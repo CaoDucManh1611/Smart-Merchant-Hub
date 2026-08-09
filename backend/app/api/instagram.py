@@ -1,8 +1,26 @@
+import json
+import sys
+
 from fastapi import APIRouter, Request, Query, HTTPException
 from fastapi.responses import PlainTextResponse
 
 from app.services.message_service import normalize_message
 from app.core.config import settings
+
+# Fix Unicode print trên Windows
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _safe_print(label: str, data) -> None:
+    """Print an toàn với mọi encoding."""
+    try:
+        print(label, json.dumps(data, ensure_ascii=False, default=str))
+    except Exception:
+        print(label, json.dumps(data, ensure_ascii=True, default=str))
 
 router = APIRouter(prefix="/webhooks/instagram", tags=["Instagram"])
 
@@ -17,7 +35,7 @@ async def verify_instagram_webhook(
         hub_mode == "subscribe"
         and hub_verify_token == settings.FACEBOOK_VERIFY_TOKEN
     ):
-        print("✅ INSTAGRAM WEBHOOK VERIFIED")
+        print("[OK] INSTAGRAM WEBHOOK VERIFIED")
         return PlainTextResponse(content=hub_challenge)
 
     raise HTTPException(
@@ -35,7 +53,7 @@ async def receive_instagram_webhook(request: Request):
         payload=payload,
     )
 
-    print("INSTAGRAM RAW:", payload)
-    print("INSTAGRAM NORMALIZED:", normalized)
+    _safe_print("INSTAGRAM RAW:", payload)
+    _safe_print("INSTAGRAM NORMALIZED:", normalized)
 
     return {"status": "received"}
