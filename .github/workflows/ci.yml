@@ -38,6 +38,23 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
 
+      - name: Create messages table
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d crm_chatbot -c "
+          CREATE TABLE IF NOT EXISTS messages (
+              id SERIAL PRIMARY KEY,
+              channel VARCHAR(50) NOT NULL,
+              external_user_id VARCHAR(255),
+              external_message_id VARCHAR(255) UNIQUE,
+              content TEXT,
+              sent_at TIMESTAMPTZ,
+              raw_payload JSONB,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          "
+
       - name: Run backend tests
         working-directory: backend
         env:
