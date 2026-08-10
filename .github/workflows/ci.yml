@@ -27,7 +27,7 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: sqlite:///./test.db
-        run: pytest tests/
+        run: pytest
 
   frontend-build:
     runs-on: ubuntu-latest
