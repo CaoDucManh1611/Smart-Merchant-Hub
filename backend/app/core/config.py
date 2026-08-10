@@ -4,9 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     APP_NAME: str = "CRM Chatbot API"
 
-    DATABASE_URL: str = (
-        "postgresql+psycopg://postgres:postgres@db:5432/crm_chatbot"
-    )
+    DATABASE_URL: str
 
     FACEBOOK_VERIFY_TOKEN: str = "crm_chatbot_2026"
     FACEBOOK_PAGE_ACCESS_TOKEN: str = ""
