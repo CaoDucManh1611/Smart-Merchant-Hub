@@ -10,6 +10,21 @@ jobs:
   backend-test:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crm_chatbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -26,7 +41,7 @@ jobs:
       - name: Run backend tests
         working-directory: backend
         env:
-          DATABASE_URL: sqlite:///./test.db
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/crm_chatbot
         run: pytest
 
   frontend-build:
