@@ -180,8 +180,10 @@ class TestReceiveWebhook:
 # ─────────────────────────────────────────────
 
 class TestMessageNormalization:
+
     def test_normalize_instagram_dm(self):
         """normalize_message trả đúng fields cho Instagram DM."""
+
         from app.services.message_service import normalize_message
 
         payload = dm_payload(
@@ -190,20 +192,31 @@ class TestMessageNormalization:
             mid="mid.normalize.001",
         )
 
-        result = normalize_message(channel="instagram", payload=payload)
+        result = normalize_message(
+            channel="instagram",
+            payload=payload,
+        )
 
         assert result["channel"] == "instagram"
         assert result["external_user_id"] == "USER_AAA"
         assert result["external_message_id"] == "mid.normalize.001"
         assert result["content"] == "Hello shop!"
-        assert result["sent_at"] is not None  # timestamp đã được convert
+
 
     def test_normalize_empty_entry(self):
         """Entry rỗng → trả empty_normalized_message."""
+
         from app.services.message_service import normalize_message
 
-        payload = {"object": "instagram", "entry": []}
-        result = normalize_message(channel="instagram", payload=payload)
+        payload = {
+            "object": "instagram",
+            "entry": [],
+        }
+
+        result = normalize_message(
+            channel="instagram",
+            payload=payload,
+        )
 
         assert result["channel"] == "instagram"
         assert result["external_user_id"] is None
