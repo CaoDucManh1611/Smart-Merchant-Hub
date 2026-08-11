@@ -4,8 +4,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.dependencies import get_db
-from app.db.message_repository import save_message
-from app.services.message_service import normalize_message
+from app.services.message_service import (
+    normalize_message,
+    process_and_save_message,
+)
 
 router = APIRouter()
 
@@ -44,7 +46,9 @@ async def receive_facebook_webhook(
 ):
     """
     Nhận webhook message từ Facebook,
-    chuẩn hóa dữ liệu và lưu vào PostgreSQL.
+    chuẩn hóa dữ liệu,
+    tạo customer/conversation nếu cần,
+    rồi lưu message vào PostgreSQL.
     """
 
     print("FACEBOOK RAW:", payload)
@@ -56,17 +60,24 @@ async def receive_facebook_webhook(
 
     print("FACEBOOK NORMALIZED:", normalized)
 
-    # Chỉ lưu khi đây thực sự là một message
+    # Chỉ xử lý khi đây thực sự là một message
     if normalized.get("external_message_id"):
-        save_message(
+
+        process_and_save_message(
             db=db,
             message=normalized,
         )
 
-        print("✅ FACEBOOK MESSAGE SAVED TO POSTGRESQL")
+        print(
+            "✅ FACEBOOK MESSAGE PROCESSED "
+            "AND SAVED TO POSTGRESQL"
+        )
 
     else:
-        print("⚠️ FACEBOOK EVENT IGNORED - NO MESSAGE ID")
+        print(
+            "⚠️ FACEBOOK EVENT IGNORED "
+            "- NO MESSAGE ID"
+        )
 
     return {
         "status": "received",

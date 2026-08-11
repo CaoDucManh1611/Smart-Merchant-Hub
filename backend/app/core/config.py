@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     FACEBOOK_VERIFY_TOKEN: str = "crm_chatbot_2026"
     FACEBOOK_PAGE_ACCESS_TOKEN: str = ""
 
+
+    FACEBOOK_PAGE_ID: str = ""
+    INSTAGRAM_ACCOUNT_ID: str = ""
+
+
     INSTAGRAM_ACCESS_TOKEN: str = ""
 
     model_config = SettingsConfigDict(

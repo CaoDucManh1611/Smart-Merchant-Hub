@@ -4,8 +4,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.dependencies import get_db
-from app.db.message_repository import save_message
-from app.services.message_service import normalize_message
+from app.services.message_service import (
+    normalize_message,
+    process_and_save_message,
+)
 
 router = APIRouter()
 
@@ -45,7 +47,8 @@ async def receive_instagram_webhook(
     """
     Nhận webhook Instagram,
     normalize message,
-    rồi lưu vào PostgreSQL.
+    tạo customer/conversation nếu cần,
+    rồi lưu message vào PostgreSQL.
     """
 
     print("INSTAGRAM RAW:", payload)
@@ -57,18 +60,25 @@ async def receive_instagram_webhook(
 
     print("INSTAGRAM NORMALIZED:", normalized)
 
-    # Chỉ lưu khi thật sự có message
+    # Chỉ xử lý khi thật sự có message
     if normalized.get("external_message_id"):
-        save_message(
+
+        process_and_save_message(
             db=db,
             message=normalized,
         )
 
-        print("✅ INSTAGRAM MESSAGE SAVED TO POSTGRESQL")
+        print(
+            "✅ INSTAGRAM MESSAGE PROCESSED "
+            "AND SAVED TO POSTGRESQL"
+        )
 
     else:
-        print("⚠️ INSTAGRAM EVENT IGNORED - NO MESSAGE ID")
+        print(
+            "⚠️ INSTAGRAM EVENT IGNORED "
+            "- NO MESSAGE ID"
+        )
 
     return {
-        "status": "received"
+        "status": "received",
     }
