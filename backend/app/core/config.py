@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
 
     INSTAGRAM_ACCESS_TOKEN: str = ""
+    PUBLIC_BASE_URL: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

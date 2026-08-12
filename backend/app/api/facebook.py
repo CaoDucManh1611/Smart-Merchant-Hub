@@ -8,6 +8,7 @@ from app.services.message_service import (
     normalize_message,
     process_and_save_message,
 )
+from app.services.realtime import manager
 
 router = APIRouter()
 
@@ -63,10 +64,27 @@ async def receive_facebook_webhook(
     # Chỉ xử lý khi đây thực sự là một message
     if normalized.get("external_message_id"):
 
-        process_and_save_message(
+        saved_message = process_and_save_message(
             db=db,
             message=normalized,
         )
+
+        if isinstance(
+            saved_message,
+            dict,
+        ):
+            await manager.broadcast(
+                {
+                    "type":
+                        "message_created",
+                    "conversation_id":
+                        saved_message.get(
+                            "conversation_id"
+                        ),
+                    "message":
+                        saved_message,
+                }
+            )
 
         print(
             "✅ FACEBOOK MESSAGE PROCESSED "

@@ -5,3 +5,5 @@ sqlalchemy==2.0.46
 psycopg[binary]==3.3.2
 pytest==9.0.2
 httpx==0.28.1
+python-multipart
+Pillow==11.3.0

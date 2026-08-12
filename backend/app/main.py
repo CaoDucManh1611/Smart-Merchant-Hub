@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.services.realtime import manager
 
 
 app = FastAPI(
@@ -36,6 +37,23 @@ app.add_middleware(
 # =========================================================
 
 app.include_router(api_router)
+
+
+@app.websocket("/ws/conversations")
+async def conversations_websocket(
+    websocket: WebSocket,
+):
+    await manager.connect(
+        websocket
+    )
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(
+            websocket
+        )
 
 
 # =========================================================
