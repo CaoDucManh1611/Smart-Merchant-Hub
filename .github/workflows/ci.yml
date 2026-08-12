@@ -7,7 +7,6 @@ on:
   pull_request:
     branches: ["main", "develop"]
 
-
 jobs:
 
   backend-test:
@@ -31,34 +30,26 @@ jobs:
           --health-timeout=5s
           --health-retries=5
 
-
     steps:
 
       - name: Checkout source code
         uses: actions/checkout@v4
 
-
       - name: Set up Python
         uses: actions/setup-python@v5
-
         with:
           python-version: "3.12"
 
-
       - name: Install backend dependencies
         working-directory: backend
-
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-
       - name: Initialize PostgreSQL database
         env:
           PGPASSWORD: postgres
-
         run: |
-
           psql \
             -h localhost \
             -U postgres \
@@ -67,14 +58,11 @@ jobs:
 
           CREATE TABLE IF NOT EXISTS customers (
               id SERIAL PRIMARY KEY,
-
               channel VARCHAR(30) NOT NULL,
-
               external_user_id VARCHAR(255) NOT NULL,
-
               name VARCHAR(255),
-
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              avatar_url VARCHAR,
 
               CONSTRAINT uq_customers_channel_user
                   UNIQUE (
@@ -83,12 +71,9 @@ jobs:
                   )
           );
 
-
           CREATE TABLE IF NOT EXISTS conversations (
               id SERIAL PRIMARY KEY,
-
               customer_id INT NOT NULL,
-
               channel VARCHAR(30) NOT NULL,
 
               status VARCHAR(30)
@@ -109,16 +94,11 @@ jobs:
                   ON DELETE CASCADE
           );
 
-
           CREATE TABLE IF NOT EXISTS messages (
               id SERIAL PRIMARY KEY,
-
               conversation_id INT NOT NULL,
-
               channel VARCHAR(30) NOT NULL,
-
               external_user_id VARCHAR(255),
-
               external_message_id VARCHAR(255) UNIQUE,
 
               direction VARCHAR(20)
@@ -126,11 +106,13 @@ jobs:
                   DEFAULT 'inbound',
 
               content TEXT,
-
               raw_payload JSONB,
 
               received_at TIMESTAMP
                   DEFAULT CURRENT_TIMESTAMP,
+
+              media_type VARCHAR(30),
+              media_url TEXT,
 
               CONSTRAINT fk_messages_conversation
                   FOREIGN KEY (
@@ -142,44 +124,32 @@ jobs:
 
           SQL
 
-
       - name: Run backend tests
         working-directory: backend
-
         env:
           DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/crm_chatbot
-
-        run: pytest
+        run: pytest -v
 
 
   frontend-build:
     runs-on: ubuntu-latest
-
 
     steps:
 
       - name: Checkout source code
         uses: actions/checkout@v4
 
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
-
         with:
           node-version: "22"
-
           cache: "npm"
-
           cache-dependency-path: frontend/package-lock.json
-
 
       - name: Install frontend dependencies
         working-directory: frontend
-
         run: npm ci
-
 
       - name: Build frontend
         working-directory: frontend
-
         run: npm run build
