@@ -1,13 +1,8 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+"""Database session compatibility exports.
 
-from app.core.config import settings
+Keep one SQLAlchemy engine/session factory for the API and database setup.
+"""
 
+from app.database.session import SessionLocal, engine
 
-engine = create_engine(settings.DATABASE_URL)
-
-SessionLocal = sessionmaker(
-    bind=engine,
-    autoflush=False,
-    autocommit=False,
-)
+__all__ = ["SessionLocal", "engine"]

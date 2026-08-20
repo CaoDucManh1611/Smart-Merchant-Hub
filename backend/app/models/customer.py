@@ -37,6 +37,11 @@ class Customer(Base):
         nullable=True,
     )
 
+    avatar_url: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),

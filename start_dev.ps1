@@ -97,12 +97,20 @@ if (-not (Test-Path $envFile)) {
     Write-Host "[5/5] .env da ton tai" -ForegroundColor Green
 }
 
+Write-Host ">> Tao du lieu seed RAG..." -ForegroundColor Yellow
+& python "$BackendPath\scripts\generate_seed_dataset.py"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "   LOI: Khong the tao du lieu seed RAG" -ForegroundColor Red
+    exit 1
+}
+Write-Host "   OK: Du lieu seed RAG da san sang" -ForegroundColor Green
+
 # ----------------------------------------------
 # 6. Khoi dong FastAPI (terminal moi)
 # ----------------------------------------------
 Write-Host ""
 Write-Host ">> Mo terminal FastAPI server..." -ForegroundColor Cyan
-Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", "Set-Location '$BackendPath'; Write-Host 'FastAPI dang chay...' -ForegroundColor Cyan; python -m uvicorn app.main:app --reload --port 8000"
+Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", "Set-Location '$BackendPath'; Write-Host 'FastAPI dang chay...' -ForegroundColor Cyan; python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
 
 Start-Sleep -Seconds 4
 
@@ -110,7 +118,7 @@ Start-Sleep -Seconds 4
 # 7. Khoi dong ngrok voi Static Domain cố định
 # ----------------------------------------------
 Write-Host ">> Mo tunnel ngrok (Static Domain)..." -ForegroundColor Cyan
-Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", "Write-Host 'ngrok tunnel (Static Domain)...' -ForegroundColor Green; & '$ngrokCmd' http 8000 --url=https://rimmed-cane-legwarmer.ngrok-free.dev"
+Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", "Write-Host 'ngrok tunnel (Static Domain)...' -ForegroundColor Green; & '$ngrokCmd' http 127.0.0.1:8000 --url=https://vocalist-dreamy-corned.ngrok-free.dev"
 
 Start-Sleep -Seconds 5
 
@@ -122,25 +130,32 @@ try {
     $publicUrl = ($tunnels.tunnels | Where-Object { $_.proto -eq "https" } | Select-Object -First 1).public_url
 
     Write-Host ""
-    Write-Host "================================================" -ForegroundColor Green
-    Write-Host "  MOI THU DA CHAY!                             " -ForegroundColor Green
-    Write-Host "================================================" -ForegroundColor Green
+    Write-Host "=================================================" -ForegroundColor Green
+    Write-Host "  SMART MERCHANT HUB (RAG CHATBOT) DA RUNNING!  " -ForegroundColor Green
+    Write-Host "=================================================" -ForegroundColor Green
     Write-Host "  Ngrok URL  : $publicUrl" -ForegroundColor White
-    Write-Host "  Webhook    : $publicUrl/api/webhooks/instagram" -ForegroundColor Yellow
+    Write-Host "  FB Webhook : $publicUrl/api/webhooks/facebook" -ForegroundColor Yellow
+    Write-Host "  IG Webhook : $publicUrl/api/webhooks/instagram" -ForegroundColor Yellow
     Write-Host "  Verify Token: crm_chatbot_2026               " -ForegroundColor Cyan
     Write-Host "  Swagger docs: http://localhost:8000/docs      " -ForegroundColor Cyan
-    Write-Host "================================================" -ForegroundColor Green
+    Write-Host "=================================================" -ForegroundColor Green
 } catch {
     Write-Host ""
     Write-Host "CHU Y: Mo http://localhost:4040 de lay ngrok URL." -ForegroundColor Yellow
-    Write-Host "   Roi paste URL vao Meta Dashboard theo dang:" -ForegroundColor Gray
-    Write-Host "   https://xxxx.ngrok-free.app/api/webhooks/instagram" -ForegroundColor White
+}
+
+# ----------------------------------------------
+# 9. Tu dong mo Frontend Web App
+# ----------------------------------------------
+$frontendIndex = "$PSScriptRoot\frontend\index.html"
+if (Test-Path $frontendIndex) {
+    Write-Host ">> Tu dong mo Frontend App tren trinh duyet..." -ForegroundColor Cyan
+    Start-Process $frontendIndex
 }
 
 Write-Host ""
-Write-Host "Cac buoc tiep theo trong Meta Dashboard:" -ForegroundColor Cyan
-Write-Host "   1. Vao developers.facebook.com -> App cua ban" -ForegroundColor White
-Write-Host "   2. Webhooks -> Instagram -> Edit Subscription" -ForegroundColor White
-Write-Host "   3. Paste Webhook URL + Verify Token roi click Verify and Save" -ForegroundColor White
-Write-Host "   4. Subscribe field: messages" -ForegroundColor White
+Write-Host "HD TEST RAG CHATBOT TREN WEB APP:" -ForegroundColor Cyan
+Write-Host "   1. Tab 'Kho tri thức': Drag & drop upload file (PDF, DOCX, TXT...)" -ForegroundColor White
+Write-Host "   2. Tab 'AI Assistant': Nhap cau hoi de chat AI RAG + xem nguon trich dan" -ForegroundColor White
+Write-Host "   3. Tab 'AI Assistant': Bat 'Auto-Reply' de AI tu dong nhan tin cho khach Facebook/Instagram" -ForegroundColor White
 Write-Host ""

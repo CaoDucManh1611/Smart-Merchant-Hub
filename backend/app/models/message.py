@@ -36,7 +36,24 @@ class Message(Base):
         nullable=True,
     )
 
+    direction: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="inbound",
+        server_default="inbound",
+    )
+
     content: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    media_type: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+    )
+
+    media_url: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )

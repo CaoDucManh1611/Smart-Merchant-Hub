@@ -1,9 +1,16 @@
+import logging
+from threading import Thread
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.database.init_db import init_db
 from app.services.realtime import manager
+from app.services.knowledge_seed_service import seed_knowledge_base
+
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(
@@ -12,24 +19,34 @@ app = FastAPI(
 )
 
 
+@app.on_event("startup")
+def initialize_database() -> None:
+    """Ensure pgvector, tables and indexes exist before serving requests."""
+    try:
+        init_db()
+        Thread(
+            target=seed_knowledge_base,
+            name="knowledge-base-seed",
+            daemon=True,
+        ).start()
+    except Exception:
+        logger.exception("Database initialization failed")
+        raise
+
+
 # =========================================================
 # CORS
-# Cho phép Vue frontend gọi FastAPI
+# Cho phép Vue frontend gọi FastAPI từ mọi origin
 # =========================================================
-
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 # =========================================================

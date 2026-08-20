@@ -4,6 +4,7 @@ import httpx
 
 from app.core.config import settings
 from app.services.meta_errors import MetaAPIError
+from app.services.meta_config_service import get_meta_config
 
 
 # =========================================================
@@ -57,8 +58,7 @@ def get_instagram_account_id() -> str:
     """
 
     account_id = str(
-        settings.INSTAGRAM_ACCOUNT_ID
-        or ""
+        get_meta_config()["instagram_account_id"] or ""
     ).strip()
 
     if not account_id:
@@ -79,14 +79,11 @@ def get_instagram_page_messaging_config() -> tuple[
     nen outbound phai dung Page Send API voi platform=instagram.
     """
 
-    page_id = str(
-        settings.FACEBOOK_PAGE_ID
-        or ""
-    ).strip()
+    meta_config = get_meta_config()
+    page_id = str(meta_config["facebook_page_id"] or "").strip()
 
     access_token = str(
-        settings.FACEBOOK_PAGE_ACCESS_TOKEN
-        or ""
+        meta_config["facebook_page_access_token"] or ""
     ).strip()
 
     if not page_id:

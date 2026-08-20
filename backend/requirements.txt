@@ -7,3 +7,11 @@ pytest==9.0.2
 httpx==0.28.1
 python-multipart
 Pillow==11.3.0
+
+# RAG dependencies
+google-generativeai>=0.8.0
+openai>=1.0.0
+pgvector>=0.3.0
+pypdf>=5.0.0
+python-docx>=1.1.0
+beautifulsoup4>=4.12.0

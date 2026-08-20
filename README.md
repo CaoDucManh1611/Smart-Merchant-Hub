@@ -6,7 +6,7 @@ Kiến trúc ban đầu:
 - Backend: FastAPI
 - Database: PostgreSQL + pgvector
 - Webhook: Facebook, Instagram, Shopee, TikTok
-- RAG: để sẵn module phát triển sau
+- RAG: PostgreSQL + pgvector, hỗ trợ upload tài liệu, hybrid retrieval và chatbot có nguồn
 - Docker Compose
 - GitHub Actions CI
 
@@ -47,6 +47,8 @@ cd ..
 docker compose up --build
 ```
 
+Backend sẽ tự khởi tạo pgvector, các bảng dữ liệu và vector index khi bắt đầu.
+
 ## 4. Facebook Webhook
 
 Callback URL:
@@ -67,7 +69,27 @@ Có thể đổi trong:
 backend/.env
 ```
 
-## 5. Lệnh chạy backend quan trọng
+## 5. Meta OAuth (Facebook Page + Instagram)
+
+OAuth được mở từ tab **Cài đặt** trên Web UI. Trước khi bấm **Kết nối với Facebook**, điền các biến sau vào `backend/.env`:
+
+```env
+META_APP_ID=ID_CUA_META_APP
+META_APP_SECRET=SECRET_CUA_META_APP
+META_GRAPH_VERSION=v26.0
+META_OAUTH_REDIRECT_URI=https://TEN-MIEN-PUBLIC/api/oauth/meta/callback
+FRONTEND_BASE_URL=http://localhost:5173
+```
+
+Trong Meta Developer, thêm Redirect URI đúng bằng:
+
+```text
+https://TEN-MIEN-PUBLIC/api/oauth/meta/callback
+```
+
+OAuth sẽ đổi authorization code thành Page Access Token, tự chọn Page, lấy Instagram Professional Account liên kết và tự đăng ký webhook `messages` cho Page. Token được lưu trong PostgreSQL `app_settings`, không cần dán token thủ công vào UI.
+
+## 6. Lệnh chạy backend quan trọng
 
 Đứng trong thư mục `backend` và chạy:
 

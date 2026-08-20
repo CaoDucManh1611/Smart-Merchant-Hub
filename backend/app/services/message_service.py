@@ -4,8 +4,8 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.db.message_repository import save_message
+from app.services.meta_config_service import get_meta_config
 
 
 # =========================================================
@@ -226,6 +226,15 @@ def normalize_facebook_message(
             payload=payload,
         )
 
+    # Facebook echoes Page-sent messages back to the webhook. Do not treat
+    # those echoes as new customer questions or trigger another RAG reply.
+    if message.get("is_echo"):
+        print("🔁 FACEBOOK OUTBOUND ECHO IGNORED")
+        return empty_normalized_message(
+            channel="facebook",
+            payload=payload,
+        )
+
     attachment = extract_attachment(
         message
     )
@@ -274,8 +283,7 @@ def fetch_facebook_customer_profile(
 ) -> dict[str, Any]:
 
     access_token = str(
-        settings.FACEBOOK_PAGE_ACCESS_TOKEN
-        or ""
+        get_meta_config()["facebook_page_access_token"] or ""
     ).strip()
 
     if not access_token:
@@ -382,8 +390,7 @@ def fetch_instagram_customer_profile(
 ) -> dict[str, Any]:
 
     access_token = str(
-        settings.FACEBOOK_PAGE_ACCESS_TOKEN
-        or ""
+        get_meta_config()["facebook_page_access_token"] or ""
     ).strip()
 
     if not access_token:
@@ -958,6 +965,15 @@ def normalize_instagram_message(
 
     event = messaging_events[0]
 
+    # Meta emits message_edit events after delivery. They are not new
+    # customer messages and must not trigger another RAG reply.
+    if event.get("message_edit"):
+        print("🔁 INSTAGRAM MESSAGE_EDIT IGNORED")
+        return empty_normalized_message(
+            channel="instagram",
+            payload=payload,
+        )
+
 
     # =====================================================
     # CASE 1:
@@ -971,6 +987,15 @@ def normalize_instagram_message(
 
 
     if message:
+
+        # Meta echoes messages sent by the Instagram account back to the
+        # webhook. Do not save them as inbound messages or auto-reply to them.
+        if message.get("is_echo"):
+            print("🔁 INSTAGRAM OUTBOUND ECHO IGNORED")
+            return empty_normalized_message(
+                channel="instagram",
+                payload=payload,
+            )
 
         attachment = (
             extract_attachment(
@@ -1049,9 +1074,7 @@ def normalize_instagram_message(
             "mid"
         )
 
-        access_token = (
-            settings.FACEBOOK_PAGE_ACCESS_TOKEN
-        )
+        access_token = get_meta_config()["facebook_page_access_token"]
 
 
         print(
@@ -1163,8 +1186,7 @@ def process_and_save_message(
     if channel == "instagram":
 
         instagram_account_id = str(
-            settings.INSTAGRAM_ACCOUNT_ID
-            or ""
+            get_meta_config()["instagram_account_id"] or ""
         ).strip()
 
         sender_id = (
@@ -1531,6 +1553,19 @@ def process_and_save_message(
         f"external_message_id="
         f"{external_message_id}"
     )
+
+    # RAG Auto-reply check
+    if message.get("content"):
+        try:
+            from app.services.auto_reply_service import process_rag_auto_reply_background
+            process_rag_auto_reply_background(
+                conversation_id=conversation_id,
+                channel=channel,
+                query_text=message.get("content"),
+            )
+        except Exception as exc:
+            print("Auto-reply trigger error:", str(exc))
+
 
 
     return saved_message or {

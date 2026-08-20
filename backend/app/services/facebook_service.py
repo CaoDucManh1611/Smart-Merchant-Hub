@@ -2,8 +2,8 @@ from typing import Any
 
 import httpx
 
-from app.core.config import settings
 from app.services.meta_errors import MetaAPIError
+from app.services.meta_config_service import get_meta_config
 
 
 # =========================================================
@@ -15,14 +15,11 @@ def get_facebook_config() -> tuple[str, str]:
     Lấy cấu hình Facebook Page.
     """
 
-    page_id = str(
-        settings.FACEBOOK_PAGE_ID
-        or ""
-    ).strip()
+    meta_config = get_meta_config()
+    page_id = str(meta_config["facebook_page_id"] or "").strip()
 
     access_token = str(
-        settings.FACEBOOK_PAGE_ACCESS_TOKEN
-        or ""
+        meta_config["facebook_page_access_token"] or ""
     ).strip()
 
     if not page_id:

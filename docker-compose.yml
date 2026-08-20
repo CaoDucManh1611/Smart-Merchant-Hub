@@ -10,6 +10,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d crm_chatbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   backend:
     build:
@@ -17,10 +22,15 @@ services:
     container_name: crm_chatbot_backend
     env_file:
       - ./backend/.env
+    environment:
+      # Trong Docker, PostgreSQL được truy cập qua tên service `db`,
+      # không phải localhost/127.0.0.1.
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/crm_chatbot
     ports:
       - "8000:8000"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - ./backend/app:/app/app
 

@@ -8,6 +8,8 @@ venv/
 # Environment
 .env
 backend/.env
+backend/sample_data/
+backend/rag_runs.jsonl
 
 # Node
 frontend/node_modules/
@@ -20,3 +22,6 @@ frontend/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime artifacts
+rag_runs.json

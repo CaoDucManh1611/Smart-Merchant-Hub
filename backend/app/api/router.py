@@ -1,9 +1,15 @@
 from fastapi import APIRouter
-from app.api import conversations
+from app.api import conversations, documents, chat, meta_oauth
 from app.api import facebook, instagram, shopee, tiktok
 
 
 api_router = APIRouter(prefix="/api")
+
+api_router.include_router(
+    meta_oauth.router,
+    prefix="/oauth",
+    tags=["Meta OAuth"],
+)
 
 
 # Facebook
@@ -41,4 +47,20 @@ api_router.include_router(
     conversations.router,
     prefix="/conversations",
     tags=["Conversations"],
+)
+
+
+# RAG – Document Management
+api_router.include_router(
+    documents.router,
+    prefix="/documents",
+    tags=["Documents"],
+)
+
+
+# RAG – Chat
+api_router.include_router(
+    chat.router,
+    prefix="/chat",
+    tags=["Chat"],
 )

@@ -2806,3 +2806,27 @@ async def upload_and_send_image(
             f"channel: {channel}"
         ),
     )
+
+
+# =========================================================
+# AUTO-REPLY SETTINGS ENDPOINTS
+# =========================================================
+
+class AutoReplyStatusRequest(BaseModel):
+    auto_reply_enabled: bool
+
+
+@router.get("/auto-reply-status")
+async def get_auto_reply_status(db: Session = Depends(get_db)):
+    from app.services.auto_reply_service import get_auto_reply_enabled
+    return {"auto_reply_enabled": get_auto_reply_enabled(db)}
+
+
+@router.post("/auto-reply-status")
+async def set_auto_reply_status(
+    req: AutoReplyStatusRequest,
+    db: Session = Depends(get_db),
+):
+    from app.services.auto_reply_service import set_auto_reply_enabled
+    enabled = set_auto_reply_enabled(db, req.auto_reply_enabled)
+    return {"auto_reply_enabled": enabled}
