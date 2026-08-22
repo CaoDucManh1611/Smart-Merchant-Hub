@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    participant C as Khách hàng
+    participant K as Kênh tích hợp
+    participant W as Webhook API
+    participant E as channel_events
+    participant CRM as CRM Service
+    participant DB as PostgreSQL
+    participant AI as RAG/Chatbot
+    participant NV as Nhân viên CSKH
+
+    C->>K: Gửi tin nhắn
+    K->>W: Webhook payload
+    W->>E: Ghi external_event_id + payload
+    W->>CRM: Chuẩn hóa sender/message
+    CRM->>DB: Upsert customer
+    CRM->>DB: Tìm hoặc tạo conversation
+    CRM->>DB: Lưu inbound message
+    alt Auto-reply được bật và có context
+        CRM->>AI: Retrieve top-k document_chunks
+        AI-->>CRM: Prompt + answer + sources
+        CRM->>K: Gửi outbound reply
+        CRM->>DB: Lưu outbound message
+    else Cần người xử lý
+        CRM->>DB: Tạo conversation_assignment
+        CRM-->>NV: Đưa hội thoại vào inbox
+        NV->>K: Gửi phản hồi
+        NV->>DB: Lưu outbound message
+    end
+    K-->>C: Nhận phản hồi

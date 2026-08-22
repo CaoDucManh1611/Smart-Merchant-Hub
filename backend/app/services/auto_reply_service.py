@@ -9,6 +9,7 @@ from threading import Thread
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.database import SessionLocal
 from app.models.setting import AppSetting
 
@@ -98,7 +99,11 @@ def _save_auto_reply_outbound(
 
 def get_auto_reply_enabled(db: Session) -> bool:
     setting = db.get(AppSetting, AUTO_REPLY_SETTING_KEY)
-    return bool(setting and setting.value.lower() == "true")
+    if setting is None:
+        # Keep a configurable default for a fresh database. Once the user
+        # changes the toggle, app_settings becomes the source of truth.
+        return bool(settings.RAG_AUTO_REPLY_ENABLED)
+    return setting.value.strip().lower() == "true"
 
 
 def set_auto_reply_enabled(db: Session, enabled: bool) -> bool:
@@ -131,6 +136,10 @@ def process_rag_auto_reply(
         top_k=5,
     ) as run:
       if not get_auto_reply_enabled(db):
+          logger.info(
+              "Auto-reply skipped: disabled for conversation %d",
+              conversation_id,
+          )
           run.finish("skipped", phase="complete", reason="auto_reply_disabled")
           return False
 
@@ -145,7 +154,11 @@ def process_rag_auto_reply(
         # 1. Retrieve
         chunks = retrieve(query=query_text, db=db, top_k=5)
         if not chunks:
-            logger.info("No relevant RAG chunks found for query: %s", query_text[:50])
+            logger.warning(
+                "Auto-reply skipped: no relevant RAG chunks for conversation %d, query=%r",
+                conversation_id,
+                query_text[:100],
+            )
             run.finish("no_context", phase="complete", chunks_found=0)
             return False
 
@@ -204,6 +217,11 @@ def process_rag_auto_reply(
             content=answer,
             meta_response=meta_response,
         )
+        logger.info(
+            "Auto-reply completed for conversation %d, external_message_id=%s",
+            conversation_id,
+            meta_response.get("message_id"),
+        )
         run.finish("success", phase="complete", answer_chars=len(answer))
         return True
 
@@ -230,6 +248,11 @@ def process_rag_auto_reply_background(
     def worker() -> None:
         db = SessionLocal()
         try:
+            logger.info(
+                "Auto-reply worker started for conversation %d, channel=%s",
+                conversation_id,
+                channel,
+            )
             process_rag_auto_reply(
                 db=db,
                 conversation_id=conversation_id,
@@ -238,5 +261,9 @@ def process_rag_auto_reply_background(
             )
         finally:
             db.close()
+            logger.info(
+                "Auto-reply worker finished for conversation %d",
+                conversation_id,
+            )
 
     Thread(target=worker, daemon=True).start()

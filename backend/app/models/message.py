@@ -14,6 +14,18 @@ class Message(Base):
         primary_key=True,
     )
 
+    sender_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="customer",
+        server_default="customer",
+    )
+
+    sender_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     conversation_id: Mapped[int] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
@@ -63,12 +75,25 @@ class Message(Base):
         nullable=True,
     )
 
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="received",
+        server_default="received",
+    )
+
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+
     received_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
     )
 
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     conversation = relationship(
         "Conversation",
         back_populates="messages",
     )
+
+    sender_user = relationship("User")

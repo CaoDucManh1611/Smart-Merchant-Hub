@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # openai/gpt-oss-20b | gemini-3.6-flash | gpt-4o-mini
 
     EMBEDDING_PROVIDER: str = "gemini"
-    # gemini | openai
+    # local | gemini | openai
 
     EMBEDDING_API_KEY: str = ""
     EMBEDDING_MODEL: str = "gemini-embedding-001"
@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     RAG_LOG_FILE: str = "rag_runs.jsonl"
     RAG_AUTO_SEED_ENABLED: bool = True
     RAG_AUTO_SEED_DIR: str = "sample_data/knowledge_base"
+    # Auto-reply defaults to on for the demo/development deployment. A row in
+    # app_settings or this environment variable can still turn it off.
+    RAG_AUTO_REPLY_ENABLED: bool = True
     # False keeps embeddings for every seeded document so semantic retrieval
     # is available. Set to true only when intentionally using lexical fallback.
     RAG_AUTO_SEED_FAST_MODE: bool = False

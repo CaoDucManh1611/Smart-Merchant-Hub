@@ -1,0 +1,14 @@
+flowchart TD
+    A[Upload PDF/DOCX/TXT/CSV/MD/HTML] --> B[documents: pending]
+    B --> C[Load nội dung]
+    C --> D[Chunk text]
+    D --> E[Tạo embedding]
+    E --> F[(document_chunks + pgvector)]
+    F --> G[Retriever: semantic + lexical]
+    Q[Câu hỏi khách hàng] --> G
+    G --> H[Build prompt]
+    H --> I[LLM provider]
+    I --> J{Có thể tự trả lời?}
+    J -->|Có| K[Gửi outbound message]
+    J -->|Không| L[Chuyển conversation cho nhân viên]
+    K --> M[Hiển thị nguồn tham khảo]

@@ -2,22 +2,65 @@
 # Script khoi dong FastAPI + ngrok cung luc
 # Cach chay:
 #   .\start_dev.ps1 -AuthToken "YOUR_NGROK_AUTHTOKEN"
+#   .\start_dev.ps1 -ResetDatabase
 #   .\start_dev.ps1   (neu da add authtoken roi)
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$AuthToken = ""
+    [string]$AuthToken = "",
+
+    [Parameter(Mandatory=$false)]
+    [switch]$ResetDatabase
 )
 
 $ErrorActionPreference = "Stop"
 $BackendPath = "$PSScriptRoot\backend"
 $PowerShellExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$ComposeProjectPath = $PSScriptRoot
 
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "    Smart Merchant Hub -- Dev Server Start      " -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
+
+# ----------------------------------------------
+# 0. Khoi dong PostgreSQL/pgvector tu dong
+# ----------------------------------------------
+Write-Host "[0/5] Kiem tra PostgreSQL/pgvector Docker..." -ForegroundColor Yellow
+$dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+if (-not $dockerCmd) {
+    Write-Host "   LOI: Chua tim thay Docker Desktop. Hay mo Docker Desktop roi chay lai script." -ForegroundColor Red
+    exit 1
+}
+
+Push-Location $ComposeProjectPath
+try {
+    & docker compose up -d db
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker Compose khong khoi dong duoc PostgreSQL/pgvector."
+    }
+} finally {
+    Pop-Location
+}
+
+$dbReady = $false
+for ($attempt = 1; $attempt -le 30; $attempt++) {
+    $dbHealth = & docker inspect --format="{{.State.Health.Status}}" crm_chatbot_db 2>$null
+    if ($dbHealth -eq "healthy") {
+        $dbReady = $true
+        break
+    }
+    Write-Host "   Dang cho database san sang ($attempt/30)..." -ForegroundColor Gray
+    Start-Sleep -Seconds 2
+}
+
+if (-not $dbReady) {
+    Write-Host "   LOI: Database chua san sang sau 60 giay." -ForegroundColor Red
+    Write-Host "   Kiem tra Docker Desktop va xem log bang: docker compose logs db" -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "   OK: PostgreSQL/pgvector da san sang. Backend se tu tao/cap nhat schema." -ForegroundColor Green
 
 # ----------------------------------------------
 # 1. Kiem tra Python
@@ -95,6 +138,30 @@ if (-not (Test-Path $envFile)) {
     Write-Host "   CHU Y: Dien FACEBOOK_PAGE_ACCESS_TOKEN vao .env truoc khi test!" -ForegroundColor Yellow
 } else {
     Write-Host "[5/5] .env da ton tai" -ForegroundColor Green
+}
+
+if ($ResetDatabase) {
+    Write-Host ""
+    Write-Host "!!! RESET DATABASE: XOA TOAN BO BANG CU TRONG schema public !!!" -ForegroundColor Red
+    Write-Host "!!! Du lieu cu se khong the khoi phuc sau thao tac nay. !!!" -ForegroundColor Red
+    $resetConfirmation = Read-Host "Nhap RESET de xac nhan"
+    if ($resetConfirmation -ne "RESET") {
+        Write-Host "Da huy reset database." -ForegroundColor Yellow
+        exit 1
+    }
+
+    Write-Host ">> Xoa bang cu va tao lai dung 20 bang..." -ForegroundColor Yellow
+    Push-Location $BackendPath
+    try {
+        & python "scripts\reset_database_schema.py" --yes
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   LOI: Reset database that bai." -ForegroundColor Red
+            exit 1
+        }
+    } finally {
+        Pop-Location
+    }
+    Write-Host "   OK: Database da duoc reset ve dung 20 bang." -ForegroundColor Green
 }
 
 Write-Host ">> Tao du lieu seed RAG..." -ForegroundColor Yellow

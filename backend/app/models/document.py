@@ -31,6 +31,12 @@ class Document(Base):
         primary_key=True,
     )
 
+    business_id: Mapped[int | None] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+
     filename: Mapped[str] = mapped_column(
         String(500),
         nullable=False,
@@ -80,6 +86,8 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+
+    business = relationship("Business", back_populates="documents")
 
 
 class DocumentChunk(Base):

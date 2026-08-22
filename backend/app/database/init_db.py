@@ -1,4 +1,5 @@
 import logging
+import time
 
 from sqlalchemy import text
 
@@ -9,11 +10,47 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.document import Document, DocumentChunk
 from app.models.setting import AppSetting
+# Import all target models before create_all() so SQLAlchemy registers the
+# full multi-tenant schema in one metadata graph.
+from app.models.business import Business, Payment, ServicePlan, Subscription, User
+from app.models.channel import Channel, ChannelEvent
+from app.models.crm_extended import ConversationAssignment, ConversationTag, Tag
+from app.models.sales import Order, OrderItem, Product
+from app.models.chatbot import ChatbotConfig
 
 logger = logging.getLogger(__name__)
 
 
+def _wait_for_database(max_attempts: int = 15, delay_seconds: int = 2) -> None:
+    """Wait briefly for PostgreSQL to accept connections during startup."""
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt == max_attempts:
+                break
+            logger.warning(
+                "Database is not ready yet (%d/%d); retrying in %ds",
+                attempt,
+                max_attempts,
+                delay_seconds,
+            )
+            time.sleep(delay_seconds)
+
+    raise RuntimeError(
+        "Khong ket noi duoc PostgreSQL. Hay kiem tra Docker Desktop, "
+        "DATABASE_URL va cong 5432."
+    ) from last_error
+
+
 def init_db() -> None:
+    _wait_for_database()
+
     # Kích hoạt pgvector extension (cần chạy 1 lần)
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -24,6 +61,135 @@ def init_db() -> None:
     # create_all() does not add newly introduced columns to existing tables.
     # Keep this small compatibility migration idempotent for older databases.
     with engine.begin() as conn:
+        # The original project was a single-shop prototype. These nullable
+        # columns allow old rows and environment-based credentials to keep
+        # working while new tenants can use the normalized relations.
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES businesses(id) ON DELETE CASCADE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS email VARCHAR(255)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS phone VARCHAR(40)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS address TEXT"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "DROP CONSTRAINT IF EXISTS uq_customers_channel_user"
+            )
+        )
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'uq_customers_business_channel_user'
+                    ) THEN
+                        ALTER TABLE customers
+                        ADD CONSTRAINT uq_customers_business_channel_user
+                        UNIQUE (business_id, channel, external_user_id);
+                    END IF;
+                END $$;
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES businesses(id) ON DELETE CASCADE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS channel_id INTEGER REFERENCES channels(id) ON DELETE SET NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS priority VARCHAR(20) NOT NULL DEFAULT 'normal'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS last_message_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE messages "
+                "ADD COLUMN IF NOT EXISTS sender_type VARCHAR(20) NOT NULL DEFAULT 'customer'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE messages "
+                "ADD COLUMN IF NOT EXISTS sender_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE messages "
+                "ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'received'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE messages "
+                "ADD COLUMN IF NOT EXISTS metadata JSON"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE messages "
+                "ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE documents "
+                "ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES businesses(id) ON DELETE CASCADE"
+            )
+        )
         conn.execute(
             text(
                 "ALTER TABLE customers "

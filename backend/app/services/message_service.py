@@ -1542,6 +1542,32 @@ def process_and_save_message(
         message=message,
     )
 
+    # Keep the CRM list ordered by the latest interaction and make the
+    # database change visible even when the message is later handled by the
+    # background auto-reply worker.
+    db.execute(
+        text(
+            """
+            UPDATE conversations
+            SET updated_at = NOW(),
+                last_message_at = NOW()
+            WHERE id = :conversation_id
+            """
+        ),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE customers
+            SET updated_at = NOW()
+            WHERE id = :customer_id
+            """
+        ),
+        {"customer_id": customer_id},
+    )
+    db.commit()
+
 
     print(
         "✅ MESSAGE SAVED | "

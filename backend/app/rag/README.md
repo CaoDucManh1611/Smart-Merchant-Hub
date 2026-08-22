@@ -8,7 +8,7 @@ Retrieval-Augmented Generation cho CRM Chatbot.
 |------|-----------|
 | `loader.py` | Đọc nội dung từ PDF, DOCX, TXT, CSV, HTML |
 | `chunker.py` | Chia text thành chunks (Recursive Character Splitter) |
-| `embedder.py` | Chuyển text → vector embedding (Gemini / OpenAI) |
+| `embedder.py` | Chuyển text → vector embedding (local Sentence-Transformers / Gemini / OpenAI) |
 | `retriever.py` | Hybrid retrieval: pgvector + tìm kiếm từ khóa |
 | `prompt_builder.py` | Xây dựng prompt cho LLM từ context + query |
 | `llm_caller.py` | Gọi LLM API, hỗ trợ streaming (Groq / Gemini / OpenAI) |
@@ -53,10 +53,11 @@ LLM_PROVIDER=groq
 GROQ_API_KEY=your-groq-api-key
 LLM_API_KEY=
 LLM_MODEL=openai/gpt-oss-20b
-EMBEDDING_PROVIDER=gemini
-EMBEDDING_API_KEY=your-gemini-api-key
-EMBEDDING_MODEL=gemini-embedding-001
-EMBEDDING_DIMENSION=3072
+# Có thể chọn: local | gemini | openai
+EMBEDDING_PROVIDER=local
+EMBEDDING_API_KEY=
+EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+EMBEDDING_DIMENSION=768
 RAG_CHUNK_SIZE=800
 RAG_CHUNK_OVERLAP=100
 RAG_TOP_K=5
@@ -65,6 +66,7 @@ RAG_LOG_FILE=rag_runs.jsonl
 RAG_AUTO_SEED_ENABLED=true
 RAG_AUTO_SEED_DIR=sample_data/knowledge_base
 RAG_AUTO_SEED_FAST_MODE=false
+RAG_AUTO_REPLY_ENABLED=true
 ```
 
 ## RAG run log

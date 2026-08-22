@@ -11,8 +11,6 @@ Hỗ trợ:
 import logging
 from collections.abc import AsyncGenerator
 
-import google.generativeai as genai
-
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -96,6 +94,8 @@ def _messages_to_gemini_format(
 
 def call_gemini(messages: list[dict]) -> str:
     """Gọi Gemini API (non-streaming)."""
+    import google.generativeai as genai
+
     genai.configure(api_key=settings.LLM_API_KEY)
 
     system_instruction, history = _messages_to_gemini_format(
@@ -125,6 +125,8 @@ async def stream_gemini(
     messages: list[dict],
 ) -> AsyncGenerator[str, None]:
     """Gọi Gemini API với streaming."""
+    import google.generativeai as genai
+
     genai.configure(api_key=settings.LLM_API_KEY)
 
     system_instruction, history = _messages_to_gemini_format(

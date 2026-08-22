@@ -1,8 +1,7 @@
 import logging
 import re
 import time
-
-import google.generativeai as genai
+from functools import lru_cache
 
 from app.core.config import settings
 
@@ -58,6 +57,8 @@ def _embed_with_gemini(
     model: str,
 ) -> list[list[float]]:
     """Embed texts bằng Google Gemini API."""
+    import google.generativeai as genai
+
     genai.configure(api_key=_embedding_api_key())
 
     embeddings = []
@@ -99,6 +100,8 @@ def _embed_query_with_gemini(
     model: str,
 ) -> list[float]:
     """Embed 1 query duy nhất bằng Gemini (dùng task_type khác)."""
+    import google.generativeai as genai
+
     genai.configure(api_key=_embedding_api_key())
 
     result = genai.embed_content(
@@ -107,6 +110,44 @@ def _embed_query_with_gemini(
         task_type="retrieval_query",
     )
     return result["embedding"]
+
+
+def _embed_with_local(
+    texts: list[str],
+    model: str,
+) -> list[list[float]]:
+    """Embed bằng mô hình Sentence-Transformers chạy local."""
+    encoder = _get_local_encoder(model)
+    vectors = encoder.encode(
+        texts,
+        batch_size=32,
+        normalize_embeddings=True,
+        convert_to_numpy=True,
+        show_progress_bar=False,
+    )
+    return vectors.tolist()
+
+
+@lru_cache(maxsize=2)
+def _get_local_encoder(model: str):
+    """Load mỗi model local một lần trong suốt vòng đời process."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as error:
+        raise ValueError(
+            "EMBEDDING_PROVIDER=local cần package sentence-transformers. "
+            "Hãy rebuild Docker hoặc chạy: pip install sentence-transformers."
+        ) from error
+
+    return SentenceTransformer(model)
+
+
+def _embed_query_with_local(
+    text: str,
+    model: str,
+) -> list[float]:
+    """Embed một câu hỏi bằng cùng local encoder với tài liệu."""
+    return _embed_with_local([text], model)[0]
 
 
 def _embed_with_openai(
@@ -158,14 +199,16 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         model,
     )
 
-    if provider == "gemini":
+    if provider == "local":
+        vectors = _embed_with_local(texts, model)
+    elif provider == "gemini":
         vectors = _embed_with_gemini(texts, model)
     elif provider == "openai":
         vectors = _embed_with_openai(texts, model)
     else:
         raise ValueError(
             f"Unknown embedding provider: {provider}. "
-            f"Supported: gemini, openai"
+            f"Supported: local, gemini, openai"
         )
 
     return _validate_vectors(vectors, expected_count=len(texts))
@@ -189,7 +232,9 @@ def embed_query(text: str) -> list[float]:
         model,
     )
 
-    if provider == "gemini":
+    if provider == "local":
+        vector = _embed_query_with_local(text, model)
+    elif provider == "gemini":
         vector = _embed_query_with_gemini(text, model)
     elif provider == "openai":
         vectors = _embed_with_openai([text], model)
@@ -197,7 +242,7 @@ def embed_query(text: str) -> list[float]:
     else:
         raise ValueError(
             f"Unknown embedding provider: {provider}. "
-            f"Supported: gemini, openai"
+            f"Supported: local, gemini, openai"
         )
 
     return _validate_vectors([vector], expected_count=1)[0]

@@ -12,6 +12,22 @@ Kiến trúc ban đầu:
 
 ## 1. Chạy backend không dùng Docker
 
+Nếu muốn chạy FastAPI bằng Python nhưng vẫn tự bật PostgreSQL/pgvector, dùng script ở thư mục gốc:
+
+```powershell
+.\start_dev.ps1
+```
+
+Script sẽ tự gọi Docker cho service `db`, chờ database sẵn sàng, sau đó backend tự tạo/cập nhật schema. Không cần mở DBeaver để chạy SQL.
+
+Nếu database đang có các bảng cũ và cần đưa về đúng 20 bảng để vẽ ERD, chạy một lần:
+
+```powershell
+.\reset_database.ps1
+```
+
+Script sẽ hỏi nhập `RESET`, xóa toàn bộ bảng trong schema `public`, rồi tạo lại đúng 20 bảng hiện tại. Lệnh này xóa dữ liệu cũ.
+
 ```bash
 cd backend
 copy .env.example .env
@@ -48,6 +64,8 @@ docker compose up --build
 ```
 
 Backend sẽ tự khởi tạo pgvector, các bảng dữ liệu và vector index khi bắt đầu.
+
+Schema được tạo tự động từ `backend/app/database/init_db.py`. File SQL trong `docs/` chỉ dùng để kiểm tra hoặc chạy thủ công trên DBeaver khi cần.
 
 ## 4. Facebook Webhook
 
@@ -98,3 +116,13 @@ uvicorn app.main:app --reload
 ```
 
 Không chạy `uvicorn main:app` vì file `main.py` nằm trong thư mục `app`.
+
+## 7. Thiết kế CSDL và Use Case
+
+Thiết kế 20 bảng, ma trận Use Case và các sơ đồ Mermaid nằm tại:
+
+- `docs/database-use-cases.md`
+- `docs/diagrams/erd.mmd`
+- `docs/diagrams/system-use-case.mmd`
+- `docs/diagrams/conversation-flow.mmd`
+- `docs/diagrams/rag-flow.mmd`
