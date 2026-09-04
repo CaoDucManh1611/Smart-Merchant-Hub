@@ -1,0 +1,59 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "PAGE_001",
+      "time": 1788439000,
+      "messaging": [
+        {
+          "sender": {"id": "FB_USER_001"},
+          "recipient": {"id": "PAGE_001"},
+          "timestamp": 1788439001000,
+          "message": {
+            "mid": "m_fb_text_001",
+            "text": "Shop còn áo màu xanh không?"
+          }
+        },
+        {
+          "sender": {"id": "FB_USER_002"},
+          "recipient": {"id": "PAGE_001"},
+          "timestamp": 1788439002000,
+          "message": {
+            "mid": "m_fb_image_001",
+            "attachments": [
+              {
+                "type": "image",
+                "payload": {"url": "https://cdn.example.test/facebook/image-1.jpg"}
+              }
+            ]
+          }
+        },
+        {
+          "sender": {"id": "PAGE_001"},
+          "recipient": {"id": "FB_USER_001"},
+          "timestamp": 1788439003000,
+          "message": {
+            "mid": "m_fb_echo_001",
+            "is_echo": true,
+            "text": "Tin nhắn do Page gửi"
+          }
+        }
+      ]
+    },
+    {
+      "id": "PAGE_002",
+      "time": 1788439010,
+      "messaging": [
+        {
+          "sender": {"id": "FB_USER_003"},
+          "recipient": {"id": "PAGE_002"},
+          "timestamp": 1788439011000,
+          "message": {
+            "mid": "m_fb_text_002",
+            "text": "Tư vấn giúp mình size M"
+          }
+        }
+      ]
+    }
+  ]
+}

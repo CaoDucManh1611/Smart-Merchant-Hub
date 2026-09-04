@@ -15,6 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.db.dependencies import get_db
 from app.rag.retriever import retrieve
+from app.tenancy.context import TenantContext
+from app.tenancy.dependencies import get_tenant_context
 from app.rag.prompt_builder import build_prompt
 from app.rag.llm_caller import call_llm, stream_llm
 from app.rag.run_logger import RagRunLog
@@ -34,6 +36,7 @@ router = APIRouter()
 async def chat(
     request: ChatRequest,
     db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """
     Gửi câu hỏi → RAG tìm context → LLM trả lời.
@@ -52,6 +55,7 @@ async def chat(
         chunks = retrieve(
             query=request.query,
             db=db,
+            business_id=tenant.business_id,
             top_k=request.top_k,
         )
 
@@ -114,6 +118,7 @@ async def chat(
 async def chat_stream(
     request: ChatRequest,
     db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """
     Gửi câu hỏi → RAG → LLM streaming response qua SSE.
@@ -136,6 +141,7 @@ async def chat_stream(
             chunks = retrieve(
                 query=request.query,
                 db=db,
+                business_id=tenant.business_id,
                 top_k=request.top_k,
             )
 

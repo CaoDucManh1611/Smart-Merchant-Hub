@@ -19,6 +19,11 @@ class Channel(Base):
             "external_account_id",
             name="uq_channels_business_type_account",
         ),
+        UniqueConstraint(
+            "channel_type",
+            "external_account_id",
+            name="uq_channels_type_account_global",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -31,6 +36,7 @@ class Channel(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     external_account_id: Mapped[str] = mapped_column(String(255), nullable=False)
     access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
     config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

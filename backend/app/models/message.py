@@ -96,4 +96,11 @@ class Message(Base):
         back_populates="messages",
     )
 
+    attachments = relationship(
+        "MessageAttachment",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="MessageAttachment.id",
+    )
+
     sender_user = relationship("User")

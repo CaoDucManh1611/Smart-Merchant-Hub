@@ -8,6 +8,7 @@ Chạy: pytest tests/ -v
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from app.core.config import settings
 
 client = TestClient(app)
 
@@ -92,6 +93,13 @@ class TestVerifyWebhook:
 # ─────────────────────────────────────────────
 
 class TestReceiveWebhook:
+    @pytest.fixture(autouse=True)
+    def isolate_provider_signature_config(self, monkeypatch):
+        # These tests exercise parsing/persistence, not Meta HMAC signing.
+        # Keep production verification enabled while preventing the host
+        # container's real META_APP_SECRET from changing test behavior.
+        monkeypatch.setattr(settings, "META_APP_SECRET", "")
+
     def test_receive_dm_returns_200(self):
         """POST với DM payload hợp lệ → 200."""
         resp = client.post(WEBHOOK_URL, json=dm_payload())

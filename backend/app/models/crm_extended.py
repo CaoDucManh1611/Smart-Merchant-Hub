@@ -81,3 +81,37 @@ class ConversationTag(Base):
 
     conversation = relationship("Conversation", back_populates="tag_links")
     tag = relationship("Tag", back_populates="conversations")
+
+
+class CustomerTag(Base):
+    """Tenant-scoped labels that belong to a customer across conversations."""
+
+    __tablename__ = "customer_tags"
+    __table_args__ = (
+        UniqueConstraint("customer_id", "tag_id", name="uq_customer_tags_pair"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("tags.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    customer = relationship("Customer")
+    tag = relationship("Tag")

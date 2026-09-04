@@ -111,9 +111,12 @@ def save_message(
         },
     )
 
-    db.commit()
-
     row = result.mappings().first()
+
+    # Consume INSERT ... RETURNING before committing. SQLite keeps the
+    # statement cursor active until it is read, which otherwise causes
+    # ``cannot commit transaction - SQL statements in progress``.
+    db.commit()
 
     if row:
         return dict(

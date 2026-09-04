@@ -63,9 +63,35 @@ cd ..
 docker compose up --build
 ```
 
-Backend sẽ tự khởi tạo pgvector, các bảng dữ liệu và vector index khi bắt đầu.
+Backend sẽ tự khởi tạo pgvector và các bảng dữ liệu khi bắt đầu. Sau mỗi lần
+cập nhật tính năng, áp dụng migration mới bằng:
 
-Schema được tạo tự động từ `backend/app/database/init_db.py`. File SQL trong `docs/` chỉ dùng để kiểm tra hoặc chạy thủ công trên DBeaver khi cần.
+```powershell
+docker compose exec backend python -m alembic upgrade head
+```
+
+Kiểm tra phiên bản schema:
+
+```powershell
+docker compose exec backend python -m alembic current
+```
+
+Schema được quản lý bằng Alembic trong `backend/alembic/`; không cần xóa DB
+hiện tại để cập nhật.
+
+## 3.1 Media đa kênh
+
+Ảnh, âm thanh, sticker, video và file được chuẩn hóa qua cùng contract rồi lưu
+tenant-scoped trong `message_attachments`. Sau khi cập nhật code, chạy:
+
+```powershell
+docker compose exec backend python -m alembic upgrade head
+```
+
+Inbox tải media qua `GET /api/media/{attachment_id}`; API tự kiểm tra tenant và
+không đưa channel token ra trình duyệt. Nhân viên gửi media bằng
+`POST /api/conversations/{conversation_id}/send-media`. Xem chi tiết endpoint,
+giới hạn provider và lệnh kiểm thử trong [`backend/README.md`](backend/README.md).
 
 ## 4. Facebook Webhook
 
@@ -119,7 +145,7 @@ Không chạy `uvicorn main:app` vì file `main.py` nằm trong thư mục `app`
 
 ## 7. Thiết kế CSDL và Use Case
 
-Thiết kế 20 bảng, ma trận Use Case và các sơ đồ Mermaid nằm tại:
+Thiết kế dữ liệu nền, ma trận Use Case và các sơ đồ Mermaid nằm tại:
 
 - `docs/database-use-cases.md`
 - `docs/diagrams/erd.mmd`

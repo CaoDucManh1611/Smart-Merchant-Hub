@@ -3,6 +3,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     APP_NAME: str = "CRM Chatbot API"
+    ENVIRONMENT: str = "development"
+    CHANNEL_ENCRYPTION_KEY: str = ""
+    AUTH_SECRET: str = ""
 
     DATABASE_URL: str
 
@@ -57,6 +60,9 @@ class Settings(BaseSettings):
     # Auto-reply defaults to on for the demo/development deployment. A row in
     # app_settings or this environment variable can still turn it off.
     RAG_AUTO_REPLY_ENABLED: bool = True
+    # Extract durable customer facts in a background worker. Keep this
+    # opt-in so a deployment never starts making LLM calls unexpectedly.
+    CUSTOMER_FACT_EXTRACTION_ENABLED: bool = False
     # False keeps embeddings for every seeded document so semantic retrieval
     # is available. Set to true only when intentionally using lexical fallback.
     RAG_AUTO_SEED_FAST_MODE: bool = False

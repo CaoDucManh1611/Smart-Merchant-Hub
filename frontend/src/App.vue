@@ -9,8 +9,25 @@ import {
 
 import "./style.css";
 import logoUrl from "./assets/lunari-logo.jpg";
+import { channelLabel } from "./channel-utils.js";
+import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";
+import { filterConversationsForCustomer } from "./ticket-utils.js";
+import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
 
 const API_BASE = "http://127.0.0.1:8000/api";
+const BUSINESS_ID = "1";
+
+function apiFetch(input, init = {}) {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has("X-Business-Id")) {
+    headers.set("X-Business-Id", BUSINESS_ID);
+  }
+  const token = window.localStorage.getItem("crm_access_token");
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return fetch(input, { ...init, headers });
+}
 
 
 /* =========================================================
@@ -19,10 +36,26 @@ const API_BASE = "http://127.0.0.1:8000/api";
 
 const conversations = ref([]);
 const messages = ref([]);
+const customer360 = ref(null);
+const customer360Loading = ref(false);
+const customerFactSaving = ref(false);
+const customerFactError = ref("");
+const customerFactDraft = ref({
+  fact_type: "preference",
+  fact_key: "",
+  fact_value: "",
+  confidence: 1,
+  is_verified: true,
+});
 
 const selectedId = ref(null);
 
 const activeFilter = ref("all");
+const tagCatalog = ref([]);
+const tagFilter = ref("");
+const customerTagDraft = ref("");
+const customerTagSaving = ref(false);
+const customerTagError = ref("");
 
 const search = ref("");
 const draft = ref("");
@@ -38,13 +71,130 @@ const error = ref("");
 const imageFile = ref(null);
 const imagePreview = ref("");
 const fileInput = ref(null);
+const selectedMediaType = ref("image");
 
 let pollingTimer = null;
 let socket = null;
 let reconnectTimer = null;
 
 /* RAG & TAB STATE */
-const currentTab = ref("inbox"); // 'inbox' | 'documents' | 'rag_chat'
+const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 'tickets' | 'reports' | 'documents' | 'rag_chat' | 'experiments'
+
+const products = ref([]);
+const productsLoading = ref(false);
+const productSaving = ref(false);
+const productError = ref("");
+const productForm = ref({
+  id: null,
+  sku: "",
+  name: "",
+  description: "",
+  price: 0,
+  stock_quantity: 0,
+  status: "active",
+});
+const orders = ref([]);
+const ordersLoading = ref(false);
+const orderSaving = ref(false);
+const orderError = ref("");
+const orderCustomers = ref([]);
+const revenueByChannel = ref([]);
+const orderForm = ref({
+  order_number: "",
+  customer_id: "",
+  conversation_id: "",
+  product_id: "",
+  quantity: 1,
+});
+const purchaseOrders = ref([]);
+const purchaseOrdersLoading = ref(false);
+const purchaseOrderSaving = ref(false);
+const purchaseOrderError = ref("");
+const purchaseOrderForm = ref({
+  po_number: "",
+  supplier_name: "",
+  product_id: "",
+  quantity: 1,
+  unit_cost: 0,
+  notes: "",
+});
+const purchaseStatuses = ["draft", "submitted", "partially_received", "received", "closed", "cancelled"];
+const authUser = ref(null);
+const authToken = ref(window.localStorage.getItem("crm_access_token") || "");
+const authLoading = ref(false);
+const authError = ref("");
+const loginForm = ref({ email: "", password: "" });
+const auditLogs = ref([]);
+const auditLoading = ref(false);
+const customerMergeSourceId = ref("");
+const customerMergeSaving = ref(false);
+const customerMergeError = ref("");
+const leads = ref([]);
+const leadsLoading = ref(false);
+const leadSaving = ref(false);
+const leadError = ref("");
+const pipelineSummary = ref([]);
+const leadForm = ref({
+  title: "",
+  customer_id: "",
+  conversation_id: "",
+  stage: "new",
+  value: 0,
+  probability: 0,
+});
+const tickets = ref([]);
+const ticketsLoading = ref(false);
+const ticketSaving = ref(false);
+const ticketError = ref("");
+const ticketReport = ref({ items: [], overdue_tickets: 0 });
+const slaNotifications = ref([]);
+const ticketHistory = ref({});
+const ticketHistoryLoading = ref({});
+const ticketCommentDrafts = ref({});
+const crmOverview = ref(null);
+const agentPerformance = ref([]);
+const reportsLoading = ref(false);
+const reportsError = ref("");
+const reportFilters = ref({ start_at: "", end_at: "", channel: "", status: "", assigned_user_id: "" });
+const ticketForm = ref({
+  title: "",
+  description: "",
+  customer_id: "",
+  conversation_id: "",
+  priority: "normal",
+  assigned_user_id: "",
+});
+const workflows = ref([]);
+const workflowsLoading = ref(false);
+const workflowSaving = ref(false);
+const workflowError = ref("");
+const workflowRuns = ref({});
+const workflowRunsLoading = ref({});
+const ruleSuggestions = ref([]);
+const experiments = ref([]);
+const experimentationLoading = ref(false);
+const experimentationError = ref("");
+const workflowForm = ref({
+  name: "",
+  event_type: "message.created",
+  condition_channel: "",
+  action_type: "create_ticket",
+  action_title: "",
+  action_priority: "normal",
+  action_tag: "",
+  action_user_id: "",
+  enabled: true,
+});
+const teamUsers = ref([]);
+const teamLoading = ref(false);
+const teamSaving = ref(false);
+const teamError = ref("");
+const teamForm = ref({
+  full_name: "",
+  email: "",
+  role: "agent",
+  password: "",
+});
 
 const documents = ref([]);
 const docsLoading = ref(false);
@@ -80,7 +230,7 @@ const metaNotice = ref("");
 /* META OAUTH */
 async function fetchMetaStatus() {
   try {
-    const res = await fetch(`${API_BASE}/oauth/meta/status`);
+    const res = await apiFetch(`${API_BASE}/oauth/meta/status`);
     if (res.ok) metaStatus.value = await res.json();
   } catch (e) {
     console.error("Fetch Meta OAuth status error:", e);
@@ -94,13 +244,15 @@ function connectMeta() {
 function openSettings() {
   currentTab.value = "settings";
   void fetchMetaStatus();
+  void fetchTeam();
+  void fetchAuditLogs();
 }
 
 async function disconnectMeta() {
   if (!confirm("Ngắt kết nối Facebook/Instagram khỏi hệ thống?")) return;
   metaLoading.value = true;
   try {
-    const res = await fetch(`${API_BASE}/oauth/meta/disconnect`, {
+    const res = await apiFetch(`${API_BASE}/oauth/meta/disconnect`, {
       method: "DELETE",
     });
     if (res.ok) {
@@ -119,7 +271,7 @@ async function disconnectMeta() {
 async function fetchDocuments() {
   docsLoading.value = true;
   try {
-    const res = await fetch(`${API_BASE}/documents`);
+    const res = await apiFetch(`${API_BASE}/documents`);
     if (res.ok) {
       const data = await res.json();
       documents.value = data.documents || [];
@@ -147,7 +299,7 @@ async function uploadDocumentFile(file) {
   try {
     const formData = new FormData();
     formData.append("file", file);
-    const res = await fetch(`${API_BASE}/documents/upload`, {
+    const res = await apiFetch(`${API_BASE}/documents/upload`, {
       method: "POST",
       body: formData,
     });
@@ -182,7 +334,7 @@ function handleDocDrop(e) {
 async function deleteDoc(docId) {
   if (!confirm("Bạn có chắc muốn xóa tài liệu này khỏi Kho tri thức?")) return;
   try {
-    const res = await fetch(`${API_BASE}/documents/${docId}`, {
+    const res = await apiFetch(`${API_BASE}/documents/${docId}`, {
       method: "DELETE",
     });
     if (res.ok) {
@@ -205,7 +357,7 @@ function formatFileSize(bytes) {
 /* RAG CHAT PLAYGROUND METHODS */
 async function fetchAutoReplySetting() {
   try {
-    const res = await fetch(`${API_BASE}/conversations/auto-reply-status`);
+    const res = await apiFetch(`${API_BASE}/conversations/auto-reply-status`);
     if (res.ok) {
       const data = await res.json();
       autoReplyEnabled.value = Boolean(data.auto_reply_enabled);
@@ -218,7 +370,7 @@ async function fetchAutoReplySetting() {
 async function toggleAutoReply() {
   try {
     const nextState = !autoReplyEnabled.value;
-    const res = await fetch(`${API_BASE}/conversations/auto-reply-status`, {
+    const res = await apiFetch(`${API_BASE}/conversations/auto-reply-status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ auto_reply_enabled: nextState }),
@@ -260,7 +412,7 @@ async function sendRagQuery(presetText = null) {
   scrollRagChatToBottom();
 
   try {
-    const response = await fetch(`${API_BASE}/chat/stream`, {
+    const response = await apiFetch(`${API_BASE}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -342,6 +494,21 @@ const selected = computed(() => {
 });
 
 
+// A ticket may only reference a conversation owned by its selected customer.
+// Keep this list derived from the tenant-scoped inbox data so the form cannot
+// accidentally submit an unrelated conversation id.
+const ticketConversations = computed(() => {
+  return filterConversationsForCustomer(
+    conversations.value,
+    ticketForm.value.customer_id,
+  );
+});
+
+const activeTeamUsers = computed(() =>
+  teamUsers.value.filter((user) => user.is_active)
+);
+
+
 const filtered = computed(() => {
 
   const keyword = search.value
@@ -355,6 +522,11 @@ const filtered = computed(() => {
         activeFilter.value === "all"
         || item.channel === activeFilter.value;
 
+      const tagOk = matchesCustomerTagFilter(
+        item,
+        tagFilter.value,
+      );
+
       const text = [
         item.customer_name,
         item.external_user_id,
@@ -367,6 +539,7 @@ const filtered = computed(() => {
 
       return (
         channelOk
+        && tagOk
         &&
         (
           !keyword
@@ -378,6 +551,13 @@ const filtered = computed(() => {
     }
   );
 
+});
+
+const reportCsvUrl = computed(() => {
+  const params = new URLSearchParams();
+  Object.entries(reportFilters.value).forEach(([key, value]) => { if (value) params.set(key, value); });
+  const query = params.toString();
+  return `${API_BASE}/reports/overview.csv${query ? `?${query}` : ""}`;
 });
 
 
@@ -426,15 +606,6 @@ function initials(item) {
         word[0]?.toUpperCase() || ""
     )
     .join("");
-
-}
-
-
-function channelLabel(channel) {
-
-  return channel === "instagram"
-    ? "Instagram"
-    : "Facebook";
 
 }
 
@@ -489,6 +660,18 @@ function conversationPreview(item) {
   }
 
   if (
+    item?.last_media_type === "audio"
+  ) {
+    return "🎵 Âm thanh";
+  }
+
+  if (
+    item?.last_media_type === "sticker"
+  ) {
+    return "🙂 Sticker";
+  }
+
+  if (
     item?.last_media_url
   ) {
     return "📎 Tệp đính kèm";
@@ -511,6 +694,18 @@ function mediaFallback(message) {
     message?.media_type === "video"
   ) {
     return "🎥 Video";
+  }
+
+  if (
+    message?.media_type === "audio"
+  ) {
+    return "🎵 Âm thanh";
+  }
+
+  if (
+    message?.media_type === "sticker"
+  ) {
+    return "🙂 Sticker";
   }
 
   if (
@@ -540,9 +735,12 @@ function normalizedMediaType(message) {
 function mediaUrl(message) {
 
   return String(
-    message?.media_url
-    || message?.mediaUrl
-    || ""
+    resolveMediaUrl(
+      message?.media_url
+      || message?.mediaUrl
+      || "",
+      API_BASE,
+    )
   ).trim();
 
 }
@@ -681,6 +879,7 @@ function normalizeMessage(message) {
       url
       || message?.media_url
       || null,
+    attachments: displayAttachments(message, API_BASE),
   };
 
 }
@@ -884,6 +1083,7 @@ function clearImage() {
 
   imageFile.value = null;
   imagePreview.value = "";
+  selectedMediaType.value = "image";
 
   if (fileInput.value) {
     fileInput.value.value = "";
@@ -898,38 +1098,35 @@ function setImageFile(file) {
     return;
   }
 
+  const contentType = String(file.type || "").toLowerCase();
   const allowedTypes = [
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
+    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif",
+    "audio/aac", "audio/flac", "audio/m4a", "audio/mp4", "audio/mpeg",
+    "audio/ogg", "audio/opus", "audio/wav", "audio/webm", "application/ogg",
+    "video/mp4", "video/mpeg", "video/quicktime", "video/webm",
+    "application/pdf", "application/zip", "application/octet-stream",
+    "application/msword", "application/rtf", "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/x-7z-compressed", "application/x-rar-compressed",
+    "text/csv", "text/plain",
   ];
 
-
-  if (
-    !allowedTypes.includes(
-      file.type
-    )
-  ) {
-
-    error.value =
-      "Chỉ hỗ trợ ảnh JPG, JPEG hoặc PNG.";
-
+  if (!allowedTypes.includes(contentType)) {
+    error.value = "Định dạng chưa hỗ trợ. Chọn ảnh, audio, video hoặc file phổ biến.";
     return;
   }
 
-
-  const maxSize =
-    10
-    * 1024
-    * 1024;
+  const maxSize = 25 * 1024 * 1024;
 
 
   if (
     file.size > maxSize
   ) {
 
-    error.value =
-      "Ảnh quá lớn. Tối đa 10MB.";
+    error.value = "File quá lớn. Tối đa 25MB.";
 
     return;
   }
@@ -940,6 +1137,18 @@ function setImageFile(file) {
 
   imageFile.value =
     file;
+
+  if (contentType.startsWith("audio/")) {
+    selectedMediaType.value = "audio";
+  } else if (contentType.startsWith("video/")) {
+    selectedMediaType.value = "video";
+  } else if (contentType === "image/webp" && /sticker/i.test(file.name || "")) {
+    selectedMediaType.value = "sticker";
+  } else if (contentType.startsWith("image/")) {
+    selectedMediaType.value = "image";
+  } else {
+    selectedMediaType.value = "file";
+  }
 
 
   imagePreview.value =
@@ -1047,6 +1256,46 @@ async function scrollToBottom() {
    API - LOAD CONVERSATIONS
 ========================================================= */
 
+async function fetchTagCatalog() {
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/tags/catalog`);
+    if (!response.ok) return;
+    const data = await response.json();
+    tagCatalog.value = data.items || [];
+  } catch (err) {
+    console.error("Fetch tag catalog error:", err);
+  }
+}
+
+async function reindexDocument(doc) {
+  if (!doc?.id) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/documents/${doc.id}/reindex`, { method: "POST" });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await fetchDocuments();
+  } catch (err) {
+    docUploadError.value = err.message || "Không thể reindex tài liệu.";
+  }
+}
+
+function timelineLabel(event) {
+  const labels = {
+    message: "Tin nhắn",
+    note: "Ghi chú",
+    lead: "Lead",
+    sales_order: "Đơn bán",
+    purchase_order: "Đơn nhập",
+    ticket: "Ticket",
+    ticket_comment: "Bình luận ticket",
+    assignment: "Phân công",
+    customer_merge: "Gộp hồ sơ",
+  };
+  return labels[event?.event_type] || channelLabel(event?.channel) || "Sự kiện CRM";
+}
+
 async function loadConversations(
   showLoading = true
 ) {
@@ -1059,7 +1308,7 @@ async function loadConversations(
 
     error.value = "";
 
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE}/conversations`
     );
 
@@ -1134,7 +1383,7 @@ async function loadMessages(
     }
 
 
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE}/conversations/${conversationId}/messages`
     );
 
@@ -1236,6 +1485,1086 @@ async function loadMessages(
 }
 
 
+function attachmentMediaType(attachment) {
+  return String(
+    attachment?.media_type
+    || attachment?.mediaType
+    || "file"
+  ).trim().toLowerCase();
+}
+
+
+function attachmentUrl(attachment) {
+  return String(
+    resolveMediaUrl(
+      attachment?.media_url
+      || attachment?.url
+      || attachment?.source_url
+      || "",
+      API_BASE,
+    )
+  ).trim();
+}
+
+
+function messageAttachments(message) {
+  return displayAttachments(message, API_BASE);
+}
+
+
+function isAudioAttachment(attachment) {
+  return attachmentMediaType(attachment) === "audio";
+}
+
+
+function isImageAttachment(attachment) {
+  return ["image", "photo", "sticker"].includes(attachmentMediaType(attachment));
+}
+
+
+function isVideoAttachment(attachment) {
+  return ["video", "reel"].includes(attachmentMediaType(attachment));
+}
+
+
+function formatFactValue(value) {
+
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+
+}
+
+
+/* PRODUCT CATALOG METHODS */
+async function fetchProducts() {
+  productsLoading.value = true;
+  productError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/products`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    products.value = data.items || [];
+  } catch (err) {
+    console.error("Fetch products error:", err);
+    productError.value = "Không tải được danh sách sản phẩm.";
+  } finally {
+    productsLoading.value = false;
+  }
+}
+
+function resetProductForm() {
+  productForm.value = {
+    id: null,
+    sku: "",
+    name: "",
+    description: "",
+    price: 0,
+    stock_quantity: 0,
+    status: "active",
+  };
+}
+
+function editProduct(product) {
+  productForm.value = {
+    id: product.id,
+    sku: product.sku || "",
+    name: product.name || "",
+    description: product.description || "",
+    price: Number(product.price || 0),
+    stock_quantity: Number(product.stock_quantity || 0),
+    status: product.status || "active",
+  };
+}
+
+async function saveProduct() {
+  const form = productForm.value;
+  if (!form.sku.trim() || !form.name.trim()) {
+    productError.value = "SKU và tên sản phẩm là bắt buộc.";
+    return;
+  }
+  productSaving.value = true;
+  productError.value = "";
+  try {
+    const isEdit = Boolean(form.id);
+    const payload = {
+      sku: form.sku.trim(),
+      name: form.name.trim(),
+      description: form.description.trim() || null,
+      price: Number(form.price || 0),
+      stock_quantity: Number(form.stock_quantity || 0),
+      status: form.status,
+    };
+    const response = await apiFetch(
+      isEdit ? `${API_BASE}/products/${form.id}` : `${API_BASE}/products`,
+      {
+        method: isEdit ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetProductForm();
+    await fetchProducts();
+  } catch (err) {
+    productError.value = err.message || "Không thể lưu sản phẩm.";
+  } finally {
+    productSaving.value = false;
+  }
+}
+
+async function archiveProduct(product) {
+  if (!confirm(`Lưu trữ sản phẩm ${product.name}?`)) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/products/${product.id}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await fetchProducts();
+  } catch (err) {
+    productError.value = "Không thể lưu trữ sản phẩm.";
+  }
+}
+
+async function fetchOrders() {
+  ordersLoading.value = true;
+  orderError.value = "";
+  try {
+    const [ordersResponse, revenueResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/orders`),
+      apiFetch(`${API_BASE}/reports/revenue-by-channel`),
+    ]);
+    if (!ordersResponse.ok) throw new Error(`HTTP ${ordersResponse.status}`);
+    const orderData = await ordersResponse.json();
+    orders.value = orderData.items || [];
+    if (revenueResponse.ok) {
+      const revenueData = await revenueResponse.json();
+      revenueByChannel.value = revenueData.items || [];
+    }
+  } catch (err) {
+    console.error("Fetch orders error:", err);
+    orderError.value = "Không tải được danh sách đơn hàng.";
+  } finally {
+    ordersLoading.value = false;
+  }
+}
+
+async function fetchPurchaseOrders() {
+  purchaseOrdersLoading.value = true;
+  purchaseOrderError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/purchase-orders`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    purchaseOrders.value = (await response.json()).items || [];
+  } catch (err) {
+    purchaseOrderError.value = "Không tải được đơn nhập hàng.";
+  } finally {
+    purchaseOrdersLoading.value = false;
+  }
+}
+
+function resetPurchaseOrderForm() {
+  purchaseOrderForm.value = {
+    po_number: `PO-${Date.now()}`,
+    supplier_name: "",
+    product_id: products.value[0]?.id || "",
+    quantity: 1,
+    unit_cost: Number(products.value[0]?.price || 0),
+    notes: "",
+  };
+}
+
+async function savePurchaseOrder() {
+  const form = purchaseOrderForm.value;
+  if (!form.po_number.trim() || !form.supplier_name.trim() || !form.product_id || Number(form.quantity) < 1) {
+    purchaseOrderError.value = "Mã PO, nhà cung cấp, sản phẩm và số lượng là bắt buộc.";
+    return;
+  }
+  purchaseOrderSaving.value = true;
+  purchaseOrderError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/purchase-orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        po_number: form.po_number.trim(),
+        supplier_name: form.supplier_name.trim(),
+        notes: form.notes.trim() || null,
+        items: [{ product_id: Number(form.product_id), quantity: Number(form.quantity), unit_cost: Number(form.unit_cost || 0) }],
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetPurchaseOrderForm();
+    await fetchPurchaseOrders();
+  } catch (err) {
+    purchaseOrderError.value = err.message || "Không thể tạo đơn nhập hàng.";
+  } finally {
+    purchaseOrderSaving.value = false;
+  }
+}
+
+async function transitionPurchaseOrder(order, toStatus) {
+  if (!toStatus || order.status === toStatus) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/purchase-orders/${order.id}/transition`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to_status: toStatus }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    await fetchPurchaseOrders();
+  } catch (err) {
+    purchaseOrderError.value = "Không thể chuyển trạng thái đơn nhập.";
+    await fetchPurchaseOrders();
+  }
+}
+
+async function loadAuthSession() {
+  if (!authToken.value) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/me`);
+    if (response.ok) authUser.value = await response.json();
+    else {
+      window.localStorage.removeItem("crm_access_token");
+      authToken.value = "";
+    }
+  } catch {
+    // Keep the legacy development header path available when auth is offline.
+  }
+}
+
+async function login() {
+  authLoading.value = true;
+  authError.value = "";
+  try {
+    const response = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Business-Id": BUSINESS_ID },
+      body: JSON.stringify(loginForm.value),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || "Đăng nhập thất bại.");
+    }
+    const data = await response.json();
+    window.localStorage.setItem("crm_access_token", data.access_token);
+    authToken.value = data.access_token;
+    authUser.value = data.user;
+    loginForm.value.password = "";
+  } catch (err) {
+    authError.value = err.message || "Đăng nhập thất bại.";
+  } finally {
+    authLoading.value = false;
+  }
+}
+
+async function logout() {
+  try { if (authToken.value) await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" }); } catch { /* session may already be expired */ }
+  window.localStorage.removeItem("crm_access_token");
+  authToken.value = "";
+  authUser.value = null;
+}
+
+async function fetchAuditLogs() {
+  if (!authUser.value) return;
+  auditLoading.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/audit-logs?limit=50`);
+    if (response.ok) auditLogs.value = await response.json();
+  } finally {
+    auditLoading.value = false;
+  }
+}
+
+async function fetchReports() {
+  reportsLoading.value = true;
+  reportsError.value = "";
+  try {
+    const params = new URLSearchParams();
+    Object.entries(reportFilters.value).forEach(([key, value]) => { if (value) params.set(key, value); });
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const [overviewResponse, performanceResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/reports/overview${suffix}`),
+      apiFetch(`${API_BASE}/reports/agent-performance`),
+    ]);
+    if (!overviewResponse.ok) throw new Error(`HTTP ${overviewResponse.status}`);
+    crmOverview.value = await overviewResponse.json();
+    if (performanceResponse.ok) {
+      agentPerformance.value = (await performanceResponse.json()).items || [];
+    }
+  } catch (err) {
+    console.error("Fetch reports error:", err);
+    reportsError.value = "Không tải được báo cáo CRM.";
+  } finally {
+    reportsLoading.value = false;
+  }
+}
+
+async function fetchOrderCustomers() {
+  try {
+    const response = await apiFetch(`${API_BASE}/customers?limit=200`);
+    if (response.ok) {
+      const data = await response.json();
+      orderCustomers.value = data.items || [];
+    }
+  } catch (err) {
+    console.error("Fetch order customers error:", err);
+  }
+}
+
+function resetOrderForm() {
+  orderForm.value = {
+    order_number: `ORD-${Date.now()}`,
+    customer_id: orderCustomers.value[0]?.id || "",
+    conversation_id: "",
+    product_id: products.value[0]?.id || "",
+    quantity: 1,
+  };
+}
+
+async function saveOrder() {
+  const form = orderForm.value;
+  if (!form.order_number || !form.customer_id || !form.product_id || Number(form.quantity) < 1) {
+    orderError.value = "Mã đơn, customer, sản phẩm và số lượng là bắt buộc.";
+    return;
+  }
+  orderSaving.value = true;
+  orderError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        order_number: form.order_number.trim(),
+        customer_id: Number(form.customer_id),
+        conversation_id: form.conversation_id ? Number(form.conversation_id) : null,
+        items: [{ product_id: Number(form.product_id), quantity: Number(form.quantity) }],
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetOrderForm();
+    await fetchOrders();
+  } catch (err) {
+    orderError.value = err.message || "Không thể tạo đơn hàng.";
+  } finally {
+    orderSaving.value = false;
+  }
+}
+
+async function fetchLeads() {
+  leadsLoading.value = true;
+  leadError.value = "";
+  try {
+    const [leadsResponse, pipelineResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/leads`),
+      apiFetch(`${API_BASE}/reports/pipeline`),
+    ]);
+    if (!leadsResponse.ok) throw new Error(`HTTP ${leadsResponse.status}`);
+    const data = await leadsResponse.json();
+    leads.value = data.items || [];
+    if (pipelineResponse.ok) {
+      const summary = await pipelineResponse.json();
+      pipelineSummary.value = summary.items || [];
+    }
+  } catch (err) {
+    console.error("Fetch leads error:", err);
+    leadError.value = "Không tải được sales pipeline.";
+  } finally {
+    leadsLoading.value = false;
+  }
+}
+
+function resetLeadForm() {
+  leadForm.value = {
+    title: "",
+    customer_id: orderCustomers.value[0]?.id || "",
+    conversation_id: "",
+    stage: "new",
+    value: 0,
+    probability: 0,
+  };
+}
+
+async function saveLead() {
+  const form = leadForm.value;
+  if (!form.title.trim() || !form.customer_id) {
+    leadError.value = "Tên lead và customer là bắt buộc.";
+    return;
+  }
+  leadSaving.value = true;
+  leadError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/leads`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: form.title.trim(),
+        customer_id: Number(form.customer_id),
+        conversation_id: form.conversation_id ? Number(form.conversation_id) : null,
+        stage: form.stage,
+        value: Number(form.value || 0),
+        probability: Number(form.probability || 0),
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetLeadForm();
+    await fetchLeads();
+  } catch (err) {
+    leadError.value = err.message || "Không thể tạo lead.";
+  } finally {
+    leadSaving.value = false;
+  }
+}
+
+async function changeLeadStage(lead, stage) {
+  if (lead.stage === stage) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/leads/${lead.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await fetchLeads();
+  } catch (err) {
+    leadError.value = "Không thể cập nhật stage của lead.";
+  }
+}
+
+async function fetchTickets() {
+  ticketsLoading.value = true;
+  ticketError.value = "";
+  try {
+    const [ticketsResponse, reportResponse, slaResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/tickets`),
+      apiFetch(`${API_BASE}/reports/tickets`),
+      apiFetch(`${API_BASE}/tickets/sla-notifications`),
+    ]);
+    if (!ticketsResponse.ok) throw new Error(`HTTP ${ticketsResponse.status}`);
+    const data = await ticketsResponse.json();
+    tickets.value = data.items || [];
+    if (reportResponse.ok) ticketReport.value = await reportResponse.json();
+    if (slaResponse.ok) slaNotifications.value = (await slaResponse.json()).items || [];
+  } catch (err) {
+    console.error("Fetch tickets error:", err);
+    ticketError.value = "Không tải được danh sách ticket.";
+  } finally {
+    ticketsLoading.value = false;
+  }
+}
+
+async function loadTicketHistory(ticket) {
+  if (ticketHistory.value[ticket.id]) {
+    const next = { ...ticketHistory.value };
+    delete next[ticket.id];
+    ticketHistory.value = next;
+    return;
+  }
+  ticketHistoryLoading.value = { ...ticketHistoryLoading.value, [ticket.id]: true };
+  try {
+    const response = await apiFetch(`${API_BASE}/tickets/${ticket.id}/history`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    ticketHistory.value = { ...ticketHistory.value, [ticket.id]: data.items || [] };
+  } catch (err) {
+    ticketError.value = "Không tải được lịch sử xử lý ticket.";
+  } finally {
+    ticketHistoryLoading.value = { ...ticketHistoryLoading.value, [ticket.id]: false };
+  }
+}
+
+async function addTicketComment(ticket) {
+  const body = String(ticketCommentDrafts.value[ticket.id] || "").trim();
+  if (!body) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/tickets/${ticket.id}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    ticketCommentDrafts.value = { ...ticketCommentDrafts.value, [ticket.id]: "" };
+    const next = { ...ticketHistory.value };
+    delete next[ticket.id];
+    ticketHistory.value = next;
+    await fetchTickets();
+  } catch (err) {
+    ticketError.value = err.message || "Không thể thêm ghi chú xử lý.";
+  }
+}
+
+async function assignTicket(ticket, assignedUserId) {
+  try {
+    const response = await apiFetch(`${API_BASE}/tickets/${ticket.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assigned_user_id: assignedUserId ? Number(assignedUserId) : null }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const updated = await response.json();
+    ticket.assigned_user_id = updated.assigned_user_id;
+    const next = { ...ticketHistory.value };
+    delete next[ticket.id];
+    ticketHistory.value = next;
+  } catch (err) {
+    ticketError.value = err.message || "Không thể gán ticket.";
+  }
+}
+
+async function reassignConversation(conversation, assignedUserId) {
+  try {
+    const response = await apiFetch(`${API_BASE}/conversations/${conversation.conversation_id}/assignment`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assigned_user_id: assignedUserId ? Number(assignedUserId) : null }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const result = await response.json();
+    conversation.assigned_user_id = result.assigned_user_id;
+  } catch (err) {
+    error.value = err.message || "Không thể gán hội thoại.";
+  }
+}
+
+async function fetchTeam() {
+  teamLoading.value = true;
+  teamError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/team`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    teamUsers.value = data.items || [];
+  } catch (err) {
+    console.error("Fetch team error:", err);
+    teamError.value = "Không tải được danh sách nhân viên.";
+  } finally {
+    teamLoading.value = false;
+  }
+}
+
+async function fetchWorkflows() {
+  workflowsLoading.value = true;
+  workflowError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/workflows`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    workflows.value = data.items || [];
+  } catch (err) {
+    console.error("Fetch workflows error:", err);
+    workflowError.value = "Không tải được danh sách workflow.";
+  } finally {
+    workflowsLoading.value = false;
+  }
+}
+
+function resetWorkflowForm() {
+  workflowForm.value = {
+    name: "",
+    event_type: "message.created",
+    condition_channel: "",
+    action_type: "create_ticket",
+    action_title: "",
+    action_priority: "normal",
+    action_tag: "",
+    action_user_id: "",
+    enabled: true,
+  };
+}
+
+async function saveWorkflow() {
+  const form = workflowForm.value;
+  if (!form.name.trim()) {
+    workflowError.value = "Tên workflow là bắt buộc.";
+    return;
+  }
+  const action = { type: form.action_type };
+  if (form.action_type === "create_ticket") {
+    action.title = form.action_title.trim() || "Workflow follow-up";
+    action.priority = form.action_priority;
+  } else if (form.action_type === "add_tag") {
+    if (!form.action_tag.trim()) {
+      workflowError.value = "Action gắn tag cần tên tag.";
+      return;
+    }
+    action.tag = form.action_tag.trim();
+  } else {
+    if (!form.action_user_id) {
+      workflowError.value = "Action phân công cần chọn nhân viên.";
+      return;
+    }
+    action.user_id = Number(form.action_user_id);
+  }
+  workflowSaving.value = true;
+  workflowError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/workflows`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: form.name.trim(),
+        event_type: form.event_type,
+        conditions: form.condition_channel ? { channel: form.condition_channel } : {},
+        actions: [action],
+        enabled: form.enabled,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetWorkflowForm();
+    await fetchWorkflows();
+  } catch (err) {
+    workflowError.value = err.message || "Không thể tạo workflow.";
+  } finally {
+    workflowSaving.value = false;
+  }
+}
+
+async function toggleWorkflow(workflow) {
+  try {
+    const response = await apiFetch(`${API_BASE}/workflows/${workflow.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !workflow.enabled }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await fetchWorkflows();
+  } catch (err) {
+    workflowError.value = "Không thể cập nhật workflow.";
+  }
+}
+
+async function toggleWorkflowRuns(workflow) {
+  if (workflowRuns.value[workflow.id]) {
+    const next = { ...workflowRuns.value };
+    delete next[workflow.id];
+    workflowRuns.value = next;
+    return;
+  }
+  workflowRunsLoading.value = { ...workflowRunsLoading.value, [workflow.id]: true };
+  try {
+    const response = await apiFetch(`${API_BASE}/workflows/${workflow.id}/runs`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    workflowRuns.value = { ...workflowRuns.value, [workflow.id]: await response.json() };
+  } catch {
+    workflowError.value = "Không tải được lịch sử workflow.";
+  } finally {
+    workflowRunsLoading.value = { ...workflowRunsLoading.value, [workflow.id]: false };
+  }
+}
+
+async function retryWorkflowRun(workflow, run) {
+  try {
+    const response = await apiFetch(`${API_BASE}/workflows/${workflow.id}/runs/${run.id}/retry`, { method: "POST" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await toggleWorkflowRuns(workflow);
+    await toggleWorkflowRuns(workflow);
+  } catch {
+    workflowError.value = "Không thể retry workflow run.";
+  }
+}
+
+async function fetchExperimentation() {
+  experimentationLoading.value = true;
+  experimentationError.value = "";
+  try {
+    const [suggestionsResponse, experimentsResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/experiments/rule-suggestions`),
+      apiFetch(`${API_BASE}/experiments`),
+    ]);
+    if (!suggestionsResponse.ok || !experimentsResponse.ok) {
+      throw new Error("Không tải được dữ liệu thử nghiệm AI.");
+    }
+    ruleSuggestions.value = await suggestionsResponse.json();
+    experiments.value = await experimentsResponse.json();
+  } catch (err) {
+    experimentationError.value = err.message || "Không tải được dữ liệu thử nghiệm AI.";
+  } finally {
+    experimentationLoading.value = false;
+  }
+}
+
+async function reviewRuleSuggestion(suggestion, status) {
+  try {
+    const response = await apiFetch(`${API_BASE}/experiments/rule-suggestions/${suggestion.id}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await fetchExperimentation();
+  } catch (err) {
+    experimentationError.value = err.message || "Không thể cập nhật đề xuất.";
+  }
+}
+
+function resetTeamForm() {
+  teamForm.value = { full_name: "", email: "", role: "agent", password: "" };
+}
+
+async function saveTeamMember() {
+  const form = teamForm.value;
+  if (!form.full_name.trim() || !form.email.trim() || form.password.length < 8) {
+    teamError.value = "Họ tên, email và mật khẩu tối thiểu 8 ký tự là bắt buộc.";
+    return;
+  }
+  teamSaving.value = true;
+  teamError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/team`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        full_name: form.full_name.trim(),
+        email: form.email.trim(),
+        role: form.role,
+        password: form.password,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetTeamForm();
+    await fetchTeam();
+  } catch (err) {
+    teamError.value = err.message || "Không thể thêm nhân viên.";
+  } finally {
+    teamSaving.value = false;
+  }
+}
+
+async function toggleTeamMember(member) {
+  try {
+    const response = await apiFetch(`${API_BASE}/team/${member.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: !member.is_active }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await fetchTeam();
+  } catch (err) {
+    teamError.value = err.message || "Không thể cập nhật nhân viên.";
+  }
+}
+
+function resetTicketForm() {
+  ticketForm.value = {
+    title: "",
+    description: "",
+    customer_id: orderCustomers.value[0]?.id || "",
+    conversation_id: "",
+    priority: "normal",
+    assigned_user_id: "",
+  };
+}
+
+function onTicketCustomerChange() {
+  const conversationId = Number(ticketForm.value.conversation_id);
+  if (
+    conversationId
+    && !ticketConversations.value.some(
+      (conversation) => Number(conversation.conversation_id) === conversationId
+    )
+  ) {
+    ticketForm.value.conversation_id = "";
+  }
+}
+
+async function saveTicket() {
+  const form = ticketForm.value;
+  if (!form.title.trim() || !form.customer_id) {
+    ticketError.value = "Tiêu đề ticket và customer là bắt buộc.";
+    return;
+  }
+  ticketSaving.value = true;
+  ticketError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/tickets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        customer_id: Number(form.customer_id),
+        conversation_id: form.conversation_id ? Number(form.conversation_id) : null,
+        priority: form.priority,
+        assigned_user_id: form.assigned_user_id ? Number(form.assigned_user_id) : null,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetTicketForm();
+    await fetchTickets();
+  } catch (err) {
+    ticketError.value = err.message || "Không thể tạo ticket.";
+  } finally {
+    ticketSaving.value = false;
+  }
+}
+
+async function changeTicketStatus(ticket, status) {
+  if (ticket.status === status) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/tickets/${ticket.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await fetchTickets();
+  } catch (err) {
+    ticketError.value = "Không thể cập nhật trạng thái ticket.";
+  }
+}
+
+
+/* =========================================================
+   API - CUSTOMER 360
+========================================================= */
+
+async function loadCustomer360(customerId) {
+  if (!customerId) {
+    customer360.value = null;
+    return;
+  }
+
+  customer360Loading.value = true;
+  try {
+    const [profileResponse, timelineResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/customers/${customerId}`),
+      apiFetch(`${API_BASE}/customers/${customerId}/timeline`),
+    ]);
+    if (!profileResponse.ok || !timelineResponse.ok) {
+      throw new Error(
+        `Customer 360 HTTP ${profileResponse.status}/${timelineResponse.status}`
+      );
+    }
+    const profile = await profileResponse.json();
+    const timeline = await timelineResponse.json();
+    if (!orderCustomers.value.length) {
+      const customerResponse = await apiFetch(`${API_BASE}/customers?limit=200`);
+      if (customerResponse.ok) orderCustomers.value = (await customerResponse.json()).items || [];
+    }
+    customer360.value = {
+      ...profile,
+      timeline: timeline.items || [],
+    };
+  } catch (err) {
+    console.error("Customer 360 loading error:", err);
+    customer360.value = null;
+  } finally {
+    customer360Loading.value = false;
+  }
+}
+
+async function mergeSelectedCustomer() {
+  const survivorId = selected.value?.customer_id;
+  const sourceId = Number(customerMergeSourceId.value);
+  if (!survivorId || !sourceId || sourceId === Number(survivorId)) {
+    customerMergeError.value = "Chọn một customer trùng khác để gộp.";
+    return;
+  }
+  if (!confirm("Gộp customer đã chọn vào hồ sơ hiện tại? Hành động này sẽ chuyển toàn bộ dữ liệu sang hồ sơ hiện tại.")) return;
+  customerMergeSaving.value = true;
+  customerMergeError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${survivorId}/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_customer_id: sourceId, reason: "Gộp hồ sơ trùng từ Customer 360" }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    customerMergeSourceId.value = "";
+    await loadCustomer360(survivorId);
+    await loadConversations(false);
+  } catch (err) {
+    customerMergeError.value = err.message || "Không thể gộp customer.";
+  } finally {
+    customerMergeSaving.value = false;
+  }
+}
+
+async function addCustomerTag() {
+  const customerId = selected.value?.customer_id;
+  const name = customerTagDraft.value.trim();
+  if (!customerId || !name) {
+    customerTagError.value = "Nhập tên tag trước khi lưu.";
+    return;
+  }
+  customerTagSaving.value = true;
+  customerTagError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const created = await response.json();
+    customer360.value = {
+      ...customer360.value,
+      tags: Array.from(new Set([...(customer360.value?.tags || []), created.name])),
+    };
+    customerTagDraft.value = "";
+    await fetchTagCatalog();
+  } catch (err) {
+    customerTagError.value = "Không thể gắn tag cho customer.";
+  } finally {
+    customerTagSaving.value = false;
+  }
+}
+
+async function removeCustomerTag(tagName) {
+  const customerId = selected.value?.customer_id;
+  const tag = tagCatalog.value.find((item) => item.name === tagName);
+  if (!customerId || !tag) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/tags/${tag.id}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    customer360.value = {
+      ...customer360.value,
+      tags: (customer360.value?.tags || []).filter((item) => item !== tagName),
+    };
+  } catch (err) {
+    customerTagError.value = "Không thể xóa tag.";
+  }
+}
+
+
+function resetCustomerFactDraft() {
+  customerFactDraft.value = {
+    fact_type: "preference",
+    fact_key: "",
+    fact_value: "",
+    confidence: 1,
+    is_verified: true,
+  };
+  customerFactError.value = "";
+}
+
+
+async function addCustomerFact() {
+  const customerId = selected.value?.customer_id;
+  const draft = customerFactDraft.value;
+  if (!customerId || !draft.fact_key.trim() || !String(draft.fact_value).trim()) {
+    customerFactError.value = "Nhập khóa và giá trị tri thức trước khi lưu.";
+    return;
+  }
+
+  customerFactSaving.value = true;
+  customerFactError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/facts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fact_type: draft.fact_type.trim() || "preference",
+        fact_key: draft.fact_key.trim(),
+        fact_value: String(draft.fact_value).trim(),
+        confidence: Number(draft.confidence || 0),
+        source_type: "manual",
+        is_verified: Boolean(draft.is_verified),
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const fact = await response.json();
+    customer360.value = {
+      ...customer360.value,
+      facts: [fact, ...(customer360.value?.facts || [])],
+    };
+    resetCustomerFactDraft();
+  } catch (err) {
+    customerFactError.value = err.message || "Không thể lưu Customer Fact.";
+  } finally {
+    customerFactSaving.value = false;
+  }
+}
+
+
+async function toggleCustomerFact(fact) {
+  const customerId = selected.value?.customer_id;
+  if (!customerId) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/facts/${fact.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_verified: !fact.is_verified }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const updated = await response.json();
+    customer360.value = {
+      ...customer360.value,
+      facts: (customer360.value?.facts || []).map((item) => item.id === updated.id ? updated : item),
+    };
+  } catch (err) {
+    customerFactError.value = "Không thể cập nhật trạng thái xác nhận.";
+  }
+}
+
+
+async function removeCustomerFact(fact) {
+  const customerId = selected.value?.customer_id;
+  if (!customerId || !confirm(`Xóa tri thức “${fact.fact_key}”?`)) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/facts/${fact.id}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    customer360.value = {
+      ...customer360.value,
+      facts: (customer360.value?.facts || []).filter((item) => item.id !== fact.id),
+    };
+  } catch (err) {
+    customerFactError.value = "Không thể xóa Customer Fact.";
+  }
+}
+
+
 /* =========================================================
    SELECT CONVERSATION
 ========================================================= */
@@ -1252,6 +2581,8 @@ async function selectConversation(id) {
     true,
     true
   );
+
+  await loadCustomer360(selected.value?.customer_id);
 
 }
 
@@ -1275,7 +2606,7 @@ async function sendTextMessage() {
   }
 
 
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/conversations/${selectedId.value}/messages`,
     {
       method: "POST",
@@ -1338,7 +2669,7 @@ async function sendImageMessage() {
     );
 
 
-    const response = await fetch(
+  const response = await apiFetch(
       `${API_BASE}/conversations/${selectedId.value}/media/upload`,
       {
         method: "POST",
@@ -1393,97 +2724,7 @@ async function sendImageMessage() {
 ========================================================= */
 
 async function sendReply() {
-
-  if (
-    !selectedId.value
-    ||
-    sending.value
-  ) {
-    return;
-  }
-
-
-  const hasText =
-    Boolean(
-      draft.value.trim()
-    );
-
-
-  const hasImage =
-    Boolean(
-      imageFile.value
-    );
-
-
-  if (
-    !hasText
-    &&
-    !hasImage
-  ) {
-    return;
-  }
-
-
-  sending.value = true;
-
-
-  try {
-
-    error.value = "";
-
-
-    /*
-      Nếu có ảnh:
-      gửi ảnh trước.
-    */
-
-    if (hasImage) {
-
-      await sendImageMessage();
-
-    }
-
-
-    /*
-      Nếu đồng thời có text:
-      gửi text tiếp theo.
-    */
-
-    if (hasText) {
-
-      await sendTextMessage();
-
-    }
-
-
-    await loadMessages(
-      selectedId.value,
-      false,
-      true
-    );
-
-
-    await loadConversations(
-      false
-    );
-
-
-  } catch (err) {
-
-    console.error(err);
-
-
-    error.value =
-      err?.message
-      || "Gửi tin nhắn/ảnh thất bại.";
-
-
-  } finally {
-
-    sending.value = false;
-
-  }
-
+  return sendUnifiedReply();
 }
 
 
@@ -1505,15 +2746,24 @@ async function sendUnifiedReply() {
       text
     );
 
-  const hasImage =
+  const mediaType =
+    selectedMediaType.value || "image";
+
+  const hasMedia =
     Boolean(
       imageFile.value
     );
 
+  const hasImage =
+    hasMedia && mediaType === "image";
+
+  const hasGenericMedia =
+    hasMedia && !hasImage;
+
   if (
     !hasText
     &&
-    !hasImage
+    !hasMedia
   ) {
     return;
   }
@@ -1529,7 +2779,7 @@ async function sendUnifiedReply() {
 
   const optimisticIds = [];
 
-  if (hasImage) {
+  if (hasMedia) {
     const imageClientId =
       `${clientId}-image`;
 
@@ -1548,9 +2798,9 @@ async function sendUnifiedReply() {
         direction:
           "outbound",
         content:
-          null,
+          hasGenericMedia ? text : null,
         media_type:
-          "image",
+          mediaType,
         media_url:
           previewToSend,
         received_at:
@@ -1561,11 +2811,13 @@ async function sendUnifiedReply() {
           fileToSend,
         retry_preview:
           previewToSend,
+        retry_media_type:
+          mediaType,
       }
     );
   }
 
-  if (hasText) {
+  if (hasText && !hasGenericMedia) {
     const textClientId =
       `${clientId}-text`;
 
@@ -1614,7 +2866,22 @@ async function sendUnifiedReply() {
       clientId
     );
 
-    if (hasText) {
+    if (hasGenericMedia) {
+      formData.append(
+        "file",
+        fileToSend,
+      );
+      formData.append(
+        "media_type",
+        mediaType,
+      );
+      if (hasText) {
+        formData.append(
+          "caption",
+          text,
+        );
+      }
+    } else if (hasText) {
       formData.append(
         "text",
         text
@@ -1632,8 +2899,12 @@ async function sendUnifiedReply() {
       );
     }
 
-    const response = await fetch(
-      `${API_BASE}/conversations/${selectedId.value}/send`,
+    const sendPath = hasGenericMedia
+      ? `${API_BASE}/conversations/${selectedId.value}/media/upload-generic`
+      : `${API_BASE}/conversations/${selectedId.value}/send`;
+
+  const response = await apiFetch(
+      sendPath,
       {
         method:
           "POST",
@@ -1661,7 +2932,7 @@ async function sendUnifiedReply() {
 
     (
       data.messages
-      || []
+      || (data.message ? [data.message] : [])
     ).forEach(
       upsertMessage
     );
@@ -1712,6 +2983,9 @@ async function retryMessage(message) {
     imagePreview.value =
       message.retry_preview
       || "";
+    selectedMediaType.value =
+      message.retry_media_type
+      || "image";
   }
 
   messages.value =
@@ -1743,12 +3017,25 @@ function quick(text) {
 
 onMounted(async () => {
 
+  await loadAuthSession();
+
   await loadConversations(
     true
   );
+  fetchTagCatalog();
 
   connectRealtime();
   fetchDocuments();
+  fetchProducts();
+  fetchOrderCustomers();
+  fetchOrders();
+  fetchPurchaseOrders();
+  fetchLeads();
+  fetchTickets();
+  fetchTeam();
+  fetchWorkflows();
+  fetchExperimentation();
+  fetchReports();
   fetchAutoReplySetting();
   fetchMetaStatus();
 
@@ -1870,6 +3157,75 @@ onUnmounted(() => {
           <em>{{ documents.length }}</em>
         </button>
 
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'products' }"
+          @click="currentTab = 'products'; fetchProducts()"
+        >
+          <span>🛍️</span>
+          <b>Sản phẩm</b>
+          <em>{{ products.length }}</em>
+        </button>
+
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'orders' }"
+          @click="currentTab = 'orders'; fetchOrderCustomers(); fetchProducts(); fetchOrders()"
+        >
+          <span>🧾</span>
+          <b>Đơn hàng</b>
+          <em>{{ orders.length }}</em>
+        </button>
+
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'leads' }"
+          @click="currentTab = 'leads'; fetchOrderCustomers(); fetchLeads()"
+        >
+          <span>📈</span>
+          <b>Sales Pipeline</b>
+          <em>{{ leads.length }}</em>
+        </button>
+
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'tickets' }"
+          @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()"
+        >
+          <span>🎫</span>
+          <b>CSKH / Ticket</b>
+          <em>{{ tickets.length }}</em>
+        </button>
+
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'reports' }"
+          @click="currentTab = 'reports'; fetchReports()"
+        >
+          <span>📊</span>
+          <b>Báo cáo CRM</b>
+        </button>
+
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'workflows' }"
+          @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()"
+        >
+          <span>⚡</span>
+          <b>Workflow</b>
+          <em>{{ workflows.length }}</em>
+        </button>
+
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'experiments' }"
+          @click="currentTab = 'experiments'; fetchExperimentation()"
+        >
+          <span>🧪</span>
+          <b>AI thử nghiệm</b>
+          <em>{{ ruleSuggestions.filter(item => item.status === 'pending').length }}</em>
+        </button>
+
 
         <button
           class="menu-item"
@@ -1934,7 +3290,17 @@ onUnmounted(() => {
           Thu gọn
         </span>
 
-      </button>
+        </button>
+
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'purchase-orders' }"
+          @click="currentTab = 'purchase-orders'; fetchProducts(); fetchPurchaseOrders()"
+        >
+          <span>📦</span>
+          <b>Đơn nhập hàng</b>
+          <em>{{ purchaseOrders.length }}</em>
+        </button>
 
     </aside>
 
@@ -2098,6 +3464,18 @@ onUnmounted(() => {
               Instagram
             </button>
 
+            <button
+              :class="{
+                active:
+                  activeFilter === 'telegram'
+              }"
+              @click="
+                activeFilter = 'telegram'
+              "
+            >
+              Telegram
+            </button>
+
           </div>
 
 
@@ -2113,6 +3491,11 @@ onUnmounted(() => {
             />
 
           </div>
+
+          <select v-if="tagCatalog.length" v-model="tagFilter" class="segment-filter" aria-label="Lọc theo tag">
+            <option value="">Mọi phân khúc</option>
+            <option v-for="tag in tagCatalog" :key="tag.id" :value="tag.name">{{ tag.name }}</option>
+          </select>
 
 
           <div class="conversation-scroll">
@@ -2431,6 +3814,19 @@ onUnmounted(() => {
 
               <div class="chat-tools">
 
+                <label class="conversation-assignment" title="Gán hội thoại">
+                  <span>Phụ trách</span>
+                  <select
+                    :value="selected.assigned_user_id || ''"
+                    @change="reassignConversation(selected, $event.target.value)"
+                  >
+                    <option value="">Chưa phân công</option>
+                    <option v-for="member in activeTeamUsers" :key="member.id" :value="member.id">
+                      {{ member.full_name }}
+                    </option>
+                  </select>
+                </label>
+
                 <button>⋮</button>
                 <button>!</button>
                 <button>♡</button>
@@ -2586,14 +3982,64 @@ onUnmounted(() => {
 
                 <!-- BUBBLE -->
 
-                <div class="bubble">
+                <div
+                  class="bubble"
+                  :class="{
+                    'bubble-with-audio': Array.isArray(message.attachments)
+                      && message.attachments.some(isAudioAttachment),
+                  }"
+                >
+
+                  <!-- CANONICAL MEDIA LIST -->
+                  <div
+                    v-if="Array.isArray(message.attachments) && message.attachments.length"
+                    class="message-attachments"
+                  >
+                    <template v-for="(attachment, attachmentIndex) in message.attachments" :key="attachment.id || `${message.message_id}-attachment-${attachmentIndex}`">
+                      <a
+                        v-if="isImageAttachment(attachment)"
+                        :href="attachmentUrl(attachment)"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="message-media-link"
+                      >
+                        <img
+                          :src="attachmentUrl(attachment)"
+                          :alt="attachmentMediaType(attachment) === 'sticker' ? 'Sticker' : 'Ảnh'"
+                          class="message-image"
+                        />
+                      </a>
+                      <audio
+                        v-else-if="isAudioAttachment(attachment)"
+                        :src="attachmentUrl(attachment)"
+                        controls
+                        class="message-audio"
+                      ></audio>
+                      <video
+                        v-else-if="isVideoAttachment(attachment)"
+                        :src="attachmentUrl(attachment)"
+                        controls
+                        class="message-video"
+                      ></video>
+                      <a
+                        v-else-if="attachmentUrl(attachment)"
+                        :href="attachmentUrl(attachment)"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="message-attachment"
+                      >
+                        📎 Mở tệp đính kèm
+                      </a>
+                    </template>
+                  </div>
 
 
                   <!-- IMAGE -->
 
                   <a
                     v-if="
-                      hasImage(
+                      !(message.attachments && message.attachments.length)
+                      && hasImage(
                         message
                       )
                     "
@@ -2637,7 +4083,8 @@ onUnmounted(() => {
 
                   <video
                     v-else-if="
-                      hasVideo(
+                      !(message.attachments && message.attachments.length)
+                      && hasVideo(
                         message
                       )
                     "
@@ -2660,7 +4107,8 @@ onUnmounted(() => {
 
                   <a
                     v-else-if="
-                      mediaUrl(
+                      !(message.attachments && message.attachments.length)
+                      && mediaUrl(
                         message
                       )
                     "
@@ -2842,7 +4290,7 @@ onUnmounted(() => {
               />
 
 
-              <!-- IMAGE PREVIEW -->
+              <!-- MEDIA PREVIEW -->
 
               <div
                 v-if="
@@ -2855,14 +4303,28 @@ onUnmounted(() => {
               >
 
                 <img
-                  :src="
-                    imagePreview
-                  "
-
-                  alt="
-                    Ảnh chuẩn bị gửi
-                  "
+                  v-if="selectedMediaType === 'image' || selectedMediaType === 'sticker'"
+                  :src="imagePreview"
+                  :alt="selectedMediaType === 'sticker' ? 'Sticker chuẩn bị gửi' : 'Ảnh chuẩn bị gửi'"
                 />
+
+                <audio
+                  v-else-if="selectedMediaType === 'audio'"
+                  :src="imagePreview"
+                  controls
+                  class="composer-media-player"
+                />
+
+                <video
+                  v-else-if="selectedMediaType === 'video'"
+                  :src="imagePreview"
+                  controls
+                  class="composer-media-player composer-video-preview"
+                />
+
+                <div v-else class="composer-file-preview">
+                  📎 File đính kèm
+                </div>
 
 
                 <div
@@ -2876,11 +4338,22 @@ onUnmounted(() => {
                     {{
                       imageFile?.name
                       ||
-                      "Ảnh từ clipboard"
+                      "Media từ clipboard"
                     }}
 
                   </span>
 
+
+                  <label class="composer-media-type">
+                    Loại:
+                    <select v-model="selectedMediaType">
+                      <option value="image">Ảnh</option>
+                      <option value="audio">Audio</option>
+                      <option value="video">Video</option>
+                      <option value="sticker">Sticker</option>
+                      <option value="file">File</option>
+                    </select>
+                  </label>
 
                   <button
                     type="button"
@@ -2889,7 +4362,7 @@ onUnmounted(() => {
                       clearImage
                     "
                   >
-                    ✕ Xóa ảnh
+                    ✕ Xóa media
                   </button>
 
                 </div>
@@ -2904,10 +4377,7 @@ onUnmounted(() => {
 
                 type="file"
 
-                accept="
-                  image/jpeg,
-                  image/png
-                "
+                accept="image/*,audio/*,video/*,.pdf,.zip,.rar,.7z,.csv,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
 
                 class="
                   hidden-file-input
@@ -2934,16 +4404,14 @@ onUnmounted(() => {
                   <button
                     type="button"
 
-                    title="
-                      Chọn ảnh
-                    "
+                    title="Chọn ảnh, audio, video hoặc file"
 
                     @click="
                       openImagePicker
                     "
                   >
 
-                    📷
+                    📎
 
                   </button>
 
@@ -3010,7 +4478,7 @@ onUnmounted(() => {
                       sending
                       ? "Đang gửi..."
                       : imageFile
-                        ? "➤ Gửi ảnh"
+                      ? `➤ Gửi ${selectedMediaType === 'image' ? 'ảnh' : selectedMediaType}`
                         : "➤ Gửi phản hồi"
                     }}
 
@@ -3291,6 +4759,90 @@ onUnmounted(() => {
             </div>
 
 
+            <div v-if="customer360Loading" class="customer-360-loading">
+              Đang tải Customer 360...
+            </div>
+
+            <div v-else-if="customer360" class="customer-360-data">
+              <div class="section customer-identities-section">
+                <div class="section-head">
+                  <h4>Danh tính đa kênh</h4>
+                  <span>{{ customer360.identities.length }}</span>
+                </div>
+                <div class="customer-identities">
+                  <div
+                    v-for="identity in customer360.identities"
+                    :key="identity.id"
+                    class="customer-identity-row"
+                  >
+                    <span class="social-icon" :class="identity.channel"></span>
+                    <span>{{ channelLabel(identity.channel) }}</span>
+                    <small>{{ identity.external_user_id }}</small>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section customer-timeline-section">
+                <div class="section-head">
+                  <h4>Unified Timeline</h4>
+                  <span>{{ customer360.timeline.length }}</span>
+                </div>
+                <div class="customer-timeline">
+                  <div
+                    v-for="event in customer360.timeline.slice(0, 8)"
+                    :key="`${event.event_type}-${event.event_id}`"
+                    class="customer-timeline-row"
+                  >
+                    <span class="timeline-dot" :class="event.event_type"></span>
+                    <div>
+                      <small>{{ timelineLabel(event) }}<span v-if="event.channel"> · {{ channelLabel(event.channel) }}</span></small>
+                      <p>{{ event.content || 'Sự kiện không có nội dung' }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section customer-facts-section">
+                <div class="section-head">
+                  <h4>Customer Facts</h4>
+                  <span>{{ customer360.facts?.length || 0 }}</span>
+                </div>
+                <form class="customer-fact-form" @submit.prevent="addCustomerFact">
+                  <input v-model="customerFactDraft.fact_key" maxlength="120" placeholder="Khóa (vd: budget_max)" />
+                  <input v-model="customerFactDraft.fact_value" maxlength="500" placeholder="Giá trị (vd: 500000)" />
+                  <div class="customer-fact-form-row">
+                    <input v-model="customerFactDraft.confidence" type="number" min="0" max="1" step="0.01" aria-label="Độ tin cậy" />
+                    <label><input v-model="customerFactDraft.is_verified" type="checkbox" /> Đã xác nhận</label>
+                    <button type="submit" :disabled="customerFactSaving">{{ customerFactSaving ? 'Đang lưu...' : 'Ghi nhận' }}</button>
+                  </div>
+                </form>
+                <div v-if="customerFactError" class="facts-error">{{ customerFactError }}</div>
+                <div v-if="customer360.facts?.length" class="customer-facts">
+                  <div
+                    v-for="fact in customer360.facts.slice(0, 8)"
+                    :key="fact.id"
+                    class="customer-fact-row"
+                  >
+                    <div class="customer-fact-copy">
+                      <strong>{{ fact.fact_key }}</strong>
+                      <p>{{ formatFactValue(fact.fact_value) }}</p>
+                    </div>
+                    <small :class="{ verified: fact.is_verified }">
+                      {{ fact.is_verified ? 'Đã xác nhận' : `${Math.round((fact.confidence || 0) * 100)}%` }}
+                    </small>
+                    <div class="customer-fact-actions">
+                      <button type="button" @click="toggleCustomerFact(fact)">{{ fact.is_verified ? 'Bỏ xác nhận' : 'Xác nhận' }}</button>
+                      <button type="button" @click="removeCustomerFact(fact)">Xóa</button>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="facts-empty">
+                  Chưa có tri thức đã ghi nhận
+                </div>
+              </div>
+            </div>
+
+
             <!-- TAGS -->
 
             <div class="section">
@@ -3301,29 +4853,40 @@ onUnmounted(() => {
                   Tags
                 </h4>
 
-                <button>
-                  + Thêm tag
-                </button>
-
               </div>
 
-
-              <div class="tags">
-
-                <span>
-                  Khách mới
+              <div v-if="customerTagNames(customer360).length" class="tags">
+                <span v-for="tag in customerTagNames(customer360)" :key="tag" class="tag-chip">
+                  {{ tag }}
+                  <button type="button" class="tag-remove" :aria-label="`Xóa tag ${tag}`" @click="removeCustomerTag(tag)">×</button>
                 </span>
-
-                <span>
-                  Yêu thích ♥
-                </span>
-
-                <span>
-                  Order online
-                </span>
-
               </div>
+              <div v-else class="tags-empty">
+                Chưa có tag
+              </div>
+              <form class="customer-tag-form" @submit.prevent="addCustomerTag">
+                <input v-model="customerTagDraft" maxlength="80" placeholder="Thêm tag / phân khúc" />
+                <button type="submit" :disabled="customerTagSaving">{{ customerTagSaving ? '...' : 'Gắn tag' }}</button>
+              </form>
+              <div v-if="customerTagError" class="facts-error">{{ customerTagError }}</div>
 
+            </div>
+
+            <div class="section customer-merge-section">
+              <div class="section-head">
+                <h4>Gộp hồ sơ trùng</h4>
+              </div>
+              <p class="field-hint">Chọn hồ sơ nguồn; toàn bộ hội thoại, tag, fact, lead, ticket và đơn bán sẽ chuyển sang khách hiện tại.</p>
+              <form class="customer-tag-form" @submit.prevent="mergeSelectedCustomer">
+                <select v-model="customerMergeSourceId" aria-label="Customer nguồn để gộp">
+                  <option value="">Chọn customer trùng</option>
+                  <option v-for="candidate in orderCustomers.filter(item => item.id !== selected?.customer_id)" :key="candidate.id" :value="candidate.id">
+                    #{{ candidate.id }} — {{ candidate.name || candidate.channel || 'Customer' }}
+                  </option>
+                </select>
+                <button type="submit" :disabled="customerMergeSaving">{{ customerMergeSaving ? 'Đang gộp...' : 'Gộp hồ sơ' }}</button>
+              </form>
+              <div v-if="customerMergeError" class="facts-error">{{ customerMergeError }}</div>
             </div>
 
 
@@ -3526,13 +5089,496 @@ onUnmounted(() => {
       </section>
 
       <!-- ===================================================
+           SẢN PHẨM (PRODUCT CATALOG)
+      ==================================================== -->
+      <section v-if="currentTab === 'products'" class="products-layout">
+        <div class="products-header">
+          <div>
+            <h2>🛍️ Sản phẩm</h2>
+            <p>Quản lý catalog và giá sản phẩm của business.</p>
+          </div>
+
+          <button class="primary-btn" @click="resetProductForm">+ Sản phẩm mới</button>
+        </div>
+
+        <div v-if="productError" class="product-error">{{ productError }}</div>
+
+        <form class="product-form" @submit.prevent="saveProduct">
+          <div class="product-form-title">
+            {{ productForm.id ? 'Sửa sản phẩm' : 'Thêm sản phẩm' }}
+            <button v-if="productForm.id" type="button" @click="resetProductForm">Hủy</button>
+          </div>
+          <div class="product-form-grid">
+            <label>SKU<input v-model="productForm.sku" required maxlength="80" /></label>
+            <label>Tên sản phẩm<input v-model="productForm.name" required maxlength="255" /></label>
+            <label>Giá<input v-model.number="productForm.price" type="number" min="0" step="1" required /></label>
+            <label>Tồn kho<input v-model.number="productForm.stock_quantity" type="number" min="0" step="1" required /></label>
+            <label>Trạng thái<select v-model="productForm.status"><option value="active">Đang bán</option><option value="archived">Đã lưu trữ</option></select></label>
+            <label class="product-description">Mô tả<textarea v-model="productForm.description" rows="2"></textarea></label>
+          </div>
+          <button class="primary-btn" type="submit" :disabled="productSaving">
+            {{ productSaving ? 'Đang lưu...' : (productForm.id ? 'Cập nhật' : 'Tạo sản phẩm') }}
+          </button>
+        </form>
+
+        <div v-if="productsLoading" class="products-empty">Đang tải sản phẩm...</div>
+        <div v-else-if="!products.length" class="products-empty">Chưa có sản phẩm nào.</div>
+        <div v-else class="products-table-wrap">
+          <table class="products-table">
+            <thead><tr><th>SKU</th><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Trạng thái</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="product in products" :key="product.id">
+                <td><strong>{{ product.sku }}</strong></td>
+                <td><div>{{ product.name }}</div><small>{{ product.description || 'Không có mô tả' }}</small></td>
+                <td>{{ Number(product.price).toLocaleString('vi-VN') }}đ</td>
+                <td>{{ product.stock_quantity }}</td>
+                <td><span class="product-status" :class="product.status">{{ product.status === 'active' ? 'Đang bán' : 'Lưu trữ' }}</span></td>
+                <td class="product-actions"><button type="button" @click="editProduct(product)">Sửa</button><button v-if="product.status === 'active'" type="button" @click="archiveProduct(product)">Lưu trữ</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           SALES PIPELINE (LEADS)
+      ==================================================== -->
+      <section v-if="currentTab === 'leads'" class="products-layout leads-layout">
+        <div class="products-header">
+          <div>
+            <h2>📈 Sales Pipeline</h2>
+            <p>Theo dõi cơ hội bán hàng từ khách hội thoại đến chuyển đổi.</p>
+          </div>
+          <button class="primary-btn" type="button" @click="resetLeadForm">+ Tạo lead</button>
+        </div>
+
+        <div v-if="leadError" class="product-error">{{ leadError }}</div>
+
+        <div class="pipeline-summary">
+          <div v-for="stage in ['new', 'qualified', 'proposal', 'won', 'lost']" :key="stage" class="pipeline-card">
+            <span>{{ stage }}</span>
+            <strong>{{ (pipelineSummary.find(item => item.stage === stage) || {}).lead_count || 0 }}</strong>
+            <small>{{ Number((pipelineSummary.find(item => item.stage === stage) || {}).value || 0).toLocaleString('vi-VN') }}đ</small>
+          </div>
+        </div>
+
+        <form class="product-form lead-form" @submit.prevent="saveLead">
+          <div class="product-form-title">
+            Tạo lead mới
+            <button type="button" @click="resetLeadForm">Làm mới</button>
+          </div>
+          <div class="product-form-grid">
+            <label>Tên cơ hội<input v-model="leadForm.title" required maxlength="255" placeholder="Ví dụ: Khách quan tâm combo" /></label>
+            <label>Khách hàng
+              <select v-model="leadForm.customer_id" required>
+                <option value="" disabled>Chọn khách hàng</option>
+                <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
+                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                </option>
+              </select>
+            </label>
+            <label>Stage<select v-model="leadForm.stage"><option value="new">New</option><option value="qualified">Qualified</option><option value="proposal">Proposal</option><option value="won">Won</option><option value="lost">Lost</option></select></label>
+            <label>Giá trị dự kiến<input v-model.number="leadForm.value" type="number" min="0" step="1" /></label>
+            <label>Xác suất (%)<input v-model.number="leadForm.probability" type="number" min="0" max="100" step="1" /></label>
+            <label>Conversation ID (không bắt buộc)<input v-model="leadForm.conversation_id" type="number" min="1" /></label>
+          </div>
+          <button class="primary-btn" type="submit" :disabled="leadSaving">{{ leadSaving ? 'Đang tạo...' : 'Tạo lead' }}</button>
+        </form>
+
+        <div v-if="leadsLoading" class="products-empty">Đang tải pipeline...</div>
+        <div v-else-if="!leads.length" class="products-empty">Chưa có lead nào.</div>
+        <div v-else class="products-table-wrap">
+          <table class="products-table leads-table">
+            <thead><tr><th>Cơ hội</th><th>Khách hàng</th><th>Kênh</th><th>Stage</th><th>Giá trị</th><th>Xác suất</th><th>Cập nhật</th></tr></thead>
+            <tbody>
+              <tr v-for="lead in leads" :key="lead.id">
+                <td><strong>{{ lead.title }}</strong></td>
+                <td>#{{ lead.customer_id }} {{ lead.customer_name || '' }}</td>
+                <td>{{ lead.source_channel || '—' }}</td>
+                <td><select class="inline-stage" :value="lead.stage" @change="changeLeadStage(lead, $event.target.value)"><option value="new">New</option><option value="qualified">Qualified</option><option value="proposal">Proposal</option><option value="won">Won</option><option value="lost">Lost</option></select></td>
+                <td>{{ Number(lead.value || 0).toLocaleString('vi-VN') }}đ</td>
+                <td>{{ lead.probability }}%</td>
+                <td>{{ lead.updated_at ? new Date(lead.updated_at).toLocaleDateString('vi-VN') : '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           CSKH / TICKET + SLA
+      ==================================================== -->
+      <section v-if="currentTab === 'tickets'" class="products-layout tickets-layout">
+        <div class="products-header">
+          <div>
+            <h2>🎫 CSKH / Ticket</h2>
+            <p>Tiếp nhận, phân công và theo dõi thời hạn xử lý vấn đề của khách.</p>
+          </div>
+          <button class="primary-btn" type="button" @click="resetTicketForm">+ Tạo ticket</button>
+        </div>
+
+        <div v-if="ticketError" class="product-error">{{ ticketError }}</div>
+
+        <div v-if="slaNotifications.length" class="sla-alert">
+          ⚠️ Có {{ slaNotifications.length }} ticket đang quá SLA cần xử lý.
+        </div>
+
+        <div class="ticket-summary">
+          <div class="ticket-stat"><span>Tổng ticket</span><strong>{{ ticketReport.total_tickets || 0 }}</strong></div>
+          <div class="ticket-stat overdue"><span>Quá SLA</span><strong>{{ ticketReport.overdue_tickets || 0 }}</strong></div>
+          <div v-for="item in ticketReport.items || []" :key="item.status" class="ticket-stat"><span>{{ item.status }}</span><strong>{{ item.ticket_count }}</strong></div>
+        </div>
+
+        <form class="product-form ticket-form" @submit.prevent="saveTicket">
+          <div class="product-form-title">
+            Tạo ticket CSKH
+            <button type="button" @click="resetTicketForm">Làm mới</button>
+          </div>
+          <div class="product-form-grid">
+            <label>Tiêu đề<input v-model="ticketForm.title" required maxlength="255" placeholder="Ví dụ: Khách chưa nhận được hàng" /></label>
+            <label>Khách hàng
+              <select v-model="ticketForm.customer_id" required @change="onTicketCustomerChange">
+                <option value="" disabled>Chọn khách hàng</option>
+                <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
+                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                </option>
+              </select>
+            </label>
+            <label>Ưu tiên<select v-model="ticketForm.priority"><option value="low">Thấp</option><option value="normal">Bình thường</option><option value="high">Cao</option><option value="urgent">Khẩn cấp</option></select></label>
+            <label>Hội thoại (không bắt buộc)
+              <select v-model="ticketForm.conversation_id">
+                <option value="">Không gắn hội thoại</option>
+                <option v-for="conversation in ticketConversations" :key="conversation.conversation_id" :value="conversation.conversation_id">
+                  #{{ conversation.conversation_id }} — {{ channelLabel(conversation.channel) }} — {{ conversationPreview(conversation) }}
+                </option>
+              </select>
+              <small class="field-hint">Chỉ hiển thị hội thoại của khách hàng đang chọn.</small>
+            </label>
+            <label>Nhân viên phụ trách
+              <select v-model="ticketForm.assigned_user_id">
+                <option value="">Chưa phân công</option>
+                <option v-for="member in activeTeamUsers" :key="member.id" :value="member.id">
+                  {{ member.full_name }} — {{ member.role }}
+                </option>
+              </select>
+            </label>
+            <label class="product-description">Mô tả<textarea v-model="ticketForm.description" rows="2"></textarea></label>
+          </div>
+          <button class="primary-btn" type="submit" :disabled="ticketSaving">{{ ticketSaving ? 'Đang tạo...' : 'Tạo ticket' }}</button>
+        </form>
+
+        <div v-if="ticketsLoading" class="products-empty">Đang tải ticket...</div>
+        <div v-else-if="!tickets.length" class="products-empty">Chưa có ticket nào.</div>
+        <div v-else class="products-table-wrap">
+          <table class="products-table tickets-table">
+            <thead><tr><th>Ticket</th><th>Khách hàng</th><th>Kênh</th><th>Ưu tiên</th><th>Trạng thái</th><th>SLA</th><th>Phụ trách</th></tr></thead>
+            <tbody>
+              <template v-for="ticket in tickets" :key="ticket.id">
+              <tr>
+                <td><strong>#{{ ticket.id }} — {{ ticket.title }}</strong><small>{{ ticket.description || '' }}</small></td>
+                <td>#{{ ticket.customer_id }} {{ ticket.customer_name || '' }}</td>
+                <td>{{ ticket.channel || '—' }}</td>
+                <td><span class="product-status" :class="ticket.priority">{{ ticket.priority }}</span></td>
+                <td><select class="inline-stage" :value="ticket.status" @change="changeTicketStatus(ticket, $event.target.value)"><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select></td>
+                <td>{{ ticket.sla_due_at ? new Date(ticket.sla_due_at).toLocaleString('vi-VN') : '—' }}</td>
+                <td>
+                  <select class="inline-stage" :value="ticket.assigned_user_id || ''" @change="assignTicket(ticket, $event.target.value)">
+                    <option value="">Chưa phân công</option>
+                    <option v-for="member in activeTeamUsers" :key="member.id" :value="member.id">{{ member.full_name }}</option>
+                  </select>
+                  <button class="history-btn" type="button" @click="loadTicketHistory(ticket)">
+                    {{ ticketHistoryLoading[ticket.id] ? 'Đang tải...' : (ticketHistory[ticket.id] ? 'Ẩn lịch sử' : 'Lịch sử') }}
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="ticketHistory[ticket.id]" class="ticket-history-row">
+                <td colspan="7">
+                  <strong>Lịch sử ticket #{{ ticket.id }}</strong>
+                  <span v-if="!ticketHistory[ticket.id].length"> Chưa có sự kiện.</span>
+                  <ul v-else>
+                    <li v-for="event in ticketHistory[ticket.id]" :key="event.id">
+                      {{ event.event_type }} · {{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}
+                      <span v-if="event.from_value || event.to_value">({{ event.from_value || '—' }} → {{ event.to_value || '—' }})</span>
+                    </li>
+                  </ul>
+                  <div class="ticket-comment-form">
+                    <input v-model="ticketCommentDrafts[ticket.id]" maxlength="10000" placeholder="Ghi chú xử lý nội bộ..." @keyup.enter="addTicketComment(ticket)" />
+                    <button type="button" @click="addTicketComment(ticket)">Thêm ghi chú</button>
+                  </div>
+                </td>
+              </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           ĐƠN HÀNG + DOANH THU (SALES CRM)
+      ==================================================== -->
+      <section v-if="currentTab === 'orders'" class="products-layout orders-layout">
+        <div class="products-header">
+          <div>
+            <h2>🧾 Đơn hàng khách cuối</h2>
+            <p>Tạo và theo dõi đơn bán; doanh thu được gắn với kênh hội thoại.</p>
+          </div>
+          <button class="primary-btn" type="button" @click="resetOrderForm">+ Tạo đơn hàng</button>
+        </div>
+
+        <div v-if="orderError" class="product-error">{{ orderError }}</div>
+
+        <div class="revenue-cards">
+          <div class="revenue-card total">
+            <span>Tổng doanh thu</span>
+            <strong>{{ Number(revenueByChannel.reduce((sum, item) => sum + Number(item.revenue || 0), 0)).toLocaleString('vi-VN') }}đ</strong>
+          </div>
+          <div v-for="item in revenueByChannel" :key="item.channel" class="revenue-card">
+            <span>{{ item.channel === 'unknown' ? 'Không gắn kênh' : item.channel }}</span>
+            <strong>{{ Number(item.revenue || 0).toLocaleString('vi-VN') }}đ</strong>
+            <small>{{ item.order_count }} đơn</small>
+          </div>
+        </div>
+
+        <form class="product-form order-form" @submit.prevent="saveOrder">
+          <div class="product-form-title">
+            Tạo đơn bán cho khách
+            <button type="button" @click="resetOrderForm">Làm mới</button>
+          </div>
+          <div class="product-form-grid">
+            <label>Mã đơn<input v-model="orderForm.order_number" required maxlength="60" /></label>
+            <label>Khách hàng
+              <select v-model="orderForm.customer_id" required>
+                <option value="" disabled>Chọn khách hàng</option>
+                <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
+                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                </option>
+              </select>
+            </label>
+            <label>Sản phẩm
+              <select v-model="orderForm.product_id" required>
+                <option value="" disabled>Chọn sản phẩm</option>
+                <option v-for="product in products.filter(item => item.status === 'active')" :key="product.id" :value="product.id">
+                  {{ product.name }} — {{ Number(product.price).toLocaleString('vi-VN') }}đ
+                </option>
+              </select>
+            </label>
+            <label>Số lượng<input v-model.number="orderForm.quantity" type="number" min="1" step="1" required /></label>
+            <label>Conversation ID (không bắt buộc)<input v-model="orderForm.conversation_id" type="number" min="1" placeholder="Gắn doanh thu với kênh" /></label>
+          </div>
+          <button class="primary-btn" type="submit" :disabled="orderSaving">
+            {{ orderSaving ? 'Đang tạo...' : 'Tạo đơn' }}
+          </button>
+        </form>
+
+        <div v-if="ordersLoading" class="products-empty">Đang tải đơn hàng...</div>
+        <div v-else-if="!orders.length" class="products-empty">Chưa có đơn hàng nào.</div>
+        <div v-else class="products-table-wrap">
+          <table class="products-table orders-table">
+            <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Sản phẩm</th><th>Kênh</th><th>Trạng thái</th><th>Tổng tiền</th><th>Ngày tạo</th></tr></thead>
+            <tbody>
+              <tr v-for="order in orders" :key="order.id">
+                <td><strong>{{ order.order_number }}</strong></td>
+                <td>#{{ order.customer_id }}</td>
+                <td><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}</span></td>
+                <td>{{ order.channel || 'Không gắn kênh' }}</td>
+                <td><span class="product-status" :class="order.status">{{ order.status }}</span></td>
+                <td><strong>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</strong></td>
+                <td>{{ order.created_at ? new Date(order.created_at).toLocaleString('vi-VN') : '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           PURCHASE ORDERS (SUPPLIER / SHOP PROCUREMENT)
+      ==================================================== -->
+      <section v-if="currentTab === 'purchase-orders'" class="products-layout orders-layout">
+        <div class="products-header">
+          <div>
+            <h2>📦 Đơn nhập hàng / dịch vụ</h2>
+            <p>Quản lý đơn shop mua từ nhà cung cấp, tách biệt với đơn bán cho khách cuối.</p>
+          </div>
+          <button class="primary-btn" type="button" @click="resetPurchaseOrderForm">+ Tạo PO</button>
+        </div>
+
+        <div v-if="purchaseOrderError" class="product-error">{{ purchaseOrderError }}</div>
+
+        <form class="product-form order-form" @submit.prevent="savePurchaseOrder">
+          <div class="product-form-title">
+            Tạo Purchase Order
+            <button type="button" @click="resetPurchaseOrderForm">Làm mới</button>
+          </div>
+          <div class="product-form-grid">
+            <label>Mã PO<input v-model="purchaseOrderForm.po_number" required maxlength="80" /></label>
+            <label>Nhà cung cấp<input v-model="purchaseOrderForm.supplier_name" required maxlength="255" placeholder="Ví dụ: Smart Merchant Hub" /></label>
+            <label>Sản phẩm / dịch vụ
+              <select v-model="purchaseOrderForm.product_id" required>
+                <option value="" disabled>Chọn mục nhập</option>
+                <option v-for="product in products" :key="product.id" :value="product.id">{{ product.name }}</option>
+              </select>
+            </label>
+            <label>Số lượng<input v-model.number="purchaseOrderForm.quantity" type="number" min="1" step="1" required /></label>
+            <label>Đơn giá nhập<input v-model.number="purchaseOrderForm.unit_cost" type="number" min="0" step="1" required /></label>
+            <label class="product-description">Ghi chú<textarea v-model="purchaseOrderForm.notes" rows="2" placeholder="Gói dịch vụ, kỳ thanh toán..."></textarea></label>
+          </div>
+          <button class="primary-btn" type="submit" :disabled="purchaseOrderSaving">{{ purchaseOrderSaving ? 'Đang tạo...' : 'Tạo PO' }}</button>
+        </form>
+
+        <div v-if="purchaseOrdersLoading" class="products-empty">Đang tải đơn nhập...</div>
+        <div v-else-if="!purchaseOrders.length" class="products-empty">Chưa có Purchase Order nào.</div>
+        <div v-else class="products-table-wrap">
+          <table class="products-table orders-table">
+            <thead><tr><th>Mã PO</th><th>Nhà cung cấp</th><th>Mặt hàng</th><th>Trạng thái</th><th>Tổng chi</th><th>Cập nhật</th></tr></thead>
+            <tbody>
+              <tr v-for="purchase in purchaseOrders" :key="purchase.id">
+                <td><strong>{{ purchase.po_number }}</strong></td>
+                <td>{{ purchase.supplier_name }}</td>
+                <td><span v-for="(item, index) in purchase.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}</span></td>
+                <td>
+                  <select class="inline-stage" :value="purchase.status" @change="transitionPurchaseOrder(purchase, $event.target.value)">
+                    <option v-for="status in purchaseStatuses" :key="status" :value="status">{{ status }}</option>
+                  </select>
+                </td>
+                <td><strong>{{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</strong></td>
+                <td>{{ purchase.updated_at ? new Date(purchase.updated_at).toLocaleString('vi-VN') : '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           WORKFLOW AUTOMATION
+      =================================================== -->
+      <section v-if="currentTab === 'workflows'" class="products-layout workflow-layout">
+        <div class="products-header">
+          <div>
+            <h2>⚡ Workflow Automation</h2>
+            <p>Tự động hóa các bước CRM theo sự kiện, có điều kiện và lịch sử chạy.</p>
+          </div>
+          <button class="primary-btn" type="button" @click="resetWorkflowForm">+ Workflow mới</button>
+        </div>
+
+        <div v-if="workflowError" class="product-error">{{ workflowError }}</div>
+
+        <form class="product-form workflow-form" @submit.prevent="saveWorkflow">
+          <div class="product-form-title">
+            Tạo workflow
+            <button type="button" @click="resetWorkflowForm">Làm mới</button>
+          </div>
+          <div class="product-form-grid">
+            <label>Tên workflow<input v-model="workflowForm.name" required maxlength="160" placeholder="Ví dụ: Gắn tag khách Telegram" /></label>
+            <label>Sự kiện<select v-model="workflowForm.event_type"><option value="message.created">Tin nhắn mới</option><option value="ticket.created">Ticket được tạo</option><option value="ticket.status_changed">Ticket đổi trạng thái</option><option value="lead.stage_changed">Lead đổi stage</option><option value="order.created">Đơn hàng được tạo</option></select></label>
+            <label>Điều kiện kênh<select v-model="workflowForm.condition_channel"><option value="">Mọi kênh</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="telegram">Telegram</option></select></label>
+            <label>Action<select v-model="workflowForm.action_type"><option value="create_ticket">Tạo ticket</option><option value="add_tag">Gắn tag</option><option value="assign_user">Phân công nhân viên</option></select></label>
+            <label v-if="workflowForm.action_type === 'create_ticket'">Tiêu đề ticket<input v-model="workflowForm.action_title" maxlength="255" placeholder="Workflow follow-up" /></label>
+            <label v-if="workflowForm.action_type === 'create_ticket'">Ưu tiên<select v-model="workflowForm.action_priority"><option value="low">Thấp</option><option value="normal">Bình thường</option><option value="high">Cao</option><option value="urgent">Khẩn cấp</option></select></label>
+            <label v-if="workflowForm.action_type === 'add_tag'">Tên tag<input v-model="workflowForm.action_tag" maxlength="80" placeholder="vip" /></label>
+            <label v-if="workflowForm.action_type === 'assign_user'">Nhân viên<select v-model="workflowForm.action_user_id"><option value="">Chọn nhân viên</option><option v-for="member in activeTeamUsers" :key="member.id" :value="member.id">{{ member.full_name }} — {{ member.role }}</option></select></label>
+          </div>
+          <button class="primary-btn" type="submit" :disabled="workflowSaving">{{ workflowSaving ? 'Đang tạo...' : 'Tạo workflow' }}</button>
+        </form>
+
+        <div v-if="workflowsLoading" class="products-empty">Đang tải workflow...</div>
+        <div v-else-if="!workflows.length" class="products-empty">Chưa có workflow nào.</div>
+        <div v-else class="products-table-wrap">
+          <table class="products-table workflow-table">
+            <thead><tr><th>Workflow</th><th>Sự kiện</th><th>Điều kiện</th><th>Action</th><th>Trạng thái</th><th></th></tr></thead>
+            <tbody>
+              <template v-for="workflow in workflows" :key="workflow.id">
+              <tr>
+                <td><strong>{{ workflow.name }}</strong><small>#{{ workflow.id }}</small></td>
+                <td>{{ workflow.event_type }}</td>
+                <td>{{ workflow.conditions.channel ? `Kênh: ${workflow.conditions.channel}` : 'Mọi kênh' }}</td>
+                <td>{{ workflow.actions[0]?.type || '—' }}</td>
+                <td><span class="team-status" :class="{ inactive: !workflow.enabled }">{{ workflow.enabled ? 'Đang bật' : 'Đã tắt' }}</span></td>
+                <td>
+                  <button type="button" class="team-toggle" @click="toggleWorkflow(workflow)">{{ workflow.enabled ? 'Tắt' : 'Bật' }}</button>
+                  <button type="button" class="history-btn" @click="toggleWorkflowRuns(workflow)">{{ workflowRunsLoading[workflow.id] ? 'Đang tải...' : (workflowRuns[workflow.id] ? 'Ẩn runs' : 'Lịch sử') }}</button>
+                </td>
+              </tr>
+              <tr v-if="workflowRuns[workflow.id]" class="ticket-history-row">
+                <td colspan="6">
+                  <span v-if="!workflowRuns[workflow.id].length">Chưa có lần chạy.</span>
+                  <ul v-else>
+                    <li v-for="run in workflowRuns[workflow.id]" :key="run.id">
+                      #{{ run.id }} · {{ run.status }} · lần {{ run.attempts || 1 }}
+                      <button v-if="run.status === 'failed'" type="button" class="history-btn" @click="retryWorkflowRun(workflow, run)">Retry</button>
+                    </li>
+                  </ul>
+                </td>
+              </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           AI RECOMMENDATIONS / EXPERIMENTS
+      ==================================================== -->
+      <section v-if="currentTab === 'experiments'" class="products-layout experiments-layout">
+        <div class="products-header">
+          <div>
+            <h2>🧪 Recommendation & thử nghiệm AI</h2>
+            <p>Đề xuất rule cần người duyệt; assignment, outcome và bandit được ghi lại để đo lường trước khi tự động hóa.</p>
+          </div>
+          <button class="primary-btn" type="button" @click="fetchExperimentation">Làm mới</button>
+        </div>
+
+        <div v-if="experimentationError" class="product-error">{{ experimentationError }}</div>
+        <div v-if="experimentationLoading" class="products-empty">Đang tải dữ liệu thử nghiệm...</div>
+
+        <div v-else class="experiments-grid">
+          <div class="settings-card">
+            <div class="card-header">
+              <h3>Đề xuất rule</h3>
+              <span class="count-badge">{{ ruleSuggestions.length }}</span>
+            </div>
+            <div v-if="!ruleSuggestions.length" class="settings-empty">Chưa có đề xuất.</div>
+            <ul v-else class="suggestion-list">
+              <li v-for="suggestion in ruleSuggestions" :key="suggestion.id">
+                <div>
+                  <strong>{{ suggestion.title }}</strong>
+                  <p>{{ suggestion.rationale }}</p>
+                  <small>Action: {{ suggestion.proposed_action?.type || '—' }} · {{ suggestion.status }}</small>
+                </div>
+                <div v-if="suggestion.status === 'pending'" class="suggestion-actions">
+                  <button type="button" class="history-btn" @click="reviewRuleSuggestion(suggestion, 'accepted')">Duyệt</button>
+                  <button type="button" class="history-btn" @click="reviewRuleSuggestion(suggestion, 'rejected')">Từ chối</button>
+                </div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="settings-card">
+            <div class="card-header">
+              <h3>Experiments</h3>
+              <span class="count-badge">{{ experiments.length }}</span>
+            </div>
+            <div v-if="!experiments.length" class="settings-empty">Chưa có experiment. API đã sẵn sàng cho assignment/outcome.</div>
+            <ul v-else class="suggestion-list">
+              <li v-for="experiment in experiments" :key="experiment.id">
+                <div>
+                  <strong>{{ experiment.name }}</strong>
+                  <p>Variants: {{ experiment.variants.join(' · ') }}</p>
+                  <small>Trạng thái: {{ experiment.status }}</small>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================
            KHO TRI THỨC (DOCUMENTS)
       ==================================================== -->
       <section v-if="currentTab === 'documents'" class="rag-docs-layout">
         <div class="rag-header-panel">
           <div>
             <h2>📚 Kho tri thức tài liệu (RAG Knowledge Base)</h2>
-            <p>Nạp tài liệu sản phẩm, FAQ, chính sách... để AI tự động học và trả lời khách hàng qua Facebook/Instagram.</p>
+            <p>Nạp tài liệu sản phẩm, FAQ, chính sách... để AI tự động học và trả lời khách hàng qua Facebook, Instagram và Telegram.</p>
           </div>
           <div class="rag-stats">
             <div class="stat-card">
@@ -3625,11 +5671,16 @@ onUnmounted(() => {
                     <span v-else-if="doc.status === 'pending'">⏳ Chờ xử lý</span>
                     <span v-else>❌ Lỗi</span>
                   </span>
+                  <small class="doc-embedding-state">Embedding: {{ doc.embedding_status || 'pending' }}</small>
+                  <small v-if="doc.retry_after" class="doc-embedding-state">Thử lại sau: {{ formatTime(doc.retry_after) }}</small>
                 </td>
                 <td class="text-sm text-gray">{{ formatTime(doc.uploaded_at) }}</td>
                 <td>
                   <button class="btn-delete" @click="deleteDoc(doc.id)" title="Xóa tài liệu">
                     🗑️ Xóa
+                  </button>
+                  <button class="btn-refresh" @click="reindexDocument(doc)" title="Chạy lại indexing">
+                    🔁 Reindex
                   </button>
                 </td>
               </tr>
@@ -3645,7 +5696,7 @@ onUnmounted(() => {
         <div class="rag-chat-sidebar">
           <div class="setting-card">
             <h3>⚡ AI Auto-Reply (Meta Channels)</h3>
-            <p class="setting-desc">Tự động dùng RAG trả lời tin nhắn từ khách Facebook & Instagram Webhook.</p>
+            <p class="setting-desc">Tự động dùng RAG trả lời tin nhắn từ khách Facebook, Instagram và Telegram.</p>
             
             <div class="toggle-row">
               <span>Auto-Reply:</span>
@@ -3741,12 +5792,88 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
+
+      </section>
+
+      <!-- ===================================================
+           CRM REPORTS
+      ==================================================== -->
+      <section v-if="currentTab === 'reports'" class="products-layout reports-layout">
+        <div class="products-header">
+          <div>
+            <h2>📊 Báo cáo CRM</h2>
+            <p>Tổng quan khách hàng, hội thoại, bán hàng và hiệu suất xử lý.</p>
+          </div>
+          <button type="button" class="settings-refresh" @click="fetchReports">Làm mới</button>
+        </div>
+        <div v-if="reportsError" class="product-error">{{ reportsError }}</div>
+        <form class="report-filters" @submit.prevent="fetchReports">
+          <label>Từ ngày<input v-model="reportFilters.start_at" type="date" /></label>
+          <label>Đến ngày<input v-model="reportFilters.end_at" type="date" /></label>
+          <label>Kênh<select v-model="reportFilters.channel"><option value="">Tất cả kênh</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="telegram">Telegram</option><option value="zalo">Zalo</option></select></label>
+          <label>Trạng thái đơn<select v-model="reportFilters.status"><option value="">Tất cả</option><option value="draft">Draft</option><option value="confirmed">Confirmed</option><option value="processing">Processing</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></label>
+          <label>Nhân viên<select v-model="reportFilters.assigned_user_id"><option value="">Tất cả nhân viên</option><option v-for="member in teamUsers" :key="member.id" :value="member.id">{{ member.full_name }}</option></select></label>
+          <button class="primary-btn" type="submit">Áp dụng</button>
+          <a class="settings-refresh" :href="reportCsvUrl" target="_blank" rel="noreferrer">Tải CSV</a>
+        </form>
+        <div v-if="reportsLoading" class="products-empty">Đang tải báo cáo...</div>
+        <template v-else-if="crmOverview">
+          <div class="report-cards">
+            <div class="report-card accent"><span>Khách hàng</span><strong>{{ crmOverview.customer_count }}</strong></div>
+            <div class="report-card"><span>Hội thoại</span><strong>{{ crmOverview.conversation_count }}</strong></div>
+            <div class="report-card"><span>Đơn hàng</span><strong>{{ crmOverview.order_count }}</strong></div>
+            <div class="report-card"><span>Doanh thu</span><strong>{{ Number(crmOverview.total_revenue || 0).toLocaleString('vi-VN') }}đ</strong></div>
+            <div class="report-card"><span>Tỷ lệ lead thắng</span><strong>{{ crmOverview.conversion_rate }}%</strong><small>{{ crmOverview.won_lead_count }}/{{ crmOverview.lead_count }} lead</small></div>
+            <div class="report-card"><span>Đơn / hội thoại</span><strong>{{ crmOverview.conversation_to_order_rate }}%</strong></div>
+            <div class="report-card"><span>Ticket đang mở</span><strong>{{ crmOverview.open_ticket_count }}</strong><small>{{ crmOverview.ticket_count }} ticket tổng</small></div>
+            <div class="report-card"><span>Đơn nhập hàng</span><strong>{{ crmOverview.purchase_order_count || 0 }}</strong><small>Chi {{ Number(crmOverview.purchase_spend || 0).toLocaleString('vi-VN') }}đ</small></div>
+          </div>
+          <div class="report-panel">
+            <div class="report-panel-header"><h3>Hiệu suất nhân viên</h3><span>Chỉ số theo business hiện tại</span></div>
+            <div v-if="!agentPerformance.length" class="products-empty">Chưa có nhân viên được phân công.</div>
+            <div v-else class="products-table-wrap">
+              <table class="products-table reports-table">
+                <thead><tr><th>Nhân viên</th><th>Hội thoại</th><th>Ticket</th><th>Đã xử lý</th><th>Lead</th><th>Lead thắng</th></tr></thead>
+                <tbody>
+                  <tr v-for="agent in agentPerformance" :key="agent.user_id">
+                    <td><strong>{{ agent.full_name }}</strong><small>{{ agent.role }}</small></td>
+                    <td>{{ agent.assigned_conversations }}</td><td>{{ agent.assigned_tickets }}</td><td>{{ agent.resolved_tickets }}</td><td>{{ agent.assigned_leads }}</td><td>{{ agent.won_leads }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div v-if="crmOverview.time_series?.length" class="report-panel">
+            <div class="report-panel-header"><h3>Xu hướng theo ngày</h3><span>Hội thoại · đơn bán · doanh thu</span></div>
+            <div class="report-series"><div v-for="point in crmOverview.time_series.slice(-14)" :key="point.date" class="report-series-row"><span>{{ point.date }}</span><b>{{ point.conversations }} hội thoại · {{ point.orders }} đơn · {{ Number(point.revenue || 0).toLocaleString('vi-VN') }}đ</b></div></div>
+          </div>
+        </template>
       </section>
 
       <!-- ===================================================
            SETTINGS / META OAUTH
       ==================================================== -->
       <section v-if="currentTab === 'settings'" class="settings-layout">
+        <div class="settings-card auth-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>🔐 Đăng nhập CRM</h2>
+              <p>Phiên đăng nhập giúp áp dụng vai trò và ghi audit log cho thao tác.</p>
+            </div>
+            <span class="connection-badge" :class="{ connected: authUser }">{{ authUser ? 'ĐÃ ĐĂNG NHẬP' : 'ĐANG DÙNG CHẾ ĐỘ DEV' }}</span>
+          </div>
+          <form v-if="!authUser" class="team-form" @submit.prevent="login">
+            <input v-model="loginForm.email" required type="email" placeholder="Email công việc" />
+            <input v-model="loginForm.password" required type="password" placeholder="Mật khẩu" />
+            <button class="primary-btn" type="submit" :disabled="authLoading">{{ authLoading ? 'Đang đăng nhập...' : 'Đăng nhập' }}</button>
+          </form>
+          <div v-else class="auth-session-row">
+            <span><strong>{{ authUser.full_name }}</strong> · {{ authUser.role }} · {{ authUser.email }}</span>
+            <button type="button" class="settings-refresh" @click="logout">Đăng xuất</button>
+          </div>
+          <div v-if="authError" class="settings-notice team-error">{{ authError }}</div>
+        </div>
+
         <div class="settings-card">
           <div class="settings-card-header">
             <div>
@@ -3795,6 +5922,59 @@ onUnmounted(() => {
             >
               Ngắt kết nối
             </button>
+          </div>
+        </div>
+
+        <div class="settings-card team-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>👥 Đội ngũ & phân quyền</h2>
+              <p>Quản lý nhân viên thuộc business và trạng thái được phép nhận ticket.</p>
+            </div>
+            <button type="button" class="settings-refresh" @click="fetchTeam">Làm mới</button>
+          </div>
+
+          <div v-if="teamError" class="settings-notice team-error">{{ teamError }}</div>
+
+          <form class="team-form" @submit.prevent="saveTeamMember">
+            <input v-model="teamForm.full_name" required maxlength="255" placeholder="Họ và tên" />
+            <input v-model="teamForm.email" required type="email" maxlength="255" placeholder="Email công việc" />
+            <input v-model="teamForm.password" required type="password" minlength="8" maxlength="256" placeholder="Mật khẩu (≥ 8 ký tự)" />
+            <select v-model="teamForm.role">
+              <option value="admin">Admin</option>
+              <option value="agent">Agent</option>
+              <option value="viewer">Viewer</option>
+            </select>
+            <button class="primary-btn" type="submit" :disabled="teamSaving">
+              {{ teamSaving ? 'Đang thêm...' : 'Thêm nhân viên' }}
+            </button>
+          </form>
+
+          <div v-if="teamLoading" class="settings-empty">Đang tải đội ngũ...</div>
+          <div v-else-if="!teamUsers.length" class="settings-empty">Chưa có nhân viên nào.</div>
+          <div v-else class="team-table-wrap">
+            <table class="team-table">
+              <thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Trạng thái</th><th></th></tr></thead>
+              <tbody>
+                <tr v-for="member in teamUsers" :key="member.id">
+                  <td><strong>{{ member.full_name }}</strong><small>{{ member.email }}</small></td>
+                  <td><span class="team-role">{{ member.role }}</span></td>
+                  <td><span class="team-status" :class="{ inactive: !member.is_active }">{{ member.is_active ? 'Đang hoạt động' : 'Đã vô hiệu hóa' }}</span></td>
+                  <td><button type="button" class="team-toggle" @click="toggleTeamMember(member)">{{ member.is_active ? 'Vô hiệu hóa' : 'Kích hoạt' }}</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div v-if="authUser && ['owner', 'admin'].includes(authUser.role)" class="audit-panel">
+            <div class="settings-card-header">
+              <div><h3>🧾 Audit log</h3><p>Nhật ký thao tác đã loại bỏ mật khẩu, token và nội dung tin nhắn.</p></div>
+              <button type="button" class="settings-refresh" @click="fetchAuditLogs">{{ auditLoading ? 'Đang tải...' : 'Làm mới' }}</button>
+            </div>
+            <div v-if="!auditLogs.length" class="settings-empty">Chưa có audit log.</div>
+            <ul v-else class="audit-list">
+              <li v-for="log in auditLogs.slice(0, 10)" :key="log.id"><strong>{{ log.action }}</strong> · {{ log.resource_type }} {{ log.resource_id || '' }} · {{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '' }}</li>
+            </ul>
           </div>
         </div>
       </section>
@@ -4441,6 +6621,93 @@ onUnmounted(() => {
   border-radius: 22px;
   background: #ffffff;
   box-shadow: 0 8px 24px rgba(135, 54, 36, 0.08);
+}
+
+.settings-card + .settings-card {
+  margin-top: 20px;
+}
+
+.settings-refresh,
+.team-toggle {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: #8d271d;
+  background: #fff0ea;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.team-form {
+  display: grid;
+  grid-template-columns: 1.1fr 1.2fr 0.8fr auto;
+  gap: 10px;
+  margin: 22px 0;
+}
+
+.team-form input,
+.team-form select {
+  min-width: 0;
+  border: 1px solid #efc8c0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #5e423a;
+  background: #fffaf8;
+}
+
+.team-error {
+  margin-bottom: 0;
+}
+
+.team-table-wrap {
+  overflow-x: auto;
+}
+
+.team-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #5e423a;
+}
+
+.team-table th,
+.team-table td {
+  padding: 12px 8px;
+  border-bottom: 1px solid #f4dfd8;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.team-table th {
+  color: #99655a;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.team-table td small {
+  display: block;
+  margin-top: 3px;
+  color: #9b827b;
+}
+
+.team-role,
+.team-status {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: #8d271d;
+  background: #fff0ea;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.team-status {
+  color: #237443;
+  background: #e4f7e9;
+}
+
+.team-status.inactive {
+  color: #8a5a00;
+  background: #fff1cf;
 }
 
 .settings-card-header {

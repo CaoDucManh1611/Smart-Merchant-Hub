@@ -38,6 +38,7 @@ class RetrievedChunk:
 def retrieve(
     query: str,
     db: Session,
+    business_id: int,
     top_k: int | None = None,
     similarity_threshold: float | None = None,
 ) -> list[RetrievedChunk]:
@@ -64,7 +65,7 @@ def retrieve(
 
     # Always collect lexical candidates.  They are especially important for
     # product names, SKU codes and documents ingested without embeddings.
-    lexical_results = _retrieve_lexical(query, db, max(top_k * 3, top_k))
+    lexical_results = _retrieve_lexical(query, db, max(top_k * 3, top_k), business_id=business_id)
     vector_results: list[RetrievedChunk] = []
 
     # Bước 1: Embed câu hỏi thành vector; nếu hết quota vẫn dùng từ khóa.
@@ -88,6 +89,7 @@ def retrieve(
         FROM document_chunks dc
         JOIN documents d ON d.id = dc.document_id
         WHERE d.status = 'ready'
+          AND d.business_id = :business_id
           AND dc.embedding IS NOT NULL
           AND 1 - (dc.embedding <=> CAST(:query_vector AS vector)) >= :threshold
         ORDER BY dc.embedding <=> CAST(:query_vector AS vector)
@@ -99,6 +101,7 @@ def retrieve(
             sa_text(raw_sql),
             {
                 "query_vector": vector_str,
+                "business_id": business_id,
                 "threshold": similarity_threshold,
                 "top_k": max(top_k * 3, top_k),
             },
@@ -168,6 +171,7 @@ def _retrieve_lexical(
     query: str,
     db: Session,
     top_k: int,
+    business_id: int,
 ) -> list[RetrievedChunk]:
     """Tìm kiếm từ khóa trong toàn bộ chunks, kể cả chunk không có vector."""
     identifiers = list(
@@ -219,12 +223,14 @@ def _retrieve_lexical(
             SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata
             FROM document_chunks dc
             JOIN documents d ON d.id = dc.document_id
-            WHERE d.status = 'ready' AND ({conditions})
+            WHERE d.status = 'ready'
+              AND d.business_id = :business_id
+              AND ({conditions})
             ORDER BY {exact_order}
             LIMIT :candidate_limit
             """
         ),
-        {**params, "candidate_limit": max(100, top_k * 40)},
+        {**params, "business_id": business_id, "candidate_limit": max(100, top_k * 40)},
     ).fetchall()
 
     scored = []

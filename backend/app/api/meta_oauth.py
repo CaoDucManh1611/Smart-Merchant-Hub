@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
+from app.db.database import SessionLocal
 
 from app.core.config import settings
 from app.services.meta_config_service import (
@@ -20,6 +21,10 @@ from app.services.meta_config_service import (
     save_meta_config,
     save_settings,
 )
+from app.tenancy.context import TenantContext
+from app.tenancy.dependencies import get_tenant_context
+from app.tenancy.oauth import consume_oauth_state, issue_oauth_state, register_oauth_state
+from app.services.channel_service import upsert_channel_connection
 
 
 router = APIRouter()
@@ -108,9 +113,15 @@ async def meta_oauth_status() -> dict:
 
 
 @router.get("/meta/start")
-async def start_meta_oauth() -> RedirectResponse:
+async def start_meta_oauth(
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> RedirectResponse:
     app_id, _, redirect_uri = _require_oauth_settings()
-    state = secrets.token_urlsafe(32)
+    if not settings.META_APP_SECRET:
+        raise HTTPException(status_code=500, detail="META_APP_SECRET is required for signed OAuth state")
+    state = issue_oauth_state(tenant.business_id, settings.META_APP_SECRET)
+    with SessionLocal() as db:
+        register_oauth_state(db, state, settings.META_APP_SECRET)
     save_settings(
         {
             META_KEYS["oauth_state"]: state,
@@ -147,15 +158,13 @@ async def meta_oauth_callback(
     if error:
         return _frontend_redirect("error", error_description or error)
 
-    expected_state = get_setting_value(META_KEYS["oauth_state"])
-    created_at = get_setting_value(META_KEYS["oauth_state_created_at"])
     try:
-        state_is_fresh = time.time() - float(created_at) < 600
-    except (TypeError, ValueError):
-        state_is_fresh = False
-
-    if not code or not state or state != expected_state or not state_is_fresh:
+        with SessionLocal() as db:
+            state_payload = consume_oauth_state(db, state or "", settings.META_APP_SECRET)
+    except PermissionError:
         return _frontend_redirect("error", "OAuth state không hợp lệ hoặc đã hết hạn.")
+    if not code:
+        return _frontend_redirect("error", "OAuth code không hợp lệ.")
 
     try:
         app_id, app_secret, redirect_uri = _require_oauth_settings()
@@ -215,6 +224,28 @@ async def meta_oauth_callback(
                 )
 
             instagram = page.get("instagram_business_account") or {}
+            if not settings.CHANNEL_ENCRYPTION_KEY:
+                raise RuntimeError("CHANNEL_ENCRYPTION_KEY is required for channel credentials")
+            with SessionLocal() as db:
+                upsert_channel_connection(
+                    db,
+                    business_id=int(state_payload["business_id"]),
+                    channel_type="facebook",
+                    external_account_id=str(page["id"]),
+                    name=str(page.get("name") or page["id"]),
+                    access_token=str(page_token),
+                    config={"meta_user_id": str(user.get("id") or "")},
+                )
+                if instagram.get("id"):
+                    upsert_channel_connection(
+                        db,
+                        business_id=int(state_payload["business_id"]),
+                        channel_type="instagram",
+                        external_account_id=str(instagram["id"]),
+                        name=str(instagram.get("username") or instagram["id"]),
+                        access_token=str(page_token),
+                        config={"facebook_page_id": str(page["id"])},
+                    )
             subscription_status = "not_attempted"
             subscription_response = await client.post(
                 _graph_url(f"{page['id']}/subscribed_apps"),

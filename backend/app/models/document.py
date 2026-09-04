@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     JSON,
     String,
     Text,
@@ -70,6 +71,13 @@ class Document(Base):
         Text,
         nullable=True,
     )
+
+    embedding_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending", server_default="pending", index=True
+    )
+    reindex_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime,

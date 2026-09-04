@@ -4,10 +4,19 @@ import time
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.database.session import Base, engine
+from app.database.bootstrap import ensure_default_business
+from app.database.session import Base, SessionLocal, engine
 from app.models.customer import Customer
+from app.models.customer_merge import CustomerMerge
+from app.models.audit_log import AuditLog
+from app.models.auth_session import AuthSession
+from app.models.notification import Notification
+from app.models.experimentation import RuleSuggestion, FeatureSnapshot, Experiment, ExperimentAssignment, ExperimentOutcome, BanditDecision
+from app.models.customer_fact import CustomerFact
+from app.models.business_setting import BusinessSetting
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.message_attachment import MessageAttachment
 from app.models.document import Document, DocumentChunk
 from app.models.setting import AppSetting
 # Import all target models before create_all() so SQLAlchemy registers the
@@ -15,7 +24,9 @@ from app.models.setting import AppSetting
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.channel import Channel, ChannelEvent
 from app.models.crm_extended import ConversationAssignment, ConversationTag, Tag
+from app.models.ticket import TicketEvent
 from app.models.sales import Order, OrderItem, Product
+from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
 from app.models.chatbot import ChatbotConfig
 
 logger = logging.getLogger(__name__)
@@ -91,7 +102,7 @@ def init_db() -> None:
         conn.execute(
             text(
                 "ALTER TABLE customers "
-                "ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()"
+                "ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
             )
         )
         conn.execute(
@@ -198,6 +209,19 @@ def init_db() -> None:
         )
         conn.execute(
             text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS merged_into_customer_id INTEGER "
+                "REFERENCES customers(id) ON DELETE SET NULL"
+            )
+        )
+        conn.execute(
+            text(
                 "ALTER TABLE messages "
                 "ADD COLUMN IF NOT EXISTS direction VARCHAR(20) "
                 "NOT NULL DEFAULT 'inbound'"
@@ -235,6 +259,13 @@ def init_db() -> None:
             "Skipping pgvector HNSW index: embedding dimension %d exceeds the 2,000-dimension limit",
             settings.EMBEDDING_DIMENSION,
         )
+
+    # Keep the built-in tenant available for the initial single-business
+    # deployment. The Alembic seed migration performs the same operation for
+    # fresh environments; this call also makes legacy create_all databases
+    # safe to upgrade without a manual data step.
+    with SessionLocal() as db:
+        ensure_default_business(db)
 
     logger.info("Database schema and pgvector index are ready")
 

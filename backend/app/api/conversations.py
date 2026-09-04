@@ -1,5 +1,7 @@
 import json
+import mimetypes
 import uuid
+from datetime import datetime, timezone
 
 from io import BytesIO
 from pathlib import Path
@@ -18,7 +20,7 @@ from fastapi.concurrency import run_in_threadpool
 
 from pydantic import BaseModel
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 import httpx
@@ -26,6 +28,9 @@ from PIL import Image
 
 from app.core.config import settings
 from app.db.dependencies import get_db
+from app.tenancy.context import TenantContext
+from app.tenancy.dependencies import get_tenant_context
+from app.models.message_attachment import MessageAttachment
 from app.services.meta_errors import MetaAPIError
 from app.services.realtime import manager
 
@@ -38,6 +43,19 @@ from app.services.instagram_service import (
     send_instagram_message,
     send_instagram_image,
 )
+from app.services.facebook_service import send_facebook_media
+from app.services.instagram_service import send_instagram_media
+from app.services.telegram_service import send_telegram_media
+from app.services.zalo_service import send_zalo_media
+from app.services.media_resolver import build_media_url
+from app.contracts.channel_event import NormalizedAttachment, MediaType
+from app.integrations.telegram import TelegramAdapter
+from app.models.channel import Channel
+from app.models.business import User
+from app.models.conversation import Conversation
+from app.models.crm_extended import ConversationAssignment, CustomerTag, Tag
+from app.services.channel_credentials import decrypt_token
+from app.auth.dependencies import require_write_access
 
 
 router = APIRouter()
@@ -74,6 +92,58 @@ MAX_IMAGE_SIZE = (
     * 1024
 )
 
+# Media uploaded from the agent composer is stored briefly and exposed through
+# the configured public base URL so channel providers can fetch it.  Provider
+# adapters still enforce their own supported media types at send time.
+MAX_MEDIA_UPLOAD_SIZE = 25 * 1024 * 1024
+ALLOWED_MEDIA_UPLOAD_TYPES = {
+    "image": {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+    },
+    "sticker": {
+        "image/webp",
+        "image/png",
+        "image/jpeg",
+    },
+    "audio": {
+        "audio/aac",
+        "audio/flac",
+        "audio/m4a",
+        "audio/mp4",
+        "audio/mpeg",
+        "audio/ogg",
+        "audio/opus",
+        "audio/wav",
+        "audio/webm",
+        "application/ogg",
+    },
+    "video": {
+        "video/mp4",
+        "video/mpeg",
+        "video/quicktime",
+        "video/webm",
+    },
+    "file": {
+        "application/msword",
+        "application/rtf",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/x-7z-compressed",
+        "application/x-rar-compressed",
+        "application/pdf",
+        "application/zip",
+        "application/octet-stream",
+        "text/csv",
+        "text/plain",
+    },
+}
+
 
 IMAGE_SIGNATURES = {
     "image/jpeg": (
@@ -105,6 +175,11 @@ class SendMediaRequest(
 ):
     media_url: str
     media_type: str = "image"
+    caption: str | None = None
+
+
+class ConversationAssignmentRequest(BaseModel):
+    assigned_user_id: int | None = None
 
 
 # =========================================================
@@ -733,6 +808,7 @@ def log_instagram_recipient_audit(
 def get_conversation_target(
     db: Session,
     conversation_id: int,
+    business_id: int | None = None,
 ):
     """
     Lấy conversation
@@ -744,6 +820,7 @@ def get_conversation_target(
             SELECT
                 cv.id,
                 cv.channel,
+                cv.channel_id,
                 cv.customer_id,
                 c.external_user_id
 
@@ -754,12 +831,14 @@ def get_conversation_target(
 
             WHERE
                 cv.id = :conversation_id
+                AND (:business_id IS NULL OR cv.business_id = :business_id)
+                AND (:business_id IS NULL OR c.business_id = :business_id)
 
             LIMIT 1
         """),
         {
-            "conversation_id":
-                conversation_id,
+            "conversation_id": conversation_id,
+            "business_id": business_id,
         },
     ).mappings().first()
 
@@ -788,6 +867,84 @@ def get_conversation_target(
 
 
     return conversation
+
+
+def send_telegram_text(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    text_content: str,
+    business_id: int,
+) -> tuple[dict, Channel]:
+    """Send through the conversation's tenant-owned Telegram channel.
+
+    A conversation must retain the channel connection that received it.  This
+    prevents a missing/old channel link from silently falling back to a global
+    environment token or another active bot in the same tenant.
+    """
+    channel_id = conversation.get("channel_id")
+    if channel_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Telegram conversation is not linked to a channel connection",
+        )
+
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(channel_id),
+            Channel.business_id == business_id,
+            Channel.channel_type == "telegram",
+            Channel.status == "active",
+        )
+    )
+    if channel is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Active Telegram channel not found for this tenant",
+        )
+    if not channel.access_token_encrypted:
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram channel credentials are not configured",
+        )
+
+    try:
+        access_token = decrypt_token(
+            channel.access_token_encrypted,
+            settings.CHANNEL_ENCRYPTION_KEY,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram channel credentials could not be decrypted",
+        ) from exc
+
+    try:
+        result = TelegramAdapter().send_message(
+            recipient_external_id=recipient_id,
+            text=text_content,
+            access_token=access_token,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Telegram provider could not be reached",
+        ) from exc
+    if result.get("ok") is False:
+        description = result.get("description") or "Telegram rejected the message"
+        raise HTTPException(status_code=502, detail=description)
+    return result, channel
+
+
+def telegram_external_message_id(result: dict, channel: Channel) -> str | None:
+    """Build a collision-resistant local id from Telegram's response."""
+    message_id = result.get("message_id")
+    if message_id is None:
+        message_id = (result.get("result") or {}).get("message_id")
+    if message_id is None:
+        return None
+    return f"telegram:{channel.external_account_id}:{message_id}"
 
 
 # =========================================================
@@ -897,9 +1054,11 @@ def save_outbound_message(
         },
     )
 
-    db.commit()
-
+    # Consume INSERT ... RETURNING before committing. SQLite keeps the
+    # statement cursor active until it is read, which otherwise causes
+    # ``cannot commit transaction - SQL statements in progress``.
     row = result.mappings().first()
+    db.commit()
 
     if row:
         return dict(
@@ -968,6 +1127,7 @@ async def send_and_save_outbound(
     recipient_id: str,
     text_content: str | None = None,
     image_url: str | None = None,
+    business_id: int | None = None,
 ) -> dict:
     if image_url:
         print(
@@ -982,12 +1142,42 @@ async def send_and_save_outbound(
                 send_facebook_image,
                 recipient_id=recipient_id,
                 image_url=image_url,
+                db=db,
+                business_id=business_id,
             )
         elif channel == "instagram":
             result = await run_in_threadpool(
                 send_instagram_image,
                 recipient_id=recipient_id,
                 image_url=image_url,
+                db=db,
+                business_id=business_id,
+            )
+        elif channel == "telegram":
+            if business_id is None:
+                raise HTTPException(status_code=400, detail="Tenant context is required")
+            result = await run_in_threadpool(
+                send_telegram_media,
+                db=db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                recipient_id=recipient_id,
+                media_type="image",
+                media_url=image_url,
+                caption=None,
+            )
+        elif channel == "zalo":
+            if business_id is None:
+                raise HTTPException(status_code=400, detail="Tenant context is required")
+            result = await run_in_threadpool(
+                send_zalo_media,
+                db=db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                recipient_id=recipient_id,
+                media_type="image",
+                media_url=image_url,
+                caption=None,
             )
         else:
             raise HTTPException(
@@ -1023,22 +1213,44 @@ async def send_and_save_outbound(
                 send_facebook_message,
                 recipient_id=recipient_id,
                 text=text_content or "",
+                db=db,
+                business_id=business_id,
             )
         elif channel == "instagram":
             result = await run_in_threadpool(
                 send_instagram_message,
                 recipient_id=recipient_id,
                 text=text_content or "",
+                db=db,
+                business_id=business_id,
             )
+        elif channel == "telegram":
+            if business_id is None:
+                raise HTTPException(status_code=400, detail="Tenant context is required")
+            telegram_conversation = get_conversation_target(
+                db=db,
+                conversation_id=conversation_id,
+                business_id=business_id,
+            )
+            result, telegram_channel = await run_in_threadpool(
+                send_telegram_text,
+                db=db,
+                conversation=telegram_conversation,
+                recipient_id=recipient_id,
+                text_content=text_content or "",
+                business_id=business_id,
+            )
+            external_message_id = telegram_external_message_id(result, telegram_channel)
         else:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported channel: {channel}",
             )
 
-        external_message_id = result.get(
-            "message_id"
-        )
+        if channel != "telegram":
+            external_message_id = result.get(
+                "message_id"
+            )
 
         saved_message = save_outbound_message(
             db=db,
@@ -1083,6 +1295,7 @@ def get_conversations(
     db: Session = Depends(
         get_db
     ),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
 
     query = text("""
@@ -1096,6 +1309,7 @@ def get_conversations(
 
             cv.channel,
             cv.status,
+            cv.assigned_user_id,
             cv.created_at,
             cv.updated_at,
 
@@ -1183,6 +1397,9 @@ def get_conversations(
 
         JOIN customers c
             ON c.id = cv.customer_id
+           AND c.business_id = :business_id
+
+        WHERE cv.business_id = :business_id
 
         ORDER BY
             last_message_at DESC
@@ -1191,15 +1408,117 @@ def get_conversations(
 
 
     result = db.execute(
-        query
+        query,
+        {"business_id": tenant.business_id},
     ).mappings().all()
 
+    customer_ids = {int(row["customer_id"]) for row in result if row.get("customer_id") is not None}
+    tag_map: dict[int, list[str]] = {customer_id: [] for customer_id in customer_ids}
+    if customer_ids:
+        tag_rows = db.query(CustomerTag.customer_id, Tag.name).join(
+            Tag, Tag.id == CustomerTag.tag_id
+        ).filter(
+            CustomerTag.business_id == tenant.business_id,
+            Tag.business_id == tenant.business_id,
+            CustomerTag.customer_id.in_(customer_ids),
+        ).order_by(Tag.name.asc()).all()
+        for customer_id, tag_name in tag_rows:
+            tag_map.setdefault(int(customer_id), []).append(tag_name)
 
     return {
         "items": [
-            dict(row)
+            {**dict(row), "customer_tags": tag_map.get(int(row["customer_id"]), [])}
             for row in result
         ]
+    }
+
+
+@router.patch("/{conversation_id}/assignment", dependencies=[Depends(require_write_access)])
+def reassign_conversation(
+    conversation_id: int,
+    payload: ConversationAssignmentRequest,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == tenant.business_id,
+    ).first()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation không tồn tại.")
+
+    if payload.assigned_user_id is not None:
+        assignee = db.query(User).filter(
+            User.id == payload.assigned_user_id,
+            User.business_id == tenant.business_id,
+            User.is_active.is_(True),
+        ).first()
+        if assignee is None:
+            raise HTTPException(status_code=404, detail="Nhân viên không thuộc business hoặc đã bị vô hiệu hóa.")
+
+    previous_user_id = conversation.assigned_user_id
+    if previous_user_id != payload.assigned_user_id:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        active_assignments = db.query(ConversationAssignment).join(
+            Conversation,
+            Conversation.id == ConversationAssignment.conversation_id,
+        ).filter(
+            ConversationAssignment.conversation_id == conversation.id,
+            Conversation.business_id == tenant.business_id,
+            ConversationAssignment.unassigned_at.is_(None),
+        ).all()
+        for assignment in active_assignments:
+            assignment.unassigned_at = now
+        if payload.assigned_user_id is not None:
+            db.add(ConversationAssignment(
+                conversation_id=conversation.id,
+                user_id=payload.assigned_user_id,
+                assignment_type="manual",
+                assigned_at=now,
+            ))
+        conversation.assigned_user_id = payload.assigned_user_id
+        db.commit()
+
+    return {
+        "conversation_id": conversation.id,
+        "business_id": conversation.business_id,
+        "assigned_user_id": conversation.assigned_user_id,
+    }
+
+
+@router.get("/{conversation_id}/assignments")
+def get_conversation_assignments(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == tenant.business_id,
+    ).first()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation không tồn tại.")
+    assignments = db.query(ConversationAssignment).join(
+        Conversation,
+        Conversation.id == ConversationAssignment.conversation_id,
+    ).filter(
+        ConversationAssignment.conversation_id == conversation.id,
+        Conversation.business_id == tenant.business_id,
+    ).order_by(ConversationAssignment.assigned_at.asc(), ConversationAssignment.id.asc()).all()
+    return {
+        "items": [
+            {
+                "id": assignment.id,
+                "conversation_id": assignment.conversation_id,
+                "user_id": assignment.user_id,
+                "assigned_by": assignment.assigned_by,
+                "assignment_type": assignment.assignment_type,
+                "assigned_at": assignment.assigned_at,
+                "unassigned_at": assignment.unassigned_at,
+            }
+            for assignment in assignments
+        ],
+        "total": len(assignments),
     }
 
 
@@ -1215,6 +1534,7 @@ def get_conversation_messages(
     db: Session = Depends(
         get_db
     ),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
 
     conversation = db.execute(
@@ -1225,12 +1545,13 @@ def get_conversation_messages(
 
             WHERE
                 id = :conversation_id
+                AND business_id = :business_id
 
             LIMIT 1
         """),
         {
-            "conversation_id":
-                conversation_id,
+            "conversation_id": conversation_id,
+            "business_id": tenant.business_id,
         },
     ).first()
 
@@ -1265,6 +1586,12 @@ def get_conversation_messages(
             m.conversation_id
             = :conversation_id
 
+            AND EXISTS (
+                SELECT 1 FROM conversations cv
+                WHERE cv.id = m.conversation_id
+                  AND cv.business_id = :business_id
+            )
+
         ORDER BY
             m.id ASC
     """)
@@ -1273,10 +1600,41 @@ def get_conversation_messages(
     result = db.execute(
         query,
         {
-            "conversation_id":
-                conversation_id,
+            "conversation_id": conversation_id,
+            "business_id": tenant.business_id,
         },
     ).mappings().all()
+
+    # Return the complete canonical attachment list.  The legacy media_type
+    # and media_url columns remain in each row for older clients.
+    attachment_by_message: dict[int, list[dict]] = {}
+    if result:
+        try:
+            message_ids = [int(row["message_id"]) for row in result]
+            attachment_rows = db.scalars(
+                select(MessageAttachment).where(
+                    MessageAttachment.business_id == tenant.business_id,
+                    MessageAttachment.message_id.in_(message_ids),
+                ).order_by(MessageAttachment.id)
+            ).all()
+            for attachment in attachment_rows:
+                attachment_by_message.setdefault(attachment.message_id, []).append({
+                    "id": attachment.id,
+                    "media_type": attachment.media_type,
+                    "mime_type": attachment.mime_type,
+                    "file_name": attachment.file_name,
+                    "duration_ms": attachment.duration_ms,
+                    "external_attachment_id": attachment.external_attachment_id,
+                    "media_url": build_media_url(
+                        attachment_id=attachment.id,
+                        business_id=tenant.business_id,
+                    ),
+                    "metadata": attachment.metadata_,
+                })
+        except Exception:
+            # Allow a rolling deployment to serve legacy messages before the
+            # attachment migration has been applied.
+            db.rollback()
 
 
     return {
@@ -1284,7 +1642,10 @@ def get_conversation_messages(
             conversation_id,
 
         "items": [
-            dict(row)
+            {
+                **dict(row),
+                "attachments": attachment_by_message.get(int(row["message_id"]), []),
+            }
             for row in result
         ],
     }
@@ -1295,7 +1656,8 @@ def get_conversation_messages(
 # =========================================================
 
 @router.post(
-    "/{conversation_id}/messages"
+    "/{conversation_id}/messages",
+    dependencies=[Depends(require_write_access)],
 )
 def send_message(
     conversation_id: int,
@@ -1303,6 +1665,7 @@ def send_message(
     db: Session = Depends(
         get_db
     ),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
 
     message_text = str(
@@ -1328,6 +1691,7 @@ def send_message(
 
             conversation_id=
                 conversation_id,
+            business_id=tenant.business_id,
         )
     )
 
@@ -1365,6 +1729,8 @@ def send_message(
 
                     text=
                         message_text,
+                    db=db,
+                    business_id=tenant.business_id,
                 )
             )
 
@@ -1513,6 +1879,8 @@ def send_message(
 
                     text=
                         message_text,
+                    db=db,
+                    business_id=tenant.business_id,
                 )
             )
 
@@ -1609,6 +1977,10 @@ def send_message(
                 detail=exc.to_detail(),
             )
 
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         except Exception as exc:
 
             db.rollback()
@@ -1628,6 +2000,53 @@ def send_message(
             )
 
 
+    # =====================================================
+    # TELEGRAM TEXT
+    # =====================================================
+
+    if channel == "telegram":
+
+        try:
+            result, telegram_channel = send_telegram_text(
+                db=db,
+                conversation=conversation,
+                recipient_id=recipient_id,
+                text_content=message_text,
+                business_id=tenant.business_id,
+            )
+            external_message_id = telegram_external_message_id(result, telegram_channel)
+            saved_message = save_outbound_message(
+                db=db,
+                conversation_id=conversation_id,
+                channel="telegram",
+                recipient_id=recipient_id,
+                external_message_id=external_message_id,
+                content=message_text,
+                media_type=None,
+                media_url=None,
+                meta_response=result,
+            )
+            return {
+                "success": True,
+                "status": "sent",
+                "channel": "telegram",
+                "message_type": "text",
+                "conversation_id": conversation_id,
+                "external_message_id": external_message_id,
+                "message": saved_message,
+            }
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            print("❌ TELEGRAM SEND ERROR:", str(exc))
+            raise HTTPException(
+                status_code=502,
+                detail="Không thể gửi Telegram message",
+            ) from exc
+
+
     raise HTTPException(
         status_code=400,
 
@@ -1643,7 +2062,8 @@ def send_message(
 # =========================================================
 
 @router.post(
-    "/{conversation_id}/send"
+    "/{conversation_id}/send",
+    dependencies=[Depends(require_write_access)],
 )
 async def unified_send(
     conversation_id: int,
@@ -1660,6 +2080,7 @@ async def unified_send(
     db: Session = Depends(
         get_db
     ),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     message_text = str(
         text_value
@@ -1685,6 +2106,7 @@ async def unified_send(
     conversation = get_conversation_target(
         db=db,
         conversation_id=conversation_id,
+        business_id=tenant.business_id,
     )
 
     channel = conversation[
@@ -1722,6 +2144,7 @@ async def unified_send(
                     channel=channel,
                     recipient_id=recipient_id,
                     image_url=media_url,
+                    business_id=tenant.business_id,
                 )
             )
 
@@ -1733,6 +2156,7 @@ async def unified_send(
                     channel=channel,
                     recipient_id=recipient_id,
                     text_content=message_text,
+                    business_id=tenant.business_id,
                 )
             )
 
@@ -1750,6 +2174,9 @@ async def unified_send(
             ),
             detail=exc.to_detail(),
         )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     print(
         "[UI MEDIA ROUTE END] "
@@ -1793,15 +2220,149 @@ async def unified_send(
 # SEND IMAGE BY URL
 # =========================================================
 
+@router.post("/{conversation_id}/send-media", dependencies=[Depends(require_write_access)])
+async def send_media_message(
+    conversation_id: int,
+    body: SendMediaRequest,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    """Send one canonical media attachment through the linked channel."""
+    media_type = str(body.media_type or "").strip().lower()
+    try:
+        MediaType(media_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"media_type không hợp lệ: {media_type}") from exc
+    if media_type == "text":
+        raise HTTPException(status_code=422, detail="send-media chỉ nhận image/audio/sticker/video/file")
+    media_url = str(body.media_url or "").strip()
+    if not media_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=422, detail="media_url phải là URL http/https")
+
+    conversation = get_conversation_target(
+        db=db,
+        conversation_id=conversation_id,
+        business_id=tenant.business_id,
+    )
+    channel = str(conversation["channel"] or "").strip().lower()
+    recipient_id = str(conversation["external_user_id"])
+
+    try:
+        if channel == "facebook":
+            result = await run_in_threadpool(
+                send_facebook_media,
+                recipient_id=recipient_id,
+                media_type=media_type,
+                media_url=media_url,
+                caption=body.caption,
+                db=db,
+                business_id=tenant.business_id,
+            )
+        elif channel == "instagram":
+            result = await run_in_threadpool(
+                send_instagram_media,
+                recipient_id=recipient_id,
+                media_type=media_type,
+                media_url=media_url,
+                caption=body.caption,
+                db=db,
+                business_id=tenant.business_id,
+            )
+        elif channel == "telegram":
+            result = await run_in_threadpool(
+                send_telegram_media,
+                db=db,
+                business_id=tenant.business_id,
+                conversation_id=conversation_id,
+                recipient_id=recipient_id,
+                media_type=media_type,
+                media_url=media_url,
+                caption=body.caption,
+            )
+        elif channel == "zalo":
+            result = await run_in_threadpool(
+                send_zalo_media,
+                db=db,
+                business_id=tenant.business_id,
+                conversation_id=conversation_id,
+                recipient_id=recipient_id,
+                media_type=media_type,
+                media_url=media_url,
+                caption=body.caption,
+            )
+        else:
+            raise HTTPException(status_code=422, detail=f"Kênh {channel} chưa hỗ trợ gửi media")
+    except HTTPException:
+        db.rollback()
+        raise
+    except (ValueError, LookupError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except MetaAPIError as exc:
+        db.rollback()
+        raise HTTPException(status_code=meta_error_status_code(exc), detail=exc.to_detail()) from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=502, detail=f"Không thể gửi media qua {channel}") from exc
+
+    external_message_id = result.get("message_id") or (result.get("result") or {}).get("message_id")
+    saved = save_outbound_message(
+        db=db,
+        conversation_id=conversation_id,
+        channel=channel,
+        recipient_id=recipient_id,
+        external_message_id=external_message_id,
+        content=body.caption,
+        media_type=media_type,
+        media_url=media_url,
+        meta_response=result,
+    )
+    if saved and conversation.get("channel_id"):
+        try:
+            from app.services.media_service import save_message_attachments
+
+            attachment = NormalizedAttachment(
+                media_type=MediaType(media_type),
+                url=media_url,
+                metadata={
+                    "caption": body.caption,
+                    "provider_message_id": external_message_id,
+                },
+            )
+            save_message_attachments(
+                db,
+                message_id=int(saved["message_id"]),
+                business_id=tenant.business_id,
+                channel_id=int(conversation["channel_id"]),
+                attachments=[attachment],
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+    await broadcast_message_created(saved)
+    return {
+        "success": True,
+        "status": "sent",
+        "channel": channel,
+        "message_type": media_type,
+        "conversation_id": conversation_id,
+        "external_message_id": external_message_id,
+        "message": saved,
+        "provider_response": result,
+    }
+
 @router.post(
-    "/{conversation_id}/media"
+    "/{conversation_id}/media",
+    dependencies=[Depends(require_write_access)],
 )
+
 def send_media(
     conversation_id: int,
     body: SendMediaRequest,
     db: Session = Depends(
         get_db
     ),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
 
     media_type = str(
@@ -1869,6 +2430,7 @@ def send_media(
 
             conversation_id=
                 conversation_id,
+            business_id=tenant.business_id,
         )
     )
 
@@ -1913,6 +2475,8 @@ def send_media(
 
                     image_url=
                         media_url,
+                    db=db,
+                    business_id=tenant.business_id,
                 )
             )
 
@@ -2054,6 +2618,8 @@ def send_media(
 
                     image_url=
                         media_url,
+                    db=db,
+                    business_id=tenant.business_id,
                 )
             )
 
@@ -2142,6 +2708,10 @@ def send_media(
                 detail=exc.to_detail(),
             )
 
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         except Exception as exc:
 
             db.rollback()
@@ -2217,12 +2787,24 @@ def get_uploaded_image(
     )
 
 
+@router.get("/media-uploads/{filename}")
+def get_uploaded_media(filename: str):
+    """Serve a composer upload to a channel provider using a safe filename."""
+    safe_filename = Path(filename).name
+    file_path = UPLOAD_DIR / safe_filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Media not found")
+    media_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+    return FileResponse(path=file_path, media_type=media_type)
+
+
 # =========================================================
 # UPLOAD + SEND IMAGE
 # =========================================================
 
 @router.post(
-    "/{conversation_id}/media/upload"
+    "/{conversation_id}/media/upload",
+    dependencies=[Depends(require_write_access)],
 )
 async def upload_and_send_image(
     conversation_id: int,
@@ -2234,6 +2816,7 @@ async def upload_and_send_image(
     db: Session = Depends(
         get_db
     ),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """
     Flow:
@@ -2455,6 +3038,7 @@ async def upload_and_send_image(
 
             conversation_id=
                 conversation_id,
+            business_id=tenant.business_id,
         )
     )
 
@@ -2651,6 +3235,8 @@ async def upload_and_send_image(
                 send_instagram_image,
                 recipient_id=recipient_id,
                 image_url=media_url,
+                db=db,
+                business_id=tenant.business_id,
             )
 
 
@@ -2808,6 +3394,79 @@ async def upload_and_send_image(
     )
 
 
+@router.post("/{conversation_id}/media/upload-generic", dependencies=[Depends(require_write_access)])
+async def upload_and_send_generic_media(
+    conversation_id: int,
+    file: UploadFile = File(...),
+    media_type: str = Form("file"),
+    caption: str | None = Form(None),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    """Upload and send audio/video/sticker/file (and non-normalized images).
+
+    The existing ``media/upload`` endpoint deliberately normalizes images for
+    Meta.  This endpoint preserves the original bytes for media where provider
+    metadata (audio codec, sticker format, video container) matters, then
+    delegates delivery and persistence to the canonical ``send-media`` route.
+    """
+    normalized_type = str(media_type or "").strip().lower()
+    try:
+        MediaType(normalized_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"media_type không hợp lệ: {normalized_type}") from exc
+    if normalized_type in {"text", "unknown"}:
+        raise HTTPException(status_code=422, detail="upload-generic chỉ nhận image/audio/sticker/video/file")
+
+    content_type = str(file.content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
+    allowed_types = ALLOWED_MEDIA_UPLOAD_TYPES[normalized_type]
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": f"Content-Type không phù hợp với media_type={normalized_type}",
+                "content_type": content_type,
+                "allowed": sorted(allowed_types),
+            },
+        )
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="File upload bị rỗng")
+    if len(file_bytes) > MAX_MEDIA_UPLOAD_SIZE:
+        raise HTTPException(status_code=400, detail="File media quá lớn. Tối đa 25MB")
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if not suffix or len(suffix) > 10 or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789." for char in suffix):
+        suffix = mimetypes.guess_extension(content_type) or ".bin"
+    filename = f"{uuid.uuid4().hex}{suffix}"
+    file_path = UPLOAD_DIR / filename
+    try:
+        file_path.write_bytes(file_bytes)
+        media_url = f"{get_public_base_url()}/api/conversations/media-uploads/{filename}"
+        result = await send_media_message(
+            conversation_id,
+            SendMediaRequest(media_type=normalized_type, media_url=media_url, caption=caption),
+            db,
+            tenant,
+        )
+        result["upload"] = {
+            "filename": file.filename,
+            "content_type": content_type,
+            "size": len(file_bytes),
+            "media_url": media_url,
+        }
+        return result
+    except HTTPException:
+        db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Không thể upload và gửi media") from exc
+
+
 # =========================================================
 # AUTO-REPLY SETTINGS ENDPOINTS
 # =========================================================
@@ -2817,16 +3476,20 @@ class AutoReplyStatusRequest(BaseModel):
 
 
 @router.get("/auto-reply-status")
-async def get_auto_reply_status(db: Session = Depends(get_db)):
+async def get_auto_reply_status(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
     from app.services.auto_reply_service import get_auto_reply_enabled
-    return {"auto_reply_enabled": get_auto_reply_enabled(db)}
+    return {"auto_reply_enabled": get_auto_reply_enabled(db, tenant.business_id)}
 
 
-@router.post("/auto-reply-status")
+@router.post("/auto-reply-status", dependencies=[Depends(require_write_access)])
 async def set_auto_reply_status(
     req: AutoReplyStatusRequest,
     db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     from app.services.auto_reply_service import set_auto_reply_enabled
-    enabled = set_auto_reply_enabled(db, req.auto_reply_enabled)
+    enabled = set_auto_reply_enabled(db, req.auto_reply_enabled, tenant.business_id)
     return {"auto_reply_enabled": enabled}

@@ -56,6 +56,20 @@ class Customer(Base):
         nullable=True,
     )
 
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="active",
+        server_default="active",
+        index=True,
+    )
+
+    merged_into_customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
@@ -69,8 +83,26 @@ class Customer(Base):
 
     business = relationship("Business", back_populates="customers")
 
+    merged_into = relationship(
+        "Customer",
+        remote_side="Customer.id",
+        foreign_keys=[merged_into_customer_id],
+    )
+
     conversations = relationship(
         "Conversation",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
+
+    identities = relationship(
+        "CustomerIdentity",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
+
+    facts = relationship(
+        "CustomerFact",
         back_populates="customer",
         cascade="all, delete-orphan",
     )

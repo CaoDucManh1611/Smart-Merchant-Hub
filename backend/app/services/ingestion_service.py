@@ -5,7 +5,7 @@ Chạy như background task để không block request.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -13,10 +13,34 @@ from app.core.config import settings
 from app.models.document import Document, DocumentChunk
 from app.rag.loader import load_document, detect_file_type
 from app.rag.chunker import chunk_text
-from app.rag.embedder import embed_texts
+from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog
 
 logger = logging.getLogger(__name__)
+
+
+def embed_chunks_or_fallback(
+    chunk_contents: list[str],
+    *,
+    on_error=None,
+) -> tuple[list[list[float] | None], bool]:
+    """Embed chunks when possible, otherwise keep a lexical-only index.
+
+    A temporary provider failure (for example an exhausted Gemini quota) must
+    not discard an otherwise valid document.  ``retriever._retrieve_lexical``
+    intentionally supports chunks with ``NULL`` embeddings, so callers can
+    still answer product/SKU questions while semantic indexing is unavailable.
+    """
+    try:
+        return embed_texts(chunk_contents), True
+    except Exception as error:
+        if on_error is not None:
+            on_error(error)
+        logger.warning(
+            "Embedding unavailable; storing lexical-only chunks: %s",
+            error,
+        )
+        return [None] * len(chunk_contents), False
 
 
 def ingest_document(
@@ -25,6 +49,7 @@ def ingest_document(
     filename: str,
     db: Session,
     use_embeddings: bool = True,
+    business_id: int | None = None,
 ) -> None:
     """
     Pipeline xử lý tài liệu:
@@ -41,7 +66,10 @@ def ingest_document(
         filename=filename,
         file_size=len(file_bytes),
     ) as run:
-        doc = db.get(Document, document_id)
+        doc_query = db.query(Document).filter(Document.id == document_id)
+        if business_id is not None:
+            doc_query = doc_query.filter(Document.business_id == business_id)
+        doc = doc_query.first()
         if doc is None:
             logger.error("Document %d not found", document_id)
             run.finish("error", phase="complete", error="document_not_found")
@@ -50,6 +78,8 @@ def ingest_document(
         try:
             # Cập nhật trạng thái
             doc.status = "processing"
+            doc.embedding_status = "processing"
+            doc.reindex_count = (doc.reindex_count or 0) + 1
             db.commit()
 
             logger.info(
@@ -83,6 +113,7 @@ def ingest_document(
 
             if not chunks:
                 doc.status = "error"
+                doc.embedding_status = "error"
                 doc.error_message = "Không tạo được chunks từ tài liệu."
                 db.commit()
                 run.finish(
@@ -98,10 +129,35 @@ def ingest_document(
             # -------------------------------------------------
             chunk_contents = [c.content for c in chunks]
             if use_embeddings:
-                embeddings = embed_texts(chunk_contents)
-                logger.info("Embedded %d chunks", len(embeddings))
+                embedding_error = None
+
+                def capture_embedding_error(error: Exception) -> None:
+                    nonlocal embedding_error
+                    embedding_error = error
+
+                embeddings, embeddings_used = embed_chunks_or_fallback(
+                    chunk_contents,
+                    on_error=capture_embedding_error,
+                )
+                if embeddings_used:
+                    logger.info("Embedded %d chunks", len(embeddings))
+                    doc.embedding_status = "ready"
+                else:
+                    doc.embedding_status = "lexical_only"
+                    retry_delay = (
+                        embedding_retry_delay(embedding_error)
+                        if embedding_error is not None
+                        else None
+                    )
+                    doc.retry_after = (
+                        datetime.utcnow() + timedelta(seconds=retry_delay)
+                        if retry_delay is not None
+                        else None
+                    )
             else:
                 embeddings = [None] * len(chunks)
+                embeddings_used = False
+                doc.embedding_status = "lexical_only"
                 logger.info(
                     "Fast ingestion enabled for %s: storing %d chunks without remote embeddings",
                     filename,
@@ -114,7 +170,7 @@ def ingest_document(
                     f"{len(embeddings)} != {len(chunks)}."
                 )
 
-            run.update(phase="store", embeddings_skipped=not use_embeddings)
+            run.update(phase="store", embeddings_skipped=not embeddings_used)
             # -------------------------------------------------
             # Bước 4: Replace the previous index atomically.
             # -------------------------------------------------
@@ -140,6 +196,7 @@ def ingest_document(
             doc.chunk_count = len(chunks)
             doc.processed_at = datetime.utcnow()
             doc.error_message = None
+            doc.retry_after = None
             db.commit()
 
             logger.info(
@@ -160,6 +217,7 @@ def ingest_document(
             if failed_doc is not None:
                 failed_doc.status = "error"
                 failed_doc.error_message = str(e)[:500]
+                failed_doc.embedding_status = "error"
                 db.commit()
             run.finish(
                 "error",
@@ -169,9 +227,12 @@ def ingest_document(
             )
 
 
-def delete_document(document_id: int, db: Session) -> bool:
+def delete_document(document_id: int, db: Session, business_id: int | None = None) -> bool:
     """Xóa document và tất cả chunks liên quan."""
-    doc = db.get(Document, document_id)
+    doc_query = db.query(Document).filter(Document.id == document_id)
+    if business_id is not None:
+        doc_query = doc_query.filter(Document.business_id == business_id)
+    doc = doc_query.first()
     if doc is None:
         return False
 

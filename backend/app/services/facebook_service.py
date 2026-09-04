@@ -4,17 +4,29 @@ import httpx
 
 from app.services.meta_errors import MetaAPIError
 from app.services.meta_config_service import get_meta_config
+from app.services.channel_service import get_single_active_channel
+from app.core.config import settings
 
 
 # =========================================================
 # CONFIG
 # =========================================================
 
-def get_facebook_config() -> tuple[str, str]:
+def get_facebook_config(db=None, business_id: int | None = None) -> tuple[str, str]:
     """
     Lấy cấu hình Facebook Page.
     """
 
+    if settings.ENVIRONMENT == "production" and (db is None or business_id is None):
+        raise PermissionError("Tenant context is required for production outbound messaging")
+    if db is not None and business_id is not None:
+        channel = get_single_active_channel(db, business_id, "facebook")
+        if not channel.access_token_encrypted:
+            raise ValueError("Encrypted Facebook channel token is missing")
+        from app.services.channel_credentials import decrypt_token
+        return channel.external_account_id, decrypt_token(
+            channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY
+        )
     meta_config = get_meta_config()
     page_id = str(meta_config["facebook_page_id"] or "").strip()
 
@@ -59,6 +71,8 @@ def send_facebook_request(
     recipient_id: str,
     message_payload: dict[str, Any],
     stage: str = "send",
+    db=None,
+    business_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Hàm dùng chung để gửi request
@@ -76,7 +90,7 @@ def send_facebook_request(
         )
 
     page_id, access_token = (
-        get_facebook_config()
+        get_facebook_config(db=db, business_id=business_id)
     )
 
     url = (
@@ -153,6 +167,8 @@ def send_facebook_request(
 def send_facebook_message(
     recipient_id: str,
     text: str,
+    db=None,
+    business_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Gửi text message
@@ -186,6 +202,8 @@ def send_facebook_message(
                     text,
             },
             stage="text_send",
+            db=db,
+            business_id=business_id,
         )
     )
 
@@ -205,6 +223,8 @@ def send_facebook_message(
 def send_facebook_image(
     recipient_id: str,
     image_url: str,
+    db=None,
+    business_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Gửi ảnh từ CRM sang Facebook Messenger.
@@ -273,6 +293,8 @@ def send_facebook_image(
                 },
             },
             stage="image_send",
+            db=db,
+            business_id=business_id,
         )
     )
 
@@ -283,3 +305,40 @@ def send_facebook_image(
     )
 
     return result
+
+
+def send_facebook_media(
+    recipient_id: str,
+    media_type: str,
+    media_url: str,
+    caption: str | None = None,
+    db=None,
+    business_id: int | None = None,
+) -> dict[str, Any]:
+    """Send a provider-supported URL attachment through Messenger."""
+    media_type = str(media_type or "").strip().lower()
+    if media_type == "sticker":
+        raise ValueError("Facebook sticker outbound cần sticker_id; URL sticker không được hỗ trợ")
+    if media_type not in {"image", "audio", "video", "file"}:
+        raise ValueError(f"Facebook không hỗ trợ media_type: {media_type}")
+    media_url = str(media_url or "").strip()
+    if not media_url.startswith(("http://", "https://")):
+        raise ValueError("media_url phải là URL http/https")
+    payload = {
+        "attachment": {
+            "type": media_type,
+            "payload": {"url": media_url, "is_reusable": media_type == "image"},
+        }
+    }
+    if caption:
+        # Messenger attachment captions are represented as text alongside the
+        # attachment; keeping it in the payload is accepted by newer Graph API
+        # versions and ignored by older ones.
+        payload["attachment"]["payload"]["caption"] = str(caption)[:2000]
+    return send_facebook_request(
+        recipient_id=recipient_id,
+        message_payload=payload,
+        stage=f"{media_type}_send",
+        db=db,
+        business_id=business_id,
+    )

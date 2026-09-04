@@ -20,6 +20,29 @@ def _gemini_retry_delay(error: Exception) -> int:
     return 60
 
 
+def embedding_retry_delay(error: Exception) -> int | None:
+    """Return a safe retry delay for temporary provider throttling.
+
+    Providers do not use one consistent error shape: Gemini commonly returns
+    HTTP 429/``RESOURCE_EXHAUSTED`` with a ``retry_delay`` field, while other
+    clients only include a quota/rate-limit phrase.  Persisting this signal on
+    the document lets the UI tell an operator when a lexical-only index can be
+    retried.  Non-transient failures return ``None``.
+    """
+    message = str(error).lower()
+    transient_markers = (
+        "429",
+        "quota",
+        "rate limit",
+        "rate_limit",
+        "resource_exhausted",
+        "too many requests",
+    )
+    if not any(marker in message for marker in transient_markers):
+        return None
+    return _gemini_retry_delay(error)
+
+
 def _embedding_api_key() -> str:
     """Use a dedicated embedding key, with legacy LLM_API_KEY fallback."""
     api_key = settings.EMBEDDING_API_KEY or settings.LLM_API_KEY
@@ -72,6 +95,7 @@ def _embed_with_gemini(
                     model=f"models/{model}",
                     content=batch,
                     task_type="retrieval_document",
+                    output_dimensionality=settings.EMBEDDING_DIMENSION,
                 )
                 break
             except Exception as error:
@@ -108,6 +132,7 @@ def _embed_query_with_gemini(
         model=f"models/{model}",
         content=text,
         task_type="retrieval_query",
+        output_dimensionality=settings.EMBEDDING_DIMENSION,
     )
     return result["embedding"]
 

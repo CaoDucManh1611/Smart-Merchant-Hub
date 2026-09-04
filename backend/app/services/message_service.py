@@ -2,10 +2,16 @@ from typing import Any
 
 import httpx
 from sqlalchemy import text
+from app.contracts.channel_event import ChannelProvider
+from app.integrations._meta import parse_meta_events
+from app.services.customer_identity import resolve_customer
+from app.services.workflow_engine import emit_workflow_event
 from sqlalchemy.orm import Session
 
 from app.db.message_repository import save_message
 from app.services.meta_config_service import get_meta_config
+from app.services.media_resolver import build_media_url
+from app.tenancy.context import TenantContext
 
 
 # =========================================================
@@ -41,8 +47,28 @@ def empty_normalized_message(
         "content": None,
         "media_type": None,
         "media_url": None,
+        "attachments": [],
         "raw_payload": payload,
     }
+
+
+def extract_normalized_attachments(
+    payload: dict[str, Any],
+    provider: ChannelProvider,
+    message_id: str | None,
+) -> list[dict[str, Any]]:
+    """Use the canonical Meta adapter even on the legacy development path."""
+    if not message_id:
+        return []
+    try:
+        events = parse_meta_events(payload, provider)
+    except Exception:
+        return []
+    for event in events:
+        for message in event.messages:
+            if message.external_message_id == str(message_id):
+                return [item.model_dump(mode="json") for item in message.attachments]
+    return []
 
 
 # =========================================================
@@ -238,10 +264,20 @@ def normalize_facebook_message(
     attachment = extract_attachment(
         message
     )
+    normalized_attachments = extract_normalized_attachments(
+        payload,
+        ChannelProvider.FACEBOOK,
+        message.get("mid"),
+    )
 
     return {
         "channel":
             "facebook",
+
+        "external_account_id":
+            event.get("recipient", {}).get("id")
+            or event.get("page_id")
+            or next(iter(payload.get("entry") or []), {}).get("id"),
 
         "external_user_id":
             event.get(
@@ -268,6 +304,8 @@ def normalize_facebook_message(
             attachment.get(
                 "media_url"
             ),
+
+        "attachments": normalized_attachments,
 
         "raw_payload":
             payload,
@@ -1002,10 +1040,19 @@ def normalize_instagram_message(
                 message
             )
         )
+        normalized_attachments = extract_normalized_attachments(
+            payload,
+            ChannelProvider.INSTAGRAM,
+            message.get("mid"),
+        )
 
         result = {
             "channel":
                 "instagram",
+
+            "external_account_id":
+                event.get("recipient", {}).get("id")
+                or next(iter(payload.get("entry") or []), {}).get("id"),
 
             "external_user_id":
                 event.get(
@@ -1034,6 +1081,8 @@ def normalize_instagram_message(
                 attachment.get(
                     "media_url"
                 ),
+
+            "attachments": normalized_attachments,
 
             "raw_payload":
                 payload,
@@ -1244,28 +1293,41 @@ def process_and_save_message(
     # 2. TÌM CUSTOMER
     # =====================================================
 
-    customer = db.execute(
-        text("""
-            SELECT
-                id,
-                name,
-                avatar_url
+    # Prefer the tenant-scoped identity resolver whenever a business is
+    # available. The fallback preserves legacy databases that have not yet
+    # been assigned a tenant.
+    business_id = message.get("business_id")
+    if business_id is None:
+        business_id = db.execute(
+            text("SELECT id FROM businesses WHERE slug = 'default-business' LIMIT 1")
+        ).scalar()
 
-            FROM customers
+    # A message without a resolved tenant must never create a legacy/global
+    # conversation.  In production this is a rejected webhook; keeping the
+    # guard here also protects direct callers of this service.
+    if business_id is None:
+        print("⚠️ Bỏ qua webhook: không resolve được business_id")
+        return False
 
-            WHERE channel = :channel
-              AND external_user_id = :external_user_id
-
-            LIMIT 1
-        """),
-        {
-            "channel":
-                channel,
-
-            "external_user_id":
-                external_user_id,
-        },
-    ).first()
+    if business_id is not None:
+        customer = resolve_customer(
+            db,
+            business_id=int(business_id),
+            channel=channel,
+            external_user_id=str(external_user_id),
+            external_account_id=message.get("external_account_id"),
+        )
+    else:
+        customer = db.execute(
+            text("""
+                SELECT id, name, avatar_url
+                FROM customers
+                WHERE channel = :channel
+                  AND external_user_id = :external_user_id
+                LIMIT 1
+            """),
+            {"channel": channel, "external_user_id": external_user_id},
+        ).first()
 
 
     # =====================================================
@@ -1451,6 +1513,10 @@ def process_and_save_message(
     # 6. TÌM CONVERSATION
     # =====================================================
 
+    # Conversations are tenant-owned resources.  The webhook has already
+    # resolved ``business_id`` from the trusted Channel record above; carry
+    # that value into both the lookup and insert so a customer/account from
+    # another tenant can never be reused accidentally.
     conversation = db.execute(
         text("""
             SELECT id
@@ -1459,6 +1525,7 @@ def process_and_save_message(
 
             WHERE customer_id = :customer_id
               AND channel = :channel
+              AND business_id = :business_id
               AND status = 'open'
 
             ORDER BY id DESC
@@ -1471,6 +1538,9 @@ def process_and_save_message(
 
             "channel":
                 channel,
+
+            "business_id":
+                int(business_id),
         },
     ).first()
 
@@ -1485,11 +1555,15 @@ def process_and_save_message(
             text("""
                 INSERT INTO conversations (
                     customer_id,
+                    business_id,
+                    channel_id,
                     channel,
                     status
                 )
                 VALUES (
                     :customer_id,
+                    :business_id,
+                    :channel_id,
                     :channel,
                     'open'
                 )
@@ -1498,6 +1572,12 @@ def process_and_save_message(
             {
                 "customer_id":
                     customer_id,
+
+                "business_id":
+                    int(business_id),
+
+                "channel_id":
+                    message.get("channel_id"),
 
                 "channel":
                     channel,
@@ -1542,6 +1622,26 @@ def process_and_save_message(
         message=message,
     )
 
+    # Keep the legacy media columns as a compatibility mirror while storing
+    # the complete canonical attachment list in the tenant-owned table.
+    persisted_attachments = []
+    if saved_message and message.get("attachments") and message.get("channel_id"):
+        try:
+            from app.services.media_service import save_message_attachments
+
+            persisted_attachments = save_message_attachments(
+                db,
+                message_id=int(saved_message["message_id"]),
+                business_id=int(business_id),
+                channel_id=int(message["channel_id"]),
+                attachments=message.get("attachments") or [],
+            )
+        except Exception as exc:
+            # A malformed provider attachment must not make the already
+            # accepted text message disappear; keep the error visible for
+            # operators and continue with the compatibility path.
+            print("Attachment persistence error:", str(exc))
+
     # Keep the CRM list ordered by the latest interaction and make the
     # database change visible even when the message is later handled by the
     # background auto-reply worker.
@@ -1549,8 +1649,8 @@ def process_and_save_message(
         text(
             """
             UPDATE conversations
-            SET updated_at = NOW(),
-                last_message_at = NOW()
+            SET updated_at = CURRENT_TIMESTAMP,
+                last_message_at = CURRENT_TIMESTAMP
             WHERE id = :conversation_id
             """
         ),
@@ -1560,13 +1660,57 @@ def process_and_save_message(
         text(
             """
             UPDATE customers
-            SET updated_at = NOW()
+            SET updated_at = CURRENT_TIMESTAMP
             WHERE id = :customer_id
             """
         ),
         {"customer_id": customer_id},
     )
     db.commit()
+
+    if saved_message is not None and persisted_attachments:
+        saved_message["attachments"] = [
+            {
+                "id": row.id,
+                "media_type": row.media_type,
+                "mime_type": row.mime_type,
+                "file_name": row.file_name,
+                "duration_ms": row.duration_ms,
+                "external_attachment_id": row.external_attachment_id,
+                # WebSocket consumers receive this payload before their next
+                # messages refresh; expose the same tenant-safe proxy URL as
+                # GET /conversations/{id}/messages instead of leaving
+                # provider file_ids without a browser-loadable URL.
+                "media_url": build_media_url(
+                    attachment_id=row.id,
+                    business_id=int(business_id),
+                ),
+                "source_url": row.source_url,
+                "storage_key": row.storage_key,
+                "metadata": row.metadata_,
+            }
+            for row in persisted_attachments
+        ]
+
+    # Fan out the committed inbound message to enabled, tenant-scoped
+    # workflows. Duplicate webhook deliveries do not emit a second event.
+    if saved_message and business_id is not None:
+        try:
+            emit_workflow_event(
+                db,
+                TenantContext(int(business_id), "channel_account"),
+                "message.created",
+                f"message:{saved_message.get('message_id')}",
+                {
+                    "message_id": saved_message.get("message_id"),
+                    "conversation_id": conversation_id,
+                    "customer_id": customer_id,
+                    "channel": channel,
+                    "content": message.get("content"),
+                },
+            )
+        except Exception as exc:
+            print("Workflow trigger error:", str(exc))
 
 
     print(
@@ -1581,13 +1725,28 @@ def process_and_save_message(
     )
 
     # RAG Auto-reply check
-    if message.get("content"):
+    if message.get("content") and business_id is not None:
+        if saved_message and saved_message.get("message_id"):
+            try:
+                from app.services.customer_fact_extractor import (
+                    process_customer_fact_extraction_background,
+                )
+
+                process_customer_fact_extraction_background(
+                    business_id=int(business_id),
+                    customer_id=int(customer_id),
+                    source_message_id=int(saved_message["message_id"]),
+                    content=str(message.get("content")),
+                )
+            except Exception as exc:
+                print("Customer fact extraction trigger error:", str(exc))
         try:
             from app.services.auto_reply_service import process_rag_auto_reply_background
             process_rag_auto_reply_background(
                 conversation_id=conversation_id,
                 channel=channel,
                 query_text=message.get("content"),
+                business_id=int(business_id),
             )
         except Exception as exc:
             print("Auto-reply trigger error:", str(exc))

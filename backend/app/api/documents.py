@@ -23,6 +23,9 @@ from app.services.ingestion_service import (
     delete_document,
     ingest_document,
 )
+from app.tenancy.context import TenantContext
+from app.tenancy.dependencies import get_tenant_context
+from app.auth.dependencies import require_write_access
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +36,12 @@ def _run_ingestion_background(
     document_id: int,
     file_bytes: bytes,
     filename: str,
+    business_id: int,
 ) -> None:
     """Chạy ingestion trong thread riêng với DB session riêng."""
     db = SessionLocal()
     try:
-        ingest_document(document_id, file_bytes, filename, db)
+        ingest_document(document_id, file_bytes, filename, db, business_id=business_id)
     finally:
         db.close()
 
@@ -51,10 +55,12 @@ def _run_ingestion_background(
     "/upload",
     response_model=DocumentOut,
     status_code=201,
+    dependencies=[Depends(require_write_access)],
 )
 async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """
     Upload tài liệu cho RAG knowledge base.
@@ -89,10 +95,12 @@ async def upload_document(
 
     # Tạo record Document
     doc = Document(
+        business_id=tenant.business_id,
         filename=file.filename,
         file_type=file_type,
         file_size=len(file_bytes),
         status="pending",
+        source_bytes=file_bytes,
     )
     db.add(doc)
     db.commit()
@@ -101,7 +109,7 @@ async def upload_document(
     # Chạy ingestion trong background thread
     thread = Thread(
         target=_run_ingestion_background,
-        args=(doc.id, file_bytes, file.filename),
+        args=(doc.id, file_bytes, file.filename, tenant.business_id),
         daemon=True,
     )
     thread.start()
@@ -115,6 +123,36 @@ async def upload_document(
     return doc
 
 
+@router.post("/{document_id}/reindex", response_model=DocumentOut, dependencies=[Depends(require_write_access)])
+async def reindex_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    """Rebuild chunks/embeddings from the retained source file."""
+    doc = db.query(Document).filter(
+        Document.id == document_id,
+        Document.business_id == tenant.business_id,
+    ).first()
+    if doc is None:
+        raise HTTPException(404, "Tài liệu không tồn tại.")
+    if not doc.source_bytes:
+        raise HTTPException(409, "Tài liệu cũ không có bản gốc để reindex; hãy upload lại.")
+    source = bytes(doc.source_bytes)
+    doc.status = "pending"
+    doc.embedding_status = "pending"
+    doc.error_message = None
+    db.commit()
+    thread = Thread(
+        target=_run_ingestion_background,
+        args=(doc.id, source, doc.filename, tenant.business_id),
+        daemon=True,
+    )
+    thread.start()
+    db.refresh(doc)
+    return doc
+
+
 # =========================================================
 # LIST
 # =========================================================
@@ -123,10 +161,12 @@ async def upload_document(
 @router.get("", response_model=DocumentListOut)
 async def list_documents(
     db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Danh sách tất cả tài liệu đã upload."""
     docs = (
         db.query(Document)
+        .filter(Document.business_id == tenant.business_id)
         .order_by(Document.uploaded_at.desc())
         .all()
     )
@@ -148,9 +188,13 @@ async def list_documents(
 async def get_document(
     document_id: int,
     db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Xem chi tiết 1 tài liệu."""
-    doc = db.get(Document, document_id)
+    doc = db.query(Document).filter(
+        Document.id == document_id,
+        Document.business_id == tenant.business_id,
+    ).first()
     if doc is None:
         raise HTTPException(404, "Tài liệu không tồn tại.")
     return doc
@@ -163,9 +207,13 @@ async def get_document(
 async def list_document_chunks(
     document_id: int,
     db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Xem các chunks đã tạo và trạng thái embedding của một tài liệu."""
-    if db.get(Document, document_id) is None:
+    if db.query(Document).filter(
+        Document.id == document_id,
+        Document.business_id == tenant.business_id,
+    ).first() is None:
         raise HTTPException(404, "Tài liệu không tồn tại.")
 
     chunks = (
@@ -194,13 +242,14 @@ async def list_document_chunks(
 # =========================================================
 
 
-@router.delete("/{document_id}", status_code=204)
+@router.delete("/{document_id}", status_code=204, dependencies=[Depends(require_write_access)])
 async def remove_document(
     document_id: int,
     db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Xóa tài liệu và tất cả chunks liên quan."""
-    deleted = delete_document(document_id, db)
+    deleted = delete_document(document_id, db, business_id=tenant.business_id)
     if not deleted:
         raise HTTPException(404, "Tài liệu không tồn tại.")
     return None

@@ -22,6 +22,9 @@ class DocumentOut(BaseModel):
     error_message: str | None = None
     uploaded_at: datetime
     processed_at: datetime | None = None
+    embedding_status: str = "pending"
+    reindex_count: int = 0
+    retry_after: datetime | None = None
 
     model_config = {"from_attributes": True}
 
