@@ -152,8 +152,11 @@ def crm_overview(
         (Conversation.id == Order.conversation_id)
         & (Conversation.business_id == business_id),
     ).filter(Order.id.in_(order_query.with_entities(Order.id))).group_by(
-        func.coalesce(Conversation.channel, "unknown")
-    ).order_by(func.coalesce(Conversation.channel, "unknown")).all() if order_count else []
+        # Group by the source column, not a separately-bound COALESCE
+        # expression.  PostgreSQL treats the different bind parameters as
+        # distinct expressions and otherwise raises a GROUP BY error.
+        Conversation.channel
+    ).order_by(Conversation.channel).all() if order_count else []
     channel_breakdown = [
         {"channel": str(row.channel), "order_count": int(row.order_count), "revenue": Decimal(row.revenue or 0)}
         for row in breakdown_rows

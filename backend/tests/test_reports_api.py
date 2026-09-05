@@ -135,6 +135,10 @@ class ReportsApiTests(unittest.TestCase):
         self.assertEqual("150000.00", body["total_revenue"])
         self.assertEqual(50.0, body["conversion_rate"])
         self.assertEqual(100.0, body["conversation_to_order_rate"])
+        self.assertEqual(
+            [{"channel": "telegram", "order_count": 1, "revenue": "150000.00"}],
+            body["channel_breakdown"],
+        )
 
         other = self.client.get("/api/reports/overview", headers={"X-Business-Id": "2"})
         self.assertEqual(200, other.status_code)

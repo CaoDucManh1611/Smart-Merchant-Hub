@@ -94,6 +94,13 @@ class MetaOAuthTenantSecurityTests(unittest.TestCase):
         self.assertIn("state=tenant-signed-state", result["authorization_url"])
         register_state.assert_called_once_with(db, "tenant-signed-state", "secret")
 
+    def test_start_route_disables_response_model_for_redirect_or_json_response(self):
+        route = next(
+            route for route in meta_oauth.router.routes
+            if route.path == "/meta/start"
+        )
+        self.assertIsNone(route.response_model)
+
     def test_disconnect_revokes_only_the_current_tenants_credentials(self):
         with patch.object(meta_oauth, "SessionLocal", self.session_factory):
             response = asyncio.run(

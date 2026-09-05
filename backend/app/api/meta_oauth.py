@@ -120,17 +120,24 @@ async def meta_oauth_status(
     }
 
 
-@router.get("/meta/start", dependencies=[Depends(require_admin_access)])
+@router.get(
+    "/meta/start",
+    dependencies=[Depends(require_admin_access)],
+    # This endpoint returns either JSON (when the SPA requests the provider
+    # URL) or a redirect (for direct browser navigation).  FastAPI cannot
+    # derive a Pydantic response model from the union of those two types.
+    response_model=None,
+)
 async def start_meta_oauth(
     tenant: TenantContext = Depends(get_tenant_context),
     return_url: bool = Query(default=False),
 ) -> RedirectResponse | dict:
-    app_id, _, redirect_uri = _require_oauth_settings()
-    if not settings.META_APP_SECRET:
+    app_id, app_secret, redirect_uri = _require_oauth_settings()
+    if not app_secret:
         raise HTTPException(status_code=500, detail="META_APP_SECRET is required for signed OAuth state")
-    state = issue_oauth_state(tenant.business_id, settings.META_APP_SECRET)
+    state = issue_oauth_state(tenant.business_id, app_secret)
     with SessionLocal() as db:
-        register_oauth_state(db, state, settings.META_APP_SECRET)
+        register_oauth_state(db, state, app_secret)
     scope = (
         "pages_show_list,pages_read_engagement,pages_manage_metadata,"
         "pages_messaging,instagram_basic,instagram_manage_messages"
