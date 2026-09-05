@@ -66,7 +66,7 @@ $env:PYTHONPATH = "$PWD\.migrationdeps;$PWD"
 
 ## CRM operations
 
-The current schema is migrated with Alembic (head `20260904_0022`). The CRM
+The current schema is migrated with Alembic (head `20260905_0023`). The CRM
 now includes tenant-scoped Customer 360 tags/segments, merge history and a
 unified timeline; sales and purchase orders with guarded lifecycle transitions;
 owner/admin/agent/viewer sessions; append-only audit logs; filtered reports;
@@ -88,3 +88,8 @@ session is present, its tenant and role take precedence.
 For production, set `ENVIRONMENT=production`, `AUTH_SECRET` and
 `CHANNEL_ENCRYPTION_KEY` to long random values. In that mode all write
 endpoints require a bearer session; the development header fallback is off.
+Also set explicit `CORS_ORIGINS`, `ALLOWED_HOSTS`, HTTPS public/frontend URLs,
+`FORCE_HTTPS=true`, `HSTS_ENABLED=true` and `RATE_LIMIT_ENABLED=true`. See
+[`docs/production-security-runbook.md`](../docs/production-security-runbook.md)
+for secret rotation, legacy credential retirement, Git history audit and
+PostgreSQL backup/restore.

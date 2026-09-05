@@ -9,7 +9,9 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
 
-    FACEBOOK_VERIFY_TOKEN: str = "crm_chatbot_2026"
+    # Never rely on this development value in a deployed environment.  A
+    # real value must be supplied through the secret manager/.env file.
+    FACEBOOK_VERIFY_TOKEN: str = ""
     FACEBOOK_PAGE_ACCESS_TOKEN: str = ""
 
 
@@ -20,6 +22,16 @@ class Settings(BaseSettings):
     INSTAGRAM_ACCESS_TOKEN: str = ""
     PUBLIC_BASE_URL: str = ""
     FRONTEND_BASE_URL: str = "http://localhost:5173"
+
+    # Runtime security controls.  Comma-separated values keep the settings
+    # compatible with Docker Compose and Pydantic Settings on Windows/Linux.
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    ALLOWED_HOSTS: str = "*"
+    FORCE_HTTPS: bool = False
+    HSTS_ENABLED: bool = False
+    RATE_LIMIT_ENABLED: bool = False
+    RATE_LIMIT_REQUESTS: int = 120
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     # Meta OAuth integration
     META_APP_ID: str = ""
@@ -72,6 +84,53 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @staticmethod
+    def _csv(value: str) -> list[str]:
+        return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return self._csv(self.CORS_ORIGINS)
+
+    @property
+    def allowed_hosts(self) -> list[str]:
+        return self._csv(self.ALLOWED_HOSTS) or ["*"]
+
+    def validate_runtime(self) -> None:
+        """Fail closed for settings that are unsafe in production.
+
+        Development keeps the existing local workflow.  Production must
+        explicitly provide secrets, HTTPS URLs, non-wildcard CORS/hosts and
+        a real PostgreSQL URL; no insecure fallback is accepted.
+        """
+        if self.ENVIRONMENT.strip().lower() != "production":
+            return
+
+        problems: list[str] = []
+        placeholders = {"", "change-me", "changeme", "secret", "postgres"}
+        if self.AUTH_SECRET.strip().lower() in placeholders or len(self.AUTH_SECRET.strip()) < 32:
+            problems.append("AUTH_SECRET must be a random value of at least 32 characters")
+        if self.CHANNEL_ENCRYPTION_KEY.strip().lower() in placeholders or len(self.CHANNEL_ENCRYPTION_KEY.strip()) < 32:
+            problems.append("CHANNEL_ENCRYPTION_KEY must be a random value of at least 32 characters")
+        if not self.DATABASE_URL.lower().startswith(("postgresql://", "postgresql+psycopg://")):
+            problems.append("DATABASE_URL must point to PostgreSQL")
+        if not self.cors_origins or "*" in self.cors_origins:
+            problems.append("CORS_ORIGINS must be an explicit allowlist")
+        if not self.allowed_hosts or "*" in self.allowed_hosts:
+            problems.append("ALLOWED_HOSTS must be an explicit allowlist")
+        if not self.PUBLIC_BASE_URL.lower().startswith("https://"):
+            problems.append("PUBLIC_BASE_URL must use HTTPS")
+        if not self.FRONTEND_BASE_URL.lower().startswith("https://"):
+            problems.append("FRONTEND_BASE_URL must use HTTPS")
+        if not self.FACEBOOK_VERIFY_TOKEN.strip():
+            problems.append("FACEBOOK_VERIFY_TOKEN must be configured")
+        if not self.RATE_LIMIT_ENABLED:
+            problems.append("RATE_LIMIT_ENABLED must be true")
+        if self.RATE_LIMIT_REQUESTS <= 0 or self.RATE_LIMIT_WINDOW_SECONDS <= 0:
+            problems.append("RATE_LIMIT_REQUESTS and RATE_LIMIT_WINDOW_SECONDS must be positive")
+        if problems:
+            raise RuntimeError("Production security configuration is incomplete: " + "; ".join(problems))
 
 
 settings = Settings()

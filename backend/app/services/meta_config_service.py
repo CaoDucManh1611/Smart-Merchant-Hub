@@ -54,6 +54,10 @@ def save_settings(values: Mapping[str, str]) -> None:
 
 
 def get_meta_config() -> dict[str, str]:
+    # Legacy token columns in app_settings are retained only for the
+    # controlled migration command. Normal runtime code must not read them in
+    # production; channel_service decrypts tenant-scoped credentials instead.
+    legacy_token_fallback = settings.ENVIRONMENT.strip().lower() != "production"
     return {
         "facebook_page_id": get_setting_value(
             META_KEYS["facebook_page_id"],
@@ -64,8 +68,8 @@ def get_meta_config() -> dict[str, str]:
         ),
         "facebook_page_access_token": get_setting_value(
             META_KEYS["facebook_page_access_token"],
-            settings.FACEBOOK_PAGE_ACCESS_TOKEN,
-        ),
+            settings.FACEBOOK_PAGE_ACCESS_TOKEN if legacy_token_fallback else "",
+        ) if legacy_token_fallback else "",
         "instagram_account_id": get_setting_value(
             META_KEYS["instagram_account_id"],
             settings.INSTAGRAM_ACCOUNT_ID,
@@ -87,7 +91,11 @@ def save_meta_config(values: Mapping[str, str]) -> None:
         {
             META_KEYS[key]: value
             for key, value in values.items()
-            if key in META_KEYS and value is not None
+            if key in META_KEYS
+            and value is not None
+            # OAuth access tokens belong in encrypted channels, never in the
+            # generic app_settings table.
+            and key not in {"facebook_page_access_token"}
         }
     )
 

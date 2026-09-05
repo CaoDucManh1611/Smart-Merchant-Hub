@@ -21,6 +21,7 @@ from app.models.purchase_order import PurchaseOrder
 from app.models.lead import Lead
 from app.models.ticket import Ticket, TicketComment
 from app.models.customer_merge import CustomerMerge
+from app.models.audit_log import AuditLog
 from app.models.business_setting import BusinessSetting
 from app.schemas.customer import (
     CustomerFactCreate,
@@ -844,17 +845,25 @@ def add_customer_tag(
         CustomerTag.customer_id == customer.id,
         CustomerTag.tag_id == tag.id,
     ).first()
-    if link is None:
+    changed = link is None
+    if changed:
         db.add(CustomerTag(
             business_id=tenant.business_id,
             customer_id=customer.id,
             tag_id=tag.id,
         ))
+    if changed:
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="tag_add",
+            resource_type="customer",
+            resource_id=str(customer.id),
+            metadata={"tag_id": tag.id, "tag": tag.name},
+        )
     db.commit()
     db.refresh(tag)
-    if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="tag_add", resource_type="customer", resource_id=str(customer.id), metadata={"tag": tag.name})
-        db.commit()
     return CustomerTagOut(id=tag.id, name=tag.name, color=tag.color)
 
 
@@ -874,11 +883,18 @@ def remove_customer_tag(
     ).first()
     if link is None:
         raise HTTPException(status_code=404, detail="Tag không được gắn cho customer.")
+    tag = db.query(Tag).filter(Tag.id == tag_id, Tag.business_id == tenant.business_id).first()
     db.delete(link)
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="tag_remove",
+        resource_type="customer",
+        resource_id=str(customer.id),
+        metadata={"tag_id": tag_id, "tag": tag.name if tag else None},
+    )
     db.commit()
-    if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="tag_remove", resource_type="customer", resource_id=str(customer.id), metadata={"tag_id": tag_id})
-        db.commit()
     return Response(status_code=204)
 
 
@@ -952,6 +968,18 @@ def customer_timeline(
         CustomerMerge.business_id == tenant.business_id,
         (CustomerMerge.survivor_customer_id == customer_id)
         | (CustomerMerge.source_customer_id == customer_id),
+    ).all()
+    profile_history = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.resource_type == "customer",
+        AuditLog.resource_id == str(customer_id),
+        AuditLog.action.in_(("profile_created", "profile_update")),
+    ).all()
+    tag_history = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.resource_type == "customer",
+        AuditLog.resource_id == str(customer_id),
+        AuditLog.action.in_(("tag_add", "tag_remove")),
     ).all()
     items = [CustomerTimelineItem(
         event_type="message",
@@ -1034,6 +1062,26 @@ def customer_timeline(
             "after_counts": merge.after_counts,
         },
     ) for merge in merges)
+    items.extend(CustomerTimelineItem(
+        event_type="customer_profile",
+        event_id=audit.id,
+        occurred_at=audit.created_at,
+        content="Cập nhật hồ sơ khách hàng" if audit.action == "profile_update" else "Tạo hồ sơ khách hàng",
+        created_by=audit.user_id,
+        metadata={"action": audit.action, **(audit.metadata_ or {})},
+    ) for audit in profile_history)
+    items.extend(CustomerTimelineItem(
+        event_type="customer_tag",
+        event_id=audit.id,
+        occurred_at=audit.created_at,
+        content=(
+            f"Gắn tag {audit.metadata_.get('tag')}"
+            if audit.action == "tag_add"
+            else f"Bỏ tag {audit.metadata_.get('tag') or audit.metadata_.get('tag_id')}"
+        ),
+        created_by=audit.user_id,
+        metadata={"action": audit.action, **(audit.metadata_ or {})},
+    ) for audit in tag_history)
     items.sort(key=lambda item: item.occurred_at or datetime.min, reverse=True)
     return CustomerTimelineOut(items=items[:limit], total=len(items))
 

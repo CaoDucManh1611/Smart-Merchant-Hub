@@ -203,7 +203,7 @@ try {
     Write-Host "  Ngrok URL  : $publicUrl" -ForegroundColor White
     Write-Host "  FB Webhook : $publicUrl/api/webhooks/facebook" -ForegroundColor Yellow
     Write-Host "  IG Webhook : $publicUrl/api/webhooks/instagram" -ForegroundColor Yellow
-    Write-Host "  Verify Token: crm_chatbot_2026               " -ForegroundColor Cyan
+    Write-Host "  Verify Token: value configured in backend/.env" -ForegroundColor Cyan
     Write-Host "  Swagger docs: http://localhost:8000/docs      " -ForegroundColor Cyan
     Write-Host "=================================================" -ForegroundColor Green
 } catch {

@@ -264,7 +264,6 @@ async def meta_oauth_callback(
                 {
                     "facebook_page_id": str(page["id"]),
                     "facebook_page_name": str(page.get("name") or ""),
-                    "facebook_page_access_token": str(page_token),
                     "instagram_account_id": str(instagram.get("id") or ""),
                     "meta_user_id": str(user.get("id") or ""),
                     "meta_user_name": str(user.get("name") or ""),

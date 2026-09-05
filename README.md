@@ -57,11 +57,16 @@ Mở:
 Tạo file môi trường trước:
 
 ```bash
+copy .env.example .env
 cd backend
 copy .env.example .env
 cd ..
 docker compose up --build
 ```
+
+Trước khi chạy, thay các giá trị `CHANGE_ME` trong `.env` bằng thông tin
+riêng. Compose dùng `DATABASE_URL` ở file `.env` gốc để kết nối tới service
+`db`; tuyệt đối không commit file `.env`.
 
 Backend sẽ tự khởi tạo pgvector và các bảng dữ liệu khi bắt đầu. Sau mỗi lần
 cập nhật tính năng, áp dụng migration mới bằng:
@@ -101,10 +106,11 @@ Callback URL:
 https://TEN-MIEN-PUBLIC/api/webhooks/facebook
 ```
 
-Verify Token mặc định:
+Verify Token:
 
 ```text
-crm_chatbot_2026
+Giá trị riêng do bạn tạo và cấu hình trong `backend/.env` (`FACEBOOK_VERIFY_TOKEN`).
+Không còn giá trị mặc định dùng chung.
 ```
 
 Có thể đổi trong:

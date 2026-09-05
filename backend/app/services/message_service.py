@@ -2,9 +2,14 @@ from typing import Any
 
 import httpx
 from sqlalchemy import text
+from app.core.config import settings
 from app.contracts.channel_event import ChannelProvider
 from app.integrations._meta import parse_meta_events
 from app.services.customer_identity import resolve_customer
+from app.services.audit_service import record_audit
+from app.services.customer_profile import merge_profile, profile_change_metadata
+from app.services.channel_service import get_single_active_channel
+from app.services.channel_credentials import decrypt_token
 from app.services.workflow_engine import emit_workflow_event
 from sqlalchemy.orm import Session
 
@@ -318,11 +323,10 @@ def normalize_facebook_message(
 
 def fetch_facebook_customer_profile(
     external_user_id: str,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
 
-    access_token = str(
-        get_meta_config()["facebook_page_access_token"] or ""
-    ).strip()
+    access_token = str(access_token or get_meta_config()["facebook_page_access_token"] or "").strip()
 
     if not access_token:
 
@@ -425,11 +429,10 @@ def fetch_facebook_customer_profile(
 
 def fetch_instagram_customer_profile(
     external_user_id: str,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
 
-    access_token = str(
-        get_meta_config()["facebook_page_access_token"] or ""
-    ).strip()
+    access_token = str(access_token or get_meta_config()["facebook_page_access_token"] or "").strip()
 
     if not access_token:
 
@@ -1329,6 +1332,21 @@ def process_and_save_message(
             {"channel": channel, "external_user_id": external_user_id},
         ).first()
 
+    profile_access_token = None
+    if business_id is not None and channel in {"facebook", "instagram"}:
+        try:
+            channel_row = get_single_active_channel(db, int(business_id), "facebook" if channel == "instagram" else channel)
+            if channel_row.access_token_encrypted:
+                profile_access_token = decrypt_token(
+                    channel_row.access_token_encrypted,
+                    settings.CHANNEL_ENCRYPTION_KEY,
+                )
+        except (LookupError, ValueError):
+            # Development can still use its explicitly configured fallback;
+            # production simply skips profile enrichment until the encrypted
+            # tenant channel is connected.
+            profile_access_token = None
+
 
     # =====================================================
     # 3. PROFILE
@@ -1358,7 +1376,8 @@ def process_and_save_message(
             fetch_facebook_customer_profile(
                 str(
                     external_user_id
-                )
+                ),
+                access_token=profile_access_token,
             )
         )
 
@@ -1384,7 +1403,8 @@ def process_and_save_message(
             fetch_instagram_customer_profile(
                 str(
                     external_user_id
-                )
+                ),
+                access_token=profile_access_token,
             )
         )
 
@@ -1463,36 +1483,20 @@ def process_and_save_message(
         )
     ):
 
-        db.execute(
-            text("""
-                UPDATE customers
-
-                SET
-                    name = COALESCE(
-                        :name,
-                        name
-                    ),
-
-                    avatar_url = COALESCE(
-                        :avatar_url,
-                        avatar_url
-                    )
-
-                WHERE id = :customer_id
-            """),
-            {
-                "name":
-                    customer_name,
-
-                "avatar_url":
-                    avatar_url,
-
-                "customer_id":
-                    customer.id,
-            },
+        changes = merge_profile(
+            customer,
+            name=customer_name,
+            avatar_url=avatar_url,
         )
-
-
+        if changes and business_id is not None:
+            record_audit(
+                db,
+                business_id=int(business_id),
+                action="profile_update",
+                resource_type="customer",
+                resource_id=customer.id,
+                metadata=profile_change_metadata(changes),
+            )
         db.commit()
 
 

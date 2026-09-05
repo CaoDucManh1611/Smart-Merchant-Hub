@@ -23,7 +23,12 @@ AUTH_TTL_SECONDS = 8 * 60 * 60
 
 
 def _secret() -> bytes:
-    value = settings.AUTH_SECRET or settings.CHANNEL_ENCRYPTION_KEY or settings.APP_NAME
+    value = settings.AUTH_SECRET.strip()
+    if not value and settings.ENVIRONMENT.strip().lower() == "production":
+        raise RuntimeError("AUTH_SECRET must be configured in production")
+    # Keep the local demo compatible, but never use this fallback in a
+    # deployed environment.  Production validation rejects empty secrets.
+    value = value or settings.CHANNEL_ENCRYPTION_KEY or settings.APP_NAME
     return value.encode("utf-8")
 
 
