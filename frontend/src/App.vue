@@ -52,13 +52,15 @@ const selectedId = ref(null);
 
 const activeFilter = ref("all");
 const tagCatalog = ref([]);
-const tagFilter = ref("");
+const tagFilters = ref([]);
+const tagFilterMode = ref("all");
 const savedSegments = ref([]);
 const selectedSegmentId = ref("");
 const segmentCustomerIds = ref(new Set());
 const segmentLoading = ref(false);
 const segmentSaving = ref(false);
 const segmentError = ref("");
+const segmentEditingId = ref("");
 const segmentForm = ref({ name: "", description: "", tag_ids: [], match_mode: "all" });
 const customerTagDraft = ref("");
 const customerTagSaving = ref(false);
@@ -159,6 +161,8 @@ const customerMergeError = ref("");
 const customerMergePreview = ref(null);
 const customerMergeHistory = ref([]);
 const duplicateSuggestions = ref([]);
+const customerTimelineLoading = ref(false);
+const customerTimelineError = ref("");
 const leads = ref([]);
 const leadsLoading = ref(false);
 const leadSaving = ref(false);
@@ -582,7 +586,8 @@ const filtered = computed(() => {
 
       const tagOk = matchesCustomerTagFilter(
         item,
-        tagFilter.value,
+        tagFilters.value,
+        tagFilterMode.value,
       );
 
       const segmentOk = !selectedSegmentId.value
@@ -1369,27 +1374,55 @@ async function createSavedSegment() {
   segmentSaving.value = true;
   segmentError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/customers/segments`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        tag_ids: form.tag_ids.map(Number),
-        match_mode: form.match_mode,
-      }),
-    });
+    const editingId = segmentEditingId.value;
+    const refreshSelectedMembers = editingId
+      && String(selectedSegmentId.value) === String(editingId);
+    const response = await apiFetch(
+      editingId
+        ? `${API_BASE}/customers/segments/${editingId}`
+        : `${API_BASE}/customers/segments`,
+      {
+        method: editingId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          description: form.description.trim() || null,
+          tag_ids: form.tag_ids.map(Number),
+          match_mode: form.match_mode,
+        }),
+      },
+    );
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
+    segmentEditingId.value = "";
     segmentForm.value = { name: "", description: "", tag_ids: [], match_mode: "all" };
     await fetchSavedSegments();
+    if (refreshSelectedMembers) await loadSegmentMembers();
   } catch (err) {
     segmentError.value = err.message || "Không thể lưu segment.";
   } finally {
     segmentSaving.value = false;
   }
+}
+
+function editSavedSegment(segment) {
+  if (!segment) return;
+  segmentEditingId.value = String(segment.id);
+  segmentForm.value = {
+    name: segment.name || "",
+    description: segment.description || "",
+    tag_ids: (segment.tag_ids || []).map(Number),
+    match_mode: segment.match_mode || "all",
+  };
+  segmentError.value = "";
+}
+
+function cancelSegmentEdit() {
+  segmentEditingId.value = "";
+  segmentForm.value = { name: "", description: "", tag_ids: [], match_mode: "all" };
+  segmentError.value = "";
 }
 
 async function deleteSavedSegment(segment) {
@@ -1405,6 +1438,7 @@ async function deleteSavedSegment(segment) {
       selectedSegmentId.value = "";
       segmentCustomerIds.value = new Set();
     }
+    if (String(segmentEditingId.value) === String(segment.id)) cancelSegmentEdit();
     await fetchSavedSegments();
   } catch (err) {
     segmentError.value = "Không thể xóa segment.";
@@ -1436,6 +1470,9 @@ function timelineLabel(event) {
     ticket_comment: "Bình luận ticket",
     assignment: "Phân công",
     customer_merge: "Gộp hồ sơ",
+    customer_merge_undo: "Hoàn tác gộp hồ sơ",
+    customer_profile: "Thay đổi hồ sơ",
+    customer_tag: "Thay đổi tag",
   };
   return labels[event?.event_type] || channelLabel(event?.channel) || "Sự kiện CRM";
 }
@@ -2517,7 +2554,7 @@ async function loadCustomer360(customerId) {
   try {
     const [profileResponse, timelineResponse, historyResponse, duplicateResponse] = await Promise.all([
       apiFetch(`${API_BASE}/customers/${customerId}`),
-      apiFetch(`${API_BASE}/customers/${customerId}/timeline`),
+      apiFetch(`${API_BASE}/customers/${customerId}/timeline?limit=20&offset=0`),
       apiFetch(`${API_BASE}/customers/${customerId}/merge-history`),
       apiFetch(`${API_BASE}/customers/duplicates?customer_id=${customerId}`),
     ]);
@@ -2537,7 +2574,11 @@ async function loadCustomer360(customerId) {
     customer360.value = {
       ...profile,
       timeline: timeline.items || [],
+      timelineTotal: timeline.total ?? (timeline.items || []).length,
+      timelineOffset: timeline.next_offset ?? (timeline.items || []).length,
+      timelineHasMore: Boolean(timeline.has_more),
     };
+    customerTimelineError.value = "";
     customerMergeHistory.value = history.items || [];
     duplicateSuggestions.value = duplicates.items || [];
     if (!duplicateSuggestions.value.some((item) => Number(item.source_customer_id) === Number(customerMergeSourceId.value))) {
@@ -2548,6 +2589,38 @@ async function loadCustomer360(customerId) {
     customer360.value = null;
   } finally {
     customer360Loading.value = false;
+  }
+}
+
+async function loadMoreCustomerTimeline() {
+  const customerId = customer360.value?.id;
+  if (!customerId || !customer360.value?.timelineHasMore || customerTimelineLoading.value) return;
+  customerTimelineLoading.value = true;
+  customerTimelineError.value = "";
+  try {
+    const offset = Number(customer360.value.timelineOffset || customer360.value.timeline.length || 0);
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/timeline?limit=20&offset=${offset}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const page = await response.json();
+    const existing = customer360.value.timeline || [];
+    const seen = new Set(existing.map((event) => `${event.event_type}-${event.event_id}`));
+    const appended = (page.items || []).filter((event) => {
+      const key = `${event.event_type}-${event.event_id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    customer360.value = {
+      ...customer360.value,
+      timeline: [...existing, ...appended],
+      timelineTotal: page.total ?? customer360.value.timelineTotal,
+      timelineOffset: page.next_offset ?? offset + appended.length,
+      timelineHasMore: Boolean(page.has_more),
+    };
+  } catch (err) {
+    customerTimelineError.value = "Không tải thêm được lịch sử khách hàng.";
+  } finally {
+    customerTimelineLoading.value = false;
   }
 }
 
@@ -3721,10 +3794,13 @@ onUnmounted(() => {
 
           </div>
 
-          <select v-if="tagCatalog.length" v-model="tagFilter" class="segment-filter" aria-label="Lọc theo tag">
-            <option value="">Mọi phân khúc</option>
-            <option v-for="tag in tagCatalog" :key="tag.id" :value="tag.name">{{ tag.name }}</option>
-          </select>
+          <div v-if="tagCatalog.length" class="tag-filter-controls">
+            <select v-model="tagFilters" class="segment-filter" multiple size="3" aria-label="Lọc theo nhiều tag">
+              <option v-for="tag in tagCatalog" :key="tag.id" :value="tag.name">{{ tag.name }}</option>
+            </select>
+            <label><input v-model="tagFilterMode" type="radio" value="all" /> Có tất cả tag</label>
+            <label><input v-model="tagFilterMode" type="radio" value="any" /> Có ít nhất một tag</label>
+          </div>
 
           <select v-if="savedSegments.length" v-model="selectedSegmentId" class="segment-filter" aria-label="Lọc theo segment đã lưu" @change="loadSegmentMembers">
             <option value="">Mọi segment đã lưu</option>
@@ -5021,11 +5097,11 @@ onUnmounted(() => {
               <div class="section customer-timeline-section">
                 <div class="section-head">
                   <h4>Unified Timeline</h4>
-                  <span>{{ customer360.timeline.length }}</span>
+                  <span>{{ customer360.timeline.length }} / {{ customer360.timelineTotal }}</span>
                 </div>
                 <div class="customer-timeline">
                   <div
-                    v-for="event in customer360.timeline.slice(0, 8)"
+                    v-for="event in customer360.timeline"
                     :key="`${event.event_type}-${event.event_id}`"
                     class="customer-timeline-row"
                   >
@@ -5036,6 +5112,16 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </div>
+                <div v-if="customerTimelineError" class="facts-error">{{ customerTimelineError }}</div>
+                <button
+                  v-if="customer360.timelineHasMore"
+                  type="button"
+                  class="timeline-load-more"
+                  :disabled="customerTimelineLoading"
+                  @click="loadMoreCustomerTimeline"
+                >
+                  {{ customerTimelineLoading ? 'Đang tải...' : 'Tải thêm lịch sử' }}
+                </button>
               </div>
 
               <div class="section customer-facts-section">
@@ -5154,12 +5240,16 @@ onUnmounted(() => {
                 </select>
                 <label><input v-model="segmentForm.match_mode" type="radio" value="all" /> Có tất cả tag</label>
                 <label><input v-model="segmentForm.match_mode" type="radio" value="any" /> Có ít nhất một tag</label>
-                <button type="submit" :disabled="segmentSaving">{{ segmentSaving ? 'Đang lưu...' : 'Lưu segment' }}</button>
+                <button type="submit" :disabled="segmentSaving">{{ segmentSaving ? 'Đang lưu...' : (segmentEditingId ? 'Cập nhật segment' : 'Lưu segment') }}</button>
+                <button v-if="segmentEditingId" type="button" :disabled="segmentSaving" @click="cancelSegmentEdit">Hủy sửa</button>
               </form>
               <div v-if="savedSegments.length" class="saved-segment-list">
                 <div v-for="segment in savedSegments" :key="segment.id" class="saved-segment-row">
                   <span><strong>{{ segment.name }}</strong><small>{{ segment.customer_count }} khách · {{ segment.match_mode === 'all' ? 'đủ tất cả tag' : 'ít nhất một tag' }}</small></span>
-                  <button type="button" @click="deleteSavedSegment(segment)">Xóa</button>
+                  <div class="saved-segment-actions">
+                    <button type="button" @click="editSavedSegment(segment)">Sửa</button>
+                    <button type="button" @click="deleteSavedSegment(segment)">Xóa</button>
+                  </div>
                 </div>
               </div>
               <div v-if="segmentError" class="facts-error">{{ segmentError }}</div>

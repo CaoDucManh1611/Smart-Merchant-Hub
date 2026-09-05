@@ -215,6 +215,34 @@ class Customer360FinalApiTests(unittest.TestCase):
         )
         self.assertEqual(409, undone.status_code)
 
+    def test_undo_merge_is_visible_in_customer_timeline(self):
+        merged = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge",
+            headers=self.headers(),
+            json={"source_customer_id": self.duplicate_id, "confirm": True},
+        )
+        self.assertEqual(200, merged.status_code)
+        merge_id = merged.json()["merge_id"]
+
+        undone = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge-history/{merge_id}/undo",
+            headers=self.headers(),
+            json={"reason": "Tách lại hồ sơ"},
+        )
+        self.assertEqual(200, undone.status_code)
+
+        timeline = self.client.get(
+            f"/api/customers/{self.survivor_id}/timeline",
+            headers=self.headers(),
+        )
+        self.assertEqual(200, timeline.status_code)
+        undo_events = [
+            item for item in timeline.json()["items"]
+            if item["event_type"] == "customer_merge_undo"
+        ]
+        self.assertEqual(1, len(undo_events))
+        self.assertEqual("Tách lại hồ sơ", undo_events[0]["content"])
+
     def test_saved_segment_matches_multiple_tags_and_is_tenant_scoped(self):
         created = self.client.post(
             "/api/customers/segments",
@@ -251,6 +279,24 @@ class Customer360FinalApiTests(unittest.TestCase):
             json={"name": "Không hợp lệ", "tag_ids": [999999], "match_mode": "all"},
         )
         self.assertEqual(422, response.status_code)
+
+    def test_customer_list_supports_all_and_any_multi_tag_filters(self):
+        all_tags = self.client.get(
+            f"/api/customers?tag_ids={self.vip_id},{self.paid_id}&match_mode=all",
+            headers=self.headers(),
+        )
+        self.assertEqual(200, all_tags.status_code)
+        self.assertEqual([self.survivor_id], [item["id"] for item in all_tags.json()["items"]])
+
+        any_tag = self.client.get(
+            f"/api/customers?tag_ids={self.vip_id},{self.paid_id}&match_mode=any",
+            headers=self.headers(),
+        )
+        self.assertEqual(200, any_tag.status_code)
+        self.assertEqual(
+            {self.survivor_id, self.another_id},
+            {item["id"] for item in any_tag.json()["items"]},
+        )
 
 
 if __name__ == "__main__":

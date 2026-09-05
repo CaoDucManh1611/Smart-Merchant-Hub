@@ -171,3 +171,7 @@ class CustomerTimelineItem(BaseModel):
 class CustomerTimelineOut(BaseModel):
     items: list[CustomerTimelineItem]
     total: int
+    offset: int = 0
+    limit: int = 100
+    has_more: bool = False
+    next_offset: int | None = None

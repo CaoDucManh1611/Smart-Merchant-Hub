@@ -18,6 +18,7 @@ from app.models.lead import Lead
 from app.models.sales import Order
 from app.models.ticket import Ticket, TicketComment
 from app.models.business import User
+from app.models.audit_log import AuditLog
 
 
 class Customer360ApiTests(unittest.TestCase):
@@ -198,6 +199,45 @@ class Customer360ApiTests(unittest.TestCase):
         event_types = {item["event_type"] for item in response.json()["items"]}
         self.assertTrue({"lead", "sales_order", "ticket", "ticket_comment", "assignment"}.issubset(event_types))
         self.assertIn("metadata", response.json()["items"][0])
+
+    def test_timeline_supports_offset_pagination_and_reports_remaining_items(self):
+        with Session(self.engine) as db:
+            db.add_all([
+                AuditLog(
+                    business_id=1,
+                    action="profile_update",
+                    resource_type="customer",
+                    resource_id=str(self.customer_id),
+                    metadata_={"field": "phone"},
+                ),
+                AuditLog(
+                    business_id=1,
+                    action="merge_undo",
+                    resource_type="customer",
+                    resource_id=str(self.customer_id),
+                    metadata_={"merge_id": 17, "reason": "Tách hồ sơ"},
+                ),
+            ])
+            db.commit()
+
+        first_page = self.client.get(
+            f"/api/customers/{self.customer_id}/timeline?limit=1&offset=0",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, first_page.status_code)
+        first_body = first_page.json()
+        self.assertEqual(1, len(first_body["items"]))
+        self.assertGreaterEqual(first_body["total"], 3)
+        self.assertTrue(first_body["has_more"])
+        self.assertEqual(1, first_body["next_offset"])
+
+        second_page = self.client.get(
+            f"/api/customers/{self.customer_id}/timeline?limit=100&offset=0",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, second_page.status_code)
+        event_types = {item["event_type"] for item in second_page.json()["items"]}
+        self.assertIn("customer_merge_undo", event_types)
 
 
 if __name__ == "__main__":

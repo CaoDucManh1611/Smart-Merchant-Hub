@@ -388,6 +388,7 @@ def list_customers(
     offset: int = Query(default=0, ge=0),
     tag: str | None = Query(default=None, min_length=1, max_length=80),
     tag_ids: str | None = Query(default=None, max_length=500),
+    match_mode: str = Query(default="all", pattern="^(all|any)$"),
 ):
     base = db.query(Customer).filter(
         Customer.business_id == tenant.business_id,
@@ -408,10 +409,18 @@ def list_customers(
             raise HTTPException(status_code=422, detail="tag_ids phải là danh sách số nguyên.") from exc
         if any(tag_id <= 0 for tag_id in requested_tag_ids):
             raise HTTPException(status_code=422, detail="tag_ids phải là số nguyên dương.")
-        for tag_id in dict.fromkeys(requested_tag_ids):
+        normalized_tag_ids = list(dict.fromkeys(requested_tag_ids))
+        if match_mode == "all":
+            for tag_id in normalized_tag_ids:
+                customer_ids = db.query(CustomerTag.customer_id).filter(
+                    CustomerTag.business_id == tenant.business_id,
+                    CustomerTag.tag_id == tag_id,
+                )
+                base = base.filter(Customer.id.in_(customer_ids))
+        else:
             customer_ids = db.query(CustomerTag.customer_id).filter(
                 CustomerTag.business_id == tenant.business_id,
-                CustomerTag.tag_id == tag_id,
+                CustomerTag.tag_id.in_(normalized_tag_ids),
             )
             base = base.filter(Customer.id.in_(customer_ids))
     total = base.count()
@@ -490,9 +499,16 @@ def customer_merge(
         confidence_score=evidence["confidence_score"],
         evidence=evidence,
     )
-    if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="merge", resource_type="customer", resource_id=str(customer_id), metadata={"source_customer_id": payload.source_customer_id, "reason": payload.reason})
-        db.commit()
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="merge",
+        resource_type="customer",
+        resource_id=str(customer_id),
+        metadata={"source_customer_id": payload.source_customer_id, "reason": payload.reason},
+    )
+    db.commit()
     return CustomerMergeOut(
         merge_id=merge.id,
         business_id=merge.business_id,
@@ -548,17 +564,16 @@ def undo_customer_merge_endpoint(
     )
     operation_items = list_merge_history(db, customer_id, tenant.business_id)
     history = next(item for item in operation_items if item["merge_id"] == merge_id)
-    if actor:
-        record_audit(
-            db,
-            business_id=tenant.business_id,
-            user_id=actor.id,
-            action="merge_undo",
-            resource_type="customer",
-            resource_id=str(customer_id),
-            metadata={"merge_id": merge_id, "reason": payload.reason},
-        )
-        db.commit()
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="merge_undo",
+        resource_type="customer",
+        resource_id=str(customer_id),
+        metadata={"merge_id": merge_id, "reason": payload.reason},
+    )
+    db.commit()
     return CustomerMergeOut(**history)
 
 
@@ -918,6 +933,7 @@ def customer_timeline(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
     _get_customer(db, customer_id, tenant)
     messages = db.query(Message).join(
@@ -980,6 +996,12 @@ def customer_timeline(
         AuditLog.resource_type == "customer",
         AuditLog.resource_id == str(customer_id),
         AuditLog.action.in_(("tag_add", "tag_remove")),
+    ).all()
+    merge_undo_history = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.resource_type == "customer",
+        AuditLog.resource_id == str(customer_id),
+        AuditLog.action == "merge_undo",
     ).all()
     items = [CustomerTimelineItem(
         event_type="message",
@@ -1082,8 +1104,26 @@ def customer_timeline(
         created_by=audit.user_id,
         metadata={"action": audit.action, **(audit.metadata_ or {})},
     ) for audit in tag_history)
+    items.extend(CustomerTimelineItem(
+        event_type="customer_merge_undo",
+        event_id=audit.id,
+        occurred_at=audit.created_at,
+        content=(audit.metadata_ or {}).get("reason") or "Hoàn tác gộp hồ sơ khách hàng",
+        created_by=audit.user_id,
+        metadata={"action": audit.action, **(audit.metadata_ or {})},
+    ) for audit in merge_undo_history)
     items.sort(key=lambda item: item.occurred_at or datetime.min, reverse=True)
-    return CustomerTimelineOut(items=items[:limit], total=len(items))
+    total = len(items)
+    page = items[offset : offset + limit]
+    has_more = offset + len(page) < total
+    return CustomerTimelineOut(
+        items=page,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        next_offset=offset + len(page) if has_more else None,
+    )
 
 
 @router.post("/{customer_id}/notes", response_model=CustomerNoteOut, status_code=201, dependencies=[Depends(require_write_access)])

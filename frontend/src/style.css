@@ -1954,6 +1954,21 @@ button {
   min-height: 36px;
 }
 
+.tag-filter-controls {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.tag-filter-controls .segment-filter {
+  margin: 0;
+}
+
+.tag-filter-controls label {
+  color: #8c5d57;
+  font-size: 0.72rem;
+}
+
 .customer-tag-form {
   display: flex;
   gap: 6px;
@@ -2052,6 +2067,11 @@ button {
   margin-top: 2px;
   color: #9a7771;
   font-size: 0.68rem;
+}
+
+.saved-segment-actions {
+  display: flex;
+  gap: 5px;
 }
 
 .customer-segment-section {
@@ -2775,6 +2795,22 @@ button:hover {
   margin: 0.15rem 0 0;
   color: #5f3f3a;
   line-height: 1.35;
+}
+
+.timeline-load-more {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid #e99f97;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #9d3b38;
+  background: #fff0eb;
+  cursor: pointer;
+}
+
+.timeline-load-more:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .customer-facts {
