@@ -14,7 +14,7 @@ import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js"
 import { filterConversationsForCustomer } from "./ticket-utils.js";
 import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
 
-const API_BASE = "http://127.0.0.1:8000/api";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
 const BUSINESS_ID = "1";
 
 function apiFetch(input, init = {}) {
@@ -53,6 +53,13 @@ const selectedId = ref(null);
 const activeFilter = ref("all");
 const tagCatalog = ref([]);
 const tagFilter = ref("");
+const savedSegments = ref([]);
+const selectedSegmentId = ref("");
+const segmentCustomerIds = ref(new Set());
+const segmentLoading = ref(false);
+const segmentSaving = ref(false);
+const segmentError = ref("");
+const segmentForm = ref({ name: "", description: "", tag_ids: [], match_mode: "all" });
 const customerTagDraft = ref("");
 const customerTagSaving = ref(false);
 const customerTagError = ref("");
@@ -65,6 +72,26 @@ const sending = ref(false);
 const sendingImage = ref(false);
 
 const error = ref("");
+const appDialog = ref(null);
+
+function requestConfirmation(message, options = {}) {
+  return new Promise((resolve) => {
+    appDialog.value = {
+      title: options.title || "Xác nhận thao tác",
+      message,
+      confirmLabel: options.confirmLabel || "Xác nhận",
+      cancelLabel: options.cancelLabel || "Hủy",
+      tone: options.tone || "default",
+      resolve,
+    };
+  });
+}
+
+function resolveAppDialog(confirmed) {
+  const dialog = appDialog.value;
+  appDialog.value = null;
+  dialog?.resolve?.(confirmed);
+}
 
 /* IMAGE */
 
@@ -129,6 +156,9 @@ const auditLoading = ref(false);
 const customerMergeSourceId = ref("");
 const customerMergeSaving = ref(false);
 const customerMergeError = ref("");
+const customerMergePreview = ref(null);
+const customerMergeHistory = ref([]);
+const duplicateSuggestions = ref([]);
 const leads = ref([]);
 const leadsLoading = ref(false);
 const leadSaving = ref(false);
@@ -237,8 +267,28 @@ async function fetchMetaStatus() {
   }
 }
 
-function connectMeta() {
-  window.location.href = `${API_BASE}/oauth/meta/start`;
+async function connectMeta() {
+  metaLoading.value = true;
+  metaNotice.value = "";
+  try {
+    // The authenticated request creates a state bound to this tenant.  A
+    // direct location change cannot include the bearer token required in
+    // production, so only the returned Meta URL is opened in the browser.
+    const response = await apiFetch(`${API_BASE}/oauth/meta/start?return_url=true`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || "Không thể bắt đầu kết nối Meta.");
+    }
+    const payload = await response.json();
+    if (!payload.authorization_url) {
+      throw new Error("Máy chủ không trả về đường dẫn kết nối Meta.");
+    }
+    window.location.assign(payload.authorization_url);
+  } catch (error) {
+    metaNotice.value = error.message || "Không thể bắt đầu kết nối Meta.";
+  } finally {
+    metaLoading.value = false;
+  }
 }
 
 function openSettings() {
@@ -249,7 +299,11 @@ function openSettings() {
 }
 
 async function disconnectMeta() {
-  if (!confirm("Ngắt kết nối Facebook/Instagram khỏi hệ thống?")) return;
+  if (!(await requestConfirmation("Ngắt kết nối Facebook/Instagram khỏi hệ thống?", {
+    title: "Ngắt kết nối Meta",
+    confirmLabel: "Ngắt kết nối",
+    tone: "danger",
+  }))) return;
   metaLoading.value = true;
   try {
     const res = await apiFetch(`${API_BASE}/oauth/meta/disconnect`, {
@@ -332,7 +386,11 @@ function handleDocDrop(e) {
 }
 
 async function deleteDoc(docId) {
-  if (!confirm("Bạn có chắc muốn xóa tài liệu này khỏi Kho tri thức?")) return;
+  if (!(await requestConfirmation("Bạn có chắc muốn xóa tài liệu này khỏi Kho tri thức?", {
+    title: "Xóa tài liệu",
+    confirmLabel: "Xóa tài liệu",
+    tone: "danger",
+  }))) return;
   try {
     const res = await apiFetch(`${API_BASE}/documents/${docId}`, {
       method: "DELETE",
@@ -527,6 +585,9 @@ const filtered = computed(() => {
         tagFilter.value,
       );
 
+      const segmentOk = !selectedSegmentId.value
+        || segmentCustomerIds.value.has(Number(item.customer_id));
+
       const text = [
         item.customer_name,
         item.external_user_id,
@@ -540,6 +601,7 @@ const filtered = computed(() => {
       return (
         channelOk
         && tagOk
+        && segmentOk
         &&
         (
           !keyword
@@ -1267,6 +1329,88 @@ async function fetchTagCatalog() {
   }
 }
 
+async function fetchSavedSegments() {
+  segmentLoading.value = true;
+  segmentError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/segments`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    savedSegments.value = data.items || [];
+  } catch (err) {
+    segmentError.value = "Không tải được segment đã lưu.";
+  } finally {
+    segmentLoading.value = false;
+  }
+}
+
+async function loadSegmentMembers() {
+  if (!selectedSegmentId.value) {
+    segmentCustomerIds.value = new Set();
+    return;
+  }
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/segments/${selectedSegmentId.value}/customers?limit=500`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    segmentCustomerIds.value = new Set((data.items || []).map((item) => Number(item.id)));
+  } catch (err) {
+    segmentError.value = "Không tải được khách trong segment.";
+    segmentCustomerIds.value = new Set();
+  }
+}
+
+async function createSavedSegment() {
+  const form = segmentForm.value;
+  if (!form.name.trim() || !form.tag_ids.length) {
+    segmentError.value = "Segment cần tên và ít nhất một tag.";
+    return;
+  }
+  segmentSaving.value = true;
+  segmentError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/segments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        tag_ids: form.tag_ids.map(Number),
+        match_mode: form.match_mode,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    segmentForm.value = { name: "", description: "", tag_ids: [], match_mode: "all" };
+    await fetchSavedSegments();
+  } catch (err) {
+    segmentError.value = err.message || "Không thể lưu segment.";
+  } finally {
+    segmentSaving.value = false;
+  }
+}
+
+async function deleteSavedSegment(segment) {
+  if (!(await requestConfirmation(`Xóa segment “${segment.name}”?`, {
+    title: "Xóa segment",
+    confirmLabel: "Xóa segment",
+    tone: "danger",
+  }))) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/segments/${segment.id}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (String(selectedSegmentId.value) === String(segment.id)) {
+      selectedSegmentId.value = "";
+      segmentCustomerIds.value = new Set();
+    }
+    await fetchSavedSegments();
+  } catch (err) {
+    segmentError.value = "Không thể xóa segment.";
+  }
+}
+
 async function reindexDocument(doc) {
   if (!doc?.id) return;
   try {
@@ -1627,7 +1771,11 @@ async function saveProduct() {
 }
 
 async function archiveProduct(product) {
-  if (!confirm(`Lưu trữ sản phẩm ${product.name}?`)) return;
+  if (!(await requestConfirmation(`Lưu trữ sản phẩm ${product.name}?`, {
+    title: "Lưu trữ sản phẩm",
+    confirmLabel: "Lưu trữ",
+    tone: "danger",
+  }))) return;
   try {
     const response = await apiFetch(`${API_BASE}/products/${product.id}`, { method: "DELETE" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -2367,17 +2515,21 @@ async function loadCustomer360(customerId) {
 
   customer360Loading.value = true;
   try {
-    const [profileResponse, timelineResponse] = await Promise.all([
+    const [profileResponse, timelineResponse, historyResponse, duplicateResponse] = await Promise.all([
       apiFetch(`${API_BASE}/customers/${customerId}`),
       apiFetch(`${API_BASE}/customers/${customerId}/timeline`),
+      apiFetch(`${API_BASE}/customers/${customerId}/merge-history`),
+      apiFetch(`${API_BASE}/customers/duplicates?customer_id=${customerId}`),
     ]);
-    if (!profileResponse.ok || !timelineResponse.ok) {
+    if (!profileResponse.ok || !timelineResponse.ok || !historyResponse.ok || !duplicateResponse.ok) {
       throw new Error(
-        `Customer 360 HTTP ${profileResponse.status}/${timelineResponse.status}`
+        `Customer 360 HTTP ${profileResponse.status}/${timelineResponse.status}/${historyResponse.status}/${duplicateResponse.status}`
       );
     }
     const profile = await profileResponse.json();
     const timeline = await timelineResponse.json();
+    const history = await historyResponse.json();
+    const duplicates = await duplicateResponse.json();
     if (!orderCustomers.value.length) {
       const customerResponse = await apiFetch(`${API_BASE}/customers?limit=200`);
       if (customerResponse.ok) orderCustomers.value = (await customerResponse.json()).items || [];
@@ -2386,11 +2538,44 @@ async function loadCustomer360(customerId) {
       ...profile,
       timeline: timeline.items || [],
     };
+    customerMergeHistory.value = history.items || [];
+    duplicateSuggestions.value = duplicates.items || [];
+    if (!duplicateSuggestions.value.some((item) => Number(item.source_customer_id) === Number(customerMergeSourceId.value))) {
+      customerMergePreview.value = null;
+    }
   } catch (err) {
     console.error("Customer 360 loading error:", err);
     customer360.value = null;
   } finally {
     customer360Loading.value = false;
+  }
+}
+
+async function previewSelectedCustomerMerge() {
+  const survivorId = selected.value?.customer_id;
+  const sourceId = Number(customerMergeSourceId.value);
+  if (!survivorId || !sourceId || sourceId === Number(survivorId)) {
+    customerMergeError.value = "Chọn một customer trùng khác để xem preview.";
+    return;
+  }
+  customerMergeSaving.value = true;
+  customerMergeError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${survivorId}/merge-preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_customer_id: sourceId }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    customerMergePreview.value = await response.json();
+  } catch (err) {
+    customerMergePreview.value = null;
+    customerMergeError.value = err.message || "Không thể tạo preview merge.";
+  } finally {
+    customerMergeSaving.value = false;
   }
 }
 
@@ -2401,26 +2586,65 @@ async function mergeSelectedCustomer() {
     customerMergeError.value = "Chọn một customer trùng khác để gộp.";
     return;
   }
-  if (!confirm("Gộp customer đã chọn vào hồ sơ hiện tại? Hành động này sẽ chuyển toàn bộ dữ liệu sang hồ sơ hiện tại.")) return;
+  if (!customerMergePreview.value || Number(customerMergePreview.value.source_customer_id) !== sourceId) {
+    await previewSelectedCustomerMerge();
+  }
+  if (!customerMergePreview.value) return;
+  const score = Math.round(Number(customerMergePreview.value.confidence_score || 0) * 100);
+  const fields = (customerMergePreview.value.matched_fields || []).join(", ") || "chưa có tín hiệu mạnh";
+  if (!(await requestConfirmation(`Độ tin cậy ${score}% (${fields}). Có thể hoàn tác chỉ khi hồ sơ sống chưa phát sinh thay đổi.`, {
+    title: "Xác nhận gộp hồ sơ",
+    confirmLabel: "Gộp hồ sơ",
+    tone: "danger",
+  }))) return;
   customerMergeSaving.value = true;
   customerMergeError.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/customers/${survivorId}/merge`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source_customer_id: sourceId, reason: "Gộp hồ sơ trùng từ Customer 360" }),
+      body: JSON.stringify({ source_customer_id: sourceId, confirm: true, reason: "Gộp hồ sơ trùng từ Customer 360" }),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
     customerMergeSourceId.value = "";
+    customerMergePreview.value = null;
     await loadCustomer360(survivorId);
     await loadConversations(false);
+    await fetchSavedSegments();
   } catch (err) {
     customerMergeError.value = err.message || "Không thể gộp customer.";
   } finally {
     customerMergeSaving.value = false;
+  }
+}
+
+async function undoCustomerMerge(merge) {
+  const customerId = selected.value?.customer_id;
+  if (!customerId || !merge?.merge_id || merge.status !== "completed") return;
+  if (!(await requestConfirmation("Chỉ thực hiện được nếu hồ sơ sống chưa có dữ liệu mới.", {
+    title: "Hoàn tác merge",
+    confirmLabel: "Tách / hoàn tác",
+    tone: "danger",
+  }))) return;
+  customerMergeError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/merge-history/${merge.merge_id}/undo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "Hoàn tác từ Customer 360" }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await loadCustomer360(customerId);
+    await loadConversations(false);
+    await fetchSavedSegments();
+  } catch (err) {
+    customerMergeError.value = err.message || "Không thể hoàn tác merge.";
   }
 }
 
@@ -2549,7 +2773,11 @@ async function toggleCustomerFact(fact) {
 
 async function removeCustomerFact(fact) {
   const customerId = selected.value?.customer_id;
-  if (!customerId || !confirm(`Xóa tri thức “${fact.fact_key}”?`)) return;
+  if (!customerId || !(await requestConfirmation(`Xóa tri thức “${fact.fact_key}”?`, {
+    title: "Xóa customer fact",
+    confirmLabel: "Xóa tri thức",
+    tone: "danger",
+  }))) return;
   try {
     const response = await apiFetch(`${API_BASE}/customers/${customerId}/facts/${fact.id}`, {
       method: "DELETE",
@@ -3023,6 +3251,7 @@ onMounted(async () => {
     true
   );
   fetchTagCatalog();
+  fetchSavedSegments();
 
   connectRealtime();
   fetchDocuments();
@@ -3495,6 +3724,13 @@ onUnmounted(() => {
           <select v-if="tagCatalog.length" v-model="tagFilter" class="segment-filter" aria-label="Lọc theo tag">
             <option value="">Mọi phân khúc</option>
             <option v-for="tag in tagCatalog" :key="tag.id" :value="tag.name">{{ tag.name }}</option>
+          </select>
+
+          <select v-if="savedSegments.length" v-model="selectedSegmentId" class="segment-filter" aria-label="Lọc theo segment đã lưu" @change="loadSegmentMembers">
+            <option value="">Mọi segment đã lưu</option>
+            <option v-for="segment in savedSegments" :key="segment.id" :value="segment.id">
+              {{ segment.name }} ({{ segment.customer_count }})
+            </option>
           </select>
 
 
@@ -4874,19 +5110,59 @@ onUnmounted(() => {
 
             <div class="section customer-merge-section">
               <div class="section-head">
-                <h4>Gộp hồ sơ trùng</h4>
+                <h4>Customer 360 nâng cao</h4>
               </div>
-              <p class="field-hint">Chọn hồ sơ nguồn; toàn bộ hội thoại, tag, fact, lead, ticket và đơn bán sẽ chuyển sang khách hiện tại.</p>
+              <p class="field-hint">Đề xuất trùng và xem điểm tin cậy trước khi chuyển dữ liệu sang khách hiện tại.</p>
               <form class="customer-tag-form" @submit.prevent="mergeSelectedCustomer">
                 <select v-model="customerMergeSourceId" aria-label="Customer nguồn để gộp">
                   <option value="">Chọn customer trùng</option>
-                  <option v-for="candidate in orderCustomers.filter(item => item.id !== selected?.customer_id)" :key="candidate.id" :value="candidate.id">
-                    #{{ candidate.id }} — {{ candidate.name || candidate.channel || 'Customer' }}
+                  <option v-for="candidate in duplicateSuggestions" :key="candidate.source_customer_id" :value="candidate.source_customer_id">
+                    #{{ candidate.source_customer_id }} — {{ candidate.source_name || candidate.source_channel }} ({{ Math.round(candidate.confidence_score * 100) }}%)
                   </option>
                 </select>
-                <button type="submit" :disabled="customerMergeSaving">{{ customerMergeSaving ? 'Đang gộp...' : 'Gộp hồ sơ' }}</button>
+                <button type="button" :disabled="customerMergeSaving" @click="previewSelectedCustomerMerge">Xem preview</button>
+                <button type="submit" :disabled="customerMergeSaving">{{ customerMergeSaving ? 'Đang xử lý...' : 'Xác nhận merge' }}</button>
               </form>
+              <div v-if="customerMergePreview" class="merge-preview-card">
+                <strong>Độ tin cậy: {{ Math.round(customerMergePreview.confidence_score * 100) }}%</strong>
+                <span>{{ customerMergePreview.confidence_label }}</span>
+                <small>{{ customerMergePreview.matched_fields.join(', ') || 'Chưa có tín hiệu trùng mạnh' }}</small>
+              </div>
               <div v-if="customerMergeError" class="facts-error">{{ customerMergeError }}</div>
+              <div v-if="customerMergeHistory.length" class="merge-history">
+                <div class="section-head"><h5>Lịch sử merge</h5><span>{{ customerMergeHistory.length }}</span></div>
+                <div v-for="merge in customerMergeHistory" :key="merge.merge_id" class="merge-history-row">
+                  <div>
+                    <strong>#{{ merge.merge_id }} · {{ merge.status === 'undone' ? 'Đã hoàn tác' : 'Đã merge' }}</strong>
+                    <small>{{ merge.confidence_score == null ? 'Không có điểm cũ' : `Tin cậy ${Math.round(merge.confidence_score * 100)}%` }}</small>
+                  </div>
+                  <button v-if="merge.can_undo" type="button" @click="undoCustomerMerge(merge)">Tách / hoàn tác</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="section customer-segment-section">
+              <div class="section-head">
+                <h4>Segment lưu theo nhiều tag</h4>
+                <span>{{ savedSegments.length }}</span>
+              </div>
+              <form class="segment-form" @submit.prevent="createSavedSegment">
+                <input v-model="segmentForm.name" maxlength="160" placeholder="Tên segment" />
+                <input v-model="segmentForm.description" maxlength="2000" placeholder="Mô tả (không bắt buộc)" />
+                <select v-model="segmentForm.tag_ids" multiple aria-label="Tag của segment">
+                  <option v-for="tag in tagCatalog" :key="tag.id" :value="tag.id">{{ tag.name }}</option>
+                </select>
+                <label><input v-model="segmentForm.match_mode" type="radio" value="all" /> Có tất cả tag</label>
+                <label><input v-model="segmentForm.match_mode" type="radio" value="any" /> Có ít nhất một tag</label>
+                <button type="submit" :disabled="segmentSaving">{{ segmentSaving ? 'Đang lưu...' : 'Lưu segment' }}</button>
+              </form>
+              <div v-if="savedSegments.length" class="saved-segment-list">
+                <div v-for="segment in savedSegments" :key="segment.id" class="saved-segment-row">
+                  <span><strong>{{ segment.name }}</strong><small>{{ segment.customer_count }} khách · {{ segment.match_mode === 'all' ? 'đủ tất cả tag' : 'ít nhất một tag' }}</small></span>
+                  <button type="button" @click="deleteSavedSegment(segment)">Xóa</button>
+                </div>
+              </div>
+              <div v-if="segmentError" class="facts-error">{{ segmentError }}</div>
             </div>
 
 
@@ -5981,6 +6257,26 @@ onUnmounted(() => {
 
 
     </main>
+
+    <div
+      v-if="appDialog"
+      class="app-dialog-backdrop"
+      role="presentation"
+      @click.self="resolveAppDialog(false)"
+      @keydown.esc="resolveAppDialog(false)"
+    >
+      <section class="app-dialog" role="dialog" aria-modal="true" aria-labelledby="app-dialog-title">
+        <div class="app-dialog-icon" :class="`app-dialog-icon-${appDialog.tone}`">!</div>
+        <div class="app-dialog-content">
+          <h3 id="app-dialog-title">{{ appDialog.title }}</h3>
+          <p>{{ appDialog.message }}</p>
+        </div>
+        <div class="app-dialog-actions">
+          <button type="button" class="app-dialog-cancel" @click="resolveAppDialog(false)">{{ appDialog.cancelLabel }}</button>
+          <button type="button" class="app-dialog-confirm" :class="{ 'is-danger': appDialog.tone === 'danger' }" @click="resolveAppDialog(true)">{{ appDialog.confirmLabel }}</button>
+        </div>
+      </section>
+    </div>
 
   </div>
 

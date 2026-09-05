@@ -23,7 +23,12 @@ AUTH_TTL_SECONDS = 8 * 60 * 60
 
 
 def _secret() -> bytes:
-    value = settings.AUTH_SECRET or settings.CHANNEL_ENCRYPTION_KEY or settings.APP_NAME
+    value = settings.AUTH_SECRET.strip()
+    if not value and settings.ENVIRONMENT.strip().lower() == "production":
+        raise RuntimeError("AUTH_SECRET must be configured in production")
+    # Keep the local demo compatible, but never use this fallback in a
+    # deployed environment.  Production validation rejects empty secrets.
+    value = value or settings.CHANNEL_ENCRYPTION_KEY or settings.APP_NAME
     return value.encode("utf-8")
 
 
@@ -114,6 +119,8 @@ def require_write_access(user: User | None = Depends(get_optional_user)) -> User
     can never mutate CRM data.
     """
     if user is None:
+        if settings.ENVIRONMENT.strip().lower() == "production":
+            raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
         return None
     if (user.role or "").lower() not in {"owner", "admin", "agent"}:
         raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này.")
@@ -123,6 +130,8 @@ def require_write_access(user: User | None = Depends(get_optional_user)) -> User
 def require_admin_access(user: User | None = Depends(get_optional_user)) -> User | None:
     """Require owner/admin for team, security, and configuration writes."""
     if user is None:
+        if settings.ENVIRONMENT.strip().lower() == "production":
+            raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
         return None
     if (user.role or "").lower() not in {"owner", "admin"}:
         raise HTTPException(status_code=403, detail="Chỉ quản trị viên mới được thực hiện thao tác này.")

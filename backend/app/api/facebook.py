@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
@@ -14,6 +16,7 @@ from app.integrations import get_channel_adapter
 from app.services.channel_event_service import ingest_normalized_events
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -30,7 +33,7 @@ async def verify_facebook_webhook(
         hub_mode == "subscribe"
         and hub_verify_token == settings.FACEBOOK_VERIFY_TOKEN
     ):
-        print("✅ FACEBOOK WEBHOOK VERIFIED")
+        logger.info("Facebook webhook verified")
 
         return PlainTextResponse(
             content=hub_challenge,
@@ -57,7 +60,9 @@ async def receive_facebook_webhook(
     rồi lưu message vào PostgreSQL.
     """
 
-    print("FACEBOOK RAW:", payload)
+    # Do not log the provider payload: it can contain customer messages,
+    # external IDs and access credentials.
+    logger.info("Facebook webhook received")
 
     if settings.ENVIRONMENT == "production" and not settings.META_APP_SECRET:
         raise HTTPException(status_code=500, detail="META_APP_SECRET is required")
@@ -106,7 +111,11 @@ async def receive_facebook_webhook(
     if settings.ENVIRONMENT == "production" and normalized["business_id"] is None:
         raise HTTPException(status_code=404, detail="Unknown Facebook channel account")
 
-    print("FACEBOOK NORMALIZED:", normalized)
+    logger.info(
+        "Facebook webhook normalized: channel_bound=%s is_message=%s",
+        channel_binding is not None,
+        bool(normalized.get("external_message_id")),
+    )
 
     # Chỉ xử lý khi đây thực sự là một message
     if normalized.get("external_message_id"):
@@ -133,16 +142,10 @@ async def receive_facebook_webhook(
                 }
             )
 
-        print(
-            "✅ FACEBOOK MESSAGE PROCESSED "
-            "AND SAVED TO POSTGRESQL"
-        )
+        logger.info("Facebook message processed")
 
     else:
-        print(
-            "⚠️ FACEBOOK EVENT IGNORED "
-            "- NO MESSAGE ID"
-        )
+        logger.info("Facebook event ignored because it has no message ID")
 
     return {
         "status": "received",

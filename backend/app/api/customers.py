@@ -3,10 +3,11 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Table, UniqueConstraint, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.dependencies import get_db
+from app.database.session import Base
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_fact import CustomerFact
@@ -20,6 +21,7 @@ from app.models.purchase_order import PurchaseOrder
 from app.models.lead import Lead
 from app.models.ticket import Ticket, TicketComment
 from app.models.customer_merge import CustomerMerge
+from app.models.audit_log import AuditLog
 from app.models.business_setting import BusinessSetting
 from app.schemas.customer import (
     CustomerFactCreate,
@@ -45,6 +47,10 @@ from app.schemas.customer_merge import (
     CustomerMergeOut,
     CustomerMergePreviewOut,
     CustomerMergeRequest,
+    CustomerMergeUndoRequest,
+    CustomerSegmentCreate,
+    CustomerSegmentOut,
+    CustomerSegmentUpdate,
 )
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
@@ -52,13 +58,36 @@ from app.services.customer_fact_extractor import (
     FACT_EXTRACTION_SETTING_KEY,
     get_customer_fact_extraction_enabled,
 )
-from app.services.customer_merge_service import merge_customer, preview_merge
+from app.services.customer_merge_service import (
+    duplicate_evidence,
+    find_duplicate_suggestions,
+    list_merge_history,
+    merge_customer,
+    preview_merge,
+    undo_customer_merge,
+)
 from app.auth.dependencies import require_write_access
 from app.models.business import User
 from app.services.audit_service import record_audit
 
 
 router = APIRouter()
+
+
+customer_segments_table = Table(
+    "customer_segments",
+    Base.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("business_id", Integer, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("name", String(160), nullable=False),
+    Column("description", String(2000), nullable=True),
+    Column("tag_ids", JSON, nullable=False),
+    Column("match_mode", String(10), nullable=False, server_default="all"),
+    Column("created_by", Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+    Column("created_at", DateTime, server_default=func.now(), nullable=False),
+    Column("updated_at", DateTime, server_default=func.now(), nullable=False),
+    UniqueConstraint("business_id", "name", name="uq_customer_segments_business_name"),
+)
 
 
 def _fact_out(fact: CustomerFact) -> CustomerFactOut:
@@ -124,6 +153,231 @@ def _get_customer(db: Session, customer_id: int, tenant: TenantContext) -> Custo
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer không tồn tại.")
     return customer
+
+
+def _segment_row_to_dict(db: Session, row) -> dict:
+    data = dict(row._mapping if hasattr(row, "_mapping") else row)
+    tag_ids = [int(value) for value in (data.get("tag_ids") or [])]
+    customer_query = db.query(Customer.id).filter(
+        Customer.business_id == data["business_id"],
+        Customer.status != "merged",
+    )
+    if data.get("match_mode") == "all":
+        for tag_id in tag_ids:
+            customer_query = customer_query.filter(Customer.id.in_(
+                db.query(CustomerTag.customer_id).filter(
+                    CustomerTag.business_id == data["business_id"],
+                    CustomerTag.tag_id == tag_id,
+                )
+            ))
+    elif tag_ids:
+        customer_query = customer_query.join(
+            CustomerTag,
+            CustomerTag.customer_id == Customer.id,
+        ).filter(
+            CustomerTag.business_id == data["business_id"],
+            CustomerTag.tag_id.in_(tag_ids),
+        ).distinct()
+    data["tag_ids"] = tag_ids
+    data["customer_count"] = customer_query.count()
+    return data
+
+
+def _get_segment(db: Session, segment_id: int, tenant: TenantContext) -> dict:
+    row = db.execute(select(customer_segments_table).where(
+        customer_segments_table.c.id == segment_id,
+        customer_segments_table.c.business_id == tenant.business_id,
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Segment không tồn tại trong business này.")
+    return _segment_row_to_dict(db, row)
+
+
+def _validate_segment_tags(db: Session, tenant: TenantContext, tag_ids: list[int]) -> list[int]:
+    normalized = list(dict.fromkeys(int(value) for value in tag_ids))
+    if not normalized or any(value <= 0 for value in normalized):
+        raise HTTPException(status_code=422, detail="Segment phải có ít nhất một tag hợp lệ.")
+    found = {
+        tag_id
+        for (tag_id,) in db.query(Tag.id).filter(
+            Tag.business_id == tenant.business_id,
+            Tag.id.in_(normalized),
+        ).all()
+    }
+    missing = [tag_id for tag_id in normalized if tag_id not in found]
+    if missing:
+        raise HTTPException(status_code=422, detail="Segment chỉ được dùng tag thuộc business hiện tại.")
+    return normalized
+
+
+def _segment_customer_query(db: Session, segment: dict):
+    query = db.query(Customer).filter(
+        Customer.business_id == segment["business_id"],
+        Customer.status != "merged",
+    )
+    tag_ids = segment.get("tag_ids") or []
+    if segment.get("match_mode") == "all":
+        for tag_id in tag_ids:
+            query = query.filter(Customer.id.in_(
+                db.query(CustomerTag.customer_id).filter(
+                    CustomerTag.business_id == segment["business_id"],
+                    CustomerTag.tag_id == tag_id,
+                )
+            ))
+    elif tag_ids:
+        query = query.join(CustomerTag, CustomerTag.customer_id == Customer.id).filter(
+            CustomerTag.business_id == segment["business_id"],
+            CustomerTag.tag_id.in_(tag_ids),
+        ).distinct()
+    return query
+
+
+def _customer_list_out(db: Session, query, *, offset: int = 0, limit: int = 200) -> CustomerListOut:
+    total = query.count()
+    customers = query.order_by(Customer.updated_at.desc(), Customer.id.desc()).offset(offset).limit(limit).all()
+    items = []
+    for customer in customers:
+        count = db.query(func.count(Conversation.id)).filter(
+            Conversation.business_id == customer.business_id,
+            Conversation.customer_id == customer.id,
+        ).scalar() or 0
+        items.append(CustomerListItem(
+            id=customer.id,
+            name=customer.name,
+            email=customer.email,
+            phone=customer.phone,
+            channel=customer.channel,
+            updated_at=customer.updated_at,
+            conversation_count=count,
+        ))
+    return CustomerListOut(items=items, total=total)
+
+
+@router.get("/duplicates", response_model=dict)
+def list_duplicate_suggestions(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    customer_id: int | None = Query(default=None, ge=1),
+    threshold: float = Query(default=0.55, ge=0.0, le=1.0),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    items = find_duplicate_suggestions(
+        db,
+        tenant.business_id,
+        customer_id=customer_id,
+        threshold=threshold,
+        limit=limit,
+    )
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/segments", response_model=dict)
+def list_customer_segments(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    rows = db.execute(select(customer_segments_table).where(
+        customer_segments_table.c.business_id == tenant.business_id,
+    ).order_by(customer_segments_table.c.name.asc())).all()
+    items = [CustomerSegmentOut(**_segment_row_to_dict(db, row)) for row in rows]
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/segments", response_model=CustomerSegmentOut, status_code=201, dependencies=[Depends(require_write_access)])
+def create_customer_segment(
+    payload: CustomerSegmentCreate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    tag_ids = _validate_segment_tags(db, tenant, payload.tag_ids)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Tên segment không được rỗng.")
+    existing = db.execute(select(customer_segments_table.c.id).where(
+        customer_segments_table.c.business_id == tenant.business_id,
+        customer_segments_table.c.name == name,
+    )).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Tên segment đã tồn tại trong business này.")
+    result = db.execute(customer_segments_table.insert().values(
+        business_id=tenant.business_id,
+        name=name,
+        description=payload.description.strip() if payload.description else None,
+        tag_ids=tag_ids,
+        match_mode=payload.match_mode,
+        created_by=actor.id if actor else None,
+    ))
+    db.commit()
+    segment = _get_segment(db, int(result.inserted_primary_key[0]), tenant)
+    return CustomerSegmentOut(**segment)
+
+
+@router.patch("/segments/{segment_id}", response_model=CustomerSegmentOut, dependencies=[Depends(require_write_access)])
+def update_customer_segment(
+    segment_id: int,
+    payload: CustomerSegmentUpdate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    current = _get_segment(db, segment_id, tenant)
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data:
+        data["name"] = data["name"].strip()
+        if not data["name"]:
+            raise HTTPException(status_code=422, detail="Tên segment không được rỗng.")
+        duplicate = db.execute(select(customer_segments_table.c.id).where(
+            customer_segments_table.c.business_id == tenant.business_id,
+            customer_segments_table.c.name == data["name"],
+            customer_segments_table.c.id != segment_id,
+        )).first()
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="Tên segment đã tồn tại trong business này.")
+    if "tag_ids" in data:
+        data["tag_ids"] = _validate_segment_tags(db, tenant, data["tag_ids"])
+    if "description" in data and data["description"] is not None:
+        data["description"] = data["description"].strip() or None
+    if not data:
+        return CustomerSegmentOut(**current)
+    data["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.execute(update(customer_segments_table).where(
+        customer_segments_table.c.id == segment_id,
+        customer_segments_table.c.business_id == tenant.business_id,
+    ).values(**data))
+    db.commit()
+    return CustomerSegmentOut(**_get_segment(db, segment_id, tenant))
+
+
+@router.delete("/segments/{segment_id}", status_code=204, dependencies=[Depends(require_write_access)])
+def delete_customer_segment(
+    segment_id: int,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    _get_segment(db, segment_id, tenant)
+    db.execute(delete(customer_segments_table).where(
+        customer_segments_table.c.id == segment_id,
+        customer_segments_table.c.business_id == tenant.business_id,
+    ))
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/segments/{segment_id}/customers", response_model=CustomerListOut)
+def list_segment_customers(
+    segment_id: int,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    segment = _get_segment(db, segment_id, tenant)
+    return _customer_list_out(
+        db,
+        _segment_customer_query(db, segment),
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.get("", response_model=CustomerListOut)
@@ -194,11 +448,14 @@ def customer_merge_preview(
         source_customer_id=payload.source_customer_id,
         business_id=tenant.business_id,
     )
+    details = duplicate_evidence(db, survivor, source)
     return CustomerMergePreviewOut(
         survivor_customer_id=survivor.id,
         source_customer_id=source.id,
         survivor_counts=survivor_counts,
         source_counts=source_counts,
+        **details,
+        can_merge=True,
     )
 
 
@@ -211,6 +468,18 @@ def customer_merge(
     actor: User | None = Depends(require_write_access),
 ):
     """Merge a duplicate customer while retaining an append-only merge record."""
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=409,
+            detail="Cần xác nhận merge sau khi đã xem preview và điểm tin cậy.",
+        )
+    survivor, source, _survivor_counts, _source_counts = preview_merge(
+        db,
+        survivor_customer_id=customer_id,
+        source_customer_id=payload.source_customer_id,
+        business_id=tenant.business_id,
+    )
+    evidence = duplicate_evidence(db, survivor, source)
     merge = merge_customer(
         db,
         survivor_customer_id=customer_id,
@@ -218,6 +487,8 @@ def customer_merge(
         business_id=tenant.business_id,
         reason=payload.reason,
         created_by=actor.id if actor else None,
+        confidence_score=evidence["confidence_score"],
+        evidence=evidence,
     )
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="merge", resource_type="customer", resource_id=str(customer_id), metadata={"source_customer_id": payload.source_customer_id, "reason": payload.reason})
@@ -232,7 +503,63 @@ def customer_merge(
         before_counts=merge.before_counts,
         after_counts=merge.after_counts,
         created_at=merge.created_at,
+        confidence_score=evidence["confidence_score"],
+        confidence_label=evidence["confidence_label"],
+        matched_fields=evidence["matched_fields"],
+        evidence=evidence["evidence"],
+        can_undo=True,
     )
+
+
+@router.get("/{customer_id}/merge-history", response_model=dict)
+def customer_merge_history(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    _get_customer(db, customer_id, tenant)
+    items = list_merge_history(db, customer_id, tenant.business_id)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/{customer_id}/merge-history/{merge_id}/undo", response_model=CustomerMergeOut, dependencies=[Depends(require_write_access)])
+def undo_customer_merge_endpoint(
+    customer_id: int,
+    merge_id: int,
+    payload: CustomerMergeUndoRequest,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    merge = db.query(CustomerMerge).filter(
+        CustomerMerge.id == merge_id,
+        CustomerMerge.business_id == tenant.business_id,
+        (CustomerMerge.survivor_customer_id == customer_id)
+        | (CustomerMerge.source_customer_id == customer_id),
+    ).first()
+    if merge is None:
+        raise HTTPException(status_code=404, detail="Merge không thuộc customer/business này.")
+    undo_customer_merge(
+        db,
+        merge_id,
+        tenant.business_id,
+        actor_id=actor.id if actor else None,
+        reason=payload.reason,
+    )
+    operation_items = list_merge_history(db, customer_id, tenant.business_id)
+    history = next(item for item in operation_items if item["merge_id"] == merge_id)
+    if actor:
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id,
+            action="merge_undo",
+            resource_type="customer",
+            resource_id=str(customer_id),
+            metadata={"merge_id": merge_id, "reason": payload.reason},
+        )
+        db.commit()
+    return CustomerMergeOut(**history)
 
 
 @router.get("/fact-extraction-status", response_model=CustomerFactExtractionStatusOut)
@@ -518,17 +845,25 @@ def add_customer_tag(
         CustomerTag.customer_id == customer.id,
         CustomerTag.tag_id == tag.id,
     ).first()
-    if link is None:
+    changed = link is None
+    if changed:
         db.add(CustomerTag(
             business_id=tenant.business_id,
             customer_id=customer.id,
             tag_id=tag.id,
         ))
+    if changed:
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="tag_add",
+            resource_type="customer",
+            resource_id=str(customer.id),
+            metadata={"tag_id": tag.id, "tag": tag.name},
+        )
     db.commit()
     db.refresh(tag)
-    if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="tag_add", resource_type="customer", resource_id=str(customer.id), metadata={"tag": tag.name})
-        db.commit()
     return CustomerTagOut(id=tag.id, name=tag.name, color=tag.color)
 
 
@@ -548,11 +883,18 @@ def remove_customer_tag(
     ).first()
     if link is None:
         raise HTTPException(status_code=404, detail="Tag không được gắn cho customer.")
+    tag = db.query(Tag).filter(Tag.id == tag_id, Tag.business_id == tenant.business_id).first()
     db.delete(link)
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="tag_remove",
+        resource_type="customer",
+        resource_id=str(customer.id),
+        metadata={"tag_id": tag_id, "tag": tag.name if tag else None},
+    )
     db.commit()
-    if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="tag_remove", resource_type="customer", resource_id=str(customer.id), metadata={"tag_id": tag_id})
-        db.commit()
     return Response(status_code=204)
 
 
@@ -626,6 +968,18 @@ def customer_timeline(
         CustomerMerge.business_id == tenant.business_id,
         (CustomerMerge.survivor_customer_id == customer_id)
         | (CustomerMerge.source_customer_id == customer_id),
+    ).all()
+    profile_history = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.resource_type == "customer",
+        AuditLog.resource_id == str(customer_id),
+        AuditLog.action.in_(("profile_created", "profile_update")),
+    ).all()
+    tag_history = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.resource_type == "customer",
+        AuditLog.resource_id == str(customer_id),
+        AuditLog.action.in_(("tag_add", "tag_remove")),
     ).all()
     items = [CustomerTimelineItem(
         event_type="message",
@@ -708,6 +1062,26 @@ def customer_timeline(
             "after_counts": merge.after_counts,
         },
     ) for merge in merges)
+    items.extend(CustomerTimelineItem(
+        event_type="customer_profile",
+        event_id=audit.id,
+        occurred_at=audit.created_at,
+        content="Cập nhật hồ sơ khách hàng" if audit.action == "profile_update" else "Tạo hồ sơ khách hàng",
+        created_by=audit.user_id,
+        metadata={"action": audit.action, **(audit.metadata_ or {})},
+    ) for audit in profile_history)
+    items.extend(CustomerTimelineItem(
+        event_type="customer_tag",
+        event_id=audit.id,
+        occurred_at=audit.created_at,
+        content=(
+            f"Gắn tag {audit.metadata_.get('tag')}"
+            if audit.action == "tag_add"
+            else f"Bỏ tag {audit.metadata_.get('tag') or audit.metadata_.get('tag_id')}"
+        ),
+        created_by=audit.user_id,
+        metadata={"action": audit.action, **(audit.metadata_ or {})},
+    ) for audit in tag_history)
     items.sort(key=lambda item: item.occurred_at or datetime.min, reverse=True)
     return CustomerTimelineOut(items=items[:limit], total=len(items))
 

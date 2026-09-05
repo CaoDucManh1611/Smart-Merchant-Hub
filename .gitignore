@@ -25,3 +25,8 @@ Thumbs.db
 
 # Runtime artifacts
 rag_runs.json
+
+# Database backups are deployment artifacts, never source-controlled.
+backups/
+*.dump
+*.dump.list

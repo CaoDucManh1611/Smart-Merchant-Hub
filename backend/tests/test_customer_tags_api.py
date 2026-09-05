@@ -76,6 +76,14 @@ class CustomerTagsApiTests(unittest.TestCase):
         )
         self.assertEqual([], profile_after.json()["tags"])
 
+        timeline = self.client.get(
+            f"/api/customers/{self.customer_id}/timeline",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, timeline.status_code)
+        tag_events = [item for item in timeline.json()["items"] if item["event_type"] == "customer_tag"]
+        self.assertEqual({"tag_add", "tag_remove"}, {item["metadata"]["action"] for item in tag_events})
+
     def test_cross_tenant_customer_tag_is_rejected(self):
         response = self.client.post(
             f"/api/customers/{self.other_customer_id}/tags",

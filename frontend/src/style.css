@@ -37,6 +37,94 @@ button {
   cursor: pointer;
 }
 
+.app-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(74, 28, 30, 0.32);
+  backdrop-filter: blur(4px);
+}
+
+.app-dialog {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px 12px;
+  width: min(460px, 100%);
+  padding: 22px;
+  color: #542a2c;
+  background: #fffaf7;
+  border: 1px solid rgba(232, 126, 107, 0.38);
+  border-radius: 22px;
+  box-shadow: 0 24px 70px rgba(91, 37, 40, 0.24);
+  animation: app-dialog-in 160ms ease-out;
+}
+
+.app-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  color: #fff;
+  background: #e99562;
+  border-radius: 50%;
+  font-weight: 800;
+}
+
+.app-dialog-icon-danger {
+  background: #df3941;
+}
+
+.app-dialog-content h3 {
+  margin: 3px 0 7px;
+  color: #8c202c;
+  font-size: 1.08rem;
+}
+
+.app-dialog-content p {
+  margin: 0;
+  color: #70494a;
+  line-height: 1.55;
+}
+
+.app-dialog-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.app-dialog-actions button {
+  min-width: 106px;
+  padding: 10px 15px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  font-weight: 700;
+}
+
+.app-dialog-cancel {
+  color: #7c4a4b;
+  background: #fff;
+  border-color: #efb9aa !important;
+}
+
+.app-dialog-confirm {
+  color: #fff;
+  background: #d87856;
+}
+
+.app-dialog-confirm.is-danger {
+  background: #d8323b;
+}
+
+@keyframes app-dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 
 /* =========================================================
    APP
@@ -1875,6 +1963,121 @@ button {
 .customer-merge-section .field-hint {
   margin: 0 0 8px;
   line-height: 1.35;
+}
+
+.customer-tag-form select,
+.segment-form input,
+.segment-form select {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid #efc8c0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #6c4a45;
+  background: #fffaf8;
+}
+
+.customer-tag-form button,
+.segment-form button,
+.merge-history-row button,
+.saved-segment-row button {
+  border: 1px solid #e99f97;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #9d3b38;
+  background: #fff0eb;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.customer-tag-form button:disabled,
+.segment-form button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.merge-preview-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  padding: 9px 10px;
+  border: 1px solid #f0c4a8;
+  border-radius: 9px;
+  color: #7c4b32;
+  background: #fff8e9;
+  font-size: 0.75rem;
+}
+
+.merge-preview-card small {
+  width: 100%;
+  color: #9a7771;
+}
+
+.merge-history {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.merge-history h5 {
+  margin: 0;
+  color: #a6202c;
+  font-size: 12px;
+}
+
+.merge-history-row,
+.saved-segment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid #f2d8d1;
+  border-radius: 9px;
+  background: #fffaf8;
+}
+
+.merge-history-row strong,
+.saved-segment-row strong {
+  display: block;
+  color: #6e2828;
+  font-size: 0.75rem;
+}
+
+.merge-history-row small,
+.saved-segment-row small {
+  display: block;
+  margin-top: 2px;
+  color: #9a7771;
+  font-size: 0.68rem;
+}
+
+.customer-segment-section {
+  margin-top: 16px;
+}
+
+.segment-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.segment-form select[multiple] {
+  min-height: 72px;
+}
+
+.segment-form label {
+  color: #80514c;
+  font-size: 0.72rem;
+}
+
+.saved-segment-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
 }
 
 .auth-session-row {

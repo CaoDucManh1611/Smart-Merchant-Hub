@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import httpx
@@ -6,6 +7,8 @@ from app.services.meta_errors import MetaAPIError
 from app.services.meta_config_service import get_meta_config
 from app.services.channel_service import get_single_active_channel
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
@@ -124,15 +127,7 @@ def send_facebook_request(
             timeout=20,
         )
 
-        print(
-            "FACEBOOK SEND STATUS:",
-            response.status_code,
-        )
-
-        print(
-            "FACEBOOK SEND RESPONSE:",
-            response.text[:1000],
-        )
+        logger.info("Facebook provider response status=%s", response.status_code)
 
         if response.status_code >= 400:
             raise MetaAPIError(
@@ -150,12 +145,8 @@ def send_facebook_request(
 
         raise
 
-    except httpx.RequestError as exc:
-
-        print(
-            "❌ FACEBOOK REQUEST ERROR:",
-            str(exc),
-        )
+    except httpx.RequestError:
+        logger.warning("Facebook provider request failed")
 
         raise
 
@@ -186,11 +177,7 @@ def send_facebook_message(
             "không được để trống"
         )
 
-    print(
-        "📤 FACEBOOK SEND TEXT | "
-        f"recipient_id={recipient_id} | "
-        f"text={text!r}"
-    )
+    logger.info("Sending Facebook text message")
 
     result = (
         send_facebook_request(
@@ -207,11 +194,7 @@ def send_facebook_message(
         )
     )
 
-    print(
-        "✅ FACEBOOK TEXT SENT | "
-        f"message_id="
-        f"{result.get('message_id')}"
-    )
+    logger.info("Facebook text message sent")
 
     return result
 
@@ -259,19 +242,7 @@ def send_facebook_image(
             "http/https"
         )
 
-    print(
-        "[FACEBOOK IMAGE CONFIG] "
-        "endpoint=https://graph.facebook.com/v22.0/{FACEBOOK_PAGE_ID}/messages | "
-        "recipient_id_type=PSID | "
-        "token_type=FACEBOOK_PAGE_ACCESS_TOKEN | "
-        "flow=direct_url"
-    )
-
-    print(
-        "📤 FACEBOOK SEND IMAGE | "
-        f"recipient_id={recipient_id} | "
-        f"image_url={image_url}"
-    )
+    logger.info("Sending Facebook image message")
 
     result = (
         send_facebook_request(
@@ -298,11 +269,7 @@ def send_facebook_image(
         )
     )
 
-    print(
-        "✅ FACEBOOK IMAGE SENT | "
-        f"message_id="
-        f"{result.get('message_id')}"
-    )
+    logger.info("Facebook image message sent")
 
     return result
 

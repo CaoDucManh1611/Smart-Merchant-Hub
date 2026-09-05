@@ -1,0 +1,257 @@
+import unittest
+
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
+from app.db.dependencies import get_db
+from app.main import app
+from app.models.business import Business
+from app.models.conversation import Conversation
+from app.models.customer import Customer
+from app.models.crm_extended import CustomerTag, Tag
+
+
+class Customer360FinalApiTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Business.metadata.create_all(self.engine)
+        with Session(self.engine) as db:
+            one = Business(name="Final One", slug="customer-360-final-one")
+            two = Business(name="Final Two", slug="customer-360-final-two")
+            db.add_all([one, two])
+            db.flush()
+
+            survivor = Customer(
+                business_id=one.id,
+                channel="telegram",
+                external_user_id="tg-survivor",
+                name="Nguyen Thi An",
+                email="an@example.com",
+                phone="0901234567",
+            )
+            duplicate = Customer(
+                business_id=one.id,
+                channel="facebook",
+                external_user_id="fb-duplicate",
+                name="Nguyen Thi An",
+                email="an@example.com",
+                phone="0901234567",
+            )
+            another = Customer(
+                business_id=one.id,
+                channel="zalo",
+                external_user_id="zalo-another",
+                name="Tran Binh",
+                email="binh@example.com",
+                phone="0909999999",
+            )
+            cross_tenant = Customer(
+                business_id=two.id,
+                channel="telegram",
+                external_user_id="tg-other",
+                name="Nguyen Thi An",
+                email="an@example.com",
+                phone="0901234567",
+            )
+            db.add_all([survivor, duplicate, another, cross_tenant])
+            db.flush()
+
+            vip = Tag(business_id=one.id, name="VIP")
+            paid = Tag(business_id=one.id, name="Đã mua")
+            db.add_all([vip, paid])
+            db.flush()
+            db.add_all([
+                CustomerTag(business_id=one.id, customer_id=survivor.id, tag_id=vip.id),
+                CustomerTag(business_id=one.id, customer_id=survivor.id, tag_id=paid.id),
+                CustomerTag(business_id=one.id, customer_id=another.id, tag_id=vip.id),
+            ])
+
+            source_conversation = Conversation(
+                business_id=one.id,
+                customer_id=duplicate.id,
+                channel="facebook",
+            )
+            db.add(source_conversation)
+            db.commit()
+
+            self.business_id = one.id
+            self.other_business_id = two.id
+            self.survivor_id = survivor.id
+            self.duplicate_id = duplicate.id
+            self.another_id = another.id
+            self.cross_tenant_id = cross_tenant.id
+            self.source_conversation_id = source_conversation.id
+            self.vip_id = vip.id
+            self.paid_id = paid.id
+
+        def override_get_db():
+            with Session(self.engine) as db:
+                yield db
+
+        app.dependency_overrides[get_db] = override_get_db
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        app.dependency_overrides.clear()
+        self.engine.dispose()
+
+    def headers(self, business_id=None):
+        return {"X-Business-Id": str(business_id or self.business_id)}
+
+    def test_duplicate_suggestions_and_preview_include_confidence_evidence(self):
+        response = self.client.get(
+            "/api/customers/duplicates",
+            headers=self.headers(),
+        )
+        self.assertEqual(200, response.status_code)
+        suggestions = response.json()["items"]
+        self.assertEqual(1, len(suggestions))
+        self.assertEqual(self.duplicate_id, suggestions[0]["source_customer_id"])
+        self.assertGreaterEqual(suggestions[0]["confidence_score"], 0.9)
+        self.assertIn("email", suggestions[0]["matched_fields"])
+        self.assertIn("phone", suggestions[0]["matched_fields"])
+
+        preview = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge-preview",
+            headers=self.headers(),
+            json={"source_customer_id": self.duplicate_id},
+        )
+        self.assertEqual(200, preview.status_code)
+        body = preview.json()
+        self.assertGreaterEqual(body["confidence_score"], 0.9)
+        self.assertTrue(body["can_merge"])
+        self.assertIn("email", body["matched_fields"])
+
+        cross_tenant = self.client.get(
+            "/api/customers/duplicates",
+            headers=self.headers(self.other_business_id),
+        )
+        self.assertEqual(200, cross_tenant.status_code)
+        self.assertEqual([], cross_tenant.json()["items"])
+
+    def test_merge_requires_confirmation_then_history_can_undo_safely(self):
+        not_confirmed = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge",
+            headers=self.headers(),
+            json={"source_customer_id": self.duplicate_id, "confirm": False},
+        )
+        self.assertEqual(409, not_confirmed.status_code)
+
+        merged = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge",
+            headers=self.headers(),
+            json={"source_customer_id": self.duplicate_id, "confirm": True},
+        )
+        self.assertEqual(200, merged.status_code)
+        merge_id = merged.json()["merge_id"]
+        self.assertEqual("completed", merged.json()["status"])
+
+        history = self.client.get(
+            f"/api/customers/{self.survivor_id}/merge-history",
+            headers=self.headers(),
+        )
+        self.assertEqual(200, history.status_code)
+        self.assertEqual("completed", history.json()["items"][0]["status"])
+
+        undone = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge-history/{merge_id}/undo",
+            headers=self.headers(),
+            json={"reason": "Xác nhận nhầm hồ sơ"},
+        )
+        self.assertEqual(200, undone.status_code)
+        self.assertEqual("undone", undone.json()["status"])
+
+        with Session(self.engine) as db:
+            source = db.get(Customer, self.duplicate_id)
+            conversation = db.get(Conversation, self.source_conversation_id)
+            self.assertEqual("active", source.status)
+            self.assertIsNone(source.merged_into_customer_id)
+            self.assertEqual(self.duplicate_id, conversation.customer_id)
+
+        remerged = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge",
+            headers=self.headers(),
+            json={"source_customer_id": self.duplicate_id, "confirm": True},
+        )
+        self.assertEqual(200, remerged.status_code)
+        self.assertNotEqual(merge_id, remerged.json()["merge_id"])
+        self.assertEqual("completed", remerged.json()["status"])
+
+        history_after_remerge = self.client.get(
+            f"/api/customers/{self.survivor_id}/merge-history",
+            headers=self.headers(),
+        )
+        self.assertEqual(2, history_after_remerge.json()["total"])
+        self.assertEqual("completed", history_after_remerge.json()["items"][0]["status"])
+        self.assertEqual("undone", history_after_remerge.json()["items"][1]["status"])
+
+    def test_undo_is_rejected_when_survivor_changed_after_merge(self):
+        merged = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge",
+            headers=self.headers(),
+            json={"source_customer_id": self.duplicate_id, "confirm": True},
+        )
+        self.assertEqual(200, merged.status_code)
+        merge_id = merged.json()["merge_id"]
+
+        with Session(self.engine) as db:
+            db.add(Conversation(
+                business_id=self.business_id,
+                customer_id=self.survivor_id,
+                channel="telegram",
+            ))
+            db.commit()
+
+        undone = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge-history/{merge_id}/undo",
+            headers=self.headers(),
+            json={"reason": "Không được tách khi đã có dữ liệu mới"},
+        )
+        self.assertEqual(409, undone.status_code)
+
+    def test_saved_segment_matches_multiple_tags_and_is_tenant_scoped(self):
+        created = self.client.post(
+            "/api/customers/segments",
+            headers=self.headers(),
+            json={
+                "name": "VIP đã mua",
+                "description": "Khách VIP đã có đơn",
+                "tag_ids": [self.vip_id, self.paid_id],
+                "match_mode": "all",
+            },
+        )
+        self.assertEqual(201, created.status_code)
+        segment = created.json()
+        self.assertEqual([self.vip_id, self.paid_id], segment["tag_ids"])
+
+        members = self.client.get(
+            f"/api/customers/segments/{segment['id']}/customers",
+            headers=self.headers(),
+        )
+        self.assertEqual(200, members.status_code)
+        self.assertEqual([self.survivor_id], [item["id"] for item in members.json()["items"]])
+
+        other_tenant = self.client.get(
+            "/api/customers/segments",
+            headers=self.headers(self.other_business_id),
+        )
+        self.assertEqual(200, other_tenant.status_code)
+        self.assertEqual([], other_tenant.json()["items"])
+
+    def test_segment_rejects_tag_from_another_tenant(self):
+        response = self.client.post(
+            "/api/customers/segments",
+            headers=self.headers(),
+            json={"name": "Không hợp lệ", "tag_ids": [999999], "match_mode": "all"},
+        )
+        self.assertEqual(422, response.status_code)
+
+
+if __name__ == "__main__":
+    unittest.main()

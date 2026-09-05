@@ -12,8 +12,14 @@ from app.core.config import settings
 
 client = TestClient(app)
 
-VERIFY_TOKEN = "crm_chatbot_2026"
+VERIFY_TOKEN = "test-instagram-verify-token"
 WEBHOOK_URL = "/api/webhooks/instagram"
+
+
+@pytest.fixture(autouse=True)
+def configure_verify_token(monkeypatch):
+    """Keep webhook verification tests independent from a local .env file."""
+    monkeypatch.setattr(settings, "FACEBOOK_VERIFY_TOKEN", VERIFY_TOKEN)
 
 
 # ─────────────────────────────────────────────
