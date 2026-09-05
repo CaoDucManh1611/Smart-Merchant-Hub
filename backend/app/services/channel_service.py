@@ -1,5 +1,7 @@
 """Tenant-scoped channel connection access."""
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -83,6 +85,8 @@ def upsert_channel_connection(
     channel.access_token = None
     channel.status = "active"
     channel.config = config
+    channel.connected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    channel.disconnected_at = None
     db.commit()
     db.refresh(channel)
     return channel

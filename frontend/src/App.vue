@@ -267,8 +267,28 @@ async function fetchMetaStatus() {
   }
 }
 
-function connectMeta() {
-  window.location.href = `${API_BASE}/oauth/meta/start`;
+async function connectMeta() {
+  metaLoading.value = true;
+  metaNotice.value = "";
+  try {
+    // The authenticated request creates a state bound to this tenant.  A
+    // direct location change cannot include the bearer token required in
+    // production, so only the returned Meta URL is opened in the browser.
+    const response = await apiFetch(`${API_BASE}/oauth/meta/start?return_url=true`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || "Không thể bắt đầu kết nối Meta.");
+    }
+    const payload = await response.json();
+    if (!payload.authorization_url) {
+      throw new Error("Máy chủ không trả về đường dẫn kết nối Meta.");
+    }
+    window.location.assign(payload.authorization_url);
+  } catch (error) {
+    metaNotice.value = error.message || "Không thể bắt đầu kết nối Meta.";
+  } finally {
+    metaLoading.value = false;
+  }
 }
 
 function openSettings() {

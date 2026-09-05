@@ -1,4 +1,5 @@
 import json
+import logging
 import mimetypes
 import uuid
 from datetime import datetime, timezone
@@ -59,6 +60,17 @@ from app.auth.dependencies import require_write_access
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _log_meta_error(exc: MetaAPIError) -> None:
+    """Keep provider failures diagnosable without logging raw response data."""
+    logger.warning(
+        "Meta provider request failed: channel=%s stage=%s status=%s",
+        exc.channel,
+        exc.stage,
+        exc.meta_status,
+    )
 
 
 # =========================================================
@@ -1825,12 +1837,7 @@ def send_message(
 
             db.rollback()
 
-            print(
-                "[FACEBOOK SEND] "
-                f"stage={exc.stage} | "
-                f"status={exc.meta_status} | "
-                f"response={exc.response}"
-            )
+            _log_meta_error(exc)
 
             raise HTTPException(
                 status_code=meta_error_status_code(
@@ -1963,12 +1970,7 @@ def send_message(
 
             db.rollback()
 
-            print(
-                "[INSTAGRAM SEND] "
-                f"stage={exc.stage} | "
-                f"status={exc.meta_status} | "
-                f"response={exc.response}"
-            )
+            _log_meta_error(exc)
 
             raise HTTPException(
                 status_code=meta_error_status_code(
@@ -2162,12 +2164,7 @@ async def unified_send(
 
     except MetaAPIError as exc:
         db.rollback()
-        print(
-            "[UNIFIED SEND] "
-            f"stage={exc.stage} | "
-            f"status={exc.meta_status} | "
-            f"response={exc.response}"
-        )
+        _log_meta_error(exc)
         raise HTTPException(
             status_code=meta_error_status_code(
                 exc
@@ -2563,12 +2560,7 @@ def send_media(
 
             db.rollback()
 
-            print(
-                "[FACEBOOK SEND] "
-                f"stage={exc.stage} | "
-                f"status={exc.meta_status} | "
-                f"response={exc.response}"
-            )
+            _log_meta_error(exc)
 
             raise HTTPException(
                 status_code=meta_error_status_code(
@@ -2694,12 +2686,7 @@ def send_media(
 
             db.rollback()
 
-            print(
-                "[INSTAGRAM SEND] "
-                f"stage={exc.stage} | "
-                f"status={exc.meta_status} | "
-                f"response={exc.response}"
-            )
+            _log_meta_error(exc)
 
             raise HTTPException(
                 status_code=meta_error_status_code(
@@ -3159,12 +3146,7 @@ async def upload_and_send_image(
 
             db.rollback()
 
-            print(
-                "[FACEBOOK SEND] "
-                f"stage={exc.stage} | "
-                f"status={exc.meta_status} | "
-                f"response={exc.response}"
-            )
+            _log_meta_error(exc)
 
 
             try:
@@ -3313,12 +3295,7 @@ async def upload_and_send_image(
 
             db.rollback()
 
-            print(
-                "[INSTAGRAM SEND] "
-                f"stage={exc.stage} | "
-                f"status={exc.meta_status} | "
-                f"response={exc.response}"
-            )
+            _log_meta_error(exc)
 
 
             try:

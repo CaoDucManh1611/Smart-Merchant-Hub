@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
@@ -14,6 +16,7 @@ from app.integrations import get_channel_adapter
 from app.services.channel_event_service import ingest_normalized_events
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -30,7 +33,7 @@ async def verify_instagram_webhook(
         hub_mode == "subscribe"
         and hub_verify_token == settings.FACEBOOK_VERIFY_TOKEN
     ):
-        print("✅ INSTAGRAM WEBHOOK VERIFIED")
+        logger.info("Instagram webhook verified")
 
         return PlainTextResponse(
             content=hub_challenge,
@@ -57,7 +60,9 @@ async def receive_instagram_webhook(
     rồi lưu message vào PostgreSQL.
     """
 
-    print("INSTAGRAM RAW:", payload)
+    # Do not log the provider payload: it can contain customer messages,
+    # external IDs and access credentials.
+    logger.info("Instagram webhook received")
 
     if settings.ENVIRONMENT == "production" and not settings.META_APP_SECRET:
         raise HTTPException(status_code=500, detail="META_APP_SECRET is required")
@@ -115,7 +120,11 @@ async def receive_instagram_webhook(
     if channel_binding is None and settings.ENVIRONMENT != "production":
         return {"status": "received", "processed": 0}
 
-    print("INSTAGRAM NORMALIZED:", normalized)
+    logger.info(
+        "Instagram webhook normalized: channel_bound=%s is_message=%s",
+        channel_binding is not None,
+        bool(normalized.get("external_message_id")),
+    )
 
     # Chỉ xử lý khi thật sự có message
     if normalized.get("external_message_id"):
@@ -142,16 +151,10 @@ async def receive_instagram_webhook(
                 }
             )
 
-        print(
-            "✅ INSTAGRAM MESSAGE PROCESSED "
-            "AND SAVED TO POSTGRESQL"
-        )
+        logger.info("Instagram message processed")
 
     else:
-        print(
-            "⚠️ INSTAGRAM EVENT IGNORED "
-            "- NO MESSAGE ID"
-        )
+        logger.info("Instagram event ignored because it has no message ID")
 
     return {
         "status": "received",

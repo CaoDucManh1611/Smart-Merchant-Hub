@@ -66,6 +66,32 @@ class CustomerIdentityResolutionTests(unittest.TestCase):
             self.assertEqual(first.id, second.id)
             self.assertEqual(2, len(db.scalars(select(CustomerIdentity)).all()))
 
+    def test_lower_priority_name_cannot_replace_a_stored_display_name(self):
+        with Session(self.engine) as db:
+            business = Business(name="Shop", slug="shop")
+            db.add(business)
+            db.commit()
+
+            customer = resolve_customer(
+                db,
+                business_id=business.id,
+                channel="instagram",
+                external_user_id="ig-1",
+                external_account_id="ig-account-1",
+                display_name="Tên hiển thị đáng tin cậy",
+            )
+            refreshed = resolve_customer(
+                db,
+                business_id=business.id,
+                channel="instagram",
+                external_user_id="ig-1",
+                external_account_id="ig-account-1",
+                name="Tên từ nguồn thấp hơn",
+            )
+
+            self.assertEqual(customer.id, refreshed.id)
+            self.assertEqual("Tên hiển thị đáng tin cậy", refreshed.name)
+
     def test_same_external_id_in_another_business_is_isolated(self):
         with Session(self.engine) as db:
             first_business = Business(name="One", slug="one")

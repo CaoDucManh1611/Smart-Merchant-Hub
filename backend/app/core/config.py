@@ -123,6 +123,10 @@ class Settings(BaseSettings):
             problems.append("PUBLIC_BASE_URL must use HTTPS")
         if not self.FRONTEND_BASE_URL.lower().startswith("https://"):
             problems.append("FRONTEND_BASE_URL must use HTTPS")
+        if not self.FORCE_HTTPS:
+            problems.append("FORCE_HTTPS must be true")
+        if not self.HSTS_ENABLED:
+            problems.append("HSTS_ENABLED must be true")
         if not self.FACEBOOK_VERIFY_TOKEN.strip():
             problems.append("FACEBOOK_VERIFY_TOKEN must be configured")
         if not self.RATE_LIMIT_ENABLED:

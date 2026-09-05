@@ -1,8 +1,8 @@
-"""Persistent Meta integration configuration.
+"""Persistent Meta display configuration.
 
-OAuth credentials are stored in app_settings so a successful connection is
-available after a backend restart. Environment variables remain the fallback
-for the existing single-shop/demo setup.
+Tenant-owned OAuth credentials live encrypted in ``channels``.  This module
+keeps only non-secret display metadata in ``app_settings`` while the old
+single-shop/demo setup continues to use environment-variable fallbacks.
 """
 
 from __future__ import annotations

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, crm-completion]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, crm-completion]
 
 permissions:
   contents: read

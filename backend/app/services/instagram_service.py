@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import httpx
@@ -7,6 +8,8 @@ from app.services.meta_errors import MetaAPIError
 from app.services.meta_config_service import get_meta_config
 from app.services.channel_service import get_single_active_channel
 from app.services.channel_credentials import decrypt_token
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
@@ -224,15 +227,7 @@ def send_instagram_request(
             timeout=30,
         )
 
-        print(
-            "INSTAGRAM SEND STATUS:",
-            response.status_code,
-        )
-
-        print(
-            "INSTAGRAM SEND RESPONSE:",
-            response.text[:1500],
-        )
+        logger.info("Instagram provider response status=%s", response.status_code)
 
         if response.status_code >= 400:
             raise MetaAPIError(
@@ -250,12 +245,8 @@ def send_instagram_request(
 
         raise
 
-    except httpx.RequestError as exc:
-
-        print(
-            "❌ INSTAGRAM REQUEST ERROR:",
-            str(exc),
-        )
+    except httpx.RequestError:
+        logger.warning("Instagram provider request failed")
 
         raise
 
@@ -290,11 +281,7 @@ def send_instagram_message(
             "không được để trống"
         )
 
-    print(
-        "📤 INSTAGRAM SEND TEXT | "
-        f"recipient_id={recipient_id} | "
-        f"text={text!r}"
-    )
+    logger.info("Sending Instagram text message")
 
     result = (
         send_instagram_request(
@@ -311,11 +298,7 @@ def send_instagram_message(
         )
     )
 
-    print(
-        "✅ INSTAGRAM TEXT SENT | "
-        f"message_id="
-        f"{result.get('message_id')}"
-    )
+    logger.info("Instagram text message sent")
 
     return result
 
@@ -405,11 +388,7 @@ def upload_instagram_image_attachment(
     }
 
 
-    print(
-        "[INSTAGRAM ATTACHMENT] "
-        f"endpoint={url} | "
-        f"image_url={image_url}"
-    )
+    logger.info("Uploading Instagram image attachment")
 
 
     try:
@@ -422,18 +401,7 @@ def upload_instagram_image_attachment(
         )
 
 
-        print(
-            "INSTAGRAM ATTACHMENT "
-            "UPLOAD STATUS:",
-            response.status_code,
-        )
-
-
-        print(
-            "INSTAGRAM ATTACHMENT "
-            "UPLOAD RESPONSE:",
-            response.text[:1500],
-        )
+        logger.info("Instagram attachment response status=%s", response.status_code)
 
 
         if response.status_code >= 400:
@@ -467,12 +435,7 @@ def upload_instagram_image_attachment(
             )
 
 
-        print(
-            "✅ INSTAGRAM ATTACHMENT "
-            "UPLOADED | "
-            f"attachment_id="
-            f"{attachment_id}"
-        )
+        logger.info("Instagram attachment uploaded")
 
 
         return str(
@@ -485,13 +448,8 @@ def upload_instagram_image_attachment(
         raise
 
 
-    except httpx.RequestError as exc:
-
-        print(
-            "❌ INSTAGRAM ATTACHMENT "
-            "REQUEST ERROR:",
-            str(exc),
-        )
+    except httpx.RequestError:
+        logger.warning("Instagram attachment upload failed")
 
         raise
 
@@ -571,20 +529,7 @@ def send_instagram_image(
         )
 
 
-    print(
-        "[INSTAGRAM IMAGE CONFIG] "
-        "endpoint=https://graph.facebook.com/v22.0/{FACEBOOK_PAGE_ID}/messages | "
-        "platform=instagram | "
-        "recipient_id_type=IGSID_FROM_PAGE_CONVERSATIONS | "
-        "token_type=FACEBOOK_PAGE_ACCESS_TOKEN | "
-        "flow=direct_url"
-    )
-
-    print(
-        "[INSTAGRAM SEND] "
-        f"recipient_id={recipient_id} | "
-        f"image_url={image_url}"
-    )
+    logger.info("Sending Instagram image message")
 
     result = (
         send_instagram_request(
@@ -609,11 +554,7 @@ def send_instagram_image(
     )
 
 
-    print(
-        "[INSTAGRAM SEND] "
-        f"message_id="
-        f"{result.get('message_id')}"
-    )
+    logger.info("Instagram image message sent")
 
     return result
 

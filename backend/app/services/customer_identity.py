@@ -8,6 +8,7 @@ from app.models.customer_identity import CustomerIdentity
 from app.services.audit_service import record_audit
 from app.services.customer_profile import (
     merge_profile,
+    normalize_name,
     normalize_email,
     normalize_phone,
     profile_change_metadata,
@@ -17,6 +18,29 @@ from app.services.customer_profile import (
 def _clean(value: str | None) -> str | None:
     value = str(value).strip() if value is not None else None
     return value or None
+
+
+def get_existing_name_priority(db: Session, customer: Customer) -> int:
+    """Recover the best-known source rank for a stored customer name.
+
+    Customer rows predate the source-rank column, so the associated immutable
+    identities are the trustworthy record of whether the current value came
+    from a display name (3), a username (1), or an ordinary name (2).
+    """
+    current = normalize_name(customer.name)
+    if not current:
+        return 0
+    identities = db.scalars(
+        select(CustomerIdentity).where(
+            CustomerIdentity.business_id == customer.business_id,
+            CustomerIdentity.customer_id == customer.id,
+        )
+    ).all()
+    if any(normalize_name(identity.display_name) == current for identity in identities):
+        return 3
+    if any(normalize_name(identity.username) == current for identity in identities):
+        return 1
+    return 2
 
 
 def resolve_customer(
@@ -57,6 +81,7 @@ def resolve_customer(
         customer = identity.customer
         changes = merge_profile(
             customer,
+            existing_name_priority=get_existing_name_priority(db, customer),
             name=name,
             display_name=display_name,
             username=username,
@@ -104,6 +129,7 @@ def resolve_customer(
         db.flush()
         changes = merge_profile(
             customer,
+            existing_name_priority=get_existing_name_priority(db, customer),
             name=name,
             display_name=display_name,
             username=username,
@@ -122,6 +148,7 @@ def resolve_customer(
     else:
         changes = merge_profile(
             customer,
+            existing_name_priority=get_existing_name_priority(db, customer),
             name=name,
             display_name=display_name,
             username=username,

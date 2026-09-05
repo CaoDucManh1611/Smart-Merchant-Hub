@@ -65,6 +65,7 @@ def _name_priority(value: str | None, *, source: str) -> int:
 def select_name(
     *,
     existing: object,
+    existing_priority: int = 2,
     name: object = None,
     display_name: object = None,
     username: object = None,
@@ -79,7 +80,7 @@ def select_name(
     current = normalize_name(existing)
     if not incoming:
         return current
-    current_priority = 2 if current else 0
+    current_priority = max(0, min(3, int(existing_priority))) if current else 0
     if _name_priority(incoming, source=incoming_source) >= current_priority:
         return incoming
     return current
@@ -88,6 +89,7 @@ def select_name(
 def merge_profile(
     customer,
     *,
+    existing_name_priority: int = 2,
     name: object = None,
     display_name: object = None,
     username: object = None,
@@ -104,6 +106,7 @@ def merge_profile(
     changes: dict[str, dict[str, str | None]] = {}
     selected_name = select_name(
         existing=customer.name,
+        existing_priority=existing_name_priority,
         name=name,
         display_name=display_name,
         username=username,
@@ -129,4 +132,3 @@ def profile_change_metadata(changes: Mapping[str, Mapping[str, object]]) -> dict
             for field, values in changes.items()
         }
     }
-

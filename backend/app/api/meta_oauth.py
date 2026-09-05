@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import secrets
-import time
+import logging
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
@@ -13,14 +12,8 @@ from fastapi.responses import RedirectResponse
 from app.db.database import SessionLocal
 
 from app.core.config import settings
-from app.services.meta_config_service import (
-    META_KEYS,
-    clear_meta_config,
-    get_meta_config,
-    get_setting_value,
-    save_meta_config,
-    save_settings,
-)
+from app.models.channel import Channel
+from app.auth.dependencies import require_admin_access
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.tenancy.oauth import consume_oauth_state, issue_oauth_state, register_oauth_state
@@ -28,6 +21,7 @@ from app.services.channel_service import upsert_channel_connection
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _redirect_uri() -> str:
@@ -91,44 +85,52 @@ async def _graph_get(
 
 
 @router.get("/meta/status")
-async def meta_oauth_status() -> dict:
-    config = get_meta_config()
-    # Do not treat the legacy single-shop values from .env as an OAuth
-    # connection. OAuth is complete only after the callback persists the
-    # Meta user and connection timestamp in app_settings.
-    oauth_connected = bool(
-        config["facebook_page_access_token"]
-        and config["meta_user_id"]
-        and config["connected_at"]
+async def meta_oauth_status(
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict:
+    # Credential state is tenant-owned in ``channels``.  app_settings only
+    # retains non-secret display metadata during the transition from the old
+    # single-shop integration.
+    with SessionLocal() as db:
+        facebook = db.query(Channel).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.channel_type == "facebook",
+            Channel.status == "active",
+            Channel.access_token_encrypted.is_not(None),
+        ).first()
+        instagram = db.query(Channel).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.channel_type == "instagram",
+            Channel.status == "active",
+        ).first()
+
+    channel_config = facebook.config or {} if facebook else {}
+    connected_at = (
+        facebook.connected_at or facebook.created_at
+        if facebook else None
     )
     return {
-        "connected": oauth_connected,
-        "facebook_page_id": config["facebook_page_id"],
-        "facebook_page_name": config["facebook_page_name"],
-        "instagram_account_id": config["instagram_account_id"],
-        "instagram_account_name": config["instagram_account_name"],
-        "subscription_status": config["subscription_status"],
-        "connected_at": config["connected_at"],
+        "connected": facebook is not None,
+        "facebook_page_id": facebook.external_account_id if facebook else "",
+        "facebook_page_name": facebook.name if facebook else "",
+        "instagram_account_id": instagram.external_account_id if instagram else "",
+        "instagram_account_name": instagram.name if instagram else "",
+        "subscription_status": channel_config.get("subscription_status", "not_attempted"),
+        "connected_at": connected_at.isoformat() if connected_at else "",
     }
 
 
-@router.get("/meta/start")
+@router.get("/meta/start", dependencies=[Depends(require_admin_access)])
 async def start_meta_oauth(
     tenant: TenantContext = Depends(get_tenant_context),
-) -> RedirectResponse:
+    return_url: bool = Query(default=False),
+) -> RedirectResponse | dict:
     app_id, _, redirect_uri = _require_oauth_settings()
     if not settings.META_APP_SECRET:
         raise HTTPException(status_code=500, detail="META_APP_SECRET is required for signed OAuth state")
     state = issue_oauth_state(tenant.business_id, settings.META_APP_SECRET)
     with SessionLocal() as db:
         register_oauth_state(db, state, settings.META_APP_SECRET)
-    save_settings(
-        {
-            META_KEYS["oauth_state"]: state,
-            META_KEYS["oauth_state_created_at"]: str(time.time()),
-        }
-    )
-
     scope = (
         "pages_show_list,pages_read_engagement,pages_manage_metadata,"
         "pages_messaging,instagram_basic,instagram_manage_messages"
@@ -142,10 +144,15 @@ async def start_meta_oauth(
             "response_type": "code",
         }
     )
-    return RedirectResponse(
-        url=f"https://www.facebook.com/{settings.META_GRAPH_VERSION}/dialog/oauth?{query}",
-        status_code=307,
+    authorization_url = (
+        f"https://www.facebook.com/{settings.META_GRAPH_VERSION}/dialog/oauth?{query}"
     )
+    # A browser navigation cannot attach the CRM bearer token.  The SPA asks
+    # for this JSON form through its authenticated API helper, then navigates
+    # to Meta only after a tenant-scoped state has been issued.
+    if return_url:
+        return {"authorization_url": authorization_url}
+    return RedirectResponse(url=authorization_url, status_code=307)
 
 
 @router.get("/meta/callback")
@@ -260,26 +267,44 @@ async def meta_oauth_callback(
             else:
                 subscription_status = "subscription_failed"
 
-            save_meta_config(
-                {
-                    "facebook_page_id": str(page["id"]),
-                    "facebook_page_name": str(page.get("name") or ""),
-                    "instagram_account_id": str(instagram.get("id") or ""),
-                    "meta_user_id": str(user.get("id") or ""),
-                    "meta_user_name": str(user.get("name") or ""),
-                    "connected_at": datetime.now(timezone.utc).isoformat(),
-                    "subscription_status": subscription_status,
-                    "oauth_state": "",
-                    "oauth_state_created_at": "",
-                }
-            )
+            with SessionLocal() as db:
+                facebook_channel = db.query(Channel).filter(
+                    Channel.business_id == int(state_payload["business_id"]),
+                    Channel.channel_type == "facebook",
+                    Channel.external_account_id == str(page["id"]),
+                ).first()
+                if facebook_channel is not None:
+                    facebook_channel.config = {
+                        **(facebook_channel.config or {}),
+                        "meta_user_id": str(user.get("id") or ""),
+                        "subscription_status": subscription_status,
+                    }
+                    db.commit()
 
             return _frontend_redirect("connected", subscription_status)
-    except Exception as exc:
-        return _frontend_redirect("error", str(exc))
+    except Exception:
+        # Provider errors can contain request or account data.  Keep detailed
+        # diagnostics only in the redacted server log and never reflect them
+        # into a browser URL.
+        logger.exception("Meta OAuth callback failed")
+        return _frontend_redirect("error", "Không thể hoàn tất kết nối Meta. Hãy thử lại.")
 
 
-@router.delete("/meta/disconnect")
-async def disconnect_meta() -> dict:
-    clear_meta_config()
+@router.delete("/meta/disconnect", dependencies=[Depends(require_admin_access)])
+async def disconnect_meta(
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict:
+    """Revoke only this tenant's stored Meta channel credentials."""
+    with SessionLocal() as db:
+        channels = db.query(Channel).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.channel_type.in_(("facebook", "instagram")),
+        ).all()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for channel in channels:
+            channel.status = "inactive"
+            channel.access_token = None
+            channel.access_token_encrypted = None
+            channel.disconnected_at = now
+        db.commit()
     return {"connected": False}

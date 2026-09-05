@@ -20,6 +20,14 @@ class CustomerProfilePolicyTests(unittest.TestCase):
             "Nguyen An",
             select_name(existing=None, name="Nguyen An", username="an.shop"),
         )
+        self.assertEqual(
+            "Tên hiển thị đáng tin cậy",
+            select_name(
+                existing="Tên hiển thị đáng tin cậy",
+                existing_priority=3,
+                name="Tên từ nguồn thấp hơn",
+            ),
+        )
 
     def test_profile_values_are_normalized_and_empty_values_do_not_erase_data(self):
         customer = SimpleNamespace(
