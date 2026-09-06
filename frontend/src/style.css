@@ -3206,6 +3206,52 @@ button:hover {
   background: #fffaf8;
 }
 
+.order-payment-cell {
+  min-width: 210px;
+}
+
+.order-payment-cell small {
+  display: block;
+  margin-top: 0.25rem;
+}
+
+.order-payment-actions {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+}
+
+.order-payment-actions input {
+  width: 82px;
+  min-width: 0;
+  border: 1px solid #efc8c0;
+  border-radius: 0.35rem;
+  padding: 0.28rem 0.35rem;
+  color: #6e2828;
+  background: #fffaf8;
+}
+
+.order-payment-actions button,
+.table-action-btn {
+  border: 1px solid #efb5ac;
+  border-radius: 0.35rem;
+  padding: 0.28rem 0.45rem;
+  color: #8d3734;
+  background: #fff0eb;
+  cursor: pointer;
+}
+
+.order-payment-actions button:disabled,
+.table-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.table-action-btn {
+  display: block;
+  margin-top: 0.35rem;
+}
+
 .ticket-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

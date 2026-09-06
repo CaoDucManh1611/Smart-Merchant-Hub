@@ -128,6 +128,12 @@ const orderSaving = ref(false);
 const orderError = ref("");
 const orderCustomers = ref([]);
 const revenueByChannel = ref([]);
+const orderPaymentDrafts = ref({});
+const orderPaymentSaving = ref({});
+const purchasePaymentDrafts = ref({});
+const purchasePaymentSaving = ref({});
+const inventoryReport = ref(null);
+const purchaseCostReport = ref(null);
 const orderForm = ref({
   order_number: "",
   customer_id: "",
@@ -148,6 +154,7 @@ const purchaseOrderForm = ref({
   notes: "",
 });
 const purchaseStatuses = ["draft", "submitted", "partially_received", "received", "closed", "cancelled"];
+const salesStatuses = ["draft", "confirmed", "processing", "shipped", "delivered", "completed", "refunded", "cancelled"];
 const authUser = ref(null);
 const authToken = ref(window.localStorage.getItem("crm_access_token") || "");
 const authLoading = ref(false);
@@ -1465,6 +1472,7 @@ function timelineLabel(event) {
     note: "Ghi chú",
     lead: "Lead",
     sales_order: "Đơn bán",
+    order_payment: "Thanh toán đơn",
     purchase_order: "Đơn nhập",
     ticket: "Ticket",
     ticket_comment: "Bình luận ticket",
@@ -1845,6 +1853,56 @@ async function fetchOrders() {
   }
 }
 
+async function transitionSalesOrder(order, toStatus) {
+  if (!order || !toStatus || order.status === toStatus) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/orders/${order.id}/transition`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to_status: toStatus }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await Promise.all([fetchOrders(), fetchProducts()]);
+  } catch (err) {
+    orderError.value = err.message || "Không thể cập nhật vòng đời đơn hàng.";
+    await fetchOrders();
+  }
+}
+
+async function recordSalesPayment(order, kind = "payment") {
+  const amount = Number(orderPaymentDrafts.value[order.id] || 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    orderError.value = "Nhập số tiền thanh toán hợp lệ trước.";
+    return;
+  }
+  orderPaymentSaving.value = { ...orderPaymentSaving.value, [order.id]: true };
+  orderError.value = "";
+  try {
+    const isRefund = kind === "refund";
+    const payload = isRefund
+      ? { idempotency_key: `ui-refund-${order.id}-${Date.now()}`, amount, reason: "Thao tác từ CRM" }
+      : { idempotency_key: `ui-payment-${order.id}-${Date.now()}`, amount, method: "manual", status: "paid" };
+    const response = await apiFetch(`${API_BASE}/orders/${order.id}/${isRefund ? "refunds" : "payments"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    orderPaymentDrafts.value = { ...orderPaymentDrafts.value, [order.id]: "" };
+    await fetchOrders();
+  } catch (err) {
+    orderError.value = err.message || (kind === "refund" ? "Không thể hoàn tiền." : "Không thể ghi nhận thanh toán.");
+  } finally {
+    orderPaymentSaving.value = { ...orderPaymentSaving.value, [order.id]: false };
+  }
+}
+
 async function fetchPurchaseOrders() {
   purchaseOrdersLoading.value = true;
   purchaseOrderError.value = "";
@@ -1918,6 +1976,62 @@ async function transitionPurchaseOrder(order, toStatus) {
   }
 }
 
+async function receivePurchaseOrder(order) {
+  if (!order?.items?.length) return;
+  const items = order.items
+    .filter((item) => Number(item.quantity || 0) > Number(item.received_quantity || 0))
+    .map((item) => ({
+      purchase_order_item_id: item.id,
+      quantity: Number(item.quantity || 0) - Number(item.received_quantity || 0),
+    }));
+  if (!items.length) {
+    purchaseOrderError.value = "Đơn này đã nhận đủ hàng.";
+    return;
+  }
+  purchaseOrderError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/purchase-orders/${order.id}/receipts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotency_key: `ui-receipt-${order.id}-${Date.now()}`, items, note: "Nhận hàng từ CRM" }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await Promise.all([fetchPurchaseOrders(), fetchProducts()]);
+  } catch (err) {
+    purchaseOrderError.value = err.message || "Không thể ghi nhận nhập kho.";
+  }
+}
+
+async function recordPurchasePayment(order) {
+  const amount = Number(purchasePaymentDrafts.value[order.id] || 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    purchaseOrderError.value = "Nhập số tiền thanh toán nhà cung cấp hợp lệ.";
+    return;
+  }
+  purchasePaymentSaving.value = { ...purchasePaymentSaving.value, [order.id]: true };
+  purchaseOrderError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/purchase-orders/${order.id}/payments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotency_key: `ui-po-payment-${order.id}-${Date.now()}`, amount, method: "manual", status: "paid" }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    purchasePaymentDrafts.value = { ...purchasePaymentDrafts.value, [order.id]: "" };
+    await fetchPurchaseOrders();
+  } catch (err) {
+    purchaseOrderError.value = err.message || "Không thể ghi nhận thanh toán nhà cung cấp.";
+  } finally {
+    purchasePaymentSaving.value = { ...purchasePaymentSaving.value, [order.id]: false };
+  }
+}
+
 async function loadAuthSession() {
   if (!authToken.value) return;
   try {
@@ -1982,15 +2096,19 @@ async function fetchReports() {
     const params = new URLSearchParams();
     Object.entries(reportFilters.value).forEach(([key, value]) => { if (value) params.set(key, value); });
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    const [overviewResponse, performanceResponse] = await Promise.all([
+    const [overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse] = await Promise.all([
       apiFetch(`${API_BASE}/reports/overview${suffix}`),
       apiFetch(`${API_BASE}/reports/agent-performance`),
+      apiFetch(`${API_BASE}/reports/inventory`),
+      apiFetch(`${API_BASE}/reports/purchase-costs${suffix}`),
     ]);
     if (!overviewResponse.ok) throw new Error(`HTTP ${overviewResponse.status}`);
     crmOverview.value = await overviewResponse.json();
     if (performanceResponse.ok) {
       agentPerformance.value = (await performanceResponse.json()).items || [];
     }
+    if (inventoryResponse.ok) inventoryReport.value = await inventoryResponse.json();
+    if (purchaseCostResponse.ok) purchaseCostReport.value = await purchaseCostResponse.json();
   } catch (err) {
     console.error("Fetch reports error:", err);
     reportsError.value = "Không tải được báo cáo CRM.";
@@ -5740,14 +5858,27 @@ onUnmounted(() => {
         <div v-else-if="!orders.length" class="products-empty">Chưa có đơn hàng nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table orders-table">
-            <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Sản phẩm</th><th>Kênh</th><th>Trạng thái</th><th>Tổng tiền</th><th>Ngày tạo</th></tr></thead>
+            <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Sản phẩm</th><th>Kênh</th><th>Trạng thái</th><th>Thanh toán</th><th>Tổng tiền</th><th>Ngày tạo</th></tr></thead>
             <tbody>
               <tr v-for="order in orders" :key="order.id">
                 <td><strong>{{ order.order_number }}</strong></td>
                 <td>#{{ order.customer_id }}</td>
                 <td><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}</span></td>
                 <td>{{ order.channel || 'Không gắn kênh' }}</td>
-                <td><span class="product-status" :class="order.status">{{ order.status }}</span></td>
+                <td>
+                  <select class="inline-stage" :value="order.status" @change="transitionSalesOrder(order, $event.target.value)">
+                    <option v-for="status in salesStatuses" :key="status" :value="status">{{ status }}</option>
+                  </select>
+                </td>
+                <td class="order-payment-cell">
+                  <span class="product-status" :class="order.payment_status">{{ order.payment_status }}</span>
+                  <small>{{ Number(order.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</small>
+                  <div class="order-payment-actions">
+                    <input v-model.number="orderPaymentDrafts[order.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" />
+                    <button type="button" :disabled="orderPaymentSaving[order.id]" @click="recordSalesPayment(order)">Thu</button>
+                    <button type="button" :disabled="orderPaymentSaving[order.id]" @click="recordSalesPayment(order, 'refund')">Hoàn</button>
+                  </div>
+                </td>
                 <td><strong>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</strong></td>
                 <td>{{ order.created_at ? new Date(order.created_at).toLocaleString('vi-VN') : '—' }}</td>
               </tr>
@@ -5795,7 +5926,7 @@ onUnmounted(() => {
         <div v-else-if="!purchaseOrders.length" class="products-empty">Chưa có Purchase Order nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table orders-table">
-            <thead><tr><th>Mã PO</th><th>Nhà cung cấp</th><th>Mặt hàng</th><th>Trạng thái</th><th>Tổng chi</th><th>Cập nhật</th></tr></thead>
+            <thead><tr><th>Mã PO</th><th>Nhà cung cấp</th><th>Mặt hàng</th><th>Trạng thái</th><th>Thanh toán</th><th>Tổng chi</th><th>Cập nhật</th></tr></thead>
             <tbody>
               <tr v-for="purchase in purchaseOrders" :key="purchase.id">
                 <td><strong>{{ purchase.po_number }}</strong></td>
@@ -5803,9 +5934,11 @@ onUnmounted(() => {
                 <td><span v-for="(item, index) in purchase.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}</span></td>
                 <td>
                   <select class="inline-stage" :value="purchase.status" @change="transitionPurchaseOrder(purchase, $event.target.value)">
-                    <option v-for="status in purchaseStatuses" :key="status" :value="status">{{ status }}</option>
+                    <option v-for="status in purchaseStatuses" :key="status" :value="status" :disabled="['partially_received', 'received'].includes(status)">{{ status }}</option>
                   </select>
+                  <button v-if="['submitted', 'partially_received'].includes(purchase.status)" type="button" class="table-action-btn" @click="receivePurchaseOrder(purchase)">Nhận đủ</button>
                 </td>
+                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ purchase.payment_status || 'unpaid' }}</span><small>{{ Number(purchase.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Chi trả</button></div></td>
                 <td><strong>{{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</strong></td>
                 <td>{{ purchase.updated_at ? new Date(purchase.updated_at).toLocaleString('vi-VN') : '—' }}</td>
               </tr>
@@ -6212,6 +6345,25 @@ onUnmounted(() => {
           <div v-if="crmOverview.time_series?.length" class="report-panel">
             <div class="report-panel-header"><h3>Xu hướng theo ngày</h3><span>Hội thoại · đơn bán · doanh thu</span></div>
             <div class="report-series"><div v-for="point in crmOverview.time_series.slice(-14)" :key="point.date" class="report-series-row"><span>{{ point.date }}</span><b>{{ point.conversations }} hội thoại · {{ point.orders }} đơn · {{ Number(point.revenue || 0).toLocaleString('vi-VN') }}đ</b></div></div>
+          </div>
+          <div v-if="inventoryReport" class="report-panel">
+            <div class="report-panel-header"><h3>Tồn kho</h3><span>{{ inventoryReport.total || 0 }} sản phẩm</span></div>
+            <div class="report-cards">
+              <div class="report-card"><span>Tồn thực tế</span><strong>{{ inventoryReport.stock_quantity || 0 }}</strong></div>
+              <div class="report-card"><span>Đang giữ</span><strong>{{ inventoryReport.reserved_quantity || 0 }}</strong></div>
+              <div class="report-card"><span>Có thể bán</span><strong>{{ inventoryReport.available_quantity || 0 }}</strong></div>
+            </div>
+            <div v-if="inventoryReport.items?.length" class="products-table-wrap">
+              <table class="products-table reports-table">
+                <thead><tr><th>Sản phẩm</th><th>Tồn</th><th>Giữ</th><th>Có thể bán</th><th>Biến động</th></tr></thead>
+                <tbody><tr v-for="item in inventoryReport.items" :key="item.product_id"><td><strong>{{ item.name }}</strong><small>{{ item.sku }}</small></td><td>{{ item.stock_quantity }}</td><td>{{ item.reserved_quantity }}</td><td>{{ item.available_quantity }}</td><td>{{ item.net_movement_quantity }} ({{ item.movement_count }} lần)</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <div v-if="purchaseCostReport" class="report-panel">
+            <div class="report-panel-header"><h3>Chi phí nhập đã nhận</h3><strong>{{ Number(purchaseCostReport.total_received_cost || 0).toLocaleString('vi-VN') }}đ</strong></div>
+            <div v-if="!purchaseCostReport.items?.length" class="products-empty">Chưa có phiếu nhập trong khoảng thời gian này.</div>
+            <div v-else class="products-table-wrap"><table class="products-table reports-table"><thead><tr><th>Nhà cung cấp</th><th>Số phiếu</th><th>Số lượng</th><th>Chi phí nhận</th></tr></thead><tbody><tr v-for="item in purchaseCostReport.items" :key="item.supplier_name"><td>{{ item.supplier_name }}</td><td>{{ item.receipt_count }}</td><td>{{ item.received_quantity }}</td><td><strong>{{ Number(item.received_cost || 0).toLocaleString('vi-VN') }}đ</strong></td></tr></tbody></table></div>
           </div>
         </template>
       </section>
