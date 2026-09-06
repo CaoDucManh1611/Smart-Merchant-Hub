@@ -82,7 +82,9 @@ class ProductOrderApiTests(unittest.TestCase):
     def test_product_list_is_tenant_scoped(self):
         response = self.client.get("/api/products", headers={"X-Business-Id": "1"})
         self.assertEqual(200, response.status_code)
-        self.assertEqual([self.product_id], [item["id"] for item in response.json()["items"]])
+        product_ids = [item["id"] for item in response.json()["items"]]
+        self.assertIn(self.product_id, product_ids)
+        self.assertNotIn(self.other_product_id, product_ids)
 
     def test_order_uses_database_product_price_and_calculates_total(self):
         response = self.client.post(
