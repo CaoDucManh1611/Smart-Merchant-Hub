@@ -350,7 +350,10 @@ def update_order(
     actor: User | None = Depends(require_write_access),
 ):
     order = _order(db, order_id, tenant)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    values = payload.model_dump(exclude_unset=True)
+    if "status" in values:
+        raise HTTPException(status_code=409, detail="Trạng thái đơn phải đổi qua endpoint transition để cập nhật tồn kho.")
+    for field, value in values.items():
         setattr(order, "metadata_" if field == "metadata" else field, value)
     db.commit()
     if actor:

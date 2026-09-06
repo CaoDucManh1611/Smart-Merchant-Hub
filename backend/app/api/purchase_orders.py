@@ -12,6 +12,7 @@ from app.models.business import User
 from app.models.sales import Product
 from app.models.supplier import Supplier
 from app.models.inventory import PurchaseReceipt, PurchaseReceiptItem
+from app.models.order_event import OrderEvent
 from app.schemas.purchase_order import PurchaseReceiptCreate, PurchaseReceiptOut
 from app.services.inventory_service import InventoryOperationError, receive_purchase_order
 from app.schemas.purchase_order import (
@@ -224,9 +225,22 @@ def transition_purchase_order(
     to_status = payload.to_status.strip().lower()
     if to_status not in PURCHASE_TRANSITIONS:
         raise HTTPException(status_code=422, detail="Trạng thái Purchase Order không hợp lệ.")
+    if to_status in {"partially_received", "received"}:
+        raise HTTPException(status_code=409, detail="Dùng endpoint receipts để cập nhật số lượng nhận và tồn kho.")
     if to_status not in PURCHASE_TRANSITIONS.get(order.status, set()):
         raise HTTPException(status_code=409, detail=f"Không thể chuyển {order.status} sang {to_status}.")
+    previous = order.status
     order.status = to_status
+    db.add(OrderEvent(
+        business_id=tenant.business_id,
+        order_type="purchase_order",
+        order_id=order.id,
+        event_type="status_changed",
+        from_status=previous,
+        to_status=to_status,
+        actor_id=actor.id if actor else None,
+        metadata_={},
+    ))
     db.commit()
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="transition", resource_type="purchase_order", resource_id=str(order.id), metadata={"to_status": to_status})
