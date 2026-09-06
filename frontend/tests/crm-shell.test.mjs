@@ -113,3 +113,63 @@ test("inbox header and conversation rows expose readable status hierarchy", () =
   assert.match(styleSource, /\.inbox-filter-panel/);
   assert.match(styleSource, /\.conversation-channel-pill/);
 });
+
+test("chat workspace uses a neutral timeline and aligned composer layout", () => {
+  assert.match(appSource, /class="chat chat-shell"/);
+  assert.match(appSource, /class="messages-scroll chat-timeline"/);
+  assert.match(appSource, /class="composer chat-composer"/);
+  assert.match(styleSource, /\.chat-shell/);
+  assert.match(styleSource, /\.chat-timeline/);
+  assert.match(styleSource, /\.chat-composer/);
+  assert.doesNotMatch(styleSource, /url\("data:image\/svg\+xml/);
+});
+
+test("chat controls are actionable and the composer keeps a standard input hint", () => {
+  assert.match(appSource, /@click="toggleConversationActions"/);
+  assert.match(appSource, /@click="toggleConversationPriority"/);
+  assert.match(appSource, /@click="toggleConversationFavorite"/);
+  assert.match(appSource, /:aria-pressed="conversationPriorityActive"/);
+  assert.match(appSource, /:aria-pressed="conversationFavoriteActive"/);
+  assert.doesNotMatch(appSource, /MÃ\s*\n?\s*Tạo mã giảm giá/);
+  assert.doesNotMatch(appSource, /Ctrl\+V để dán ảnh/);
+  assert.match(styleSource, /\.conversation-actions-popover/);
+});
+
+test("chat attachments stay compact and action menu labels remain readable", () => {
+  assert.match(styleSource, /\.chat-composer \.image-preview-box[\s\S]*?max-height:\s*80px/);
+  assert.match(styleSource, /\.chat-composer \.image-preview-info[\s\S]*?flex-direction:\s*row/);
+  assert.match(styleSource, /\.conversation-actions-popover[\s\S]*?min-width:\s*220px/);
+  assert.match(styleSource, /\.conversation-actions-popover[\s\S]*?white-space:\s*nowrap/);
+});
+
+test("chat attachment tray exposes a Messenger-style removable thumbnail", () => {
+  assert.match(appSource, /class="composer-attachment-visual"/);
+  assert.match(appSource, /class="image-preview-remove"/);
+  assert.match(appSource, /aria-label="Xóa media"/);
+  assert.match(styleSource, /\.chat-composer \.composer-attachment-visual[\s\S]*?position:\s*relative/);
+  assert.match(styleSource, /\.chat-composer \.image-preview-remove[\s\S]*?position:\s*absolute/);
+});
+
+test("chat attachment tray sits above the input without a media-type selector", () => {
+  assert.match(styleSource, /\.chat-composer\s*\{[\s\S]*?display:\s*flex/);
+  assert.match(styleSource, /\.chat-composer \.image-preview-box[\s\S]*?order:\s*1/);
+  assert.match(styleSource, /\.chat-composer textarea[\s\S]*?order:\s*2/);
+  assert.doesNotMatch(appSource, /class="composer-media-type"/);
+});
+
+test("chat composer queues multiple media items without filenames or quick replies", () => {
+  assert.match(appSource, /const pendingMedia = ref\(\[\]\)/);
+  assert.match(appSource, /multiple/);
+  assert.match(appSource, /v-for="media in pendingMedia"/);
+  assert.match(appSource, /removePendingMedia/);
+  assert.match(appSource, /const files = Array\.from\(event\.target\.files/);
+  assert.match(appSource, /files\.forEach\(\(file\) => setImageFile\(file\)\)/);
+  assert.match(appSource, /for \(const \[index, media\] of mediaQueue\.entries\(\)\)/);
+  assert.match(appSource, /await sendMedia\(media, index\)/);
+  assert.doesNotMatch(appSource, /image-preview-name/);
+  assert.doesNotMatch(appSource, /class="quick"/);
+  assert.doesNotMatch(appSource, /Xin chào 👋/);
+  assert.match(styleSource, /\.chat-composer \.composer-attachment-grid/);
+  assert.match(styleSource, /\.chat-composer \.image-preview-box[\s\S]*?width:\s*max-content/);
+  assert.match(styleSource, /\.chat-composer \.image-preview-box[\s\S]*?background:\s*transparent/);
+});

@@ -48,6 +48,10 @@ const customerFactDraft = ref({
 });
 
 const selectedId = ref(null);
+const conversationActionsOpen = ref(false);
+const conversationPriorityIds = ref(new Set());
+const conversationFavoriteIds = ref(new Set());
+const composerMode = ref("reply");
 
 const activeFilter = ref("all");
 const tagCatalog = ref([]);
@@ -96,10 +100,8 @@ function resolveAppDialog(confirmed) {
 
 /* IMAGE */
 
-const imageFile = ref(null);
-const imagePreview = ref("");
+const pendingMedia = ref([]);
 const fileInput = ref(null);
-const selectedMediaType = ref("image");
 
 let pollingTimer = null;
 let socket = null;
@@ -625,6 +627,16 @@ const selected = computed(() => {
   );
 
 });
+
+const conversationPriorityActive = computed(() => (
+  selectedId.value !== null
+  && conversationPriorityIds.value.has(selectedId.value)
+));
+
+const conversationFavoriteActive = computed(() => (
+  selectedId.value !== null
+  && conversationFavoriteIds.value.has(selectedId.value)
+));
 
 
 // A ticket may only reference a conversation owned by its selected customer.
@@ -1242,116 +1254,91 @@ function openImagePicker() {
 }
 
 
-function clearImage() {
+const allowedMediaTypes = new Set([
+  "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif",
+  "audio/aac", "audio/flac", "audio/m4a", "audio/mp4", "audio/mpeg",
+  "audio/ogg", "audio/opus", "audio/wav", "audio/webm", "application/ogg",
+  "video/mp4", "video/mpeg", "video/quicktime", "video/webm",
+  "application/pdf", "application/zip", "application/octet-stream",
+  "application/msword", "application/rtf", "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/x-7z-compressed", "application/x-rar-compressed",
+  "text/csv", "text/plain",
+]);
 
-  if (
-    imagePreview.value
-    &&
-    imagePreview.value.startsWith(
-      "blob:"
-    )
-  ) {
+function detectMediaType(file) {
+  const contentType = String(file?.type || "").toLowerCase();
+  if (contentType.startsWith("audio/")) return "audio";
+  if (contentType.startsWith("video/")) return "video";
+  if (contentType === "image/webp" && /sticker/i.test(file?.name || "")) return "sticker";
+  if (contentType.startsWith("image/")) return "image";
+  return "file";
+}
 
-    URL.revokeObjectURL(
-      imagePreview.value
-    );
-
+function revokeMediaPreview(preview) {
+  if (preview?.startsWith("blob:")) {
+    URL.revokeObjectURL(preview);
   }
+}
 
-  imageFile.value = null;
-  imagePreview.value = "";
-  selectedMediaType.value = "image";
+function queueMediaFile(file, options = {}) {
+  if (!file) return;
+
+  const preview = options.preview || URL.createObjectURL(file);
+  pendingMedia.value = [
+    ...pendingMedia.value,
+    {
+      id: options.id || `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      preview,
+      mediaType: options.mediaType || detectMediaType(file),
+    },
+  ];
+}
+
+function clearImage() {
+  pendingMedia.value.forEach((media) => revokeMediaPreview(media.preview));
+  pendingMedia.value = [];
 
   if (fileInput.value) {
     fileInput.value.value = "";
   }
-
 }
 
+function removePendingMedia(mediaId) {
+  const media = pendingMedia.value.find((item) => item.id === mediaId);
+  if (!media) return;
+
+  revokeMediaPreview(media.preview);
+  pendingMedia.value = pendingMedia.value.filter((item) => item.id !== mediaId);
+}
 
 function setImageFile(file) {
-
-  if (!file) {
-    return;
-  }
+  if (!file) return;
 
   const contentType = String(file.type || "").toLowerCase();
-  const allowedTypes = [
-    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif",
-    "audio/aac", "audio/flac", "audio/m4a", "audio/mp4", "audio/mpeg",
-    "audio/ogg", "audio/opus", "audio/wav", "audio/webm", "application/ogg",
-    "video/mp4", "video/mpeg", "video/quicktime", "video/webm",
-    "application/pdf", "application/zip", "application/octet-stream",
-    "application/msword", "application/rtf", "application/vnd.ms-excel",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/x-7z-compressed", "application/x-rar-compressed",
-    "text/csv", "text/plain",
-  ];
-
-  if (!allowedTypes.includes(contentType)) {
+  if (!allowedMediaTypes.has(contentType)) {
     error.value = "Định dạng chưa hỗ trợ. Chọn ảnh, audio, video hoặc file phổ biến.";
     return;
   }
 
   const maxSize = 25 * 1024 * 1024;
-
-
-  if (
-    file.size > maxSize
-  ) {
-
+  if (file.size > maxSize) {
     error.value = "File quá lớn. Tối đa 25MB.";
-
     return;
   }
 
-
-  clearImage();
-
-
-  imageFile.value =
-    file;
-
-  if (contentType.startsWith("audio/")) {
-    selectedMediaType.value = "audio";
-  } else if (contentType.startsWith("video/")) {
-    selectedMediaType.value = "video";
-  } else if (contentType === "image/webp" && /sticker/i.test(file.name || "")) {
-    selectedMediaType.value = "sticker";
-  } else if (contentType.startsWith("image/")) {
-    selectedMediaType.value = "image";
-  } else {
-    selectedMediaType.value = "file";
-  }
-
-
-  imagePreview.value =
-    URL.createObjectURL(
-      file
-    );
-
-
+  queueMediaFile(file);
   error.value = "";
-
 }
 
-
 function handleFileChange(event) {
-
-  const file =
-    event.target.files?.[0];
-
-  if (!file) {
-    return;
-  }
-
-  setImageFile(
-    file
-  );
-
+  const files = Array.from(event.target.files || []);
+  files.forEach((file) => setImageFile(file));
+  event.target.value = "";
 }
 
 
@@ -1365,42 +1352,19 @@ function handlePaste(event) {
     event.clipboardData?.items
     || [];
 
+  let pastedImage = false;
+  for (const item of clipboardItems) {
+    if (!item.type?.startsWith("image/")) continue;
 
-  for (
-    const item of clipboardItems
-  ) {
+    const file = item.getAsFile();
+    if (!file) continue;
 
-    if (
-      item.type
-      &&
-      item.type.startsWith(
-        "image/"
-      )
-    ) {
+    setImageFile(file);
+    pastedImage = true;
+  }
 
-      const file =
-        item.getAsFile();
-
-
-      if (file) {
-
-        /*
-          Nếu clipboard là ảnh:
-          không paste text rác vào textarea.
-        */
-
-        event.preventDefault();
-
-        setImageFile(
-          file
-        );
-
-        return;
-
-      }
-
-    }
-
+  if (pastedImage) {
+    event.preventDefault();
   }
 
 }
@@ -3467,6 +3431,8 @@ async function removeCustomerFact(fact) {
 async function selectConversation(id) {
 
   selectedId.value = id;
+  conversationActionsOpen.value = false;
+  composerMode.value = "reply";
 
   clearImage();
 
@@ -3538,8 +3504,10 @@ async function sendTextMessage() {
 
 async function sendImageMessage() {
 
+  const media = pendingMedia.value[0];
+
   if (
-    !imageFile.value
+    !media
     ||
     !selectedId.value
   ) {
@@ -3560,7 +3528,7 @@ async function sendImageMessage() {
 
     formData.append(
       "file",
-      imageFile.value
+      media.file
     );
 
 
@@ -3633,117 +3601,50 @@ async function sendUnifiedReply() {
     return;
   }
 
-  const text =
-    draft.value.trim();
+  const text = draft.value.trim();
+  const mediaQueue = pendingMedia.value.slice();
+  const hasText = Boolean(text);
+  const hasMedia = mediaQueue.length > 0;
 
-  const hasText =
-    Boolean(
-      text
-    );
+  if (!hasText && !hasMedia) return;
 
-  const mediaType =
-    selectedMediaType.value || "image";
-
-  const hasMedia =
-    Boolean(
-      imageFile.value
-    );
-
-  const hasImage =
-    hasMedia && mediaType === "image";
-
-  const hasGenericMedia =
-    hasMedia && !hasImage;
-
-  if (
-    !hasText
-    &&
-    !hasMedia
-  ) {
-    return;
-  }
-
-  const fileToSend =
-    imageFile.value;
-
-  const previewToSend =
-    imagePreview.value;
-
-  const clientId =
-    makeClientId();
-
+  const clientId = makeClientId();
   const optimisticIds = [];
+  const textClientId = `${clientId}-text`;
 
-  if (hasMedia) {
-    const imageClientId =
-      `${clientId}-image`;
+  mediaQueue.forEach((media, index) => {
+    const mediaClientId = `${clientId}-media-${index + 1}`;
+    optimisticIds.push(mediaClientId);
+    upsertMessage({
+      client_id: mediaClientId,
+      message_id: mediaClientId,
+      conversation_id: selectedId.value,
+      direction: "outbound",
+      content: media.mediaType === "image" && index === 0 ? null : index === 0 ? text : null,
+      media_type: media.mediaType,
+      media_url: media.preview,
+      received_at: new Date().toISOString(),
+      status: "sending",
+      retry_file: media.file,
+      retry_preview: media.preview,
+      retry_media_type: media.mediaType,
+    });
+  });
 
-    optimisticIds.push(
-      imageClientId
-    );
-
-    upsertMessage(
-      {
-        client_id:
-          imageClientId,
-        message_id:
-          imageClientId,
-        conversation_id:
-          selectedId.value,
-        direction:
-          "outbound",
-        content:
-          hasGenericMedia ? text : null,
-        media_type:
-          mediaType,
-        media_url:
-          previewToSend,
-        received_at:
-          new Date().toISOString(),
-        status:
-          "sending",
-        retry_file:
-          fileToSend,
-        retry_preview:
-          previewToSend,
-        retry_media_type:
-          mediaType,
-      }
-    );
-  }
-
-  if (hasText && !hasGenericMedia) {
-    const textClientId =
-      `${clientId}-text`;
-
-    optimisticIds.push(
-      textClientId
-    );
-
-    upsertMessage(
-      {
-        client_id:
-          textClientId,
-        message_id:
-          textClientId,
-        conversation_id:
-          selectedId.value,
-        direction:
-          "outbound",
-        content:
-          text,
-        media_type:
-          null,
-        media_url:
-          null,
-        received_at:
-          new Date().toISOString(),
-        status:
-          "sending",
-        retry_text:
-          text,
-      }
-    );
+  if (hasText && (!hasMedia || mediaQueue[0]?.mediaType === "image")) {
+    optimisticIds.push(textClientId);
+    upsertMessage({
+      client_id: textClientId,
+      message_id: textClientId,
+      conversation_id: selectedId.value,
+      direction: "outbound",
+      content: text,
+      media_type: null,
+      media_url: null,
+      received_at: new Date().toISOString(),
+      status: "sending",
+      retry_text: text,
+    });
   }
 
   await scrollToBottom();
@@ -3753,84 +3654,70 @@ async function sendUnifiedReply() {
   try {
     error.value = "";
 
-    const formData =
-      new FormData();
+    const removeOptimistic = (id) => {
+      const index = optimisticIds.indexOf(id);
+      if (index >= 0) optimisticIds.splice(index, 1);
+      messages.value = messages.value.filter((message) => message.client_id !== id);
+    };
 
-    formData.append(
-      "client_id",
-      clientId
-    );
+    const applyResponse = (data) => {
+      (data.messages || (data.message ? [data.message] : [])).forEach(upsertMessage);
+    };
 
-    if (hasGenericMedia) {
-      formData.append(
-        "file",
-        fileToSend,
-      );
-      formData.append(
-        "media_type",
-        mediaType,
-      );
-      if (hasText) {
-        formData.append(
-          "caption",
-          text,
-        );
+    const sendMedia = async (media, index) => {
+      const mediaType = media.mediaType || "image";
+      const hasGenericMedia = mediaType !== "image";
+      const formData = new FormData();
+      formData.append("client_id", `${clientId}-${index + 1}`);
+      formData.append("file", media.file);
+
+      if (hasGenericMedia) {
+        formData.append("media_type", mediaType);
+        if (hasText && index === 0) formData.append("caption", text);
+      } else if (hasText && index === 0) {
+        formData.append("text", text);
       }
-    } else if (hasText) {
-      formData.append(
-        "text",
-        text
-      );
-    }
 
-    if (
-      hasImage
-      &&
-      fileToSend
-    ) {
-      formData.append(
-        "file",
-        fileToSend
-      );
-    }
+      const sendPath = hasGenericMedia
+        ? `${API_BASE}/conversations/${selectedId.value}/media/upload-generic`
+        : `${API_BASE}/conversations/${selectedId.value}/send`;
+      const response = await apiFetch(sendPath, { method: "POST", body: formData });
 
-    const sendPath = hasGenericMedia
-      ? `${API_BASE}/conversations/${selectedId.value}/media/upload-generic`
-      : `${API_BASE}/conversations/${selectedId.value}/send`;
-
-  const response = await apiFetch(
-      sendPath,
-      {
-        method:
-          "POST",
-        body:
-          formData,
+      if (!response.ok) {
+        const responseText = await response.text();
+        let detail = responseText;
+        try {
+          const payload = JSON.parse(responseText);
+          detail = payload?.detail?.message || payload?.detail?.meta_message || payload?.detail || responseText;
+        } catch {
+          // Keep raw backend response.
+        }
+        throw new Error(detail || `HTTP ${response.status}`);
       }
-    );
 
-    if (!response.ok) {
-      throw new Error(
-        await response.text()
-      );
+      const data = await response.json();
+      removeOptimistic(`${clientId}-media-${index + 1}`);
+      if (index === 0 && hasText && !hasGenericMedia) removeOptimistic(textClientId);
+      applyResponse(data);
+      removePendingMedia(media.id);
+    };
+
+    if (hasMedia) {
+      for (const [index, media] of mediaQueue.entries()) {
+        await sendMedia(media, index);
+      }
+    } else {
+      const formData = new FormData();
+      formData.append("client_id", clientId);
+      formData.append("text", text);
+      const response = await apiFetch(`${API_BASE}/conversations/${selectedId.value}/send`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) throw new Error(await response.text());
+      removeOptimistic(textClientId);
+      applyResponse(await response.json());
     }
-
-    const data =
-      await response.json();
-
-    messages.value =
-      messages.value.filter(
-        (message) =>
-          !optimisticIds.includes(
-            message.client_id
-          )
-      );
-
-    (
-      data.messages
-      || (data.message ? [data.message] : [])
-    ).forEach(
-      upsertMessage
-    );
 
     draft.value = "";
     clearImage();
@@ -3873,14 +3760,11 @@ async function retryMessage(message) {
   }
 
   if (message.retry_file) {
-    imageFile.value =
-      message.retry_file;
-    imagePreview.value =
-      message.retry_preview
-      || "";
-    selectedMediaType.value =
-      message.retry_media_type
-      || "image";
+    clearImage();
+    queueMediaFile(message.retry_file, {
+      preview: message.retry_preview || "",
+      mediaType: message.retry_media_type || "image",
+    });
   }
 
   messages.value =
@@ -3896,13 +3780,90 @@ async function retryMessage(message) {
 
 
 /* =========================================================
-   QUICK REPLY
+   CHAT ACTIONS
 ========================================================= */
 
-function quick(text) {
+function toggleConversationActions() {
+  conversationActionsOpen.value = !conversationActionsOpen.value;
+}
 
-  draft.value = text;
+function toggleConversationPriority() {
+  if (selectedId.value === null) return;
+  const next = new Set(conversationPriorityIds.value);
+  if (next.has(selectedId.value)) next.delete(selectedId.value);
+  else next.add(selectedId.value);
+  conversationPriorityIds.value = next;
+}
 
+function toggleConversationFavorite() {
+  if (selectedId.value === null) return;
+  const next = new Set(conversationFavoriteIds.value);
+  if (next.has(selectedId.value)) next.delete(selectedId.value);
+  else next.add(selectedId.value);
+  conversationFavoriteIds.value = next;
+}
+
+async function refreshSelectedConversation() {
+  if (!selectedId.value) return;
+  conversationActionsOpen.value = false;
+  await Promise.all([
+    loadMessages(selectedId.value, true, true),
+    loadCustomer360(selected.value?.customer_id),
+  ]);
+}
+
+function setComposerMode(mode) {
+  composerMode.value = mode;
+  nextTick(() => document.querySelector(".chat-composer textarea")?.focus());
+}
+
+function focusComposer() {
+  nextTick(() => document.querySelector(".chat-composer textarea")?.focus());
+}
+
+function insertComposerEmoji() {
+  draft.value = `${draft.value}${draft.value ? " " : ""}🙂`;
+  focusComposer();
+}
+
+function insertReplyTemplate() {
+  if (!draft.value.trim()) {
+    draft.value = "Xin chào, mình có thể hỗ trợ gì cho bạn?";
+  } else {
+    draft.value = `${draft.value.trim()} Xin chào, mình có thể hỗ trợ gì cho bạn?`;
+  }
+  focusComposer();
+}
+
+async function sendComposerContent() {
+  if (composerMode.value !== "internal") {
+    await sendUnifiedReply();
+    return;
+  }
+
+  const customerId = selected.value?.customer_id;
+  const content = draft.value.trim();
+  if (!customerId || !content) return;
+
+  sending.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/notes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    draft.value = "";
+    removePendingMedia(media.id);
+    await loadCustomer360(customerId);
+  } catch (err) {
+    error.value = err.message || "Không thể lưu ghi chú nội bộ.";
+  } finally {
+    sending.value = false;
+  }
 }
 
 
@@ -4482,7 +4443,7 @@ onUnmounted(() => {
              CHAT
         ================================================== -->
 
-        <section class="chat">
+        <section class="chat chat-shell">
 
 
           <template v-if="selected">
@@ -4638,9 +4599,34 @@ onUnmounted(() => {
                   </select>
                 </label>
 
-                <button>⋮</button>
-                <button>!</button>
-                <button>♡</button>
+                <button
+                  type="button"
+                  title="Thao tác hội thoại"
+                  aria-label="Thao tác hội thoại"
+                  :aria-expanded="conversationActionsOpen"
+                  @click="toggleConversationActions"
+                >⋮</button>
+                <button
+                  type="button"
+                  title="Đánh dấu ưu tiên"
+                  aria-label="Đánh dấu ưu tiên"
+                  :class="{ active: conversationPriorityActive }"
+                  :aria-pressed="conversationPriorityActive"
+                  @click="toggleConversationPriority"
+                >!</button>
+                <button
+                  type="button"
+                  title="Ghim hội thoại"
+                  aria-label="Ghim hội thoại"
+                  :class="{ active: conversationFavoriteActive }"
+                  :aria-pressed="conversationFavoriteActive"
+                  @click="toggleConversationFavorite"
+                >♡</button>
+
+                <div v-if="conversationActionsOpen" class="conversation-actions-popover" role="menu">
+                  <button type="button" role="menuitem" @click="refreshSelectedConversation">Làm mới hội thoại</button>
+                  <button type="button" role="menuitem" @click="toggleConversationActions">Đóng menu</button>
+                </div>
 
               </div>
 
@@ -4651,7 +4637,7 @@ onUnmounted(() => {
                  MESSAGES
             ================================================== -->
 
-            <div class="messages-scroll">
+            <div class="messages-scroll chat-timeline">
 
 
               <div class="today">
@@ -4982,16 +4968,24 @@ onUnmounted(() => {
                  COMPOSER
             ================================================== -->
 
-            <footer class="composer">
+            <footer class="composer chat-composer">
 
 
               <div class="composer-tabs">
 
-                <button class="active">
+                <button
+                  type="button"
+                  :class="{ active: composerMode === 'reply' }"
+                  @click="setComposerMode('reply')"
+                >
                   Trả lời
                 </button>
 
-                <button>
+                <button
+                  type="button"
+                  :class="{ active: composerMode === 'internal' }"
+                  @click="setComposerMode('internal')"
+                >
                   Ghi chú nội bộ
                 </button>
 
@@ -5003,17 +4997,14 @@ onUnmounted(() => {
               <textarea
                 v-model="draft"
 
-                placeholder="
-                  Nhập tin nhắn...
-                  Ctrl+V để dán ảnh
-                "
+                :placeholder="composerMode === 'internal' ? 'Ghi chú nội bộ...' : 'Nhập tin nhắn...'"
 
                 @paste="
                   handlePaste
                 "
 
                 @keydown.enter.exact.prevent="
-                  sendReply
+                  sendComposerContent
                 "
               />
 
@@ -5022,76 +5013,64 @@ onUnmounted(() => {
 
               <div
                 v-if="
-                  imagePreview
+                  pendingMedia.length
                 "
 
                 class="
                   image-preview-box
                 "
+                role="list"
+                aria-label="Media đang chờ gửi"
               >
 
-                <img
-                  v-if="selectedMediaType === 'image' || selectedMediaType === 'sticker'"
-                  :src="imagePreview"
-                  :alt="selectedMediaType === 'sticker' ? 'Sticker chuẩn bị gửi' : 'Ảnh chuẩn bị gửi'"
-                />
+                <div class="composer-attachment-grid">
 
-                <audio
-                  v-else-if="selectedMediaType === 'audio'"
-                  :src="imagePreview"
-                  controls
-                  class="composer-media-player"
-                />
-
-                <video
-                  v-else-if="selectedMediaType === 'video'"
-                  :src="imagePreview"
-                  controls
-                  class="composer-media-player composer-video-preview"
-                />
-
-                <div v-else class="composer-file-preview">
-                  📎 File đính kèm
-                </div>
-
-
-                <div
-                  class="
-                    image-preview-info
-                  "
-                >
-
-                  <span>
-
-                    {{
-                      imageFile?.name
-                      ||
-                      "Media từ clipboard"
-                    }}
-
-                  </span>
-
-
-                  <label class="composer-media-type">
-                    Loại:
-                    <select v-model="selectedMediaType">
-                      <option value="image">Ảnh</option>
-                      <option value="audio">Audio</option>
-                      <option value="video">Video</option>
-                      <option value="sticker">Sticker</option>
-                      <option value="file">File</option>
-                    </select>
-                  </label>
-
-                  <button
-                    type="button"
-
-                    @click="
-                      clearImage
-                    "
+                  <div
+                    v-for="media in pendingMedia"
+                    :key="media.id"
+                    class="composer-attachment-item"
+                    role="listitem"
                   >
-                    ✕ Xóa media
-                  </button>
+
+                    <div class="composer-attachment-visual">
+
+                      <img
+                        v-if="media.mediaType === 'image' || media.mediaType === 'sticker'"
+                        :src="media.preview"
+                        :alt="media.mediaType === 'sticker' ? 'Sticker chuẩn bị gửi' : 'Ảnh chuẩn bị gửi'"
+                      />
+
+                      <audio
+                        v-else-if="media.mediaType === 'audio'"
+                        :src="media.preview"
+                        controls
+                        class="composer-media-player"
+                      />
+
+                      <video
+                        v-else-if="media.mediaType === 'video'"
+                        :src="media.preview"
+                        controls
+                        class="composer-media-player composer-video-preview"
+                      />
+
+                      <div v-else class="composer-file-preview">
+                        📎
+                      </div>
+
+                      <button
+                        type="button"
+                        class="image-preview-remove"
+                        title="Xóa media"
+                        aria-label="Xóa media"
+                        @click="removePendingMedia(media.id)"
+                      >
+                        ×
+                      </button>
+
+                    </div>
+
+                  </div>
 
                 </div>
 
@@ -5104,6 +5083,7 @@ onUnmounted(() => {
                 ref="fileInput"
 
                 type="file"
+                multiple
 
                 accept="image/*,audio/*,video/*,.pdf,.zip,.rar,.7z,.csv,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
 
@@ -5122,7 +5102,12 @@ onUnmounted(() => {
 
                 <div class="left-actions">
 
-                  <button>
+                  <button
+                    type="button"
+                    title="Thêm emoji"
+                    aria-label="Thêm emoji"
+                    @click="insertComposerEmoji"
+                  >
                     ☺
                   </button>
 
@@ -5144,20 +5129,35 @@ onUnmounted(() => {
                   </button>
 
 
-                  <button>
+                  <button
+                    type="button"
+                    title="Đặt con trỏ vào ô nhập"
+                    aria-label="Đặt con trỏ vào ô nhập"
+                    @click="focusComposer"
+                  >
                     ⌕
                   </button>
 
 
-                  <button>
+                  <button
+                    type="button"
+                    title="Ghim hội thoại"
+                    aria-label="Ghim hội thoại"
+                    :class="{ active: conversationFavoriteActive }"
+                    :aria-pressed="conversationFavoriteActive"
+                    @click="toggleConversationFavorite"
+                  >
                     ♡
                   </button>
 
 
                   <button
+                    type="button"
                     class="
                       template
                     "
+                    title="Chèn mẫu trả lời"
+                    @click="insertReplyTemplate"
                   >
                     Mẫu trả lời
                   </button>
@@ -5169,28 +5169,19 @@ onUnmounted(() => {
 
 
                   <button
-                    class="
-                      voucher
-                    "
-                  >
-
-                    MÃ
-                    Tạo mã giảm giá
-
-                  </button>
-
-
-                  <button
+                    type="button"
                     class="
                       send
                     "
 
                     :disabled="
-                      (
-                        !draft.trim()
-                        &&
-                        !imageFile
-                      )
+                      composerMode === 'internal'
+                      ? !draft.trim()
+                      : (
+                          !draft.trim()
+                          &&
+                          !pendingMedia.length
+                        )
                       ||
                       sending
                       ||
@@ -5198,15 +5189,17 @@ onUnmounted(() => {
                     "
 
                     @click="
-                      sendUnifiedReply
+                      sendComposerContent
                     "
                   >
 
                     {{
                       sending
                       ? "Đang gửi..."
-                      : imageFile
-                      ? `➤ Gửi ${selectedMediaType === 'image' ? 'ảnh' : selectedMediaType}`
+                      : composerMode === 'internal'
+                      ? "Lưu ghi chú"
+                      : pendingMedia.length
+                      ? `➤ Gửi ${pendingMedia.length} media`
                         : "➤ Gửi phản hồi"
                     }}
 
@@ -5216,53 +5209,6 @@ onUnmounted(() => {
 
               </div>
 
-
-              <div class="quick">
-
-                <button
-                  @click="
-                    quick(
-                      'Xin chào 👋'
-                    )
-                  "
-                >
-                  Xin chào 👋
-                </button>
-
-
-                <button
-                  @click="
-                    quick(
-                      'Cảm ơn bạn ❤️'
-                    )
-                  "
-                >
-                  Cảm ơn bạn ❤️
-                </button>
-
-
-                <button
-                  @click="
-                    quick(
-                      'Dạ bên mình đã nhận đơn rồi ạ ✅'
-                    )
-                  "
-                >
-                  Đã nhận đơn ✅
-                </button>
-
-
-                <button
-                  @click="
-                    quick(
-                      'Bạn muốn hẹn giờ giao lúc mấy giờ ạ? ⏰'
-                    )
-                  "
-                >
-                  Hẹn giờ giao ⏰
-                </button>
-
-              </div>
 
             </footer>
 
