@@ -3801,3 +3801,511 @@ button:hover {
     min-height: 0;
   }
 }
+
+/* =========================================================
+   CRM RED-PINK THEME
+   Giữ nhận diện Smart Merchant Hub hiện tại, khôi phục bảng màu
+   đỏ/hồng của giao diện CRM trước và tăng nhẹ cỡ chữ dễ đọc.
+========================================================= */
+
+:root {
+  --crm-ink: #6e2828;
+  --crm-muted: #956b68;
+  --crm-subtle: #a77c75;
+  --crm-border: #f1c7bd;
+  --crm-border-strong: #efb5ac;
+  --crm-surface: #fffaf8;
+  --crm-canvas: #fff8f5;
+  --crm-sidebar: #d72431;
+  --crm-sidebar-soft: #fff5ee;
+  --crm-accent: #d72431;
+  --crm-accent-soft: #fff0eb;
+  --crm-success: #24734c;
+  --crm-danger: #c23c47;
+}
+
+html,
+body,
+#app {
+  background: #fff1ec;
+}
+
+.crm-app {
+  grid-template-columns: 250px minmax(0, 1fr);
+  color: var(--crm-ink);
+  background:
+    radial-gradient(circle at 75% 10%, rgba(255, 196, 183, 0.45), transparent 22%),
+    linear-gradient(135deg, #ffece5, #fff8f4 48%, #ffe9e2);
+}
+
+.side {
+  padding: 14px 16px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(255, 255, 255, 0.14), transparent 17%),
+    linear-gradient(180deg, #f2383d 0%, #dc202f 48%, #bf1528 100%);
+  border-radius: 0 30px 30px 0;
+  box-shadow: 14px 0 35px rgba(144, 26, 36, 0.13);
+}
+
+/* Decorative shapes are CRM-neutral; no food or campaign imagery. */
+.side::before {
+  content: "✦   ·   ♡";
+  position: absolute;
+  z-index: 0;
+  top: 36px;
+  right: 20px;
+  color: rgba(255, 255, 255, 0.19);
+  font-size: 22px;
+  letter-spacing: 12px;
+  pointer-events: none;
+}
+
+.side::after {
+  content: "·   ✧   ·";
+  position: absolute;
+  z-index: 0;
+  right: 18px;
+  bottom: 160px;
+  color: rgba(255, 255, 255, 0.15);
+  font-size: 20px;
+  letter-spacing: 9px;
+  pointer-events: none;
+}
+
+.menu::before,
+.menu::after {
+  content: none;
+}
+
+.brand-lockup,
+.menu,
+.side-card,
+.collapse {
+  position: relative;
+  z-index: 1;
+}
+
+.brand-copy strong {
+  color: #fff8f4;
+  font-size: 14px;
+}
+
+.brand-copy small {
+  color: #ffe5df;
+  font-size: 11px;
+}
+
+.menu-item {
+  grid-template-columns: 30px 1fr auto;
+  min-height: 47px;
+  padding: 0 14px;
+  color: #fff8f4;
+  border-color: transparent;
+  border-radius: 15px;
+  font-size: 14px;
+}
+
+.menu-item:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  transform: none;
+}
+
+.menu-item.active {
+  color: #c91c2b;
+  background: #fff5ee;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.nav-icon {
+  color: #ffe6df;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.menu-item.active .nav-icon {
+  color: #c91c2b;
+  background: #ffe2da;
+}
+
+.menu-item em {
+  min-width: 25px;
+  height: 25px;
+  color: #fff;
+  background: #d72431;
+  font-size: 11px;
+}
+
+.menu-item.active em {
+  color: #fff;
+  background: #d72431;
+}
+
+.side-card {
+  min-height: 150px;
+  margin: auto 5px 12px;
+  padding: 18px;
+  background: linear-gradient(145deg, #f85c58, #cb1d2c);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 24px;
+}
+
+.side-card strong {
+  color: #fff;
+  font-size: 15px;
+}
+
+.side-card small {
+  color: #ffe5df;
+  font-size: 11px;
+}
+
+.collapse {
+  min-height: 38px;
+  margin: 9px 5px 0;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+  border-radius: 13px;
+  font-size: 13px;
+}
+
+.main {
+  background: var(--crm-canvas);
+}
+
+.welcome strong {
+  color: #8d1722;
+  font-size: 22px;
+}
+
+.welcome span {
+  color: #9a5d5c;
+  font-size: 13px;
+}
+
+.top-search {
+  color: #a67974;
+  background: rgba(255, 248, 244, 0.9);
+  border-color: #f0bdb3;
+  border-radius: 15px;
+  font-size: 13px;
+}
+
+.bell,
+.team {
+  color: #c91d2b;
+  background: #fff6f1;
+  border-color: #f0bdb3;
+}
+
+.team b {
+  color: #6e2828;
+  font-size: 12px;
+}
+
+.team small {
+  color: #976765;
+  font-size: 10px;
+}
+
+.team-avatar {
+  color: #fff;
+  background: #d82030;
+}
+
+.error {
+  color: #8e1823;
+  background: #ffe0db;
+  border-color: #efa7a0;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.inbox,
+.chat,
+.customer {
+  background: rgba(255, 241, 235, 0.92);
+  border-color: rgba(226, 137, 128, 0.45);
+  border-radius: 24px;
+  box-shadow: 0 10px 28px rgba(143, 33, 43, 0.05);
+}
+
+.inbox-title {
+  color: #fff;
+  background: linear-gradient(135deg, #d71e2b, #ef3e40);
+}
+
+.inbox-title h2 {
+  font-size: 18px;
+}
+
+.inbox-title button {
+  color: #c51e2a;
+  background: #fff3ec;
+  border-color: transparent;
+}
+
+.inbox-tabs button {
+  color: #8b5b58;
+  background: #fbe8e1;
+  border-color: #f0c2b8;
+  font-size: 12px;
+}
+
+.inbox-tabs button.active {
+  color: #fff;
+  background: #e92e38;
+  border-color: transparent;
+}
+
+.search-box {
+  background: #fff7f2;
+  border-color: #f0c7be;
+  border-radius: 13px;
+}
+
+.search-box input {
+  color: #6e2828;
+  font-size: 13px;
+}
+
+.conversation:hover {
+  background: #fff0eb;
+}
+
+.conversation.selected {
+  background: #ffe8e1;
+  box-shadow: inset 3px 0 0 #d72431;
+}
+
+.conversation p,
+.conversation-footer,
+.chat-person p,
+.conversation-assignment,
+.customer-profile p {
+  color: #956b68;
+}
+
+.conversation p {
+  font-size: 12px;
+}
+
+.avatar {
+  color: #a33b3b;
+  background: #fff0eb;
+  border-color: #efc8c0;
+}
+
+.chat {
+  background: #fff1ec;
+}
+
+.chat-head {
+  background: rgba(255, 234, 227, 0.88);
+  border-color: #efc5bc;
+}
+
+.chat-person h2 {
+  color: #642126;
+  font-size: 18px;
+}
+
+.conversation-assignment select,
+.chat-tools button {
+  color: #6e2828;
+  background: #fffaf8;
+  border-color: #efbcb2;
+}
+
+.chat-tools button {
+  color: #c42631;
+  border-radius: 12px;
+}
+
+.messages-scroll {
+  background-color: #fff1ec;
+  background-image:
+    radial-gradient(circle at 85% 18%, rgba(255, 149, 135, 0.13), transparent 18%),
+    radial-gradient(circle at 18% 72%, rgba(255, 190, 178, 0.12), transparent 19%);
+}
+
+.today {
+  color: #956b68;
+  background: #ffe9e2;
+  border-color: #efc5bc;
+}
+
+.bubble {
+  box-shadow: 0 3px 10px rgba(143, 33, 43, 0.05);
+  border-radius: 12px;
+}
+
+.inbound .bubble {
+  color: #6e2828;
+  background: #fffaf8;
+  border-color: #efc8c0;
+}
+
+.outbound .bubble {
+  color: #6e2828;
+  background: #ffe5df;
+  border-color: #efbcb2;
+}
+
+.brand-mini {
+  background: #d82030;
+  font-size: 9px;
+}
+
+.composer {
+  background: #fffaf8;
+  border-color: #efc8c0;
+  border-radius: 16px;
+}
+
+.composer-tabs {
+  border-color: #efc8c0;
+}
+
+.composer-tabs button.active {
+  color: #d72431;
+  border-bottom-color: #d72431;
+}
+
+.customer-title h3,
+.customer-profile h3,
+.section h4,
+.empty-chat h2 {
+  color: #6e2828;
+}
+
+.section {
+  border-top-color: #f1c7bd;
+}
+
+.section h4 {
+  font-size: 12px;
+}
+
+.section-head a,
+.section-head button,
+.customer-title button {
+  color: #c42631;
+}
+
+.tags span {
+  color: #9d3b38;
+  background: #fff0eb;
+  border-color: #efbcb2;
+}
+
+.empty-chat {
+  color: #956b68;
+  background: #fff1ec;
+}
+
+.empty-chat-mark {
+  background: linear-gradient(135deg, #e52c3c, #b81f35);
+  box-shadow: 0 12px 22px rgba(216, 36, 49, 0.2);
+}
+
+.conversation-scroll::-webkit-scrollbar-thumb,
+.messages-scroll::-webkit-scrollbar-thumb,
+.customer::-webkit-scrollbar-thumb {
+  background: #efb5ac;
+}
+
+.products-layout {
+  background: transparent;
+}
+
+.products-header h2 {
+  color: #6e2828;
+  font-size: 26px;
+}
+
+.products-header p {
+  color: #9c6660;
+  font-size: 15px;
+}
+
+.product-form,
+.products-table-wrap,
+.report-panel {
+  border-color: #f1c7bd;
+  background: #fffaf8;
+  box-shadow: 0 8px 24px rgba(143, 33, 43, 0.04);
+}
+
+.product-form-title {
+  color: #6e2828;
+  font-size: 16px;
+}
+
+.product-form-grid label {
+  color: #86514a;
+  font-size: 0.9rem;
+}
+
+.product-form-grid input,
+.product-form-grid select,
+.product-form-grid textarea,
+.inline-stage,
+.order-payment-actions input,
+.ticket-comment-form input {
+  color: #51322e;
+  background: #fffaf8;
+  border-color: #efc8c0;
+  font-size: 0.9rem;
+}
+
+.primary-btn {
+  background: linear-gradient(135deg, #e52c3c, #c91c2b);
+  border-radius: 0.7rem;
+  font-size: 0.95rem;
+}
+
+.products-table th,
+.products-table td {
+  color: #5f3f3a;
+  border-color: #f7dfd8;
+  font-size: 0.92rem;
+}
+
+.products-table th {
+  color: #8d4b43;
+  background: #fff5f1;
+}
+
+.products-table td small {
+  color: #a77c75;
+  font-size: 0.82rem;
+}
+
+/* Keep the existing responsive layout while using the restored palette. */
+@media (max-width: 1100px) {
+  .crm-app {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .side {
+    padding: 16px 8px;
+    border-radius: 0;
+  }
+
+  .brand-copy,
+  .menu-item b,
+  .menu-item em,
+  .side-card,
+  .collapse span {
+    display: none;
+  }
+
+  .menu-item {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: 0;
+  }
+}
