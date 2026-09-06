@@ -26,7 +26,7 @@ class OrderLifecycleTests(unittest.TestCase):
             db.add(business)
             db.flush()
             customer = Customer(business_id=business.id, channel="telegram", external_user_id="life-user")
-            product = Product(business_id=business.id, sku="LIFE", name="Life", price=10)
+            product = Product(business_id=business.id, sku="LIFE", name="Life", price=10, stock_quantity=1)
             db.add_all([customer, product])
             db.flush()
             order = Order(

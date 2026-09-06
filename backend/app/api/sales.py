@@ -31,19 +31,12 @@ from app.tenancy.dependencies import get_tenant_context
 from app.services.workflow_engine import emit_workflow_event
 from app.auth.dependencies import require_write_access
 from app.services.audit_service import record_audit
+from app.services.order_service import SalesOrderOperationError, SALES_TRANSITIONS as ORDER_TRANSITIONS, transition_sales_order
 
 
 router = APIRouter()
 
-SALES_TRANSITIONS = {
-    "draft": {"confirmed", "cancelled"},
-    "confirmed": {"processing", "cancelled"},
-    "processing": {"shipped", "cancelled"},
-    "shipped": {"delivered"},
-    "delivered": {"completed"},
-    "completed": set(),
-    "cancelled": set(),
-}
+SALES_TRANSITIONS = ORDER_TRANSITIONS
 
 
 def _product(db: Session, product_id: int, tenant: TenantContext) -> Product:
@@ -79,6 +72,11 @@ def _order_out(order: Order) -> OrderOut:
         order_number=order.order_number,
         status=order.status,
         total_amount=order.total_amount,
+        reserved_quantity=int(order.reserved_quantity or 0),
+        payment_status=order.payment_status,
+        paid_amount=order.paid_amount,
+        refunded_amount=order.refunded_amount,
+        cancel_reason=order.cancel_reason,
         shipping_address=order.shipping_address,
         shipping_phone=order.shipping_phone,
         metadata=order.metadata_,
@@ -91,6 +89,8 @@ def _order_out(order: Order) -> OrderOut:
             quantity=item.quantity,
             unit_price=item.unit_price,
             line_total=item.line_total,
+            product_name_snapshot=item.product_name_snapshot,
+            sku_snapshot=item.sku_snapshot,
         ) for item in order.items],
     )
 
@@ -310,6 +310,8 @@ def create_order(
             quantity=item_payload.quantity,
             unit_price=unit_price,
             line_total=line_total,
+            product_name_snapshot=product.name,
+            sku_snapshot=product.sku,
         ))
     order.total_amount = total
     try:
@@ -365,15 +367,20 @@ def transition_order(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
+    try:
+        transition_sales_order(
+            db,
+            order_id=order_id,
+            to_status=payload.to_status,
+            actor_id=actor.id if actor else None,
+            business_id=tenant.business_id,
+        )
+        db.commit()
+    except SalesOrderOperationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     order = _order(db, order_id, tenant)
-    to_status = payload.to_status.strip().lower()
-    if to_status not in SALES_TRANSITIONS:
-        raise HTTPException(status_code=422, detail="Trạng thái đơn hàng không hợp lệ.")
-    if to_status not in SALES_TRANSITIONS.get(order.status, set()):
-        raise HTTPException(status_code=409, detail=f"Không thể chuyển {order.status} sang {to_status}.")
-    order.status = to_status
-    db.commit()
     if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="transition", resource_type="sales_order", resource_id=str(order.id), metadata={"to_status": to_status})
+        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="transition", resource_type="sales_order", resource_id=str(order.id), metadata={"to_status": order.status})
         db.commit()
     return _order_out(_order(db, order_id, tenant))

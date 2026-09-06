@@ -34,6 +34,7 @@ class ProductOut(BaseModel):
     description: str | None = None
     price: Decimal
     stock_quantity: int
+    reserved_quantity: int = 0
     status: str
     metadata: dict | None = Field(default=None, validation_alias="metadata_")
     created_at: datetime | None = None
@@ -81,6 +82,8 @@ class OrderItemOut(BaseModel):
     quantity: int
     unit_price: Decimal
     line_total: Decimal
+    product_name_snapshot: str | None = None
+    sku_snapshot: str | None = None
 
 
 class OrderOut(BaseModel):
@@ -92,6 +95,11 @@ class OrderOut(BaseModel):
     order_number: str
     status: str
     total_amount: Decimal
+    reserved_quantity: int = 0
+    payment_status: str = "unpaid"
+    paid_amount: Decimal = Decimal("0")
+    refunded_amount: Decimal = Decimal("0")
+    cancel_reason: str | None = None
     shipping_address: str | None = None
     shipping_phone: str | None = None
     metadata: dict | None = Field(default=None, validation_alias="metadata_")
