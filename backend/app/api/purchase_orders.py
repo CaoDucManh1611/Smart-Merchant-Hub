@@ -119,6 +119,8 @@ def create_purchase_order(
         ).first()
         if supplier is None:
             raise HTTPException(status_code=404, detail="Nhà cung cấp không tồn tại.")
+        if supplier.status != "active":
+            raise HTTPException(status_code=409, detail="Nhà cung cấp đã archive, không thể tạo Purchase Order mới.")
     supplier_name = (supplier.name if supplier else (payload.supplier_name or "")).strip()
     if not supplier_name:
         raise HTTPException(status_code=422, detail="Cần chọn supplier_id hoặc nhập supplier_name.")
@@ -134,13 +136,15 @@ def create_purchase_order(
     status = payload.status.strip().lower()
     if status not in PURCHASE_TRANSITIONS:
         raise HTTPException(status_code=422, detail="Trạng thái Purchase Order không hợp lệ.")
+    if status != "draft":
+        raise HTTPException(status_code=422, detail="Purchase Order mới phải bắt đầu ở trạng thái draft.")
     order = PurchaseOrder(
         business_id=tenant.business_id,
         po_number=payload.po_number.strip(),
         supplier_name=supplier_name,
         supplier_id=supplier.id if supplier else None,
         supplier_name_snapshot=supplier_name,
-        status=status,
+        status="draft",
         notes=payload.notes,
         metadata_=payload.metadata,
         total_spend=Decimal("0"),
@@ -187,6 +191,8 @@ def update_purchase_order(
 ):
     order = _purchase_order(db, order_id, tenant)
     values = payload.model_dump(exclude_unset=True)
+    if order.status != "draft" and {"supplier_id", "supplier_name"}.intersection(values):
+        raise HTTPException(status_code=409, detail="Chỉ được thay đổi nhà cung cấp khi Purchase Order ở trạng thái draft.")
     if "supplier_id" in values:
         supplier_id = values.pop("supplier_id")
         supplier = None
@@ -197,6 +203,8 @@ def update_purchase_order(
             ).first()
             if supplier is None:
                 raise HTTPException(status_code=404, detail="Nhà cung cấp không tồn tại.")
+            if supplier.status != "active":
+                raise HTTPException(status_code=409, detail="Nhà cung cấp đã archive, không thể gán cho Purchase Order.")
         order.supplier_id = supplier_id
         if supplier:
             order.supplier_name = supplier.name
@@ -291,6 +299,18 @@ def receive_order(
     except InventoryOperationError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except IntegrityError as exc:
+        # A concurrent retry can pass the initial lookup in the service and
+        # lose at the unique idempotency constraint during flush. Replay the
+        # receipt that won instead of exposing a 500 or duplicating stock.
+        db.rollback()
+        receipt = db.query(PurchaseReceipt).filter(
+            PurchaseReceipt.business_id == tenant.business_id,
+            PurchaseReceipt.idempotency_key == payload.idempotency_key.strip(),
+        ).first()
+        if receipt is None or receipt.purchase_order_id != order_id:
+            raise HTTPException(status_code=409, detail="Idempotency key đã được dùng cho Purchase Order khác.") from exc
+        created = False
     response.status_code = 201 if created else 200
     if created:
         db.commit()

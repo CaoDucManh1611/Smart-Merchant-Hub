@@ -137,6 +137,82 @@ class ProductOrderApiTests(unittest.TestCase):
         )
         self.assertEqual(404, response.status_code)
 
+    def test_order_must_start_as_draft(self):
+        response = self.client.post(
+            "/api/orders",
+            headers={"X-Business-Id": "1"},
+            json={
+                "order_number": "ORD-NON-DRAFT",
+                "customer_id": self.customer_id,
+                "items": [{"product_id": self.product_id, "quantity": 1}],
+                "status": "confirmed",
+            },
+        )
+        self.assertEqual(422, response.status_code, response.text)
+
+    def test_stock_adjustment_is_ledgered_and_product_patch_cannot_bypass_it(self):
+        bypass = self.client.patch(
+            f"/api/products/{self.product_id}",
+            headers={"X-Business-Id": "1"},
+            json={"stock_quantity": 20},
+        )
+        self.assertEqual(409, bypass.status_code, bypass.text)
+
+        adjustment = self.client.post(
+            f"/api/inventory/products/{self.product_id}/adjustments",
+            headers={"X-Business-Id": "1"},
+            json={"quantity": 2, "note": "Kiểm kho"},
+        )
+        self.assertEqual(201, adjustment.status_code, adjustment.text)
+        self.assertEqual(12, adjustment.json()["balance"]["stock_quantity"])
+
+        movements = self.client.get(
+            f"/api/inventory/movements?product_id={self.product_id}",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(1, movements.json()["total"])
+        self.assertEqual("inventory_adjustment", movements.json()["items"][0]["movement_type"])
+        self.assertEqual(2, movements.json()["items"][0]["quantity"])
+
+        zero_adjustment = self.client.post(
+            f"/api/inventory/products/{self.product_id}/adjustments",
+            headers={"X-Business-Id": "1"},
+            json={"quantity": 0},
+        )
+        self.assertEqual(422, zero_adjustment.status_code, zero_adjustment.text)
+
+    def test_product_creation_records_opening_stock_in_inventory_ledger(self):
+        created = self.client.post(
+            "/api/products",
+            headers={"X-Business-Id": "1"},
+            json={
+                "sku": "OPENING-STOCK",
+                "name": "Opening stock product",
+                "price": "10",
+                "stock_quantity": 3,
+            },
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        product_id = created.json()["id"]
+
+        movements = self.client.get(
+            f"/api/inventory/movements?product_id={product_id}",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(1, movements.json()["total"])
+        movement = movements.json()["items"][0]
+        self.assertEqual("opening_balance", movement["movement_type"])
+        self.assertEqual(3, movement["quantity"])
+        self.assertEqual(0, movement["quantity_before"])
+        self.assertEqual(3, movement["quantity_after"])
+
+    def test_inventory_movements_rejects_a_product_from_another_tenant(self):
+        response = self.client.get(
+            f"/api/inventory/movements?product_id={self.other_product_id}",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(404, response.status_code, response.text)
+
     def test_revenue_report_is_grouped_by_conversation_channel_and_tenant_scoped(self):
         existing = self.client.get(
             "/api/orders",

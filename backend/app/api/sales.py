@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.db.dependencies import get_db
 from app.models.conversation import Conversation
 from app.models.customer import Customer
+from app.models.inventory import StockMovement
 from app.models.sales import Order, OrderItem, Product
 from app.models.business import User
 from app.schemas.sales import (
@@ -145,6 +146,20 @@ def create_product(
         metadata_=payload.metadata,
     )
     db.add(product)
+    db.flush()
+    initial_stock = int(product.stock_quantity or 0)
+    if initial_stock > 0:
+        db.add(StockMovement(
+            business_id=tenant.business_id,
+            product_id=product.id,
+            movement_type="opening_balance",
+            quantity=initial_stock,
+            quantity_before=0,
+            quantity_after=initial_stock,
+            source_type="product_initialization",
+            actor_id=actor.id if actor else None,
+            note="Tồn đầu khi tạo sản phẩm",
+        ))
     try:
         db.commit()
     except IntegrityError as exc:
@@ -176,6 +191,8 @@ def update_product(
 ):
     product = _product(db, product_id, tenant)
     for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == "stock_quantity":
+            raise HTTPException(status_code=409, detail="Dùng endpoint inventory adjustment để thay đổi tồn kho.")
         setattr(product, "metadata_" if field == "metadata" else field, value.strip() if isinstance(value, str) else value)
     try:
         db.commit()
@@ -304,13 +321,15 @@ def create_order(
     order_number = (payload.order_number or "").strip()
     if not order_number:
         order_number = _generated_order_number(db, tenant.business_id)
+    if payload.status.strip().lower() != "draft":
+        raise HTTPException(status_code=422, detail="Sales Order mới phải bắt đầu ở trạng thái draft.")
 
     order = Order(
         business_id=tenant.business_id,
         customer_id=customer.id,
         conversation_id=conversation.id if conversation else None,
         order_number=order_number,
-        status=payload.status,
+        status="draft",
         shipping_address=payload.shipping_address,
         shipping_phone=payload.shipping_phone,
         metadata_=payload.metadata,

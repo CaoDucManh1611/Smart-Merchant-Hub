@@ -62,3 +62,8 @@ test("CRM reports UI renders inventory and received purchase costs", () => {
   assert.match(appSource, /Chi phí nhập đã nhận/);
   assert.match(styleSource, /\.order-payment-cell/);
 });
+
+test("CRM product editor records stock changes through the inventory adjustment API", () => {
+  assert.match(appSource, /\/inventory\/products\/\$\{form\.id\}\/adjustments/);
+  assert.match(appSource, /Điều chỉnh tồn kho/);
+});

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class InventoryBalanceOut(BaseModel):
@@ -10,6 +10,11 @@ class InventoryBalanceOut(BaseModel):
     stock_quantity: int
     reserved_quantity: int
     available_quantity: int
+
+
+class StockAdjustmentCreate(BaseModel):
+    quantity: int = Field(..., ge=-1_000_000, le=1_000_000)
+    note: str | None = Field(default=None, max_length=10_000)
 
 
 class StockMovementOut(BaseModel):
@@ -25,6 +30,8 @@ class StockMovementOut(BaseModel):
     actor_id: int | None = None
     note: str | None = None
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StockMovementListOut(BaseModel):

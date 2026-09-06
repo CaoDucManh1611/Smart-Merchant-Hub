@@ -3,10 +3,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_write_access
 from app.db.dependencies import get_db
+from app.models.business import User
 from app.models.inventory import StockMovement
 from app.models.sales import Product
-from app.schemas.inventory import InventoryBalanceOut, StockMovementListOut, StockMovementOut
+from app.schemas.inventory import InventoryBalanceOut, StockAdjustmentCreate, StockMovementListOut, StockMovementOut
+from app.services.audit_service import record_audit
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 
@@ -38,6 +41,67 @@ def get_inventory_balance(
     )
 
 
+@router.post("/inventory/products/{product_id}/adjustments", status_code=201)
+def adjust_inventory(
+    product_id: int,
+    payload: StockAdjustmentCreate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    """Adjust stock through an append-only ledger entry."""
+    if payload.quantity == 0:
+        raise HTTPException(status_code=422, detail="Số lượng điều chỉnh phải khác 0.")
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.business_id == tenant.business_id,
+    ).with_for_update().first()
+    if product is None:
+        raise HTTPException(status_code=404, detail="Sản phẩm không tồn tại.")
+
+    before = int(product.stock_quantity or 0)
+    reserved = int(product.reserved_quantity or 0)
+    after = before + payload.quantity
+    if after < reserved:
+        raise HTTPException(status_code=409, detail="Không thể điều chỉnh tồn thấp hơn số lượng đang giữ.")
+
+    product.stock_quantity = after
+    movement = StockMovement(
+        business_id=tenant.business_id,
+        product_id=product.id,
+        movement_type="inventory_adjustment",
+        quantity=payload.quantity,
+        quantity_before=before,
+        quantity_after=after,
+        source_type="inventory_adjustment",
+        actor_id=actor.id if actor else None,
+        note=payload.note.strip() if payload.note else None,
+    )
+    db.add(movement)
+    db.commit()
+    db.refresh(movement)
+    if actor:
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id,
+            action="adjust",
+            resource_type="inventory",
+            resource_id=str(product.id),
+            metadata={"quantity": payload.quantity, "movement_id": movement.id},
+        )
+        db.commit()
+    return {
+        "balance": InventoryBalanceOut(
+            product_id=product.id,
+            stock_quantity=after,
+            reserved_quantity=reserved,
+            available_quantity=after - reserved,
+        ),
+        "movement": StockMovementOut.model_validate(movement),
+    }
+
+
 @router.get("/inventory/movements", response_model=StockMovementListOut)
 def list_inventory_movements(
     db: Session = Depends(get_db),
@@ -49,6 +113,12 @@ def list_inventory_movements(
 ):
     query = db.query(StockMovement).filter(StockMovement.business_id == tenant.business_id)
     if product_id is not None:
+        product = db.query(Product).filter(
+            Product.id == product_id,
+            Product.business_id == tenant.business_id,
+        ).first()
+        if product is None:
+            raise HTTPException(status_code=404, detail="Sản phẩm không tồn tại.")
         query = query.filter(StockMovement.product_id == product_id)
     if source_type:
         query = query.filter(StockMovement.source_type == source_type.strip())

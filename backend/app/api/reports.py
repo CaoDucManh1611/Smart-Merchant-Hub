@@ -1,7 +1,7 @@
 """Tenant-scoped CRM reporting endpoints."""
 
 import csv
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from io import StringIO
 
@@ -66,12 +66,15 @@ def _count(db: Session, model, business_id: int, *conditions) -> int:
     return int(query.scalar() or 0)
 
 
-def _parse_date(value: str | None, name: str) -> datetime | None:
+def _parse_date(value: str | None, name: str, *, end_of_day: bool = False) -> datetime | None:
     if not value:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return parsed.replace(tzinfo=None)
+        normalized = value.strip()
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00")).replace(tzinfo=None)
+        if end_of_day and len(normalized) == 10:
+            return datetime.combine(parsed.date(), time.max)
+        return parsed
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"{name} không hợp lệ; dùng ISO-8601.") from exc
 
@@ -88,7 +91,7 @@ def crm_overview(
 ):
     business_id = tenant.business_id
     start = _parse_date(start_at, "start_at")
-    end = _parse_date(end_at, "end_at")
+    end = _parse_date(end_at, "end_at", end_of_day=True)
     if start and end and start > end:
         raise HTTPException(status_code=422, detail="start_at phải trước end_at.")
 
@@ -228,7 +231,7 @@ def crm_overview_csv(
     if start_at:
         purchase_query = purchase_query.filter(PurchaseOrder.created_at >= _parse_date(start_at, "start_at"))
     if end_at:
-        purchase_query = purchase_query.filter(PurchaseOrder.created_at <= _parse_date(end_at, "end_at"))
+        purchase_query = purchase_query.filter(PurchaseOrder.created_at <= _parse_date(end_at, "end_at", end_of_day=True))
     if status:
         purchase_query = purchase_query.filter(PurchaseOrder.status == status.strip().lower())
     rows = [
@@ -301,7 +304,7 @@ def purchase_cost_report(
 ):
     """Aggregate received inventory cost by supplier and receipt date."""
     start = _parse_date(start_at, "start_at")
-    end = _parse_date(end_at, "end_at")
+    end = _parse_date(end_at, "end_at", end_of_day=True)
     if start and end and start > end:
         raise HTTPException(status_code=422, detail="start_at phải trước end_at.")
     rows = db.query(PurchaseReceiptItem, PurchaseReceipt, PurchaseOrderItem, PurchaseOrder).join(

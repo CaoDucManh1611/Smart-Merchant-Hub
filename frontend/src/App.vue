@@ -1863,14 +1863,18 @@ async function saveProduct() {
   productError.value = "";
   try {
     const isEdit = Boolean(form.id);
+    const existingProduct = isEdit ? products.value.find((product) => product.id === form.id) : null;
+    const stockAdjustment = isEdit
+      ? Number(form.stock_quantity || 0) - Number(existingProduct?.stock_quantity || 0)
+      : 0;
     const payload = {
       sku: form.sku.trim(),
       name: form.name.trim(),
       description: form.description.trim() || null,
       price: Number(form.price || 0),
-      stock_quantity: Number(form.stock_quantity || 0),
       status: form.status,
     };
+    if (!isEdit) payload.stock_quantity = Number(form.stock_quantity || 0);
     const response = await apiFetch(
       isEdit ? `${API_BASE}/products/${form.id}` : `${API_BASE}/products`,
       {
@@ -1882,6 +1886,20 @@ async function saveProduct() {
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    if (isEdit && stockAdjustment !== 0) {
+      const adjustmentResponse = await apiFetch(`${API_BASE}/inventory/products/${form.id}/adjustments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quantity: stockAdjustment,
+          note: "Điều chỉnh tồn kho từ danh mục sản phẩm",
+        }),
+      });
+      if (!adjustmentResponse.ok) {
+        const detail = await adjustmentResponse.json().catch(() => ({}));
+        throw new Error(detail.detail || "Không thể điều chỉnh tồn kho.");
+      }
     }
     resetProductForm();
     await fetchProducts();

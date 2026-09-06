@@ -123,6 +123,32 @@ class SalesInventoryLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(409, response.status_code)
 
+    def test_confirm_aggregates_duplicate_product_lines_before_reserving(self):
+        created = self.client.post(
+            "/api/orders",
+            headers=self.headers(),
+            json={
+                "order_number": "SO-INVENTORY-DUPLICATE-LINES",
+                "customer_id": self.customer_id,
+                "items": [
+                    {"product_id": self.product_id, "quantity": 3},
+                    {"product_id": self.product_id, "quantity": 3},
+                ],
+            },
+        )
+        self.assertEqual(201, created.status_code, created.text)
+
+        confirmed = self.client.post(
+            f"/api/orders/{created.json()['id']}/transition",
+            headers=self.headers(),
+            json={"to_status": "confirmed"},
+        )
+        self.assertEqual(409, confirmed.status_code, confirmed.text)
+
+        balance = self.client.get(f"/api/inventory/products/{self.product_id}", headers=self.headers())
+        self.assertEqual(5, balance.json()["stock_quantity"])
+        self.assertEqual(0, balance.json()["reserved_quantity"])
+
     def test_cancel_releases_reservation(self):
         order = self.create_order("SO-INVENTORY-CANCEL", 1)
         confirmed = self.client.post(

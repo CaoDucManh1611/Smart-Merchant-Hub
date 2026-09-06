@@ -48,6 +48,8 @@ def receive_purchase_order(
         PurchaseReceipt.idempotency_key == key,
     ).first()
     if existing is not None:
+        if existing.purchase_order_id != purchase_order_id:
+            raise InventoryOperationError("Idempotency key đã được dùng cho Purchase Order khác.", 409)
         return existing, False
 
     order = db.query(PurchaseOrder).filter(

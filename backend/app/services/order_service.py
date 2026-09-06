@@ -48,11 +48,12 @@ PAYMENT_STATUSES = {"pending", "paid", "failed", "cancelled"}
 
 
 def _payment_status(paid: Decimal, total: Decimal, refunded: Decimal = Decimal("0")) -> str:
-    if refunded > 0 and refunded >= paid and paid > 0:
-        return "refunded"
     if paid <= 0:
         return "unpaid"
-    if paid >= total:
+    net_paid = paid - refunded
+    if net_paid <= 0:
+        return "refunded" if refunded > 0 else "unpaid"
+    if net_paid >= total:
         return "paid"
     return "partial"
 
@@ -306,6 +307,15 @@ def transition_sales_order(
         raise SalesOrderOperationError(f"Không thể chuyển {order.status} sang {target}.", 409)
     previous = order.status
 
+    if target == "completed":
+        net_paid = Decimal(order.paid_amount or 0) - Decimal(order.refunded_amount or 0)
+        if net_paid < Decimal(order.total_amount or 0):
+            raise SalesOrderOperationError("Chỉ có thể hoàn tất đơn khi đã thanh toán đủ.", 409)
+
+    quantities_by_product: dict[int, int] = {}
+    for item in order_items:
+        quantities_by_product[item.product_id] = quantities_by_product.get(item.product_id, 0) + item.quantity
+
     product_ids = sorted({item.product_id for item in order_items})
     products = db.query(Product).filter(
         Product.business_id == business_id,
@@ -317,43 +327,43 @@ def transition_sales_order(
         raise SalesOrderOperationError(f"Sản phẩm không tồn tại trong business: {missing}.", 404)
 
     if target == "confirmed":
-        for item in order_items:
-            product = product_map[item.product_id]
+        for product_id, quantity in quantities_by_product.items():
+            product = product_map[product_id]
             stock = int(product.stock_quantity or 0)
             reserved = int(product.reserved_quantity or 0)
             available = stock - reserved
-            if available < item.quantity:
+            if available < quantity:
                 raise SalesOrderOperationError(
                     f"Sản phẩm {product.sku} không đủ tồn khả dụng ({available}).",
                     409,
                 )
         total_reserved = 0
-        for item in order_items:
-            product = product_map[item.product_id]
-            product.reserved_quantity = int(product.reserved_quantity or 0) + item.quantity
-            total_reserved += item.quantity
+        for product_id, quantity in quantities_by_product.items():
+            product = product_map[product_id]
+            product.reserved_quantity = int(product.reserved_quantity or 0) + quantity
+            total_reserved += quantity
         order.reserved_quantity = total_reserved
 
     elif target == "shipped":
-        for item in order_items:
-            product = product_map[item.product_id]
+        for product_id, quantity in quantities_by_product.items():
+            product = product_map[product_id]
             stock = int(product.stock_quantity or 0)
             reserved = int(product.reserved_quantity or 0)
-            if reserved < item.quantity or stock < item.quantity:
+            if reserved < quantity or stock < quantity:
                 raise SalesOrderOperationError(
                     f"Không thể xuất kho sản phẩm {product.sku}: tồn/giữ không đủ.",
                     409,
                 )
-        for item in order_items:
-            product = product_map[item.product_id]
+        for product_id, quantity in quantities_by_product.items():
+            product = product_map[product_id]
             before = int(product.stock_quantity or 0)
-            product.stock_quantity = before - item.quantity
-            product.reserved_quantity = int(product.reserved_quantity or 0) - item.quantity
+            product.stock_quantity = before - quantity
+            product.reserved_quantity = int(product.reserved_quantity or 0) - quantity
             db.add(StockMovement(
                 business_id=business_id,
                 product_id=product.id,
                 movement_type="sales_shipment",
-                quantity=-item.quantity,
+                quantity=-quantity,
                 quantity_before=before,
                 quantity_after=product.stock_quantity,
                 source_type="sales_order",
@@ -363,29 +373,29 @@ def transition_sales_order(
         order.reserved_quantity = 0
 
     elif target == "cancelled" and previous in {"confirmed", "processing"}:
-        for item in order_items:
-            product = product_map[item.product_id]
+        for product_id, quantity in quantities_by_product.items():
+            product = product_map[product_id]
             reserved = int(product.reserved_quantity or 0)
-            if reserved < item.quantity:
+            if reserved < quantity:
                 raise SalesOrderOperationError(
                     f"Không thể giải phóng tồn giữ cho sản phẩm {product.sku}.",
                     409,
                 )
-        for item in order_items:
-            product = product_map[item.product_id]
-            product.reserved_quantity = int(product.reserved_quantity or 0) - item.quantity
+        for product_id, quantity in quantities_by_product.items():
+            product = product_map[product_id]
+            product.reserved_quantity = int(product.reserved_quantity or 0) - quantity
         order.reserved_quantity = 0
 
     elif target == "refunded":
-        for item in order_items:
-            product = product_map[item.product_id]
+        for product_id, quantity in quantities_by_product.items():
+            product = product_map[product_id]
             before = int(product.stock_quantity or 0)
-            product.stock_quantity = before + item.quantity
+            product.stock_quantity = before + quantity
             db.add(StockMovement(
                 business_id=business_id,
                 product_id=product.id,
                 movement_type="sales_refund",
-                quantity=item.quantity,
+                quantity=quantity,
                 quantity_before=before,
                 quantity_after=product.stock_quantity,
                 source_type="sales_order",
