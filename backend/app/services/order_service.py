@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from decimal import Decimal
+
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.inventory import StockMovement
 from app.models.order_event import OrderEvent
+from app.models.order_payment import OrderPayment
+from app.models.purchase_order import PurchaseOrder
 from app.models.sales import Order, OrderItem, Product
 
 
@@ -28,6 +33,240 @@ class SalesOrderOperationError(ValueError):
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+
+
+class PaymentOperationError(ValueError):
+    """A controlled payment/refund validation error."""
+
+    def __init__(self, detail: str, status_code: int = 409):
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+
+
+PAYMENT_STATUSES = {"pending", "paid", "failed", "cancelled"}
+
+
+def _payment_status(paid: Decimal, total: Decimal, refunded: Decimal = Decimal("0")) -> str:
+    if refunded > 0 and refunded >= paid and paid > 0:
+        return "refunded"
+    if paid <= 0:
+        return "unpaid"
+    if paid >= total:
+        return "paid"
+    return "partial"
+
+
+def _existing_payment(
+    db: Session,
+    *,
+    business_id: int,
+    idempotency_key: str,
+    order_id: int | None = None,
+    purchase_order_id: int | None = None,
+) -> OrderPayment | None:
+    existing = db.query(OrderPayment).filter(
+        OrderPayment.business_id == business_id,
+        OrderPayment.idempotency_key == idempotency_key,
+    ).first()
+    if existing is None:
+        return None
+    if existing.order_id != order_id or existing.purchase_order_id != purchase_order_id:
+        raise PaymentOperationError("Idempotency key đã được dùng cho giao dịch khác.", 409)
+    return existing
+
+
+def record_order_payment(
+    db: Session,
+    *,
+    order_id: int,
+    amount: Decimal,
+    method: str,
+    status: str,
+    reference: str | None,
+    idempotency_key: str,
+    actor_id: int | None,
+    business_id: int,
+) -> tuple[OrderPayment, Order, bool]:
+    """Record a customer payment and update the order's payment summary."""
+    existing = _existing_payment(
+        db,
+        business_id=business_id,
+        idempotency_key=idempotency_key,
+        order_id=order_id,
+    )
+    if existing is not None:
+        order = db.query(Order).filter(Order.id == order_id, Order.business_id == business_id).first()
+        if order is None:
+            raise PaymentOperationError("Đơn hàng không tồn tại.", 404)
+        return existing, order, False
+
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.business_id == business_id,
+    ).with_for_update().first()
+    if order is None:
+        raise PaymentOperationError("Đơn hàng không tồn tại.", 404)
+    normalized_status = status.strip().lower()
+    if normalized_status not in PAYMENT_STATUSES:
+        raise PaymentOperationError("Trạng thái thanh toán không hợp lệ.", 422)
+    amount = Decimal(amount).quantize(Decimal("0.01"))
+    if normalized_status == "paid":
+        new_paid = Decimal(order.paid_amount or 0) + amount
+        if new_paid > Decimal(order.total_amount or 0):
+            raise PaymentOperationError("Số tiền thanh toán vượt quá giá trị đơn hàng.", 409)
+        order.paid_amount = new_paid
+        order.payment_status = _payment_status(new_paid, Decimal(order.total_amount or 0), Decimal(order.refunded_amount or 0))
+    payment = OrderPayment(
+        business_id=business_id,
+        order_id=order.id,
+        amount=amount,
+        method=method.strip(),
+        status=normalized_status,
+        reference=reference.strip() if reference else None,
+        paid_at=datetime.now(timezone.utc).replace(tzinfo=None) if normalized_status == "paid" else None,
+        idempotency_key=idempotency_key.strip(),
+    )
+    db.add(payment)
+    db.flush()
+    db.add(OrderEvent(
+        business_id=business_id,
+        order_type="sales_order",
+        order_id=order.id,
+        event_type="payment_created",
+        actor_id=actor_id,
+        metadata_={"payment_id": payment.id, "amount": str(amount), "method": payment.method, "status": normalized_status},
+    ))
+    return payment, order, True
+
+
+def refund_order_payment(
+    db: Session,
+    *,
+    order_id: int,
+    amount: Decimal,
+    reason: str | None,
+    idempotency_key: str,
+    actor_id: int | None,
+    business_id: int,
+) -> tuple[OrderPayment, Order, bool]:
+    """Record a customer refund without allowing refunds beyond paid money."""
+    existing = _existing_payment(
+        db,
+        business_id=business_id,
+        idempotency_key=idempotency_key,
+        order_id=order_id,
+    )
+    if existing is not None:
+        order = db.query(Order).filter(Order.id == order_id, Order.business_id == business_id).first()
+        if order is None:
+            raise PaymentOperationError("Đơn hàng không tồn tại.", 404)
+        return existing, order, False
+
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.business_id == business_id,
+    ).with_for_update().first()
+    if order is None:
+        raise PaymentOperationError("Đơn hàng không tồn tại.", 404)
+    amount = Decimal(amount).quantize(Decimal("0.01"))
+    paid = Decimal(order.paid_amount or 0)
+    refunded = Decimal(order.refunded_amount or 0)
+    if amount > paid - refunded:
+        raise PaymentOperationError("Số tiền hoàn vượt quá số tiền đã thanh toán.", 409)
+    order.refunded_amount = refunded + amount
+    order.payment_status = _payment_status(paid, Decimal(order.total_amount or 0), order.refunded_amount)
+    payment = OrderPayment(
+        business_id=business_id,
+        order_id=order.id,
+        amount=amount,
+        method="refund",
+        status="refunded",
+        reference=reason.strip() if reason else None,
+        paid_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        refunded_amount=amount,
+        idempotency_key=idempotency_key.strip(),
+    )
+    db.add(payment)
+    db.flush()
+    db.add(OrderEvent(
+        business_id=business_id,
+        order_type="sales_order",
+        order_id=order.id,
+        event_type="refund_created",
+        actor_id=actor_id,
+        metadata_={"payment_id": payment.id, "amount": str(amount)},
+    ))
+    return payment, order, True
+
+
+def record_purchase_payment(
+    db: Session,
+    *,
+    purchase_order_id: int,
+    amount: Decimal,
+    method: str,
+    status: str,
+    reference: str | None,
+    idempotency_key: str,
+    actor_id: int | None,
+    business_id: int,
+) -> tuple[OrderPayment, PurchaseOrder, bool]:
+    """Record payment against a supplier Purchase Order."""
+    existing = _existing_payment(
+        db,
+        business_id=business_id,
+        idempotency_key=idempotency_key,
+        purchase_order_id=purchase_order_id,
+    )
+    if existing is not None:
+        order = db.query(PurchaseOrder).filter(PurchaseOrder.id == purchase_order_id, PurchaseOrder.business_id == business_id).first()
+        if order is None:
+            raise PaymentOperationError("Purchase Order không tồn tại.", 404)
+        return existing, order, False
+
+    order = db.query(PurchaseOrder).filter(
+        PurchaseOrder.id == purchase_order_id,
+        PurchaseOrder.business_id == business_id,
+    ).with_for_update().first()
+    if order is None:
+        raise PaymentOperationError("Purchase Order không tồn tại.", 404)
+    normalized_status = status.strip().lower()
+    if normalized_status not in PAYMENT_STATUSES:
+        raise PaymentOperationError("Trạng thái thanh toán không hợp lệ.", 422)
+    amount = Decimal(amount).quantize(Decimal("0.01"))
+    if normalized_status == "paid":
+        new_paid = Decimal(order.paid_amount or 0) + amount
+        if new_paid > Decimal(order.total_spend or 0):
+            raise PaymentOperationError("Số tiền thanh toán vượt quá giá trị Purchase Order.", 409)
+        order.paid_amount = new_paid
+        if new_paid <= 0:
+            order.payment_status = "unpaid"
+        elif new_paid >= Decimal(order.total_spend or 0):
+            order.payment_status = "paid"
+        else:
+            order.payment_status = "partial"
+    payment = OrderPayment(
+        business_id=business_id,
+        purchase_order_id=order.id,
+        amount=amount,
+        method=method.strip(),
+        status=normalized_status,
+        reference=reference.strip() if reference else None,
+        paid_at=datetime.now(timezone.utc).replace(tzinfo=None) if normalized_status == "paid" else None,
+        idempotency_key=idempotency_key.strip(),
+    )
+    db.add(payment)
+    db.flush()
+    db.add(OrderEvent(
+        business_id=business_id,
+        order_type="purchase_order",
+        order_id=order.id,
+        event_type="payment_created",
+        actor_id=actor_id,
+        metadata_={"payment_id": payment.id, "amount": str(amount), "method": payment.method, "status": normalized_status},
+    ))
+    return payment, order, True
 
 
 def transition_sales_order(

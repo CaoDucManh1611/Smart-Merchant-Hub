@@ -53,6 +53,9 @@ class PurchaseOrderOut(BaseModel):
     supplier_name: str
     status: str
     total_spend: Decimal
+    payment_status: str = "unpaid"
+    paid_amount: Decimal = Decimal("0")
+    cancel_reason: str | None = None
     notes: str | None = None
     metadata: dict | None = Field(default=None, validation_alias="metadata_")
     created_at: datetime | None = None
