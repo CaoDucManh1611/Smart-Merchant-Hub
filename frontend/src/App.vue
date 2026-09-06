@@ -8,7 +8,6 @@ import {
 } from "vue";
 
 import "./style.css";
-import logoUrl from "./assets/lunari-logo.jpg";
 import { channelLabel } from "./channel-utils.js";
 import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";
 import { filterConversationsForCustomer } from "./ticket-utils.js";
@@ -3554,7 +3553,7 @@ onUnmounted(() => {
 
 <template>
 
-  <div class="lunari-app">
+  <div class="crm-app">
 
 
     <!-- =====================================================
@@ -3563,14 +3562,12 @@ onUnmounted(() => {
 
     <aside class="side">
 
-      <div class="logo-wrap">
-
-        <img
-          :src="logoUrl"
-          class="logo"
-          alt="Lunari Food"
-        />
-
+      <div class="brand-lockup">
+        <div class="crm-brand-mark" data-testid="crm-brand-mark">SM</div>
+        <div class="brand-copy">
+          <strong>Smart Merchant Hub</strong>
+          <small>CRM workspace</small>
+        </div>
       </div>
 
 
@@ -3578,13 +3575,13 @@ onUnmounted(() => {
 
         <button
           class="menu-item"
-          :class="{ active: currentTab === 'inbox' }"
+          :class="{ active: currentTab === 'inbox' && !selectedId }"
           @click="currentTab = 'inbox'"
         >
 
-          <span>💬</span>
+          <span class="nav-icon">IN</span>
 
-          <b>Hộp thư</b>
+          <b>Inbox</b>
 
           <em>
             {{ conversations.length }}
@@ -3595,11 +3592,21 @@ onUnmounted(() => {
 
         <button
           class="menu-item"
+          :class="{ active: currentTab === 'inbox' && selectedId }"
+          @click="currentTab = 'inbox'"
+        >
+          <span class="nav-icon">CX</span>
+          <b>Customer 360</b>
+        </button>
+
+
+        <button
+          class="menu-item"
           :class="{ active: currentTab === 'documents' }"
           @click="currentTab = 'documents'; fetchDocuments()"
         >
-          <span>📚</span>
-          <b>Kho tri thức</b>
+          <span class="nav-icon">KB</span>
+          <b>Knowledge Base</b>
           <em>{{ documents.length }}</em>
         </button>
 
@@ -3608,7 +3615,7 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'products' }"
           @click="currentTab = 'products'; fetchProducts()"
         >
-          <span>🛍️</span>
+          <span class="nav-icon">PR</span>
           <b>Sản phẩm</b>
           <em>{{ products.length }}</em>
         </button>
@@ -3618,8 +3625,8 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'orders' }"
           @click="currentTab = 'orders'; fetchOrderCustomers(); fetchProducts(); fetchOrders()"
         >
-          <span>🧾</span>
-          <b>Đơn hàng</b>
+          <span class="nav-icon">SO</span>
+          <b>Đơn bán</b>
           <em>{{ orders.length }}</em>
         </button>
 
@@ -3628,7 +3635,7 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'leads' }"
           @click="currentTab = 'leads'; fetchOrderCustomers(); fetchLeads()"
         >
-          <span>📈</span>
+          <span class="nav-icon">SL</span>
           <b>Sales Pipeline</b>
           <em>{{ leads.length }}</em>
         </button>
@@ -3638,8 +3645,8 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'tickets' }"
           @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()"
         >
-          <span>🎫</span>
-          <b>CSKH / Ticket</b>
+          <span class="nav-icon">TK</span>
+          <b>Ticket &amp; SLA</b>
           <em>{{ tickets.length }}</em>
         </button>
 
@@ -3648,8 +3655,8 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'reports' }"
           @click="currentTab = 'reports'; fetchReports()"
         >
-          <span>📊</span>
-          <b>Báo cáo CRM</b>
+          <span class="nav-icon">BI</span>
+          <b>Báo cáo</b>
         </button>
 
         <button
@@ -3657,7 +3664,7 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'workflows' }"
           @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()"
         >
-          <span>⚡</span>
+          <span class="nav-icon">WF</span>
           <b>Workflow</b>
           <em>{{ workflows.length }}</em>
         </button>
@@ -3667,8 +3674,8 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'experiments' }"
           @click="currentTab = 'experiments'; fetchExperimentation()"
         >
-          <span>🧪</span>
-          <b>AI thử nghiệm</b>
+          <span class="nav-icon">ML</span>
+          <b>AI Lab</b>
           <em>{{ ruleSuggestions.filter(item => item.status === 'pending').length }}</em>
         </button>
 
@@ -3678,7 +3685,7 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'rag_chat' }"
           @click="currentTab = 'rag_chat'; fetchAutoReplySetting()"
         >
-          <span>🤖</span>
+          <span class="nav-icon">AI</span>
           <b>AI Assistant</b>
         </button>
 
@@ -3688,8 +3695,19 @@ onUnmounted(() => {
           :class="{ active: currentTab === 'settings' }"
           @click="openSettings"
         >
-          <span>⚙</span>
-          <b>Cài đặt</b>
+          <span class="nav-icon">SE</span>
+          <b>Settings</b>
+        </button>
+
+
+        <button
+          class="menu-item"
+          :class="{ active: currentTab === 'purchase-orders' }"
+          @click="currentTab = 'purchase-orders'; fetchProducts(); fetchPurchaseOrders()"
+        >
+          <span class="nav-icon">PO</span>
+          <b>Đơn nhập</b>
+          <em>{{ purchaseOrders.length }}</em>
         </button>
 
       </nav>
@@ -3697,34 +3715,10 @@ onUnmounted(() => {
 
 
       <div class="side-card">
-
-        <div class="side-card-copy">
-
-          <strong>
-            Gắn kết
-            <br />
-            khách hàng
-            <br />
-            mỗi ngày!
-          </strong>
-
-          <small>
-            Một chút dễ thương
-            cho mỗi cuộc trò chuyện.
-          </small>
-
-        </div>
-
-
-        <div class="food-cup">
-          🍗
-        </div>
-
-
-        <div class="side-heart">
-          ♥
-        </div>
-
+        <span class="side-card-kicker">WORKSPACE STATUS</span>
+        <strong>CRM đang hoạt động</strong>
+        <small>Dữ liệu hội thoại và vận hành được đồng bộ theo business.</small>
+        <span class="status-dot"><i></i> Online</span>
       </div>
 
 
@@ -3736,16 +3730,6 @@ onUnmounted(() => {
           Thu gọn
         </span>
 
-        </button>
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'purchase-orders' }"
-          @click="currentTab = 'purchase-orders'; fetchProducts(); fetchPurchaseOrders()"
-        >
-          <span>📦</span>
-          <b>Đơn nhập hàng</b>
-          <em>{{ purchaseOrders.length }}</em>
         </button>
 
     </aside>
@@ -3765,12 +3749,11 @@ onUnmounted(() => {
         <div class="welcome">
 
           <strong>
-            Xin chào, Lunari! 👋
+            Chào mừng trở lại
           </strong>
 
           <span>
-            Hôm nay là một ngày tuyệt vời
-            để mang đến trải nghiệm ngon miệng!
+            Theo dõi khách hàng, hội thoại và vận hành trên một workspace.
           </span>
 
         </div>
@@ -3792,7 +3775,7 @@ onUnmounted(() => {
 
           <button class="bell">
 
-            ♢
+            !
 
             <i>
               12
@@ -3804,13 +3787,13 @@ onUnmounted(() => {
           <div class="team">
 
             <div class="team-avatar">
-              L
+              SM
             </div>
 
             <div>
 
               <b>
-                Lunari Team
+                CRM workspace
               </b>
 
               <small>
@@ -4299,76 +4282,6 @@ onUnmounted(() => {
             <div class="messages-scroll">
 
 
-              <div
-                class="
-                  chat-decoration
-                  decor-heart-one
-                "
-              >
-                ♡
-              </div>
-
-
-              <div
-                class="
-                  chat-decoration
-                  decor-heart-two
-                "
-              >
-                ♥
-              </div>
-
-
-              <div
-                class="
-                  chat-decoration
-                  decor-star-one
-                "
-              >
-                ✦
-              </div>
-
-
-              <div
-                class="
-                  chat-decoration
-                  decor-star-two
-                "
-              >
-                ✧
-              </div>
-
-
-              <div
-                class="
-                  chat-doodle
-                  doodle-one
-                "
-              >
-                ♡
-              </div>
-
-
-              <div
-                class="
-                  chat-doodle
-                  doodle-two
-                "
-              >
-                ✿
-              </div>
-
-
-              <div
-                class="
-                  chat-doodle
-                  doodle-three
-                "
-              >
-                ♡
-              </div>
-
-
               <div class="today">
                 Hôm nay
               </div>
@@ -4682,24 +4595,11 @@ onUnmounted(() => {
                 </div>
 
 
-                <img
-                  v-if="
-                    message.direction
-                    === 'outbound'
-                  "
-
-                  :src="
-                    logoUrl
-                  "
-
-                  class="
-                    brand-mini
-                  "
-
-                  alt="
-                    Lunari
-                  "
-                />
+                <span
+                  v-if="message.direction === 'outbound'"
+                  class="brand-mini"
+                  aria-label="Smart Merchant Hub"
+                >SM</span>
 
               </div>
 
@@ -4902,7 +4802,7 @@ onUnmounted(() => {
                     "
                   >
 
-                    🎁
+                    MÃ
                     Tạo mã giảm giá
 
                   </button>
@@ -5006,18 +4906,10 @@ onUnmounted(() => {
             "
           >
 
-            <img
-              :src="
-                logoUrl
-              "
-
-              alt="
-                Lunari
-              "
-            />
+            <div class="empty-chat-mark" aria-hidden="true">SM</div>
 
             <h2>
-              Chọn một hội thoại nhé
+              Chọn một hội thoại để bắt đầu
             </h2>
 
           </div>
@@ -5445,153 +5337,6 @@ onUnmounted(() => {
             </div>
 
 
-            <!-- ORDER -->
-
-            <div class="section">
-
-              <div class="section-head">
-
-                <h4>
-                  Đơn gần nhất
-                </h4>
-
-                <a>
-                  Xem tất cả
-                </a>
-
-              </div>
-
-
-              <div class="order">
-
-                <div class="order-top">
-
-                  <b>
-                    #LNR-DEMO
-                  </b>
-
-                  <span>
-                    Đã giao
-                  </span>
-
-                </div>
-
-
-                <div class="order-item">
-
-                  <div class="dish">
-                    🍗
-                  </div>
-
-
-                  <div>
-
-                    <b>
-                      Combo gà sốt phô mai
-                    </b>
-
-                    <small>
-                      x 1
-                    </small>
-
-                  </div>
-
-
-                  <strong>
-                    119.000đ
-                  </strong>
-
-                </div>
-
-
-                <div class="total">
-
-                  <span>
-                    Tổng cộng
-                  </span>
-
-                  <b>
-                    119.000đ
-                  </b>
-
-                </div>
-
-              </div>
-
-            </div>
-
-
-            <!-- FAVORITE -->
-
-            <div class="section">
-
-              <h4>
-                Món yêu thích
-              </h4>
-
-
-              <div class="foods">
-
-                <div>
-
-                  <div>
-                    🍗
-                  </div>
-
-                  <span>
-                    Gà sốt phô mai
-                  </span>
-
-                </div>
-
-
-                <div>
-
-                  <div>
-                    🍜
-                  </div>
-
-                  <span>
-                    Tokbokki phô mai
-                  </span>
-
-                </div>
-
-
-                <div>
-
-                  <div>
-                    🍟
-                  </div>
-
-                  <span>
-                    Khoai tây lắc
-                  </span>
-
-                </div>
-
-              </div>
-
-            </div>
-
-
-            <!-- NOTE -->
-
-            <div class="note">
-
-              <b>
-                Ghi chú của đội ngũ
-              </b>
-
-
-              <p>
-                Khách hàng thân thiện,
-                thường đặt món vào buổi tối.
-                Ưa thích combo phô mai.
-              </p>
-
-            </div>
-
           </template>
 
         </aside>
@@ -5604,7 +5349,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'products'" class="products-layout">
         <div class="products-header">
           <div>
-            <h2>🛍️ Sản phẩm</h2>
+            <h2>Sản phẩm</h2>
             <p>Quản lý catalog và giá sản phẩm của business.</p>
           </div>
 
@@ -5656,7 +5401,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'leads'" class="products-layout leads-layout">
         <div class="products-header">
           <div>
-            <h2>📈 Sales Pipeline</h2>
+            <h2>Sales Pipeline</h2>
             <p>Theo dõi cơ hội bán hàng từ khách hội thoại đến chuyển đổi.</p>
           </div>
           <button class="primary-btn" type="button" @click="resetLeadForm">+ Tạo lead</button>
@@ -5721,7 +5466,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'tickets'" class="products-layout tickets-layout">
         <div class="products-header">
           <div>
-            <h2>🎫 CSKH / Ticket</h2>
+            <h2>Ticket &amp; SLA</h2>
             <p>Tiếp nhận, phân công và theo dõi thời hạn xử lý vấn đề của khách.</p>
           </div>
           <button class="primary-btn" type="button" @click="resetTicketForm">+ Tạo ticket</button>
@@ -5730,7 +5475,7 @@ onUnmounted(() => {
         <div v-if="ticketError" class="product-error">{{ ticketError }}</div>
 
         <div v-if="slaNotifications.length" class="sla-alert">
-          ⚠️ Có {{ slaNotifications.length }} ticket đang quá SLA cần xử lý.
+          Có {{ slaNotifications.length }} ticket đang quá SLA cần xử lý.
         </div>
 
         <div class="ticket-summary">
@@ -5829,7 +5574,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'orders'" class="products-layout orders-layout">
         <div class="products-header">
           <div>
-            <h2>🧾 Đơn hàng khách cuối</h2>
+            <h2>Đơn bán</h2>
             <p>Tạo và theo dõi đơn bán; doanh thu được gắn với kênh hội thoại.</p>
           </div>
           <button class="primary-btn" type="button" @click="resetOrderForm">+ Tạo đơn hàng</button>
@@ -5928,7 +5673,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'purchase-orders'" class="products-layout orders-layout">
         <div class="products-header">
           <div>
-            <h2>📦 Đơn nhập hàng / dịch vụ</h2>
+            <h2>Đơn nhập hàng / dịch vụ</h2>
             <p>Quản lý đơn shop mua từ nhà cung cấp, tách biệt với đơn bán cho khách cuối.</p>
           </div>
           <button class="primary-btn" type="button" @click="resetPurchaseOrderForm">+ Tạo PO</button>
@@ -5988,7 +5733,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'workflows'" class="products-layout workflow-layout">
         <div class="products-header">
           <div>
-            <h2>⚡ Workflow Automation</h2>
+            <h2>Workflow Automation</h2>
             <p>Tự động hóa các bước CRM theo sự kiện, có điều kiện và lịch sử chạy.</p>
           </div>
           <button class="primary-btn" type="button" @click="resetWorkflowForm">+ Workflow mới</button>
@@ -6055,7 +5800,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'experiments'" class="products-layout experiments-layout">
         <div class="products-header">
           <div>
-            <h2>🧪 Recommendation & thử nghiệm AI</h2>
+            <h2>Recommendation &amp; thử nghiệm AI</h2>
             <p>Đề xuất rule cần người duyệt; assignment, outcome và bandit được ghi lại để đo lường trước khi tự động hóa.</p>
           </div>
           <button class="primary-btn" type="button" @click="fetchExperimentation">Làm mới</button>
@@ -6111,7 +5856,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'documents'" class="rag-docs-layout">
         <div class="rag-header-panel">
           <div>
-            <h2>📚 Kho tri thức tài liệu (RAG Knowledge Base)</h2>
+            <h2>Kho tri thức tài liệu (RAG Knowledge Base)</h2>
             <p>Nạp tài liệu sản phẩm, FAQ, chính sách... để AI tự động học và trả lời khách hàng qua Facebook, Instagram và Telegram.</p>
           </div>
           <div class="rag-stats">
@@ -6145,18 +5890,18 @@ onUnmounted(() => {
             @change="handleDocFileSelect"
           />
           <div class="dropzone-content" v-if="!docUploading">
-            <span class="upload-icon">☁️</span>
+            <span class="upload-icon">UPLOAD</span>
             <strong>Kéo thả file vào đây hoặc nhấp để chọn file upload</strong>
             <small>Hỗ trợ định dạng: PDF, DOCX, TXT, CSV, MD, HTML (Tối đa 20MB)</small>
           </div>
           <div class="dropzone-content" v-else>
-            <span class="spinner-icon">⚙️</span>
+            <span class="spinner-icon">...</span>
             <strong>Đang upload & xử lý vector embeddings...</strong>
           </div>
         </div>
 
         <div v-if="docUploadError" class="error-banner">
-          ⚠️ {{ docUploadError }}
+          {{ docUploadError }}
         </div>
 
         <!-- DOCUMENT LIST TABLE -->
@@ -6193,15 +5938,15 @@ onUnmounted(() => {
               <tr v-for="doc in documents" :key="doc.id">
                 <td>#{{ doc.id }}</td>
                 <td class="font-medium">
-                  <span class="doc-file-icon">📄</span> {{ doc.filename }}
+                  <span class="doc-file-icon">DOC</span> {{ doc.filename }}
                 </td>
                 <td><span class="badge-type">{{ doc.file_type.toUpperCase() }}</span></td>
                 <td>{{ formatFileSize(doc.file_size) }}</td>
                 <td><strong>{{ doc.chunk_count || 0 }}</strong></td>
                 <td>
                   <span class="status-badge" :class="'status-' + doc.status">
-                    <span v-if="doc.status === 'ready'">✅ Sẵn sàng</span>
-                    <span v-else-if="doc.status === 'processing'">⚙️ Đang xử lý</span>
+                    <span v-if="doc.status === 'ready'">Sẵn sàng</span>
+                    <span v-else-if="doc.status === 'processing'">Đang xử lý</span>
                     <span v-else-if="doc.status === 'pending'">⏳ Chờ xử lý</span>
                     <span v-else>❌ Lỗi</span>
                   </span>
@@ -6211,7 +5956,7 @@ onUnmounted(() => {
                 <td class="text-sm text-gray">{{ formatTime(doc.uploaded_at) }}</td>
                 <td>
                   <button class="btn-delete" @click="deleteDoc(doc.id)" title="Xóa tài liệu">
-                    🗑️ Xóa
+                    Xóa
                   </button>
                   <button class="btn-refresh" @click="reindexDocument(doc)" title="Chạy lại indexing">
                     🔁 Reindex
@@ -6229,7 +5974,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'rag_chat'" class="rag-chat-layout">
         <div class="rag-chat-sidebar">
           <div class="setting-card">
-            <h3>⚡ AI Auto-Reply (Meta Channels)</h3>
+            <h3>AI Auto-Reply (Meta Channels)</h3>
             <p class="setting-desc">Tự động dùng RAG trả lời tin nhắn từ khách Facebook, Instagram và Telegram.</p>
             
             <div class="toggle-row">
@@ -6246,7 +5991,7 @@ onUnmounted(() => {
           </div>
 
           <div class="setting-card">
-            <h3>🎛️ RAG Config</h3>
+            <h3>RAG Config</h3>
             <div class="config-item">
               <label>Top-K Context Chunks: <strong>{{ ragTopK }}</strong></label>
               <input type="range" min="1" max="10" v-model="ragTopK" class="range-slider" />
@@ -6262,7 +6007,7 @@ onUnmounted(() => {
           </div>
 
           <div class="setting-card">
-            <h3>💡 Câu hỏi mẫu nhanh</h3>
+            <h3>Câu hỏi mẫu nhanh</h3>
             <div class="quick-questions">
               <button @click="sendRagQuery('Cửa hàng có những sản phẩm gì và giá bao nhiêu?')">
                 💬 Danh sách sản phẩm & Giá
@@ -6280,7 +6025,7 @@ onUnmounted(() => {
         <div class="rag-chat-main">
           <div class="rag-chat-header">
             <div>
-              <h2>🤖 RAG AI Assistant Playground</h2>
+              <h2>RAG AI Assistant Playground</h2>
               <small>Hỏi đáp trực tiếp với Kho tri thức – Hỗ trợ Streaming response (SSE)</small>
             </div>
             <span class="badge-online">● Online</span>
@@ -6294,7 +6039,7 @@ onUnmounted(() => {
               :class="m.role"
             >
               <div class="rag-msg-avatar">
-                {{ m.role === 'user' ? '👤' : '🤖' }}
+                {{ m.role === 'user' ? 'Bạn' : 'AI' }}
               </div>
               <div class="rag-msg-bubble">
                 <div class="rag-msg-sender">
@@ -6335,7 +6080,7 @@ onUnmounted(() => {
       <section v-if="currentTab === 'reports'" class="products-layout reports-layout">
         <div class="products-header">
           <div>
-            <h2>📊 Báo cáo CRM</h2>
+            <h2>Báo cáo CRM</h2>
             <p>Tổng quan khách hàng, hội thoại, bán hàng và hiệu suất xử lý.</p>
           </div>
           <button type="button" class="settings-refresh" @click="fetchReports">Làm mới</button>
@@ -6410,7 +6155,7 @@ onUnmounted(() => {
         <div class="settings-card auth-card">
           <div class="settings-card-header">
             <div>
-              <h2>🔐 Đăng nhập CRM</h2>
+              <h2>Đăng nhập CRM</h2>
               <p>Phiên đăng nhập giúp áp dụng vai trò và ghi audit log cho thao tác.</p>
             </div>
             <span class="connection-badge" :class="{ connected: authUser }">{{ authUser ? 'ĐÃ ĐĂNG NHẬP' : 'ĐANG DÙNG CHẾ ĐỘ DEV' }}</span>
@@ -6430,7 +6175,7 @@ onUnmounted(() => {
         <div class="settings-card">
           <div class="settings-card-header">
             <div>
-              <h2>🔗 Kết nối kênh bán hàng</h2>
+              <h2>Kết nối kênh bán hàng</h2>
               <p>Kết nối Facebook Page và Instagram Professional bằng OAuth.</p>
             </div>
             <span
@@ -6521,7 +6266,7 @@ onUnmounted(() => {
 
           <div v-if="authUser && ['owner', 'admin'].includes(authUser.role)" class="audit-panel">
             <div class="settings-card-header">
-              <div><h3>🧾 Audit log</h3><p>Nhật ký thao tác đã loại bỏ mật khẩu, token và nội dung tin nhắn.</p></div>
+              <div><h3>Audit log</h3><p>Nhật ký thao tác đã loại bỏ mật khẩu, token và nội dung tin nhắn.</p></div>
               <button type="button" class="settings-refresh" @click="fetchAuditLogs">{{ auditLoading ? 'Đang tải...' : 'Làm mới' }}</button>
             </div>
             <div v-if="!auditLogs.length" class="settings-empty">Chưa có audit log.</div>
@@ -7360,6 +7105,237 @@ onUnmounted(() => {
 .btn-meta-disconnect:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Neutral visual language for operational CRM screens. */
+.products-layout,
+.settings-layout,
+.rag-docs-layout,
+.rag-chat-layout {
+  color: var(--crm-ink);
+  background: var(--crm-canvas);
+}
+
+.products-layout {
+  min-height: calc(100vh - 84px);
+  padding: 24px;
+}
+
+.products-header h2,
+.product-form-title,
+.settings-card-header h2,
+.rag-header-panel h2 {
+  color: var(--crm-ink);
+  font-weight: 700;
+}
+
+.products-header p,
+.field-hint,
+.settings-card-header p,
+.settings-empty,
+.rag-header-panel p {
+  color: var(--crm-muted);
+}
+
+.primary-btn,
+.btn-send-rag {
+  color: #fff;
+  background: var(--crm-accent);
+  border-radius: 9px;
+}
+
+.product-form,
+.settings-card,
+.rag-header-panel,
+.docs-table-card,
+.setting-card,
+.rag-chat-main,
+.report-panel,
+.products-table-wrap {
+  border: 1px solid var(--crm-border);
+  border-radius: 12px;
+  background: var(--crm-surface);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+
+.product-form {
+  padding: 18px;
+}
+
+.product-form-grid input,
+.product-form-grid select,
+.product-form-grid textarea,
+.team-form input,
+.team-form select,
+.report-filters input,
+.report-filters select,
+.inline-stage,
+.order-payment-actions input,
+.ticket-comment-form input {
+  color: var(--crm-ink);
+  background: var(--crm-surface);
+  border-color: var(--crm-border-strong);
+  border-radius: 8px;
+}
+
+.products-table-wrap {
+  overflow: auto;
+}
+
+.products-table th,
+.products-table td,
+.team-table th,
+.team-table td,
+.docs-table th,
+.docs-table td {
+  color: var(--crm-ink);
+  border-color: var(--crm-border);
+}
+
+.products-table th,
+.docs-table th {
+  color: var(--crm-muted);
+  background: #f7f9fc;
+}
+
+.products-table td small,
+.team-table td small {
+  color: var(--crm-subtle);
+}
+
+.product-error,
+.error-banner {
+  color: #a83d49;
+  background: #fff1f2;
+  border: 1px solid #f2c3c9;
+}
+
+.revenue-card,
+.pipeline-card,
+.ticket-stat,
+.report-card,
+.stat-card {
+  color: var(--crm-muted);
+  background: var(--crm-surface);
+  border-color: var(--crm-border);
+}
+
+.revenue-card.total,
+.report-card.accent {
+  color: #fff;
+  background: linear-gradient(135deg, #2f6fed, #4658c9);
+  border-color: transparent;
+}
+
+.revenue-card strong,
+.pipeline-card strong,
+.ticket-stat strong,
+.report-card strong,
+.stat-num {
+  color: var(--crm-ink);
+}
+
+.revenue-card.total strong,
+.report-card.accent strong,
+.revenue-card.total small,
+.report-card.accent small {
+  color: #fff;
+}
+
+.settings-layout {
+  min-height: calc(100vh - 84px);
+  padding: 24px;
+}
+
+.settings-card {
+  max-width: 980px;
+  padding: 22px;
+}
+
+.settings-refresh,
+.team-toggle,
+.btn-refresh {
+  color: var(--crm-accent);
+  background: var(--crm-accent-soft);
+  border: 1px solid #d5e2ff;
+  border-radius: 8px;
+}
+
+.connection-badge {
+  color: #9a6c16;
+  background: #fff7df;
+}
+
+.connection-badge.connected,
+.team-status {
+  color: #087c5a;
+  background: #e7f7f0;
+}
+
+.meta-connection-details {
+  color: var(--crm-ink);
+  background: #f5f8fc;
+  border: 1px solid var(--crm-border);
+}
+
+.rag-docs-layout,
+.rag-chat-layout {
+  min-height: calc(100vh - 84px);
+  padding: 24px;
+}
+
+.upload-dropzone {
+  background: var(--crm-surface);
+  border-color: var(--crm-border-strong);
+  border-radius: 12px;
+}
+
+.upload-dropzone:hover {
+  background: var(--crm-accent-soft);
+  border-color: var(--crm-accent);
+}
+
+.rag-chat-sidebar {
+  width: 300px;
+}
+
+.setting-card {
+  padding: 16px;
+}
+
+.setting-card h3,
+.rag-chat-header h2,
+.card-header h3 {
+  color: var(--crm-ink);
+}
+
+.quick-questions button {
+  color: var(--crm-ink);
+  background: #f7f9fc;
+  border-color: var(--crm-border);
+}
+
+.rag-chat-main {
+  overflow: hidden;
+}
+
+.rag-chat-messages {
+  background: #f7f9fc;
+}
+
+.rag-msg-bubble {
+  color: var(--crm-ink);
+  background: var(--crm-surface);
+}
+
+.user .rag-msg-bubble,
+.btn-send-rag {
+  background: var(--crm-accent);
+}
+
+.rag-chat-inputzone {
+  background: var(--crm-surface);
+  border-color: var(--crm-border);
 }
 
 </style>

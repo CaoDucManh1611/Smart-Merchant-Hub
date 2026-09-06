@@ -1,13 +1,13 @@
-@import url("https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&family=Patrick+Hand&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
 
 /* =========================================================
    ROOT
 ========================================================= */
 
 :root {
-  font-family: "Nunito", "Segoe UI", sans-serif;
-  color: #53282a;
-  background: #fff0ea;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  color: #172033;
+  background: #eef2f7;
 }
 
 * {
@@ -130,7 +130,7 @@ button {
    APP
 ========================================================= */
 
-.lunari-app {
+.crm-app {
   display: grid;
   grid-template-columns: 250px 1fr;
 
@@ -194,75 +194,6 @@ button {
 
 
 /* =========================================================
-   SIDEBAR DECORATION
-========================================================= */
-
-.side::before {
-  content:
-    "✦       ♡"
-    "\A"
-    "     ✧      ❀"
-    "\A"
-    "♡        ✦"
-    "\A"
-    "   ❀          ✧"
-    "\A"
-    "       ♡"
-    "\A"
-    "✦          ❀"
-    "\A"
-    "     ♡      ✧";
-
-  white-space: pre;
-
-  position: absolute;
-
-  inset: 0;
-
-  z-index: -1;
-
-  padding: 110px 18px 100px;
-
-  color: rgba(255, 236, 230, 0.17);
-
-  font-family: "Patrick Hand", cursive;
-
-  font-size: 27px;
-
-  line-height: 3;
-
-  letter-spacing: 10px;
-
-  transform:
-    rotate(-5deg)
-    scale(1.04);
-
-  pointer-events: none;
-}
-
-.side::after {
-  content: "❀   ♡   ✿   ✧";
-
-  position: absolute;
-
-  left: 18px;
-  bottom: 195px;
-
-  z-index: -1;
-
-  color: rgba(255, 226, 217, 0.16);
-
-  font-size: 24px;
-
-  letter-spacing: 13px;
-
-  transform: rotate(-12deg);
-
-  pointer-events: none;
-}
-
-
-/* =========================================================
    LOGO
 ========================================================= */
 
@@ -273,34 +204,6 @@ button {
   place-items: center;
 
   padding: 0 0 12px;
-}
-
-.logo-wrap::before {
-  content: "✦";
-
-  position: absolute;
-
-  left: 4px;
-  top: 6px;
-
-  color: rgba(255, 235, 228, 0.65);
-
-  font-size: 18px;
-}
-
-.logo-wrap::after {
-  content: "♡";
-
-  position: absolute;
-
-  right: 8px;
-  top: 30px;
-
-  color: rgba(255, 235, 228, 0.55);
-
-  font-size: 21px;
-
-  transform: rotate(12deg);
 }
 
 .logo {
@@ -331,38 +234,6 @@ button {
   display: grid;
 
   gap: 4px;
-}
-
-.menu::before {
-  content: "✦";
-
-  position: absolute;
-
-  right: 5px;
-  top: 55px;
-
-  color: rgba(255, 238, 232, 0.28);
-
-  font-size: 16px;
-
-  pointer-events: none;
-}
-
-.menu::after {
-  content: "♡";
-
-  position: absolute;
-
-  right: 16px;
-  bottom: 14px;
-
-  color: rgba(255, 238, 232, 0.2);
-
-  font-size: 24px;
-
-  transform: rotate(12deg);
-
-  pointer-events: none;
 }
 
 .menu-item {
@@ -461,42 +332,12 @@ button {
     rgba(255, 255, 255, 0.22);
 }
 
-.side-card::before {
-  content: "✦";
-
-  position: absolute;
-
-  left: 15px;
-  bottom: 15px;
-
-  color: rgba(255, 240, 233, 0.5);
-
-  font-size: 18px;
-}
-
-.side-card::after {
-  content: "♡";
-
-  position: absolute;
-
-  right: 12px;
-  top: 10px;
-
-  color: rgba(255, 240, 233, 0.7);
-
-  font-size: 22px;
-
-  transform: rotate(10deg);
-}
-
 .side-card-copy strong {
   display: block;
 
   max-width: 135px;
 
-  font-family:
-    "Patrick Hand",
-    cursive;
+  font-family: "Inter", "Segoe UI", sans-serif;
 
   font-size: 25px;
 
@@ -517,26 +358,6 @@ button {
   font-size: 11px;
 
   line-height: 1.45;
-}
-
-.food-cup {
-  position: absolute;
-
-  right: 18px;
-  bottom: 16px;
-
-  font-size: 44px;
-}
-
-.side-heart {
-  position: absolute;
-
-  right: 17px;
-  top: 13px;
-
-  color: #ffd7ce;
-
-  font-size: 25px;
 }
 
 .collapse {
@@ -594,9 +415,7 @@ button {
 
   color: #8d1722;
 
-  font-family:
-    "Patrick Hand",
-    cursive;
+  font-family: "Inter", "Segoe UI", sans-serif;
 
   font-size: 23px;
 
@@ -847,9 +666,7 @@ button {
 .inbox-title h2 {
   margin: 0;
 
-  font-family:
-    "Patrick Hand",
-    cursive;
+  font-family: "Inter", "Segoe UI", sans-serif;
 
   font-size: 28px;
 
@@ -1014,9 +831,7 @@ button {
 
   border-radius: 50%;
 
-  font-family:
-    "Patrick Hand",
-    cursive;
+  font-family: "Inter", "Segoe UI", sans-serif;
 
   font-size: 18px;
 }
@@ -1367,28 +1182,6 @@ button {
   pointer-events: none;
 
   user-select: none;
-}
-
-.decor-heart-one {
-  right: 11%;
-  top: 11%;
-
-  color: rgba(236, 85, 102, 0.15);
-
-  font-size: 58px;
-
-  transform: rotate(-14deg);
-}
-
-.decor-heart-two {
-  right: 24%;
-  top: 32%;
-
-  color: rgba(239, 94, 111, 0.1);
-
-  font-size: 24px;
-
-  transform: rotate(15deg);
 }
 
 .decor-star-one {
@@ -2354,199 +2147,6 @@ button {
 
 
 /* =========================================================
-   ORDER
-========================================================= */
-
-.order {
-  margin-top: 8px;
-
-  padding: 11px;
-
-  background: #fff4ef;
-
-  border:
-    1px solid
-    #efbdb2;
-
-  border-radius: 14px;
-}
-
-.order-top,
-.order-item,
-.total {
-  display: flex;
-
-  align-items: center;
-  justify-content: space-between;
-
-  gap: 7px;
-}
-
-.order-top span {
-  padding: 4px 7px;
-
-  color: #2e8d4a;
-
-  background: #ddf1df;
-
-  border-radius: 999px;
-
-  font-size: 8px;
-}
-
-.order-item {
-  margin: 11px 0;
-}
-
-.dish {
-  display: grid;
-  place-items: center;
-
-  width: 38px;
-  height: 38px;
-
-  background: #ffd9c4;
-
-  border-radius: 11px;
-}
-
-.order-item > div:nth-child(2) {
-  flex: 1;
-}
-
-.order-item b,
-.order-item small {
-  display: block;
-}
-
-.order-item b {
-  font-size: 9px;
-}
-
-.order-item small {
-  margin-top: 3px;
-
-  color: #9a706d;
-
-  font-size: 8px;
-}
-
-.order-item strong {
-  font-size: 9px;
-}
-
-.total {
-  padding-top: 8px;
-
-  border-top:
-    1px solid
-    #efc9c0;
-
-  font-size: 9px;
-}
-
-
-/* =========================================================
-   FAVORITE FOODS
-========================================================= */
-
-.foods {
-  display: grid;
-
-  grid-template-columns:
-    repeat(3, 1fr);
-
-  gap: 7px;
-
-  margin-top: 8px;
-}
-
-.foods > div {
-  min-width: 0;
-
-  text-align: center;
-}
-
-.foods > div > div {
-  display: grid;
-  place-items: center;
-
-  aspect-ratio: 1;
-
-  background:
-    linear-gradient(
-      145deg,
-      #ffc3b4,
-      #ffe2d7
-    );
-
-  border:
-    1px solid
-    #efb6aa;
-
-  border-radius: 12px;
-
-  font-size: 24px;
-}
-
-.foods span {
-  display: block;
-
-  margin-top: 4px;
-
-  overflow: hidden;
-
-  color: #774946;
-
-  white-space: nowrap;
-
-  text-overflow: ellipsis;
-
-  font-size: 8px;
-}
-
-
-/* =========================================================
-   NOTE
-========================================================= */
-
-.note {
-  margin-top: 16px;
-
-  padding: 12px;
-
-  color: #755147;
-
-  background:
-    linear-gradient(
-      145deg,
-      #ffe7c8,
-      #fff2d9
-    );
-
-  border:
-    1px solid
-    #efcd9b;
-
-  border-radius: 14px;
-}
-
-.note b {
-  color: #9e541f;
-
-  font-size: 11px;
-}
-
-.note p {
-  margin: 6px 0 0;
-
-  font-size: 9px;
-
-  line-height: 1.5;
-}
-
-
-/* =========================================================
    EMPTY CHAT
 ========================================================= */
 
@@ -2571,9 +2171,7 @@ button {
 }
 
 .empty-chat h2 {
-  font-family:
-    "Patrick Hand",
-    cursive;
+  font-family: "Inter", "Segoe UI", sans-serif;
 
   font-size: 28px;
 
@@ -2612,7 +2210,7 @@ button {
 
 @media (max-width: 1500px) {
 
-  .lunari-app {
+  .crm-app {
     grid-template-columns:
       220px
       1fr;
@@ -3499,4 +3097,702 @@ button:hover {
 .product-status.refunded {
   color: #9c2727;
   background: #ffe4e2;
+}
+
+/* =========================================================
+   CRM WORKSPACE VISUAL SYSTEM
+   Neutral B2B interface: data first, no campaign/food decoration.
+========================================================= */
+
+:root {
+  --crm-ink: #172033;
+  --crm-muted: #687386;
+  --crm-subtle: #8b96a8;
+  --crm-border: #dfe5ec;
+  --crm-border-strong: #cbd5e1;
+  --crm-surface: #ffffff;
+  --crm-canvas: #f4f7fb;
+  --crm-sidebar: #101a2d;
+  --crm-sidebar-soft: #1b2941;
+  --crm-accent: #2f6fed;
+  --crm-accent-soft: #eaf1ff;
+  --crm-success: #159570;
+  --crm-danger: #d6535f;
+}
+
+html,
+body,
+#app {
+  background: var(--crm-canvas);
+}
+
+.crm-app {
+  grid-template-columns: 248px minmax(0, 1fr);
+  color: var(--crm-ink);
+  background: var(--crm-canvas);
+}
+
+.side {
+  padding: 20px 14px 16px;
+  color: #e8eef8;
+  background: var(--crm-sidebar);
+  border-radius: 0;
+  box-shadow: 12px 0 32px rgba(15, 23, 42, 0.12);
+}
+
+.side::before,
+.side::after,
+.menu::before,
+.menu::after {
+  content: none;
+  display: none;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 52px;
+  margin: 0 8px 26px;
+}
+
+.crm-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  color: #fff;
+  background: linear-gradient(135deg, #3e82ff, #6c5ce7);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  box-shadow: 0 8px 18px rgba(47, 111, 237, 0.28);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.brand-copy {
+  min-width: 0;
+}
+
+.brand-copy strong,
+.brand-copy small {
+  display: block;
+}
+
+.brand-copy strong {
+  overflow: hidden;
+  color: #f8fbff;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brand-copy small {
+  margin-top: 4px;
+  color: #8291aa;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.menu {
+  gap: 3px;
+  overflow-y: auto;
+}
+
+.menu-item {
+  grid-template-columns: 34px 1fr auto;
+  min-height: 42px;
+  padding: 0 11px;
+  color: #9eabc0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.menu-item:hover {
+  color: #f3f7ff;
+  background: rgba(255, 255, 255, 0.06);
+  transform: none;
+}
+
+.menu-item.active {
+  color: #f7fbff;
+  background: var(--crm-sidebar-soft);
+  border-color: rgba(89, 139, 239, 0.35);
+  box-shadow: inset 3px 0 0 var(--crm-accent);
+}
+
+.menu-item b {
+  font-weight: 600;
+}
+
+.nav-icon {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  color: #9fbfff;
+  background: rgba(116, 153, 220, 0.12);
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.menu-item.active .nav-icon {
+  color: #fff;
+  background: var(--crm-accent);
+}
+
+.menu-item em {
+  min-width: 21px;
+  height: 21px;
+  color: #b6c4d9;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+}
+
+.menu-item.active em {
+  color: #eaf1ff;
+  background: rgba(84, 139, 240, 0.3);
+}
+
+.side-card {
+  min-height: 132px;
+  margin: auto 5px 12px;
+  padding: 15px;
+  background: linear-gradient(145deg, #1d2e4b, #17243a);
+  border: 1px solid rgba(125, 157, 208, 0.22);
+  border-radius: 14px;
+}
+
+.side-card-copy {
+  display: contents;
+}
+
+.side-card-kicker {
+  display: block;
+  color: #7f9bca;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.side-card strong {
+  display: block;
+  margin-top: 9px;
+  color: #f3f7ff;
+  font-size: 13px;
+}
+
+.side-card small {
+  display: block;
+  margin-top: 7px;
+  color: #9eacc0;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.status-dot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 11px;
+  color: #83d9bb;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.status-dot i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  background: #35c995;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(53, 201, 149, 0.12);
+}
+
+.collapse {
+  min-height: 36px;
+  margin: 0 5px;
+  color: #9aa9c0;
+  background: transparent;
+  border: 1px solid rgba(145, 165, 198, 0.2);
+  border-radius: 9px;
+  font-size: 11px;
+}
+
+.collapse:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.main {
+  padding: 18px 22px 22px;
+  background: var(--crm-canvas);
+}
+
+.top {
+  height: 66px;
+  padding: 0 2px 16px;
+}
+
+.welcome strong {
+  color: var(--crm-ink);
+  font-size: 20px;
+  font-weight: 750;
+}
+
+.welcome span {
+  margin-top: 5px;
+  color: var(--crm-muted);
+  font-size: 12px;
+}
+
+.top-actions {
+  gap: 9px;
+}
+
+.top-search {
+  width: min(360px, 30vw);
+  padding: 10px 13px;
+  color: var(--crm-subtle);
+  background: var(--crm-surface);
+  border: 1px solid var(--crm-border);
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.bell {
+  width: 38px;
+  height: 38px;
+  color: var(--crm-muted);
+  background: var(--crm-surface);
+  border: 1px solid var(--crm-border);
+  border-radius: 9px;
+  font-weight: 800;
+}
+
+.bell i {
+  width: 17px;
+  height: 17px;
+  color: #fff;
+  background: var(--crm-danger);
+  font-size: 9px;
+}
+
+.team {
+  min-width: 154px;
+  padding: 5px 9px;
+  background: var(--crm-surface);
+  border: 1px solid var(--crm-border);
+  border-radius: 9px;
+}
+
+.team-avatar {
+  width: 30px;
+  height: 30px;
+  color: #fff;
+  background: var(--crm-ink);
+  border-radius: 8px;
+  font-size: 9px;
+}
+
+.team b {
+  color: var(--crm-ink);
+  font-size: 11px;
+}
+
+.team small {
+  color: var(--crm-muted);
+  font-size: 9px;
+}
+
+.error {
+  top: 80px;
+  right: 22px;
+  color: #a83d49;
+  background: #fff1f2;
+  border-color: #f2c3c9;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.layout {
+  grid-template-columns: minmax(250px, 292px) minmax(0, 1fr) minmax(276px, 320px);
+  gap: 14px;
+  height: calc(100vh - 84px);
+}
+
+.inbox,
+.chat,
+.customer {
+  background: var(--crm-surface);
+  border: 1px solid var(--crm-border);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+
+.inbox-title {
+  padding: 16px 15px;
+  color: var(--crm-ink);
+  background: var(--crm-surface);
+  border-bottom: 1px solid var(--crm-border);
+}
+
+.inbox-title h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.inbox-title button {
+  width: 30px;
+  height: 30px;
+  color: var(--crm-muted);
+  background: var(--crm-canvas);
+  border: 1px solid var(--crm-border);
+  border-radius: 8px;
+}
+
+.inbox-tabs {
+  gap: 5px;
+  padding: 11px 11px 7px;
+}
+
+.inbox-tabs button {
+  padding: 7px 6px;
+  color: var(--crm-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 10px;
+}
+
+.inbox-tabs button.active {
+  color: var(--crm-accent);
+  background: var(--crm-accent-soft);
+  border-color: #d5e2ff;
+}
+
+.search-box {
+  margin: 0 11px 9px;
+  padding: 9px 10px;
+  background: var(--crm-canvas);
+  border: 1px solid var(--crm-border);
+  border-radius: 8px;
+}
+
+.search-box input {
+  color: var(--crm-ink);
+  font-size: 12px;
+}
+
+.conversation-scroll {
+  padding: 0 7px;
+}
+
+.conversation {
+  min-height: 66px;
+  padding: 10px 8px;
+  border-radius: 9px;
+}
+
+.conversation:hover {
+  background: #f5f8fc;
+  transform: none;
+}
+
+.conversation.selected {
+  background: var(--crm-accent-soft);
+  box-shadow: inset 3px 0 0 var(--crm-accent);
+}
+
+.conversation p {
+  color: var(--crm-muted);
+  font-size: 11px;
+}
+
+.conversation-footer {
+  padding: 9px 12px;
+  color: var(--crm-subtle);
+  border-top: 1px solid var(--crm-border);
+  font-size: 10px;
+}
+
+.avatar {
+  color: #315ba8;
+  background: #edf3ff;
+  border: 1px solid #d7e4ff;
+}
+
+.chat {
+  background: var(--crm-surface);
+}
+
+.chat-head {
+  padding: 13px 16px;
+  background: var(--crm-surface);
+  border-bottom: 1px solid var(--crm-border);
+}
+
+.chat-person h2 {
+  color: var(--crm-ink);
+  font-size: 16px;
+}
+
+.chat-person h2 span {
+  color: #f0a124;
+}
+
+.chat-person p,
+.conversation-assignment,
+.customer-profile p {
+  color: var(--crm-muted);
+}
+
+.conversation-assignment select {
+  color: var(--crm-ink);
+  background: var(--crm-surface);
+  border-color: var(--crm-border);
+}
+
+.chat-tools button {
+  width: 32px;
+  height: 32px;
+  color: var(--crm-muted);
+  background: var(--crm-surface);
+  border-color: var(--crm-border);
+  border-radius: 8px;
+}
+
+.messages-scroll {
+  padding: 16px 20px;
+  background: #f8fafc;
+  background-image: none;
+}
+
+.today {
+  color: var(--crm-muted);
+  background: #edf1f6;
+  border: 1px solid var(--crm-border);
+}
+
+.bubble {
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
+  border-radius: 12px;
+}
+
+.inbound .bubble {
+  color: var(--crm-ink);
+  background: var(--crm-surface);
+  border-color: var(--crm-border);
+  border-bottom-left-radius: 4px;
+}
+
+.outbound .bubble {
+  color: #17315d;
+  background: #eaf1ff;
+  border-color: #d5e2ff;
+  border-bottom-right-radius: 4px;
+}
+
+.bubble small {
+  color: var(--crm-subtle);
+}
+
+.bubble small b {
+  color: var(--crm-accent);
+}
+
+.brand-mini {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: #fff;
+  background: var(--crm-ink);
+  border: 0;
+  border-radius: 7px;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.composer {
+  margin: 0 12px 12px;
+  background: var(--crm-surface);
+  border-color: var(--crm-border);
+  border-radius: 12px;
+}
+
+.composer-tabs {
+  border-color: var(--crm-border);
+}
+
+.composer-tabs button {
+  color: var(--crm-muted);
+}
+
+.composer-tabs button.active {
+  color: var(--crm-accent);
+  border-bottom-color: var(--crm-accent);
+}
+
+.composer textarea {
+  color: var(--crm-ink);
+}
+
+.customer {
+  padding: 15px;
+  background: var(--crm-surface);
+}
+
+.customer-title h3,
+.customer-profile h3 {
+  color: var(--crm-ink);
+}
+
+.customer-title h3 {
+  font-size: 14px;
+}
+
+.customer-title button {
+  color: var(--crm-muted);
+}
+
+.customer-profile small {
+  color: var(--crm-subtle);
+}
+
+.section {
+  margin-top: 15px;
+  padding-top: 14px;
+  border-top: 1px solid var(--crm-border);
+}
+
+.section h4 {
+  color: var(--crm-ink);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.section-head a,
+.section-head button {
+  color: var(--crm-accent);
+}
+
+.section-head button {
+  border-color: var(--crm-border);
+}
+
+.tags span {
+  color: #315ba8;
+  background: var(--crm-accent-soft);
+  border: 1px solid #d5e2ff;
+}
+
+.empty-chat {
+  color: var(--crm-muted);
+  background: #f8fafc;
+}
+
+.empty-chat-mark {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  color: #fff;
+  background: linear-gradient(135deg, #3e82ff, #6c5ce7);
+  border-radius: 16px;
+  box-shadow: 0 12px 22px rgba(47, 111, 237, 0.2);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.empty-chat h2 {
+  margin-top: 15px;
+  color: var(--crm-ink);
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.conversation-scroll::-webkit-scrollbar-thumb,
+.messages-scroll::-webkit-scrollbar-thumb,
+.customer::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+button:hover {
+  transform: none;
+}
+
+@media (max-width: 1100px) {
+  .crm-app {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .side {
+    padding: 16px 8px;
+  }
+
+  .brand-lockup {
+    justify-content: center;
+    margin: 0 0 20px;
+  }
+
+  .brand-copy,
+  .menu-item b,
+  .menu-item em,
+  .side-card,
+  .collapse span {
+    display: none;
+  }
+
+  .menu-item {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: 0;
+  }
+
+  .layout {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+
+  .customer {
+    display: none;
+  }
+}
+
+@media (max-width: 780px) {
+  .main {
+    padding: 12px;
+  }
+
+  .top {
+    height: auto;
+    min-height: 62px;
+    padding-bottom: 12px;
+  }
+
+  .top-search {
+    display: none;
+  }
+
+  .layout {
+    grid-template-columns: 1fr;
+    height: calc(100vh - 84px);
+  }
+
+  .inbox {
+    display: none;
+  }
+
+  .chat {
+    min-height: 0;
+  }
 }
