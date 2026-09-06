@@ -46,6 +46,7 @@ class Business(Base):
     documents = relationship("Document", back_populates="business")
     products = relationship("Product", back_populates="business")
     orders = relationship("Order", back_populates="business")
+    suppliers = relationship("Supplier", back_populates="business", cascade="all, delete-orphan")
     leads = relationship("Lead", back_populates="business", cascade="all, delete-orphan")
     tickets = relationship("Ticket", back_populates="business", cascade="all, delete-orphan")
     subscriptions = relationship("Subscription", back_populates="business")

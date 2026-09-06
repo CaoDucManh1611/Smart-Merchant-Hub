@@ -28,6 +28,7 @@ class Product(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reserved_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -65,6 +66,11 @@ class Order(Base):
     order_number: Mapped[str] = mapped_column(String(60), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft")
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    reserved_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    payment_status: Mapped[str] = mapped_column(String(30), nullable=False, default="unpaid", server_default="unpaid")
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    refunded_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     shipping_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     shipping_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
@@ -79,6 +85,7 @@ class Order(Base):
     customer = relationship("Customer", back_populates="orders")
     conversation = relationship("Conversation", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    payments = relationship("OrderPayment", back_populates="order", cascade="all, delete-orphan")
 
 
 class OrderItem(Base):
@@ -97,6 +104,8 @@ class OrderItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    product_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     order = relationship("Order", back_populates="items")
     product = relationship("Product", back_populates="order_items")

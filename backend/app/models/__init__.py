@@ -20,6 +20,10 @@ from app.models.channel import Channel, ChannelEvent
 from app.models.crm_extended import ConversationAssignment, ConversationTag, CustomerTag, Tag
 from app.models.sales import Order, OrderItem, Product
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
+from app.models.supplier import Supplier
+from app.models.inventory import StockMovement, PurchaseReceipt, PurchaseReceiptItem
+from app.models.order_event import OrderEvent
+from app.models.order_payment import OrderPayment
 from app.models.lead import Lead
 from app.models.ticket import Ticket, TicketComment, TicketEvent
 from app.models.workflow import Workflow, WorkflowRun
@@ -61,6 +65,12 @@ __all__ = [
     "OrderItem",
     "PurchaseOrder",
     "PurchaseOrderItem",
+    "Supplier",
+    "StockMovement",
+    "PurchaseReceipt",
+    "PurchaseReceiptItem",
+    "OrderEvent",
+    "OrderPayment",
     "Lead",
     "Ticket",
     "TicketComment",
