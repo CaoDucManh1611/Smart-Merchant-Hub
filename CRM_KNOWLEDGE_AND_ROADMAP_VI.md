@@ -631,3 +631,12 @@ Phần còn lại chủ yếu là đưa các khối nền tảng này lên mức
 
 Tệp này không thay thế test hoặc migration. Khi code thay đổi, phải cập nhật test, migration và tài liệu bàn giao cùng Pull Request.
 
+---
+
+## 21. P1-02 đã triển khai trên nhánh crm-completion
+
+P1-02 Sales và Purchase Operations đã được hoàn thiện ở mức nghiệp vụ lõi: supplier, snapshot đơn, vòng đời Sales Order, nhận hàng Purchase Order, ledger tồn kho, payment/refund, order events, timeline Customer 360 và báo cáo tồn/chi phí. Giao diện CRM đã có thao tác xác nhận đơn, cảnh báo tồn, thu/hoàn tiền, nhận hàng và thanh toán công nợ.
+
+Migration hiện tại là `20260906_0024`. Bằng chứng kiểm thử và lệnh chạy Docker nằm trong `docs/superpowers/plans/2026-09-06-p1-02-sales-purchase-ops-verification.md`.
+
+Các giới hạn còn lại của P1-02 là tích hợp cổng thanh toán bên ngoài, form receipt theo từng dòng và smoke test trên Docker/production; không nên đánh đồng các giới hạn này với việc xóa dữ liệu hoặc reset database.
