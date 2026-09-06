@@ -136,8 +136,13 @@ const purchasePaymentDrafts = ref({});
 const purchasePaymentSaving = ref({});
 const inventoryReport = ref(null);
 const purchaseCostReport = ref(null);
+function generateSalesOrderNumber() {
+  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `ORD-${Date.now()}-${suffix}`;
+}
+
 const orderForm = ref({
-  order_number: "",
+  order_number: generateSalesOrderNumber(),
   customer_id: "",
   conversation_id: "",
   product_id: "",
@@ -590,6 +595,40 @@ const ticketConversations = computed(() => {
     ticketForm.value.customer_id,
   );
 });
+
+// Sales orders may only link revenue to a conversation belonging to the
+// selected customer.  When no customer is selected yet, expose all tenant
+// conversations so the dropdown remains useful while the form is loading.
+const orderConversationOptions = computed(() => {
+  const customerId = Number(orderForm.value.customer_id);
+  const source = customerId
+    ? filterConversationsForCustomer(conversations.value, customerId)
+    : conversations.value;
+  return [...source]
+    .filter((conversation) => Number(conversation?.conversation_id) > 0)
+    .sort((left, right) => Number(right.conversation_id) - Number(left.conversation_id));
+});
+
+function orderConversationLabel(conversation) {
+  const preview = String(conversation?.last_message || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 44);
+  const suffix = preview ? ` — ${preview}` : "";
+  return `#${conversation.conversation_id} — ${channelLabel(conversation.channel)}${suffix}`;
+}
+
+function onOrderCustomerChange() {
+  const conversationId = Number(orderForm.value.conversation_id);
+  if (
+    conversationId
+    && !orderConversationOptions.value.some(
+      (conversation) => Number(conversation.conversation_id) === conversationId,
+    )
+  ) {
+    orderForm.value.conversation_id = "";
+  }
+}
 
 const activeTeamUsers = computed(() =>
   teamUsers.value.filter((user) => user.is_active)
@@ -1931,10 +1970,21 @@ function orderCanConfirm(order) {
 async function loadSalesOrderEvents(order) {
   if (!order?.id) return;
   orderEventsLoading.value = true;
+  selectedOrderEvents.value = { order, items: [] };
+  await nextTick();
+  document.querySelector('[data-testid="order-events-panel"]')?.scrollIntoView({
+    behavior: "smooth",
+    block: "start",
+  });
   try {
     const response = await apiFetch(`${API_BASE}/orders/${order.id}/events`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     selectedOrderEvents.value = { order, ...(await response.json()) };
+    await nextTick();
+    document.querySelector('[data-testid="order-events-panel"]')?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
   } catch (err) {
     orderError.value = "Không tải được lịch sử đơn hàng.";
   } finally {
@@ -2201,7 +2251,7 @@ async function fetchOrderCustomers() {
 
 function resetOrderForm() {
   orderForm.value = {
-    order_number: `ORD-${Date.now()}`,
+    order_number: generateSalesOrderNumber(),
     customer_id: orderCustomers.value[0]?.id || "",
     conversation_id: "",
     product_id: products.value[0]?.id || "",
@@ -3511,13 +3561,13 @@ onMounted(async () => {
   await loadConversations(
     true
   );
+  await Promise.all([fetchProducts(), fetchOrderCustomers()]);
+  resetOrderForm();
   fetchTagCatalog();
   fetchSavedSegments();
 
   connectRealtime();
   fetchDocuments();
-  fetchProducts();
-  fetchOrderCustomers();
   fetchOrders();
   fetchPurchaseOrders();
   fetchLeads();
@@ -3668,7 +3718,7 @@ onUnmounted(() => {
         <button
           class="menu-item"
           :class="{ active: currentTab === 'orders' }"
-          @click="currentTab = 'orders'; fetchOrderCustomers(); fetchProducts(); fetchOrders()"
+          @click="currentTab = 'orders'; loadConversations(false); fetchOrderCustomers(); fetchProducts(); fetchOrders()"
         >
           <span class="nav-icon">SO</span>
           <b>Đơn bán</b>
@@ -5645,9 +5695,9 @@ onUnmounted(() => {
             <button type="button" @click="resetOrderForm">Làm mới</button>
           </div>
           <div class="product-form-grid">
-            <label>Mã đơn<input v-model="orderForm.order_number" required maxlength="60" /></label>
+            <label>Mã đơn (tự sinh)<input v-model="orderForm.order_number" readonly aria-readonly="true" maxlength="60" /></label>
             <label>Khách hàng
-              <select v-model="orderForm.customer_id" required>
+              <select v-model="orderForm.customer_id" required @change="onOrderCustomerChange">
                 <option value="" disabled>Chọn khách hàng</option>
                 <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
                   #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
@@ -5663,7 +5713,14 @@ onUnmounted(() => {
               </select>
             </label>
             <label>Số lượng<input v-model.number="orderForm.quantity" type="number" min="1" step="1" required /></label>
-            <label>Conversation ID (không bắt buộc)<input v-model="orderForm.conversation_id" type="number" min="1" placeholder="Gắn doanh thu với kênh" /></label>
+            <label>Conversation (không bắt buộc)
+              <select v-model="orderForm.conversation_id">
+                <option value="">Không gắn hội thoại</option>
+                <option v-for="conversation in orderConversationOptions" :key="conversation.conversation_id" :value="conversation.conversation_id">
+                  {{ orderConversationLabel(conversation) }}
+                </option>
+              </select>
+            </label>
           </div>
           <button class="primary-btn" type="submit" :disabled="orderSaving">
             {{ orderSaving ? 'Đang tạo...' : 'Tạo đơn' }}
@@ -5687,7 +5744,7 @@ onUnmounted(() => {
                   </select>
                   <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order) || orderTransitionSaving[order.id]" @click.stop="transitionSalesOrder(order, 'confirmed')">{{ orderTransitionSaving[order.id] ? 'Đang cập nhật...' : 'Xác nhận đơn' }}</button>
                   <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">Thiếu tồn khả dụng</small>
-                  <button type="button" class="table-action-btn" @click="loadSalesOrderEvents(order)">Lịch sử</button>
+                  <button type="button" class="table-action-btn" data-testid="order-history-button" @click.stop="loadSalesOrderEvents(order)">Lịch sử</button>
                 </td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ order.payment_status }}</span>
@@ -5704,7 +5761,7 @@ onUnmounted(() => {
             </tbody>
           </table>
         </div>
-        <div v-if="selectedOrderEvents" class="report-panel order-events-panel">
+        <div v-if="selectedOrderEvents" class="report-panel order-events-panel" data-testid="order-events-panel">
           <div class="report-panel-header"><h3>Lịch sử {{ selectedOrderEvents.order.order_number }}</h3><button type="button" class="settings-refresh" @click="selectedOrderEvents = null">Đóng</button></div>
           <div v-if="orderEventsLoading" class="products-empty">Đang tải lịch sử...</div>
           <div v-else-if="!selectedOrderEvents.items?.length" class="products-empty">Chưa có event.</div>

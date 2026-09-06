@@ -27,6 +27,26 @@ test("CRM order history renders meaningful lifecycle and payment events", () => 
   assert.doesNotMatch(appSource, /timelineLabel\(\{ event_type: event\.event_type \}\)/);
 });
 
+test("CRM order history action is an explicit control that reveals the panel", () => {
+  assert.match(appSource, /data-testid="order-history-button"/);
+  assert.match(appSource, /@click\.stop="loadSalesOrderEvents\(order\)"/);
+  assert.match(appSource, /scrollIntoView\(/);
+  assert.match(appSource, /data-testid="order-events-panel"/);
+});
+
+test("CRM order form auto-generates the order number and selects an optional conversation", () => {
+  assert.match(appSource, /Mã đơn \(tự sinh\)/);
+  assert.match(appSource, /orderConversationOptions/);
+  assert.match(appSource, /v-for="conversation in orderConversationOptions"/);
+  assert.match(appSource, /Không gắn hội thoại/);
+  assert.match(appSource, /<select v-model="orderForm\.conversation_id"/);
+});
+
+test("CRM orders page remains vertically scrollable when content exceeds the viewport", () => {
+  assert.match(styleSource, /\.main\s*\{[^}]*overflow-y:\s*auto/);
+  assert.match(styleSource, /\.orders-layout\s*\{[^}]*padding-bottom:/);
+});
+
 test("CRM purchase UI wires receipts and supplier debt payment", () => {
   assert.match(appSource, /\/purchase-orders\/\$\{order\.id\}\/receipts/);
   assert.match(appSource, /\/purchase-orders\/\$\{order\.id\}\/payments/);

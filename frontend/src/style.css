@@ -2711,6 +2711,7 @@ button:hover {
 
 .orders-layout {
   min-width: 0;
+  padding-bottom: 32px;
 }
 
 .revenue-cards {
@@ -2847,6 +2848,7 @@ button:hover {
 
 .order-events-panel {
   margin-top: 1rem;
+  scroll-margin-top: 18px;
 }
 
 .order-events-list {
@@ -3332,6 +3334,9 @@ body,
 }
 
 .main {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 18px 22px 22px;
   background: var(--crm-canvas);
 }

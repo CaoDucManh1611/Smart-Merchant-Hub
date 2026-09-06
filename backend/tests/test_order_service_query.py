@@ -7,9 +7,10 @@ SERVICE_SOURCE = Path(__file__).parents[1].joinpath("app", "services", "order_se
 
 def test_sales_transition_does_not_lock_a_collection_join():
     """PostgreSQL rejects FOR UPDATE on the nullable side of a joinedload."""
+    transition_source = SERVICE_SOURCE.split("def transition_sales_order(", 1)[-1]
     transition_query = re.search(
         r"order = db\.query\(Order\).*?if order is None:",
-        SERVICE_SOURCE,
+        transition_source,
         flags=re.DOTALL,
     )
     assert transition_query is not None

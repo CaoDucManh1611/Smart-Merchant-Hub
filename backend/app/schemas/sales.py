@@ -54,7 +54,7 @@ class OrderItemCreate(BaseModel):
 
 
 class OrderCreate(BaseModel):
-    order_number: str = Field(..., min_length=1, max_length=60)
+    order_number: str | None = Field(default=None, min_length=1, max_length=60)
     customer_id: int
     conversation_id: int | None = None
     items: list[OrderItemCreate] = Field(..., min_length=1)

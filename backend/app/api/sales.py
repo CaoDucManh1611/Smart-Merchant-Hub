@@ -1,5 +1,6 @@
 """Tenant-scoped product catalog and order APIs."""
 
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -37,6 +38,21 @@ from app.services.order_service import SalesOrderOperationError, SALES_TRANSITIO
 router = APIRouter()
 
 SALES_TRANSITIONS = ORDER_TRANSITIONS
+
+
+def _generated_order_number(db: Session, business_id: int) -> str:
+    """Generate a readable, tenant-scoped order number for API clients."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    base = f"ORD-{timestamp}"
+    candidate = base
+    sequence = 1
+    while db.query(Order.id).filter(
+        Order.business_id == business_id,
+        Order.order_number == candidate,
+    ).first() is not None:
+        sequence += 1
+        candidate = f"{base}-{sequence}"
+    return candidate
 
 
 def _product(db: Session, product_id: int, tenant: TenantContext) -> Product:
@@ -285,11 +301,15 @@ def create_order(
     if missing:
         raise HTTPException(status_code=404, detail=f"Sản phẩm không tồn tại trong tenant: {missing}")
 
+    order_number = (payload.order_number or "").strip()
+    if not order_number:
+        order_number = _generated_order_number(db, tenant.business_id)
+
     order = Order(
         business_id=tenant.business_id,
         customer_id=customer.id,
         conversation_id=conversation.id if conversation else None,
-        order_number=payload.order_number.strip(),
+        order_number=order_number,
         status=payload.status,
         shipping_address=payload.shipping_address,
         shipping_phone=payload.shipping_phone,

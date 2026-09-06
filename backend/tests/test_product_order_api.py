@@ -101,6 +101,18 @@ class ProductOrderApiTests(unittest.TestCase):
         self.assertEqual(1, len(body["items"]))
         self.assertEqual("420000.00", body["items"][0]["unit_price"])
 
+    def test_order_number_is_generated_when_omitted(self):
+        response = self.client.post(
+            "/api/orders",
+            headers={"X-Business-Id": "1"},
+            json={
+                "customer_id": self.customer_id,
+                "items": [{"product_id": self.product_id, "quantity": 1}],
+            },
+        )
+        self.assertEqual(201, response.status_code)
+        self.assertRegex(response.json()["order_number"], r"^ORD-\d{14}(?:-\d+)?$")
+
     def test_order_cannot_reference_other_tenant_product(self):
         response = self.client.post(
             "/api/orders",
