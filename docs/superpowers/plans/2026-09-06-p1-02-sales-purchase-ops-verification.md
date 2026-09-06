@@ -76,6 +76,8 @@ docker compose run --rm frontend pnpm build
 
 Nếu service `backend` đang dừng, dùng `docker compose run --rm backend ...` cho migration/test; không dùng `docker compose exec backend` khi container không chạy.
 
+Image frontend đã cài sẵn `pnpm` trong Dockerfile. Nếu đang dùng image cũ, build lại image trước khi chạy lệnh pnpm.
+
 ## Smoke test tối thiểu
 
 1. Tạo Product có `stock_quantity=5` và một Sales Order số lượng 2.
