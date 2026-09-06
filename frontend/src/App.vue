@@ -130,6 +130,8 @@ const orderCustomers = ref([]);
 const revenueByChannel = ref([]);
 const orderPaymentDrafts = ref({});
 const orderPaymentSaving = ref({});
+const selectedOrderEvents = ref(null);
+const orderEventsLoading = ref(false);
 const purchasePaymentDrafts = ref({});
 const purchasePaymentSaving = ref({});
 const inventoryReport = ref(null);
@@ -1869,6 +1871,30 @@ async function transitionSalesOrder(order, toStatus) {
   } catch (err) {
     orderError.value = err.message || "Không thể cập nhật vòng đời đơn hàng.";
     await fetchOrders();
+  }
+}
+
+function availableProductQuantity(productId) {
+  const product = products.value.find((item) => Number(item.id) === Number(productId));
+  if (!product) return 0;
+  return Number(product.stock_quantity || 0) - Number(product.reserved_quantity || 0);
+}
+
+function orderCanConfirm(order) {
+  return Boolean(order?.items?.length) && order.items.every((item) => availableProductQuantity(item.product_id) >= Number(item.quantity || 0));
+}
+
+async function loadSalesOrderEvents(order) {
+  if (!order?.id) return;
+  orderEventsLoading.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/orders/${order.id}/events`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    selectedOrderEvents.value = { order, ...(await response.json()) };
+  } catch (err) {
+    orderError.value = "Không tải được lịch sử đơn hàng.";
+  } finally {
+    orderEventsLoading.value = false;
   }
 }
 
@@ -5863,12 +5889,15 @@ onUnmounted(() => {
               <tr v-for="order in orders" :key="order.id">
                 <td><strong>{{ order.order_number }}</strong></td>
                 <td>#{{ order.customer_id }}</td>
-                <td><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}</span></td>
+                <td><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}<small v-if="order.status === 'draft'"> (còn {{ availableProductQuantity(item.product_id) }})</small></span></td>
                 <td>{{ order.channel || 'Không gắn kênh' }}</td>
                 <td>
                   <select class="inline-stage" :value="order.status" @change="transitionSalesOrder(order, $event.target.value)">
                     <option v-for="status in salesStatuses" :key="status" :value="status">{{ status }}</option>
                   </select>
+                  <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order)" @click="transitionSalesOrder(order, 'confirmed')">Xác nhận đơn</button>
+                  <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">Thiếu tồn khả dụng</small>
+                  <button type="button" class="table-action-btn" @click="loadSalesOrderEvents(order)">Lịch sử</button>
                 </td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ order.payment_status }}</span>
@@ -5884,6 +5913,12 @@ onUnmounted(() => {
               </tr>
             </tbody>
           </table>
+        </div>
+        <div v-if="selectedOrderEvents" class="report-panel order-events-panel">
+          <div class="report-panel-header"><h3>Lịch sử {{ selectedOrderEvents.order.order_number }}</h3><button type="button" class="settings-refresh" @click="selectedOrderEvents = null">Đóng</button></div>
+          <div v-if="orderEventsLoading" class="products-empty">Đang tải lịch sử...</div>
+          <div v-else-if="!selectedOrderEvents.items?.length" class="products-empty">Chưa có event.</div>
+          <ul v-else class="order-events-list"><li v-for="event in selectedOrderEvents.items" :key="event.id"><strong>{{ timelineLabel({ event_type: event.event_type }) }}</strong><span>{{ event.from_status || '—' }} → {{ event.to_status || '—' }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small></li></ul>
         </div>
       </section>
 
@@ -5931,14 +5966,14 @@ onUnmounted(() => {
               <tr v-for="purchase in purchaseOrders" :key="purchase.id">
                 <td><strong>{{ purchase.po_number }}</strong></td>
                 <td>{{ purchase.supplier_name }}</td>
-                <td><span v-for="(item, index) in purchase.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}</span></td>
+                <td><span v-for="(item, index) in purchase.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.received_quantity || 0 }} / {{ item.quantity }}</span></td>
                 <td>
                   <select class="inline-stage" :value="purchase.status" @change="transitionPurchaseOrder(purchase, $event.target.value)">
                     <option v-for="status in purchaseStatuses" :key="status" :value="status" :disabled="['partially_received', 'received'].includes(status)">{{ status }}</option>
                   </select>
-                  <button v-if="['submitted', 'partially_received'].includes(purchase.status)" type="button" class="table-action-btn" @click="receivePurchaseOrder(purchase)">Nhận đủ</button>
+                  <button v-if="['submitted', 'partially_received'].includes(purchase.status)" type="button" class="table-action-btn" @click="receivePurchaseOrder(purchase)">Nhận hàng</button>
                 </td>
-                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ purchase.payment_status || 'unpaid' }}</span><small>{{ Number(purchase.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Chi trả</button></div></td>
+                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ purchase.payment_status || 'unpaid' }}</span><small>{{ Number(purchase.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Thanh toán công nợ</button></div></td>
                 <td><strong>{{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</strong></td>
                 <td>{{ purchase.updated_at ? new Date(purchase.updated_at).toLocaleString('vi-VN') : '—' }}</td>
               </tr>

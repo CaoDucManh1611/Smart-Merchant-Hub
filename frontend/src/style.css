@@ -3241,6 +3241,38 @@ button:hover {
   cursor: pointer;
 }
 
+.stock-warning {
+  display: block;
+  margin-top: 0.25rem;
+  color: #a33b2e;
+}
+
+.order-events-panel {
+  margin-top: 1rem;
+}
+
+.order-events-list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.order-events-list li {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  border-bottom: 1px solid #f7dfd8;
+  padding: 0.55rem 0;
+  color: #6e2828;
+}
+
+.order-events-list small {
+  color: #a77c75;
+}
+
 .order-payment-actions button:disabled,
 .table-action-btn:disabled {
   opacity: 0.55;
