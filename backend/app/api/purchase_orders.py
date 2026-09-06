@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -11,6 +11,9 @@ from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
 from app.models.business import User
 from app.models.sales import Product
 from app.models.supplier import Supplier
+from app.models.inventory import PurchaseReceipt, PurchaseReceiptItem
+from app.schemas.purchase_order import PurchaseReceiptCreate, PurchaseReceiptOut
+from app.services.inventory_service import InventoryOperationError, receive_purchase_order
 from app.schemas.purchase_order import (
     PurchaseOrderCreate,
     PurchaseOrderItemOut,
@@ -226,3 +229,59 @@ def transition_purchase_order(
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="transition", resource_type="purchase_order", resource_id=str(order.id), metadata={"to_status": to_status})
         db.commit()
     return _out(_purchase_order(db, order_id, tenant))
+
+
+def _receipt_out(receipt: PurchaseReceipt, order: PurchaseOrder) -> PurchaseReceiptOut:
+    return PurchaseReceiptOut(
+        id=receipt.id,
+        business_id=receipt.business_id,
+        purchase_order_id=receipt.purchase_order_id,
+        received_by=receipt.received_by,
+        received_at=receipt.received_at,
+        note=receipt.note,
+        idempotency_key=receipt.idempotency_key,
+        items=[
+            {
+                "id": item.id,
+                "purchase_order_item_id": item.purchase_order_item_id,
+                "quantity": item.quantity,
+            }
+            for item in receipt.items
+        ],
+        purchase_order=_out(order),
+    )
+
+
+@router.post("/purchase-orders/{order_id}/receipts", response_model=PurchaseReceiptOut)
+def receive_order(
+    order_id: int,
+    payload: PurchaseReceiptCreate,
+    response: Response,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    try:
+        receipt, created = receive_purchase_order(
+            db,
+            purchase_order_id=order_id,
+            lines=[(item.purchase_order_item_id, item.quantity) for item in payload.items],
+            actor_id=actor.id if actor else None,
+            business_id=tenant.business_id,
+            idempotency_key=payload.idempotency_key,
+            note=payload.note,
+        )
+    except InventoryOperationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    response.status_code = 201 if created else 200
+    if created:
+        db.commit()
+    order = _purchase_order(db, order_id, tenant)
+    receipt = db.query(PurchaseReceipt).filter(
+        PurchaseReceipt.id == receipt.id,
+        PurchaseReceipt.business_id == tenant.business_id,
+    ).first()
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="Receipt không tồn tại.")
+    return _receipt_out(receipt, order)

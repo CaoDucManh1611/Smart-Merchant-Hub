@@ -65,3 +65,34 @@ class PurchaseOrderOut(BaseModel):
 class PurchaseOrderListOut(BaseModel):
     items: list[PurchaseOrderOut]
     total: int
+
+
+class PurchaseReceiptItemCreate(BaseModel):
+    purchase_order_item_id: int = Field(..., ge=1)
+    quantity: int = Field(..., ge=1, le=1_000_000)
+
+
+class PurchaseReceiptCreate(BaseModel):
+    idempotency_key: str = Field(..., min_length=1, max_length=160)
+    items: list[PurchaseReceiptItemCreate] = Field(..., min_length=1)
+    note: str | None = Field(default=None, max_length=10000)
+
+
+class PurchaseReceiptItemOut(BaseModel):
+    id: int
+    purchase_order_item_id: int
+    quantity: int
+
+
+class PurchaseReceiptOut(BaseModel):
+    id: int
+    business_id: int
+    purchase_order_id: int
+    received_by: int | None = None
+    received_at: datetime
+    note: str | None = None
+    idempotency_key: str
+    items: list[PurchaseReceiptItemOut] = Field(default_factory=list)
+    purchase_order: PurchaseOrderOut
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
