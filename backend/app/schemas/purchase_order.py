@@ -14,7 +14,8 @@ class PurchaseOrderItemCreate(BaseModel):
 
 class PurchaseOrderCreate(BaseModel):
     po_number: str = Field(..., min_length=1, max_length=60)
-    supplier_name: str = Field(..., min_length=1, max_length=255)
+    supplier_id: int | None = Field(default=None, ge=1)
+    supplier_name: str | None = Field(default=None, min_length=1, max_length=255)
     items: list[PurchaseOrderItemCreate] = Field(..., min_length=1)
     status: str = Field(default="draft", min_length=1, max_length=30)
     notes: str | None = Field(default=None, max_length=10000)
@@ -22,6 +23,7 @@ class PurchaseOrderCreate(BaseModel):
 
 
 class PurchaseOrderUpdate(BaseModel):
+    supplier_id: int | None = Field(default=None, ge=1)
     supplier_name: str | None = Field(default=None, min_length=1, max_length=255)
     notes: str | None = Field(default=None, max_length=10000)
     metadata: dict | None = None
@@ -36,14 +38,18 @@ class PurchaseOrderItemOut(BaseModel):
     product_id: int
     product_name: str
     quantity: int
+    received_quantity: int = 0
     unit_cost: Decimal
     line_total: Decimal
+    product_name_snapshot: str | None = None
+    sku_snapshot: str | None = None
 
 
 class PurchaseOrderOut(BaseModel):
     id: int
     business_id: int
     po_number: str
+    supplier_id: int | None = None
     supplier_name: str
     status: str
     total_spend: Decimal

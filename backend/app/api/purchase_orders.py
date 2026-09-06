@@ -10,6 +10,7 @@ from app.db.dependencies import get_db
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
 from app.models.business import User
 from app.models.sales import Product
+from app.models.supplier import Supplier
 from app.schemas.purchase_order import (
     PurchaseOrderCreate,
     PurchaseOrderItemOut,
@@ -53,7 +54,8 @@ def _out(order: PurchaseOrder) -> PurchaseOrderOut:
         id=order.id,
         business_id=order.business_id,
         po_number=order.po_number,
-        supplier_name=order.supplier_name,
+        supplier_id=order.supplier_id,
+        supplier_name=order.supplier_name_snapshot or order.supplier_name,
         status=order.status,
         total_spend=order.total_spend,
         notes=order.notes,
@@ -63,10 +65,13 @@ def _out(order: PurchaseOrder) -> PurchaseOrderOut:
         items=[PurchaseOrderItemOut(
             id=item.id,
             product_id=item.product_id,
-            product_name=item.product.name,
+            product_name=item.product_name_snapshot or item.product.name,
             quantity=item.quantity,
+            received_quantity=item.received_quantity,
             unit_cost=item.unit_cost,
             line_total=item.line_total,
+            product_name_snapshot=item.product_name_snapshot,
+            sku_snapshot=item.sku_snapshot,
         ) for item in order.items],
     )
 
@@ -99,6 +104,17 @@ def create_purchase_order(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
+    supplier = None
+    if payload.supplier_id is not None:
+        supplier = db.query(Supplier).filter(
+            Supplier.id == payload.supplier_id,
+            Supplier.business_id == tenant.business_id,
+        ).first()
+        if supplier is None:
+            raise HTTPException(status_code=404, detail="Nhà cung cấp không tồn tại.")
+    supplier_name = (supplier.name if supplier else (payload.supplier_name or "")).strip()
+    if not supplier_name:
+        raise HTTPException(status_code=422, detail="Cần chọn supplier_id hoặc nhập supplier_name.")
     product_ids = [item.product_id for item in payload.items]
     products = db.query(Product).filter(
         Product.business_id == tenant.business_id,
@@ -114,7 +130,9 @@ def create_purchase_order(
     order = PurchaseOrder(
         business_id=tenant.business_id,
         po_number=payload.po_number.strip(),
-        supplier_name=payload.supplier_name.strip(),
+        supplier_name=supplier_name,
+        supplier_id=supplier.id if supplier else None,
+        supplier_name_snapshot=supplier_name,
         status=status,
         notes=payload.notes,
         metadata_=payload.metadata,
@@ -130,6 +148,8 @@ def create_purchase_order(
             purchase_order_id=order.id,
             product_id=product_map[item_payload.product_id].id,
             quantity=item_payload.quantity,
+            product_name_snapshot=product_map[item_payload.product_id].name,
+            sku_snapshot=product_map[item_payload.product_id].sku,
             unit_cost=item_payload.unit_cost,
             line_total=line_total,
         ))
@@ -159,8 +179,26 @@ def update_purchase_order(
     actor: User | None = Depends(require_write_access),
 ):
     order = _purchase_order(db, order_id, tenant)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(order, "metadata_" if field == "metadata" else field, value.strip() if isinstance(value, str) else value)
+    values = payload.model_dump(exclude_unset=True)
+    if "supplier_id" in values:
+        supplier_id = values.pop("supplier_id")
+        supplier = None
+        if supplier_id is not None:
+            supplier = db.query(Supplier).filter(
+                Supplier.id == supplier_id,
+                Supplier.business_id == tenant.business_id,
+            ).first()
+            if supplier is None:
+                raise HTTPException(status_code=404, detail="Nhà cung cấp không tồn tại.")
+        order.supplier_id = supplier_id
+        if supplier:
+            order.supplier_name = supplier.name
+            order.supplier_name_snapshot = supplier.name
+    for field, value in values.items():
+        clean_value = value.strip() if isinstance(value, str) else value
+        setattr(order, "metadata_" if field == "metadata" else field, clean_value)
+        if field == "supplier_name" and clean_value:
+            order.supplier_name_snapshot = clean_value
     db.commit()
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="update", resource_type="purchase_order", resource_id=str(order.id), metadata={"fields": list(payload.model_dump(exclude_unset=True))})
