@@ -15,9 +15,11 @@ from app.models.business import User
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.lead import Lead
-from app.models.sales import Order
+from app.models.sales import Order, Product
 from app.models.ticket import Ticket
 from app.models.purchase_order import PurchaseOrder
+from app.models.purchase_order import PurchaseOrderItem
+from app.models.inventory import PurchaseReceipt, PurchaseReceiptItem, StockMovement
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 
@@ -254,6 +256,84 @@ def spend_by_supplier(db: Session = Depends(get_db), tenant: TenantContext = Dep
         func.coalesce(func.sum(PurchaseOrder.total_spend), Decimal("0")).label("spend"),
     ).filter(PurchaseOrder.business_id == tenant.business_id).group_by(PurchaseOrder.supplier_name).order_by(PurchaseOrder.supplier_name.asc()).all()
     return {"items": [{"supplier_name": row.supplier_name, "order_count": int(row.order_count), "spend": Decimal(row.spend or 0)} for row in rows], "total_spend": sum((Decimal(row.spend or 0) for row in rows), Decimal("0"))}
+
+
+@router.get("/reports/inventory")
+def inventory_report(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+    """Return on-hand, reserved and ledger totals for every tenant product."""
+    products = db.query(Product).filter(Product.business_id == tenant.business_id).order_by(Product.name.asc(), Product.id.asc()).all()
+    movement_rows = db.query(
+        StockMovement.product_id,
+        func.coalesce(func.sum(StockMovement.quantity), 0).label("net_quantity"),
+        func.count(StockMovement.id).label("movement_count"),
+    ).filter(StockMovement.business_id == tenant.business_id).group_by(StockMovement.product_id).all()
+    movement_map = {row.product_id: row for row in movement_rows}
+    items = []
+    for product in products:
+        row = movement_map.get(product.id)
+        stock = int(product.stock_quantity or 0)
+        reserved = int(product.reserved_quantity or 0)
+        items.append({
+            "product_id": product.id,
+            "sku": product.sku,
+            "name": product.name,
+            "stock_quantity": stock,
+            "reserved_quantity": reserved,
+            "available_quantity": stock - reserved,
+            "net_movement_quantity": int(row.net_quantity or 0) if row else 0,
+            "movement_count": int(row.movement_count or 0) if row else 0,
+        })
+    return {
+        "items": items,
+        "total": len(items),
+        "stock_quantity": sum(item["stock_quantity"] for item in items),
+        "reserved_quantity": sum(item["reserved_quantity"] for item in items),
+        "available_quantity": sum(item["available_quantity"] for item in items),
+    }
+
+
+@router.get("/reports/purchase-costs")
+def purchase_cost_report(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    start_at: str | None = Query(default=None),
+    end_at: str | None = Query(default=None),
+):
+    """Aggregate received inventory cost by supplier and receipt date."""
+    start = _parse_date(start_at, "start_at")
+    end = _parse_date(end_at, "end_at")
+    if start and end and start > end:
+        raise HTTPException(status_code=422, detail="start_at phải trước end_at.")
+    rows = db.query(PurchaseReceiptItem, PurchaseReceipt, PurchaseOrderItem, PurchaseOrder).join(
+        PurchaseReceipt, PurchaseReceipt.id == PurchaseReceiptItem.receipt_id,
+    ).join(
+        PurchaseOrderItem, PurchaseOrderItem.id == PurchaseReceiptItem.purchase_order_item_id,
+    ).join(
+        PurchaseOrder, PurchaseOrder.id == PurchaseOrderItem.purchase_order_id,
+    ).filter(
+        PurchaseReceipt.business_id == tenant.business_id,
+        PurchaseOrder.business_id == tenant.business_id,
+    )
+    if start:
+        rows = rows.filter(PurchaseReceipt.received_at >= start)
+    if end:
+        rows = rows.filter(PurchaseReceipt.received_at <= end)
+    grouped: dict[str, dict] = {}
+    for receipt_item, receipt, po_item, purchase in rows.all():
+        supplier_name = purchase.supplier_name_snapshot or purchase.supplier_name
+        bucket = grouped.setdefault(supplier_name, {"supplier_name": supplier_name, "receipt_count": set(), "received_quantity": 0, "received_cost": Decimal("0")})
+        bucket["receipt_count"].add(receipt.id)
+        bucket["received_quantity"] += int(receipt_item.quantity or 0)
+        bucket["received_cost"] += Decimal(receipt_item.quantity or 0) * Decimal(po_item.unit_cost or 0)
+    items = []
+    for bucket in sorted(grouped.values(), key=lambda value: value["supplier_name"]):
+        items.append({
+            "supplier_name": bucket["supplier_name"],
+            "receipt_count": len(bucket["receipt_count"]),
+            "received_quantity": bucket["received_quantity"],
+            "received_cost": bucket["received_cost"],
+        })
+    return {"items": items, "total_received_cost": sum((item["received_cost"] for item in items), Decimal("0"))}
 
 
 @router.get("/reports/agent-performance", response_model=AgentPerformanceOut)

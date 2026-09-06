@@ -22,6 +22,7 @@ from app.models.lead import Lead
 from app.models.ticket import Ticket, TicketComment
 from app.models.customer_merge import CustomerMerge
 from app.models.audit_log import AuditLog
+from app.models.order_event import OrderEvent
 from app.models.business_setting import BusinessSetting
 from app.schemas.customer import (
     CustomerFactCreate,
@@ -954,6 +955,12 @@ def customer_timeline(
         Order.business_id == tenant.business_id,
         Order.customer_id == customer_id,
     ).all()
+    order_ids = [order.id for order in orders]
+    order_events = db.query(OrderEvent).filter(
+        OrderEvent.business_id == tenant.business_id,
+        OrderEvent.order_type == "sales_order",
+        OrderEvent.order_id.in_(order_ids),
+    ).all() if order_ids else []
     # Purchase Orders are shop-level records.  Include one in a customer's
     # timeline only when the operator explicitly linked it through metadata
     # (``{"customer_id": ...}``), avoiding unrelated supplier activity on
@@ -1038,6 +1045,21 @@ def customer_timeline(
         conversation_id=order.conversation_id,
         metadata={"status": order.status, "total_amount": str(order.total_amount)},
     ) for order in orders)
+    order_by_id = {order.id: order for order in orders}
+    items.extend(CustomerTimelineItem(
+        event_type="order_payment" if event.event_type in {"payment_created", "refund_created"} else "sales_order",
+        event_id=event.id,
+        occurred_at=event.created_at,
+        channel=(order_by_id.get(event.order_id).conversation.channel if order_by_id.get(event.order_id) and order_by_id.get(event.order_id).conversation else None),
+        content=(
+            "Hoàn tiền đơn hàng" if event.event_type == "refund_created"
+            else "Thanh toán đơn hàng" if event.event_type == "payment_created"
+            else f"Cập nhật đơn {order_by_id.get(event.order_id).order_number if order_by_id.get(event.order_id) else event.order_id}"
+        ),
+        conversation_id=order_by_id.get(event.order_id).conversation_id if order_by_id.get(event.order_id) else None,
+        created_by=event.actor_id,
+        metadata={"event_subtype": event.event_type, "from_status": event.from_status, "to_status": event.to_status, **(event.metadata_ or {})},
+    ) for event in order_events)
     items.extend(CustomerTimelineItem(
         event_type="purchase_order",
         event_id=purchase.id,
