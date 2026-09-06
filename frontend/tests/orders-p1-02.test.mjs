@@ -19,6 +19,14 @@ test("CRM order status picker only offers valid next lifecycle steps", () => {
   assert.doesNotMatch(appSource, /v-for="status in salesStatuses"/);
 });
 
+test("CRM order history renders meaningful lifecycle and payment events", () => {
+  assert.match(appSource, /function orderEventLabel\(event\)/);
+  assert.match(appSource, /function orderEventSummary\(event\)/);
+  assert.match(appSource, /orderEventLabel\(event\)/);
+  assert.match(appSource, /refund_created/);
+  assert.doesNotMatch(appSource, /timelineLabel\(\{ event_type: event\.event_type \}\)/);
+});
+
 test("CRM purchase UI wires receipts and supplier debt payment", () => {
   assert.match(appSource, /\/purchase-orders\/\$\{order\.id\}\/receipts/);
   assert.match(appSource, /\/purchase-orders\/\$\{order\.id\}\/payments/);

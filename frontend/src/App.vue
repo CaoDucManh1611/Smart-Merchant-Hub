@@ -1503,6 +1503,26 @@ function timelineLabel(event) {
   return labels[event?.event_type] || channelLabel(event?.channel) || "Sự kiện CRM";
 }
 
+function orderEventLabel(event) {
+  const labels = {
+    status_changed: "Đổi trạng thái đơn",
+    payment_created: "Ghi nhận thanh toán",
+    refund_created: "Hoàn tiền",
+    order_created: "Tạo đơn hàng",
+  };
+  return labels[event?.event_type] || "Sự kiện đơn hàng";
+}
+
+function orderEventSummary(event) {
+  if (event?.event_type === "status_changed") {
+    return `${event.from_status || "—"} → ${event.to_status || "—"}`;
+  }
+  const metadata = event?.metadata || event?.metadata_ || {};
+  const amount = Number(metadata.amount || 0);
+  if (amount > 0) return `${amount.toLocaleString("vi-VN")}đ`;
+  return "Không có chi tiết";
+}
+
 async function loadConversations(
   showLoading = true
 ) {
@@ -5688,7 +5708,7 @@ onUnmounted(() => {
           <div class="report-panel-header"><h3>Lịch sử {{ selectedOrderEvents.order.order_number }}</h3><button type="button" class="settings-refresh" @click="selectedOrderEvents = null">Đóng</button></div>
           <div v-if="orderEventsLoading" class="products-empty">Đang tải lịch sử...</div>
           <div v-else-if="!selectedOrderEvents.items?.length" class="products-empty">Chưa có event.</div>
-          <ul v-else class="order-events-list"><li v-for="event in selectedOrderEvents.items" :key="event.id"><strong>{{ timelineLabel({ event_type: event.event_type }) }}</strong><span>{{ event.from_status || '—' }} → {{ event.to_status || '—' }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small></li></ul>
+          <ul v-else class="order-events-list"><li v-for="event in selectedOrderEvents.items" :key="event.id"><strong>{{ orderEventLabel(event) }}</strong><span>{{ orderEventSummary(event) }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small></li></ul>
         </div>
       </section>
 
