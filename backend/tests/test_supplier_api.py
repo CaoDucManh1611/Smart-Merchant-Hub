@@ -104,6 +104,76 @@ class SupplierApiTests(unittest.TestCase):
         )
         self.assertEqual(404, response.status_code)
 
+    def test_archived_supplier_cannot_be_used_for_new_or_updated_purchase_order(self):
+        supplier = self.client.post(
+            "/api/suppliers",
+            headers=self.headers(),
+            json={"code": "SUP-ARCHIVED", "name": "Archived supplier"},
+        ).json()
+        self.assertEqual(
+            204,
+            self.client.delete(f"/api/suppliers/{supplier['id']}", headers=self.headers()).status_code,
+        )
+
+        created = self.client.post(
+            "/api/purchase-orders",
+            headers=self.headers(),
+            json={
+                "po_number": "PO-ARCHIVED-SUPPLIER",
+                "supplier_id": supplier["id"],
+                "items": [{"product_id": self.product_id, "quantity": 1, "unit_cost": "10"}],
+            },
+        )
+        self.assertEqual(409, created.status_code, created.text)
+
+        manual_supplier_order = self.client.post(
+            "/api/purchase-orders",
+            headers=self.headers(),
+            json={
+                "po_number": "PO-UPDATE-ARCHIVED-SUPPLIER",
+                "supplier_name": "Manual supplier",
+                "items": [{"product_id": self.product_id, "quantity": 1, "unit_cost": "10"}],
+            },
+        )
+        self.assertEqual(201, manual_supplier_order.status_code, manual_supplier_order.text)
+        updated = self.client.patch(
+            f"/api/purchase-orders/{manual_supplier_order.json()['id']}",
+            headers=self.headers(),
+            json={"supplier_id": supplier["id"]},
+        )
+        self.assertEqual(409, updated.status_code, updated.text)
+
+    def test_purchase_order_supplier_is_frozen_after_submission(self):
+        supplier = self.client.post(
+            "/api/suppliers",
+            headers=self.headers(),
+            json={"code": "SUP-FROZEN", "name": "Frozen supplier"},
+        ).json()
+        purchase = self.client.post(
+            "/api/purchase-orders",
+            headers=self.headers(),
+            json={
+                "po_number": "PO-FROZEN-SUPPLIER",
+                "supplier_name": "Original supplier",
+                "items": [{"product_id": self.product_id, "quantity": 1, "unit_cost": "10"}],
+            },
+        )
+        self.assertEqual(201, purchase.status_code, purchase.text)
+        self.assertEqual(
+            200,
+            self.client.post(
+                f"/api/purchase-orders/{purchase.json()['id']}/transition",
+                headers=self.headers(),
+                json={"to_status": "submitted"},
+            ).status_code,
+        )
+        update = self.client.patch(
+            f"/api/purchase-orders/{purchase.json()['id']}",
+            headers=self.headers(),
+            json={"supplier_id": supplier["id"]},
+        )
+        self.assertEqual(409, update.status_code, update.text)
+
 
 if __name__ == "__main__":
     unittest.main()

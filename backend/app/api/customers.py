@@ -19,7 +19,7 @@ from app.models.message import Message
 from app.models.sales import Order
 from app.models.purchase_order import PurchaseOrder
 from app.models.lead import Lead
-from app.models.ticket import Ticket, TicketComment
+from app.models.ticket import Ticket, TicketComment, TicketEvent
 from app.models.customer_merge import CustomerMerge
 from app.models.audit_log import AuditLog
 from app.models.order_event import OrderEvent
@@ -67,6 +67,7 @@ from app.services.customer_merge_service import (
     preview_merge,
     undo_customer_merge,
 )
+from app.services.customer_avatar import refresh_customer_avatar_url
 from app.auth.dependencies import require_write_access
 from app.models.business import User
 from app.services.audit_service import record_audit
@@ -309,8 +310,18 @@ def create_customer_segment(
         match_mode=payload.match_mode,
         created_by=actor.id if actor else None,
     ))
+    segment_id = int(result.inserted_primary_key[0])
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="segment_create",
+        resource_type="customer_segment",
+        resource_id=segment_id,
+        metadata={"name": name, "tag_ids": tag_ids, "match_mode": payload.match_mode},
+    )
     db.commit()
-    segment = _get_segment(db, int(result.inserted_primary_key[0]), tenant)
+    segment = _get_segment(db, segment_id, tenant)
     return CustomerSegmentOut(**segment)
 
 
@@ -320,6 +331,7 @@ def update_customer_segment(
     payload: CustomerSegmentUpdate,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     current = _get_segment(db, segment_id, tenant)
     data = payload.model_dump(exclude_unset=True)
@@ -345,6 +357,15 @@ def update_customer_segment(
         customer_segments_table.c.id == segment_id,
         customer_segments_table.c.business_id == tenant.business_id,
     ).values(**data))
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="segment_update",
+        resource_type="customer_segment",
+        resource_id=segment_id,
+        metadata={"fields": sorted(key for key in data if key != "updated_at")},
+    )
     db.commit()
     return CustomerSegmentOut(**_get_segment(db, segment_id, tenant))
 
@@ -354,12 +375,22 @@ def delete_customer_segment(
     segment_id: int,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     _get_segment(db, segment_id, tenant)
     db.execute(delete(customer_segments_table).where(
         customer_segments_table.c.id == segment_id,
         customer_segments_table.c.business_id == tenant.business_id,
     ))
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="segment_delete",
+        resource_type="customer_segment",
+        resource_id=segment_id,
+        metadata={},
+    )
     db.commit()
     return Response(status_code=204)
 
@@ -593,6 +624,7 @@ def set_fact_extraction_status(
     payload: CustomerFactExtractionStatusRequest,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     setting = db.query(BusinessSetting).filter(
         BusinessSetting.business_id == tenant.business_id,
@@ -608,6 +640,15 @@ def set_fact_extraction_status(
         db.add(setting)
     else:
         setting.value = value
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="fact_extraction_setting_update",
+        resource_type="business_setting",
+        resource_id=FACT_EXTRACTION_SETTING_KEY,
+        metadata={"enabled": payload.enabled},
+    )
     db.commit()
     return CustomerFactExtractionStatusOut(enabled=payload.enabled)
 
@@ -671,7 +712,11 @@ def get_customer(
         email=customer.email,
         phone=customer.phone,
         address=customer.address,
-        avatar_url=customer.avatar_url,
+        avatar_url=refresh_customer_avatar_url(
+            customer.avatar_url,
+            customer_id=customer.id,
+            business_id=tenant.business_id,
+        ),
         created_at=customer.created_at,
         updated_at=customer.updated_at,
         identities=[CustomerIdentityOut.model_validate(identity) for identity in identities],
@@ -717,6 +762,7 @@ def create_customer_fact(
     payload: CustomerFactCreate,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     """Create an explicit or extracted fact without crossing tenants."""
     customer = _get_customer(db, customer_id, tenant)
@@ -750,6 +796,23 @@ def create_customer_fact(
         is_verified=payload.is_verified,
     )
     db.add(fact)
+    db.flush()
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="fact_create",
+        resource_type="customer_fact",
+        resource_id=fact.id,
+        metadata={
+            "customer_id": customer.id,
+            "fact_type": fact.fact_type,
+            "fact_key": fact.fact_key,
+            "source_type": fact.source_type,
+            "source_message_id": fact.source_message_id,
+            "source_order_id": fact.source_order_id,
+        },
+    )
     db.commit()
     db.refresh(fact)
     return _fact_out(fact)
@@ -778,6 +841,7 @@ def update_customer_fact(
     payload: CustomerFactUpdate,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     fact = _get_customer_fact(db, customer_id, fact_id, tenant)
     data = payload.model_dump(exclude_unset=True)
@@ -796,6 +860,15 @@ def update_customer_fact(
         fact.fact_value_json = data.pop("fact_value")
     for key, value in data.items():
         setattr(fact, key, value)
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="fact_update",
+        resource_type="customer_fact",
+        resource_id=fact.id,
+        metadata={"customer_id": customer_id, "fields": sorted(data.keys())},
+    )
     db.commit()
     db.refresh(fact)
     return _fact_out(fact)
@@ -807,9 +880,19 @@ def delete_customer_fact(
     fact_id: int,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     fact = _get_customer_fact(db, customer_id, fact_id, tenant)
     db.delete(fact)
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="fact_delete",
+        resource_type="customer_fact",
+        resource_id=fact.id,
+        metadata={"customer_id": customer_id, "fact_type": fact.fact_type, "fact_key": fact.fact_key},
+    )
     db.commit()
     return Response(status_code=204)
 
@@ -937,6 +1020,14 @@ def customer_timeline(
     offset: int = Query(default=0, ge=0),
 ):
     _get_customer(db, customer_id, tenant)
+    identities = db.query(CustomerIdentity).filter(
+        CustomerIdentity.business_id == tenant.business_id,
+        CustomerIdentity.customer_id == customer_id,
+    ).all()
+    facts = db.query(CustomerFact).filter(
+        CustomerFact.business_id == tenant.business_id,
+        CustomerFact.customer_id == customer_id,
+    ).all()
     messages = db.query(Message).join(
         Conversation, Conversation.id == Message.conversation_id
     ).filter(
@@ -977,6 +1068,10 @@ def customer_timeline(
         Ticket.customer_id == customer_id,
     ).all()
     ticket_ids = [ticket.id for ticket in tickets]
+    ticket_events = db.query(TicketEvent).filter(
+        TicketEvent.business_id == tenant.business_id,
+        TicketEvent.ticket_id.in_(ticket_ids),
+    ).all() if ticket_ids else []
     comments = db.query(TicketComment).filter(
         TicketComment.business_id == tenant.business_id,
         TicketComment.ticket_id.in_(ticket_ids),
@@ -1020,6 +1115,38 @@ def customer_timeline(
         conversation_id=message.conversation_id,
         created_by=message.sender_user_id,
     ) for message in messages]
+    items.extend(CustomerTimelineItem(
+        event_type="identity",
+        event_id=identity.id,
+        occurred_at=identity.last_seen_at or identity.created_at,
+        channel=identity.channel,
+        content=identity.display_name or identity.username or identity.external_user_id,
+        created_by=None,
+        metadata={
+            "identity_id": identity.id,
+            "external_account_id": identity.external_account_id,
+            "external_user_id": identity.external_user_id,
+            "username": identity.username,
+            "display_name": identity.display_name,
+        },
+    ) for identity in identities)
+    items.extend(CustomerTimelineItem(
+        event_type="fact",
+        event_id=fact.id,
+        occurred_at=fact.updated_at or fact.observed_at or fact.created_at,
+        content=fact.fact_key,
+        created_by=None,
+        metadata={
+            "fact_type": fact.fact_type,
+            "fact_key": fact.fact_key,
+            "fact_value": fact.fact_value_json,
+            "confidence": fact.confidence,
+            "source_type": fact.source_type,
+            "source_message_id": fact.source_message_id,
+            "source_order_id": fact.source_order_id,
+            "is_verified": fact.is_verified,
+        },
+    ) for fact in facts)
     items.extend(CustomerTimelineItem(
         event_type="note",
         event_id=note.id,
@@ -1084,6 +1211,21 @@ def customer_timeline(
         created_by=comment.author_user_id,
         metadata={"ticket_id": comment.ticket_id},
     ) for comment in comments)
+    ticket_by_id = {ticket.id: ticket for ticket in tickets}
+    items.extend(CustomerTimelineItem(
+        event_type="ticket_event",
+        event_id=event.id,
+        occurred_at=event.created_at,
+        content=event.event_type,
+        conversation_id=ticket_by_id.get(event.ticket_id).conversation_id if ticket_by_id.get(event.ticket_id) else None,
+        created_by=event.actor_user_id,
+        metadata={
+            "ticket_id": event.ticket_id,
+            "event_subtype": event.event_type,
+            "from_value": event.from_value,
+            "to_value": event.to_value,
+        },
+    ) for event in ticket_events)
     items.extend(CustomerTimelineItem(
         event_type="assignment",
         event_id=assignment.id,
@@ -1167,7 +1309,14 @@ def create_customer_note(
     db.add(note)
     db.commit()
     db.refresh(note)
-    if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="create", resource_type="customer_note", resource_id=str(note.id), metadata={})
-        db.commit()
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="note_create",
+        resource_type="customer_note",
+        resource_id=str(note.id),
+        metadata={"customer_id": customer_id},
+    )
+    db.commit()
     return note

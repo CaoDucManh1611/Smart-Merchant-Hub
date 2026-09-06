@@ -1,6 +1,7 @@
 """Payment, refund and append-only order-event endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.purchase_orders import _out as purchase_order_out
@@ -56,6 +57,23 @@ def _events(db: Session, *, business_id: int, order_type: str, order_id: int):
     return OrderEventListOut(items=[OrderEventOut.model_validate(row) for row in rows], total=len(rows))
 
 
+def _replayed_payment(
+    db: Session,
+    *,
+    business_id: int,
+    idempotency_key: str,
+    order_id: int | None = None,
+    purchase_order_id: int | None = None,
+) -> OrderPayment:
+    payment = db.query(OrderPayment).filter(
+        OrderPayment.business_id == business_id,
+        OrderPayment.idempotency_key == idempotency_key.strip(),
+    ).first()
+    if payment is None or payment.order_id != order_id or payment.purchase_order_id != purchase_order_id:
+        raise HTTPException(status_code=409, detail="Idempotency key đã được dùng cho giao dịch khác.")
+    return payment
+
+
 @router.post("/orders/{order_id}/payments", response_model=SalesPaymentResult, dependencies=[Depends(require_write_access)])
 def create_order_payment(
     order_id: int,
@@ -80,6 +98,15 @@ def create_order_payment(
     except PaymentOperationError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except IntegrityError:
+        db.rollback()
+        payment = _replayed_payment(
+            db,
+            business_id=tenant.business_id,
+            idempotency_key=payload.idempotency_key,
+            order_id=order_id,
+        )
+        created = False
     if created:
         db.commit()
         response.status_code = 201
@@ -115,6 +142,15 @@ def create_order_refund(
     except PaymentOperationError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except IntegrityError:
+        db.rollback()
+        payment = _replayed_payment(
+            db,
+            business_id=tenant.business_id,
+            idempotency_key=payload.idempotency_key,
+            order_id=order_id,
+        )
+        created = False
     if created:
         db.commit()
         response.status_code = 201
@@ -163,6 +199,15 @@ def create_purchase_order_payment(
     except PaymentOperationError as exc:
         db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except IntegrityError:
+        db.rollback()
+        payment = _replayed_payment(
+            db,
+            business_id=tenant.business_id,
+            idempotency_key=payload.idempotency_key,
+            purchase_order_id=order_id,
+        )
+        created = False
     if created:
         db.commit()
         response.status_code = 201

@@ -107,11 +107,15 @@ let reconnectTimer = null;
 
 /* RAG & TAB STATE */
 const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 'tickets' | 'reports' | 'documents' | 'rag_chat' | 'experiments'
+const sidebarCollapsed = ref(false);
 
 const products = ref([]);
 const productsLoading = ref(false);
 const productSaving = ref(false);
 const productError = ref("");
+const productAdjustmentDrafts = ref({});
+const productAdjustmentSaving = ref({});
+const inventoryAdjustmentOpen = ref(null);
 const productForm = ref({
   id: null,
   sku: "",
@@ -152,8 +156,16 @@ const purchaseOrders = ref([]);
 const purchaseOrdersLoading = ref(false);
 const purchaseOrderSaving = ref(false);
 const purchaseOrderError = ref("");
+const suppliers = ref([]);
+const suppliersLoading = ref(false);
+const selectedPurchaseOrderEvents = ref(null);
+const purchaseOrderEventsLoading = ref(false);
+const purchaseReceiptDrafts = ref({});
+const supplierSaving = ref(false);
+const supplierForm = ref({ code: "", name: "" });
 const purchaseOrderForm = ref({
   po_number: "",
+  supplier_id: "",
   supplier_name: "",
   product_id: "",
   quantity: 1,
@@ -238,6 +250,20 @@ const ruleSuggestions = ref([]);
 const experiments = ref([]);
 const experimentationLoading = ref(false);
 const experimentationError = ref("");
+const ruleSuggestionFilter = ref("pending");
+const aiRuleSaving = ref(false);
+const aiRuleForm = ref({
+  title: "",
+  rationale: "",
+  action_type: "add_tag",
+  action_tag: "",
+  action_title: "",
+  action_priority: "normal",
+  action_user_id: "",
+  workflow_id: "",
+});
+const experimentSaving = ref(false);
+const experimentForm = ref({ name: "", variants: "A\nB", status: "draft" });
 const workflowForm = ref({
   name: "",
   event_type: "message.created",
@@ -330,6 +356,21 @@ function openSettings() {
   void fetchMetaStatus();
   void fetchTeam();
   void fetchAuditLogs();
+}
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+}
+
+function runGlobalSearch() {
+  currentTab.value = "inbox";
+  nextTick(() => document.querySelector(".search-box input")?.focus());
+}
+
+function openNotifications() {
+  currentTab.value = "tickets";
+  void fetchOrderCustomers();
+  void fetchTickets();
 }
 
 async function disconnectMeta() {
@@ -633,6 +674,11 @@ function onOrderCustomerChange() {
 const activeTeamUsers = computed(() =>
   teamUsers.value.filter((user) => user.is_active)
 );
+
+const filteredRuleSuggestions = computed(() => {
+  if (ruleSuggestionFilter.value === "all") return ruleSuggestions.value;
+  return ruleSuggestions.value.filter((suggestion) => suggestion.status === ruleSuggestionFilter.value);
+});
 
 
 const filtered = computed(() => {
@@ -1471,6 +1517,18 @@ async function createSavedSegment() {
   }
 }
 
+function toggleTagFilter(tagName) {
+  const name = String(tagName || "").trim();
+  if (!name) return;
+  tagFilters.value = tagFilters.value.includes(name)
+    ? tagFilters.value.filter((tag) => tag !== name)
+    : [...tagFilters.value, name];
+}
+
+function clearInboxSearch() {
+  search.value = "";
+}
+
 function editSavedSegment(segment) {
   if (!segment) return;
   segmentEditingId.value = String(segment.id);
@@ -1526,12 +1584,15 @@ async function reindexDocument(doc) {
 function timelineLabel(event) {
   const labels = {
     message: "Tin nhắn",
+    identity: "Danh tính đa kênh",
+    fact: "Customer Fact",
     note: "Ghi chú",
     lead: "Lead",
     sales_order: "Đơn bán",
     order_payment: "Thanh toán đơn",
     purchase_order: "Đơn nhập",
     ticket: "Ticket",
+    ticket_event: "Lịch sử ticket",
     ticket_comment: "Bình luận ticket",
     assignment: "Phân công",
     customer_merge: "Gộp hồ sơ",
@@ -1821,6 +1882,11 @@ async function fetchProducts() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     products.value = data.items || [];
+    const drafts = { ...productAdjustmentDrafts.value };
+    for (const product of products.value) {
+      if (!drafts[product.id]) drafts[product.id] = { quantity: 1, direction: 1, reason: "" };
+    }
+    productAdjustmentDrafts.value = drafts;
   } catch (err) {
     console.error("Fetch products error:", err);
     productError.value = "Không tải được danh sách sản phẩm.";
@@ -1863,14 +1929,18 @@ async function saveProduct() {
   productError.value = "";
   try {
     const isEdit = Boolean(form.id);
+    const existingProduct = isEdit ? products.value.find((product) => product.id === form.id) : null;
+    const stockAdjustment = isEdit
+      ? Number(form.stock_quantity || 0) - Number(existingProduct?.stock_quantity || 0)
+      : 0;
     const payload = {
       sku: form.sku.trim(),
       name: form.name.trim(),
       description: form.description.trim() || null,
       price: Number(form.price || 0),
-      stock_quantity: Number(form.stock_quantity || 0),
       status: form.status,
     };
+    if (!isEdit) payload.stock_quantity = Number(form.stock_quantity || 0);
     const response = await apiFetch(
       isEdit ? `${API_BASE}/products/${form.id}` : `${API_BASE}/products`,
       {
@@ -1882,6 +1952,20 @@ async function saveProduct() {
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    if (isEdit && stockAdjustment !== 0) {
+      const adjustmentResponse = await apiFetch(`${API_BASE}/inventory/products/${form.id}/adjustments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quantity: stockAdjustment,
+          note: "Điều chỉnh tồn kho từ danh mục sản phẩm",
+        }),
+      });
+      if (!adjustmentResponse.ok) {
+        const detail = await adjustmentResponse.json().catch(() => ({}));
+        throw new Error(detail.detail || "Không thể điều chỉnh tồn kho.");
+      }
     }
     resetProductForm();
     await fetchProducts();
@@ -1928,6 +2012,73 @@ async function fetchOrders() {
   } finally {
     ordersLoading.value = false;
   }
+}
+
+async function adjustProductInventory(product) {
+  const draft = productAdjustmentDrafts.value[product.id] || {};
+  const quantity = Math.abs(Number(draft.quantity || 0)) * (Number(draft.direction || 1) < 0 ? -1 : 1);
+  const reason = String(draft.reason || "").trim();
+  if (!Number.isFinite(quantity) || quantity === 0) {
+    productError.value = "Nhập số lượng điều chỉnh khác 0.";
+    return;
+  }
+  if (!reason) {
+    productError.value = "Cần ghi lý do điều chỉnh tồn kho để tạo ledger.";
+    return;
+  }
+  productAdjustmentSaving.value = { ...productAdjustmentSaving.value, [product.id]: true };
+  productError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/inventory/products/${product.id}/adjustments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quantity, reason }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    productAdjustmentDrafts.value = {
+      ...productAdjustmentDrafts.value,
+      [product.id]: { quantity: 1, direction: 1, reason: "" },
+    };
+    closeInventoryAdjustment();
+    await fetchProducts();
+  } catch (err) {
+    productError.value = err.message || "Không thể điều chỉnh tồn kho.";
+  } finally {
+    const nextSaving = { ...productAdjustmentSaving.value };
+    delete nextSaving[product.id];
+    productAdjustmentSaving.value = nextSaving;
+  }
+}
+
+function openInventoryAdjustment(product, direction = 1) {
+  if (!product?.id) return;
+  const existing = productAdjustmentDrafts.value[product.id] || { quantity: 1, reason: "" };
+  productAdjustmentDrafts.value = {
+    ...productAdjustmentDrafts.value,
+    [product.id]: {
+      ...existing,
+      quantity: Math.max(1, Math.abs(Number(existing.quantity || 1))),
+      direction: direction < 0 ? -1 : 1,
+    },
+  };
+  inventoryAdjustmentOpen.value = product.id;
+}
+
+function closeInventoryAdjustment() {
+  inventoryAdjustmentOpen.value = null;
+}
+
+function inventoryAdjustmentSignedQuantity(product) {
+  const draft = productAdjustmentDrafts.value[product?.id] || {};
+  const amount = Math.abs(Number(draft.quantity || 0));
+  return amount * (Number(draft.direction || 1) < 0 ? -1 : 1);
+}
+
+function inventoryAdjustmentPreview(product) {
+  return Math.max(0, Number(product?.stock_quantity || 0) + inventoryAdjustmentSignedQuantity(product));
 }
 
 async function transitionSalesOrder(order, toStatus) {
@@ -2030,6 +2181,16 @@ async function fetchPurchaseOrders() {
     const response = await apiFetch(`${API_BASE}/purchase-orders`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     purchaseOrders.value = (await response.json()).items || [];
+    const receiptDrafts = { ...purchaseReceiptDrafts.value };
+    for (const purchase of purchaseOrders.value) {
+      for (const item of purchase.items || []) {
+        const remaining = Math.max(0, Number(item.quantity || 0) - Number(item.received_quantity || 0));
+        if (receiptDrafts[item.id] === undefined || Number(receiptDrafts[item.id]) > remaining) {
+          receiptDrafts[item.id] = remaining;
+        }
+      }
+    }
+    purchaseReceiptDrafts.value = receiptDrafts;
   } catch (err) {
     purchaseOrderError.value = "Không tải được đơn nhập hàng.";
   } finally {
@@ -2040,6 +2201,7 @@ async function fetchPurchaseOrders() {
 function resetPurchaseOrderForm() {
   purchaseOrderForm.value = {
     po_number: `PO-${Date.now()}`,
+    supplier_id: suppliers.value[0]?.id ? String(suppliers.value[0].id) : "",
     supplier_name: "",
     product_id: products.value[0]?.id || "",
     quantity: 1,
@@ -2050,7 +2212,9 @@ function resetPurchaseOrderForm() {
 
 async function savePurchaseOrder() {
   const form = purchaseOrderForm.value;
-  if (!form.po_number.trim() || !form.supplier_name.trim() || !form.product_id || Number(form.quantity) < 1) {
+  const supplierId = Number(form.supplier_id || 0) || null;
+  const supplierName = form.supplier_name.trim();
+  if (!form.po_number.trim() || (!supplierId && !supplierName) || !form.product_id || Number(form.quantity) < 1) {
     purchaseOrderError.value = "Mã PO, nhà cung cấp, sản phẩm và số lượng là bắt buộc.";
     return;
   }
@@ -2062,7 +2226,7 @@ async function savePurchaseOrder() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         po_number: form.po_number.trim(),
-        supplier_name: form.supplier_name.trim(),
+        ...(supplierId ? { supplier_id: supplierId } : { supplier_name: supplierName }),
         notes: form.notes.trim() || null,
         items: [{ product_id: Number(form.product_id), quantity: Number(form.quantity), unit_cost: Number(form.unit_cost || 0) }],
       }),
@@ -2078,6 +2242,43 @@ async function savePurchaseOrder() {
   } finally {
     purchaseOrderSaving.value = false;
   }
+}
+
+async function loadPurchaseOrderEvents(purchase) {
+  if (!purchase?.id) return;
+  purchaseOrderEventsLoading.value = true;
+  selectedPurchaseOrderEvents.value = { purchase, items: [] };
+  await nextTick();
+  document.querySelector('[data-testid="purchase-order-events-panel"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+  try {
+    const response = await apiFetch(`${API_BASE}/purchase-orders/${purchase.id}/events`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    selectedPurchaseOrderEvents.value = { purchase, ...(await response.json()) };
+    await nextTick();
+    document.querySelector('[data-testid="purchase-order-events-panel"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) {
+    purchaseOrderError.value = "Không tải được lịch sử đơn nhập.";
+  } finally {
+    purchaseOrderEventsLoading.value = false;
+  }
+}
+
+function purchaseOrderEventLabel(event) {
+  const labels = {
+    status_changed: "Cập nhật trạng thái",
+    receipt_created: "Nhận hàng",
+    payment_created: "Thanh toán nhà cung cấp",
+    refund_created: "Hoàn tiền nhà cung cấp",
+  };
+  return labels[event?.event_type] || event?.event_type || "Sự kiện đơn nhập";
+}
+
+function purchaseOrderEventSummary(event) {
+  const metadata = event?.metadata || {};
+  if (event?.event_type === "status_changed") return `${metadata.from_status || "—"} → ${metadata.to_status || "—"}`;
+  if (metadata.amount !== undefined) return `${Number(metadata.amount).toLocaleString("vi-VN")}đ`;
+  if (metadata.received_quantity !== undefined) return `Đã nhận ${metadata.received_quantity}`;
+  return metadata.note || "Có thay đổi được ghi nhận.";
 }
 
 async function transitionPurchaseOrder(order, toStatus) {
@@ -2096,14 +2297,63 @@ async function transitionPurchaseOrder(order, toStatus) {
   }
 }
 
+async function fetchSuppliers() {
+  suppliersLoading.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/suppliers?status=active`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    suppliers.value = (await response.json()).items || [];
+    if (!purchaseOrderForm.value.supplier_id && suppliers.value.length) {
+      purchaseOrderForm.value.supplier_id = String(suppliers.value[0].id);
+      purchaseOrderForm.value.supplier_name = "";
+    }
+  } catch (err) {
+    purchaseOrderError.value = "Không tải được danh sách nhà cung cấp.";
+  } finally {
+    suppliersLoading.value = false;
+  }
+}
+
+async function saveSupplier() {
+  const code = supplierForm.value.code.trim();
+  const name = supplierForm.value.name.trim();
+  if (!code || !name) {
+    purchaseOrderError.value = "Mã và tên nhà cung cấp là bắt buộc.";
+    return;
+  }
+  supplierSaving.value = true;
+  purchaseOrderError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/suppliers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, name }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    supplierForm.value = { code: "", name: "" };
+    await fetchSuppliers();
+  } catch (err) {
+    purchaseOrderError.value = err.message || "Không thể tạo nhà cung cấp.";
+  } finally {
+    supplierSaving.value = false;
+  }
+}
+
 async function receivePurchaseOrder(order) {
   if (!order?.items?.length) return;
   const items = order.items
-    .filter((item) => Number(item.quantity || 0) > Number(item.received_quantity || 0))
-    .map((item) => ({
-      purchase_order_item_id: item.id,
-      quantity: Number(item.quantity || 0) - Number(item.received_quantity || 0),
-    }));
+    .map((item) => {
+      const remaining = Math.max(0, Number(item.quantity || 0) - Number(item.received_quantity || 0));
+      const requested = Number(purchaseReceiptDrafts.value[item.id] ?? remaining);
+      return {
+        purchase_order_item_id: item.id,
+        quantity: Math.min(remaining, requested),
+      };
+    })
+    .filter((item) => item.quantity > 0);
   if (!items.length) {
     purchaseOrderError.value = "Đơn này đã nhận đủ hàng.";
     return;
@@ -2636,6 +2886,112 @@ async function fetchExperimentation() {
   } finally {
     experimentationLoading.value = false;
   }
+}
+
+function resetAiRuleForm() {
+  aiRuleForm.value = {
+    title: "",
+    rationale: "",
+    action_type: "add_tag",
+    action_tag: "",
+    action_title: "",
+    action_priority: "normal",
+    action_user_id: "",
+    workflow_id: "",
+  };
+}
+
+function resetExperimentForm() {
+  experimentForm.value = { name: "", variants: "A\nB", status: "draft" };
+}
+
+async function createRuleSuggestion() {
+  const form = aiRuleForm.value;
+  if (!form.title.trim() || !form.rationale.trim()) {
+    experimentationError.value = "Tiêu đề và lý do đề xuất là bắt buộc.";
+    return;
+  }
+  const action = { type: form.action_type };
+  if (form.action_type === "add_tag") {
+    if (!form.action_tag.trim()) {
+      experimentationError.value = "Rule gắn tag cần tên tag.";
+      return;
+    }
+    action.tag = form.action_tag.trim();
+  } else if (form.action_type === "create_ticket") {
+    action.title = form.action_title.trim() || "AI follow-up";
+    action.priority = form.action_priority;
+  } else {
+    if (!form.action_user_id) {
+      experimentationError.value = "Rule phân công cần chọn nhân viên.";
+      return;
+    }
+    action.user_id = Number(form.action_user_id);
+  }
+  aiRuleSaving.value = true;
+  experimentationError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/experiments/rule-suggestions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: form.title.trim(),
+        rationale: form.rationale.trim(),
+        proposed_action: action,
+        workflow_id: form.workflow_id ? Number(form.workflow_id) : null,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetAiRuleForm();
+    ruleSuggestionFilter.value = "pending";
+    await fetchExperimentation();
+  } catch (err) {
+    experimentationError.value = err.message || "Không thể lưu đề xuất rule.";
+  } finally {
+    aiRuleSaving.value = false;
+  }
+}
+
+async function createExperiment() {
+  const form = experimentForm.value;
+  const variants = [...new Set(form.variants.split(/[\n,]+/).map((variant) => variant.trim()).filter(Boolean))];
+  if (!form.name.trim() || variants.length < 2) {
+    experimentationError.value = "Experiment cần tên và ít nhất hai biến thể khác nhau.";
+    return;
+  }
+  experimentSaving.value = true;
+  experimentationError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/experiments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: form.name.trim(), variants, status: form.status }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    resetExperimentForm();
+    await fetchExperimentation();
+  } catch (err) {
+    experimentationError.value = err.message || "Không thể tạo experiment.";
+  } finally {
+    experimentSaving.value = false;
+  }
+}
+
+function ruleStatusLabel(status) {
+  return { pending: "Chờ duyệt", accepted: "Đã duyệt", rejected: "Từ chối" }[status] || status || "—";
+}
+
+function ruleActionLabel(action = {}) {
+  if (action.type === "add_tag") return `Gắn tag: ${action.tag || "—"}`;
+  if (action.type === "create_ticket") return `Tạo ticket: ${action.title || "AI follow-up"}`;
+  if (action.type === "assign_user") return `Phân công #${action.user_id || "—"}`;
+  return action.type || "Chưa xác định";
 }
 
 async function reviewRuleSuggestion(suggestion, status) {
@@ -3563,12 +3919,14 @@ onMounted(async () => {
   );
   await Promise.all([fetchProducts(), fetchOrderCustomers()]);
   resetOrderForm();
+  resetPurchaseOrderForm();
   fetchTagCatalog();
   fetchSavedSegments();
 
   connectRealtime();
   fetchDocuments();
   fetchOrders();
+  fetchSuppliers();
   fetchPurchaseOrders();
   fetchLeads();
   fetchTickets();
@@ -3648,7 +4006,7 @@ onUnmounted(() => {
 
 <template>
 
-  <div class="crm-app">
+  <div class="crm-app" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
 
 
     <!-- =====================================================
@@ -3668,142 +4026,65 @@ onUnmounted(() => {
 
       <nav class="menu">
 
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'inbox' && !selectedId }"
-          @click="currentTab = 'inbox'"
-        >
+        <div class="menu-group menu-group-customer">
+          <span class="menu-group-label">Khách hàng</span>
+          <button
+            class="menu-item"
+            :class="{ active: currentTab === 'inbox' }"
+            @click="currentTab = 'inbox'"
+          >
+            <span class="nav-icon">CX</span>
+            <b>Inbox &amp; Customer 360</b>
+            <em>{{ conversations.length }}</em>
+          </button>
+        </div>
 
-          <span class="nav-icon">IN</span>
+        <div class="menu-group menu-group-operations">
+          <span class="menu-group-label">Vận hành</span>
+          <button class="menu-item" :class="{ active: currentTab === 'documents' }" @click="currentTab = 'documents'; fetchDocuments()">
+            <span class="nav-icon">KB</span><b>Knowledge Base</b><em>{{ documents.length }}</em>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'products' }" @click="currentTab = 'products'; fetchProducts()">
+            <span class="nav-icon">PR</span><b>Sản phẩm</b><em>{{ products.length }}</em>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'orders' }" @click="currentTab = 'orders'; loadConversations(false); fetchOrderCustomers(); fetchProducts(); fetchOrders()">
+            <span class="nav-icon">SO</span><b>Đơn bán</b><em>{{ orders.length }}</em>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'purchase-orders' }" @click="currentTab = 'purchase-orders'; fetchProducts(); fetchSuppliers(); fetchPurchaseOrders()">
+            <span class="nav-icon">PO</span><b>Đơn nhập</b><em>{{ purchaseOrders.length }}</em>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'leads' }" @click="currentTab = 'leads'; fetchOrderCustomers(); fetchLeads()">
+            <span class="nav-icon">SL</span><b>Sales Pipeline</b><em>{{ leads.length }}</em>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'tickets' }" @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()">
+            <span class="nav-icon">TK</span><b>Ticket &amp; SLA</b><em>{{ tickets.length }}</em>
+          </button>
+        </div>
 
-          <b>Inbox</b>
+        <div class="menu-group menu-group-ai">
+          <span class="menu-group-label">AI &amp; Tự động hóa</span>
+          <div class="ai-submenu">
+            <button class="menu-item" :class="{ active: currentTab === 'workflows' }" @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()">
+              <span class="nav-icon">WF</span><b>Workflow</b><em>{{ workflows.length }}</em>
+            </button>
+            <button class="menu-item" :class="{ active: currentTab === 'experiments' }" @click="currentTab = 'experiments'; fetchExperimentation(); fetchTeam(); fetchWorkflows()">
+              <span class="nav-icon">ML</span><b>AI Rule Lab</b><em>{{ ruleSuggestions.filter(item => item.status === 'pending').length }}</em>
+            </button>
+            <button class="menu-item" :class="{ active: currentTab === 'rag_chat' }" @click="currentTab = 'rag_chat'; fetchAutoReplySetting()">
+              <span class="nav-icon">AI</span><b>AI Assistant</b>
+            </button>
+          </div>
+        </div>
 
-          <em>
-            {{ conversations.length }}
-          </em>
-
-        </button>
-
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'inbox' && selectedId }"
-          @click="currentTab = 'inbox'"
-        >
-          <span class="nav-icon">CX</span>
-          <b>Customer 360</b>
-        </button>
-
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'documents' }"
-          @click="currentTab = 'documents'; fetchDocuments()"
-        >
-          <span class="nav-icon">KB</span>
-          <b>Knowledge Base</b>
-          <em>{{ documents.length }}</em>
-        </button>
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'products' }"
-          @click="currentTab = 'products'; fetchProducts()"
-        >
-          <span class="nav-icon">PR</span>
-          <b>Sản phẩm</b>
-          <em>{{ products.length }}</em>
-        </button>
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'orders' }"
-          @click="currentTab = 'orders'; loadConversations(false); fetchOrderCustomers(); fetchProducts(); fetchOrders()"
-        >
-          <span class="nav-icon">SO</span>
-          <b>Đơn bán</b>
-          <em>{{ orders.length }}</em>
-        </button>
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'leads' }"
-          @click="currentTab = 'leads'; fetchOrderCustomers(); fetchLeads()"
-        >
-          <span class="nav-icon">SL</span>
-          <b>Sales Pipeline</b>
-          <em>{{ leads.length }}</em>
-        </button>
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'tickets' }"
-          @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()"
-        >
-          <span class="nav-icon">TK</span>
-          <b>Ticket &amp; SLA</b>
-          <em>{{ tickets.length }}</em>
-        </button>
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'reports' }"
-          @click="currentTab = 'reports'; fetchReports()"
-        >
-          <span class="nav-icon">BI</span>
-          <b>Báo cáo</b>
-        </button>
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'workflows' }"
-          @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()"
-        >
-          <span class="nav-icon">WF</span>
-          <b>Workflow</b>
-          <em>{{ workflows.length }}</em>
-        </button>
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'experiments' }"
-          @click="currentTab = 'experiments'; fetchExperimentation()"
-        >
-          <span class="nav-icon">ML</span>
-          <b>AI Lab</b>
-          <em>{{ ruleSuggestions.filter(item => item.status === 'pending').length }}</em>
-        </button>
-
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'rag_chat' }"
-          @click="currentTab = 'rag_chat'; fetchAutoReplySetting()"
-        >
-          <span class="nav-icon">AI</span>
-          <b>AI Assistant</b>
-        </button>
-
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'settings' }"
-          @click="openSettings"
-        >
-          <span class="nav-icon">SE</span>
-          <b>Settings</b>
-        </button>
-
-
-        <button
-          class="menu-item"
-          :class="{ active: currentTab === 'purchase-orders' }"
-          @click="currentTab = 'purchase-orders'; fetchProducts(); fetchPurchaseOrders()"
-        >
-          <span class="nav-icon">PO</span>
-          <b>Đơn nhập</b>
-          <em>{{ purchaseOrders.length }}</em>
-        </button>
+        <div class="menu-group menu-group-system">
+          <span class="menu-group-label">Hệ thống</span>
+          <button class="menu-item" :class="{ active: currentTab === 'reports' }" @click="currentTab = 'reports'; fetchReports()">
+            <span class="nav-icon">BI</span><b>Báo cáo</b>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'settings' }" @click="openSettings">
+            <span class="nav-icon">SE</span><b>Settings</b>
+          </button>
+        </div>
 
       </nav>
 
@@ -3817,15 +4098,17 @@ onUnmounted(() => {
       </div>
 
 
-      <button class="collapse">
-
-        ‹
-
-        <span>
-          Thu gọn
-        </span>
-
-        </button>
+      <button
+        type="button"
+        class="collapse"
+        :aria-expanded="String(!sidebarCollapsed)"
+        :aria-label="sidebarCollapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'"
+        :title="sidebarCollapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'"
+        @click="toggleSidebar"
+      >
+        <span class="collapse-icon" aria-hidden="true">‹</span>
+        <span>{{ sidebarCollapsed ? 'Mở rộng' : 'Thu gọn' }}</span>
+      </button>
 
     </aside>
 
@@ -3856,30 +4139,38 @@ onUnmounted(() => {
 
         <div class="top-actions">
 
-          <div class="top-search">
+          <label class="top-search" role="search">
+            <input
+              class="top-search-input"
+              v-model="search"
+              type="search"
+              placeholder="Tìm kiếm khách hàng, tin nhắn, đơn hàng..."
+              aria-label="Tìm kiếm khách hàng, tin nhắn, đơn hàng"
+              @keydown.enter="runGlobalSearch"
+            />
+            <span aria-hidden="true">⌕</span>
+          </label>
 
-            Tìm kiếm khách hàng,
-            tin nhắn, đơn hàng...
 
-            <span>
-              ⌕
-            </span>
-
-          </div>
-
-
-          <button class="bell">
-
+          <button
+            type="button"
+            class="bell"
+            aria-label="Mở thông báo SLA"
+            title="Mở thông báo SLA"
+            @click="openNotifications"
+          >
             !
-
-            <i>
-              12
-            </i>
-
+            <i v-if="slaNotifications.length">{{ slaNotifications.length }}</i>
           </button>
 
 
-          <div class="team">
+          <button
+            type="button"
+            class="team"
+            aria-label="Mở Settings"
+            title="Mở Settings"
+            @click="openSettings"
+          >
 
             <div class="team-avatar">
               SM
@@ -3897,7 +4188,7 @@ onUnmounted(() => {
 
             </div>
 
-          </div>
+          </button>
 
         </div>
 
@@ -3930,19 +4221,19 @@ onUnmounted(() => {
 
 
           <div class="inbox-title">
-
-            <h2>
-              Hộp thư khách hàng
-            </h2>
-
-            <button>
-              ⌄
-            </button>
-
+            <div class="inbox-title-copy">
+              <span class="inbox-title-kicker">CUSTOMER INBOX</span>
+              <h2>Hộp thư khách hàng</h2>
+              <p>Quản lý hội thoại và hồ sơ 360 trên một màn hình.</p>
+            </div>
+            <div class="inbox-title-actions">
+              <span class="inbox-title-count">{{ filtered.length }}</span>
+              <button type="button" class="inbox-refresh" aria-label="Làm mới hội thoại" title="Làm mới hội thoại" @click="loadConversations(false)">↻</button>
+            </div>
           </div>
 
-
-          <div class="inbox-tabs">
+          <div class="inbox-toolbar">
+            <div class="inbox-tabs inbox-channel-tabs">
 
             <button
               :class="{
@@ -3954,11 +4245,8 @@ onUnmounted(() => {
               "
             >
 
-              Tất cả
-
-              <i>
-                {{ conversations.length }}
-              </i>
+              <span>Tất cả</span>
+              <i>{{ conversations.length }}</i>
 
             </button>
 
@@ -3972,7 +4260,8 @@ onUnmounted(() => {
                 activeFilter = 'facebook'
               "
             >
-              Facebook
+              <span>Facebook</span>
+              <i>{{ conversations.filter(item => item.channel === 'facebook').length }}</i>
             </button>
 
 
@@ -3985,7 +4274,8 @@ onUnmounted(() => {
                 activeFilter = 'instagram'
               "
             >
-              Instagram
+              <span>Instagram</span>
+              <i>{{ conversations.filter(item => item.channel === 'instagram').length }}</i>
             </button>
 
             <button
@@ -3997,39 +4287,41 @@ onUnmounted(() => {
                 activeFilter = 'telegram'
               "
             >
-              Telegram
+              <span>Telegram</span>
+              <i>{{ conversations.filter(item => item.channel === 'telegram').length }}</i>
             </button>
 
           </div>
 
 
-          <div class="search-box">
+          <div class="search-box inbox-search-box">
+            <span aria-hidden="true">⌕</span>
+            <input v-model="search" aria-label="Tìm hội thoại" placeholder="Tìm theo tên, nội dung hoặc kênh..." @keydown.escape="clearInboxSearch" />
+            <button v-if="search" type="button" class="search-clear" aria-label="Xóa tìm kiếm" @click="clearInboxSearch">×</button>
+            </div>
 
-            <span>
-              ⌕
-            </span>
-
-            <input
-              v-model="search"
-              placeholder="Tìm hội thoại..."
-            />
-
+          <div class="inbox-filter-panel">
+            <div class="filter-panel-heading"><span>Tags khách hàng</span><button v-if="tagFilters.length" type="button" @click="tagFilters = []">Bỏ chọn</button></div>
+            <div v-if="tagCatalog.length" class="tag-chip-list">
+              <button v-for="tag in tagCatalog" :key="tag.id" type="button" class="tag-chip" :class="{ active: tagFilters.includes(tag.name) }" @click="toggleTagFilter(tag.name)">
+                <span>#{{ tag.name }}</span><i>{{ tag.customer_count || 0 }}</i>
+              </button>
+            </div>
+            <div v-else class="filter-empty">Chưa có tag để lọc</div>
+            <div class="tag-mode-toggle" role="group" aria-label="Cách lọc tag">
+              <label :class="{ active: tagFilterMode === 'all' }"><input v-model="tagFilterMode" type="radio" value="all" /> Tất cả tag</label>
+              <label :class="{ active: tagFilterMode === 'any' }"><input v-model="tagFilterMode" type="radio" value="any" /> Ít nhất một tag</label>
+            </div>
           </div>
 
-          <div v-if="tagCatalog.length" class="tag-filter-controls">
-            <select v-model="tagFilters" class="segment-filter" multiple size="3" aria-label="Lọc theo nhiều tag">
-              <option v-for="tag in tagCatalog" :key="tag.id" :value="tag.name">{{ tag.name }}</option>
+            <div class="segment-control">
+            <div class="filter-panel-heading"><span>Segment</span><small v-if="segmentLoading">Đang tải...</small></div>
+            <select v-model="selectedSegmentId" aria-label="Lọc theo segment đã lưu" @change="loadSegmentMembers">
+              <option value="">Mọi segment đã lưu</option>
+              <option v-for="segment in savedSegments" :key="segment.id" :value="segment.id">{{ segment.name }} ({{ segment.customer_count }})</option>
             </select>
-            <label><input v-model="tagFilterMode" type="radio" value="all" /> Có tất cả tag</label>
-            <label><input v-model="tagFilterMode" type="radio" value="any" /> Có ít nhất một tag</label>
+            </div>
           </div>
-
-          <select v-if="savedSegments.length" v-model="selectedSegmentId" class="segment-filter" aria-label="Lọc theo segment đã lưu" @change="loadSegmentMembers">
-            <option value="">Mọi segment đã lưu</option>
-            <option v-for="segment in savedSegments" :key="segment.id" :value="segment.id">
-              {{ segment.name }} ({{ segment.customer_count }})
-            </option>
-          </select>
 
 
           <div class="conversation-scroll">
@@ -4080,30 +4372,20 @@ onUnmounted(() => {
 
 
                 <div class="conv-head">
-
                   <strong>
                     {{ nameOf(item) }}
                   </strong>
-
-                  <time>
-                    {{
-                      formatTime(
-                        item.last_message_at
-                      )
-                    }}
-                  </time>
-
+                  <div class="conversation-status">
+                    <span v-if="item.unread_count" class="conversation-unread">{{ item.unread_count }}</span>
+                    <time>{{ formatTime(item.last_message_at) }}</time>
+                  </div>
                 </div>
 
 
                 <div class="channel">
 
-                  <span
-                    class="social-icon"
-                    :class="
-                      item.channel
-                    "
-                  >
+                  <span class="conversation-channel-pill">
+                    <span class="social-icon" :class="item.channel">
 
                     <svg
                       v-if="
@@ -4163,14 +4445,9 @@ onUnmounted(() => {
 
                     </svg>
 
+                    </span>
+                    {{ channelLabel(item.channel) }}
                   </span>
-
-
-                  {{
-                    channelLabel(
-                      item.channel
-                    )
-                  }}
 
                 </div>
 
@@ -5240,6 +5517,10 @@ onUnmounted(() => {
                     <div>
                       <small>{{ timelineLabel(event) }}<span v-if="event.channel"> · {{ channelLabel(event.channel) }}</span></small>
                       <p>{{ event.content || 'Sự kiện không có nội dung' }}</p>
+                      <small class="customer-timeline-meta">
+                        {{ event.occurred_at ? new Date(event.occurred_at).toLocaleString('vi-VN') : 'Không rõ thời gian' }}
+                        <span v-if="event.created_by"> · Nhân viên #{{ event.created_by }}</span>
+                      </small>
                     </div>
                   </div>
                 </div>
@@ -5462,7 +5743,7 @@ onUnmounted(() => {
             <label>SKU<input v-model="productForm.sku" required maxlength="80" /></label>
             <label>Tên sản phẩm<input v-model="productForm.name" required maxlength="255" /></label>
             <label>Giá<input v-model.number="productForm.price" type="number" min="0" step="1" required /></label>
-            <label>Tồn kho<input v-model.number="productForm.stock_quantity" type="number" min="0" step="1" required /></label>
+            <label>Tồn đầu kỳ{{ productForm.id ? ' (không sửa trực tiếp)' : '' }}<input v-model.number="productForm.stock_quantity" type="number" min="0" step="1" :disabled="Boolean(productForm.id)" required /></label>
             <label>Trạng thái<select v-model="productForm.status"><option value="active">Đang bán</option><option value="archived">Đã lưu trữ</option></select></label>
             <label class="product-description">Mô tả<textarea v-model="productForm.description" rows="2"></textarea></label>
           </div>
@@ -5475,16 +5756,63 @@ onUnmounted(() => {
         <div v-else-if="!products.length" class="products-empty">Chưa có sản phẩm nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table">
-            <thead><tr><th>SKU</th><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Trạng thái</th><th></th></tr></thead>
+            <thead><tr><th>SKU</th><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Điều chỉnh tồn</th><th>Trạng thái</th><th></th></tr></thead>
             <tbody>
-              <tr v-for="product in products" :key="product.id">
-                <td><strong>{{ product.sku }}</strong></td>
-                <td><div>{{ product.name }}</div><small>{{ product.description || 'Không có mô tả' }}</small></td>
-                <td>{{ Number(product.price).toLocaleString('vi-VN') }}đ</td>
-                <td>{{ product.stock_quantity }}</td>
-                <td><span class="product-status" :class="product.status">{{ product.status === 'active' ? 'Đang bán' : 'Lưu trữ' }}</span></td>
-                <td class="product-actions"><button type="button" @click="editProduct(product)">Sửa</button><button v-if="product.status === 'active'" type="button" @click="archiveProduct(product)">Lưu trữ</button></td>
-              </tr>
+              <template v-for="product in products" :key="product.id">
+                <tr>
+                  <td><strong>{{ product.sku }}</strong></td>
+                  <td><div>{{ product.name }}</div><small>{{ product.description || 'Không có mô tả' }}</small></td>
+                  <td>{{ Number(product.price).toLocaleString('vi-VN') }}đ</td>
+                  <td class="inventory-cell">
+                    <div class="inventory-summary">
+                      <div class="inventory-total">
+                        <span>Tồn kho</span>
+                        <strong>{{ product.stock_quantity }}</strong>
+                      </div>
+                      <div class="inventory-available">
+                        <span>Khả dụng</span>
+                        <strong>{{ Math.max(0, Number(product.stock_quantity || 0) - Number(product.reserved_quantity || 0)) }}</strong>
+                      </div>
+                    </div>
+                    <small v-if="Number(product.reserved_quantity || 0) > 0" class="inventory-reserved">Đang giữ {{ product.reserved_quantity }}</small>
+                  </td>
+                  <td class="inventory-adjustment-cell">
+                    <button type="button" class="adjustment-trigger" :class="{ active: inventoryAdjustmentOpen === product.id }" @click="inventoryAdjustmentOpen === product.id ? closeInventoryAdjustment() : openInventoryAdjustment(product)">
+                      {{ inventoryAdjustmentOpen === product.id ? 'Đóng điều chỉnh' : 'Điều chỉnh' }}
+                    </button>
+                    <small>Ghi qua ledger</small>
+                  </td>
+                  <td><span class="product-status" :class="product.status">{{ product.status === 'active' ? 'Đang bán' : 'Lưu trữ' }}</span></td>
+                  <td class="product-actions"><button type="button" @click="editProduct(product)">Sửa</button><button v-if="product.status === 'active'" type="button" @click="archiveProduct(product)">Lưu trữ</button></td>
+                </tr>
+                <tr v-if="inventoryAdjustmentOpen === product.id" class="inventory-adjustment-row">
+                  <td colspan="7">
+                    <div class="inventory-adjustment-panel">
+                      <div class="inventory-adjustment-heading">
+                        <div>
+                          <strong>Điều chỉnh tồn kho · {{ product.name }}</strong>
+                          <div class="inventory-adjustment-current">
+                            <span><small>Tồn hiện tại</small><b>{{ product.stock_quantity }}</b></span>
+                            <span><small>Khả dụng</small><b>{{ Math.max(0, Number(product.stock_quantity || 0) - Number(product.reserved_quantity || 0)) }}</b></span>
+                            <span><small>Đang giữ</small><b>{{ Number(product.reserved_quantity || 0) }}</b></span>
+                          </div>
+                        </div>
+                        <button type="button" class="panel-close-btn" @click="closeInventoryAdjustment">×</button>
+                      </div>
+                      <div class="adjustment-direction" role="group" aria-label="Loại điều chỉnh">
+                        <button type="button" :class="{ active: Number(productAdjustmentDrafts[product.id].direction) > 0 }" @click="openInventoryAdjustment(product, 1)">Nhập thêm (+)</button>
+                        <button type="button" :class="{ active: Number(productAdjustmentDrafts[product.id].direction) < 0 }" @click="openInventoryAdjustment(product, -1)">Ghi giảm (−)</button>
+                      </div>
+                      <div class="adjustment-fields">
+                        <label>Số lượng<input v-model.number="productAdjustmentDrafts[product.id].quantity" type="number" min="1" step="1" aria-label="Số lượng điều chỉnh" /></label>
+                        <label>Lý do điều chỉnh<input v-model="productAdjustmentDrafts[product.id].reason" maxlength="1000" placeholder="Ví dụ: kiểm kê, hỏng hàng, nhập bổ sung..." aria-label="Lý do điều chỉnh tồn" /></label>
+                        <div class="adjustment-preview"><span>Tồn sau điều chỉnh</span><strong>{{ inventoryAdjustmentPreview(product) }}</strong></div>
+                      </div>
+                      <div class="adjustment-actions"><small>Số lượng gửi: {{ inventoryAdjustmentSignedQuantity(product) > 0 ? '+' : '' }}{{ inventoryAdjustmentSignedQuantity(product) }}</small><button type="button" class="primary-btn" :disabled="productAdjustmentSaving[product.id]" @click="adjustProductInventory(product)">{{ productAdjustmentSaving[product.id] ? 'Đang ghi...' : 'Ghi điều chỉnh' }}</button></div>
+                    </div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -5790,7 +6118,14 @@ onUnmounted(() => {
           </div>
           <div class="product-form-grid">
             <label>Mã PO<input v-model="purchaseOrderForm.po_number" required maxlength="80" /></label>
-            <label>Nhà cung cấp<input v-model="purchaseOrderForm.supplier_name" required maxlength="255" placeholder="Ví dụ: Smart Merchant Hub" /></label>
+            <label>Nhà cung cấp
+              <select v-model="purchaseOrderForm.supplier_id" :disabled="suppliersLoading">
+                <option value="">Nhập tên thủ công</option>
+                <option v-for="supplier in suppliers" :key="supplier.id" :value="String(supplier.id)">{{ supplier.name }}{{ supplier.code ? ` · ${supplier.code}` : '' }}</option>
+              </select>
+              <input v-if="!purchaseOrderForm.supplier_id" v-model="purchaseOrderForm.supplier_name" required maxlength="255" placeholder="Tên nhà cung cấp" />
+              <small v-else>Đã chọn nhà cung cấp đang hoạt động</small>
+            </label>
             <label>Sản phẩm / dịch vụ
               <select v-model="purchaseOrderForm.product_id" required>
                 <option value="" disabled>Chọn mục nhập</option>
@@ -5804,16 +6139,28 @@ onUnmounted(() => {
           <button class="primary-btn" type="submit" :disabled="purchaseOrderSaving">{{ purchaseOrderSaving ? 'Đang tạo...' : 'Tạo PO' }}</button>
         </form>
 
+        <details class="supplier-manager">
+          <summary>Quản lý nhà cung cấp</summary>
+          <form class="supplier-form" @submit.prevent="saveSupplier">
+            <input v-model="supplierForm.code" required maxlength="80" placeholder="Mã nhà cung cấp" />
+            <input v-model="supplierForm.name" required maxlength="255" placeholder="Tên nhà cung cấp" />
+            <button class="table-action-btn" type="submit" :disabled="supplierSaving">{{ supplierSaving ? 'Đang lưu...' : 'Thêm nhà cung cấp' }}</button>
+          </form>
+          <div v-if="suppliersLoading" class="products-empty">Đang tải nhà cung cấp...</div>
+          <div v-else-if="!suppliers.length" class="products-empty">Chưa có nhà cung cấp đang hoạt động.</div>
+          <ul v-else class="supplier-list"><li v-for="supplier in suppliers" :key="supplier.id"><strong>{{ supplier.name }}</strong><small>{{ supplier.code }}</small></li></ul>
+        </details>
+
         <div v-if="purchaseOrdersLoading" class="products-empty">Đang tải đơn nhập...</div>
         <div v-else-if="!purchaseOrders.length" class="products-empty">Chưa có Purchase Order nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table orders-table">
-            <thead><tr><th>Mã PO</th><th>Nhà cung cấp</th><th>Mặt hàng</th><th>Trạng thái</th><th>Thanh toán</th><th>Tổng chi</th><th>Cập nhật</th></tr></thead>
+            <thead><tr><th>Mã PO</th><th>Nhà cung cấp</th><th>Mặt hàng</th><th>Trạng thái</th><th>Thanh toán</th><th>Tổng chi</th><th>Cập nhật</th><th></th></tr></thead>
             <tbody>
               <tr v-for="purchase in purchaseOrders" :key="purchase.id">
                 <td><strong>{{ purchase.po_number }}</strong></td>
                 <td>{{ purchase.supplier_name }}</td>
-                <td><span v-for="(item, index) in purchase.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.received_quantity || 0 }} / {{ item.quantity }}</span></td>
+                <td><span v-for="(item, index) in purchase.items" :key="item.id" class="purchase-line"><span>{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.received_quantity || 0 }} / {{ item.quantity }}</span><input v-if="['submitted', 'partially_received'].includes(purchase.status) && Number(item.quantity || 0) > Number(item.received_quantity || 0)" v-model.number="purchaseReceiptDrafts[item.id]" type="number" min="1" :max="Math.max(1, Number(item.quantity || 0) - Number(item.received_quantity || 0))" aria-label="Số lượng nhận" /></span></td>
                 <td>
                   <select class="inline-stage" :value="purchase.status" @change="transitionPurchaseOrder(purchase, $event.target.value)">
                     <option v-for="status in purchaseStatuses" :key="status" :value="status" :disabled="['partially_received', 'received'].includes(status)">{{ status }}</option>
@@ -5823,9 +6170,25 @@ onUnmounted(() => {
                 <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ purchase.payment_status || 'unpaid' }}</span><small>{{ Number(purchase.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Thanh toán công nợ</button></div></td>
                 <td><strong>{{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</strong></td>
                 <td>{{ purchase.updated_at ? new Date(purchase.updated_at).toLocaleString('vi-VN') : '—' }}</td>
+                <td><button type="button" class="table-action-btn" data-testid="purchase-order-history-button" @click.stop="loadPurchaseOrderEvents(purchase)">Lịch sử</button></td>
               </tr>
             </tbody>
           </table>
+        </div>
+        <div v-if="selectedPurchaseOrderEvents" class="order-events-panel" data-testid="purchase-order-events-panel">
+          <div class="product-form-title">
+            <span>Lịch sử {{ selectedPurchaseOrderEvents.purchase?.po_number || 'Purchase Order' }}</span>
+            <button type="button" @click="selectedPurchaseOrderEvents = null">Đóng</button>
+          </div>
+          <div v-if="purchaseOrderEventsLoading" class="products-empty">Đang tải lịch sử...</div>
+          <div v-else-if="!selectedPurchaseOrderEvents.items?.length" class="products-empty">Chưa có event.</div>
+          <ol v-else class="order-events-list">
+            <li v-for="event in selectedPurchaseOrderEvents.items" :key="event.id">
+              <strong>{{ purchaseOrderEventLabel(event) }}</strong>
+              <span>{{ purchaseOrderEventSummary(event) }}</span>
+              <small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small>
+            </li>
+          </ol>
         </div>
       </section>
 
@@ -5902,52 +6265,66 @@ onUnmounted(() => {
       <section v-if="currentTab === 'experiments'" class="products-layout experiments-layout">
         <div class="products-header">
           <div>
-            <h2>Recommendation &amp; thử nghiệm AI</h2>
-            <p>Đề xuất rule cần người duyệt; assignment, outcome và bandit được ghi lại để đo lường trước khi tự động hóa.</p>
+            <span class="page-kicker">AI &amp; Tự động hóa</span>
+            <h2>AI Rule Lab</h2>
+            <p>Quản lý đề xuất có giải thích, duyệt thủ công trước khi đưa vào workflow và theo dõi thử nghiệm theo từng biến thể.</p>
           </div>
-          <button class="primary-btn" type="button" @click="fetchExperimentation">Làm mới</button>
+          <button class="primary-btn" type="button" @click="fetchExperimentation">Làm mới dữ liệu</button>
         </div>
 
         <div v-if="experimentationError" class="product-error">{{ experimentationError }}</div>
         <div v-if="experimentationLoading" class="products-empty">Đang tải dữ liệu thử nghiệm...</div>
 
-        <div v-else class="experiments-grid">
-          <div class="settings-card">
-            <div class="card-header">
-              <h3>Đề xuất rule</h3>
-              <span class="count-badge">{{ ruleSuggestions.length }}</span>
-            </div>
-            <div v-if="!ruleSuggestions.length" class="settings-empty">Chưa có đề xuất.</div>
-            <ul v-else class="suggestion-list">
-              <li v-for="suggestion in ruleSuggestions" :key="suggestion.id">
-                <div>
-                  <strong>{{ suggestion.title }}</strong>
-                  <p>{{ suggestion.rationale }}</p>
-                  <small>Action: {{ suggestion.proposed_action?.type || '—' }} · {{ suggestion.status }}</small>
-                </div>
-                <div v-if="suggestion.status === 'pending'" class="suggestion-actions">
-                  <button type="button" class="history-btn" @click="reviewRuleSuggestion(suggestion, 'accepted')">Duyệt</button>
-                  <button type="button" class="history-btn" @click="reviewRuleSuggestion(suggestion, 'rejected')">Từ chối</button>
-                </div>
-              </li>
-            </ul>
+        <div v-else class="ai-lab-content">
+          <div class="ai-lab-summary">
+            <div class="ai-stat-card ai-stat-primary"><span>Tổng đề xuất</span><strong>{{ ruleSuggestions.length }}</strong><small>Rule đã ghi nhận</small></div>
+            <div class="ai-stat-card"><span>Chờ duyệt</span><strong>{{ ruleSuggestions.filter(item => item.status === 'pending').length }}</strong><small>Cần người kiểm tra</small></div>
+            <div class="ai-stat-card"><span>Đã duyệt</span><strong>{{ ruleSuggestions.filter(item => item.status === 'accepted').length }}</strong><small>Sẵn sàng đưa vào workflow</small></div>
+            <div class="ai-stat-card"><span>Experiments</span><strong>{{ experiments.length }}</strong><small>Đang theo dõi</small></div>
           </div>
 
-          <div class="settings-card">
-            <div class="card-header">
-              <h3>Experiments</h3>
-              <span class="count-badge">{{ experiments.length }}</span>
+          <div class="ai-compose-grid">
+            <form class="ai-compose-card" @submit.prevent="createRuleSuggestion">
+              <div class="ai-card-heading"><div><span class="card-eyebrow">HUMAN REVIEW</span><h3>Tạo đề xuất rule</h3></div><span class="ai-card-icon">R</span></div>
+              <p class="ai-card-help">AI chỉ đề xuất. Rule chỉ được dùng sau khi bạn duyệt.</p>
+              <label class="ai-field">Tiêu đề rule<input v-model="aiRuleForm.title" required maxlength="255" placeholder="Ví dụ: Gắn tag khách hỏi giá" /></label>
+              <label class="ai-field">Lý do đề xuất<textarea v-model="aiRuleForm.rationale" required maxlength="5000" rows="3" placeholder="Mô tả tín hiệu và lợi ích của rule..."></textarea></label>
+              <div class="ai-field-grid">
+                <label class="ai-field">Hành động<select v-model="aiRuleForm.action_type"><option value="add_tag">Gắn tag</option><option value="create_ticket">Tạo ticket</option><option value="assign_user">Phân công</option></select></label>
+                <label class="ai-field" v-if="aiRuleForm.action_type === 'add_tag'">Tên tag<input v-model="aiRuleForm.action_tag" maxlength="80" placeholder="vip" /></label>
+                <label class="ai-field" v-if="aiRuleForm.action_type === 'create_ticket'">Tiêu đề ticket<input v-model="aiRuleForm.action_title" maxlength="255" placeholder="AI follow-up" /></label>
+                <label class="ai-field" v-if="aiRuleForm.action_type === 'create_ticket'">Ưu tiên<select v-model="aiRuleForm.action_priority"><option value="low">Thấp</option><option value="normal">Bình thường</option><option value="high">Cao</option><option value="urgent">Khẩn cấp</option></select></label>
+                <label class="ai-field" v-if="aiRuleForm.action_type === 'assign_user'">Nhân viên<select v-model="aiRuleForm.action_user_id"><option value="">Chọn nhân viên</option><option v-for="member in activeTeamUsers" :key="member.id" :value="member.id">{{ member.full_name }}</option></select></label>
+              </div>
+              <label class="ai-field">Workflow liên kết <select v-model="aiRuleForm.workflow_id"><option value="">Chưa liên kết</option><option v-for="workflow in workflows" :key="workflow.id" :value="workflow.id">{{ workflow.name }}</option></select></label>
+              <div class="ai-form-actions"><button type="button" class="secondary-btn" @click="resetAiRuleForm">Xóa form</button><button class="primary-btn" type="submit" :disabled="aiRuleSaving">{{ aiRuleSaving ? 'Đang lưu...' : 'Lưu đề xuất rule' }}</button></div>
+            </form>
+
+            <form class="ai-compose-card" @submit.prevent="createExperiment">
+              <div class="ai-card-heading"><div><span class="card-eyebrow">MEASURE BEFORE SCALE</span><h3>Tạo experiment</h3></div><span class="ai-card-icon ai-card-icon-alt">A/B</span></div>
+              <p class="ai-card-help">Tách biến thể bằng dấu phẩy hoặc xuống dòng để đo hiệu quả trước khi tự động hóa.</p>
+              <label class="ai-field">Tên experiment<input v-model="experimentForm.name" required maxlength="160" placeholder="Ví dụ: Mẫu trả lời giá" /></label>
+              <label class="ai-field">Các biến thể<textarea v-model="experimentForm.variants" required rows="4" placeholder="A\nB"></textarea></label>
+              <label class="ai-field">Trạng thái ban đầu<select v-model="experimentForm.status"><option value="draft">Bản nháp</option><option value="running">Đang chạy</option><option value="paused">Tạm dừng</option></select></label>
+              <div class="ai-form-actions"><button type="button" class="secondary-btn" @click="resetExperimentForm">Xóa form</button><button class="primary-btn" type="submit" :disabled="experimentSaving">{{ experimentSaving ? 'Đang tạo...' : 'Tạo experiment' }}</button></div>
+            </form>
+          </div>
+
+          <div class="ai-board-card">
+            <div class="ai-board-header"><div><span class="card-eyebrow">RULE QUEUE</span><h3>Đề xuất rule</h3><p>Kiểm tra lý do và hành động trước khi chấp nhận.</p></div><div class="ai-filter-tabs"><button v-for="filter in [{ value: 'pending', label: 'Chờ duyệt' }, { value: 'accepted', label: 'Đã duyệt' }, { value: 'rejected', label: 'Từ chối' }, { value: 'all', label: 'Tất cả' }]" :key="filter.value" type="button" :class="{ active: ruleSuggestionFilter === filter.value }" @click="ruleSuggestionFilter = filter.value">{{ filter.label }} <span>{{ filter.value === 'all' ? ruleSuggestions.length : ruleSuggestions.filter(item => item.status === filter.value).length }}</span></button></div></div>
+            <div v-if="!filteredRuleSuggestions.length" class="ai-empty-state"><strong>Chưa có rule ở bộ lọc này</strong><span>Tạo một đề xuất mới để bắt đầu vòng duyệt.</span></div>
+            <div v-else class="ai-rule-list">
+              <article v-for="suggestion in filteredRuleSuggestions" :key="suggestion.id" class="ai-rule-card">
+                <div class="ai-rule-main"><div class="ai-rule-title-row"><strong>{{ suggestion.title }}</strong><span class="ai-status-pill" :class="`status-${suggestion.status}`">{{ ruleStatusLabel(suggestion.status) }}</span></div><p>{{ suggestion.rationale }}</p><div class="ai-rule-meta"><span class="ai-action-chip">{{ ruleActionLabel(suggestion.proposed_action) }}</span><span v-if="suggestion.workflow_id">Workflow #{{ suggestion.workflow_id }}</span><span v-if="suggestion.created_at">{{ formatTime(suggestion.created_at) }}</span></div></div>
+                <div v-if="suggestion.status === 'pending'" class="suggestion-actions"><button type="button" class="ai-approve-btn" @click="reviewRuleSuggestion(suggestion, 'accepted')">Duyệt rule</button><button type="button" class="ai-reject-btn" @click="reviewRuleSuggestion(suggestion, 'rejected')">Từ chối</button></div>
+              </article>
             </div>
-            <div v-if="!experiments.length" class="settings-empty">Chưa có experiment. API đã sẵn sàng cho assignment/outcome.</div>
-            <ul v-else class="suggestion-list">
-              <li v-for="experiment in experiments" :key="experiment.id">
-                <div>
-                  <strong>{{ experiment.name }}</strong>
-                  <p>Variants: {{ experiment.variants.join(' · ') }}</p>
-                  <small>Trạng thái: {{ experiment.status }}</small>
-                </div>
-              </li>
-            </ul>
+          </div>
+
+          <div class="ai-board-card">
+            <div class="ai-board-header"><div><span class="card-eyebrow">EXPERIMENTS</span><h3>Thử nghiệm đang theo dõi</h3><p>So sánh biến thể và giữ lại dữ liệu để quyết định.</p></div><span class="count-badge">{{ experiments.length }}</span></div>
+            <div v-if="!experiments.length" class="ai-empty-state"><strong>Chưa có experiment</strong><span>Tạo experiment A/B ở biểu mẫu phía trên.</span></div>
+            <div v-else class="ai-experiment-list"><article v-for="experiment in experiments" :key="experiment.id" class="ai-experiment-card"><div><strong>{{ experiment.name }}</strong><span>#{{ experiment.id }}</span></div><div class="ai-variant-list"><span v-for="variant in experiment.variants" :key="variant">{{ variant }}</span></div><span class="ai-status-pill" :class="`status-${experiment.status}`">{{ experiment.status }}</span></article></div>
           </div>
         </div>
       </section>

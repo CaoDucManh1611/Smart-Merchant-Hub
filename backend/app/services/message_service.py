@@ -6,6 +6,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.contracts.channel_event import ChannelProvider
 from app.integrations._meta import parse_meta_events
+from app.integrations.telegram import TelegramAdapter
 from app.services.customer_identity import get_existing_name_priority, resolve_customer
 from app.services.audit_service import record_audit
 from app.services.customer_profile import merge_profile, profile_change_metadata
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.db.message_repository import save_message
 from app.services.meta_config_service import get_meta_config
 from app.services.media_resolver import build_media_url
+from app.services.customer_avatar import build_customer_avatar_url
 from app.tenancy.context import TenantContext
 
 logger = logging.getLogger(__name__)
@@ -1214,6 +1216,10 @@ def process_and_save_message(
             channel=channel,
             external_user_id=str(external_user_id),
             external_account_id=message.get("external_account_id"),
+            name=message.get("name"),
+            display_name=message.get("display_name"),
+            username=message.get("username"),
+            avatar_url=message.get("avatar_url"),
         )
     else:
         customer = db.execute(
@@ -1228,9 +1234,13 @@ def process_and_save_message(
         ).first()
 
     profile_access_token = None
-    if business_id is not None and channel in {"facebook", "instagram"}:
+    if business_id is not None and channel in {"facebook", "instagram", "telegram"}:
         try:
-            channel_row = get_single_active_channel(db, int(business_id), "facebook" if channel == "instagram" else channel)
+            channel_row = get_single_active_channel(
+                db,
+                int(business_id),
+                "facebook" if channel == "instagram" else channel,
+            )
             if channel_row.access_token_encrypted:
                 profile_access_token = decrypt_token(
                     channel_row.access_token_encrypted,
@@ -1311,6 +1321,30 @@ def process_and_save_message(
             "avatar_url"
         )
 
+    # =====================================================
+    # TELEGRAM PROFILE PHOTO
+    # =====================================================
+
+    elif (
+        channel == "telegram"
+        and should_fetch_profile
+        and profile_access_token
+    ):
+        try:
+            file_path = TelegramAdapter().fetch_profile_avatar_file_path(
+                user_id=str(external_user_id),
+                access_token=profile_access_token,
+            )
+            if file_path and business_id is not None:
+                avatar_url = build_customer_avatar_url(
+                    customer_id=customer.id,
+                    business_id=int(business_id),
+                )
+        except Exception:
+            # Avatar enrichment is optional; never reject an otherwise valid
+            # inbound Telegram message because the profile endpoint is down.
+            logger.warning("Telegram customer avatar lookup failed", exc_info=True)
+
 
     # =====================================================
     # 4. CREATE CUSTOMER
@@ -1367,6 +1401,7 @@ def process_and_save_message(
         channel in (
             "facebook",
             "instagram",
+            "telegram",
         )
         and (
             customer_name

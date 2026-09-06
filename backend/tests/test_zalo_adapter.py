@@ -12,7 +12,12 @@ class ZaloAdapterTests(unittest.TestCase):
                 "message_id": "z-msg-1",
                 "date": 1775362520302,
                 "chat": {"id": "z-chat-1", "chat_type": "PRIVATE"},
-                "from": {"id": "z-user-1", "display_name": "Zalo Buyer", "is_bot": False},
+                "from": {
+                    "id": "z-user-1",
+                    "display_name": "Zalo Buyer",
+                    "avatar_url": "https://cdn.example/zalo-avatar.jpg",
+                    "is_bot": False,
+                },
                 "text": "Cho hỏi giá sản phẩm?",
             },
         }
@@ -25,6 +30,10 @@ class ZaloAdapterTests(unittest.TestCase):
         self.assertEqual("zalo:zalo-bot-1:z-msg-1", event.external_event_id)
         self.assertEqual("z-user-1", event.messages[0].sender_external_id)
         self.assertEqual("z-chat-1", event.messages[0].metadata["chat_id"])
+        self.assertEqual(
+            "https://cdn.example/zalo-avatar.jpg",
+            event.messages[0].metadata["avatar_url"],
+        )
         self.assertEqual("Cho hỏi giá sản phẩm?", event.messages[0].text)
 
     def test_image_event_is_normalized_with_photo_attachment(self):
@@ -43,6 +52,29 @@ class ZaloAdapterTests(unittest.TestCase):
 
         self.assertEqual("image", event.messages[0].message_type.value)
         self.assertEqual("https://example.com/photo.jpg", event.messages[0].attachments[0].url)
+
+    def test_flat_profile_fields_include_avatar_from_zalo_conversation_shape(self):
+        """Accept the flat from_avatar shape returned by Zalo conversation APIs."""
+        payload = {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "z-flat-profile-1",
+                "date": 1775362520302,
+                "chat": {"id": "z-chat-1", "chat_type": "PRIVATE"},
+                "from_id": "z-user-1",
+                "from_display_name": "Zalo Buyer",
+                "from_avatar": "https://cdn.example/zalo-flat-avatar.jpg",
+                "text": "Xin chào",
+            },
+        }
+
+        event = ZaloAdapter().parse_events(payload, external_account_id="zalo-bot-1")[0]
+
+        self.assertEqual("Zalo Buyer", event.messages[0].metadata["display_name"])
+        self.assertEqual(
+            "https://cdn.example/zalo-flat-avatar.jpg",
+            event.messages[0].metadata["avatar_url"],
+        )
 
     def test_bot_message_and_missing_message_are_ignored(self):
         bot_payload = {

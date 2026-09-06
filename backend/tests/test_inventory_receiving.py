@@ -126,6 +126,29 @@ class InventoryReceivingTests(unittest.TestCase):
         self.assertEqual(200, second.status_code, second.text)
         self.assertEqual(first.json()["id"], second.json()["id"])
 
+    def test_receipt_idempotency_key_cannot_be_reused_for_another_purchase_order(self):
+        first_order = self.create_submitted_po("PO-RECEIPT-KEY-ONE", quantity=3)
+        first_receipt = self.client.post(
+            f"/api/purchase-orders/{first_order['id']}/receipts",
+            headers=self.headers(),
+            json={
+                "idempotency_key": "receipt-cross-order",
+                "items": [{"purchase_order_item_id": first_order["items"][0]["id"], "quantity": 1}],
+            },
+        )
+        self.assertEqual(201, first_receipt.status_code, first_receipt.text)
+
+        second_order = self.create_submitted_po("PO-RECEIPT-KEY-TWO", quantity=3)
+        reused_key = self.client.post(
+            f"/api/purchase-orders/{second_order['id']}/receipts",
+            headers=self.headers(),
+            json={
+                "idempotency_key": "receipt-cross-order",
+                "items": [{"purchase_order_item_id": second_order["items"][0]["id"], "quantity": 1}],
+            },
+        )
+        self.assertEqual(409, reused_key.status_code, reused_key.text)
+
 
 if __name__ == "__main__":
     unittest.main()

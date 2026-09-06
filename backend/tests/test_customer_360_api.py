@@ -12,11 +12,12 @@ from app.models.business import Business
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_identity import CustomerIdentity
+from app.models.customer_fact import CustomerFact
 from app.models.message import Message
 from app.models.crm_extended import ConversationAssignment, ConversationTag, Tag
 from app.models.lead import Lead
 from app.models.sales import Order
-from app.models.ticket import Ticket, TicketComment
+from app.models.ticket import Ticket, TicketComment, TicketEvent
 from app.models.business import User
 from app.models.audit_log import AuditLog
 
@@ -139,6 +140,13 @@ class Customer360ApiTests(unittest.TestCase):
             json={"content": "Khách quan tâm sản phẩm mới"},
         )
         self.assertEqual(201, note.status_code)
+        with Session(self.engine) as db:
+            self.assertIsNotNone(db.query(AuditLog).filter(
+                AuditLog.business_id == 1,
+                AuditLog.action == "note_create",
+                AuditLog.resource_type == "customer_note",
+                AuditLog.resource_id == str(note.json()["id"]),
+            ).first())
         timeline = self.client.get(
             f"/api/customers/{self.customer_id}/timeline",
             headers={"X-Business-Id": "1"},
@@ -238,6 +246,64 @@ class Customer360ApiTests(unittest.TestCase):
         self.assertEqual(200, second_page.status_code)
         event_types = {item["event_type"] for item in second_page.json()["items"]}
         self.assertIn("customer_merge_undo", event_types)
+
+    def test_timeline_includes_identity_fact_and_ticket_history_events(self):
+        with Session(self.engine) as db:
+            conversation = db.query(Conversation).filter(
+                Conversation.customer_id == self.customer_id,
+                Conversation.business_id == 1,
+            ).first()
+            db.add(CustomerIdentity(
+                business_id=1,
+                customer_id=self.customer_id,
+                channel="facebook",
+                external_account_id="page-1",
+                external_user_id="fb-360",
+                username="customer360",
+            ))
+            fact = CustomerFact(
+                business_id=1,
+                customer_id=self.customer_id,
+                fact_type="preference",
+                fact_key="budget_max",
+                fact_value_json=500000,
+                confidence=0.95,
+                source_type="manual",
+                is_verified=True,
+            )
+            ticket = Ticket(
+                business_id=1,
+                customer_id=self.customer_id,
+                conversation_id=conversation.id,
+                title="Theo dõi yêu cầu",
+                status="pending",
+            )
+            db.add_all([fact, ticket])
+            db.flush()
+            db.add(TicketEvent(
+                business_id=1,
+                ticket_id=ticket.id,
+                event_type="status_changed",
+                from_value="open",
+                to_value="pending",
+            ))
+            ticket_id = ticket.id
+            db.commit()
+
+        response = self.client.get(
+            f"/api/customers/{self.customer_id}/timeline",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        items = response.json()["items"]
+        event_types = {item["event_type"] for item in items}
+        self.assertTrue({"identity", "fact", "ticket_event"}.issubset(event_types))
+        fact_event = next(item for item in items if item["event_type"] == "fact")
+        self.assertEqual("budget_max", fact_event["metadata"]["fact_key"])
+        self.assertEqual(500000, fact_event["metadata"]["fact_value"])
+        ticket_event = next(item for item in items if item["event_type"] == "ticket_event")
+        self.assertEqual(ticket_id, ticket_event["metadata"]["ticket_id"])
+        self.assertEqual("open", ticket_event["metadata"]["from_value"])
 
 
 if __name__ == "__main__":

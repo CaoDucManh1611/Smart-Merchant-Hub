@@ -34,6 +34,7 @@ async def receive_zalo_webhook(
     processed = 0
     for event in accepted_events:
         for item in event.messages:
+            profile = item.metadata or {}
             saved = process_and_save_message(
                 db=db,
                 message={
@@ -42,9 +43,12 @@ async def receive_zalo_webhook(
                     "external_user_id": item.sender_external_id,
                     "external_message_id": item.external_message_id,
                     "content": item.text,
+                    "name": profile.get("display_name"),
+                    "display_name": profile.get("display_name"),
+                    "avatar_url": profile.get("avatar_url"),
                     "media_type": item.message_type.value,
-                "media_url": item.attachments[0].url if item.attachments else None,
-                "attachments": [attachment.model_dump(mode="json") for attachment in item.attachments],
+                    "media_url": item.attachments[0].url if item.attachments else None,
+                    "attachments": [attachment.model_dump(mode="json") for attachment in item.attachments],
                     "raw_payload": event.raw_payload,
                     "business_id": event.business_id,
                     "channel_id": event.channel_id,

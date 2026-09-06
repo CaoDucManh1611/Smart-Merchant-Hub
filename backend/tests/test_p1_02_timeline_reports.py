@@ -107,6 +107,44 @@ class P102TimelineReportsTests(unittest.TestCase):
         self.assertIn("items", body)
         self.assertIn("total_received_cost", body)
 
+    def test_purchase_cost_date_range_includes_the_entire_end_date(self):
+        purchase = self.client.post(
+            "/api/purchase-orders",
+            headers=self.headers(),
+            json={
+                "po_number": "PO-DATE-RANGE-1",
+                "supplier_name": "Date supplier",
+                "items": [{"product_id": self.product_id, "quantity": 1, "unit_cost": "50"}],
+            },
+        )
+        self.assertEqual(201, purchase.status_code, purchase.text)
+        order = purchase.json()
+        self.assertEqual(
+            200,
+            self.client.post(
+                f"/api/purchase-orders/{order['id']}/transition",
+                headers=self.headers(),
+                json={"to_status": "submitted"},
+            ).status_code,
+        )
+        receipt = self.client.post(
+            f"/api/purchase-orders/{order['id']}/receipts",
+            headers=self.headers(),
+            json={
+                "idempotency_key": "receipt-date-range-1",
+                "items": [{"purchase_order_item_id": order["items"][0]["id"], "quantity": 1}],
+            },
+        )
+        self.assertEqual(201, receipt.status_code, receipt.text)
+
+        today = receipt.json()["received_at"][:10]
+        report = self.client.get(
+            f"/api/reports/purchase-costs?start_at={today}&end_at={today}",
+            headers=self.headers(),
+        )
+        self.assertEqual(200, report.status_code, report.text)
+        self.assertGreaterEqual(float(report.json()["total_received_cost"]), 50)
+
 
 if __name__ == "__main__":
     unittest.main()

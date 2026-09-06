@@ -108,6 +108,19 @@ class PurchaseOrderApiTests(unittest.TestCase):
         self.assertEqual(200, valid.status_code)
         self.assertEqual("submitted", valid.json()["status"])
 
+    def test_purchase_order_must_start_as_draft(self):
+        response = self.client.post(
+            "/api/purchase-orders",
+            headers=self.headers(),
+            json={
+                "po_number": "PO-NON-DRAFT",
+                "supplier_name": "NCC",
+                "items": [{"product_id": self.product_id, "quantity": 1, "unit_cost": 10}],
+                "status": "submitted",
+            },
+        )
+        self.assertEqual(422, response.status_code, response.text)
+
 
 if __name__ == "__main__":
     unittest.main()

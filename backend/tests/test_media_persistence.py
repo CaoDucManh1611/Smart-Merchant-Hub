@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -8,6 +9,8 @@ from app.models import Business, Channel, Conversation, Customer, Message, Messa
 from app.services.media_service import save_message_attachments
 from app.services.message_service import process_and_save_message
 from app.contracts.channel_event import MediaType, NormalizedAttachment
+from app.core.config import settings
+from app.services.channel_credentials import encrypt_token
 
 
 class MediaPersistenceTests(unittest.TestCase):
@@ -158,6 +161,64 @@ class MediaPersistenceTests(unittest.TestCase):
         self.assertTrue(media_url.startswith("/api/media/1?"))
         self.assertIn("business_id=1", media_url)
         self.assertIn("signature=", media_url)
+
+    def test_telegram_profile_photo_stores_signed_proxy_without_bot_token(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Business.metadata.create_all(engine)
+        previous_key = settings.CHANNEL_ENCRYPTION_KEY
+        previous_public_base_url = settings.PUBLIC_BASE_URL
+        settings.CHANNEL_ENCRYPTION_KEY = "avatar-test-encryption-key"
+        # Keep the assertion deterministic even when the developer's .env
+        # points PUBLIC_BASE_URL at a public ngrok origin.
+        settings.PUBLIC_BASE_URL = ""
+        try:
+            with Session(engine) as db:
+                business = Business(name="Avatar Shop", slug="avatar-shop")
+                db.add(business)
+                db.flush()
+                channel = Channel(
+                    business_id=business.id,
+                    channel_type="telegram",
+                    name="Telegram",
+                    external_account_id="bot-avatar",
+                    access_token_encrypted=encrypt_token(
+                        "bot-token-secret",
+                        settings.CHANNEL_ENCRYPTION_KEY,
+                    ),
+                )
+                db.add(channel)
+                db.flush()
+
+                with patch(
+                    "app.services.message_service.TelegramAdapter.fetch_profile_avatar_file_path",
+                    return_value="photos/avatar.jpg",
+                ):
+                    saved = process_and_save_message(
+                        db,
+                        {
+                            "channel": "telegram",
+                            "business_id": business.id,
+                            "channel_id": channel.id,
+                            "external_account_id": channel.external_account_id,
+                            "external_user_id": "12345",
+                            "external_message_id": "telegram:avatar:1",
+                            "content": "Xin chào",
+                        },
+                    )
+
+                self.assertIsInstance(saved, dict)
+                customer = db.scalar(select(Customer).where(Customer.business_id == business.id))
+                self.assertIsNotNone(customer)
+                self.assertTrue(customer.avatar_url.startswith("http://127.0.0.1:8000/api/customers/"))
+                self.assertNotIn("bot-token-secret", customer.avatar_url)
+                self.assertIn("signature=", customer.avatar_url)
+        finally:
+            settings.CHANNEL_ENCRYPTION_KEY = previous_key
+            settings.PUBLIC_BASE_URL = previous_public_base_url
 
 
 if __name__ == "__main__":

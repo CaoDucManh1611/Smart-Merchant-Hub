@@ -77,6 +77,16 @@ def _attachment_value(value: Any) -> tuple[str | None, str | None]:
     return None, value
 
 
+def _avatar_url(sender: dict[str, Any]) -> str | None:
+    """Extract only a public HTTP(S) avatar URL from common Zalo payloads."""
+    for key in ("avatar_url", "avatar", "photo_url", "profile_photo", "profile_pic"):
+        value = sender.get(key)
+        url, _identifier = _attachment_value(value)
+        if url and url.startswith(("http://", "https://")):
+            return url
+    return None
+
+
 class ZaloAdapter:
     """Translate Zalo Bot webhook payloads into the shared CRM contract."""
 
@@ -104,7 +114,17 @@ class ZaloAdapter:
             sender = {
                 "id": message.get("from_id"),
                 "display_name": message.get("from_display_name"),
+                "avatar_url": message.get("from_avatar") or message.get("from_avatar_url"),
             }
+        elif sender:
+            # Conversation-history bridges expose profile fields alongside
+            # ``from_id`` instead of nesting them in ``from``.  Preserve the
+            # nested sender shape while accepting those flat aliases too.
+            sender = dict(sender)
+            sender.setdefault(
+                "avatar_url",
+                message.get("from_avatar") or message.get("from_avatar_url"),
+            )
         chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
         if not chat:
             chat = {
@@ -245,6 +265,7 @@ class ZaloAdapter:
                 "chat_type": str(chat.get("chat_type") or "PRIVATE"),
                 "event_name": event_name,
                 "display_name": sender.get("display_name"),
+                "avatar_url": _avatar_url(sender),
             },
         )
         return [

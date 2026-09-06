@@ -83,6 +83,9 @@ class TelegramAdapter:
         occurred_at = None
         if isinstance(message.get("date"), (int, float)):
             occurred_at = datetime.fromtimestamp(message["date"], tz=UTC)
+        first_name = str(sender.get("first_name") or "").strip()
+        last_name = str(sender.get("last_name") or "").strip()
+        display_name = " ".join(part for part in (first_name, last_name) if part) or None
         external_event_id = f"telegram:{update_id}:{message_id}"
         normalized_message = NormalizedMessage(
             external_message_id=external_event_id,
@@ -92,7 +95,11 @@ class TelegramAdapter:
             attachments=attachments,
             sender_external_id=str(sender_id),
             provider_created_at=occurred_at,
-            metadata={"chat_id": str(chat.get("id", sender_id))},
+            metadata={
+                "chat_id": str(chat.get("id", sender_id)),
+                "display_name": display_name,
+                "username": str(sender.get("username") or "").strip() or None,
+            },
         )
         return [NormalizedChannelEvent(
             provider=ChannelProvider.TELEGRAM,
@@ -114,6 +121,63 @@ class TelegramAdapter:
         )
         response.raise_for_status()
         return response.json()
+
+    def fetch_profile_avatar_file_path(
+        self,
+        *,
+        user_id: str,
+        access_token: str,
+    ) -> str | None:
+        """Resolve the largest Telegram profile photo to a provider file path.
+
+        The returned path is intentionally not a client URL.  Callers can use
+        it from a backend proxy while keeping the bot token out of CRM data.
+        """
+        try:
+            telegram_user_id = int(str(user_id).strip())
+        except (TypeError, ValueError):
+            return None
+        access_token = str(access_token or "").strip()
+        if not access_token:
+            return None
+
+        photos_response = httpx.post(
+            f"https://api.telegram.org/bot{access_token}/getUserProfilePhotos",
+            json={"user_id": telegram_user_id, "limit": 1},
+            timeout=15,
+        )
+        photos_response.raise_for_status()
+        photos_payload = photos_response.json()
+        photos = (photos_payload.get("result") or {}).get("photos") or []
+        if not isinstance(photos, list) or not photos or not isinstance(photos[0], list):
+            return None
+
+        candidates = [
+            item
+            for item in photos[0]
+            if isinstance(item, dict) and item.get("file_id")
+        ]
+        if not candidates:
+            return None
+        photo = max(
+            candidates,
+            key=lambda item: int(item.get("width") or 0) * int(item.get("height") or 0),
+        )
+
+        file_response = httpx.post(
+            f"https://api.telegram.org/bot{access_token}/getFile",
+            json={"file_id": str(photo["file_id"])},
+            timeout=15,
+        )
+        file_response.raise_for_status()
+        file_payload = file_response.json()
+        file_path = (file_payload.get("result") or {}).get("file_path")
+        return str(file_path).strip() if file_path else None
+
+    @staticmethod
+    def build_file_url(*, file_path: str, access_token: str) -> str:
+        """Build a provider URL for backend-only downloading."""
+        return f"https://api.telegram.org/file/bot{str(access_token).strip()}/{str(file_path).lstrip('/')}"
 
     def send_media(
         self,

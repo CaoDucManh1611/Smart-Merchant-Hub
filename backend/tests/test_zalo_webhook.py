@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.dependencies import get_db
 from app.main import app
-from app.models import Business, Channel, ChannelEvent, Conversation, Customer, Message, MessageAttachment
+from app.models import Business, Channel, ChannelEvent, Conversation, Customer, CustomerIdentity, Message, MessageAttachment
 
 
 class ZaloWebhookApiTests(unittest.TestCase):
@@ -59,6 +59,7 @@ class ZaloWebhookApiTests(unittest.TestCase):
                 "from": {
                     "id": "z-user-1",
                     "display_name": "Zalo Buyer",
+                    "avatar_url": "https://cdn.example/zalo-avatar.jpg",
                     "is_bot": False,
                 },
                 "text": "Tôi muốn xem sản phẩm",
@@ -83,6 +84,11 @@ class ZaloWebhookApiTests(unittest.TestCase):
             customer = db.scalar(select(Customer).where(Customer.channel == "zalo"))
             self.assertIsNotNone(customer)
             self.assertEqual(self.business_id, customer.business_id)
+            self.assertEqual("Zalo Buyer", customer.name)
+            self.assertEqual("https://cdn.example/zalo-avatar.jpg", customer.avatar_url)
+            identity = db.scalar(select(CustomerIdentity).where(CustomerIdentity.customer_id == customer.id))
+            self.assertIsNotNone(identity)
+            self.assertEqual("Zalo Buyer", identity.display_name)
             conversation = db.scalar(select(Conversation).where(Conversation.channel == "zalo"))
             self.assertIsNotNone(conversation)
             self.assertEqual(self.business_id, conversation.business_id)

@@ -30,6 +30,7 @@ from app.tenancy.dependencies import get_tenant_context
 from app.services.workflow_engine import emit_workflow_event
 from app.auth.dependencies import require_write_access
 from app.services.notification_service import create_notification
+from app.services.audit_service import record_audit
 
 
 router = APIRouter()
@@ -94,6 +95,7 @@ def _record_event(
     *,
     from_value: str | None = None,
     to_value: str | None = None,
+    actor_user_id: int | None = None,
 ) -> TicketEvent:
     event = TicketEvent(
         business_id=ticket.business_id,
@@ -101,6 +103,7 @@ def _record_event(
         event_type=event_type,
         from_value=from_value,
         to_value=to_value,
+        actor_user_id=actor_user_id,
     )
     db.add(event)
     return event
@@ -157,6 +160,7 @@ def create_ticket(
     payload: TicketCreate,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     _validate_values(payload.status, payload.priority)
     customer = _customer(db, payload.customer_id, tenant)
@@ -197,6 +201,21 @@ def create_ticket(
         ticket,
         "created",
         to_value=ticket.status,
+        actor_user_id=actor.id if actor else None,
+    )
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="ticket_created",
+        resource_type="ticket",
+        resource_id=ticket.id,
+        metadata={
+            "customer_id": ticket.customer_id,
+            "conversation_id": ticket.conversation_id,
+            "priority": ticket.priority,
+            "status": ticket.status,
+        },
     )
     db.commit()
     emit_workflow_event(
@@ -215,6 +234,7 @@ def update_ticket(
     payload: TicketUpdate,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     ticket = _ticket(db, ticket_id, tenant)
     previous_status = ticket.status
@@ -243,6 +263,7 @@ def update_ticket(
             "status_changed",
             from_value=previous_status,
             to_value=ticket.status,
+            actor_user_id=actor.id if actor else None,
         )
     if "priority" in data and data["priority"] != previous_priority:
         _record_event(
@@ -251,6 +272,7 @@ def update_ticket(
             "priority_changed",
             from_value=previous_priority,
             to_value=ticket.priority,
+            actor_user_id=actor.id if actor else None,
         )
     if "assigned_user_id" in data and data["assigned_user_id"] != previous_assignee:
         _record_event(
@@ -259,6 +281,25 @@ def update_ticket(
             "assigned",
             from_value=str(previous_assignee) if previous_assignee is not None else None,
             to_value=str(ticket.assigned_user_id) if ticket.assigned_user_id is not None else None,
+            actor_user_id=actor.id if actor else None,
+        )
+    if data:
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="ticket_updated",
+            resource_type="ticket",
+            resource_id=ticket.id,
+            metadata={
+                "fields": sorted(data.keys()),
+                "from_status": previous_status,
+                "to_status": ticket.status,
+                "from_priority": previous_priority,
+                "to_priority": ticket.priority,
+                "from_assigned_user_id": previous_assignee,
+                "to_assigned_user_id": ticket.assigned_user_id,
+            },
         )
     db.commit()
     if "status" in data and data["status"] != previous_status:
@@ -278,13 +319,34 @@ def add_ticket_comment(
     payload: TicketCommentCreate,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     ticket = _ticket(db, ticket_id, tenant)
-    comment = TicketComment(business_id=tenant.business_id, ticket_id=ticket.id, body=payload.body.strip())
+    comment = TicketComment(
+        business_id=tenant.business_id,
+        ticket_id=ticket.id,
+        body=payload.body.strip(),
+        author_user_id=actor.id if actor else None,
+    )
     db.add(comment)
     db.commit()
     db.refresh(comment)
-    _record_event(db, ticket, "comment_added", to_value=str(comment.id))
+    _record_event(
+        db,
+        ticket,
+        "comment_added",
+        to_value=str(comment.id),
+        actor_user_id=actor.id if actor else None,
+    )
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="ticket_comment",
+        resource_type="ticket",
+        resource_id=ticket.id,
+        metadata={"ticket_id": ticket.id, "comment_id": comment.id},
+    )
     db.commit()
     return comment
 

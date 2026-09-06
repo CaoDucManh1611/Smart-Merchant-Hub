@@ -29,12 +29,17 @@ async def receive_telegram_webhook(
     processed = 0
     for event in accepted:
         for item in event.messages:
+            profile = item.metadata or {}
             saved = process_and_save_message(db=db, message={
                 "channel": event.provider.value,
                 "external_account_id": event.external_account_id,
                 "external_user_id": item.sender_external_id,
                 "external_message_id": item.external_message_id,
                 "content": item.text,
+                "name": profile.get("display_name"),
+                "display_name": profile.get("display_name"),
+                "username": profile.get("username"),
+                "avatar_url": profile.get("avatar_url"),
                 "media_type": item.message_type.value,
                 "media_url": item.attachments[0].url if item.attachments else None,
                 "attachments": [attachment.model_dump(mode="json") for attachment in item.attachments],

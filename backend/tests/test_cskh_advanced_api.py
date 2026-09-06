@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.auth.passwords import hash_password
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, Conversation, Customer, Ticket, User
@@ -49,7 +50,15 @@ class CskhAdvancedApiTests(unittest.TestCase):
                 email="agent-b@cskh.test",
                 is_active=True,
             )
-            db.add_all([customer_a, customer_b, agent_a, agent_b])
+            owner_a = User(
+                business_id=one.id,
+                full_name="Owner A",
+                email="owner-a@cskh.test",
+                role="owner",
+                password_hash=hash_password("owner-password"),
+                is_active=True,
+            )
+            db.add_all([customer_a, customer_b, agent_a, agent_b, owner_a])
             db.flush()
             conversation_a = Conversation(
                 business_id=one.id,
@@ -90,6 +99,7 @@ class CskhAdvancedApiTests(unittest.TestCase):
             cls.conversation_a = conversation_a.id
             cls.agent_a = agent_a.id
             cls.agent_b = agent_b.id
+            cls.owner_a = owner_a.id
 
         def override_get_db():
             with Session(cls.engine) as db:
@@ -185,6 +195,63 @@ class CskhAdvancedApiTests(unittest.TestCase):
             conversation = db.get(Conversation, self.conversation_a)
             self.assertEqual(self.agent_a, conversation.assigned_user_id)
             self.assertEqual(1, len(conversation.assignments))
+
+    def test_authenticated_handling_history_keeps_actor_attribution(self):
+        login = self.client.post(
+            "/api/auth/login",
+            headers={"X-Business-Id": str(self.business_a)},
+            json={"email": "owner-a@cskh.test", "password": "owner-password"},
+        )
+        self.assertEqual(200, login.status_code, login.text)
+        headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}",
+            "X-Business-Id": str(self.business_a),
+        }
+
+        created = self.client.post(
+            "/api/tickets",
+            headers=headers,
+            json={"title": "Cần cập nhật người xử lý", "customer_id": self.customer_a},
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        ticket_id = created.json()["id"]
+
+        updated = self.client.patch(
+            f"/api/tickets/{ticket_id}",
+            headers=headers,
+            json={"status": "pending", "assigned_user_id": self.agent_a},
+        )
+        self.assertEqual(200, updated.status_code, updated.text)
+
+        comment = self.client.post(
+            f"/api/tickets/{ticket_id}/comments",
+            headers=headers,
+            json={"body": "Đã bàn giao cho nhân viên."},
+        )
+        self.assertEqual(201, comment.status_code, comment.text)
+        self.assertEqual(self.owner_a, comment.json()["author_user_id"])
+
+        history = self.client.get(f"/api/tickets/{ticket_id}/history", headers=headers)
+        self.assertEqual(200, history.status_code, history.text)
+        self.assertTrue(all(item["actor_user_id"] == self.owner_a for item in history.json()["items"]))
+
+        reassigned = self.client.patch(
+            f"/api/conversations/{self.conversation_a}/assignment",
+            headers=headers,
+            json={"assigned_user_id": self.agent_a},
+        )
+        self.assertEqual(200, reassigned.status_code, reassigned.text)
+        assignments = self.client.get(
+            f"/api/conversations/{self.conversation_a}/assignments",
+            headers=headers,
+        )
+        self.assertEqual(200, assignments.status_code, assignments.text)
+        self.assertEqual(self.owner_a, assignments.json()["items"][-1]["assigned_by"])
+
+        audit_logs = self.client.get("/api/auth/audit-logs", headers=headers)
+        self.assertEqual(200, audit_logs.status_code, audit_logs.text)
+        actions = {row["action"] for row in audit_logs.json()}
+        self.assertTrue({"conversation_assignment", "ticket_created", "ticket_updated", "ticket_comment"}.issubset(actions))
 
 
 if __name__ == "__main__":

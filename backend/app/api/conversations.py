@@ -49,6 +49,8 @@ from app.services.instagram_service import send_instagram_media
 from app.services.telegram_service import send_telegram_media
 from app.services.zalo_service import send_zalo_media
 from app.services.media_resolver import build_media_url
+from app.services.audit_service import record_audit
+from app.services.customer_avatar import refresh_customer_avatar_url
 from app.contracts.channel_event import NormalizedAttachment, MediaType
 from app.integrations.telegram import TelegramAdapter
 from app.models.channel import Channel
@@ -1439,7 +1441,15 @@ def get_conversations(
 
     return {
         "items": [
-            {**dict(row), "customer_tags": tag_map.get(int(row["customer_id"]), [])}
+            {
+                **dict(row),
+                "avatar_url": refresh_customer_avatar_url(
+                    row.get("avatar_url"),
+                    customer_id=int(row["customer_id"]),
+                    business_id=tenant.business_id,
+                ),
+                "customer_tags": tag_map.get(int(row["customer_id"]), []),
+            }
             for row in result
         ]
     }
@@ -1451,6 +1461,7 @@ def reassign_conversation(
     payload: ConversationAssignmentRequest,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     conversation = db.query(Conversation).filter(
         Conversation.id == conversation_id,
@@ -1485,10 +1496,23 @@ def reassign_conversation(
             db.add(ConversationAssignment(
                 conversation_id=conversation.id,
                 user_id=payload.assigned_user_id,
+                assigned_by=actor.id if actor else None,
                 assignment_type="manual",
                 assigned_at=now,
             ))
         conversation.assigned_user_id = payload.assigned_user_id
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="conversation_assignment",
+            resource_type="conversation",
+            resource_id=conversation.id,
+            metadata={
+                "previous_user_id": previous_user_id,
+                "assigned_user_id": payload.assigned_user_id,
+            },
+        )
         db.commit()
 
     return {

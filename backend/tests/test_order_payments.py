@@ -167,6 +167,43 @@ class OrderPaymentApiTests(unittest.TestCase):
         self.assertIn("payment_created", event_types)
         self.assertIn("refund_created", event_types)
 
+    def test_order_cannot_complete_until_fully_paid(self):
+        order = self.create_order("SO-PAY-COMPLETE")
+        for status in ("confirmed", "processing", "shipped", "delivered"):
+            transition = self.client.post(
+                f"/api/orders/{order['id']}/transition",
+                headers=self.headers(),
+                json={"to_status": status},
+            )
+            self.assertEqual(200, transition.status_code, transition.text)
+
+        unpaid_completion = self.client.post(
+            f"/api/orders/{order['id']}/transition",
+            headers=self.headers(),
+            json={"to_status": "completed"},
+        )
+        self.assertEqual(409, unpaid_completion.status_code, unpaid_completion.text)
+
+        payment = self.client.post(
+            f"/api/orders/{order['id']}/payments",
+            headers=self.headers(),
+            json={
+                "idempotency_key": "pay-complete-1",
+                "amount": "100.00",
+                "method": "cash",
+                "status": "paid",
+            },
+        )
+        self.assertEqual(201, payment.status_code, payment.text)
+
+        completed = self.client.post(
+            f"/api/orders/{order['id']}/transition",
+            headers=self.headers(),
+            json={"to_status": "completed"},
+        )
+        self.assertEqual(200, completed.status_code, completed.text)
+        self.assertEqual("completed", completed.json()["status"])
+
 
 if __name__ == "__main__":
     unittest.main()

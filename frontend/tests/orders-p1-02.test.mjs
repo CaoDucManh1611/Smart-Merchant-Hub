@@ -55,10 +55,48 @@ test("CRM purchase UI wires receipts and supplier debt payment", () => {
   assert.match(appSource, /received_quantity/);
 });
 
+test("CRM purchase UI selects active suppliers and exposes PO history", () => {
+  assert.match(appSource, /fetchSuppliers/);
+  assert.match(appSource, /\/suppliers\?status=active/);
+  assert.match(appSource, /saveSupplier/);
+  assert.match(appSource, /method: "POST"[\s\S]*\/suppliers/);
+  assert.match(appSource, /purchaseOrderForm\.supplier_id/);
+  assert.match(appSource, /\/purchase-orders\/\$\{purchase\.id\}\/events/);
+  assert.match(appSource, /data-testid="purchase-order-history-button"/);
+  assert.match(appSource, /data-testid="purchase-order-events-panel"/);
+});
+
+test("CRM purchase UI supports partial receiving quantities per PO line", () => {
+  assert.match(appSource, /purchaseReceiptDrafts/);
+  assert.match(appSource, /v-model\.number="purchaseReceiptDrafts\[item\.id\]"/);
+  assert.match(appSource, /Math\.min\(remaining, requested\)/);
+});
+
+test("CRM inventory UI records stock changes through the adjustment ledger", () => {
+  assert.match(appSource, /productAdjustmentDrafts/);
+  assert.match(appSource, /\/inventory\/products\/\$\{product\.id\}\/adjustments/);
+  assert.match(appSource, /Điều chỉnh tồn/);
+  assert.match(appSource, /Lý do điều chỉnh/);
+});
+
+test("CRM inventory adjustment uses an expandable, signed quantity control", () => {
+  assert.match(appSource, /openInventoryAdjustment/);
+  assert.match(appSource, /closeInventoryAdjustment/);
+  assert.match(appSource, /Nhập thêm \(\+\)/);
+  assert.match(appSource, /Ghi giảm \(−\)/);
+  assert.match(appSource, /Tồn sau điều chỉnh/);
+  assert.match(appSource, /inventory-adjustment-panel/);
+});
+
 test("CRM reports UI renders inventory and received purchase costs", () => {
   assert.match(appSource, /\/reports\/inventory/);
   assert.match(appSource, /\/reports\/purchase-costs/);
   assert.match(appSource, /Tồn kho/);
   assert.match(appSource, /Chi phí nhập đã nhận/);
   assert.match(styleSource, /\.order-payment-cell/);
+});
+
+test("CRM product editor records stock changes through the inventory adjustment API", () => {
+  assert.match(appSource, /\/inventory\/products\/\$\{form\.id\}\/adjustments/);
+  assert.match(appSource, /Điều chỉnh tồn kho/);
 });

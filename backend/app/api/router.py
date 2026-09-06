@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.api import auth, conversations, documents, chat, meta_oauth, customers, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media
-from app.api import facebook, instagram, shopee, tiktok, telegram, zalo
+from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo
 
 
 api_router = APIRouter(prefix="/api")
@@ -79,6 +79,12 @@ api_router.include_router(
     chat.router,
     prefix="/chat",
     tags=["Chat"],
+)
+
+api_router.include_router(
+    customer_avatar.router,
+    prefix="/customers",
+    tags=["Customers"],
 )
 
 api_router.include_router(

@@ -2,6 +2,7 @@ export const CHANNEL_LABELS = {
   facebook: "Facebook",
   instagram: "Instagram",
   telegram: "Telegram",
+  zalo: "ZALO",
 };
 
 export function channelLabel(channel) {

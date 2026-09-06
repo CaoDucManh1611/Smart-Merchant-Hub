@@ -127,10 +127,35 @@ def duplicate_evidence(
         matched_fields.append("address")
         evidence.append({"field": "address", "weight": 0.05, "reason": "Địa chỉ trùng khớp."})
 
-    if first.channel == second.channel and first.external_user_id == second.external_user_id:
+    # Include both the canonical customer's primary channel identity and any
+    # linked identities.  The customer table prevents two primary identities
+    # from being identical, but linked identities can still reveal that two
+    # records came from the same platform user (for example after an account
+    # migration).  Keep the signal explainable and bounded so it never causes
+    # an automatic merge by itself.
+    def identity_keys(customer: Customer) -> set[tuple[str, str]]:
+        keys = {(customer.channel, customer.external_user_id)}
+        keys.update(
+            (identity.channel, identity.external_user_id)
+            for identity in db.query(CustomerIdentity).filter(
+                CustomerIdentity.business_id == customer.business_id,
+                CustomerIdentity.customer_id == customer.id,
+            ).all()
+            if identity.channel and identity.external_user_id
+        )
+        return keys
+
+    shared_identities = identity_keys(first) & identity_keys(second)
+    if shared_identities:
         score += 0.2
-        matched_fields.append("channel_identity")
-        evidence.append({"field": "channel_identity", "weight": 0.2, "reason": "Định danh kênh trùng khớp."})
+        matched_fields.append("identity")
+        evidence.append({
+            "field": "identity",
+            "weight": 0.2,
+            "match_count": len(shared_identities),
+            "channels": sorted({channel for channel, _external_user_id in shared_identities}),
+            "reason": "Định danh người dùng trên cùng kênh trùng khớp.",
+        })
 
     score = round(min(score, 1.0), 4)
     label = "high" if score >= 0.8 else "medium" if score >= 0.55 else "low"

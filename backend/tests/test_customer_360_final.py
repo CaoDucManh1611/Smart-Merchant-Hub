@@ -11,6 +11,9 @@ from app.models.business import Business
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.crm_extended import CustomerTag, Tag
+from app.models.audit_log import AuditLog
+from app.models.customer_identity import CustomerIdentity
+from app.services.customer_merge_service import duplicate_evidence
 
 
 class Customer360FinalApiTests(unittest.TestCase):
@@ -134,6 +137,32 @@ class Customer360FinalApiTests(unittest.TestCase):
         )
         self.assertEqual(200, cross_tenant.status_code)
         self.assertEqual([], cross_tenant.json()["items"])
+
+    def test_duplicate_evidence_considers_linked_channel_identity(self):
+        with Session(self.engine) as db:
+            db.add_all([
+                CustomerIdentity(
+                    business_id=self.business_id,
+                    customer_id=self.survivor_id,
+                    channel="facebook",
+                    external_account_id="page-a",
+                    external_user_id="shared-profile",
+                ),
+                CustomerIdentity(
+                    business_id=self.business_id,
+                    customer_id=self.another_id,
+                    channel="facebook",
+                    external_account_id="page-b",
+                    external_user_id="shared-profile",
+                ),
+            ])
+            db.commit()
+            survivor = db.get(Customer, self.survivor_id)
+            another = db.get(Customer, self.another_id)
+            evidence = duplicate_evidence(db, survivor, another)
+        self.assertIn("identity", evidence["matched_fields"])
+        identity_evidence = next(item for item in evidence["evidence"] if item["field"] == "identity")
+        self.assertEqual(1, identity_evidence["match_count"])
 
     def test_merge_requires_confirmation_then_history_can_undo_safely(self):
         not_confirmed = self.client.post(
@@ -279,6 +308,60 @@ class Customer360FinalApiTests(unittest.TestCase):
             json={"name": "Không hợp lệ", "tag_ids": [999999], "match_mode": "all"},
         )
         self.assertEqual(422, response.status_code)
+
+    def test_customer_fact_and_segment_writes_are_audited_without_sensitive_values(self):
+        fact = self.client.post(
+            f"/api/customers/{self.survivor_id}/facts",
+            headers=self.headers(),
+            json={
+                "fact_type": "preference",
+                "fact_key": "budget_max",
+                "fact_value": 500000,
+                "confidence": 0.95,
+                "source_type": "manual",
+                "is_verified": True,
+            },
+        )
+        self.assertEqual(201, fact.status_code, fact.text)
+        fact_id = fact.json()["id"]
+        updated_fact = self.client.patch(
+            f"/api/customers/{self.survivor_id}/facts/{fact_id}",
+            headers=self.headers(),
+            json={"is_verified": False},
+        )
+        self.assertEqual(200, updated_fact.status_code, updated_fact.text)
+        deleted_fact = self.client.delete(
+            f"/api/customers/{self.survivor_id}/facts/{fact_id}",
+            headers=self.headers(),
+        )
+        self.assertEqual(204, deleted_fact.status_code, deleted_fact.text)
+
+        segment = self.client.post(
+            "/api/customers/segments",
+            headers=self.headers(),
+            json={"name": "Audit segment", "tag_ids": [self.vip_id]},
+        )
+        self.assertEqual(201, segment.status_code, segment.text)
+        segment_id = segment.json()["id"]
+        updated_segment = self.client.patch(
+            f"/api/customers/segments/{segment_id}",
+            headers=self.headers(),
+            json={"match_mode": "any"},
+        )
+        self.assertEqual(200, updated_segment.status_code, updated_segment.text)
+        deleted_segment = self.client.delete(
+            f"/api/customers/segments/{segment_id}",
+            headers=self.headers(),
+        )
+        self.assertEqual(204, deleted_segment.status_code, deleted_segment.text)
+
+        with Session(self.engine) as db:
+            actions = {
+                row.action
+                for row in db.query(AuditLog).filter(AuditLog.business_id == self.business_id).all()
+            }
+            self.assertTrue({"fact_create", "fact_update", "fact_delete", "segment_create", "segment_update", "segment_delete"}.issubset(actions))
+            self.assertTrue(all("fact_value" not in (row.metadata_ or {}) for row in db.query(AuditLog).all()))
 
     def test_customer_list_supports_all_and_any_multi_tag_filters(self):
         all_tags = self.client.get(
