@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.models.inventory import StockMovement
 from app.models.order_event import OrderEvent
@@ -282,14 +282,21 @@ def transition_sales_order(
     The caller owns the transaction boundary. Product rows are locked in
     deterministic order before changing stock or reservations.
     """
-    order = db.query(Order).options(
-        joinedload(Order.items),
-    ).filter(
+    # Lock only the order row.  Combining ``FOR UPDATE`` with a joinedload
+    # of the one-to-many items collection produces a LEFT OUTER JOIN, which
+    # PostgreSQL rejects with "FOR UPDATE cannot be applied to the nullable
+    # side of an outer join".  Load items in a separate query after the lock
+    # so the inventory transition remains transactional without a 500.
+    order = db.query(Order).filter(
         Order.id == order_id,
         Order.business_id == business_id,
     ).with_for_update().first()
     if order is None:
         raise SalesOrderOperationError("Đơn hàng không tồn tại.", 404)
+
+    order_items = db.query(OrderItem).filter(
+        OrderItem.order_id == order.id,
+    ).order_by(OrderItem.id.asc()).all()
 
     target = to_status.strip().lower()
     if target not in SALES_TRANSITIONS:
@@ -299,7 +306,7 @@ def transition_sales_order(
         raise SalesOrderOperationError(f"Không thể chuyển {order.status} sang {target}.", 409)
     previous = order.status
 
-    product_ids = sorted({item.product_id for item in order.items})
+    product_ids = sorted({item.product_id for item in order_items})
     products = db.query(Product).filter(
         Product.business_id == business_id,
         Product.id.in_(product_ids),
@@ -310,7 +317,7 @@ def transition_sales_order(
         raise SalesOrderOperationError(f"Sản phẩm không tồn tại trong business: {missing}.", 404)
 
     if target == "confirmed":
-        for item in order.items:
+        for item in order_items:
             product = product_map[item.product_id]
             stock = int(product.stock_quantity or 0)
             reserved = int(product.reserved_quantity or 0)
@@ -321,14 +328,14 @@ def transition_sales_order(
                     409,
                 )
         total_reserved = 0
-        for item in order.items:
+        for item in order_items:
             product = product_map[item.product_id]
             product.reserved_quantity = int(product.reserved_quantity or 0) + item.quantity
             total_reserved += item.quantity
         order.reserved_quantity = total_reserved
 
     elif target == "shipped":
-        for item in order.items:
+        for item in order_items:
             product = product_map[item.product_id]
             stock = int(product.stock_quantity or 0)
             reserved = int(product.reserved_quantity or 0)
@@ -337,7 +344,7 @@ def transition_sales_order(
                     f"Không thể xuất kho sản phẩm {product.sku}: tồn/giữ không đủ.",
                     409,
                 )
-        for item in order.items:
+        for item in order_items:
             product = product_map[item.product_id]
             before = int(product.stock_quantity or 0)
             product.stock_quantity = before - item.quantity
@@ -356,7 +363,7 @@ def transition_sales_order(
         order.reserved_quantity = 0
 
     elif target == "cancelled" and previous in {"confirmed", "processing"}:
-        for item in order.items:
+        for item in order_items:
             product = product_map[item.product_id]
             reserved = int(product.reserved_quantity or 0)
             if reserved < item.quantity:
@@ -364,13 +371,13 @@ def transition_sales_order(
                     f"Không thể giải phóng tồn giữ cho sản phẩm {product.sku}.",
                     409,
                 )
-        for item in order.items:
+        for item in order_items:
             product = product_map[item.product_id]
             product.reserved_quantity = int(product.reserved_quantity or 0) - item.quantity
         order.reserved_quantity = 0
 
     elif target == "refunded":
-        for item in order.items:
+        for item in order_items:
             product = product_map[item.product_id]
             before = int(product.stock_quantity or 0)
             product.stock_quantity = before + item.quantity

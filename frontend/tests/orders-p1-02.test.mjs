@@ -13,6 +13,12 @@ test("CRM orders UI wires Sales Order lifecycle, payment and refund endpoints", 
   assert.match(appSource, /Lịch sử/);
 });
 
+test("CRM order status picker only offers valid next lifecycle steps", () => {
+  assert.match(appSource, /salesStatusTransitions/);
+  assert.match(appSource, /salesStatusOptions\(order\)/);
+  assert.doesNotMatch(appSource, /v-for="status in salesStatuses"/);
+});
+
 test("CRM purchase UI wires receipts and supplier debt payment", () => {
   assert.match(appSource, /\/purchase-orders\/\$\{order\.id\}\/receipts/);
   assert.match(appSource, /\/purchase-orders\/\$\{order\.id\}\/payments/);

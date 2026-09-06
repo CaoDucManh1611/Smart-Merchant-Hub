@@ -129,6 +129,7 @@ const orderCustomers = ref([]);
 const revenueByChannel = ref([]);
 const orderPaymentDrafts = ref({});
 const orderPaymentSaving = ref({});
+const orderTransitionSaving = ref({});
 const selectedOrderEvents = ref(null);
 const orderEventsLoading = ref(false);
 const purchasePaymentDrafts = ref({});
@@ -155,7 +156,23 @@ const purchaseOrderForm = ref({
   notes: "",
 });
 const purchaseStatuses = ["draft", "submitted", "partially_received", "received", "closed", "cancelled"];
-const salesStatuses = ["draft", "confirmed", "processing", "shipped", "delivered", "completed", "refunded", "cancelled"];
+const salesStatusTransitions = Object.freeze({
+  draft: ["confirmed", "cancelled"],
+  confirmed: ["processing", "cancelled"],
+  processing: ["shipped", "cancelled"],
+  shipped: ["delivered"],
+  delivered: ["completed", "refunded"],
+  completed: [],
+  refunded: [],
+  cancelled: [],
+});
+
+function salesStatusOptions(order) {
+  const current = String(order?.status || "").trim().toLowerCase();
+  const next = salesStatusTransitions[current] || [];
+  return [current, ...next].filter((status, index, statuses) => status && statuses.indexOf(status) === index);
+}
+
 const authUser = ref(null);
 const authToken = ref(window.localStorage.getItem("crm_access_token") || "");
 const authLoading = ref(false);
@@ -1856,6 +1873,10 @@ async function fetchOrders() {
 
 async function transitionSalesOrder(order, toStatus) {
   if (!order || !toStatus || order.status === toStatus) return;
+  const orderId = Number(order.id);
+  if (orderTransitionSaving.value[orderId]) return;
+  orderError.value = "";
+  orderTransitionSaving.value = { ...orderTransitionSaving.value, [orderId]: true };
   try {
     const response = await apiFetch(`${API_BASE}/orders/${order.id}/transition`, {
       method: "POST",
@@ -1870,6 +1891,10 @@ async function transitionSalesOrder(order, toStatus) {
   } catch (err) {
     orderError.value = err.message || "Không thể cập nhật vòng đời đơn hàng.";
     await fetchOrders();
+  } finally {
+    const nextSaving = { ...orderTransitionSaving.value };
+    delete nextSaving[orderId];
+    orderTransitionSaving.value = nextSaving;
   }
 }
 
@@ -5637,10 +5662,10 @@ onUnmounted(() => {
                 <td><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}<small v-if="order.status === 'draft'"> (còn {{ availableProductQuantity(item.product_id) }})</small></span></td>
                 <td>{{ order.channel || 'Không gắn kênh' }}</td>
                 <td>
-                  <select class="inline-stage" :value="order.status" @change="transitionSalesOrder(order, $event.target.value)">
-                    <option v-for="status in salesStatuses" :key="status" :value="status">{{ status }}</option>
+                  <select class="inline-stage" :value="order.status" :disabled="orderTransitionSaving[order.id]" @change="transitionSalesOrder(order, $event.target.value)">
+                    <option v-for="status in salesStatusOptions(order)" :key="status" :value="status">{{ status }}</option>
                   </select>
-                  <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order)" @click="transitionSalesOrder(order, 'confirmed')">Xác nhận đơn</button>
+                  <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order) || orderTransitionSaving[order.id]" @click.stop="transitionSalesOrder(order, 'confirmed')">{{ orderTransitionSaving[order.id] ? 'Đang cập nhật...' : 'Xác nhận đơn' }}</button>
                   <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">Thiếu tồn khả dụng</small>
                   <button type="button" class="table-action-btn" @click="loadSalesOrderEvents(order)">Lịch sử</button>
                 </td>
