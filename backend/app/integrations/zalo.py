@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 from typing import Any
 
 import httpx
@@ -18,6 +19,8 @@ from app.contracts.channel_event import (
 
 
 ZALO_BOT_API_BASE = "https://bot-api.zaloplatforms.com/bot"
+ZALO_OA_MESSAGE_API = "https://openapi.zalo.me/v3.0/oa/message/cs"
+ZALO_OA_PROFILE_API = "https://openapi.zalo.me/v3.0/oa/user/detail"
 
 
 def _created_at(value: Any) -> datetime | None:
@@ -93,17 +96,88 @@ class ZaloAdapter:
     def verify_webhook(self, payload: bytes, headers: dict[str, str]) -> bool:
         return bool(headers.get("x-bot-api-secret-token"))
 
+    def fetch_user_profile(
+        self,
+        *,
+        user_id: str,
+        access_token: str,
+    ) -> dict[str, str | None]:
+        """Fetch optional profile fields through the Zalo OA user API.
+
+        Bot Creator webhooks do not consistently include an avatar.  An OA
+        access token can enrich the profile without changing the webhook
+        contract.  Callers deliberately treat provider errors as optional
+        enrichment failures so receiving a message never fails.
+        """
+        user_id = str(user_id or "").strip()
+        access_token = str(access_token or "").strip()
+        if not user_id or not access_token:
+            raise ValueError("Zalo user_id and access_token are required")
+        response = httpx.get(
+            ZALO_OA_PROFILE_API,
+            params={"data": json.dumps({"user_id": user_id}, separators=(",", ":"))},
+            headers={"access_token": access_token},
+            timeout=15,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict) or body.get("error") not in (None, 0):
+            raise ValueError("Zalo profile lookup failed")
+        data = body.get("data") if isinstance(body.get("data"), dict) else body
+        avatar = _avatar_url(data)
+        return {
+            "display_name": str(data.get("display_name") or data.get("name") or "").strip() or None,
+            "avatar_url": avatar,
+        }
+
     def parse_events(
         self,
         payload: dict[str, Any],
         *,
         external_account_id: str,
+        raw_payload: dict[str, Any] | None = None,
     ) -> list[NormalizedChannelEvent]:
         external_account_id = str(external_account_id or "").strip()
         if not external_account_id:
             raise ValueError("Zalo external_account_id is required")
         if not isinstance(payload, dict):
             return []
+
+        # Official Account webhooks use sender/recipient/event_name at the
+        # top level, while Bot Creator puts the sender inside message.from.
+        # Convert the OA envelope into the shared parser shape so both
+        # integrations keep identical persistence and Customer 360 behavior.
+        event_name = str(payload.get("event_name") or "").strip().lower()
+        if event_name.startswith("user_") and isinstance(payload.get("sender"), dict):
+            sender = payload["sender"]
+            message = payload.get("message")
+            if not isinstance(message, dict):
+                return []
+            sender_id = sender.get("id")
+            message_id = message.get("msg_id") or message.get("message_id") or payload.get("msg_id")
+            if sender_id is None or message_id is None:
+                return []
+            normalized_message = dict(message)
+            normalized_message.update(
+                {
+                    "message_id": message_id,
+                    "date": payload.get("timestamp"),
+                    "from_id": sender_id,
+                    "from_display_name": sender.get("display_name"),
+                    "from_avatar": sender.get("avatar_url") or sender.get("avatar"),
+                    "chat_id": sender_id,
+                    "chat_type": "PRIVATE",
+                }
+            )
+            normalized_payload = {
+                "event_name": payload.get("event_name"),
+                "message": normalized_message,
+            }
+            return self.parse_events(
+                normalized_payload,
+                external_account_id=external_account_id,
+                raw_payload=payload,
+            )
 
         message = payload.get("message")
         if not isinstance(message, dict):
@@ -277,7 +351,7 @@ class ZaloAdapter:
                 sender_external_id=str(sender_id),
                 recipient_external_id=str(chat_id),
                 provider_created_at=occurred_at,
-                raw_payload=payload,
+                raw_payload=raw_payload if raw_payload is not None else payload,
                 messages=[normalized_message],
             )
         ]
@@ -288,6 +362,7 @@ class ZaloAdapter:
         recipient_external_id: str,
         text: str,
         access_token: str,
+        provider: str = "bot",
     ) -> dict[str, Any]:
         recipient_external_id = str(recipient_external_id or "").strip()
         text = str(text or "").strip()
@@ -297,7 +372,19 @@ class ZaloAdapter:
         if not text:
             raise ValueError("Zalo message text is required")
         if not access_token:
-            raise ValueError("Zalo Bot token is required")
+            raise ValueError("Zalo access token is required")
+        if str(provider).strip().lower() in {"oa", "zalo_oa", "official_account"}:
+            response = httpx.post(
+                ZALO_OA_MESSAGE_API,
+                headers={"access_token": access_token},
+                json={
+                    "recipient": {"user_id": recipient_external_id},
+                    "message": {"text": text[:2000]},
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            return response.json()
         response = httpx.post(
             f"{ZALO_BOT_API_BASE}{access_token}/sendMessage",
             json={"chat_id": recipient_external_id, "text": text[:2000]},
@@ -314,11 +401,42 @@ class ZaloAdapter:
         media_url: str,
         access_token: str,
         caption: str | None = None,
+        provider: str = "bot",
     ) -> dict[str, Any]:
         media_type = str(media_type or "").strip().lower()
         media_url = str(media_url or "").strip()
         if not media_url:
             raise ValueError("Zalo media_url là bắt buộc")
+        if str(provider).strip().lower() in {"oa", "zalo_oa", "official_account"}:
+            if media_type not in {"image", "gif"}:
+                raise ValueError("Zalo OA hiện hỗ trợ gửi image/gif qua CRM")
+            message: dict[str, Any] = {
+                "attachment": {
+                    "type": "template",
+                    "payload": {
+                        "template_type": "media",
+                        "elements": [
+                            {
+                                "media_type": "image" if media_type == "image" else "gif",
+                                "url": media_url,
+                            }
+                        ],
+                    },
+                }
+            }
+            if caption:
+                message["text"] = str(caption)[:2000]
+            response = httpx.post(
+                ZALO_OA_MESSAGE_API,
+                headers={"access_token": access_token},
+                json={
+                    "recipient": {"user_id": recipient_external_id},
+                    "message": message,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            return response.json()
         methods: dict[str, tuple[str, str]] = {
             "image": ("sendPhoto", "photo"),
             "audio": ("sendVoice", "voice_url"),

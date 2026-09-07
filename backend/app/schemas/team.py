@@ -40,3 +40,42 @@ class TeamUserOut(BaseModel):
 class TeamUserListOut(BaseModel):
     items: list[TeamUserOut]
     total: int
+
+
+class PermissionOverrideCreate(BaseModel):
+    resource: str = Field(..., min_length=1, max_length=80)
+    action: str = Field(..., min_length=1, max_length=40)
+    effect: str = Field(..., pattern="^(allow|deny)$")
+    role: str | None = Field(default=None, max_length=40)
+    user_id: int | None = None
+
+
+class PermissionOverrideOut(BaseModel):
+    id: int
+    business_id: int
+    resource: str
+    action: str
+    effect: str
+    role: str | None = None
+    user_id: int | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PermissionOverrideListOut(BaseModel):
+    items: list[PermissionOverrideOut]
+    total: int
+
+
+class EffectivePermissionOut(BaseModel):
+    resource: str
+    action: str
+    allowed: bool
+    source: str
+
+
+class EffectivePermissionListOut(BaseModel):
+    user_id: int
+    items: list[EffectivePermissionOut]

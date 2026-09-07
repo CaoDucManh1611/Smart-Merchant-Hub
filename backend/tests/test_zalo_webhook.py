@@ -1,4 +1,6 @@
 import unittest
+import hashlib
+import json
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -8,7 +10,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.dependencies import get_db
 from app.main import app
+from app.core.config import settings
 from app.models import Business, Channel, ChannelEvent, Conversation, Customer, CustomerIdentity, Message, MessageAttachment
+from app.services.channel_credentials import encrypt_token
 
 
 class ZaloWebhookApiTests(unittest.TestCase):
@@ -32,6 +36,29 @@ class ZaloWebhookApiTests(unittest.TestCase):
                     external_account_id="zalo-bot-1",
                     status="active",
                     config={"webhook_secret": "zalo-secret-1"},
+                    access_token_encrypted=encrypt_token(
+                        "zalo-oa-access-token",
+                        settings.CHANNEL_ENCRYPTION_KEY,
+                    ),
+                )
+            )
+            db.add(
+                Channel(
+                    business_id=business.id,
+                    channel_type="zalo",
+                    name="Shop Zalo OA",
+                    external_account_id="zalo-oa-1",
+                    status="active",
+                    config={
+                        "provider": "zalo_oa",
+                        "oa_app_id": "oa-app-1",
+                        "oa_id": "zalo-oa-1",
+                        "oa_secret_key": "oa-secret-1",
+                    },
+                    access_token_encrypted=encrypt_token(
+                        "zalo-oa-access-token",
+                        settings.CHANNEL_ENCRYPTION_KEY,
+                    ),
                 )
             )
             db.commit()
@@ -66,6 +93,26 @@ class ZaloWebhookApiTests(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def oa_text_payload(message_id: str = "oa-msg-1") -> dict:
+        return {
+            "app_id": "oa-app-1",
+            "oa_id": "zalo-oa-1",
+            "event_name": "user_send_text",
+            "sender": {"id": "oa-user-1"},
+            "recipient": {"id": "zalo-oa-1"},
+            "message": {"text": "Xin chào OA", "msg_id": message_id},
+            "timestamp": "1775362520302",
+        }
+
+    @staticmethod
+    def oa_signature(payload: dict) -> tuple[str, bytes]:
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+        timestamp = str(payload["timestamp"])
+        raw = "oa-app-1".encode() + body + timestamp.encode() + b"oa-secret-1"
+        digest = hashlib.sha256(raw).hexdigest()
+        return f"mac={digest}", body
+
     def test_valid_secret_persists_zalo_message_under_channel_tenant(self):
         with patch(
             "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
@@ -96,6 +143,31 @@ class ZaloWebhookApiTests(unittest.TestCase):
             self.assertIsNotNone(saved)
             self.assertEqual("Tôi muốn xem sản phẩm", saved.content)
 
+    def test_missing_webhook_avatar_is_enriched_from_zalo_profile(self):
+        payload = self.text_payload("z-msg-profile")
+        payload["message"]["from"].pop("avatar_url")
+        with patch(
+            "app.integrations.zalo.ZaloAdapter.fetch_user_profile",
+            return_value={
+                "display_name": "Zalo Buyer",
+                "avatar_url": "https://cdn.example/zalo-profile.jpg",
+            },
+        ), patch(
+            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
+        ), patch("app.services.auto_reply_service.process_rag_auto_reply_background"):
+            response = self.client.post(
+                "/api/webhooks/zalo",
+                headers={"X-Bot-Api-Secret-Token": "zalo-secret-1"},
+                json=payload,
+            )
+
+        self.assertEqual(200, response.status_code, response.text)
+        with Session(self.engine) as db:
+            customer = db.scalar(
+                select(Customer).where(Customer.external_user_id == "z-user-1")
+            )
+            self.assertEqual("https://cdn.example/zalo-profile.jpg", customer.avatar_url)
+
     def test_invalid_secret_is_rejected_before_persistence(self):
         response = self.client.post(
             "/api/webhooks/zalo",
@@ -104,6 +176,61 @@ class ZaloWebhookApiTests(unittest.TestCase):
         )
 
         self.assertEqual(401, response.status_code)
+
+    def test_oa_webhook_signature_persists_message_and_returns_200(self):
+        payload = self.oa_text_payload()
+        signature, body = self.oa_signature(payload)
+        with patch(
+            "app.integrations.zalo.ZaloAdapter.fetch_user_profile",
+            return_value={
+                "display_name": "OA Buyer",
+                "avatar_url": "https://cdn.example/oa-avatar.jpg",
+            },
+        ), patch(
+            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
+        ), patch("app.services.auto_reply_service.process_rag_auto_reply_background"):
+            response = self.client.post(
+                "/api/webhooks/zalo",
+                headers={
+                    "X-ZEvent-Signature": signature,
+                    "Content-Type": "application/json",
+                },
+                content=body,
+            )
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual({"status": "received", "processed": 1}, response.json())
+        with Session(self.engine) as db:
+            customer = db.scalar(select(Customer).where(Customer.external_user_id == "oa-user-1"))
+            self.assertIsNotNone(customer)
+            self.assertEqual("OA Buyer", customer.name)
+            self.assertEqual("https://cdn.example/oa-avatar.jpg", customer.avatar_url)
+            saved = db.scalar(select(Message).where(Message.external_message_id == "zalo:zalo-oa-1:oa-msg-1"))
+            self.assertIsNotNone(saved)
+            self.assertEqual("Xin chào OA", saved.content)
+
+    def test_invalid_oa_signature_is_rejected_before_persistence(self):
+        payload = self.oa_text_payload("oa-msg-invalid")
+        response = self.client.post(
+            "/api/webhooks/zalo",
+            headers={
+                "X-ZEvent-Signature": "mac=" + ("0" * 64),
+                "Content-Type": "application/json",
+            },
+            content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
+        )
+
+        self.assertEqual(401, response.status_code)
+
+    def test_empty_webhook_probe_returns_200_without_authentication(self):
+        response = self.client.post(
+            "/api/webhooks/zalo",
+            headers={"Content-Type": "application/json"},
+            json={},
+        )
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual({"status": "received", "processed": 0}, response.json())
 
     def test_duplicate_zalo_delivery_is_acknowledged_without_duplicate_message(self):
         with patch(

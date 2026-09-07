@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models.auth_session import AuthSession
 from app.models.business import User
+from app.services.permission_service import permission_allowed
 
 
 AUTH_TTL_SECONDS = 8 * 60 * 60
@@ -98,13 +99,9 @@ def get_optional_user(
 
 def require_permission(permission: str):
     """Return a dependency enforcing the minimal role for a permission."""
-    def dependency(user: User = Depends(get_current_user)) -> User:
-        role = (user.role or "").lower()
-        if role in {"owner", "admin"}:
-            return user
-        if role == "agent" and permission.endswith(":write") and not permission.startswith(("team:", "audit:")):
-            return user
-        if role == "viewer" and permission.endswith(":read"):
+    resource, action = (permission.split(":", 1) + ["read"])[:2] if ":" in permission else (permission, "read")
+    def dependency(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
+        if permission_allowed(db, user, resource=resource, action=action):
             return user
         raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này.")
     return dependency

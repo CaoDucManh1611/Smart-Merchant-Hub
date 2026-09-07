@@ -9,6 +9,7 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models.business import Business
 from app.models.customer import Customer
+from app.models.crm_extended import CustomerTag, Tag
 
 
 class CustomerTagsApiTests(unittest.TestCase):
@@ -116,6 +117,30 @@ class CustomerTagsApiTests(unittest.TestCase):
             headers=headers,
         )
         self.assertEqual([], only_vip.json()["items"])
+
+    def test_tag_catalog_returns_unique_active_customer_counts(self):
+        with Session(self.engine) as db:
+            second_customer = Customer(
+                business_id=1,
+                channel="zalo",
+                external_user_id="tag-user-two",
+            )
+            tag = Tag(business_id=1, name="Catalog Count")
+            db.add_all([second_customer, tag])
+            db.flush()
+            db.add_all([
+                CustomerTag(business_id=1, customer_id=self.customer_id, tag_id=tag.id),
+                CustomerTag(business_id=1, customer_id=second_customer.id, tag_id=tag.id),
+            ])
+            db.commit()
+
+        response = self.client.get(
+            "/api/customers/tags/catalog",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, response.status_code)
+        item = next(item for item in response.json()["items"] if item["name"] == "Catalog Count")
+        self.assertEqual(2, item["customer_count"])
 
 
 if __name__ == "__main__":

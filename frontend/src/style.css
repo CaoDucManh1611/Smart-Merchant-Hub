@@ -5192,36 +5192,119 @@ body,
   background: #fffaf8;
 }
 
-.inbox-channel-tabs {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+.inbox-channel-filter {
+  display: block;
   padding: 12px 14px 8px;
+  background: #fffaf8;
 }
 
-.inbox-channel-tabs button {
-  display: flex;
+.inbox-channel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.inbox-channel-all,
+.inbox-channel-button {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-width: 0;
+  gap: 6px;
   min-height: 37px;
-  padding: 0 6px;
+  padding: 0 10px;
   color: #8b5b58;
   border: 1px solid #f0c2b8;
   border-radius: 11px;
   background: #fff5f1;
-  font-size: .71rem;
+  font-size: .72rem;
   font-weight: 700;
   white-space: nowrap;
 }
 
-.inbox-channel-tabs button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.inbox-channel-all {
+  grid-column: 1 / -1;
 }
 
-.inbox-channel-tabs button i {
+.inbox-channel-button {
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.channel-tab-label {
+  white-space: nowrap;
+}
+
+.channel-tab-icon {
+  display: inline-grid;
+  flex: 0 0 22px;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #fff;
+  border-radius: 8px;
+  font-size: .72rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.channel-tab-icon::before {
+  display: block;
+}
+
+.channel-tab-icon.all {
+  background: #d72431;
+}
+
+.channel-tab-icon.all::before {
+  content: "✦";
+}
+
+.channel-tab-icon.facebook {
+  background: #1877f2;
+}
+
+.channel-tab-icon.facebook::before {
+  content: "f";
+  font-size: .9rem;
+}
+
+.channel-tab-icon.instagram {
+  background: linear-gradient(135deg, #f9ce34, #ee2a7b 52%, #6228d7);
+}
+
+.channel-tab-icon.instagram::before {
+  content: "◎";
+  font-size: .95rem;
+}
+
+.channel-tab-icon.telegram {
+  background: #229ed9;
+}
+
+.channel-tab-icon.telegram::before {
+  content: "➤";
+  font-size: .8rem;
+}
+
+.channel-tab-icon.zalo {
+  background: #1677ff;
+}
+
+.channel-tab-icon.zalo::before {
+  content: "Z";
+}
+
+.channel-tab-icon:not(.all):not(.facebook):not(.instagram):not(.telegram):not(.zalo) {
+  background: #8b6dca;
+}
+
+.channel-tab-icon:not(.all):not(.facebook):not(.instagram):not(.telegram):not(.zalo)::before {
+  content: "•";
+}
+
+.inbox-channel-all i,
+.inbox-channel-button i {
   display: inline-grid;
   place-items: center;
   min-width: 17px;
@@ -5235,14 +5318,16 @@ body,
   font-style: normal;
 }
 
-.inbox-channel-tabs button.active {
+.inbox-channel-all.active,
+.inbox-channel-button.active {
   color: #fff;
   border-color: #e92e38;
   background: #e92e38;
   box-shadow: 0 5px 12px rgba(216, 36, 49, .15);
 }
 
-.inbox-channel-tabs button.active i {
+.inbox-channel-all.active i,
+.inbox-channel-button.active i {
   color: #d72431;
   background: #fff5ee;
 }
@@ -5521,9 +5606,22 @@ body,
     display: none;
   }
 
-  .inbox-channel-tabs button {
-    padding-inline: 4px;
-    font-size: .65rem;
+  .inbox-channel-filter {
+    gap: 5px;
+    padding-inline: 10px;
+  }
+
+  .inbox-channel-all,
+  .inbox-channel-button {
+    min-height: 36px;
+    padding-inline: 9px;
+    font-size: .7rem;
+  }
+
+  .channel-tab-icon {
+    width: 21px;
+    height: 21px;
+    flex-basis: 21px;
   }
 
   .inbox-filter-panel,

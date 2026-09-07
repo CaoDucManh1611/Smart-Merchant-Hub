@@ -40,6 +40,7 @@ test("AI Rule Lab supports creating and filtering explainable rule suggestions",
   assert.match(appSource, /Đã duyệt/);
   assert.match(appSource, /Từ chối/);
   assert.match(appSource, /suggestion.proposed_action/);
+  assert.match(appSource, /Chưa đồng bộ database AI/);
 });
 
 test("AI experiments can be created from the AI Lab", () => {
@@ -48,6 +49,30 @@ test("AI experiments can be created from the AI Lab", () => {
   assert.match(appSource, /Tạo experiment/);
   assert.match(appSource, /experiment.variants/);
   assert.match(appSource, /experiment.status/);
+});
+
+test("Knowledge Base exposes durable RAG run status and retry action", () => {
+  assert.match(appSource, /documentRuns/);
+  assert.match(appSource, /\/documents\/\$\{doc\.id\}\/runs/);
+  assert.match(appSource, /RAG run/);
+  assert.match(appSource, /Thử lại indexing/);
+});
+
+test("CRM operations expose attribution, lead conversion, and lead activity actions", () => {
+  assert.match(appSource, /revenue-attribution\?model=last_touch/);
+  assert.match(appSource, /Tính lại nguồn doanh thu/);
+  assert.match(appSource, /leads\/\$\{lead\.id\}\/activities/);
+  assert.match(appSource, /leads\/\$\{lead\.id\}\/convert/);
+  assert.match(appSource, /Ghi nhận chuyển đổi/);
+  assert.match(appSource, /Hoạt động/);
+});
+
+test("Team settings expose tenant-scoped permission overrides", () => {
+  assert.match(appSource, /team\/permissions/);
+  assert.match(appSource, /permissionForm/);
+  assert.match(appSource, /Quyền chi tiết/);
+  assert.match(appSource, /Từ chối luôn được ưu tiên/);
+  assert.match(appSource, /Thêm quy tắc/);
 });
 
 test("AI navigation keeps the Rule Lab and Assistant under one group", () => {
@@ -103,6 +128,21 @@ test("inbox uses a polished filter toolbar instead of a native multi-select", ()
   assert.match(appSource, /toggleTagFilter/);
   assert.match(appSource, /class="segment-control"/);
   assert.doesNotMatch(appSource, /class="segment-filter" multiple/);
+});
+
+test("inbox platform filters keep complete labels in a compact channel grid", () => {
+  assert.match(appSource, /class="inbox-channel-filter"/);
+  assert.match(appSource, /class="inbox-channel-all"/);
+  assert.match(appSource, /class="inbox-channel-grid"/);
+  assert.match(appSource, /class="channel-tab-icon"/);
+  assert.match(appSource, /class="channel-tab-label"/);
+  assert.match(styleSource, /\.inbox-channel-grid[\s\S]*?display:\s*grid/);
+  assert.match(styleSource, /\.inbox-channel-all[\s\S]*?grid-column:\s*1\s*\/\s*-1/);
+  assert.match(styleSource, /\.inbox-channel-button[\s\S]*?min-width:\s*0/);
+  assert.match(styleSource, /\.channel-tab-label[\s\S]*?white-space:\s*nowrap/);
+  assert.doesNotMatch(appSource, /class="inbox-channel-scroll"/);
+  assert.doesNotMatch(styleSource, /\.inbox-channel-scroll/);
+  assert.doesNotMatch(styleSource, /\.inbox-channel-tabs button span\s*\{[^}]*text-overflow:\s*ellipsis/s);
 });
 
 test("inbox header and conversation rows expose readable status hierarchy", () => {

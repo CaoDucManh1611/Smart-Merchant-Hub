@@ -6,7 +6,12 @@ from app.models.customer_merge import CustomerMerge
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
 from app.models.notification import Notification
-from app.models.experimentation import RuleSuggestion, FeatureSnapshot, Experiment, ExperimentAssignment, ExperimentOutcome, BanditDecision
+from app.models.experimentation import (
+    RuleSuggestion, FeatureSnapshot, Experiment, ExperimentAssignment,
+    ExperimentExposure, ExperimentOutcome, ExperimentMetricAggregate,
+    ModelVersion, ModelTrainingRun, ModelEvaluationMetric,
+    BanditPolicy, BanditArmStat, BanditDecision,
+)
 from app.models.business_setting import BusinessSetting
 from app.models.oauth_state import OAuthState
 from app.models.channel_migration import ChannelMigrationAudit
@@ -28,6 +33,10 @@ from app.models.lead import Lead
 from app.models.ticket import Ticket, TicketComment, TicketEvent
 from app.models.workflow import Workflow, WorkflowRun
 from app.models.chatbot import ChatbotConfig
+from app.models.revenue import RevenueTouchpoint, RevenueAttribution, LeadActivity, LeadConversion
+from app.models.crm_job import CrmJob
+from app.models.rag_run import RagRun
+from app.models.permission import PermissionOverride
 
 __all__ = [
     "Customer",
@@ -41,7 +50,14 @@ __all__ = [
     "FeatureSnapshot",
     "Experiment",
     "ExperimentAssignment",
+    "ExperimentExposure",
     "ExperimentOutcome",
+    "ExperimentMetricAggregate",
+    "ModelVersion",
+    "ModelTrainingRun",
+    "ModelEvaluationMetric",
+    "BanditPolicy",
+    "BanditArmStat",
     "BanditDecision",
     "Conversation",
     "Message",
@@ -78,4 +94,11 @@ __all__ = [
     "Workflow",
     "WorkflowRun",
     "ChatbotConfig",
+    "RevenueTouchpoint",
+    "RevenueAttribution",
+    "LeadActivity",
+    "LeadConversion",
+    "CrmJob",
+    "RagRun",
+    "PermissionOverride",
 ]

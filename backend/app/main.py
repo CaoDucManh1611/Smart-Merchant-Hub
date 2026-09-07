@@ -1,8 +1,10 @@
 import logging
+from pathlib import Path
 from threading import Thread
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -16,6 +18,8 @@ from app.services.knowledge_seed_service import seed_knowledge_base
 
 logger = logging.getLogger(__name__)
 configure_logging()
+
+ZALO_VERIFICATION_DIR = Path(__file__).resolve().parent / "zalo_verification"
 
 
 app = FastAPI(
@@ -112,3 +116,21 @@ async def health_check():
     return {
         "status": "ok"
     }
+
+
+@app.get("/{filename:path}", include_in_schema=False)
+async def zalo_domain_verification_file(filename: str):
+    """Serve only Zalo's downloaded domain-verification HTML files."""
+    if (
+        not filename.lower().startswith("zalo_verifier")
+        or not filename.lower().endswith(".html")
+        or "/" in filename
+        or "\\" in filename
+    ):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    verification_dir = ZALO_VERIFICATION_DIR.resolve()
+    candidate = (verification_dir / filename).resolve()
+    if candidate.parent != verification_dir or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(candidate, media_type="text/html")

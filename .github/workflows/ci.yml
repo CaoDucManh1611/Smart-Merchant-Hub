@@ -13,12 +13,17 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  POSTGRES_DB: crm_chatbot
+  POSTGRES_USER: ci_user
+  POSTGRES_PASSWORD: ci_password
+  DATABASE_URL: postgresql+psycopg://ci_user:ci_password@localhost:5432/crm_chatbot
+  RAG_AUTO_SEED_ENABLED: "false"
+  RAG_AUTO_REPLY_ENABLED: "false"
+
 jobs:
   backend-test:
     runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: postgresql+psycopg://ci_user:ci_password@localhost:5432/crm_chatbot
-      RAG_AUTO_SEED_ENABLED: "false"
 
     services:
       postgres:
@@ -39,6 +44,9 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
+      - name: Check patch whitespace
+        run: git diff --check
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -52,20 +60,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Initialize application database
+      - name: Apply Alembic migrations
         working-directory: backend
-        run: python -c "from app.database.init_db import init_db; init_db()"
+        run: python -m alembic upgrade head
+
+      - name: Verify migration head and model drift
+        working-directory: backend
+        run: |
+          python -m alembic current
+          python -m alembic heads
+          python -m alembic check
+
+      - name: Compile backend sources
+        working-directory: backend
+        run: python -m compileall -q app alembic tests
 
       - name: Run backend tests
         working-directory: backend
         run: pytest -v
 
-  frontend-build:
+  frontend-test:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
+
+      - name: Check patch whitespace
+        run: git diff --check
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -78,12 +100,70 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+
       - name: Build frontend
         working-directory: frontend
         run: npm run build
 
+  compose-smoke:
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_DB: crm_chatbot
+      POSTGRES_USER: ci_user
+      POSTGRES_PASSWORD: ci_password
+      DATABASE_URL: postgresql+psycopg://ci_user:ci_password@db:5432/crm_chatbot
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Check Compose configuration
+        run: |
+          cat > backend/.env <<'EOF'
+          DATABASE_URL=postgresql+psycopg://ci_user:ci_password@db:5432/crm_chatbot
+          ENVIRONMENT=development
+          AUTH_SECRET=ci-only-auth-secret
+          CHANNEL_ENCRYPTION_KEY=ci-only-channel-key
+          RAG_AUTO_SEED_ENABLED=false
+          RAG_AUTO_REPLY_ENABLED=false
+          EMBEDDING_PROVIDER=local
+          CORS_ORIGINS=http://localhost:5173
+          ALLOWED_HOSTS=*
+          EOF
+          docker compose config --quiet
+
+      - name: Start Compose stack
+        run: docker compose up -d --build
+
+      - name: Wait for service health
+        run: |
+          for attempt in $(seq 1 30); do
+            backend_status=$(docker inspect --format '{{.State.Health.Status}}' crm_chatbot_backend 2>/dev/null || true)
+            frontend_status=$(docker inspect --format '{{.State.Health.Status}}' crm_chatbot_frontend 2>/dev/null || true)
+            if [ "$backend_status" = "healthy" ] && [ "$frontend_status" = "healthy" ]; then
+              break
+            fi
+            if [ "$attempt" = "30" ]; then
+              docker compose ps
+              docker compose logs --no-color db backend frontend
+              exit 1
+            fi
+            sleep 5
+          done
+          curl --fail --silent --show-error http://localhost:8000/health
+          curl --fail --silent --show-error http://localhost:5173/
+          docker compose ps
+
+      - name: Tear down Compose stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
   docker-build:
-    needs: [backend-test, frontend-build]
+    needs: [backend-test, frontend-test, compose-smoke]
     runs-on: ubuntu-latest
 
     steps:

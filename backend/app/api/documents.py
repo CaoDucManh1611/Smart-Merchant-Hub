@@ -3,7 +3,8 @@ Document Management API – upload, list, delete tài liệu.
 """
 
 import logging
-from threading import Thread
+import re
+from datetime import datetime, timezone
 
 from fastapi import (
     APIRouter,
@@ -14,9 +15,9 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
 from app.db.dependencies import get_db
 from app.models.document import Document, DocumentChunk
+from app.models.rag_run import RagRun
 from app.rag.loader import detect_file_type, LOADERS
 from app.schemas.rag import DocumentChunkOut, DocumentListOut, DocumentOut
 from app.services.ingestion_service import (
@@ -26,24 +27,69 @@ from app.services.ingestion_service import (
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_write_access
+from app.services.job_service import dispatch_due_jobs, enqueue_job
 
 logger = logging.getLogger(__name__)
+
+_SENSITIVE_ERROR = re.compile(
+    r"(?i)(token|secret|authorization|api[_-]?key)\s*[=:]\s*[^\s,;]+"
+)
+
+
+def _safe_error(exc: Exception) -> str:
+    """Keep provider credentials out of persisted RAG diagnostics."""
+    message = _SENSITIVE_ERROR.sub(r"\1=[redacted]", str(exc or ""))
+    return message[:500] or "RAG ingestion failed"
 
 router = APIRouter()
 
 
-def _run_ingestion_background(
-    document_id: int,
-    file_bytes: bytes,
-    filename: str,
-    business_id: int,
-) -> None:
-    """Chạy ingestion trong thread riêng với DB session riêng."""
-    db = SessionLocal()
+def _queue_ingestion(db: Session, doc: Document, *, kind: str) -> RagRun:
+    run = RagRun(
+        business_id=doc.business_id,
+        document_id=doc.id,
+        kind=kind,
+        status="queued",
+        source_document_ids=[doc.id],
+    )
+    db.add(run)
+    db.flush()
+    enqueue_job(
+        db,
+        business_id=doc.business_id,
+        kind="rag.ingest",
+        payload={"run_id": run.id, "document_id": doc.id},
+        idempotency_key=f"rag:{kind}:{run.id}",
+    )
+    return run
+
+
+def _dispatch_rag_job(db: Session, payload: dict, business_id: int) -> None:
+    run = db.query(RagRun).filter(RagRun.id == int(payload["run_id"]), RagRun.business_id == business_id).first()
+    doc = db.query(Document).filter(Document.id == int(payload["document_id"]), Document.business_id == business_id).first()
+    if run is None or doc is None:
+        return
+    run.status = "processing"
+    run.phase = "load"
+    run.attempts = (run.attempts or 0) + 1
+    db.commit()
     try:
-        ingest_document(document_id, file_bytes, filename, db, business_id=business_id)
-    finally:
-        db.close()
+        ingest_document(doc.id, bytes(doc.source_bytes or b""), doc.filename, db, business_id=business_id)
+    except Exception as exc:
+        run.status = "failed"
+        run.phase = "complete"
+        run.error_message = _safe_error(exc)
+        run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        raise
+    db.refresh(doc)
+    db.refresh(run)
+    run.status = "completed" if doc.status == "ready" else "failed"
+    run.phase = "complete"
+    run.chunk_count = int(doc.chunk_count or 0)
+    run.error_message = doc.error_message
+    run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
 
 
 # =========================================================
@@ -106,13 +152,8 @@ async def upload_document(
     db.commit()
     db.refresh(doc)
 
-    # Chạy ingestion trong background thread
-    thread = Thread(
-        target=_run_ingestion_background,
-        args=(doc.id, file_bytes, file.filename, tenant.business_id),
-        daemon=True,
-    )
-    thread.start()
+    _queue_ingestion(db, doc, kind="ingestion")
+    db.commit()
 
     logger.info(
         "Document uploaded: %s (id=%d), processing in background",
@@ -143,14 +184,24 @@ async def reindex_document(
     doc.embedding_status = "pending"
     doc.error_message = None
     db.commit()
-    thread = Thread(
-        target=_run_ingestion_background,
-        args=(doc.id, source, doc.filename, tenant.business_id),
-        daemon=True,
-    )
-    thread.start()
+    _queue_ingestion(db, doc, kind="reindex")
+    db.commit()
     db.refresh(doc)
     return doc
+
+
+@router.get("/{document_id}/runs")
+async def list_document_runs(document_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+    if db.query(Document.id).filter(Document.id == document_id, Document.business_id == tenant.business_id).first() is None:
+        raise HTTPException(404, "Tài liệu không tồn tại.")
+    runs = db.query(RagRun).filter(RagRun.document_id == document_id, RagRun.business_id == tenant.business_id).order_by(RagRun.id.desc()).limit(100).all()
+    return {"items": [{"id": row.id, "document_id": row.document_id, "kind": row.kind, "status": row.status, "phase": row.phase, "chunk_count": row.chunk_count, "attempts": row.attempts, "error_message": row.error_message, "created_at": row.created_at, "completed_at": row.completed_at} for row in runs], "total": len(runs)}
+
+
+@router.post("/jobs/dispatch")
+async def dispatch_document_jobs(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+    processed = dispatch_due_jobs(db, business_id=tenant.business_id, handlers={"rag.ingest": lambda payload: _dispatch_rag_job(db, payload, tenant.business_id)})
+    return {"processed": processed}
 
 
 # =========================================================

@@ -11,6 +11,8 @@ from app.models.business import User
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.lead import Lead
+from app.models.revenue import LeadActivity, LeadConversion
+from app.models.sales import Order
 from app.schemas.lead import (
     LeadCreate,
     LeadListOut,
@@ -19,6 +21,11 @@ from app.schemas.lead import (
     PipelineReportOut,
     PipelineStageItem,
     PIPELINE_STAGES,
+    LeadActivityCreate,
+    LeadActivityListOut,
+    LeadActivityOut,
+    LeadConversionCreate,
+    LeadConversionOut,
 )
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
@@ -218,3 +225,65 @@ def pipeline_report(db: Session = Depends(get_db), tenant: TenantContext = Depen
         total_leads=sum(item.lead_count for item in items),
         total_value=sum((item.value for item in items), Decimal("0")),
     )
+
+
+@router.get("/leads/{lead_id}/activities", response_model=LeadActivityListOut)
+def list_lead_activities(lead_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+    _get_lead(db, lead_id, tenant)
+    query = db.query(LeadActivity).filter(LeadActivity.business_id == tenant.business_id, LeadActivity.lead_id == lead_id)
+    total = query.count()
+    rows = query.order_by(LeadActivity.occurred_at.desc(), LeadActivity.id.desc()).limit(200).all()
+    return LeadActivityListOut(items=rows, total=total)
+
+
+@router.post("/leads/{lead_id}/activities", response_model=LeadActivityOut, status_code=201, dependencies=[Depends(require_write_access)])
+def create_lead_activity(
+    lead_id: int,
+    payload: LeadActivityCreate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    _get_lead(db, lead_id, tenant)
+    row = LeadActivity(
+        business_id=tenant.business_id,
+        lead_id=lead_id,
+        activity_type=payload.activity_type.strip().lower(),
+        subject=payload.subject.strip(),
+        body=payload.body.strip() if payload.body else None,
+        occurred_at=payload.occurred_at,
+        actor_id=actor.id if actor else None,
+        metadata_=payload.metadata,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.post("/leads/{lead_id}/convert", response_model=LeadConversionOut, status_code=201, dependencies=[Depends(require_write_access)])
+def convert_lead(
+    lead_id: int,
+    payload: LeadConversionCreate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    lead = _get_lead(db, lead_id, tenant)
+    order = db.query(Order).filter(Order.id == payload.order_id, Order.business_id == tenant.business_id, Order.customer_id == lead.customer_id).first()
+    if order is None:
+        raise HTTPException(status_code=404, detail="Đơn hàng không thuộc customer/business của lead.")
+    existing = db.query(LeadConversion).filter(LeadConversion.business_id == tenant.business_id, LeadConversion.lead_id == lead_id).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Lead đã được chuyển đổi.")
+    order_existing = db.query(LeadConversion).filter(LeadConversion.business_id == tenant.business_id, LeadConversion.order_id == order.id).first()
+    if order_existing is not None:
+        raise HTTPException(status_code=409, detail="Đơn hàng đã được liên kết với một lead khác.")
+    conversion = LeadConversion(business_id=tenant.business_id, lead_id=lead.id, order_id=order.id, converted_by=actor.id if actor else None)
+    db.add(conversion)
+    lead.stage = "won"
+    lead.status = "converted"
+    db.add(LeadActivity(business_id=tenant.business_id, lead_id=lead.id, activity_type="conversion", subject="Lead chuyển đổi thành đơn hàng", body=f"Order #{order.order_number}", actor_id=actor.id if actor else None))
+    db.commit()
+    db.refresh(conversion)
+    return conversion

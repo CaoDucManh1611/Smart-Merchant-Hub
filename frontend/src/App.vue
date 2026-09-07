@@ -12,6 +12,7 @@ import { channelLabel } from "./channel-utils.js";
 import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";
 import { filterConversationsForCustomer } from "./ticket-utils.js";
 import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
+import { getInboxChannels } from "./inbox-utils.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
 const BUSINESS_ID = "1";
@@ -211,6 +212,12 @@ const leads = ref([]);
 const leadsLoading = ref(false);
 const leadSaving = ref(false);
 const leadError = ref("");
+const leadActivities = ref({});
+const leadActivityVisible = ref({});
+const leadActivityDrafts = ref({});
+const leadActivityLoading = ref({});
+const leadConversionOrders = ref({});
+const leadConversionSaving = ref({});
 const pipelineSummary = ref([]);
 const leadForm = ref({
   title: "",
@@ -230,6 +237,8 @@ const ticketHistory = ref({});
 const ticketHistoryLoading = ref({});
 const ticketCommentDrafts = ref({});
 const crmOverview = ref(null);
+const revenueAttribution = ref(null);
+const attributionSaving = ref(false);
 const agentPerformance = ref([]);
 const reportsLoading = ref(false);
 const reportsError = ref("");
@@ -281,6 +290,16 @@ const teamUsers = ref([]);
 const teamLoading = ref(false);
 const teamSaving = ref(false);
 const teamError = ref("");
+const permissionOverrides = ref([]);
+const permissionSaving = ref(false);
+const permissionError = ref("");
+const permissionForm = ref({
+  resource: "orders",
+  action: "write",
+  effect: "deny",
+  role: "agent",
+  user_id: "",
+});
 const teamForm = ref({
   full_name: "",
   email: "",
@@ -289,6 +308,7 @@ const teamForm = ref({
 });
 
 const documents = ref([]);
+const documentRuns = ref({});
 const docsLoading = ref(false);
 const docUploading = ref(false);
 const docUploadError = ref("");
@@ -399,13 +419,32 @@ async function disconnectMeta() {
 
 
 /* RAG DOCUMENTS METHODS */
+async function fetchDocumentRuns(items) {
+  const entries = await Promise.all((items || []).map(async (doc) => {
+    try {
+      const response = await apiFetch(`${API_BASE}/documents/${doc.id}/runs`);
+      if (!response.ok) return [doc.id, null];
+      const data = await response.json();
+      return [doc.id, data.items?.[0] || null];
+    } catch {
+      return [doc.id, null];
+    }
+  }));
+  documentRuns.value = Object.fromEntries(entries);
+}
+
 async function fetchDocuments() {
   docsLoading.value = true;
   try {
+    // Drain one durable ingestion batch before refreshing the list. The same
+    // endpoint is safe for a background worker, so the UI remains useful in
+    // development without spawning request-owned threads.
+    await apiFetch(`${API_BASE}/documents/jobs/dispatch`, { method: "POST" });
     const res = await apiFetch(`${API_BASE}/documents`);
     if (res.ok) {
       const data = await res.json();
       documents.value = data.documents || [];
+      await fetchDocumentRuns(documents.value);
       const hasProcessing = documents.value.some(
         d => d.status === "pending" || d.status === "processing"
       );
@@ -741,6 +780,8 @@ const filtered = computed(() => {
   );
 
 });
+
+const inboxChannels = computed(() => getInboxChannels(conversations.value));
 
 const reportCsvUrl = computed(() => {
   const params = new URLSearchParams();
@@ -2430,11 +2471,12 @@ async function fetchReports() {
     const params = new URLSearchParams();
     Object.entries(reportFilters.value).forEach(([key, value]) => { if (value) params.set(key, value); });
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    const [overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse] = await Promise.all([
+    const [overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse] = await Promise.all([
       apiFetch(`${API_BASE}/reports/overview${suffix}`),
       apiFetch(`${API_BASE}/reports/agent-performance`),
       apiFetch(`${API_BASE}/reports/inventory`),
       apiFetch(`${API_BASE}/reports/purchase-costs${suffix}`),
+      apiFetch(`${API_BASE}/reports/revenue-attribution?model=last_touch`),
     ]);
     if (!overviewResponse.ok) throw new Error(`HTTP ${overviewResponse.status}`);
     crmOverview.value = await overviewResponse.json();
@@ -2443,6 +2485,7 @@ async function fetchReports() {
     }
     if (inventoryResponse.ok) inventoryReport.value = await inventoryResponse.json();
     if (purchaseCostResponse.ok) purchaseCostReport.value = await purchaseCostResponse.json();
+    if (attributionResponse.ok) revenueAttribution.value = await attributionResponse.json();
   } catch (err) {
     console.error("Fetch reports error:", err);
     reportsError.value = "Không tải được báo cáo CRM.";
@@ -2696,10 +2739,17 @@ async function fetchTeam() {
   teamLoading.value = true;
   teamError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/team`);
+    const [response, permissionResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/team`),
+      apiFetch(`${API_BASE}/team/permissions`),
+    ]);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     teamUsers.value = data.items || [];
+    if (permissionResponse.ok) {
+      const permissionData = await permissionResponse.json();
+      permissionOverrides.value = permissionData.items || [];
+    }
   } catch (err) {
     console.error("Fetch team error:", err);
     teamError.value = "Không tải được danh sách nhân viên.";
@@ -2846,7 +2896,9 @@ async function fetchExperimentation() {
     ruleSuggestions.value = await suggestionsResponse.json();
     experiments.value = await experimentsResponse.json();
   } catch (err) {
-    experimentationError.value = err.message || "Không tải được dữ liệu thử nghiệm AI.";
+    experimentationError.value = err.message === "Failed to fetch"
+      ? "Chưa đồng bộ database AI. Hãy chạy migration rồi bấm Làm mới dữ liệu."
+      : (err.message || "Không tải được dữ liệu thử nghiệm AI.");
   } finally {
     experimentationLoading.value = false;
   }
@@ -3778,6 +3830,23 @@ async function retryMessage(message) {
 
 }
 
+async function recalculateRevenueAttribution() {
+  attributionSaving.value = true;
+  try {
+    const candidates = orders.value.filter((order) => order?.id);
+    await Promise.all(candidates.map((order) => apiFetch(`${API_BASE}/orders/${order.id}/attribution`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "last_touch" }),
+    })));
+    await fetchReports();
+  } catch (err) {
+    reportsError.value = err.message || "Không thể tính lại attribution.";
+  } finally {
+    attributionSaving.value = false;
+  }
+}
+
 
 /* =========================================================
    CHAT ACTIONS
@@ -3863,6 +3932,107 @@ async function sendComposerContent() {
     error.value = err.message || "Không thể lưu ghi chú nội bộ.";
   } finally {
     sending.value = false;
+  }
+}
+
+async function fetchLeadActivities(lead) {
+  leadActivityLoading.value = { ...leadActivityLoading.value, [lead.id]: true };
+  try {
+    const response = await apiFetch(`${API_BASE}/leads/${lead.id}/activities`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    leadActivities.value = { ...leadActivities.value, [lead.id]: data.items || [] };
+  } catch (err) {
+    leadError.value = "Không tải được lịch sử hoạt động của lead.";
+  } finally {
+    leadActivityLoading.value = { ...leadActivityLoading.value, [lead.id]: false };
+  }
+}
+
+async function toggleLeadActivities(lead) {
+  const visible = !leadActivityVisible.value[lead.id];
+  leadActivityVisible.value = { ...leadActivityVisible.value, [lead.id]: visible };
+  if (visible && !Object.prototype.hasOwnProperty.call(leadActivities.value, lead.id)) {
+    await fetchLeadActivities(lead);
+  }
+}
+
+async function addLeadActivity(lead) {
+  const draft = leadActivityDrafts.value[lead.id] || "";
+  if (!draft.trim()) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/leads/${lead.id}/activities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ activity_type: "note", subject: draft.trim() }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    leadActivityDrafts.value = { ...leadActivityDrafts.value, [lead.id]: "" };
+    await fetchLeadActivities(lead);
+  } catch (err) {
+    leadError.value = err.message || "Không thể ghi hoạt động.";
+  }
+}
+
+function setLeadActivityDraft(leadId, value) {
+  leadActivityDrafts.value = { ...leadActivityDrafts.value, [leadId]: value };
+}
+
+async function convertLead(lead) {
+  const orderId = leadConversionOrders.value[lead.id];
+  if (!orderId) {
+    leadError.value = "Chọn đơn hàng để ghi nhận chuyển đổi.";
+    return;
+  }
+  leadConversionSaving.value = { ...leadConversionSaving.value, [lead.id]: true };
+  try {
+    const response = await apiFetch(`${API_BASE}/leads/${lead.id}/convert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order_id: Number(orderId) }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await fetchLeads();
+  } catch (err) {
+    leadError.value = err.message || "Không thể ghi nhận chuyển đổi.";
+  } finally {
+    leadConversionSaving.value = { ...leadConversionSaving.value, [lead.id]: false };
+  }
+}
+
+async function savePermissionOverride() {
+  permissionSaving.value = true;
+  permissionError.value = "";
+  try {
+    const form = permissionForm.value;
+    const body = {
+      resource: form.resource,
+      action: form.action,
+      effect: form.effect,
+      ...(form.role ? { role: form.role } : {}),
+      ...(form.user_id ? { user_id: Number(form.user_id) } : {}),
+    };
+    const response = await apiFetch(`${API_BASE}/team/permissions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const created = await response.json();
+    permissionOverrides.value = [...permissionOverrides.value, created];
+  } catch (err) {
+    permissionError.value = err.message || "Không thể lưu quyền.";
+  } finally {
+    permissionSaving.value = false;
   }
 }
 
@@ -4194,65 +4364,34 @@ onUnmounted(() => {
           </div>
 
           <div class="inbox-toolbar">
-            <div class="inbox-tabs inbox-channel-tabs">
-
-            <button
-              :class="{
-                active:
-                  activeFilter === 'all'
-              }"
-              @click="
-                activeFilter = 'all'
-              "
-            >
-
-              <span>Tất cả</span>
-              <i>{{ conversations.length }}</i>
-
-            </button>
-
-
-            <button
-              :class="{
-                active:
-                  activeFilter === 'facebook'
-              }"
-              @click="
-                activeFilter = 'facebook'
-              "
-            >
-              <span>Facebook</span>
-              <i>{{ conversations.filter(item => item.channel === 'facebook').length }}</i>
-            </button>
-
-
-            <button
-              :class="{
-                active:
-                  activeFilter === 'instagram'
-              }"
-              @click="
-                activeFilter = 'instagram'
-              "
-            >
-              <span>Instagram</span>
-              <i>{{ conversations.filter(item => item.channel === 'instagram').length }}</i>
-            </button>
-
-            <button
-              :class="{
-                active:
-                  activeFilter === 'telegram'
-              }"
-              @click="
-                activeFilter = 'telegram'
-              "
-            >
-              <span>Telegram</span>
-              <i>{{ conversations.filter(item => item.channel === 'telegram').length }}</i>
-            </button>
-
-          </div>
+            <div class="inbox-channel-filter">
+              <div class="inbox-channel-grid">
+              <button
+                type="button"
+                class="inbox-channel-all"
+                :class="{ active: activeFilter === 'all' }"
+                :aria-pressed="activeFilter === 'all'"
+                @click="activeFilter = 'all'"
+              >
+                <span class="channel-tab-icon all" aria-hidden="true"></span>
+                <span class="channel-tab-label">Tất cả</span>
+                <i>{{ conversations.length }}</i>
+              </button>
+              <button
+                v-for="channel in inboxChannels"
+                :key="channel.value"
+                type="button"
+                class="inbox-channel-button"
+                :class="[{ active: activeFilter === channel.value }, `channel-${channel.value}`]"
+                :aria-pressed="activeFilter === channel.value"
+                @click="activeFilter = channel.value"
+              >
+                <span class="channel-tab-icon" :class="channel.value" aria-hidden="true"></span>
+                <span class="channel-tab-label">{{ channel.label }}</span>
+                <i>{{ channel.count }}</i>
+              </button>
+              </div>
+            </div>
 
 
           <div class="search-box inbox-search-box">
@@ -5813,9 +5952,10 @@ onUnmounted(() => {
         <div v-else-if="!leads.length" class="products-empty">Chưa có lead nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table leads-table">
-            <thead><tr><th>Cơ hội</th><th>Khách hàng</th><th>Kênh</th><th>Stage</th><th>Giá trị</th><th>Xác suất</th><th>Cập nhật</th></tr></thead>
+            <thead><tr><th>Cơ hội</th><th>Khách hàng</th><th>Kênh</th><th>Stage</th><th>Giá trị</th><th>Xác suất</th><th>Cập nhật</th><th>Thao tác</th></tr></thead>
             <tbody>
-              <tr v-for="lead in leads" :key="lead.id">
+              <template v-for="lead in leads" :key="lead.id">
+              <tr>
                 <td><strong>{{ lead.title }}</strong></td>
                 <td>#{{ lead.customer_id }} {{ lead.customer_name || '' }}</td>
                 <td>{{ lead.source_channel || '—' }}</td>
@@ -5823,7 +5963,31 @@ onUnmounted(() => {
                 <td>{{ Number(lead.value || 0).toLocaleString('vi-VN') }}đ</td>
                 <td>{{ lead.probability }}%</td>
                 <td>{{ lead.updated_at ? new Date(lead.updated_at).toLocaleDateString('vi-VN') : '—' }}</td>
+                <td class="lead-actions"><button type="button" class="table-link" @click="toggleLeadActivities(lead)">{{ leadActivityVisible[lead.id] ? 'Ẩn hoạt động' : 'Hoạt động' }}</button></td>
               </tr>
+              <tr v-if="leadActivityVisible[lead.id]" class="lead-detail-row">
+                <td colspan="8">
+                  <div class="lead-detail">
+                    <div class="lead-detail-header"><strong>Hoạt động & chuyển đổi</strong><span v-if="leadActivityLoading[lead.id]">Đang tải...</span></div>
+                    <div class="lead-activity-list" v-if="(leadActivities[lead.id] || []).length">
+                      <div v-for="activity in leadActivities[lead.id]" :key="activity.id" class="lead-activity"><b>{{ activity.subject }}</b><small>{{ activity.activity_type }} · {{ activity.occurred_at ? new Date(activity.occurred_at).toLocaleString('vi-VN') : '—' }}</small></div>
+                    </div>
+                    <div v-else class="settings-empty">Chưa có hoạt động.</div>
+                    <form class="lead-activity-form" @submit.prevent="addLeadActivity(lead)">
+                      <input :value="leadActivityDrafts[lead.id] || ''" @input="setLeadActivityDraft(lead.id, $event.target.value)" placeholder="Ghi chú cuộc gọi, email, hẹn gặp..." maxlength="255" />
+                      <button class="table-link" type="submit">Ghi hoạt động</button>
+                    </form>
+                    <div v-if="lead.stage !== 'won'" class="lead-conversion-form">
+                      <select v-model="leadConversionOrders[lead.id]">
+                        <option value="">Chọn đơn để chuyển đổi</option>
+                        <option v-for="order in orders.filter(item => item.customer_id === lead.customer_id)" :key="order.id" :value="order.id">{{ order.order_number || `Đơn #${order.id}` }} · {{ Number(order.total_amount || order.total || 0).toLocaleString('vi-VN') }}đ</option>
+                      </select>
+                      <button class="primary-btn" type="button" :disabled="leadConversionSaving[lead.id]" @click="convertLead(lead)">{{ leadConversionSaving[lead.id] ? 'Đang lưu...' : 'Ghi nhận chuyển đổi' }}</button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -6377,6 +6541,9 @@ onUnmounted(() => {
                   </span>
                   <small class="doc-embedding-state">Embedding: {{ doc.embedding_status || 'pending' }}</small>
                   <small v-if="doc.retry_after" class="doc-embedding-state">Thử lại sau: {{ formatTime(doc.retry_after) }}</small>
+                  <small v-if="documentRuns[doc.id]" class="doc-embedding-state">
+                    RAG run: {{ documentRuns[doc.id].status }} · lần {{ documentRuns[doc.id].attempts || 0 }}
+                  </small>
                 </td>
                 <td class="text-sm text-gray">{{ formatTime(doc.uploaded_at) }}</td>
                 <td>
@@ -6385,6 +6552,14 @@ onUnmounted(() => {
                   </button>
                   <button class="btn-refresh" @click="reindexDocument(doc)" title="Chạy lại indexing">
                     🔁 Reindex
+                  </button>
+                  <button
+                    v-if="documentRuns[doc.id]?.status === 'failed'"
+                    class="btn-refresh"
+                    @click="reindexDocument(doc)"
+                    title="Thử lại indexing"
+                  >
+                    Thử lại indexing
                   </button>
                 </td>
               </tr>
@@ -6547,6 +6722,20 @@ onUnmounted(() => {
               </table>
             </div>
           </div>
+          <div v-if="revenueAttribution" class="report-panel">
+            <div class="report-panel-header"><div><h3>Revenue attribution</h3><span>Mô hình last-touch</span></div><button type="button" class="settings-refresh" :disabled="attributionSaving" @click="recalculateRevenueAttribution">{{ attributionSaving ? 'Đang tính...' : 'Tính lại nguồn doanh thu' }}</button></div>
+            <div class="report-cards">
+              <div class="report-card accent"><span>Doanh thu được gán</span><strong>{{ Number(revenueAttribution.total_attributed || 0).toLocaleString('vi-VN') }}đ</strong></div>
+              <div class="report-card"><span>Touchpoint</span><strong>{{ revenueAttribution.items?.length || 0 }}</strong></div>
+            </div>
+            <div v-if="!revenueAttribution.items?.length" class="products-empty">Chưa có dữ liệu touchpoint. Doanh thu sẽ xuất hiện sau khi gắn nguồn hội thoại/campaign.</div>
+            <div v-else class="products-table-wrap">
+              <table class="products-table reports-table">
+                <thead><tr><th>Kênh</th><th>Nguồn</th><th>Campaign</th><th>Doanh thu gán</th></tr></thead>
+                <tbody><tr v-for="item in revenueAttribution.items" :key="`${item.channel}-${item.source}-${item.campaign || ''}`"><td>{{ item.channel || '—' }}</td><td>{{ item.source }}</td><td>{{ item.campaign || '—' }}</td><td><strong>{{ Number(item.attributed_revenue || 0).toLocaleString('vi-VN') }}đ</strong></td></tr></tbody>
+              </table>
+            </div>
+          </div>
           <div v-if="crmOverview.time_series?.length" class="report-panel">
             <div class="report-panel-header"><h3>Xu hướng theo ngày</h3><span>Hội thoại · đơn bán · doanh thu</span></div>
             <div class="report-series"><div v-for="point in crmOverview.time_series.slice(-14)" :key="point.date" class="report-series-row"><span>{{ point.date }}</span><b>{{ point.conversations }} hội thoại · {{ point.orders }} đơn · {{ Number(point.revenue || 0).toLocaleString('vi-VN') }}đ</b></div></div>
@@ -6687,6 +6876,67 @@ onUnmounted(() => {
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <div class="permission-panel">
+            <div class="settings-card-header">
+              <div>
+                <h3>Quyền chi tiết</h3>
+                <p>Ghi đè quyền theo vai trò hoặc một nhân viên cụ thể. Từ chối luôn được ưu tiên.</p>
+              </div>
+            </div>
+            <div v-if="permissionError" class="settings-notice team-error">{{ permissionError }}</div>
+            <form class="permission-form" @submit.prevent="savePermissionOverride">
+              <label>Tài nguyên
+                <select v-model="permissionForm.resource">
+                  <option value="customers">Khách hàng</option>
+                  <option value="orders">Đơn hàng</option>
+                  <option value="tickets">Ticket</option>
+                  <option value="team">Đội ngũ</option>
+                  <option value="reports">Báo cáo</option>
+                  <option value="documents">Kho tri thức</option>
+                </select>
+              </label>
+              <label>Hành động
+                <select v-model="permissionForm.action">
+                  <option value="read">Xem</option>
+                  <option value="write">Tạo / sửa</option>
+                </select>
+              </label>
+              <label>Hiệu lực
+                <select v-model="permissionForm.effect">
+                  <option value="deny">Từ chối</option>
+                  <option value="allow">Cho phép</option>
+                </select>
+              </label>
+              <label>Áp dụng cho vai trò
+                <select v-model="permissionForm.role">
+                  <option value="">Không chọn vai trò</option>
+                  <option value="owner">Owner</option>
+                  <option value="admin">Admin</option>
+                  <option value="agent">Agent</option>
+                  <option value="viewer">Viewer</option>
+                  <option value="business_agent">Business agent</option>
+                </select>
+              </label>
+              <label>Hoặc nhân viên
+                <select v-model="permissionForm.user_id">
+                  <option value="">Không chọn nhân viên</option>
+                  <option v-for="member in teamUsers" :key="member.id" :value="member.id">{{ member.full_name }}</option>
+                </select>
+              </label>
+              <button class="primary-btn" type="submit" :disabled="permissionSaving || (!permissionForm.role && !permissionForm.user_id)">
+                {{ permissionSaving ? 'Đang lưu...' : 'Thêm quy tắc' }}
+              </button>
+            </form>
+            <div v-if="!permissionOverrides.length" class="settings-empty">Chưa có quy tắc ghi đè.</div>
+            <ul v-else class="permission-list">
+              <li v-for="override in permissionOverrides" :key="override.id">
+                <strong>{{ override.resource }} · {{ override.action }}</strong>
+                <span :class="override.effect === 'deny' ? 'permission-deny' : 'permission-allow'">{{ override.effect === 'deny' ? 'Từ chối' : 'Cho phép' }}</span>
+                <small>{{ override.role ? `Vai trò: ${override.role}` : `Nhân viên #${override.user_id}` }}</small>
+              </li>
+            </ul>
           </div>
 
           <div v-if="authUser && ['owner', 'admin'].includes(authUser.role)" class="audit-panel">
@@ -7453,6 +7703,85 @@ onUnmounted(() => {
   background: #fff1cf;
 }
 
+.permission-panel {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #f4dfd8;
+}
+
+.permission-panel h3 {
+  margin: 0 0 6px;
+  color: #8d271d;
+}
+
+.permission-form {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 16px;
+}
+
+.permission-form label {
+  display: grid;
+  gap: 6px;
+  color: #8b6b64;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.permission-form select {
+  min-height: 38px;
+  border: 1px solid #f0c7bd;
+  border-radius: 10px;
+  padding: 0 10px;
+  color: #5e423a;
+  background: #fffaf7;
+}
+
+.permission-list {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.permission-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 12px;
+  padding: 10px 12px;
+  border: 1px solid #f4dfd8;
+  border-radius: 10px;
+  background: #fffaf7;
+  color: #5e423a;
+}
+
+.permission-list small {
+  grid-column: 1 / -1;
+  color: #9b827b;
+}
+
+.permission-deny,
+.permission-allow {
+  align-self: start;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.permission-deny {
+  color: #9a2b21;
+  background: #ffe7e1;
+}
+
+.permission-allow {
+  color: #237443;
+  background: #e4f7e9;
+}
+
 .settings-card-header {
   display: flex;
   align-items: flex-start;
@@ -7665,6 +7994,75 @@ onUnmounted(() => {
 .revenue-card.total small,
 .report-card.accent small {
   color: #fff;
+}
+
+.lead-actions {
+  white-space: nowrap;
+}
+
+.table-link {
+  border: 1px solid var(--crm-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--crm-accent);
+  background: var(--crm-accent-soft);
+  cursor: pointer;
+}
+
+.lead-detail-row td {
+  padding: 0;
+  background: #f8fbff;
+}
+
+.lead-detail {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-top: 1px solid var(--crm-border);
+}
+
+.lead-detail-header,
+.lead-activity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lead-detail-header span,
+.lead-activity small {
+  color: var(--crm-subtle);
+  font-size: 12px;
+}
+
+.lead-activity-list {
+  display: grid;
+  gap: 7px;
+}
+
+.lead-activity {
+  padding: 9px 11px;
+  border: 1px solid var(--crm-border);
+  border-radius: 9px;
+  background: var(--crm-surface);
+}
+
+.lead-activity-form,
+.lead-conversion-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lead-activity-form input,
+.lead-conversion-form select {
+  flex: 1;
+  min-height: 36px;
+  border: 1px solid var(--crm-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--crm-ink);
+  background: var(--crm-surface);
 }
 
 .settings-layout {

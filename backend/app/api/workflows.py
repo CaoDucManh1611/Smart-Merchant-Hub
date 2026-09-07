@@ -16,6 +16,7 @@ from app.schemas.workflow import (
     WorkflowUpdate,
 )
 from app.services.workflow_engine import execute_workflow
+from app.services.job_service import dispatch_due_jobs, enqueue_job
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_write_access
@@ -71,6 +72,23 @@ def list_workflows(db: Session = Depends(get_db), tenant: TenantContext = Depend
 @router.get("/workflows/runs/dispatch", response_model=list[WorkflowRunOut])
 def dispatch_due_workflows(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
     """Execute due scheduled runs; safe to call repeatedly from a scheduler."""
+    def handle_job(payload: dict) -> None:
+        workflow = _workflow(db, int(payload["workflow_id"]), tenant)
+        execute_workflow(
+            db,
+            workflow,
+            str(payload["event_id"]),
+            str(payload.get("event_type") or workflow.event_type),
+            payload.get("event_payload") or {},
+            tenant,
+            allow_retry=True,
+        )
+
+    dispatch_due_jobs(
+        db,
+        business_id=tenant.business_id,
+        handlers={"workflow.run": handle_job},
+    )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     runs = db.query(WorkflowRun).filter(
         WorkflowRun.business_id == tenant.business_id,
@@ -146,6 +164,20 @@ def run_workflow(workflow_id: int, payload: WorkflowRunRequest, db: Session = De
             next_run_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=payload.delay_seconds),
         )
         db.add(run)
+        db.flush()
+        enqueue_job(
+            db,
+            business_id=tenant.business_id,
+            kind="workflow.run",
+            payload={
+                "workflow_id": workflow.id,
+                "event_id": payload.event_id,
+                "event_type": payload.event_type,
+                "event_payload": payload.payload,
+            },
+            idempotency_key=f"workflow:{workflow.id}:{payload.event_id}",
+            run_at=run.next_run_at,
+        )
         db.commit()
         db.refresh(run)
         return _run_out(run)

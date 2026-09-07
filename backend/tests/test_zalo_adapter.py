@@ -5,6 +5,29 @@ from app.integrations.zalo import ZaloAdapter
 
 
 class ZaloAdapterTests(unittest.TestCase):
+    @patch("app.integrations.zalo.httpx.get")
+    def test_fetch_user_profile_returns_name_and_avatar_from_oa_api(self, get):
+        response = get.return_value
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "error": 0,
+            "data": {
+                "user_id": "z-user-1",
+                "display_name": "Zalo Buyer",
+                "avatar": "https://cdn.example/zalo-profile.jpg",
+            },
+        }
+
+        profile = ZaloAdapter().fetch_user_profile(
+            user_id="z-user-1",
+            access_token="oa-access-token",
+        )
+
+        self.assertEqual("Zalo Buyer", profile["display_name"])
+        self.assertEqual("https://cdn.example/zalo-profile.jpg", profile["avatar_url"])
+        self.assertIn("openapi.zalo.me/v3.0/oa/user/detail", get.call_args.args[0])
+        self.assertEqual("oa-access-token", get.call_args.kwargs["headers"]["access_token"])
+
     def test_text_event_is_normalized_with_bot_account_and_chat_id(self):
         payload = {
             "event_name": "message.text.received",
@@ -168,6 +191,55 @@ class ZaloAdapterTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("/sendPhoto", post.call_args.args[0])
         self.assertEqual("https://cdn.example/photo.jpg", post.call_args.kwargs["json"]["photo"])
+
+    @patch("app.integrations.zalo.httpx.post")
+    def test_send_message_oa_uses_message_v3_consultation_api(self, post):
+        post.return_value.json.return_value = {
+            "error": 0,
+            "data": {"message_id": "oa-out-1"},
+        }
+        post.return_value.raise_for_status.return_value = None
+
+        result = ZaloAdapter().send_message(
+            recipient_external_id="oa-user-1",
+            text="Xin chào từ CRM",
+            access_token="oa-token",
+            provider="zalo_oa",
+        )
+
+        self.assertEqual("oa-out-1", result["data"]["message_id"])
+        self.assertIn("/v3.0/oa/message/cs", post.call_args.args[0])
+        self.assertEqual(
+            {
+                "recipient": {"user_id": "oa-user-1"},
+                "message": {"text": "Xin chào từ CRM"},
+            },
+            post.call_args.kwargs["json"],
+        )
+
+    @patch("app.integrations.zalo.httpx.post")
+    def test_send_oa_image_uses_media_template(self, post):
+        post.return_value.json.return_value = {
+            "error": 0,
+            "data": {"message_id": "oa-image-1"},
+        }
+        post.return_value.raise_for_status.return_value = None
+
+        result = ZaloAdapter().send_media(
+            recipient_external_id="oa-user-1",
+            media_type="image",
+            media_url="https://cdn.example/photo.jpg",
+            caption="Ảnh sản phẩm",
+            access_token="oa-token",
+            provider="zalo_oa",
+        )
+
+        self.assertEqual("oa-image-1", result["data"]["message_id"])
+        self.assertIn("/v3.0/oa/message/cs", post.call_args.args[0])
+        self.assertEqual(
+            "https://cdn.example/photo.jpg",
+            post.call_args.kwargs["json"]["message"]["attachment"]["payload"]["elements"][0]["url"],
+        )
 
 
 if __name__ == "__main__":

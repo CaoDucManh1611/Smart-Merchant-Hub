@@ -31,6 +31,8 @@ from app.services.workflow_engine import emit_workflow_event
 from app.auth.dependencies import require_write_access
 from app.services.notification_service import create_notification
 from app.services.audit_service import record_audit
+from app.services.job_service import dispatch_due_jobs, enqueue_job
+from app.services.notification_service import create_sla_notification
 
 
 router = APIRouter()
@@ -131,6 +133,19 @@ def _out(ticket: Ticket) -> TicketOut:
     )
 
 
+def _enqueue_sla_job(db: Session, ticket: Ticket) -> None:
+    if ticket.sla_due_at is None or ticket.status in ("resolved", "closed"):
+        return
+    enqueue_job(
+        db,
+        business_id=ticket.business_id,
+        kind="ticket.sla_check",
+        payload={"ticket_id": ticket.id},
+        idempotency_key=f"ticket:{ticket.id}:sla:{ticket.sla_due_at.isoformat()}",
+        run_at=ticket.sla_due_at,
+    )
+
+
 @router.get("/tickets", response_model=TicketListOut)
 def list_tickets(
     db: Session = Depends(get_db),
@@ -184,6 +199,8 @@ def create_ticket(
         resolved_at=resolved_at,
     )
     db.add(ticket)
+    db.commit()
+    _enqueue_sla_job(db, ticket)
     db.commit()
     if ticket.assigned_user_id is not None:
         create_notification(
@@ -302,6 +319,8 @@ def update_ticket(
             },
         )
     db.commit()
+    _enqueue_sla_job(db, ticket)
+    db.commit()
     if "status" in data and data["status"] != previous_status:
         emit_workflow_event(
             db,
@@ -357,6 +376,29 @@ def sla_notifications(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     now = _utcnow()
+    def handle_sla(payload: dict) -> None:
+        ticket = db.query(Ticket).filter(Ticket.id == int(payload["ticket_id"]), Ticket.business_id == tenant.business_id).first()
+        if ticket is None or ticket.status in ("resolved", "closed") or ticket.sla_due_at is None or ticket.sla_due_at > _utcnow():
+            return
+        create_sla_notification(
+            db,
+            business_id=tenant.business_id,
+            ticket_id=ticket.id,
+            user_id=ticket.assigned_user_id,
+            title=f"SLA quá hạn: {ticket.title}",
+            due_at=ticket.sla_due_at.isoformat(),
+        )
+
+    overdue_candidates = db.query(Ticket).filter(
+        Ticket.business_id == tenant.business_id,
+        Ticket.sla_due_at.is_not(None),
+        Ticket.sla_due_at <= now,
+        Ticket.status.not_in(("resolved", "closed")),
+    ).all()
+    for ticket in overdue_candidates:
+        _enqueue_sla_job(db, ticket)
+    db.commit()
+    dispatch_due_jobs(db, business_id=tenant.business_id, handlers={"ticket.sla_check": handle_sla})
     tickets = db.query(Ticket).filter(
         Ticket.business_id == tenant.business_id,
         Ticket.sla_due_at.is_not(None),

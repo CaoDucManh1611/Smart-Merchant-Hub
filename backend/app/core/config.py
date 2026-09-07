@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     META_OAUTH_REDIRECT_URI: str = ""
     META_DEFAULT_PAGE_ID: str = ""
 
+    # TikTok Shop webhook authentication
+    TIKTOK_APP_KEY: str = ""
+    TIKTOK_APP_SECRET: str = ""
+
     # =========================================================
     # RAG SETTINGS
     # =========================================================

@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.dependencies import get_db
 from app.main import app
-from app.models import Business, Conversation, Customer, User
+from app.models import Business, Conversation, Customer, User, CrmJob
 from app.models.crm_extended import CustomerTag
 
 
@@ -185,6 +185,31 @@ class WorkflowApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(422, invalid_action.status_code)
+
+    def test_delayed_workflow_is_backed_by_durable_job(self):
+        created = self.client.post(
+            "/api/workflows",
+            headers={"X-Business-Id": str(self.business_one)},
+            json={
+                "name": "Delayed follow-up",
+                "event_type": "message.created",
+                "actions": [{"type": "create_ticket", "title": "Delayed"}],
+            },
+        )
+        self.assertEqual(201, created.status_code)
+        run = self.client.post(
+            f"/api/workflows/{created.json()['id']}/run",
+            headers={"X-Business-Id": str(self.business_one)},
+            json={
+                "event_id": "delayed-1",
+                "event_type": "message.created",
+                "delay_seconds": 1,
+                "payload": {"customer_id": self.customer_id, "conversation_id": self.conversation_id},
+            },
+        )
+        self.assertEqual(200, run.status_code)
+        with Session(self.engine) as db:
+            self.assertEqual(1, db.query(CrmJob).filter(CrmJob.business_id == self.business_one, CrmJob.kind == "workflow.run").count())
 
 
 if __name__ == "__main__":

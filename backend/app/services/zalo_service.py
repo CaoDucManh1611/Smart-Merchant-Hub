@@ -44,10 +44,17 @@ def send_zalo_message(
         channel.access_token_encrypted,
         settings.CHANNEL_ENCRYPTION_KEY,
     )
+    config = channel.config if isinstance(channel.config, dict) else {}
+    provider = config.get("provider", "bot")
+    send_kwargs = {
+        "recipient_external_id": recipient_id,
+        "text": text,
+        "access_token": access_token,
+    }
+    if str(provider).strip().lower() in {"oa", "zalo_oa", "official_account"}:
+        send_kwargs["provider"] = str(provider)
     result = ZaloAdapter().send_message(
-        recipient_external_id=recipient_id,
-        text=text,
-        access_token=access_token,
+        **send_kwargs,
     )
     if result.get("ok") is False:
         raise RuntimeError(result.get("description") or "Zalo rejected the message")
@@ -90,13 +97,18 @@ def send_zalo_media(
     if channel is None or not channel.access_token_encrypted:
         raise LookupError("Active Zalo channel credentials not found")
     access_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
-    result = ZaloAdapter().send_media(
-        recipient_external_id=recipient_id,
-        media_type=media_type,
-        media_url=media_url,
-        caption=caption,
-        access_token=access_token,
-    )
+    config = channel.config if isinstance(channel.config, dict) else {}
+    provider = str(config.get("provider", "bot"))
+    media_kwargs = {
+        "recipient_external_id": recipient_id,
+        "media_type": media_type,
+        "media_url": media_url,
+        "caption": caption,
+        "access_token": access_token,
+    }
+    if provider.strip().lower() in {"oa", "zalo_oa", "official_account"}:
+        media_kwargs["provider"] = provider
+    result = ZaloAdapter().send_media(**media_kwargs)
     if result.get("ok") is False:
         raise RuntimeError(result.get("description") or "Zalo rejected the media")
     raw_message_id = result.get("message_id") or (result.get("result") or {}).get("message_id")

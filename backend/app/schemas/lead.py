@@ -76,3 +76,45 @@ class PipelineReportOut(BaseModel):
     items: list[PipelineStageItem]
     total_leads: int
     total_value: Decimal
+
+
+class LeadActivityCreate(BaseModel):
+    activity_type: str = Field(..., min_length=1, max_length=40)
+    subject: str = Field(..., min_length=1, max_length=255)
+    body: str | None = None
+    occurred_at: datetime | None = None
+    metadata: dict | None = None
+
+
+class LeadActivityOut(BaseModel):
+    id: int
+    business_id: int
+    lead_id: int
+    activity_type: str
+    subject: str
+    body: str | None = None
+    occurred_at: datetime | None = None
+    actor_id: int | None = None
+    metadata: dict | None = Field(default=None, validation_alias="metadata_")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class LeadActivityListOut(BaseModel):
+    items: list[LeadActivityOut]
+    total: int
+
+
+class LeadConversionCreate(BaseModel):
+    order_id: int
+
+
+class LeadConversionOut(BaseModel):
+    id: int
+    business_id: int
+    lead_id: int
+    order_id: int
+    converted_by: int | None = None
+    converted_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)

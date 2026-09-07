@@ -10,11 +10,74 @@ from sqlalchemy.orm import Session
 from app.models.channel import Channel
 
 
+def verify_zalo_oa_signature(
+    raw_body: bytes,
+    *,
+    signature: str | None,
+    app_id: str | None,
+    timestamp: str | None,
+    oa_secret_key: str | None,
+) -> bool:
+    """Verify Zalo OA's ``X-ZEvent-Signature`` header.
+
+    Zalo signs the application id, the exact JSON body, the event timestamp
+    and the OA secret key with SHA-256.  The provider documents the header as
+    ``mac=<hex digest>``; accepting surrounding whitespace keeps the parser
+    tolerant without weakening the comparison.
+    """
+    if not signature or not app_id or not timestamp or not oa_secret_key:
+        return False
+    provided = signature.strip()
+    if "=" in provided:
+        prefix, provided = provided.split("=", 1)
+        if prefix.strip().lower() != "mac":
+            return False
+    provided = provided.strip().lower()
+    if len(provided) != 64:
+        return False
+    try:
+        int(provided, 16)
+    except ValueError:
+        return False
+    expected = hashlib.sha256(
+        str(app_id).encode()
+        + raw_body
+        + str(timestamp).encode()
+        + str(oa_secret_key).encode()
+    ).hexdigest()
+    return hmac.compare_digest(provided, expected)
+
+
 def verify_meta_signature(raw_body: bytes, signature: str | None, app_secret: str) -> bool:
     if not signature or not signature.startswith("sha256=") or not app_secret:
         return False
     expected = hmac.new(app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature[7:], expected)
+
+
+def verify_tiktok_webhook_signature(
+    raw_body: bytes,
+    *,
+    authorization: str | None,
+    app_key: str | None,
+    app_secret: str | None,
+) -> bool:
+    """Verify TikTok Shop's incoming webhook Authorization signature."""
+    if not authorization or not app_key or not app_secret:
+        return False
+    provided = authorization.strip().lower()
+    if len(provided) != 64:
+        return False
+    try:
+        int(provided, 16)
+    except ValueError:
+        return False
+    expected = hmac.new(
+        app_secret.encode("utf-8"),
+        str(app_key).encode("utf-8") + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(provided, expected)
 
 
 def resolve_channel_business(
@@ -112,4 +175,46 @@ def resolve_zalo_channel(db: Session, secret_token: str | None) -> Channel | Non
         if isinstance(channel.config, dict)
         and hmac.compare_digest(str(channel.config.get("webhook_secret", "")), secret_token)
     ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def resolve_zalo_oa_channel(db: Session, payload: dict) -> Channel | None:
+    """Resolve an Official Account webhook to its tenant-owned channel."""
+    if not isinstance(payload, dict):
+        return None
+    app_id = str(payload.get("app_id") or "").strip()
+    recipient = payload.get("recipient")
+    recipient_id = recipient.get("id") if isinstance(recipient, dict) else None
+    oa_id = str(payload.get("oa_id") or recipient_id or "").strip()
+    if not app_id and not oa_id:
+        return None
+    try:
+        channels = db.scalars(
+            select(Channel).where(
+                Channel.channel_type == "zalo",
+                Channel.status == "active",
+            )
+        ).all()
+    except OperationalError:
+        db.rollback()
+        return None
+
+    matches: list[Channel] = []
+    for channel in channels:
+        config = channel.config if isinstance(channel.config, dict) else {}
+        provider = str(config.get("provider") or "").strip().lower()
+        configured_app_id = str(
+            config.get("oa_app_id") or config.get("app_id") or ""
+        ).strip()
+        configured_oa_id = str(
+            config.get("oa_id") or channel.external_account_id or ""
+        ).strip()
+        if provider not in {"zalo_oa", "oa", "official_account"}:
+            continue
+        if configured_app_id and app_id and configured_app_id != app_id:
+            continue
+        if configured_oa_id and oa_id and configured_oa_id != oa_id:
+            continue
+        if configured_app_id or configured_oa_id:
+            matches.append(channel)
     return matches[0] if len(matches) == 1 else None

@@ -660,9 +660,26 @@ def list_customer_tag_catalog(
 ):
     """List tags used by this tenant for segmentation controls."""
     rows = db.query(Tag).filter(Tag.business_id == tenant.business_id).order_by(Tag.name.asc()).all()
+    count_rows = db.query(
+        CustomerTag.tag_id,
+        func.count(func.distinct(CustomerTag.customer_id)),
+    ).join(
+        Customer,
+        Customer.id == CustomerTag.customer_id,
+    ).filter(
+        CustomerTag.business_id == tenant.business_id,
+        Customer.business_id == tenant.business_id,
+        Customer.status != "merged",
+    ).group_by(CustomerTag.tag_id).all()
+    customer_counts = {int(tag_id): int(count) for tag_id, count in count_rows}
     return {
         "items": [
-            {"id": tag.id, "name": tag.name, "color": tag.color}
+            {
+                "id": tag.id,
+                "name": tag.name,
+                "color": tag.color,
+                "customer_count": customer_counts.get(tag.id, 0),
+            }
             for tag in rows
         ],
         "total": len(rows),
