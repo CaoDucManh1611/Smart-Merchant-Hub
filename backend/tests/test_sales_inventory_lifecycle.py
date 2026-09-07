@@ -165,7 +165,7 @@ class SalesInventoryLifecycleTests(unittest.TestCase):
         self.assertEqual(200, cancelled.status_code, cancelled.text)
         self.assertEqual(0, cancelled.json()["reserved_quantity"])
 
-    def test_refund_after_delivery_restores_stock(self):
+    def test_refund_after_delivery_records_money_then_restores_stock(self):
         order = self.create_order("SO-INVENTORY-REFUND", 1)
         for status in ("confirmed", "processing", "shipped", "delivered"):
             response = self.client.post(
@@ -174,13 +174,28 @@ class SalesInventoryLifecycleTests(unittest.TestCase):
                 json={"to_status": status},
             )
             self.assertEqual(200, response.status_code, response.text)
-        refunded = self.client.post(
+        bypass_attempt = self.client.post(
             f"/api/orders/{order['id']}/transition",
             headers=self.headers(),
             json={"to_status": "refunded"},
         )
-        self.assertEqual(200, refunded.status_code, refunded.text)
-        self.assertEqual("refunded", refunded.json()["status"])
+        self.assertEqual(409, bypass_attempt.status_code, bypass_attempt.text)
+        before_refund = self.client.get(f"/api/inventory/products/{self.product_id}", headers=self.headers()).json()
+        self.assertEqual(4, before_refund["stock_quantity"])
+
+        paid = self.client.post(
+            f"/api/orders/{order['id']}/payments",
+            headers=self.headers(),
+            json={"idempotency_key": "inventory-refund-payment", "amount": "100", "method": "cash", "status": "paid"},
+        )
+        self.assertEqual(201, paid.status_code, paid.text)
+        refunded = self.client.post(
+            f"/api/orders/{order['id']}/refunds",
+            headers=self.headers(),
+            json={"idempotency_key": "inventory-refund-money", "amount": "100", "reason": "Khách trả hàng"},
+        )
+        self.assertEqual(201, refunded.status_code, refunded.text)
+        self.assertEqual("refunded", refunded.json()["order"]["status"])
         balance = self.client.get(f"/api/inventory/products/{self.product_id}", headers=self.headers()).json()
         self.assertEqual(5, balance["stock_quantity"])
 

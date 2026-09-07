@@ -1,8 +1,10 @@
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -84,6 +86,50 @@ class CrmAttributionPipelineTests(unittest.TestCase):
         self.assertEqual(200, hidden.status_code)
         self.assertEqual([], hidden.json()["items"])
 
+    def test_linear_attribution_reconciles_rounding_remainder(self):
+        """Every cent must be allocated even when the split is not exact."""
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="zalo",
+                external_user_id="attr-rounding",
+                name="Rounding Buyer",
+            )
+            db.add(customer)
+            db.flush()
+            order = Order(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                order_number="ATTR-ROUNDING-001",
+                total_amount=Decimal("100.00"),
+            )
+            db.add(order)
+            db.commit()
+            customer_id = customer.id
+            order_id = order.id
+
+        headers = {"X-Business-Id": str(self.business_id)}
+        for source in ("first", "middle", "last"):
+            created = self.client.post(
+                "/api/revenue/touchpoints",
+                headers=headers,
+                json={"customer_id": customer_id, "channel": "zalo", "source": source},
+            )
+            self.assertEqual(201, created.status_code, created.text)
+
+        attributed = self.client.post(
+            f"/api/orders/{order_id}/attribution",
+            headers=headers,
+            json={"model": "linear"},
+        )
+        self.assertEqual(200, attributed.status_code, attributed.text)
+        body = attributed.json()
+        self.assertEqual("100.00", body["total_attributed"])
+        self.assertEqual(
+            ["33.33", "33.33", "33.34"],
+            sorted(item["amount"] for item in body["items"]),
+        )
+
     def test_lead_activity_and_conversion_are_explicit(self):
         headers = {"X-Business-Id": str(self.business_id)}
         activity = self.client.post(
@@ -107,6 +153,45 @@ class CrmAttributionPipelineTests(unittest.TestCase):
             json={"order_id": self.order_id},
         )
         self.assertEqual(409, duplicate.status_code)
+
+    def test_conversion_unique_race_is_reported_as_conflict_not_server_error(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="facebook",
+                external_user_id="conversion-race",
+                name="Race Buyer",
+            )
+            db.add(customer)
+            db.flush()
+            order = Order(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                order_number="ATTR-CONVERSION-RACE",
+                total_amount=Decimal("10.00"),
+            )
+            lead = Lead(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                title="Race lead",
+                value=Decimal("10.00"),
+            )
+            db.add_all([order, lead])
+            db.commit()
+            order_id = order.id
+            lead_id = lead.id
+
+        with patch(
+            "app.api.leads.Session.commit",
+            side_effect=IntegrityError("INSERT lead_conversions", {}, Exception("duplicate")),
+        ):
+            response = self.client.post(
+                f"/api/leads/{lead_id}/convert",
+                headers={"X-Business-Id": str(self.business_id)},
+                json={"order_id": order_id},
+            )
+        self.assertEqual(409, response.status_code, response.text)
+        self.assertIn("đã được chuyển đổi", response.json()["detail"])
 
 
 if __name__ == "__main__":

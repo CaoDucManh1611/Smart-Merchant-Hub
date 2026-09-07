@@ -398,7 +398,12 @@ def sla_notifications(
     for ticket in overdue_candidates:
         _enqueue_sla_job(db, ticket)
     db.commit()
-    dispatch_due_jobs(db, business_id=tenant.business_id, handlers={"ticket.sla_check": handle_sla})
+    dispatch_due_jobs(
+        db,
+        business_id=tenant.business_id,
+        handlers={"ticket.sla_check": handle_sla},
+        kinds={"ticket.sla_check"},
+    )
     tickets = db.query(Ticket).filter(
         Ticket.business_id == tenant.business_id,
         Ticket.sla_due_at.is_not(None),

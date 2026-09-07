@@ -7,24 +7,11 @@ from difflib import SequenceMatcher
 import unicodedata
 
 from fastapi import HTTPException
-from sqlalchemy import (
-    Column,
-    DateTime,
-    ForeignKey,
-    Integer,
-    JSON,
-    Numeric,
-    String,
-    Table,
-    Text,
-    func,
-    select,
-    update,
-)
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.database.session import Base
 from app.models.conversation import Conversation
+from app.models.customer_360 import customer_merge_operations
 from app.models.customer import Customer
 from app.models.customer_fact import CustomerFact
 from app.models.customer_identity import CustomerIdentity
@@ -35,24 +22,6 @@ from app.models.lead import Lead
 from app.models.sales import Order
 from app.models.ticket import Ticket
 from app.models.purchase_order import PurchaseOrder
-
-
-customer_merge_operations = Table(
-    "customer_merge_operations",
-    Base.metadata,
-    Column("id", Integer, primary_key=True),
-    Column("business_id", Integer, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True),
-    Column("customer_merge_id", Integer, ForeignKey("customer_merges.id", ondelete="CASCADE"), nullable=False, unique=True, index=True),
-    Column("status", String(20), nullable=False, server_default="completed", index=True),
-    Column("confidence_score", Numeric(5, 4), nullable=True),
-    Column("evidence", JSON, nullable=False, default=dict),
-    Column("moved_records", JSON, nullable=False, default=dict),
-    Column("confirmed_at", DateTime, nullable=True),
-    Column("undone_at", DateTime, nullable=True),
-    Column("undone_by", Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-    Column("undo_reason", Text, nullable=True),
-    Column("created_at", DateTime, server_default=func.now(), nullable=False),
-)
 
 
 COUNT_KEYS = (

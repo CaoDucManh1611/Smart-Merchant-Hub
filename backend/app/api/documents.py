@@ -200,7 +200,12 @@ async def list_document_runs(document_id: int, db: Session = Depends(get_db), te
 
 @router.post("/jobs/dispatch")
 async def dispatch_document_jobs(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
-    processed = dispatch_due_jobs(db, business_id=tenant.business_id, handlers={"rag.ingest": lambda payload: _dispatch_rag_job(db, payload, tenant.business_id)})
+    processed = dispatch_due_jobs(
+        db,
+        business_id=tenant.business_id,
+        handlers={"rag.ingest": lambda payload: _dispatch_rag_job(db, payload, tenant.business_id)},
+        kinds={"rag.ingest"},
+    )
     return {"processed": processed}
 
 

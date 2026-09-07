@@ -124,10 +124,20 @@ def recalculate_attribution(
         RevenueAttribution.order_id == order.id,
         RevenueAttribution.model == payload.model,
     ))
-    total_amount = Decimal(order.total_amount or 0)
+    # The allocation table stores currency at two decimal places.  Rounding
+    # each individual share independently can otherwise leave a one-cent gap
+    # (for example, 100 / 3 becomes 33.33 * 3 = 99.99).  Keep the final
+    # allocation as the exact remainder so every recalculation reconciles to
+    # the order total.
+    total_amount = Decimal(order.total_amount or 0).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     items = []
-    for touchpoint, weight in zip(touchpoints, weights):
-        amount = (total_amount * weight).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    allocated = Decimal("0.00")
+    for index, (touchpoint, weight) in enumerate(zip(touchpoints, weights)):
+        if index == len(touchpoints) - 1:
+            amount = total_amount - allocated
+        else:
+            amount = (total_amount * weight).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            allocated += amount
         db.add(RevenueAttribution(
             business_id=tenant.business_id,
             order_id=order.id,

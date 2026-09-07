@@ -88,6 +88,7 @@ def dispatch_due_workflows(db: Session = Depends(get_db), tenant: TenantContext 
         db,
         business_id=tenant.business_id,
         handlers={"workflow.run": handle_job},
+        kinds={"workflow.run"},
     )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     runs = db.query(WorkflowRun).filter(

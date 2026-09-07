@@ -181,7 +181,7 @@ const salesStatusTransitions = Object.freeze({
   confirmed: ["processing", "cancelled"],
   processing: ["shipped", "cancelled"],
   shipped: ["delivered"],
-  delivered: ["completed", "refunded"],
+  delivered: ["completed"],
   completed: [],
   refunded: [],
   cancelled: [],
@@ -1814,6 +1814,26 @@ async function loadMessages(
 
   }
 
+}
+
+
+async function markConversationRead(conversationId) {
+  if (!conversationId) return;
+  try {
+    const response = await apiFetch(
+      `${API_BASE}/conversations/${conversationId}/mark-read`,
+      { method: "POST" },
+    );
+    if (!response.ok) return;
+    conversations.value = conversations.value.map((conversation) => (
+      conversation.conversation_id === conversationId
+        ? { ...conversation, unread_count: 0 }
+        : conversation
+    ));
+  } catch (err) {
+    // Reading a conversation must never prevent the operator from viewing it.
+    console.warn("Không thể đánh dấu hội thoại đã đọc.", err);
+  }
 }
 
 
@@ -3494,6 +3514,8 @@ async function selectConversation(id) {
     true,
     true
   );
+
+  await markConversationRead(id);
 
   await loadCustomer360(selected.value?.customer_id);
 

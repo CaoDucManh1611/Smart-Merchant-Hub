@@ -204,6 +204,41 @@ class OrderPaymentApiTests(unittest.TestCase):
         self.assertEqual(200, completed.status_code, completed.text)
         self.assertEqual("completed", completed.json()["status"])
 
+    def test_full_refund_after_completed_order_reopens_stock_and_updates_status(self):
+        order = self.create_order("SO-PAY-COMPLETED-REFUND")
+        with Session(self.engine) as db:
+            stock_before_shipment = db.get(Product, self.product_id).stock_quantity
+        for status in ("confirmed", "processing", "shipped", "delivered"):
+            transitioned = self.client.post(
+                f"/api/orders/{order['id']}/transition",
+                headers=self.headers(),
+                json={"to_status": status},
+            )
+            self.assertEqual(200, transitioned.status_code, transitioned.text)
+        paid = self.client.post(
+            f"/api/orders/{order['id']}/payments",
+            headers=self.headers(),
+            json={"idempotency_key": "pay-completed-refund", "amount": "100", "method": "cash", "status": "paid"},
+        )
+        self.assertEqual(201, paid.status_code, paid.text)
+        completed = self.client.post(
+            f"/api/orders/{order['id']}/transition",
+            headers=self.headers(),
+            json={"to_status": "completed"},
+        )
+        self.assertEqual(200, completed.status_code, completed.text)
+
+        refund = self.client.post(
+            f"/api/orders/{order['id']}/refunds",
+            headers=self.headers(),
+            json={"idempotency_key": "refund-completed-order", "amount": "100", "reason": "Hoàn trả sau khi hoàn tất"},
+        )
+        self.assertEqual(201, refund.status_code, refund.text)
+        self.assertEqual("refunded", refund.json()["order"]["status"])
+        self.assertEqual("refunded", refund.json()["order"]["payment_status"])
+        with Session(self.engine) as db:
+            self.assertEqual(stock_before_shipment, db.get(Product, self.product_id).stock_quantity)
+
 
 if __name__ == "__main__":
     unittest.main()

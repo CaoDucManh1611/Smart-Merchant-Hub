@@ -19,7 +19,10 @@ SALES_TRANSITIONS = {
     "confirmed": {"processing", "cancelled"},
     "processing": {"shipped", "cancelled"},
     "shipped": {"delivered"},
-    "delivered": {"completed", "refunded"},
+    # A refund is a monetary operation, never a free-form status change.
+    # The refund endpoint changes a fully returned delivered/completed order
+    # to ``refunded`` only after it records the immutable refund payment.
+    "delivered": {"completed"},
     "completed": set(),
     "refunded": set(),
     "cancelled": set(),
@@ -181,7 +184,8 @@ def refund_order_payment(
     order.payment_status = _payment_status(paid, Decimal(order.total_amount or 0), order.refunded_amount)
     fully_refunded = amount == paid - refunded and paid - refunded > 0
     returned_to_stock = False
-    if fully_refunded and order.status == "delivered":
+    previous_status = order.status
+    if fully_refunded and order.status in {"delivered", "completed"}:
         order_items = db.query(OrderItem).filter(
             OrderItem.order_id == order.id,
         ).order_by(OrderItem.id.asc()).all()
@@ -242,7 +246,7 @@ def refund_order_payment(
             order_type="sales_order",
             order_id=order.id,
             event_type="status_changed",
-            from_status="delivered",
+            from_status=previous_status,
             to_status="refunded",
             actor_id=actor_id,
             metadata_={"returned_to_stock": True},
@@ -351,6 +355,11 @@ def transition_sales_order(
     target = to_status.strip().lower()
     if target not in SALES_TRANSITIONS:
         raise SalesOrderOperationError("Trạng thái đơn hàng không hợp lệ.", 422)
+    if target == "refunded":
+        raise SalesOrderOperationError(
+            "Dùng endpoint hoàn tiền để tạo giao dịch hoàn tiền trước khi đổi trạng thái đơn.",
+            409,
+        )
     allowed = SALES_TRANSITIONS.get(order.status, set())
     if target not in allowed:
         raise SalesOrderOperationError(f"Không thể chuyển {order.status} sang {target}.", 409)
@@ -434,23 +443,6 @@ def transition_sales_order(
             product = product_map[product_id]
             product.reserved_quantity = int(product.reserved_quantity or 0) - quantity
         order.reserved_quantity = 0
-
-    elif target == "refunded":
-        for product_id, quantity in quantities_by_product.items():
-            product = product_map[product_id]
-            before = int(product.stock_quantity or 0)
-            product.stock_quantity = before + quantity
-            db.add(StockMovement(
-                business_id=business_id,
-                product_id=product.id,
-                movement_type="sales_refund",
-                quantity=quantity,
-                quantity_before=before,
-                quantity_after=product.stock_quantity,
-                source_type="sales_order",
-                source_id=order.id,
-                actor_id=actor_id,
-            ))
 
     order.status = target
     db.add(OrderEvent(

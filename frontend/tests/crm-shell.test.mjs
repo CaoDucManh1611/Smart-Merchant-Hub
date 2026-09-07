@@ -175,6 +175,13 @@ test("chat controls are actionable and the composer keeps a standard input hint"
   assert.match(styleSource, /\.conversation-actions-popover/);
 });
 
+test("opening a conversation marks its inbound messages as read through the Inbox API", () => {
+  assert.match(appSource, /function markConversationRead/);
+  assert.match(appSource, /\/mark-read/);
+  assert.match(appSource, /await markConversationRead\(id\)/);
+  assert.match(appSource, /unread_count:\s*0/);
+});
+
 test("chat attachments stay compact and action menu labels remain readable", () => {
   assert.match(styleSource, /\.chat-composer \.image-preview-box[\s\S]*?max-height:\s*80px/);
   assert.match(styleSource, /\.chat-composer \.image-preview-info[\s\S]*?flex-direction:\s*row/);

@@ -47,7 +47,7 @@ from app.services.instagram_service import (
 from app.services.facebook_service import send_facebook_media
 from app.services.instagram_service import send_instagram_media
 from app.services.telegram_service import send_telegram_media
-from app.services.zalo_service import send_zalo_media
+from app.services.zalo_service import send_zalo_media, send_zalo_message
 from app.services.media_resolver import build_media_url
 from app.services.audit_service import record_audit
 from app.services.customer_avatar import refresh_customer_avatar_url
@@ -1255,6 +1255,17 @@ async def send_and_save_outbound(
                 business_id=business_id,
             )
             external_message_id = telegram_external_message_id(result, telegram_channel)
+        elif channel == "zalo":
+            if business_id is None:
+                raise HTTPException(status_code=400, detail="Tenant context is required")
+            result = await run_in_threadpool(
+                send_zalo_message,
+                db=db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                recipient_id=recipient_id,
+                text=text_content or "",
+            )
         else:
             raise HTTPException(
                 status_code=400,
@@ -1405,7 +1416,15 @@ def get_conversations(
                     m.id DESC
 
                 LIMIT 1
-            ) AS last_message_at
+            ) AS last_message_at,
+
+            (
+                SELECT COUNT(*)
+                FROM messages m
+                WHERE m.conversation_id = cv.id
+                  AND m.direction = 'inbound'
+                  AND COALESCE(m.status, 'received') != 'read'
+            ) AS unread_count
 
         FROM conversations cv
 
@@ -1452,6 +1471,57 @@ def get_conversations(
             }
             for row in result
         ]
+    }
+
+
+@router.post("/{conversation_id}/mark-read", dependencies=[Depends(require_write_access)])
+def mark_conversation_read(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    """Mark only this tenant's inbound messages as read.
+
+    Read receipts are an inbox concern, not a provider delivery acknowledgement:
+    Meta, Telegram and Zalo do not share one portable remote-read API.  Keeping
+    the status locally makes the unified Inbox deterministic and idempotent.
+    """
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == tenant.business_id,
+    ).first()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation không tồn tại.")
+
+    result = db.execute(
+        text(
+            """
+            UPDATE messages
+            SET status = 'read'
+            WHERE conversation_id = :conversation_id
+              AND direction = 'inbound'
+              AND COALESCE(status, 'received') != 'read'
+            """
+        ),
+        {"conversation_id": conversation.id},
+    )
+    marked_count = max(0, int(result.rowcount or 0))
+    if marked_count:
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="conversation_mark_read",
+            resource_type="conversation",
+            resource_id=conversation.id,
+            metadata={"marked_count": marked_count},
+        )
+    db.commit()
+    return {
+        "conversation_id": conversation.id,
+        "marked_count": marked_count,
+        "status": "read",
     }
 
 

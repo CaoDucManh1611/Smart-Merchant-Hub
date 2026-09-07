@@ -10,6 +10,7 @@ from app.models.crm_extended import ConversationAssignment, CustomerTag, Tag
 from app.models.customer import Customer
 from app.models.ticket import Ticket, TicketEvent
 from app.models.workflow import Workflow, WorkflowRun
+from app.services.job_service import enqueue_job
 from app.tenancy.context import TenantContext
 
 
@@ -77,6 +78,14 @@ def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext)
         )
         db.add(ticket)
         db.flush()
+        enqueue_job(
+            db,
+            business_id=tenant.business_id,
+            kind="ticket.sla_check",
+            payload={"ticket_id": ticket.id},
+            idempotency_key=f"ticket:{ticket.id}:sla:{ticket.sla_due_at.isoformat()}",
+            run_at=ticket.sla_due_at,
+        )
         db.add(TicketEvent(
             business_id=tenant.business_id,
             ticket_id=ticket.id,

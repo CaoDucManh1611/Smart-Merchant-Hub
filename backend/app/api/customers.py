@@ -3,13 +3,13 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Table, UniqueConstraint, delete, func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.dependencies import get_db
-from app.database.session import Base
 from app.models.conversation import Conversation
 from app.models.customer import Customer
+from app.models.customer_360 import customer_segments as customer_segments_table
 from app.models.customer_fact import CustomerFact
 from app.models.customer_identity import CustomerIdentity
 from app.models.customer_note import CustomerNote
@@ -74,22 +74,6 @@ from app.services.audit_service import record_audit
 
 
 router = APIRouter()
-
-
-customer_segments_table = Table(
-    "customer_segments",
-    Base.metadata,
-    Column("id", Integer, primary_key=True),
-    Column("business_id", Integer, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True),
-    Column("name", String(160), nullable=False),
-    Column("description", String(2000), nullable=True),
-    Column("tag_ids", JSON, nullable=False),
-    Column("match_mode", String(10), nullable=False, server_default="all"),
-    Column("created_by", Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-    Column("created_at", DateTime, server_default=func.now(), nullable=False),
-    Column("updated_at", DateTime, server_default=func.now(), nullable=False),
-    UniqueConstraint("business_id", "name", name="uq_customer_segments_business_name"),
-)
 
 
 def _fact_out(fact: CustomerFact) -> CustomerFactOut:

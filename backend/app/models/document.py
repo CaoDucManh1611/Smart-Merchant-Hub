@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Index,
     LargeBinary,
     JSON,
     String,
@@ -100,6 +101,18 @@ class Document(Base):
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
+    __table_args__ = (
+        (
+            Index(
+                "idx_document_chunks_embedding_hnsw",
+                "embedding",
+                postgresql_using="hnsw",
+                postgresql_ops={"embedding": "vector_cosine_ops"},
+            ),
+        )
+        if settings.EMBEDDING_DIMENSION <= 2000
+        else ()
+    )
 
     id: Mapped[int] = mapped_column(
         Integer,

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.dependencies import get_db
@@ -284,6 +285,13 @@ def convert_lead(
     lead.stage = "won"
     lead.status = "converted"
     db.add(LeadActivity(business_id=tenant.business_id, lead_id=lead.id, activity_type="conversion", subject="Lead chuyển đổi thành đơn hàng", body=f"Order #{order.order_number}", actor_id=actor.id if actor else None))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Unique constraints are the final guard when two requests convert
+        # the same lead/order at the same time.  Do not leak a 500 or create
+        # a second conversion/revenue path under a race.
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Lead hoặc đơn hàng đã được chuyển đổi.") from exc
     db.refresh(conversion)
     return conversion
