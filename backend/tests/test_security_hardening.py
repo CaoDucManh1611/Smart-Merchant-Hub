@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from uvicorn.logging import AccessFormatter
 
 from app.auth.dependencies import require_admin_access, require_write_access
 from app.core.config import Settings
@@ -48,6 +49,22 @@ class SecurityHardeningTests(unittest.TestCase):
         except RuntimeError:
             logger.exception("Provider call failed")
         self.assertNotIn("exception-secret", stream.getvalue())
+
+    def test_logging_filter_preserves_uvicorn_access_arguments(self):
+        record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg='%s - "%s %s HTTP/%s" %d',
+            args=("127.0.0.1:1234", "GET", "/health?access_token=secret", "1.1", 200),
+            exc_info=None,
+        )
+        self.assertTrue(RedactingFilter().filter(record))
+        self.assertEqual(5, len(record.args))
+        self.assertNotIn("secret", str(record.args))
+        rendered = AccessFormatter("%(message)s").format(record)
+        self.assertIn("GET /health", rendered)
 
     def test_rate_limit_defaults_are_positive(self):
         middleware = RateLimitMiddleware(

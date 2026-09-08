@@ -77,8 +77,13 @@ def list_permission_overrides(db: Session = Depends(get_db), tenant: TenantConte
     return PermissionOverrideListOut(items=rows, total=len(rows))
 
 
-@router.post("/team/permissions", response_model=PermissionOverrideOut, status_code=201, dependencies=[Depends(require_admin_access)])
-def create_permission_override(payload: PermissionOverrideCreate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+@router.post("/team/permissions", response_model=PermissionOverrideOut, status_code=201)
+def create_permission_override(
+    payload: PermissionOverrideCreate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
     if payload.role is None and payload.user_id is None:
         raise HTTPException(status_code=422, detail="Permission cần role hoặc user_id.")
     if payload.user_id is not None and db.query(User.id).filter(User.id == payload.user_id, User.business_id == tenant.business_id).first() is None:
@@ -93,12 +98,60 @@ def create_permission_override(payload: PermissionOverrideCreate, db: Session = 
     )
     db.add(row)
     try:
+        db.flush()
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="create",
+            resource_type="permission_override",
+            resource_id=row.id,
+            metadata={
+                "resource": row.resource,
+                "permission_action": row.action,
+                "effect": row.effect,
+                "role": row.role,
+                "user_id": row.user_id,
+            },
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Permission override đã tồn tại.") from exc
     db.refresh(row)
     return row
+
+
+@router.delete("/team/permissions/{override_id}", status_code=204)
+def delete_permission_override(
+    override_id: int,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    row = db.query(PermissionOverride).filter(
+        PermissionOverride.id == override_id,
+        PermissionOverride.business_id == tenant.business_id,
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Permission override không tồn tại.")
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="delete",
+        resource_type="permission_override",
+        resource_id=row.id,
+        metadata={
+            "resource": row.resource,
+            "permission_action": row.action,
+            "effect": row.effect,
+            "role": row.role,
+            "user_id": row.user_id,
+        },
+    )
+    db.delete(row)
+    db.commit()
 
 
 @router.get("/team/{user_id}", response_model=TeamUserOut)

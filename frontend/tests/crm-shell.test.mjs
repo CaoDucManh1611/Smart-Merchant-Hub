@@ -51,20 +51,40 @@ test("AI experiments can be created from the AI Lab", () => {
   assert.match(appSource, /experiment.status/);
 });
 
+test("AI Lab operates model versions, experiment reports, and bandit policies", () => {
+  assert.match(appSource, /modelVersions/);
+  assert.match(appSource, /createModelVersion/);
+  assert.match(appSource, /\/experiments\/models/);
+  assert.match(appSource, /loadExperimentSignals/);
+  assert.match(appSource, /\/report/);
+  assert.match(appSource, /createBanditPolicy/);
+  assert.match(appSource, /Bandit policy/);
+});
+
 test("Knowledge Base exposes durable RAG run status and retry action", () => {
   assert.match(appSource, /documentRuns/);
   assert.match(appSource, /\/documents\/\$\{doc\.id\}\/runs/);
   assert.match(appSource, /RAG run/);
+  assert.match(appSource, /retryDocumentRun/);
+  assert.match(appSource, /\/documents\/runs\/\$\{run\.id\}\/retry/);
   assert.match(appSource, /Thử lại indexing/);
 });
 
 test("CRM operations expose attribution, lead conversion, and lead activity actions", () => {
-  assert.match(appSource, /revenue-attribution\?model=last_touch/);
+  assert.match(appSource, /revenue-attribution\$\{attributionSuffix\}/);
+  assert.match(appSource, /attributionParams\.set\("model", "last_touch"\)/);
   assert.match(appSource, /Tính lại nguồn doanh thu/);
   assert.match(appSource, /leads\/\$\{lead\.id\}\/activities/);
   assert.match(appSource, /leads\/\$\{lead\.id\}\/convert/);
   assert.match(appSource, /Ghi nhận chuyển đổi/);
   assert.match(appSource, /Hoạt động/);
+});
+
+test("report workspace applies shared date, channel, owner, status, and source filters", () => {
+  assert.match(appSource, /reportFilters = ref\(\{ start_at: "", end_at: "", channel: "", source: "", status: "", assigned_user_id: "" \}\)/);
+  assert.match(appSource, /\/reports\/pipeline\$\{suffix\}/);
+  assert.match(appSource, /\/reports\/tickets\$\{suffix\}/);
+  assert.match(appSource, /Nguồn attribution/);
 });
 
 test("Team settings expose tenant-scoped permission overrides", () => {
@@ -73,6 +93,9 @@ test("Team settings expose tenant-scoped permission overrides", () => {
   assert.match(appSource, /Quyền chi tiết/);
   assert.match(appSource, /Từ chối luôn được ưu tiên/);
   assert.match(appSource, /Thêm quy tắc/);
+  assert.match(appSource, /deletePermissionOverride/);
+  assert.match(appSource, /team\/permissions\/\$\{override\.id\}/);
+  assert.match(appSource, /Xóa quy tắc/);
 });
 
 test("AI navigation keeps the Rule Lab and Assistant under one group", () => {
@@ -219,4 +242,21 @@ test("chat composer queues multiple media items without filenames or quick repli
   assert.match(styleSource, /\.chat-composer \.composer-attachment-grid/);
   assert.match(styleSource, /\.chat-composer \.image-preview-box[\s\S]*?width:\s*max-content/);
   assert.match(styleSource, /\.chat-composer \.image-preview-box[\s\S]*?background:\s*transparent/);
+});
+
+test("chat composer keeps non-JPEG images on the generic media upload path", () => {
+  assert.match(appSource, /canUseNormalizedImagePath/);
+  assert.match(appSource, /!canUseNormalizedImagePath/);
+  assert.match(appSource, /mediaType !== "image" \|\| !canUseNormalizedImagePath/);
+});
+
+test("chat composer replaces the search control with a voice recorder", () => {
+  assert.match(appSource, /navigator\.mediaDevices\?\.getUserMedia/);
+  assert.match(appSource, /new (?:window\.)?MediaRecorder/);
+  assert.match(appSource, /toggleVoiceRecording/);
+  assert.match(appSource, /new File\(\[blob\]/);
+  assert.match(appSource, /queueMediaFile\(file, \{ mediaType: "audio" \}/);
+  assert.match(appSource, /:title="voiceRecording \? 'Dừng ghi âm' : 'Ghi âm'"/);
+  assert.doesNotMatch(appSource, /title="Đặt con trỏ vào ô nhập"/);
+  assert.match(appSource, /async function selectConversation\(id\) \{[\s\S]*?discardVoiceRecording\(\);/);
 });

@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.customer import Customer
+from app.models.customer_collection import CustomerContact
 from app.models.customer_identity import CustomerIdentity
 from app.services.audit_service import record_audit
 from app.services.customer_profile import (
@@ -13,6 +14,7 @@ from app.services.customer_profile import (
     normalize_phone,
     profile_change_metadata,
 )
+from app.services.customer_collection import contact_hash
 
 
 def _clean(value: str | None) -> str | None:
@@ -108,6 +110,36 @@ def resolve_customer(
     normalized_email = normalize_email(email)
     normalized_phone = normalize_phone(phone)
     if normalized_email or normalized_phone:
+        # A verified contact collected through checkout/chat is a stronger
+        # cross-channel key than a free-form customer field.  Unverified
+        # contacts are deliberately ignored so a typo cannot merge profiles.
+        if normalized_email:
+            contact_customer_id = db.scalar(
+                select(CustomerContact.customer_id).where(
+                    CustomerContact.business_id == business_id,
+                    CustomerContact.kind == "email",
+                    CustomerContact.value_hash == contact_hash("email", normalized_email),
+                    CustomerContact.verification_status == "verified",
+                ).limit(1)
+            )
+        else:
+            contact_customer_id = db.scalar(
+                select(CustomerContact.customer_id).where(
+                    CustomerContact.business_id == business_id,
+                    CustomerContact.kind == "phone",
+                    CustomerContact.value_hash == contact_hash("phone", normalized_phone),
+                    CustomerContact.verification_status == "verified",
+                ).limit(1)
+            )
+        if contact_customer_id is not None:
+            customer = db.scalar(
+                select(Customer).where(
+                    Customer.id == contact_customer_id,
+                    Customer.business_id == business_id,
+                )
+            )
+
+    if customer is None and (normalized_email or normalized_phone):
         candidates = select(Customer).where(Customer.business_id == business_id)
         if normalized_email:
             candidates = candidates.where(Customer.email == normalized_email)

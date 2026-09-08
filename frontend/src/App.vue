@@ -103,6 +103,15 @@ function resolveAppDialog(confirmed) {
 
 const pendingMedia = ref([]);
 const fileInput = ref(null);
+const voiceRecording = ref(false);
+const voiceRecordingSeconds = ref(0);
+
+const VOICE_RECORDING_MAX_SECONDS = 120;
+let voiceRecorder = null;
+let voiceRecorderStream = null;
+let voiceRecorderChunks = [];
+let voiceRecordingTimer = null;
+let voiceRecordingDiscarded = false;
 
 let pollingTimer = null;
 let socket = null;
@@ -242,7 +251,7 @@ const attributionSaving = ref(false);
 const agentPerformance = ref([]);
 const reportsLoading = ref(false);
 const reportsError = ref("");
-const reportFilters = ref({ start_at: "", end_at: "", channel: "", status: "", assigned_user_id: "" });
+const reportFilters = ref({ start_at: "", end_at: "", channel: "", source: "", status: "", assigned_user_id: "" });
 const ticketForm = ref({
   title: "",
   description: "",
@@ -259,6 +268,10 @@ const workflowRuns = ref({});
 const workflowRunsLoading = ref({});
 const ruleSuggestions = ref([]);
 const experiments = ref([]);
+const modelVersions = ref([]);
+const experimentReports = ref({});
+const banditPolicies = ref({});
+const banditPolicyForms = ref({});
 const experimentationLoading = ref(false);
 const experimentationError = ref("");
 const ruleSuggestionFilter = ref("pending");
@@ -274,7 +287,9 @@ const aiRuleForm = ref({
   workflow_id: "",
 });
 const experimentSaving = ref(false);
-const experimentForm = ref({ name: "", variants: "A\nB", status: "draft" });
+const experimentForm = ref({ name: "", variants: "A\nB", status: "draft", min_sample_size: 0, target_conversion_rate: "" });
+const modelSaving = ref(false);
+const modelForm = ref({ name: "lead-score", version: "v1", feature_version: "v1", target: "conversion" });
 const workflowForm = ref({
   name: "",
   event_type: "message.created",
@@ -1380,6 +1395,165 @@ function handleFileChange(event) {
   const files = Array.from(event.target.files || []);
   files.forEach((file) => setImageFile(file));
   event.target.value = "";
+}
+
+
+/* =========================================================
+   VOICE RECORDER
+========================================================= */
+
+function formatVoiceRecordingTime(seconds) {
+  const totalSeconds = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
+  const remainder = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${remainder}`;
+}
+
+function supportedVoiceMimeType() {
+  if (typeof window === "undefined" || typeof window.MediaRecorder === "undefined") {
+    return "";
+  }
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/mp4",
+  ];
+  return candidates.find((type) => (
+    typeof window.MediaRecorder.isTypeSupported !== "function"
+      || window.MediaRecorder.isTypeSupported(type)
+  )) || "";
+}
+
+function clearVoiceRecordingTimer() {
+  if (voiceRecordingTimer) {
+    clearInterval(voiceRecordingTimer);
+    voiceRecordingTimer = null;
+  }
+}
+
+function stopVoiceRecordingStream() {
+  voiceRecorderStream?.getTracks?.().forEach((track) => track.stop());
+  voiceRecorderStream = null;
+}
+
+function resetVoiceRecordingState() {
+  clearVoiceRecordingTimer();
+  voiceRecorder = null;
+  voiceRecorderChunks = [];
+  voiceRecordingDiscarded = false;
+  voiceRecording.value = false;
+  voiceRecordingSeconds.value = 0;
+}
+
+function finishVoiceRecording() {
+  const chunks = voiceRecorderChunks.slice();
+  const mimeType = voiceRecorder?.mimeType || chunks[0]?.type || "audio/webm";
+  const discarded = voiceRecordingDiscarded;
+  stopVoiceRecordingStream();
+  resetVoiceRecordingState();
+
+  if (discarded || !chunks.length) return;
+
+  const blob = new Blob(chunks, { type: mimeType });
+  if (!blob.size) {
+    error.value = "Không thu được âm thanh. Hãy thử lại.";
+    return;
+  }
+
+  const extension = mimeType.includes("ogg")
+    ? "ogg"
+    : mimeType.includes("mp4")
+      ? "m4a"
+      : "webm";
+  const file = new File([blob], `voice-${Date.now()}.${extension}`, {
+    type: mimeType,
+  });
+  queueMediaFile(file, { mediaType: "audio" });
+  error.value = "";
+}
+
+function discardVoiceRecording() {
+  voiceRecordingDiscarded = true;
+  const recorder = voiceRecorder;
+  if (recorder && recorder.state !== "inactive") {
+    recorder.ondataavailable = null;
+    recorder.onstop = null;
+    recorder.stop();
+  }
+  stopVoiceRecordingStream();
+  resetVoiceRecordingState();
+}
+
+function stopVoiceRecording() {
+  if (!voiceRecorder) return;
+  if (voiceRecorder.state === "inactive") {
+    finishVoiceRecording();
+    return;
+  }
+  voiceRecorder.stop();
+}
+
+async function startVoiceRecording() {
+  if (!selectedId.value || sending.value || composerMode.value === "internal") return;
+  if (voiceRecording.value) return;
+
+  if (
+    typeof navigator === "undefined"
+    || !navigator.mediaDevices?.getUserMedia
+    || typeof window === "undefined"
+    || typeof window.MediaRecorder === "undefined"
+  ) {
+    error.value = "Trình duyệt này chưa hỗ trợ ghi âm. Hãy dùng Chrome hoặc Edge mới nhất.";
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = supportedVoiceMimeType();
+    const recorder = mimeType
+      ? new window.MediaRecorder(stream, { mimeType })
+      : new window.MediaRecorder(stream);
+
+    voiceRecorderStream = stream;
+    voiceRecorder = recorder;
+    voiceRecorderChunks = [];
+    voiceRecordingDiscarded = false;
+    recorder.ondataavailable = (event) => {
+      if (event.data?.size) voiceRecorderChunks.push(event.data);
+    };
+    recorder.onerror = () => {
+      stopVoiceRecordingStream();
+      resetVoiceRecordingState();
+      error.value = "Không thể ghi âm. Hãy kiểm tra quyền microphone rồi thử lại.";
+    };
+    recorder.onstop = finishVoiceRecording;
+    recorder.start(250);
+    voiceRecording.value = true;
+    voiceRecordingSeconds.value = 0;
+    error.value = "";
+    voiceRecordingTimer = setInterval(() => {
+      voiceRecordingSeconds.value += 1;
+      if (voiceRecordingSeconds.value >= VOICE_RECORDING_MAX_SECONDS) {
+        stopVoiceRecording();
+      }
+    }, 1000);
+  } catch (err) {
+    stopVoiceRecordingStream();
+    resetVoiceRecordingState();
+    const name = String(err?.name || "");
+    error.value = name === "NotAllowedError" || name === "SecurityError"
+      ? "Bạn chưa cấp quyền microphone cho CRM."
+      : "Không thể mở microphone. Hãy kiểm tra thiết bị rồi thử lại.";
+  }
+}
+
+function toggleVoiceRecording() {
+  if (voiceRecording.value) {
+    stopVoiceRecording();
+  } else {
+    startVoiceRecording();
+  }
 }
 
 
@@ -2491,12 +2665,17 @@ async function fetchReports() {
     const params = new URLSearchParams();
     Object.entries(reportFilters.value).forEach(([key, value]) => { if (value) params.set(key, value); });
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    const [overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse] = await Promise.all([
+    const attributionParams = new URLSearchParams(params);
+    attributionParams.set("model", "last_touch");
+    const attributionSuffix = `?${attributionParams.toString()}`;
+    const [overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse, pipelineResponse, ticketResponse] = await Promise.all([
       apiFetch(`${API_BASE}/reports/overview${suffix}`),
       apiFetch(`${API_BASE}/reports/agent-performance`),
       apiFetch(`${API_BASE}/reports/inventory`),
       apiFetch(`${API_BASE}/reports/purchase-costs${suffix}`),
-      apiFetch(`${API_BASE}/reports/revenue-attribution?model=last_touch`),
+      apiFetch(`${API_BASE}/reports/revenue-attribution${attributionSuffix}`),
+      apiFetch(`${API_BASE}/reports/pipeline${suffix}`),
+      apiFetch(`${API_BASE}/reports/tickets${suffix}`),
     ]);
     if (!overviewResponse.ok) throw new Error(`HTTP ${overviewResponse.status}`);
     crmOverview.value = await overviewResponse.json();
@@ -2506,6 +2685,8 @@ async function fetchReports() {
     if (inventoryResponse.ok) inventoryReport.value = await inventoryResponse.json();
     if (purchaseCostResponse.ok) purchaseCostReport.value = await purchaseCostResponse.json();
     if (attributionResponse.ok) revenueAttribution.value = await attributionResponse.json();
+    if (pipelineResponse.ok) pipelineSummary.value = (await pipelineResponse.json()).items || [];
+    if (ticketResponse.ok) ticketReport.value = await ticketResponse.json();
   } catch (err) {
     console.error("Fetch reports error:", err);
     reportsError.value = "Không tải được báo cáo CRM.";
@@ -2906,15 +3087,18 @@ async function fetchExperimentation() {
   experimentationLoading.value = true;
   experimentationError.value = "";
   try {
-    const [suggestionsResponse, experimentsResponse] = await Promise.all([
+    const [suggestionsResponse, experimentsResponse, modelsResponse] = await Promise.all([
       apiFetch(`${API_BASE}/experiments/rule-suggestions`),
       apiFetch(`${API_BASE}/experiments`),
+      apiFetch(`${API_BASE}/experiments/models`),
     ]);
-    if (!suggestionsResponse.ok || !experimentsResponse.ok) {
+    if (!suggestionsResponse.ok || !experimentsResponse.ok || !modelsResponse.ok) {
       throw new Error("Không tải được dữ liệu thử nghiệm AI.");
     }
     ruleSuggestions.value = await suggestionsResponse.json();
     experiments.value = await experimentsResponse.json();
+    modelVersions.value = await modelsResponse.json();
+    await loadExperimentSignals(experiments.value);
   } catch (err) {
     experimentationError.value = err.message === "Failed to fetch"
       ? "Chưa đồng bộ database AI. Hãy chạy migration rồi bấm Làm mới dữ liệu."
@@ -3004,7 +3188,11 @@ async function createExperiment() {
     const response = await apiFetch(`${API_BASE}/experiments`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: form.name.trim(), variants, status: form.status }),
+      body: JSON.stringify({
+        name: form.name.trim(), variants, status: form.status,
+        min_sample_size: Number(form.min_sample_size || 0),
+        stop_criteria: form.target_conversion_rate ? { target_conversion_rate: Number(form.target_conversion_rate) } : {},
+      }),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
@@ -3016,6 +3204,68 @@ async function createExperiment() {
     experimentationError.value = err.message || "Không thể tạo experiment.";
   } finally {
     experimentSaving.value = false;
+  }
+}
+
+async function createModelVersion() {
+  const form = modelForm.value;
+  if (![form.name, form.version, form.feature_version, form.target].every((value) => value.trim())) {
+    experimentationError.value = "Tên model, version, feature version và target là bắt buộc.";
+    return;
+  }
+  modelSaving.value = true;
+  experimentationError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/experiments/models`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...form, name: form.name.trim(), version: form.version.trim(), feature_version: form.feature_version.trim(), target: form.target.trim() }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await fetchExperimentation();
+  } catch (err) {
+    experimentationError.value = err.message || "Không thể tạo model version.";
+  } finally {
+    modelSaving.value = false;
+  }
+}
+
+async function trainModel(model) {
+  try {
+    const response = await apiFetch(`${API_BASE}/experiments/models/${model.id}/train`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ holdout_ratio: 0.2 }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await fetchExperimentation();
+  } catch (err) {
+    experimentationError.value = err.message || "Không thể train model. Hãy kiểm tra feature snapshot đã có label.";
+  }
+}
+
+async function createBanditPolicy(experiment) {
+  const form = banditPolicyForms.value[experiment.id];
+  if (!form?.version?.trim()) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/experiments/${experiment.id}/bandit/policies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version: form.version.trim(), epsilon: Number(form.epsilon), status: form.status, config: {} }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await fetchExperimentation();
+  } catch (err) {
+    experimentationError.value = err.message || "Không thể lưu Bandit policy.";
   }
 }
 
@@ -3502,6 +3752,7 @@ async function removeCustomerFact(fact) {
 
 async function selectConversation(id) {
 
+  discardVoiceRecording();
   selectedId.value = id;
   conversationActionsOpen.value = false;
   composerMode.value = "reply";
@@ -3740,7 +3991,15 @@ async function sendUnifiedReply() {
 
     const sendMedia = async (media, index) => {
       const mediaType = media.mediaType || "image";
-      const hasGenericMedia = mediaType !== "image";
+      // JPEG/PNG images keep the Meta-compatible normalization path. Other
+      // image formats (WebP/GIF) must use the generic route so their original
+      // bytes and MIME type reach providers instead of being rejected by the
+      // legacy image endpoint.
+      const normalizedContentType = String(media.file?.type || "").toLowerCase();
+      const canUseNormalizedImagePath = ["image/jpeg", "image/jpg", "image/png"].includes(
+        normalizedContentType,
+      );
+      const hasGenericMedia = mediaType !== "image" || !canUseNormalizedImagePath;
       const formData = new FormData();
       formData.append("client_id", `${clientId}-${index + 1}`);
       formData.append("file", media.file);
@@ -3852,6 +4111,19 @@ async function retryMessage(message) {
 
 }
 
+async function loadExperimentSignals(items = experiments.value) {
+  const signals = await Promise.all((items || []).map(async (experiment) => {
+    const [reportResponse, policiesResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/experiments/${experiment.id}/report`),
+      apiFetch(`${API_BASE}/experiments/${experiment.id}/bandit/policies`),
+    ]);
+    return [experiment.id, reportResponse.ok ? await reportResponse.json() : null, policiesResponse.ok ? await policiesResponse.json() : []];
+  }));
+  experimentReports.value = Object.fromEntries(signals.map(([id, report]) => [id, report]));
+  banditPolicies.value = Object.fromEntries(signals.map(([id, _report, policies]) => [id, policies]));
+  banditPolicyForms.value = Object.fromEntries((items || []).map((experiment) => [experiment.id, banditPolicyForms.value[experiment.id] || { version: "v1", epsilon: 0.1, status: "active" }]));
+}
+
 async function recalculateRevenueAttribution() {
   attributionSaving.value = true;
   try {
@@ -3866,6 +4138,20 @@ async function recalculateRevenueAttribution() {
     reportsError.value = err.message || "Không thể tính lại attribution.";
   } finally {
     attributionSaving.value = false;
+  }
+}
+
+async function retryDocumentRun(doc, run) {
+  if (!doc?.id || !run?.id) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/documents/runs/${run.id}/retry`, { method: "POST" });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await fetchDocuments();
+  } catch (err) {
+    docUploadError.value = err.message || "Không thể thử lại RAG run.";
   }
 }
 
@@ -3904,6 +4190,9 @@ async function refreshSelectedConversation() {
 }
 
 function setComposerMode(mode) {
+  if (mode === "internal" && voiceRecording.value) {
+    discardVoiceRecording();
+  }
   composerMode.value = mode;
   nextTick(() => document.querySelector(".chat-composer textarea")?.focus());
 }
@@ -4058,6 +4347,31 @@ async function savePermissionOverride() {
   }
 }
 
+async function deletePermissionOverride(override) {
+  const confirmed = await requestConfirmation(
+    `Xóa quy tắc ${override.resource} · ${override.action}?`,
+    { title: "Xóa quy tắc quyền", confirmLabel: "Xóa quy tắc", tone: "danger" },
+  );
+  if (!confirmed) return;
+
+  permissionSaving.value = true;
+  permissionError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/team/permissions/${override.id}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    permissionOverrides.value = permissionOverrides.value.filter((item) => item.id !== override.id);
+  } catch (err) {
+    permissionError.value = err.message || "Không thể xóa quy tắc quyền.";
+  } finally {
+    permissionSaving.value = false;
+  }
+}
+
 
 /* =========================================================
    START APP
@@ -4141,6 +4455,7 @@ onUnmounted(() => {
   }
 
 
+  discardVoiceRecording();
   clearImage();
 
   if (reconnectTimer) {
@@ -5292,12 +5607,25 @@ onUnmounted(() => {
 
                   <button
                     type="button"
-                    title="Đặt con trỏ vào ô nhập"
-                    aria-label="Đặt con trỏ vào ô nhập"
-                    @click="focusComposer"
+                    class="voice-record-button"
+                    :class="{ recording: voiceRecording }"
+                    :disabled="composerMode === 'internal' || sending"
+                    :title="voiceRecording ? 'Dừng ghi âm' : 'Ghi âm'"
+                    :aria-label="voiceRecording ? 'Dừng ghi âm' : 'Ghi âm'"
+                    :aria-pressed="voiceRecording"
+                    @click="toggleVoiceRecording"
                   >
-                    ⌕
+                    <span aria-hidden="true">{{ voiceRecording ? "■" : "🎙" }}</span>
                   </button>
+
+                  <span
+                    v-if="voiceRecording"
+                    class="voice-recording-status"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {{ formatVoiceRecordingTime(voiceRecordingSeconds) }}
+                  </span>
 
 
                   <button
@@ -6438,7 +6766,17 @@ onUnmounted(() => {
               <label class="ai-field">Tên experiment<input v-model="experimentForm.name" required maxlength="160" placeholder="Ví dụ: Mẫu trả lời giá" /></label>
               <label class="ai-field">Các biến thể<textarea v-model="experimentForm.variants" required rows="4" placeholder="A\nB"></textarea></label>
               <label class="ai-field">Trạng thái ban đầu<select v-model="experimentForm.status"><option value="draft">Bản nháp</option><option value="running">Đang chạy</option><option value="paused">Tạm dừng</option></select></label>
+              <div class="ai-field-grid"><label class="ai-field">Mẫu tối thiểu / biến thể<input v-model.number="experimentForm.min_sample_size" min="0" type="number" /></label><label class="ai-field">Dừng khi conversion đạt<input v-model.number="experimentForm.target_conversion_rate" min="0" max="1" step="0.01" type="number" placeholder="VD: 0.15" /></label></div>
               <div class="ai-form-actions"><button type="button" class="secondary-btn" @click="resetExperimentForm">Xóa form</button><button class="primary-btn" type="submit" :disabled="experimentSaving">{{ experimentSaving ? 'Đang tạo...' : 'Tạo experiment' }}</button></div>
+            </form>
+
+            <form class="ai-compose-card" @submit.prevent="createModelVersion">
+              <div class="ai-card-heading"><div><span class="card-eyebrow">SUPERVISED ML</span><h3>Model version</h3></div><span class="ai-card-icon">ML</span></div>
+              <p class="ai-card-help">Lưu version trước, sau đó train bằng feature snapshots đã có label để giữ evaluation rõ ràng.</p>
+              <label class="ai-field">Tên model<input v-model="modelForm.name" required maxlength="120" /></label>
+              <div class="ai-field-grid"><label class="ai-field">Model version<input v-model="modelForm.version" required maxlength="40" /></label><label class="ai-field">Feature version<input v-model="modelForm.feature_version" required maxlength="40" /></label></div>
+              <label class="ai-field">Target<input v-model="modelForm.target" required maxlength="120" placeholder="conversion" /></label>
+              <div class="ai-form-actions"><button class="primary-btn" type="submit" :disabled="modelSaving">{{ modelSaving ? 'Đang lưu...' : 'Tạo model version' }}</button></div>
             </form>
           </div>
 
@@ -6454,9 +6792,24 @@ onUnmounted(() => {
           </div>
 
           <div class="ai-board-card">
+            <div class="ai-board-header"><div><span class="card-eyebrow">MODEL REGISTRY</span><h3>Model versions & evaluation</h3><p>Model chỉ chuyển ready sau khi train; chỉ số holdout nằm trong artifact.</p></div><span class="count-badge">{{ modelVersions.length }}</span></div>
+            <div v-if="!modelVersions.length" class="ai-empty-state"><strong>Chưa có model version</strong><span>Tạo version đầu tiên để quản lý lifecycle model.</span></div>
+            <div v-else class="ai-experiment-list"><article v-for="model in modelVersions" :key="model.id" class="ai-experiment-card"><div><strong>{{ model.name }} · {{ model.version }}</strong><span>feature {{ model.feature_version }} → {{ model.target }}</span></div><span class="ai-status-pill" :class="`status-${model.status}`">{{ model.status }}</span><small v-if="model.artifact?.metrics">MAE {{ model.artifact.metrics.mae ?? '—' }} · holdout {{ model.artifact.metrics.holdout_count ?? '—' }}</small><button v-if="model.status !== 'ready'" type="button" class="settings-refresh" @click="trainModel(model)">Train model</button></article></div>
+          </div>
+
+          <div class="ai-board-card">
             <div class="ai-board-header"><div><span class="card-eyebrow">EXPERIMENTS</span><h3>Thử nghiệm đang theo dõi</h3><p>So sánh biến thể và giữ lại dữ liệu để quyết định.</p></div><span class="count-badge">{{ experiments.length }}</span></div>
             <div v-if="!experiments.length" class="ai-empty-state"><strong>Chưa có experiment</strong><span>Tạo experiment A/B ở biểu mẫu phía trên.</span></div>
-            <div v-else class="ai-experiment-list"><article v-for="experiment in experiments" :key="experiment.id" class="ai-experiment-card"><div><strong>{{ experiment.name }}</strong><span>#{{ experiment.id }}</span></div><div class="ai-variant-list"><span v-for="variant in experiment.variants" :key="variant">{{ variant }}</span></div><span class="ai-status-pill" :class="`status-${experiment.status}`">{{ experiment.status }}</span></article></div>
+            <div v-else class="ai-experiment-list">
+              <article v-for="experiment in experiments" :key="experiment.id" class="ai-experiment-card">
+                <div><strong>{{ experiment.name }}</strong><span>#{{ experiment.id }} · tối thiểu {{ experiment.min_sample_size || 0 }}/arm</span></div>
+                <div class="ai-variant-list"><span v-for="variant in experiment.variants" :key="variant">{{ variant }}</span></div>
+                <span class="ai-status-pill" :class="`status-${experiment.status}`">{{ experiment.status }}</span>
+                <div v-if="experimentReports[experiment.id]" class="ai-rule-meta"><span v-for="arm in experimentReports[experiment.id].arms" :key="arm.variant">{{ arm.variant }}: {{ arm.exposures }} exposure · {{ (arm.conversion_rate * 100).toFixed(1) }}%</span><span v-if="experimentReports[experiment.id].stopped">Đã đạt stop criteria</span></div>
+                <div class="ai-rule-meta"><strong>Bandit policy</strong><span v-if="!banditPolicies[experiment.id]?.length">Chưa có policy</span><span v-for="policy in banditPolicies[experiment.id] || []" :key="policy.id">{{ policy.version }} · ε {{ policy.epsilon }} · {{ policy.status }}</span></div>
+                <form class="ai-field-grid" @submit.prevent="createBanditPolicy(experiment)"><label class="ai-field">Policy version<input v-model="banditPolicyForms[experiment.id].version" required maxlength="40" /></label><label class="ai-field">Exploration ε<input v-model.number="banditPolicyForms[experiment.id].epsilon" type="number" min="0" max="1" step="0.01" /></label><label class="ai-field">Trạng thái<select v-model="banditPolicyForms[experiment.id].status"><option value="active">Active</option><option value="paused">Paused</option><option value="archived">Archived</option></select></label><button type="submit" class="settings-refresh">Lưu policy</button></form>
+              </article>
+            </div>
           </div>
         </div>
       </section>
@@ -6578,7 +6931,7 @@ onUnmounted(() => {
                   <button
                     v-if="documentRuns[doc.id]?.status === 'failed'"
                     class="btn-refresh"
-                    @click="reindexDocument(doc)"
+                    @click="retryDocumentRun(doc, documentRuns[doc.id])"
                     title="Thử lại indexing"
                   >
                     Thử lại indexing
@@ -6712,7 +7065,8 @@ onUnmounted(() => {
           <label>Từ ngày<input v-model="reportFilters.start_at" type="date" /></label>
           <label>Đến ngày<input v-model="reportFilters.end_at" type="date" /></label>
           <label>Kênh<select v-model="reportFilters.channel"><option value="">Tất cả kênh</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="telegram">Telegram</option><option value="zalo">Zalo</option></select></label>
-          <label>Trạng thái đơn<select v-model="reportFilters.status"><option value="">Tất cả</option><option value="draft">Draft</option><option value="confirmed">Confirmed</option><option value="processing">Processing</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></label>
+          <label>Nguồn attribution<input v-model.trim="reportFilters.source" placeholder="VD: paid-social" /></label>
+          <label>Trạng thái<select v-model="reportFilters.status"><option value="">Tất cả</option><option value="open">Đang mở</option><option value="pending">Đang chờ</option><option value="qualified">Đã đủ điều kiện</option><option value="won">Đã thắng</option><option value="resolved">Đã xử lý</option><option value="closed">Đã đóng</option></select></label>
           <label>Nhân viên<select v-model="reportFilters.assigned_user_id"><option value="">Tất cả nhân viên</option><option v-for="member in teamUsers" :key="member.id" :value="member.id">{{ member.full_name }}</option></select></label>
           <button class="primary-btn" type="submit">Áp dụng</button>
           <a class="settings-refresh" :href="reportCsvUrl" target="_blank" rel="noreferrer">Tải CSV</a>
@@ -6757,6 +7111,16 @@ onUnmounted(() => {
                 <tbody><tr v-for="item in revenueAttribution.items" :key="`${item.channel}-${item.source}-${item.campaign || ''}`"><td>{{ item.channel || '—' }}</td><td>{{ item.source }}</td><td>{{ item.campaign || '—' }}</td><td><strong>{{ Number(item.attributed_revenue || 0).toLocaleString('vi-VN') }}đ</strong></td></tr></tbody>
               </table>
             </div>
+          </div>
+          <div class="report-panel">
+            <div class="report-panel-header"><div><h3>Pipeline & conversion</h3><span>Lead theo stage trong phạm vi lọc</span></div><strong>{{ pipelineSummary.reduce((total, item) => total + Number(item.lead_count || 0), 0) }} lead</strong></div>
+            <div v-if="!pipelineSummary.length" class="products-empty">Chưa có lead phù hợp với bộ lọc.</div>
+            <div v-else class="pipeline-summary"><div v-for="item in pipelineSummary" :key="item.stage" class="pipeline-card"><span>{{ item.stage }}</span><strong>{{ item.lead_count }}</strong><small>{{ Number(item.value || 0).toLocaleString('vi-VN') }}đ</small></div></div>
+          </div>
+          <div class="report-panel">
+            <div class="report-panel-header"><div><h3>Ticket & SLA</h3><span>Ticket theo trạng thái trong phạm vi lọc</span></div><strong>{{ ticketReport.overdue_tickets || 0 }} quá SLA</strong></div>
+            <div v-if="!ticketReport.items?.length" class="products-empty">Chưa có ticket phù hợp với bộ lọc.</div>
+            <div v-else class="ticket-summary"><div class="ticket-stat"><span>Tổng ticket</span><strong>{{ ticketReport.total_tickets || 0 }}</strong></div><div v-for="item in ticketReport.items" :key="item.status" class="ticket-stat"><span>{{ item.status }}</span><strong>{{ item.ticket_count }}</strong></div></div>
           </div>
           <div v-if="crmOverview.time_series?.length" class="report-panel">
             <div class="report-panel-header"><h3>Xu hướng theo ngày</h3><span>Hội thoại · đơn bán · doanh thu</span></div>
@@ -6957,6 +7321,7 @@ onUnmounted(() => {
                 <strong>{{ override.resource }} · {{ override.action }}</strong>
                 <span :class="override.effect === 'deny' ? 'permission-deny' : 'permission-allow'">{{ override.effect === 'deny' ? 'Từ chối' : 'Cho phép' }}</span>
                 <small>{{ override.role ? `Vai trò: ${override.role}` : `Nhân viên #${override.user_id}` }}</small>
+                <button type="button" class="history-btn" :disabled="permissionSaving" @click="deletePermissionOverride(override)">Xóa quy tắc</button>
               </li>
             </ul>
           </div>

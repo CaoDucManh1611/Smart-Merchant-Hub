@@ -29,6 +29,18 @@ class RedactingFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
+            # Uvicorn's access formatter consumes a five-item ``record.args``
+            # tuple (client, method, path, HTTP version, status). Rendering
+            # the message and replacing args with ``()`` breaks that
+            # formatter, causing a logging error for every request. Keep the
+            # structured tuple intact while redacting string values in place.
+            if record.name == "uvicorn.access" and isinstance(record.args, tuple):
+                record.msg = redact_secrets(record.msg)
+                record.args = tuple(
+                    redact_secrets(value) if isinstance(value, str) else value
+                    for value in record.args
+                )
+                return True
             # Rendering first also covers ``logger.info("... %s", token)``.
             record.msg = redact_secrets(record.getMessage())
             record.args = ()

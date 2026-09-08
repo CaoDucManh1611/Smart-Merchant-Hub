@@ -152,13 +152,35 @@ def recalculate_attribution(
 
 
 @router.get("/reports/revenue-attribution")
-def revenue_attribution_report(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context), model: str = Query(default="last_touch")):
+def revenue_attribution_report(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    model: str = Query(default="last_touch"),
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    channel: str | None = None,
+    source: str | None = None,
+    campaign: str | None = None,
+):
     if model not in SUPPORTED_MODELS:
         raise HTTPException(status_code=422, detail="Attribution model không hợp lệ.")
-    rows = db.query(RevenueTouchpoint.channel, RevenueTouchpoint.source, RevenueTouchpoint.campaign, RevenueAttribution.amount).join(
+    if start_at is not None and end_at is not None and end_at < start_at:
+        raise HTTPException(status_code=422, detail="Khoảng thời gian báo cáo không hợp lệ.")
+    query = db.query(RevenueTouchpoint.channel, RevenueTouchpoint.source, RevenueTouchpoint.campaign, RevenueAttribution.amount).join(
         RevenueAttribution,
         (RevenueAttribution.touchpoint_id == RevenueTouchpoint.id) & (RevenueAttribution.business_id == tenant.business_id),
-    ).filter(RevenueTouchpoint.business_id == tenant.business_id, RevenueAttribution.model == model).all()
+    ).filter(RevenueTouchpoint.business_id == tenant.business_id, RevenueAttribution.model == model)
+    if start_at is not None:
+        query = query.filter(RevenueTouchpoint.occurred_at >= start_at)
+    if end_at is not None:
+        query = query.filter(RevenueTouchpoint.occurred_at <= end_at)
+    if channel:
+        query = query.filter(RevenueTouchpoint.channel == channel.strip().lower())
+    if source:
+        query = query.filter(RevenueTouchpoint.source == source.strip())
+    if campaign:
+        query = query.filter(RevenueTouchpoint.campaign == campaign.strip())
+    rows = query.all()
     grouped: dict[tuple[str, str, str | None], Decimal] = {}
     for channel, source, campaign, amount in rows:
         key = (str(channel or "unknown"), str(source), campaign)

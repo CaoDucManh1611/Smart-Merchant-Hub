@@ -107,4 +107,28 @@ class Customer(Base):
         cascade="all, delete-orphan",
     )
 
+    contacts = relationship(
+        "CustomerContact",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
+
+    addresses = relationship(
+        "CustomerAddress",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
+
+    collection_sessions = relationship(
+        "CustomerCollectionSession",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
+
+    consents = relationship(
+        "CustomerConsent",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
+
     orders = relationship("Order", back_populates="customer")

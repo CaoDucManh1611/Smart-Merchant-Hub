@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.api import conversations as conversations_api
+from app.api.conversations import get_public_base_url
 from app.core.config import settings
 from app.db.dependencies import get_db
 from app.main import app
@@ -105,6 +106,45 @@ class MediaUploadApiTests(unittest.TestCase):
             )
             self.assertIsNotNone(attachment)
             self.assertTrue(attachment.source_url.startswith("https://public.example/"))
+
+    def test_zalo_audio_is_normalized_to_aac_before_delivery(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            conversations_api, "UPLOAD_DIR", Path(directory)
+        ), patch(
+            "app.api.conversations.normalize_zalo_audio_upload", create=True
+        ) as normalize_audio, patch(
+            "app.api.conversations.send_zalo_media",
+            return_value={"ok": True, "message_id": "zalo:zalo-upload:voice-1"},
+        ) as send_media:
+            normalized_path = Path(directory) / "voice.aac"
+            normalized_path.write_bytes(b"aac-audio")
+            normalize_audio.return_value = (normalized_path, "audio/aac")
+            response = self.client.post(
+                f"/api/conversations/{self.zalo_conversation_id}/media/upload-generic",
+                headers={"X-Business-Id": "1"},
+                files={"file": ("voice.webm", b"webm-audio", "audio/webm")},
+                data={"media_type": "audio"},
+            )
+
+        self.assertEqual(200, response.status_code, response.text)
+        normalize_audio.assert_called_once()
+        self.assertTrue(response.json()["upload"]["media_url"].endswith(".aac"))
+        self.assertEqual("audio/aac", response.json()["upload"]["content_type"])
+        send_media.assert_called_once()
+        self.assertTrue(send_media.call_args.kwargs["media_url"].endswith(".aac"))
+
+    def test_public_base_url_ignores_legacy_oauth_callback_path(self):
+        previous_public_base_url = settings.PUBLIC_BASE_URL
+        settings.PUBLIC_BASE_URL = (
+            "https://vocalist-dreamy-corned.ngrok-free.dev/api/oauth/meta/callback"
+        )
+        try:
+            self.assertEqual(
+                "https://vocalist-dreamy-corned.ngrok-free.dev",
+                get_public_base_url(),
+            )
+        finally:
+            settings.PUBLIC_BASE_URL = previous_public_base_url
 
     def test_legacy_ui_image_upload_uses_zalo_media_sender(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(

@@ -4,6 +4,13 @@ WORKDIR /app
 
 COPY requirements.txt .
 
+# Browser microphone recordings are commonly WebM/Opus, while Zalo Bot's
+# sendVoice endpoint requires an AAC file URL.  Keep transcoding in the
+# backend so every browser and supported channel gets the same behavior.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
 COPY alembic.ini .

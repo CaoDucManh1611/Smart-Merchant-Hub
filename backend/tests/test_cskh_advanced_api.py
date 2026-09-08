@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -80,7 +80,7 @@ class CskhAdvancedApiTests(unittest.TestCase):
                     title="Overdue A",
                     status="open",
                     priority="urgent",
-                    sla_due_at=datetime.utcnow() - timedelta(hours=1),
+                    sla_due_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1),
                 ),
                 Ticket(
                     business_id=two.id,
@@ -89,7 +89,7 @@ class CskhAdvancedApiTests(unittest.TestCase):
                     title="Overdue B",
                     status="open",
                     priority="urgent",
-                    sla_due_at=datetime.utcnow() - timedelta(hours=1),
+                    sla_due_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1),
                 ),
             ])
             db.commit()

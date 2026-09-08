@@ -193,6 +193,54 @@ class CrmAttributionPipelineTests(unittest.TestCase):
         self.assertEqual(409, response.status_code, response.text)
         self.assertIn("đã được chuyển đổi", response.json()["detail"])
 
+    def test_reports_accept_consistent_operational_filters(self):
+        headers = {"X-Business-Id": str(self.business_id)}
+        touchpoint = self.client.post(
+            "/api/revenue/touchpoints",
+            headers=headers,
+            json={
+                "customer_id": self.customer_id,
+                "conversation_id": self.conversation_id,
+                "channel": "facebook",
+                "source": "paid-social",
+                "campaign": "report-filter",
+            },
+        )
+        self.assertEqual(201, touchpoint.status_code, touchpoint.text)
+        attributed = self.client.post(
+            f"/api/orders/{self.order_id}/attribution",
+            headers=headers,
+            json={"model": "last_touch"},
+        )
+        self.assertEqual(200, attributed.status_code, attributed.text)
+        attribution_report = self.client.get(
+            "/api/reports/revenue-attribution?model=last_touch&channel=facebook&source=paid-social&campaign=report-filter",
+            headers=headers,
+        )
+        self.assertEqual(200, attribution_report.status_code, attribution_report.text)
+        self.assertEqual(1, len(attribution_report.json()["items"]))
+        self.assertEqual("facebook", attribution_report.json()["items"][0]["channel"])
+
+        lead = self.client.post(
+            "/api/leads",
+            headers=headers,
+            json={"customer_id": self.customer_id, "title": "Facebook lead", "source_channel": "facebook", "stage": "qualified"},
+        )
+        self.assertEqual(201, lead.status_code, lead.text)
+        pipeline_report = self.client.get("/api/reports/pipeline?channel=facebook&status=open", headers=headers)
+        self.assertEqual(200, pipeline_report.status_code, pipeline_report.text)
+        self.assertEqual(1, pipeline_report.json()["total_leads"])
+
+        ticket = self.client.post(
+            "/api/tickets",
+            headers=headers,
+            json={"customer_id": self.customer_id, "conversation_id": self.conversation_id, "title": "Telegram ticket", "status": "open"},
+        )
+        self.assertEqual(201, ticket.status_code, ticket.text)
+        ticket_report = self.client.get("/api/reports/tickets?channel=telegram&status=open", headers=headers)
+        self.assertEqual(200, ticket_report.status_code, ticket_report.text)
+        self.assertEqual(1, ticket_report.json()["total_tickets"])
+
 
 if __name__ == "__main__":
     unittest.main()

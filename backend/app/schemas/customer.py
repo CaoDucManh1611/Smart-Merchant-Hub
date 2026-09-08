@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.customer_collection import CustomerAddressOut, CustomerContactOut
+
 
 class CustomerIdentityOut(BaseModel):
     id: int
@@ -57,6 +59,8 @@ class CustomerProfileOut(BaseModel):
     conversations: list[CustomerConversationOut] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     facts: list["CustomerFactOut"] = Field(default_factory=list)
+    contacts: list[CustomerContactOut] = Field(default_factory=list)
+    addresses: list[CustomerAddressOut] = Field(default_factory=list)
     conversation_count: int = 0
 
 

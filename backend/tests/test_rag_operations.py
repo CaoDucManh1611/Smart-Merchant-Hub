@@ -78,6 +78,40 @@ class RagOperationsTests(unittest.TestCase):
             self.assertIn("embedding provider unavailable", run.error_message)
             self.assertNotIn("token=secret", run.error_message)
 
+    def test_failed_rag_run_can_be_retried_as_a_new_queued_run(self):
+        headers = {"X-Business-Id": str(self.business_id)}
+        with Session(self.engine) as db:
+            document = Document(
+                business_id=self.business_id,
+                filename="retry.txt",
+                file_type="txt",
+                status="failed",
+                source_bytes=b"retry fixture",
+            )
+            db.add(document)
+            db.flush()
+            failed = RagRun(
+                business_id=self.business_id,
+                document_id=document.id,
+                kind="reindex",
+                status="failed",
+                phase="complete",
+                error_message="provider unavailable",
+            )
+            db.add(failed)
+            db.commit()
+            failed_id = failed.id
+
+        retried = self.client.post(f"/api/documents/runs/{failed_id}/retry", headers=headers)
+        self.assertEqual(201, retried.status_code, retried.text)
+        body = retried.json()
+        self.assertNotEqual(failed_id, body["id"])
+        self.assertEqual("queued", body["status"])
+        self.assertEqual("retry", body["kind"])
+        with Session(self.engine) as db:
+            original = db.get(RagRun, failed_id)
+            self.assertEqual("failed", original.status)
+
 
 if __name__ == "__main__":
     unittest.main()

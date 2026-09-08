@@ -5,7 +5,7 @@ Chạy như background task để không block request.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,10 @@ from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def embed_chunks_or_fallback(
@@ -150,7 +154,7 @@ def ingest_document(
                         else None
                     )
                     doc.retry_after = (
-                        datetime.utcnow() + timedelta(seconds=retry_delay)
+                        _utcnow() + timedelta(seconds=retry_delay)
                         if retry_delay is not None
                         else None
                     )
@@ -194,7 +198,7 @@ def ingest_document(
 
             doc.status = "ready"
             doc.chunk_count = len(chunks)
-            doc.processed_at = datetime.utcnow()
+            doc.processed_at = _utcnow()
             doc.error_message = None
             doc.retry_after = None
             db.commit()

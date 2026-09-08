@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Thread
 
@@ -22,13 +23,6 @@ configure_logging()
 ZALO_VERIFICATION_DIR = Path(__file__).resolve().parent / "zalo_verification"
 
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    version="0.1.0",
-)
-
-
-@app.on_event("startup")
 def initialize_database() -> None:
     """Ensure pgvector, tables and indexes exist before serving requests."""
     try:
@@ -42,6 +36,19 @@ def initialize_database() -> None:
     except Exception:
         logger.exception("Database initialization failed")
         raise
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    initialize_database()
+    yield
+
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
 
 app.add_middleware(

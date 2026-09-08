@@ -21,6 +21,7 @@ from app.models.purchase_order import PurchaseOrder
 from app.models.lead import Lead
 from app.models.ticket import Ticket, TicketComment, TicketEvent
 from app.models.customer_merge import CustomerMerge
+from app.models.customer_collection import CustomerAddress, CustomerContact
 from app.models.audit_log import AuditLog
 from app.models.order_event import OrderEvent
 from app.models.business_setting import BusinessSetting
@@ -44,6 +45,7 @@ from app.schemas.customer import (
     CustomerTimelineItem,
     CustomerTimelineOut,
 )
+from app.schemas.customer_collection import CustomerAddressOut, CustomerContactOut
 from app.schemas.customer_merge import (
     CustomerMergeOut,
     CustomerMergePreviewOut,
@@ -705,6 +707,14 @@ def get_customer(
         CustomerFact.business_id == tenant.business_id,
         CustomerFact.customer_id == customer.id,
     ).order_by(CustomerFact.is_verified.desc(), CustomerFact.updated_at.desc(), CustomerFact.id.desc()).all()
+    contacts = db.query(CustomerContact).filter(
+        CustomerContact.business_id == tenant.business_id,
+        CustomerContact.customer_id == customer.id,
+    ).order_by(CustomerContact.is_primary.desc(), CustomerContact.id.asc()).all()
+    addresses = db.query(CustomerAddress).filter(
+        CustomerAddress.business_id == tenant.business_id,
+        CustomerAddress.customer_id == customer.id,
+    ).order_by(CustomerAddress.is_default.desc(), CustomerAddress.id.asc()).all()
     tag_names = sorted({name for (name,) in conversation_tags + customer_tags})
     return CustomerProfileOut(
         id=customer.id,
@@ -724,6 +734,8 @@ def get_customer(
         conversations=[CustomerConversationOut.model_validate(conversation) for conversation in conversations],
         tags=tag_names,
         facts=[_fact_out(fact) for fact in facts],
+        contacts=[CustomerContactOut.model_validate(contact) for contact in contacts],
+        addresses=[CustomerAddressOut.model_validate(address) for address in addresses],
         conversation_count=len(conversations),
     )
 

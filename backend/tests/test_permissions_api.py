@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, User
+from app.models.audit_log import AuditLog
 
 
 class PermissionsApiTests(unittest.TestCase):
@@ -53,6 +54,39 @@ class PermissionsApiTests(unittest.TestCase):
         self.assertEqual(200, decision.status_code, decision.text)
         item = next(item for item in decision.json()["items"] if item["resource"] == "orders" and item["action"] == "write")
         self.assertFalse(item["allowed"])
+
+    def test_permission_override_is_audited_and_can_be_removed(self):
+        headers = {"X-Business-Id": str(self.business_id)}
+        created = self.client.post(
+            "/api/team/permissions",
+            headers=headers,
+            json={"resource": "documents", "action": "write", "effect": "deny", "role": "agent"},
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        override_id = created.json()["id"]
+
+        with Session(self.engine) as db:
+            audit = db.query(AuditLog).filter(
+                AuditLog.business_id == self.business_id,
+                AuditLog.resource_type == "permission_override",
+                AuditLog.resource_id == str(override_id),
+                AuditLog.action == "create",
+            ).first()
+            self.assertIsNotNone(audit)
+
+        removed = self.client.delete(f"/api/team/permissions/{override_id}", headers=headers)
+        self.assertEqual(204, removed.status_code, removed.text)
+        listed = self.client.get("/api/team/permissions", headers=headers)
+        self.assertFalse(any(item["id"] == override_id for item in listed.json()["items"]))
+
+        with Session(self.engine) as db:
+            audit = db.query(AuditLog).filter(
+                AuditLog.business_id == self.business_id,
+                AuditLog.resource_type == "permission_override",
+                AuditLog.resource_id == str(override_id),
+                AuditLog.action == "delete",
+            ).first()
+            self.assertIsNotNone(audit)
 
 
 if __name__ == "__main__":

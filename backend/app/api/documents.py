@@ -64,6 +64,21 @@ def _queue_ingestion(db: Session, doc: Document, *, kind: str) -> RagRun:
     return run
 
 
+def _run_out(row: RagRun) -> dict:
+    return {
+        "id": row.id,
+        "document_id": row.document_id,
+        "kind": row.kind,
+        "status": row.status,
+        "phase": row.phase,
+        "chunk_count": row.chunk_count,
+        "attempts": row.attempts,
+        "error_message": row.error_message,
+        "created_at": row.created_at,
+        "completed_at": row.completed_at,
+    }
+
+
 def _dispatch_rag_job(db: Session, payload: dict, business_id: int) -> None:
     run = db.query(RagRun).filter(RagRun.id == int(payload["run_id"]), RagRun.business_id == business_id).first()
     doc = db.query(Document).filter(Document.id == int(payload["document_id"]), Document.business_id == business_id).first()
@@ -195,7 +210,37 @@ async def list_document_runs(document_id: int, db: Session = Depends(get_db), te
     if db.query(Document.id).filter(Document.id == document_id, Document.business_id == tenant.business_id).first() is None:
         raise HTTPException(404, "Tài liệu không tồn tại.")
     runs = db.query(RagRun).filter(RagRun.document_id == document_id, RagRun.business_id == tenant.business_id).order_by(RagRun.id.desc()).limit(100).all()
-    return {"items": [{"id": row.id, "document_id": row.document_id, "kind": row.kind, "status": row.status, "phase": row.phase, "chunk_count": row.chunk_count, "attempts": row.attempts, "error_message": row.error_message, "created_at": row.created_at, "completed_at": row.completed_at} for row in runs], "total": len(runs)}
+    return {"items": [_run_out(row) for row in runs], "total": len(runs)}
+
+
+@router.post("/runs/{run_id}/retry", status_code=201, dependencies=[Depends(require_write_access)])
+async def retry_failed_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    """Queue a new durable run for one failed ingestion without mutating history."""
+    previous = db.query(RagRun).filter(
+        RagRun.id == run_id,
+        RagRun.business_id == tenant.business_id,
+    ).first()
+    if previous is None:
+        raise HTTPException(404, "RAG run không tồn tại.")
+    if previous.status != "failed":
+        raise HTTPException(409, "Chỉ có thể thử lại RAG run đã lỗi.")
+    doc = db.query(Document).filter(
+        Document.id == previous.document_id,
+        Document.business_id == tenant.business_id,
+    ).first()
+    if doc is None or not doc.source_bytes:
+        raise HTTPException(409, "Tài liệu không còn bản gốc để thử lại; hãy upload lại.")
+    doc.status = "pending"
+    doc.embedding_status = "pending"
+    doc.error_message = None
+    run = _queue_ingestion(db, doc, kind="retry")
+    db.commit()
+    db.refresh(run)
+    return _run_out(run)
 
 
 @router.post("/jobs/dispatch")

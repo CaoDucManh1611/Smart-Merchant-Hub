@@ -1,5 +1,6 @@
 """Tenant-scoped lead and sales pipeline APIs."""
 
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -214,12 +215,33 @@ def update_lead(
 
 
 @router.get("/reports/pipeline", response_model=PipelineReportOut)
-def pipeline_report(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
-    rows = db.query(
+def pipeline_report(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    channel: str | None = None,
+    status: str | None = None,
+    assigned_user_id: int | None = Query(default=None, ge=1),
+):
+    if start_at is not None and end_at is not None and end_at < start_at:
+        raise HTTPException(status_code=422, detail="Khoảng thời gian báo cáo không hợp lệ.")
+    query = db.query(
         Lead.stage.label("stage"),
         func.count(Lead.id).label("lead_count"),
         func.coalesce(func.sum(Lead.value), Decimal("0")).label("value"),
-    ).filter(Lead.business_id == tenant.business_id).group_by(Lead.stage).order_by(Lead.stage.asc()).all()
+    ).filter(Lead.business_id == tenant.business_id)
+    if start_at is not None:
+        query = query.filter(Lead.created_at >= start_at)
+    if end_at is not None:
+        query = query.filter(Lead.created_at <= end_at)
+    if channel:
+        query = query.filter(Lead.source_channel == channel.strip().lower())
+    if status:
+        query = query.filter(Lead.status == status.strip())
+    if assigned_user_id is not None:
+        query = query.filter(Lead.assigned_user_id == assigned_user_id)
+    rows = query.group_by(Lead.stage).order_by(Lead.stage.asc()).all()
     items = [PipelineStageItem(stage=str(row.stage), lead_count=int(row.lead_count), value=Decimal(row.value or 0)) for row in rows]
     return PipelineReportOut(
         items=items,

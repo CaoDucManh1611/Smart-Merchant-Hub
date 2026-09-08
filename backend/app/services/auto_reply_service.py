@@ -320,6 +320,14 @@ def process_rag_auto_reply_background(
                 query_text=query_text,
                 business_id=business_id,
             )
+        except Exception:
+            # Background work must never leak an unhandled thread exception
+            # into request/test runners. The operation is already recorded by
+            # RagRunLog; keep the failure visible in application logs.
+            logger.exception(
+                "Auto-reply worker failed for conversation %d",
+                conversation_id,
+            )
         finally:
             db.close()
             logger.info(

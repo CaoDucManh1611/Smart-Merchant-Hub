@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import (
     APIRouter,
@@ -48,6 +49,7 @@ from app.services.facebook_service import send_facebook_media
 from app.services.instagram_service import send_instagram_media
 from app.services.telegram_service import send_telegram_media
 from app.services.zalo_service import send_zalo_media, send_zalo_message
+from app.services.zalo_media import normalize_zalo_audio_upload
 from app.services.media_resolver import build_media_url
 from app.services.audit_service import record_audit
 from app.services.customer_avatar import refresh_customer_avatar_url
@@ -223,9 +225,25 @@ def get_public_base_url() -> str:
             ),
         )
 
-    return base_url.rstrip(
-        "/"
-    )
+    # Older setup instructions used the OAuth callback URL as
+    # ``PUBLIC_BASE_URL``.  Media providers need the public origin, otherwise
+    # uploads are exposed at paths such as ``/api/oauth/meta/callback/api/...``
+    # and fail with a 404.  Keep the callback setting itself untouched and
+    # normalize only the URL used to build public media URLs.
+    parsed = urlsplit(base_url)
+    public_path = parsed.path or ""
+    if "/api/" in public_path:
+        public_path = public_path.split("/api/", 1)[0]
+    normalized = urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            public_path.rstrip("/"),
+            "",
+            "",
+        )
+    ).rstrip("/")
+    return normalized or base_url.rstrip("/")
 
 
 def detect_image_type(
@@ -3514,7 +3532,21 @@ async def upload_and_send_generic_media(
     file_path = UPLOAD_DIR / filename
     try:
         file_path.write_bytes(file_bytes)
-        media_url = f"{get_public_base_url()}/api/conversations/media-uploads/{filename}"
+        upload_path = file_path
+        upload_content_type = content_type
+        if normalized_type == "audio":
+            conversation = get_conversation_target(
+                db=db,
+                conversation_id=conversation_id,
+                business_id=tenant.business_id,
+            )
+            channel = str(conversation["channel"] or "").strip().lower()
+            if channel == "zalo":
+                upload_path, upload_content_type = normalize_zalo_audio_upload(
+                    file_path,
+                    content_type=content_type,
+                )
+        media_url = f"{get_public_base_url()}/api/conversations/media-uploads/{upload_path.name}"
         result = await send_media_message(
             conversation_id,
             SendMediaRequest(media_type=normalized_type, media_url=media_url, caption=caption),
@@ -3523,11 +3555,15 @@ async def upload_and_send_generic_media(
         )
         result["upload"] = {
             "filename": file.filename,
-            "content_type": content_type,
-            "size": len(file_bytes),
+            "content_type": upload_content_type,
+            "size": upload_path.stat().st_size,
             "media_url": media_url,
         }
         return result
+    except RuntimeError as exc:
+        db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
         db.rollback()
         file_path.unlink(missing_ok=True)

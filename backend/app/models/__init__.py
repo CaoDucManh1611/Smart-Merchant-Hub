@@ -3,6 +3,13 @@ from app.models.customer_identity import CustomerIdentity
 from app.models.customer_note import CustomerNote
 from app.models.customer_fact import CustomerFact
 from app.models.customer_merge import CustomerMerge
+from app.models.customer_collection import (
+    CustomerContact,
+    CustomerAddress,
+    CustomerCollectionSession,
+    CustomerVerificationChallenge,
+    CustomerConsent,
+)
 from app.models.customer_360 import customer_merge_operations, customer_segments
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
@@ -44,6 +51,11 @@ __all__ = [
     "CustomerNote",
     "CustomerFact",
     "CustomerMerge",
+    "CustomerContact",
+    "CustomerAddress",
+    "CustomerCollectionSession",
+    "CustomerVerificationChallenge",
+    "CustomerConsent",
     "customer_merge_operations",
     "customer_segments",
     "AuditLog",

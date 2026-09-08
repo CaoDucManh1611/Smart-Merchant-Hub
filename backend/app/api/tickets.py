@@ -451,13 +451,37 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db), tenant: TenantCont
 
 
 @router.get("/reports/tickets", response_model=TicketReportOut)
-def ticket_report(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
-    rows = db.query(Ticket.status, func.count(Ticket.id).label("ticket_count")).filter(
-        Ticket.business_id == tenant.business_id,
-    ).group_by(Ticket.status).order_by(Ticket.status.asc()).all()
+def ticket_report(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    channel: str | None = None,
+    status: str | None = None,
+    assigned_user_id: int | None = Query(default=None, ge=1),
+):
+    if start_at is not None and end_at is not None and end_at < start_at:
+        raise HTTPException(status_code=422, detail="Khoảng thời gian báo cáo không hợp lệ.")
+    filters = [Ticket.business_id == tenant.business_id]
+    if start_at is not None:
+        filters.append(Ticket.created_at >= start_at)
+    if end_at is not None:
+        filters.append(Ticket.created_at <= end_at)
+    if status:
+        filters.append(Ticket.status == status.strip())
+    if assigned_user_id is not None:
+        filters.append(Ticket.assigned_user_id == assigned_user_id)
+    report_query = db.query(Ticket.status, func.count(Ticket.id).label("ticket_count"))
+    if channel:
+        report_query = report_query.join(Conversation, Ticket.conversation_id == Conversation.id)
+        filters.append(Conversation.channel == channel.strip().lower())
+    rows = report_query.filter(*filters).group_by(Ticket.status).order_by(Ticket.status.asc()).all()
     items = [TicketStatusItem(status=row.status, ticket_count=int(row.ticket_count)) for row in rows]
-    overdue = db.query(func.count(Ticket.id)).filter(
-        Ticket.business_id == tenant.business_id,
+    overdue_query = db.query(func.count(Ticket.id))
+    if channel:
+        overdue_query = overdue_query.join(Conversation, Ticket.conversation_id == Conversation.id)
+    overdue = overdue_query.filter(
+        *filters,
         Ticket.sla_due_at.is_not(None),
         Ticket.sla_due_at < _utcnow(),
         Ticket.status.not_in(("resolved", "closed")),
