@@ -8,7 +8,7 @@ import re
 import secrets
 
 from app.core.config import settings
-from app.services.channel_credentials import encrypt_token
+from app.services.channel_credentials import decrypt_token, encrypt_token
 
 
 def _secret() -> bytes:
@@ -39,6 +39,12 @@ def contact_hash(kind: str, value: str) -> str:
 
 def encrypt_contact(kind: str, value: str) -> str:
     return encrypt_token(normalize_contact(kind, value), _secret().decode("utf-8"))
+
+
+def decrypt_contact(kind: str, value_encrypted: str) -> str:
+    """Decrypt a contact only for an already-authorized, tenant-scoped read."""
+    value = decrypt_token(value_encrypted, _secret().decode("utf-8"))
+    return normalize_contact(kind, value)
 
 
 def mask_contact(kind: str, value: str) -> str:

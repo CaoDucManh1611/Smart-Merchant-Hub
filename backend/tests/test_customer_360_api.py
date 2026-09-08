@@ -154,6 +154,69 @@ class Customer360ApiTests(unittest.TestCase):
         self.assertEqual(200, timeline.status_code)
         self.assertIn("note", {item["event_type"] for item in timeline.json()["items"]})
 
+    def test_timeline_identifies_customer_bot_and_staff_actors(self):
+        """Catch outbound timeline rows being shown as anonymous customer messages."""
+        with Session(self.engine) as db:
+            conversation = db.query(Conversation).filter(
+                Conversation.customer_id == self.customer_id,
+                Conversation.business_id == 1,
+            ).first()
+            staff = User(
+                business_id=1,
+                full_name="Linh tư vấn",
+                email="linh-actor@example.com",
+            )
+            db.add(staff)
+            db.flush()
+            db.add_all([
+                Message(
+                    conversation_id=conversation.id,
+                    channel="telegram",
+                    direction="inbound",
+                    sender_type="customer",
+                    content="actor-customer",
+                ),
+                Message(
+                    conversation_id=conversation.id,
+                    channel="telegram",
+                    direction="outbound",
+                    sender_type="bot",
+                    content="actor-bot",
+                ),
+                Message(
+                    conversation_id=conversation.id,
+                    channel="telegram",
+                    direction="outbound",
+                    sender_type="customer",
+                    content="actor-legacy-bot",
+                ),
+                Message(
+                    conversation_id=conversation.id,
+                    channel="telegram",
+                    direction="outbound",
+                    sender_type="staff",
+                    sender_user_id=staff.id,
+                    content="actor-staff",
+                ),
+            ])
+            db.commit()
+
+        response = self.client.get(
+            f"/api/customers/{self.customer_id}/timeline",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, response.status_code)
+        messages = {
+            item["content"]: item
+            for item in response.json()["items"]
+            if item["event_type"] == "message" and item["content"].startswith("actor-")
+        }
+        self.assertEqual("customer", messages["actor-customer"]["actor_type"])
+        self.assertEqual("bot", messages["actor-bot"]["actor_type"])
+        self.assertEqual("bot", messages["actor-legacy-bot"]["actor_type"])
+        self.assertEqual("staff", messages["actor-staff"]["actor_type"])
+        self.assertEqual("Linh tư vấn", messages["actor-staff"]["actor_name"])
+
     def test_timeline_includes_crm_events_with_metadata(self):
         with Session(self.engine) as db:
             conversation = db.query(Conversation).filter(Conversation.customer_id == self.customer_id).first()

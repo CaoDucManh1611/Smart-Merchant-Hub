@@ -15,6 +15,7 @@ from app.rag.loader import load_document, detect_file_type
 from app.rag.chunker import chunk_text
 from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog
+from app.services.product_catalog_service import sync_catalog_products
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,19 @@ def ingest_document(
                 len(raw_text),
                 filename,
             )
+            if doc.business_id is not None:
+                synced_products = sync_catalog_products(
+                    db,
+                    business_id=doc.business_id,
+                    source_document_id=doc.id,
+                    text=raw_text,
+                )
+                if synced_products:
+                    logger.info(
+                        "Synchronized %d structured products from %s",
+                        len(synced_products),
+                        filename,
+                    )
 
             run.update(phase="chunk", characters_loaded=len(raw_text))
             # -------------------------------------------------

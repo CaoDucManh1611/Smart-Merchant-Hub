@@ -169,6 +169,8 @@ class CustomerTimelineItem(BaseModel):
     content: str | None = None
     conversation_id: int | None = None
     created_by: int | None = None
+    actor_type: str | None = None
+    actor_name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

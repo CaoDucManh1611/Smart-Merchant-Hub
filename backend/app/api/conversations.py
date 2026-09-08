@@ -993,6 +993,8 @@ def save_outbound_message(
     media_type: str | None,
     media_url: str | None,
     meta_response: dict,
+    sender_type: str = "staff",
+    sender_user_id: int | None = None,
 ):
     """
     Lưu outbound message
@@ -1006,6 +1008,8 @@ def save_outbound_message(
                 channel,
                 external_user_id,
                 external_message_id,
+                sender_type,
+                sender_user_id,
                 direction,
                 content,
                 media_type,
@@ -1018,6 +1022,8 @@ def save_outbound_message(
                 :channel,
                 :external_user_id,
                 :external_message_id,
+                :sender_type,
+                :sender_user_id,
                 'outbound',
                 :content,
                 :media_type,
@@ -1059,6 +1065,10 @@ def save_outbound_message(
 
             "external_message_id":
                 external_message_id,
+
+            "sender_type": sender_type,
+
+            "sender_user_id": sender_user_id,
 
             "content":
                 content,
@@ -1160,6 +1170,7 @@ async def send_and_save_outbound(
     text_content: str | None = None,
     image_url: str | None = None,
     business_id: int | None = None,
+    sender_user_id: int | None = None,
 ) -> dict:
     if image_url:
         print(
@@ -1231,6 +1242,8 @@ async def send_and_save_outbound(
             media_type="image",
             media_url=image_url,
             meta_response=result,
+            sender_type="staff",
+            sender_user_id=sender_user_id,
         )
 
     else:
@@ -1305,6 +1318,8 @@ async def send_and_save_outbound(
             media_type=None,
             media_url=None,
             meta_response=result,
+            sender_type="staff",
+            sender_user_id=sender_user_id,
         )
 
     print(
@@ -2195,6 +2210,7 @@ async def unified_send(
         get_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     message_text = str(
         text_value
@@ -2259,6 +2275,7 @@ async def unified_send(
                     recipient_id=recipient_id,
                     image_url=media_url,
                     business_id=tenant.business_id,
+                    sender_user_id=actor.id if actor else None,
                 )
             )
 
@@ -2271,6 +2288,7 @@ async def unified_send(
                     recipient_id=recipient_id,
                     text_content=message_text,
                     business_id=tenant.business_id,
+                    sender_user_id=actor.id if actor else None,
                 )
             )
 

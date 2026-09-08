@@ -1642,7 +1642,40 @@ def process_and_save_message(
         bool(message.get("media_type")),
     )
 
-    # RAG Auto-reply check
+    # Complaint and explicit human requests are routed before the normal
+    # collection/RAG flow. This prevents the bot from continuing after a
+    # human takeover and creates one auditable support ticket.
+    escalation_triggered = False
+    if message.get("content") and business_id is not None:
+        try:
+            from app.services.chatbot_agent import route_escalation
+            from app.services.auto_reply_service import send_text_reply_background
+
+            ticket = route_escalation(
+                db,
+                int(business_id),
+                int(conversation_id),
+                str(message.get("content")),
+            )
+            if ticket is not None:
+                db.commit()
+                escalation_triggered = True
+                send_text_reply_background(
+                    conversation_id=int(conversation_id),
+                    channel=str(channel),
+                    text="Mình đã chuyển yêu cầu cho nhân viên hỗ trợ. Nhân viên sẽ liên hệ bạn sớm nhất nhé.",
+                    business_id=int(business_id),
+                )
+        except Exception:
+            logger.warning("Chatbot escalation trigger failed", exc_info=True)
+
+    # Progressive customer-profile collection runs before RAG. Once a buyer
+    # starts checkout, each inbound answer advances the session and the next
+    # prompt is sent back through the same channel. This prevents the generic
+    # knowledge-base reply from competing with the order data-collection flow.
+    collection_result = None
+    if escalation_triggered:
+        collection_result = True
     if message.get("content") and business_id is not None:
         if saved_message and saved_message.get("message_id"):
             try:
@@ -1659,15 +1692,58 @@ def process_and_save_message(
             except Exception:
                 logger.warning("Customer fact extraction trigger failed")
         try:
-            from app.services.auto_reply_service import process_rag_auto_reply_background
-            process_rag_auto_reply_background(
-                conversation_id=conversation_id,
-                channel=channel,
-                query_text=message.get("content"),
-                business_id=int(business_id),
+            from app.services.customer_collection_flow import (
+                advance_customer_collection,
+                send_collection_prompt_background,
             )
+
+            collection_result = advance_customer_collection(
+                db,
+                business_id=int(business_id),
+                customer_id=int(customer_id),
+                conversation_id=int(conversation_id),
+                source_channel=str(channel),
+                text=str(message.get("content")),
+            )
+            if collection_result is not None:
+                send_collection_prompt_background(
+                    result=collection_result,
+                    conversation_id=int(conversation_id),
+                    channel=str(channel),
+                    business_id=int(business_id),
+                )
         except Exception:
-            logger.warning("Auto-reply trigger failed")
+            # Collection is an enhancement on top of the accepted inbound
+            # message; a malformed session must not make the webhook fail.
+            logger.warning("Customer collection trigger failed", exc_info=True)
+
+        if collection_result is None:
+            try:
+                from app.services.customer_collection_flow import (
+                    GREETING_REPLY,
+                    is_greeting,
+                )
+
+                if is_greeting(message.get("content")):
+                    from app.services.auto_reply_service import send_text_reply_background
+
+                    send_text_reply_background(
+                        conversation_id=conversation_id,
+                        channel=channel,
+                        text=GREETING_REPLY,
+                        business_id=int(business_id),
+                    )
+                else:
+                    from app.services.auto_reply_service import process_rag_auto_reply_background
+
+                    process_rag_auto_reply_background(
+                        conversation_id=conversation_id,
+                        channel=channel,
+                        query_text=message.get("content"),
+                        business_id=int(business_id),
+                    )
+            except Exception:
+                logger.warning("Auto-reply trigger failed")
 
 
 

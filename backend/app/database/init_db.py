@@ -28,6 +28,8 @@ from app.models.ticket import TicketEvent
 from app.models.sales import Order, OrderItem, Product
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
 from app.models.chatbot import ChatbotConfig
+from app.models.canned_response import CannedResponse
+from app.models.chatbot_followup import ChatbotFollowUp
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +165,18 @@ def init_db() -> None:
             text(
                 "ALTER TABLE conversations "
                 "ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(20) NOT NULL DEFAULT 'auto'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE chatbot_configs "
+                "ADD COLUMN IF NOT EXISTS business_hours JSON"
             )
         )
         conn.execute(

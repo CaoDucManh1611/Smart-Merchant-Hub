@@ -4,6 +4,7 @@ Auto Reply Service – Tự động trả lời tin nhắn từ RAG knowledge ba
 
 import json
 import logging
+from decimal import Decimal, InvalidOperation
 from threading import Thread
 
 from sqlalchemy import text
@@ -12,6 +13,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.database import SessionLocal
 from app.models.business_setting import BusinessSetting
+from app.models.chatbot import ChatbotConfig
+from app.models.conversation import Conversation
+from app.models.sales import Product
 
 from app.rag.retriever import retrieve
 from app.rag.prompt_builder import build_prompt
@@ -21,10 +25,20 @@ from app.services.facebook_service import send_facebook_message
 from app.services.instagram_service import send_instagram_message
 from app.services.telegram_service import send_telegram_message
 from app.services.zalo_service import send_zalo_message
+from app.services.customer_collection_flow import is_browsing_request
+from app.services.chatbot_agent import build_agent_memory, is_business_open
 
 logger = logging.getLogger(__name__)
 
 AUTO_REPLY_SETTING_KEY = "rag_auto_reply_enabled"
+NO_PRODUCT_CATALOG_REPLY = (
+    "Hiện shop chưa cập nhật danh sách sản phẩm. "
+    "Bạn cho mình biết nhu cầu, nhân viên sẽ hỗ trợ ngay nhé."
+)
+OUT_OF_HOURS_REPLY = (
+    "Shop hiện đang ngoài giờ hỗ trợ. Mình đã ghi nhận tin nhắn và nhân viên sẽ phản hồi "
+    "vào khung giờ làm việc gần nhất nhé."
+)
 
 
 def _send_channel_reply(
@@ -118,6 +132,7 @@ def _save_auto_reply_outbound(
                 channel,
                 external_user_id,
                 external_message_id,
+                sender_type,
                 direction,
                 content,
                 raw_payload,
@@ -128,6 +143,7 @@ def _save_auto_reply_outbound(
                 :channel,
                 :external_user_id,
                 :external_message_id,
+                'bot',
                 'outbound',
                 :content,
                 CAST(:raw_payload AS JSONB),
@@ -147,6 +163,114 @@ def _save_auto_reply_outbound(
         },
     )
     db.commit()
+
+
+def _format_vnd(value: object) -> str:
+    try:
+        amount = Decimal(str(value or 0))
+    except (InvalidOperation, TypeError, ValueError):
+        amount = Decimal("0")
+    return f"{amount:,.0f}".replace(",", ".")
+
+
+def format_product_catalog_reply(products: list[Product]) -> str:
+    """Format tenant-owned active products as a safe no-RAG fallback."""
+    if not products:
+        return NO_PRODUCT_CATALOG_REPLY
+
+    lines = ["Mình đang có các sản phẩm:"]
+    for product in products:
+        available = max(
+            int(product.stock_quantity or 0) - int(product.reserved_quantity or 0),
+            0,
+        )
+        stock_label = f"còn {available}" if available else "hết hàng"
+        lines.append(
+            f"- {product.name} — {_format_vnd(product.price)} đồng ({stock_label})"
+        )
+    lines.append("Bạn muốn xem sản phẩm nào để mình tư vấn thêm nhé?")
+    return "\n".join(lines)
+
+
+def build_product_catalog_reply(db: Session, business_id: int, limit: int = 10) -> str:
+    """Read the shop's active catalog for product-discovery fallback replies."""
+    products = db.query(Product).filter(
+        Product.business_id == business_id,
+        Product.status == "active",
+    ).order_by(Product.name.asc(), Product.id.asc()).limit(limit).all()
+    return format_product_catalog_reply(products)
+
+
+def send_text_reply(
+    *,
+    db: Session,
+    conversation_id: int,
+    channel: str,
+    text: str,
+    business_id: int,
+) -> dict:
+    """Send and persist a deterministic non-RAG reply on the conversation channel."""
+    stored_channel, recipient_id = _get_conversation_recipient(
+        db,
+        conversation_id,
+        business_id,
+    )
+    if stored_channel != channel:
+        logger.warning(
+            "Conversation channel mismatch: event=%s, database=%s",
+            channel,
+            stored_channel,
+        )
+        channel = stored_channel
+    response = _send_channel_reply(
+        db=db,
+        conversation_id=conversation_id,
+        channel=channel,
+        recipient_id=recipient_id,
+        text=text,
+        business_id=business_id,
+    )
+    _save_auto_reply_outbound(
+        db=db,
+        conversation_id=conversation_id,
+        channel=channel,
+        recipient_id=recipient_id,
+        external_message_id=response.get("message_id"),
+        content=text,
+        meta_response=response,
+        source_document_ids=[],
+    )
+    return response
+
+
+def send_text_reply_background(
+    *,
+    conversation_id: int,
+    channel: str,
+    text: str,
+    business_id: int,
+) -> None:
+    """Send a deterministic reply without delaying the webhook response."""
+
+    def worker() -> None:
+        db = SessionLocal()
+        try:
+            send_text_reply(
+                db=db,
+                conversation_id=conversation_id,
+                channel=channel,
+                text=text,
+                business_id=business_id,
+            )
+        except Exception:
+            logger.exception(
+                "Deterministic reply failed for conversation %d",
+                conversation_id,
+            )
+        finally:
+            db.close()
+
+    Thread(target=worker, daemon=True).start()
 
 
 def get_auto_reply_enabled(db: Session, business_id: int) -> bool:
@@ -187,12 +311,25 @@ def process_rag_auto_reply(
     """
     Tự động tra cứu RAG và gửi tin nhắn phản hồi cho khách hàng.
     """
+    config = db.query(ChatbotConfig).filter(ChatbotConfig.business_id == business_id).first()
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == business_id,
+    ).first()
+    if not isinstance(config, ChatbotConfig):
+        config = None
+    top_k = int(config.top_k if config and isinstance(config.top_k, (int, float)) and config.top_k else 5)
+    similarity_threshold = float(
+        config.similarity_threshold
+        if config and isinstance(config.similarity_threshold, (int, float))
+        else 0.3
+    )
     with RagRunLog(
         "auto_reply",
         conversation_id=conversation_id,
         channel=channel,
         query_preview=(query_text or "")[:500],
-        top_k=5,
+        top_k=top_k,
     ) as run:
       if not get_auto_reply_enabled(db, business_id):
           logger.info(
@@ -206,13 +343,59 @@ def process_rag_auto_reply(
           run.finish("skipped", phase="complete", reason="empty_query")
           return False
 
+      if config is not None and config.enabled is False:
+          run.finish("skipped", phase="complete", reason="chatbot_disabled")
+          return False
+
+      if conversation is None or conversation.bot_mode == "human":
+          run.finish("skipped", phase="complete", reason="human_takeover")
+          return False
+
+      if not is_business_open(db, business_id):
+          send_text_reply(
+              db=db,
+              conversation_id=conversation_id,
+              channel=channel,
+              text=OUT_OF_HOURS_REPLY,
+              business_id=business_id,
+          )
+          run.finish("outside_business_hours", phase="complete")
+          return True
+
       try:
         run.update(phase="retrieve")
         logger.info("Executing RAG auto-reply for conversation %d (query: %s)", conversation_id, query_text[:50])
 
         # 1. Retrieve
-        chunks = retrieve(query=query_text, db=db, top_k=5, business_id=business_id)
+        chunks = retrieve(
+            query=query_text,
+            db=db,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+            business_id=business_id,
+        )
         if not chunks:
+            if is_browsing_request(query_text):
+                catalog_reply = build_product_catalog_reply(db, business_id)
+                send_text_reply(
+                    db=db,
+                    conversation_id=conversation_id,
+                    channel=channel,
+                    text=catalog_reply,
+                    business_id=business_id,
+                )
+                logger.info(
+                    "Product catalog fallback sent via %s to conversation %d",
+                    channel,
+                    conversation_id,
+                )
+                run.finish(
+                    "catalog_fallback",
+                    phase="complete",
+                    chunks_found=0,
+                    answer_chars=len(catalog_reply),
+                )
+                return True
             logger.warning(
                 "Auto-reply skipped: no relevant RAG chunks for conversation %d, query=%r",
                 conversation_id,
@@ -228,7 +411,13 @@ def process_rag_auto_reply(
             source_document_ids=sorted({c.document_id for c in chunks}),
             top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
         )
-        messages = build_prompt(query=query_text, chunks=chunks)
+        memory = build_agent_memory(db, business_id, conversation_id)
+        messages = build_prompt(
+            query=query_text,
+            chunks=chunks,
+            conversation_history=memory["history"][:-1],
+            system_prompt=config.system_prompt if config and config.system_prompt else None,
+        )
 
         # 3. Call LLM
         run.update(phase="llm")

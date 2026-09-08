@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue
+from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot
 from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo
 
 
@@ -79,6 +79,12 @@ api_router.include_router(
     chat.router,
     prefix="/chat",
     tags=["Chat"],
+)
+
+api_router.include_router(
+    chatbot.router,
+    prefix="/chatbot",
+    tags=["Chatbot runtime"],
 )
 
 api_router.include_router(

@@ -23,6 +23,7 @@ def save_message(
             channel,
             external_user_id,
             external_message_id,
+            sender_type,
             direction,
             content,
             media_type,
@@ -34,6 +35,7 @@ def save_message(
             :channel,
             :external_user_id,
             :external_message_id,
+            :sender_type,
             :direction,
             :content,
             :media_type,
@@ -79,6 +81,12 @@ def save_message(
             "external_message_id":
                 message.get(
                     "external_message_id"
+                ),
+
+            "sender_type":
+                message.get(
+                    "sender_type",
+                    "customer",
                 ),
 
             "direction":

@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
@@ -70,12 +71,40 @@ from app.services.customer_merge_service import (
     undo_customer_merge,
 )
 from app.services.customer_avatar import refresh_customer_avatar_url
+from app.services.customer_collection import decrypt_contact
 from app.auth.dependencies import require_write_access
 from app.models.business import User
 from app.services.audit_service import record_audit
 
 
 router = APIRouter()
+
+
+def _profile_contact_value(customer: Customer, contacts: list[CustomerContact], kind: str) -> str | None:
+    """Return the profile value, backfilling it from the encrypted primary contact."""
+    current = getattr(customer, kind, None)
+    if current:
+        return current
+    for contact in contacts:
+        if contact.kind != kind:
+            continue
+        try:
+            return decrypt_contact(kind, contact.value_encrypted)
+        except (InvalidToken, ValueError, TypeError):
+            continue
+    return None
+
+
+def _timeline_message_actor_type(message: Message) -> str:
+    """Classify legacy outbound bot replies that predate sender_type."""
+    sender_type = (message.sender_type or "").strip().lower()
+    if (
+        message.direction == "outbound"
+        and sender_type == "customer"
+        and message.sender_user_id is None
+    ):
+        return "bot"
+    return sender_type or ("customer" if message.direction == "inbound" else "system")
 
 
 def _fact_out(fact: CustomerFact) -> CustomerFactOut:
@@ -716,12 +745,14 @@ def get_customer(
         CustomerAddress.customer_id == customer.id,
     ).order_by(CustomerAddress.is_default.desc(), CustomerAddress.id.asc()).all()
     tag_names = sorted({name for (name,) in conversation_tags + customer_tags})
+    profile_email = _profile_contact_value(customer, contacts, "email")
+    profile_phone = _profile_contact_value(customer, contacts, "phone")
     return CustomerProfileOut(
         id=customer.id,
         business_id=customer.business_id,
         name=customer.name,
-        email=customer.email,
-        phone=customer.phone,
+        email=profile_email,
+        phone=profile_phone,
         address=customer.address,
         avatar_url=refresh_customer_avatar_url(
             customer.avatar_url,
@@ -1033,6 +1064,10 @@ def customer_timeline(
     offset: int = Query(default=0, ge=0),
 ):
     _get_customer(db, customer_id, tenant)
+    actor_names = {
+        user.id: user.full_name or user.email
+        for user in db.query(User).filter(User.business_id == tenant.business_id).all()
+    }
     identities = db.query(CustomerIdentity).filter(
         CustomerIdentity.business_id == tenant.business_id,
         CustomerIdentity.customer_id == customer_id,
@@ -1118,16 +1153,28 @@ def customer_timeline(
         AuditLog.resource_id == str(customer_id),
         AuditLog.action == "merge_undo",
     ).all()
-    items = [CustomerTimelineItem(
-        event_type="message",
-        event_id=message.id,
-        occurred_at=message.sent_at or message.received_at,
-        channel=message.channel,
-        direction=message.direction,
-        content=message.content,
-        conversation_id=message.conversation_id,
-        created_by=message.sender_user_id,
-    ) for message in messages]
+    items = []
+    for message in messages:
+        actor_type = _timeline_message_actor_type(message)
+        items.append(CustomerTimelineItem(
+            event_type="message",
+            event_id=message.id,
+            occurred_at=message.sent_at or message.received_at,
+            channel=message.channel,
+            direction=message.direction,
+            content=message.content,
+            conversation_id=message.conversation_id,
+            created_by=message.sender_user_id,
+            actor_type=actor_type,
+            actor_name=(
+                actor_names.get(message.sender_user_id)
+                if actor_type == "staff" and message.sender_user_id is not None
+                else "Khách hàng" if actor_type == "customer"
+                else "Chatbot" if actor_type == "bot"
+                else "Hệ thống" if actor_type == "system"
+                else None
+            ),
+        ))
     items.extend(CustomerTimelineItem(
         event_type="identity",
         event_id=identity.id,
@@ -1289,6 +1336,15 @@ def customer_timeline(
         created_by=audit.user_id,
         metadata={"action": audit.action, **(audit.metadata_ or {})},
     ) for audit in merge_undo_history)
+    for item in items:
+        if item.actor_type is not None:
+            continue
+        if item.created_by is not None:
+            item.actor_type = "staff"
+            item.actor_name = actor_names.get(item.created_by) or f"Nhân viên #{item.created_by}"
+        else:
+            item.actor_type = "system"
+            item.actor_name = "Hệ thống"
     items.sort(key=lambda item: item.occurred_at or datetime.min, reverse=True)
     total = len(items)
     page = items[offset : offset + limit]

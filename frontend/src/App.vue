@@ -13,6 +13,8 @@ import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js"
 import { filterConversationsForCustomer } from "./ticket-utils.js";
 import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
 import { getInboxChannels } from "./inbox-utils.js";
+import { timelineActor } from "./timeline-utils.js";
+import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
 const BUSINESS_ID = "1";
@@ -55,6 +57,7 @@ const conversationFavoriteIds = ref(new Set());
 const composerMode = ref("reply");
 
 const activeFilter = ref("all");
+const inboxQuickFilter = ref("all");
 const tagCatalog = ref([]);
 const tagFilters = ref([]);
 const tagFilterMode = ref("all");
@@ -119,7 +122,16 @@ let reconnectTimer = null;
 
 /* RAG & TAB STATE */
 const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 'tickets' | 'reports' | 'documents' | 'rag_chat' | 'experiments'
-const sidebarCollapsed = ref(false);
+// The inbox is the primary working surface. Keep navigation compact by default;
+// users can still expand it with the persistent control at the bottom.
+const sidebarCollapsed = ref(true);
+const customerPanelCollapsed = ref(false);
+const workspaceGreeting = computed(() => {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Chào buổi sáng!";
+  if (hour < 18) return "Chào buổi chiều!";
+  return "Chào buổi tối!";
+});
 
 const products = ref([]);
 const productsLoading = ref(false);
@@ -157,12 +169,15 @@ function generateSalesOrderNumber() {
   return `ORD-${Date.now()}-${suffix}`;
 }
 
+function createOrderItem(productId = "") {
+  return { product_id: productId, quantity: 1 };
+}
+
 const orderForm = ref({
   order_number: generateSalesOrderNumber(),
   customer_id: "",
   conversation_id: "",
-  product_id: "",
-  quantity: 1,
+  items: [createOrderItem()],
 });
 const purchaseOrders = ref([]);
 const purchaseOrdersLoading = ref(false);
@@ -342,6 +357,26 @@ const ragTopK = ref(5);
 const ragSending = ref(false);
 const autoReplyEnabled = ref(false);
 const ragChatBox = ref(null);
+const chatbotConfig = ref({
+  name: "Trợ lý AI",
+  enabled: true,
+  handoff_enabled: true,
+  top_k: 5,
+  similarity_threshold: 0.3,
+  business_hours: { timezone: "Asia/Ho_Chi_Minh", mon: [["08:00", "17:30"]], tue: [["08:00", "17:30"]], wed: [["08:00", "17:30"]], thu: [["08:00", "17:30"]], fri: [["08:00", "17:30"]] },
+});
+const chatbotConfigSaving = ref(false);
+const chatbotConfigError = ref("");
+const businessHoursJson = ref("");
+const cannedResponses = ref([]);
+const selectedCannedId = ref("");
+const cannedResponseForm = ref({ shortcut: "/cod", title: "COD", content: "Shop hỗ trợ thanh toán COD.", enabled: true });
+const cannedResponseSaving = ref(false);
+const cannedResponseError = ref("");
+const botModes = ref({});
+const followups = ref([]);
+const followupsLoading = ref(false);
+const followupDispatching = ref(false);
 
 const metaStatus = ref({
   connected: false,
@@ -393,10 +428,16 @@ function openSettings() {
   void fetchMetaStatus();
   void fetchTeam();
   void fetchAuditLogs();
+  void fetchChatbotRuntime();
+  void fetchFollowups();
 }
 
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value;
+}
+
+function toggleCustomerPanel() {
+  customerPanelCollapsed.value = !customerPanelCollapsed.value;
 }
 
 function runGlobalSearch() {
@@ -682,6 +723,12 @@ const selected = computed(() => {
 
 });
 
+const selectedBotMode = computed(() => (
+  selected.value?.conversation_id
+    ? botModes.value[selected.value.conversation_id] || selected.value.bot_mode || "auto"
+    : "auto"
+));
+
 const conversationPriorityActive = computed(() => (
   selectedId.value !== null
   && conversationPriorityIds.value.has(selectedId.value)
@@ -715,6 +762,149 @@ const orderConversationOptions = computed(() => {
     .filter((conversation) => Number(conversation?.conversation_id) > 0)
     .sort((left, right) => Number(right.conversation_id) - Number(left.conversation_id));
 });
+
+const selectedOrderCustomer = computed(() => (
+  orderCustomers.value.find(
+    (customer) => Number(customer.id) === Number(orderForm.value.customer_id),
+  ) || null
+));
+
+const selectedOrderCustomerPhone = computed(() => (
+  String(selectedOrderCustomer.value?.phone || "").trim()
+));
+
+// The lower order strip is contextual: it only renders an actual order that
+// belongs to the customer selected in Inbox.  It never creates presentation
+// data on the client.
+const latestSelectedOrder = computed(() => {
+  const customerId = Number(selected.value?.customer_id);
+  if (!customerId) return null;
+  return [...orders.value]
+    .filter((order) => Number(order.customer_id) === customerId)
+    .sort((left, right) => {
+      const rightTime = Date.parse(right.created_at || "") || Number(right.id || 0);
+      const leftTime = Date.parse(left.created_at || "") || Number(left.id || 0);
+      return rightTime - leftTime;
+    })[0] || null;
+});
+
+const latestSelectedOrderItem = computed(() => (
+  latestSelectedOrder.value?.items?.[0] || null
+));
+
+const unreadConversationCount = computed(() => (
+  conversations.value.filter((item) => Number(item.unread_count || 0) > 0).length
+));
+
+const importantConversationCount = computed(() => (
+  conversations.value.filter((item) => conversationPriorityIds.value.has(item.conversation_id)).length
+));
+
+const salesOrderProgress = [
+  { value: "draft", label: "Tạo đơn" },
+  { value: "confirmed", label: "Xác nhận" },
+  { value: "processing", label: "Đóng gói" },
+  { value: "shipped", label: "Đang giao" },
+  { value: "completed", label: "Hoàn thành" },
+];
+
+function salesOrderProgressIndex(order) {
+  const status = String(order?.status || "draft");
+  const indices = { draft: 0, confirmed: 1, processing: 2, shipped: 3, delivered: 4, completed: 4 };
+  return indices[status] ?? -1;
+}
+
+function salesOrderStatusLabel(status) {
+  const labels = {
+    draft: "Mới tạo",
+    confirmed: "Đã xác nhận",
+    processing: "Đang đóng gói",
+    shipped: "Đang giao",
+    delivered: "Đã giao",
+    completed: "Hoàn thành",
+    refunded: "Đã hoàn tiền",
+    cancelled: "Đã hủy",
+  };
+  return labels[status] || status || "Chưa rõ";
+}
+
+function openInboxOrderDetail(order) {
+  if (!order?.id) return;
+  currentTab.value = "orders";
+  void fetchOrders();
+  void loadSalesOrderEvents(order);
+}
+
+const activeOrderProducts = computed(() => (
+  products.value.filter((product) => product.status === "active")
+));
+
+const orderFormTotal = computed(() => (
+  (orderForm.value.items || []).reduce((total, item) => (
+    total + orderItemLineTotal(item)
+  ), 0)
+));
+
+function orderItemLineTotal(item) {
+  const product = products.value.find(
+    (candidate) => Number(candidate.id) === Number(item?.product_id),
+  );
+  return Number(product?.price || 0) * Math.max(0, Number(item?.quantity || 0));
+}
+
+function orderItemProducts(itemIndex) {
+  const selectedElsewhere = new Set(
+    (orderForm.value.items || [])
+      .filter((_, index) => index !== itemIndex)
+      .map((item) => Number(item.product_id))
+      .filter(Number.isFinite),
+  );
+  const currentProductId = Number(orderForm.value.items?.[itemIndex]?.product_id);
+  return products.value.filter((product) => (
+    product.status === "active"
+    && (!selectedElsewhere.has(Number(product.id)) || Number(product.id) === currentProductId)
+  ));
+}
+
+function addOrderItem() {
+  const chosenProductIds = new Set(
+    (orderForm.value.items || [])
+      .map((item) => Number(item.product_id))
+      .filter(Number.isFinite),
+  );
+  const nextProduct = activeOrderProducts.value.find(
+    (product) => !chosenProductIds.has(Number(product.id)),
+  );
+  if (!nextProduct) {
+    orderError.value = "Không còn sản phẩm đang bán nào để thêm vào đơn.";
+    return;
+  }
+  orderError.value = "";
+  orderForm.value.items.push(createOrderItem(nextProduct.id));
+}
+
+function removeOrderItem(itemIndex) {
+  if ((orderForm.value.items || []).length <= 1) {
+    orderError.value = "Đơn bán phải có ít nhất một sản phẩm.";
+    return;
+  }
+  orderError.value = "";
+  orderForm.value.items.splice(itemIndex, 1);
+}
+
+function orderCustomerName(customerId) {
+  const customer = orderCustomers.value.find(
+    (candidate) => Number(candidate.id) === Number(customerId),
+  );
+  return customer?.name || customer?.email || customer?.channel || "Khách hàng";
+}
+
+function orderCustomerPhone(customerId) {
+  const customer = orderCustomers.value.find(
+    (candidate) => Number(candidate.id) === Number(customerId),
+  );
+  return String(customer?.phone || "").trim() || "Chưa có số điện thoại";
+}
 
 function orderConversationLabel(conversation) {
   const preview = String(conversation?.last_message || "")
@@ -766,6 +956,10 @@ const filtered = computed(() => {
         tagFilterMode.value,
       );
 
+      const quickFilterOk = inboxQuickFilter.value === "all"
+        || (inboxQuickFilter.value === "unread" && Number(item.unread_count || 0) > 0)
+        || (inboxQuickFilter.value === "important" && conversationPriorityIds.value.has(item.conversation_id));
+
       const segmentOk = !selectedSegmentId.value
         || segmentCustomerIds.value.has(Number(item.customer_id));
 
@@ -781,6 +975,7 @@ const filtered = computed(() => {
 
       return (
         channelOk
+        && quickFilterOk
         && tagOk
         && segmentOk
         &&
@@ -835,8 +1030,23 @@ function nameOf(item) {
   return (
     item?.customer_name
     ||
-    `Khách #${item?.customer_id ?? "?"}`
+    item?.name
+    ||
+    item?.display_name
+    ||
+    `Khách #${item?.customer_id ?? item?.id ?? "?"}`
   );
+
+}
+
+
+function customerContactValue(kind) {
+
+  const profile = customer360.value;
+  if (profile?.[kind]) {
+    return profile[kind];
+  }
+  return profile?.contacts?.find((contact) => contact.kind === kind)?.masked_value || "";
 
 }
 
@@ -1796,10 +2006,21 @@ function orderEventSummary(event) {
   if (event?.event_type === "status_changed") {
     return `${event.from_status || "—"} → ${event.to_status || "—"}`;
   }
+  if (event?.event_type === "order_created") {
+    return "Khởi tạo đơn ở trạng thái draft";
+  }
   const metadata = event?.metadata || event?.metadata_ || {};
   const amount = Number(metadata.amount || 0);
   if (amount > 0) return `${amount.toLocaleString("vi-VN")}đ`;
   return "Không có chi tiết";
+}
+
+function chronologicalOrderEvents(events) {
+  return [...(events || [])].sort((left, right) => {
+    const leftTime = Date.parse(left?.created_at || "") || 0;
+    const rightTime = Date.parse(right?.created_at || "") || 0;
+    return leftTime - rightTime || Number(left?.id || 0) - Number(right?.id || 0);
+  });
 }
 
 async function loadConversations(
@@ -2712,15 +2933,27 @@ function resetOrderForm() {
     order_number: generateSalesOrderNumber(),
     customer_id: orderCustomers.value[0]?.id || "",
     conversation_id: "",
-    product_id: products.value[0]?.id || "",
-    quantity: 1,
+    items: [createOrderItem(activeOrderProducts.value[0]?.id || "")],
   };
 }
 
 async function saveOrder() {
   const form = orderForm.value;
-  if (!form.order_number || !form.customer_id || !form.product_id || Number(form.quantity) < 1) {
-    orderError.value = "Mã đơn, customer, sản phẩm và số lượng là bắt buộc.";
+  const items = (form.items || []).map((item) => ({
+    product_id: Number(item.product_id),
+    quantity: Number(item.quantity),
+  }));
+  if (!form.order_number || !form.customer_id || !items.length || items.some((item) => (
+    !Number.isInteger(item.product_id)
+    || item.product_id < 1
+    || !Number.isInteger(item.quantity)
+    || item.quantity < 1
+  ))) {
+    orderError.value = "Mã đơn, customer và từng sản phẩm với số lượng hợp lệ là bắt buộc.";
+    return;
+  }
+  if (new Set(items.map((item) => item.product_id)).size !== items.length) {
+    orderError.value = "Mỗi sản phẩm chỉ được chọn một lần trong đơn bán.";
     return;
   }
   orderSaving.value = true;
@@ -2733,7 +2966,7 @@ async function saveOrder() {
         order_number: form.order_number.trim(),
         customer_id: Number(form.customer_id),
         conversation_id: form.conversation_id ? Number(form.conversation_id) : null,
-        items: [{ product_id: Number(form.product_id), quantity: Number(form.quantity) }],
+        items,
       }),
     });
     if (!response.ok) {
@@ -4402,6 +4635,8 @@ onMounted(async () => {
   fetchExperimentation();
   fetchReports();
   fetchAutoReplySetting();
+  fetchChatbotRuntime();
+  fetchFollowups();
   fetchMetaStatus();
 
   const metaResult = new URLSearchParams(window.location.search).get("meta");
@@ -4441,6 +4676,124 @@ onMounted(async () => {
 /* =========================================================
    STOP POLLING
 ========================================================= */
+
+function applyCannedResponse() {
+  const canned = cannedResponses.value.find((item) => String(item.id) === String(selectedCannedId.value));
+  if (!canned) return;
+  draft.value = canned.content || "";
+  selectedCannedId.value = "";
+  focusComposer();
+}
+
+async function fetchChatbotRuntime() {
+  chatbotConfigError.value = "";
+  try {
+    const [configResponse, cannedResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/chatbot/config`),
+      apiFetch(`${API_BASE}/chatbot/canned-responses`),
+    ]);
+    if (configResponse.ok) {
+      chatbotConfig.value = { ...chatbotConfig.value, ...(await configResponse.json()) };
+      businessHoursJson.value = JSON.stringify(chatbotConfig.value.business_hours || {}, null, 2);
+    }
+    if (cannedResponse.ok) cannedResponses.value = (await cannedResponse.json()).items || [];
+  } catch (err) {
+    chatbotConfigError.value = err.message || "Không tải được cấu hình chatbot.";
+  }
+}
+
+async function saveChatbotRuntime() {
+  chatbotConfigSaving.value = true;
+  chatbotConfigError.value = "";
+  try {
+    let businessHours = chatbotConfig.value.business_hours;
+    try {
+      businessHours = JSON.parse(businessHoursJson.value || "{}");
+    } catch {
+      throw new Error("Business hours phải là JSON hợp lệ.");
+    }
+    const response = await apiFetch(`${API_BASE}/chatbot/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: chatbotConfig.value.name,
+        enabled: chatbotConfig.value.enabled,
+        handoff_enabled: chatbotConfig.value.handoff_enabled,
+        top_k: Number(chatbotConfig.value.top_k),
+        similarity_threshold: Number(chatbotConfig.value.similarity_threshold),
+        business_hours: businessHours,
+      }),
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+    chatbotConfig.value = { ...chatbotConfig.value, ...(await response.json()) };
+    businessHoursJson.value = JSON.stringify(chatbotConfig.value.business_hours || {}, null, 2);
+  } catch (err) {
+    chatbotConfigError.value = err.message || "Không thể lưu cấu hình chatbot.";
+  } finally {
+    chatbotConfigSaving.value = false;
+  }
+}
+
+async function saveCannedResponse() {
+  cannedResponseSaving.value = true;
+  cannedResponseError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/chatbot/canned-responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cannedResponseForm.value),
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+    cannedResponses.value = [...cannedResponses.value, await response.json()];
+    cannedResponseForm.value = { shortcut: "/", title: "", content: "", enabled: true };
+  } catch (err) {
+    cannedResponseError.value = err.message || "Không thể lưu mẫu trả lời.";
+  } finally {
+    cannedResponseSaving.value = false;
+  }
+}
+
+async function toggleBotMode() {
+  if (!selected.value?.conversation_id) return;
+  const mode = selectedBotMode.value === "human" ? "resume" : "pause";
+  try {
+    const response = await apiFetch(`${API_BASE}/chatbot/conversations/${selected.value.conversation_id}/${mode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: mode === "pause" ? "Nhân viên tiếp quản từ CRM" : "Nhân viên trả lại cho bot" }),
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+    botModes.value = { ...botModes.value, [selected.value.conversation_id]: (await response.json()).bot_mode };
+  } catch (err) {
+    error.value = err.message || "Không thể đổi chế độ chatbot.";
+  }
+}
+
+async function fetchFollowups() {
+  followupsLoading.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/chatbot/followups?status=scheduled`);
+    if (response.ok) followups.value = (await response.json()).items || [];
+  } finally {
+    followupsLoading.value = false;
+  }
+}
+
+async function dispatchFollowups() {
+  followupDispatching.value = true;
+  try {
+    await apiFetch(`${API_BASE}/chatbot/followups/dispatch`, { method: "POST" });
+    await fetchFollowups();
+  } finally {
+    followupDispatching.value = false;
+  }
+}
+
+async function cancelFollowup(followup) {
+  if (!followup?.id) return;
+  const response = await apiFetch(`${API_BASE}/chatbot/followups/${followup.id}/cancel`, { method: "POST" });
+  if (response.ok) followups.value = followups.value.filter((item) => item.id !== followup.id);
+}
 
 onUnmounted(() => {
 
@@ -4484,7 +4837,15 @@ onUnmounted(() => {
     <aside class="side">
 
       <div class="brand-lockup">
-        <div class="crm-brand-mark" data-testid="crm-brand-mark">SM</div>
+        <div class="crm-brand-mark" data-testid="crm-brand-mark" aria-label="Smart Merchant Hub">
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M7 20h34v20H7z" fill="currentColor" opacity=".18" />
+            <path d="M5 19 9 8h30l4 11-4 5H9z" fill="currentColor" />
+            <path d="M9 19h30v21H9z" fill="currentColor" opacity=".85" />
+            <path d="M18 40V27h12v13M13 25h3v5h-3zm19 0h3v5h-3z" fill="#fffaf8" />
+            <path d="M8 18h32" stroke="#fffaf8" stroke-width="3" stroke-linecap="round" />
+          </svg>
+        </div>
         <div class="brand-copy">
           <strong>Smart Merchant Hub</strong>
           <small>CRM workspace</small>
@@ -4499,9 +4860,10 @@ onUnmounted(() => {
           <button
             class="menu-item"
             :class="{ active: currentTab === 'inbox' }"
+            title="Inbox & Customer 360"
             @click="currentTab = 'inbox'"
           >
-            <span class="nav-icon">CX</span>
+            <svg class="nav-icon nav-icon-inbox" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.6 7.6 0 0 1-8 7.5 8.8 8.8 0 0 1-3.6-.8L4 20l1.4-3.5A7.1 7.1 0 0 1 4 12a7.6 7.6 0 0 1 8-7.5 7.6 7.6 0 0 1 8 7Z" /></svg>
             <b>Inbox &amp; Customer 360</b>
             <em>{{ conversations.length }}</em>
           </button>
@@ -4509,48 +4871,48 @@ onUnmounted(() => {
 
         <div class="menu-group menu-group-operations">
           <span class="menu-group-label">Vận hành</span>
-          <button class="menu-item" :class="{ active: currentTab === 'documents' }" @click="currentTab = 'documents'; fetchDocuments()">
-            <span class="nav-icon">KB</span><b>Knowledge Base</b><em>{{ documents.length }}</em>
+          <button class="menu-item" :class="{ active: currentTab === 'documents' }" title="Knowledge Base" @click="currentTab = 'documents'; fetchDocuments()">
+            <svg class="nav-icon nav-icon-knowledge" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5c2.8-1 5.4-.6 8 1v12c-2.6-1.6-5.2-2-8-1Zm16 0c-2.8-1-5.4-.6-8 1v12c2.6-1.6 5.2-2 8-1Z" /><path d="M12 6.5v12" /></svg><b>Knowledge Base</b><em>{{ documents.length }}</em>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'products' }" @click="currentTab = 'products'; fetchProducts()">
-            <span class="nav-icon">PR</span><b>Sản phẩm</b><em>{{ products.length }}</em>
+          <button class="menu-item" :class="{ active: currentTab === 'products' }" title="Sản phẩm" @click="currentTab = 'products'; fetchProducts()">
+            <svg class="nav-icon nav-icon-products" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="m4 7.5 8 4.5 8-4.5M12 12v9" /></svg><b>Sản phẩm</b><em>{{ products.length }}</em>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'orders' }" @click="currentTab = 'orders'; loadConversations(false); fetchOrderCustomers(); fetchProducts(); fetchOrders()">
-            <span class="nav-icon">SO</span><b>Đơn bán</b><em>{{ orders.length }}</em>
+          <button class="menu-item" :class="{ active: currentTab === 'orders' }" title="Đơn bán" @click="currentTab = 'orders'; loadConversations(false); fetchOrderCustomers(); fetchProducts(); fetchOrders()">
+            <svg class="nav-icon nav-icon-orders" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6Z" /><path d="M15 3v4h4M9 11h6M9 15h6M9 19h4" /></svg><b>Đơn bán</b><em>{{ orders.length }}</em>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'purchase-orders' }" @click="currentTab = 'purchase-orders'; fetchProducts(); fetchSuppliers(); fetchPurchaseOrders()">
-            <span class="nav-icon">PO</span><b>Đơn nhập</b><em>{{ purchaseOrders.length }}</em>
+          <button class="menu-item" :class="{ active: currentTab === 'purchase-orders' }" title="Đơn nhập" @click="currentTab = 'purchase-orders'; fetchProducts(); fetchSuppliers(); fetchPurchaseOrders()">
+            <svg class="nav-icon nav-icon-purchases" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10l2 4h4v7H6L4 13Z" /><path d="M7 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM4 9h10" /></svg><b>Đơn nhập</b><em>{{ purchaseOrders.length }}</em>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'leads' }" @click="currentTab = 'leads'; fetchOrderCustomers(); fetchLeads()">
-            <span class="nav-icon">SL</span><b>Sales Pipeline</b><em>{{ leads.length }}</em>
+          <button class="menu-item" :class="{ active: currentTab === 'leads' }" title="Sales Pipeline" @click="currentTab = 'leads'; fetchOrderCustomers(); fetchLeads()">
+            <svg class="nav-icon nav-icon-pipeline" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7v5.5l-3.6 2V12Z" /></svg><b>Sales Pipeline</b><em>{{ leads.length }}</em>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'tickets' }" @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()">
-            <span class="nav-icon">TK</span><b>Ticket &amp; SLA</b><em>{{ tickets.length }}</em>
+          <button class="menu-item" :class="{ active: currentTab === 'tickets' }" title="Ticket & SLA" @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()">
+            <svg class="nav-icon nav-icon-tickets" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="m8.3 12.3 2.3 2.3 5-5" /></svg><b>Ticket &amp; SLA</b><em>{{ tickets.length }}</em>
           </button>
         </div>
 
         <div class="menu-group menu-group-ai">
           <span class="menu-group-label">AI &amp; Tự động hóa</span>
           <div class="ai-submenu">
-            <button class="menu-item" :class="{ active: currentTab === 'workflows' }" @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()">
-              <span class="nav-icon">WF</span><b>Workflow</b><em>{{ workflows.length }}</em>
+            <button class="menu-item" :class="{ active: currentTab === 'workflows' }" title="Workflow" @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()">
+              <svg class="nav-icon nav-icon-workflow" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="5" height="5" rx="1" /><rect x="15.5" y="4" width="5" height="5" rx="1" /><rect x="9.5" y="15" width="5" height="5" rx="1" /><path d="M8.5 6.5h7M12 9v6" /></svg><b>Workflow</b><em>{{ workflows.length }}</em>
             </button>
-            <button class="menu-item" :class="{ active: currentTab === 'experiments' }" @click="currentTab = 'experiments'; fetchExperimentation(); fetchTeam(); fetchWorkflows()">
-              <span class="nav-icon">ML</span><b>AI Rule Lab</b><em>{{ ruleSuggestions.filter(item => item.status === 'pending').length }}</em>
+            <button class="menu-item" :class="{ active: currentTab === 'experiments' }" title="AI Rule Lab" @click="currentTab = 'experiments'; fetchExperimentation(); fetchTeam(); fetchWorkflows()">
+              <svg class="nav-icon nav-icon-ai" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6ZM18.5 15l.7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7Z" /></svg><b>AI Rule Lab</b><em>{{ ruleSuggestions.filter(item => item.status === 'pending').length }}</em>
             </button>
-            <button class="menu-item" :class="{ active: currentTab === 'rag_chat' }" @click="currentTab = 'rag_chat'; fetchAutoReplySetting()">
-              <span class="nav-icon">AI</span><b>AI Assistant</b>
+            <button class="menu-item" :class="{ active: currentTab === 'rag_chat' }" title="AI Assistant" @click="currentTab = 'rag_chat'; fetchAutoReplySetting()">
+              <svg class="nav-icon nav-icon-assistant" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 1 14.3 4.9L20 21l-4.3-1.6A8 8 0 0 1 4 12Z" /><path d="M8.3 12h.1m3.5 0h.1m3.5 0h.1" /></svg><b>AI Assistant</b>
             </button>
           </div>
         </div>
 
         <div class="menu-group menu-group-system">
           <span class="menu-group-label">Hệ thống</span>
-          <button class="menu-item" :class="{ active: currentTab === 'reports' }" @click="currentTab = 'reports'; fetchReports()">
-            <span class="nav-icon">BI</span><b>Báo cáo</b>
+          <button class="menu-item" :class="{ active: currentTab === 'reports' }" title="Báo cáo" @click="currentTab = 'reports'; fetchReports()">
+            <svg class="nav-icon nav-icon-reports" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V7" /></svg><b>Báo cáo</b>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'settings' }" @click="openSettings">
-            <span class="nav-icon">SE</span><b>Settings</b>
+          <button class="menu-item" :class="{ active: currentTab === 'settings' }" title="Settings" @click="openSettings">
+            <svg class="nav-icon nav-icon-settings" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19 13.5v-3l-2.1-.7a5.3 5.3 0 0 0-.5-1.1l1-2-2.1-2.1-2 1a5.3 5.3 0 0 0-1.1-.5L11.5 3h-3l-.7 2.1a5.3 5.3 0 0 0-1.1.5l-2-1L2.6 6.7l1 2a5.3 5.3 0 0 0-.5 1.1l-2.1.7v3l2.1.7a5.3 5.3 0 0 0 .5 1.1l-1 2 2.1 2.1 2-1a5.3 5.3 0 0 0 1.1.5l.7 2.1h3l.7-2.1a5.3 5.3 0 0 0 1.1-.5l2 1 2.1-2.1-1-2a5.3 5.3 0 0 0 .5-1.1Z" /></svg><b>Settings</b>
           </button>
         </div>
 
@@ -4595,7 +4957,7 @@ onUnmounted(() => {
         <div class="welcome">
 
           <strong>
-            Chào mừng trở lại
+            {{ workspaceGreeting }} <span aria-hidden="true">👋</span>
           </strong>
 
           <span>
@@ -4616,7 +4978,7 @@ onUnmounted(() => {
               aria-label="Tìm kiếm khách hàng, tin nhắn, đơn hàng"
               @keydown.enter="runGlobalSearch"
             />
-            <span aria-hidden="true">⌕</span>
+            <svg class="top-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8" /><path d="m15.2 15.2 4 4" /></svg>
           </label>
 
 
@@ -4627,8 +4989,18 @@ onUnmounted(() => {
             title="Mở thông báo SLA"
             @click="openNotifications"
           >
-            !
+            <svg class="top-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 10a6 6 0 0 0-12 0c0 6-2.5 6.5-2.5 8h17C20.5 16.5 18 16 18 10Z" /><path d="M10 21h4" /></svg>
             <i v-if="slaNotifications.length">{{ slaNotifications.length }}</i>
+          </button>
+
+          <button
+            type="button"
+            class="help"
+            aria-label="Mở trợ giúp workspace"
+            title="Mở trợ giúp workspace"
+            @click="openSettings"
+          >
+            <svg class="top-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M9.5 9.2a2.7 2.7 0 1 1 4.5 2c-1.5 1-2 1.5-2 3M12 17.4h.1" /></svg>
           </button>
 
 
@@ -4702,32 +5074,18 @@ onUnmounted(() => {
 
           <div class="inbox-toolbar">
             <div class="inbox-channel-filter">
-              <div class="inbox-channel-grid">
-              <button
-                type="button"
-                class="inbox-channel-all"
-                :class="{ active: activeFilter === 'all' }"
-                :aria-pressed="activeFilter === 'all'"
-                @click="activeFilter = 'all'"
-              >
-                <span class="channel-tab-icon all" aria-hidden="true"></span>
-                <span class="channel-tab-label">Tất cả</span>
-                <i>{{ conversations.length }}</i>
-              </button>
-              <button
-                v-for="channel in inboxChannels"
-                :key="channel.value"
-                type="button"
-                class="inbox-channel-button"
-                :class="[{ active: activeFilter === channel.value }, `channel-${channel.value}`]"
-                :aria-pressed="activeFilter === channel.value"
-                @click="activeFilter = channel.value"
-              >
-                <span class="channel-tab-icon" :class="channel.value" aria-hidden="true"></span>
-                <span class="channel-tab-label">{{ channel.label }}</span>
-                <i>{{ channel.count }}</i>
-              </button>
+              <div class="inbox-quick-tabs" role="tablist" aria-label="Lọc nhanh hội thoại">
+                <button type="button" :class="{ active: inboxQuickFilter === 'all' }" :aria-selected="inboxQuickFilter === 'all'" @click="inboxQuickFilter = 'all'">Tất cả <i>{{ conversations.length }}</i></button>
+                <button type="button" :class="{ active: inboxQuickFilter === 'unread' }" :aria-selected="inboxQuickFilter === 'unread'" @click="inboxQuickFilter = 'unread'">Chưa đọc <i>{{ unreadConversationCount }}</i></button>
+                <button type="button" :class="{ active: inboxQuickFilter === 'important' }" :aria-selected="inboxQuickFilter === 'important'" @click="inboxQuickFilter = 'important'">Quan trọng <i>{{ importantConversationCount }}</i></button>
               </div>
+              <label class="inbox-channel-select">
+                <span class="visually-hidden">Lọc theo kênh</span>
+                <select v-model="activeFilter" aria-label="Lọc theo kênh hội thoại">
+                  <option value="all">Tất cả kênh</option>
+                  <option v-for="channel in inboxChannels" :key="channel.value" :value="channel.value">{{ channel.label }} ({{ channel.count }})</option>
+                </select>
+              </label>
             </div>
 
 
@@ -4737,31 +5095,40 @@ onUnmounted(() => {
             <button v-if="search" type="button" class="search-clear" aria-label="Xóa tìm kiếm" @click="clearInboxSearch">×</button>
             </div>
 
-          <div class="inbox-filter-panel">
-            <div class="filter-panel-heading"><span>Tags khách hàng</span><button v-if="tagFilters.length" type="button" @click="tagFilters = []">Bỏ chọn</button></div>
-            <div v-if="tagCatalog.length" class="tag-chip-list">
-              <button v-for="tag in tagCatalog" :key="tag.id" type="button" class="tag-chip" :class="{ active: tagFilters.includes(tag.name) }" @click="toggleTagFilter(tag.name)">
-                <span>#{{ tag.name }}</span><i>{{ tag.customer_count || 0 }}</i>
-              </button>
+          <details class="inbox-filter-disclosure">
+            <summary>Bộ lọc &amp; segment</summary>
+            <div class="inbox-filter-panel">
+              <div class="filter-panel-heading"><span>Tags khách hàng</span><button v-if="tagFilters.length" type="button" @click="tagFilters = []">Bỏ chọn</button></div>
+              <div v-if="tagCatalog.length" class="tag-chip-list">
+                <button v-for="tag in tagCatalog" :key="tag.id" type="button" class="tag-chip" :class="{ active: tagFilters.includes(tag.name) }" @click="toggleTagFilter(tag.name)">
+                  <span>#{{ tag.name }}</span><i>{{ tag.customer_count || 0 }}</i>
+                </button>
+              </div>
+              <div v-else class="filter-empty">Chưa có tag để lọc</div>
+              <div class="tag-mode-toggle" role="group" aria-label="Cách lọc tag">
+                <label :class="{ active: tagFilterMode === 'all' }"><input v-model="tagFilterMode" type="radio" value="all" /> Tất cả tag</label>
+                <label :class="{ active: tagFilterMode === 'any' }"><input v-model="tagFilterMode" type="radio" value="any" /> Ít nhất một tag</label>
+              </div>
             </div>
-            <div v-else class="filter-empty">Chưa có tag để lọc</div>
-            <div class="tag-mode-toggle" role="group" aria-label="Cách lọc tag">
-              <label :class="{ active: tagFilterMode === 'all' }"><input v-model="tagFilterMode" type="radio" value="all" /> Tất cả tag</label>
-              <label :class="{ active: tagFilterMode === 'any' }"><input v-model="tagFilterMode" type="radio" value="any" /> Ít nhất một tag</label>
-            </div>
-          </div>
 
             <div class="segment-control">
-            <div class="filter-panel-heading"><span>Segment</span><small v-if="segmentLoading">Đang tải...</small></div>
-            <select v-model="selectedSegmentId" aria-label="Lọc theo segment đã lưu" @change="loadSegmentMembers">
-              <option value="">Mọi segment đã lưu</option>
-              <option v-for="segment in savedSegments" :key="segment.id" :value="segment.id">{{ segment.name }} ({{ segment.customer_count }})</option>
-            </select>
+              <div class="filter-panel-heading"><span>Segment</span><small v-if="segmentLoading">Đang tải...</small></div>
+              <select v-model="selectedSegmentId" aria-label="Lọc theo segment đã lưu" @change="loadSegmentMembers">
+                <option value="">Mọi segment đã lưu</option>
+                <option v-for="segment in savedSegments" :key="segment.id" :value="segment.id">{{ segment.name }} ({{ segment.customer_count }})</option>
+              </select>
             </div>
+          </details>
           </div>
 
 
           <div class="conversation-scroll">
+
+            <div v-if="!filtered.length" class="inbox-empty-state">
+              <span class="inbox-empty-state-icon" aria-hidden="true">✦</span>
+              <strong>{{ conversations.length ? "Không có hội thoại phù hợp" : "Hộp thư đang chờ tin nhắn đầu tiên" }}</strong>
+              <p>{{ conversations.length ? "Thử thay đổi từ khóa hoặc bộ lọc để xem lại." : "Hội thoại từ Facebook, Instagram, Telegram và Zalo sẽ xuất hiện tại đây." }}</p>
+            </div>
 
             <button
               v-for="item in filtered"
@@ -5061,6 +5428,16 @@ onUnmounted(() => {
 
 
               <div class="chat-tools">
+
+                <button
+                  type="button"
+                  class="bot-mode-button"
+                  :class="{ human: selectedBotMode === 'human' }"
+                  :title="selectedBotMode === 'human' ? 'Bật lại chatbot' : 'Nhân viên tiếp quản'"
+                  @click="toggleBotMode"
+                >
+                  {{ selectedBotMode === 'human' ? 'Bật bot' : 'Tắt bot' }}
+                </button>
 
                 <label class="conversation-assignment" title="Gán hội thoại">
                   <span>Phụ trách</span>
@@ -5651,6 +6028,17 @@ onUnmounted(() => {
                     Mẫu trả lời
                   </button>
 
+                  <select
+                    v-if="cannedResponses.length"
+                    v-model="selectedCannedId"
+                    class="canned-response-select"
+                    title="Chọn mẫu trả lời đã lưu"
+                    @change="applyCannedResponse"
+                  >
+                    <option value="">Chọn mẫu...</option>
+                    <option v-for="item in cannedResponses" :key="item.id" :value="item.id">{{ item.shortcut }} · {{ item.title }}</option>
+                  </select>
+
                 </div>
 
 
@@ -5713,11 +6101,26 @@ onUnmounted(() => {
             "
           >
 
-            <div class="empty-chat-mark" aria-hidden="true">SM</div>
+            <div class="empty-chat-mark" aria-hidden="true">
+              <span>SM</span>
+              <i></i><i></i><i></i>
+            </div>
+
+            <span class="empty-chat-kicker">SMART MERCHANT HUB</span>
 
             <h2>
-              Chọn một hội thoại để bắt đầu
+              {{ conversations.length ? "Chọn một hội thoại để bắt đầu" : "Hộp thư sẵn sàng cho khách hàng đầu tiên" }}
             </h2>
+
+            <p>
+              {{ conversations.length ? "Chọn khách hàng bên trái để xem toàn bộ tin nhắn, đơn hàng và hồ sơ 360." : "Kết nối kênh bán hàng để tin nhắn, hồ sơ 360 và lịch sử mua sắm được tập trung tại một nơi." }}
+            </p>
+
+            <div class="empty-chat-steps" aria-label="Các bước bắt đầu sử dụng hộp thư">
+              <span><b>1</b>Kết nối kênh</span>
+              <span><b>2</b>Nhận tin nhắn</span>
+              <span><b>3</b>Chăm sóc khách hàng</span>
+            </div>
 
           </div>
 
@@ -5728,23 +6131,27 @@ onUnmounted(() => {
              CUSTOMER PANEL
         ================================================== -->
 
-        <aside class="customer">
+        <aside class="customer customer-panel-scroll" :class="{ 'customer-collapsed': customerPanelCollapsed }">
 
+          <div class="customer-title">
+
+            <h3>
+              Customer 360
+            </h3>
+
+            <button
+              type="button"
+              :aria-expanded="String(!customerPanelCollapsed)"
+              :aria-label="customerPanelCollapsed ? 'Mở rộng thông tin khách hàng' : 'Thu gọn thông tin khách hàng'"
+              :title="customerPanelCollapsed ? 'Mở rộng thông tin khách hàng' : 'Thu gọn thông tin khách hàng'"
+              @click="toggleCustomerPanel"
+            >
+              {{ customerPanelCollapsed ? '⌄' : '⌃' }}
+            </button>
+
+          </div>
 
           <template v-if="selected">
-
-
-            <div class="customer-title">
-
-              <h3>
-                Thông tin khách hàng
-              </h3>
-
-              <button>
-                ⌃
-              </button>
-
-            </div>
 
 
             <div class="customer-profile">
@@ -5789,9 +6196,9 @@ onUnmounted(() => {
 
                 <h3>
                   {{
-                    nameOf(
-                      selected
-                    )
+                    maskCustomerName(nameOf(
+                      customer360 || selected
+                    ))
                   }}
                 </h3>
 
@@ -5909,6 +6316,10 @@ onUnmounted(() => {
 
                 </small>
 
+                <small v-if="customer360?.email" class="customer-profile-email">
+                  Email: {{ maskCustomerEmail(customer360.email) }}
+                </small>
+
               </div>
 
             </div>
@@ -5937,6 +6348,48 @@ onUnmounted(() => {
                 </div>
               </div>
 
+              <div class="section customer-contact-section">
+                <div class="section-head">
+                  <h4>Thông tin nhận hàng</h4>
+                  <span>{{ (customer360.contacts?.length || 0) + (customer360.addresses?.length || 0) }}</span>
+                </div>
+                <div class="customer-contact-grid">
+                  <div class="customer-contact-card customer-profile-contact-card">
+                    <small>Thông tin khách hàng</small>
+                    <div class="customer-profile-fields">
+                      <div class="customer-profile-field">
+                        <span>Tên</span>
+                        <strong>{{ maskCustomerName(customer360.name || nameOf(selected)) }}</strong>
+                      </div>
+                      <div class="customer-profile-field">
+                        <span>Email</span>
+                        <strong>{{ maskCustomerEmail(customer360.email || customerContactValue('email')) || 'Chưa thu thập' }}</strong>
+                      </div>
+                      <div class="customer-profile-field">
+                        <span>Số điện thoại</span>
+                        <strong>{{ maskCustomerPhone(customer360.phone || customerContactValue('phone')) || 'Chưa thu thập' }}</strong>
+                      </div>
+                    </div>
+                    <div v-if="customer360.contacts?.length" class="customer-contact-status-list">
+                      <div v-for="contact in customer360.contacts" :key="contact.id" class="customer-contact-status-row">
+                        <span>{{ contact.kind === 'phone' ? 'Số điện thoại' : 'Email' }}</span>
+                        <em>{{ contact.verification_status === 'verified' ? 'Đã xác minh' : 'Chưa xác minh' }}</em>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="customer-contact-card">
+                    <small>Địa chỉ giao hàng</small>
+                    <template v-if="customer360.addresses?.length">
+                      <div v-for="address in customer360.addresses" :key="address.id" class="customer-address-row">
+                        <strong v-if="address.is_default">Mặc định</strong>
+                        <span>{{ [address.address_line1, address.ward, address.district, address.province].filter(Boolean).join(', ') }}</span>
+                      </div>
+                    </template>
+                    <span v-else class="customer-contact-empty">Chưa thu thập</span>
+                  </div>
+                </div>
+              </div>
+
               <div class="section customer-timeline-section">
                 <div class="section-head">
                   <h4>Unified Timeline</h4>
@@ -5954,7 +6407,11 @@ onUnmounted(() => {
                       <p>{{ event.content || 'Sự kiện không có nội dung' }}</p>
                       <small class="customer-timeline-meta">
                         {{ event.occurred_at ? new Date(event.occurred_at).toLocaleString('vi-VN') : 'Không rõ thời gian' }}
-                        <span v-if="event.created_by"> · Nhân viên #{{ event.created_by }}</span>
+                        <span
+                          class="timeline-actor"
+                          :class="`timeline-actor-${timelineActor(event).kind}`"
+                          :title="event.created_by ? `ID nhân viên: ${event.created_by}` : timelineActor(event).label"
+                        >{{ timelineActor(event).label }}</span>
                       </small>
                     </div>
                   </div>
@@ -6150,6 +6607,20 @@ onUnmounted(() => {
 
           </template>
 
+          <template v-else>
+            <div class="customer-empty-state">
+              <div class="customer-empty-avatar" aria-hidden="true">360</div>
+              <span class="customer-empty-kicker">CUSTOMER 360</span>
+              <h3>Hồ sơ khách hàng sẽ hiện ở đây</h3>
+              <p>Chọn một hội thoại để xem nhận diện đa kênh, tag, lịch sử tương tác và đơn gần nhất.</p>
+              <div class="customer-empty-points" aria-hidden="true">
+                <span>Tag &amp; phân khúc</span>
+                <span>Lịch sử tương tác</span>
+                <span>Đơn hàng gần nhất</span>
+              </div>
+            </div>
+          </template>
+
         </aside>
 
       </section>
@@ -6163,8 +6634,6 @@ onUnmounted(() => {
             <h2>Sản phẩm</h2>
             <p>Quản lý catalog và giá sản phẩm của business.</p>
           </div>
-
-          <button class="primary-btn" @click="resetProductForm">+ Sản phẩm mới</button>
         </div>
 
         <div v-if="productError" class="product-error">{{ productError }}</div>
@@ -6178,7 +6647,7 @@ onUnmounted(() => {
             <label>SKU<input v-model="productForm.sku" required maxlength="80" /></label>
             <label>Tên sản phẩm<input v-model="productForm.name" required maxlength="255" /></label>
             <label>Giá<input v-model.number="productForm.price" type="number" min="0" step="1" required /></label>
-            <label>Tồn đầu kỳ{{ productForm.id ? ' (không sửa trực tiếp)' : '' }}<input v-model.number="productForm.stock_quantity" type="number" min="0" step="1" :disabled="Boolean(productForm.id)" required /></label>
+            <label>Số lượng{{ productForm.id ? ' (không sửa trực tiếp)' : '' }}<input v-model.number="productForm.stock_quantity" type="number" min="0" step="1" :disabled="Boolean(productForm.id)" required /></label>
             <label>Trạng thái<select v-model="productForm.status"><option value="active">Đang bán</option><option value="archived">Đã lưu trữ</option></select></label>
             <label class="product-description">Mô tả<textarea v-model="productForm.description" rows="2"></textarea></label>
           </div>
@@ -6262,7 +6731,6 @@ onUnmounted(() => {
             <h2>Sales Pipeline</h2>
             <p>Theo dõi cơ hội bán hàng từ khách hội thoại đến chuyển đổi.</p>
           </div>
-          <button class="primary-btn" type="button" @click="resetLeadForm">+ Tạo lead</button>
         </div>
 
         <div v-if="leadError" class="product-error">{{ leadError }}</div>
@@ -6352,7 +6820,6 @@ onUnmounted(() => {
             <h2>Ticket &amp; SLA</h2>
             <p>Tiếp nhận, phân công và theo dõi thời hạn xử lý vấn đề của khách.</p>
           </div>
-          <button class="primary-btn" type="button" @click="resetTicketForm">+ Tạo ticket</button>
         </div>
 
         <div v-if="ticketError" class="product-error">{{ ticketError }}</div>
@@ -6409,11 +6876,12 @@ onUnmounted(() => {
         <div v-else-if="!tickets.length" class="products-empty">Chưa có ticket nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table tickets-table">
-            <thead><tr><th>Ticket</th><th>Khách hàng</th><th>Kênh</th><th>Ưu tiên</th><th>Trạng thái</th><th>SLA</th><th>Phụ trách</th></tr></thead>
+            <thead><tr><th>Ticket</th><th>Mô tả</th><th>Khách hàng</th><th>Kênh</th><th>Ưu tiên</th><th>Trạng thái</th><th>SLA</th><th>Phụ trách</th></tr></thead>
             <tbody>
               <template v-for="ticket in tickets" :key="ticket.id">
               <tr>
-                <td><strong>#{{ ticket.id }} — {{ ticket.title }}</strong><small>{{ ticket.description || '' }}</small></td>
+                <td><strong>#{{ ticket.id }} — {{ ticket.title }}</strong></td>
+                <td class="ticket-description-cell">{{ ticket.description || '—' }}</td>
                 <td>#{{ ticket.customer_id }} {{ ticket.customer_name || '' }}</td>
                 <td>{{ ticket.channel || '—' }}</td>
                 <td><span class="product-status" :class="ticket.priority">{{ ticket.priority }}</span></td>
@@ -6430,7 +6898,7 @@ onUnmounted(() => {
                 </td>
               </tr>
               <tr v-if="ticketHistory[ticket.id]" class="ticket-history-row">
-                <td colspan="7">
+                <td colspan="8">
                   <strong>Lịch sử ticket #{{ ticket.id }}</strong>
                   <span v-if="!ticketHistory[ticket.id].length"> Chưa có sự kiện.</span>
                   <ul v-else>
@@ -6460,7 +6928,6 @@ onUnmounted(() => {
             <h2>Đơn bán</h2>
             <p>Tạo và theo dõi đơn bán; doanh thu được gắn với kênh hội thoại.</p>
           </div>
-          <button class="primary-btn" type="button" @click="resetOrderForm">+ Tạo đơn hàng</button>
         </div>
 
         <div v-if="orderError" class="product-error">{{ orderError }}</div>
@@ -6492,15 +6959,7 @@ onUnmounted(() => {
                 </option>
               </select>
             </label>
-            <label>Sản phẩm
-              <select v-model="orderForm.product_id" required>
-                <option value="" disabled>Chọn sản phẩm</option>
-                <option v-for="product in products.filter(item => item.status === 'active')" :key="product.id" :value="product.id">
-                  {{ product.name }} — {{ Number(product.price).toLocaleString('vi-VN') }}đ
-                </option>
-              </select>
-            </label>
-            <label>Số lượng<input v-model.number="orderForm.quantity" type="number" min="1" step="1" required /></label>
+            <label class="order-customer-phone">Số điện thoại khách hàng<input :value="selectedOrderCustomerPhone || 'Chưa có số điện thoại'" readonly aria-readonly="true" /></label>
             <label>Conversation (không bắt buộc)
               <select v-model="orderForm.conversation_id">
                 <option value="">Không gắn hội thoại</option>
@@ -6509,6 +6968,26 @@ onUnmounted(() => {
                 </option>
               </select>
             </label>
+            <div class="order-items-editor">
+              <div class="order-items-heading">
+                <div><strong>Sản phẩm trong đơn</strong><small>Chọn nhiều sản phẩm khác nhau; mỗi sản phẩm chỉ có một dòng.</small></div>
+                <strong>Tạm tính: {{ Number(orderFormTotal).toLocaleString('vi-VN') }}đ</strong>
+              </div>
+              <div v-for="(item, itemIndex) in orderForm.items" :key="itemIndex" class="order-item-row">
+                <label>Sản phẩm
+                  <select v-model="item.product_id" required>
+                    <option value="" disabled>Chọn sản phẩm</option>
+                    <option v-for="product in orderItemProducts(itemIndex)" :key="product.id" :value="product.id">
+                      {{ product.name }} — {{ Number(product.price).toLocaleString('vi-VN') }}đ
+                    </option>
+                  </select>
+                </label>
+                <label>Số lượng<input v-model.number="item.quantity" type="number" min="1" step="1" required /></label>
+                <div class="order-item-line-total"><span>Thành tiền</span><strong>{{ Number(orderItemLineTotal(item)).toLocaleString('vi-VN') }}đ</strong></div>
+                <button type="button" class="table-action-btn" :disabled="orderForm.items.length === 1" @click="removeOrderItem(itemIndex)">Bỏ dòng</button>
+              </div>
+              <button type="button" class="table-action-btn order-add-item" :disabled="orderForm.items.length >= activeOrderProducts.length" @click="addOrderItem">+ Thêm dòng sản phẩm</button>
+            </div>
           </div>
           <button class="primary-btn" type="submit" :disabled="orderSaving">
             {{ orderSaving ? 'Đang tạo...' : 'Tạo đơn' }}
@@ -6519,11 +6998,12 @@ onUnmounted(() => {
         <div v-else-if="!orders.length" class="products-empty">Chưa có đơn hàng nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table orders-table">
-            <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Sản phẩm</th><th>Kênh</th><th>Trạng thái</th><th>Thanh toán</th><th>Tổng tiền</th><th>Ngày tạo</th></tr></thead>
+            <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>SĐT khách</th><th>Sản phẩm</th><th>Kênh</th><th>Trạng thái</th><th>Quy trình</th><th>Thanh toán</th><th>Tổng tiền</th><th>Ngày tạo</th></tr></thead>
             <tbody>
               <tr v-for="order in orders" :key="order.id">
                 <td><strong>{{ order.order_number }}</strong></td>
-                <td>#{{ order.customer_id }}</td>
+                <td>#{{ order.customer_id }}<small>{{ orderCustomerName(order.customer_id) }}</small></td>
+                <td class="order-phone-cell">{{ orderCustomerPhone(order.customer_id) }}</td>
                 <td><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}<small v-if="order.status === 'draft'"> (còn {{ availableProductQuantity(item.product_id) }})</small></span></td>
                 <td>{{ order.channel || 'Không gắn kênh' }}</td>
                 <td>
@@ -6532,8 +7012,8 @@ onUnmounted(() => {
                   </select>
                   <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order) || orderTransitionSaving[order.id]" @click.stop="transitionSalesOrder(order, 'confirmed')">{{ orderTransitionSaving[order.id] ? 'Đang cập nhật...' : 'Xác nhận đơn' }}</button>
                   <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">Thiếu tồn khả dụng</small>
-                  <button type="button" class="table-action-btn" data-testid="order-history-button" @click.stop="loadSalesOrderEvents(order)">Lịch sử</button>
                 </td>
+                <td><button type="button" class="table-action-btn" data-testid="order-history-button" @click.stop="loadSalesOrderEvents(order)">Xem toàn bộ quy trình</button><small>Nhật ký bất biến</small></td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ order.payment_status }}</span>
                   <small>{{ Number(order.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</small>
@@ -6550,10 +7030,10 @@ onUnmounted(() => {
           </table>
         </div>
         <div v-if="selectedOrderEvents" class="report-panel order-events-panel" data-testid="order-events-panel">
-          <div class="report-panel-header"><h3>Lịch sử {{ selectedOrderEvents.order.order_number }}</h3><button type="button" class="settings-refresh" @click="selectedOrderEvents = null">Đóng</button></div>
+          <div class="report-panel-header"><div><h3>Toàn bộ quy trình {{ selectedOrderEvents.order.order_number }}</h3><p>Nhật ký bất biến theo thời gian; thao tác nhầm vẫn được lưu để đối soát, không rollback.</p></div><button type="button" class="settings-refresh" @click="selectedOrderEvents = null">Đóng</button></div>
           <div v-if="orderEventsLoading" class="products-empty">Đang tải lịch sử...</div>
           <div v-else-if="!selectedOrderEvents.items?.length" class="products-empty">Chưa có event.</div>
-          <ul v-else class="order-events-list"><li v-for="event in selectedOrderEvents.items" :key="event.id"><strong>{{ orderEventLabel(event) }}</strong><span>{{ orderEventSummary(event) }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small></li></ul>
+          <ol v-else class="order-events-list"><li v-for="event in chronologicalOrderEvents(selectedOrderEvents.items)" :key="event.id"><strong>{{ orderEventLabel(event) }}</strong><span>{{ orderEventSummary(event) }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small></li></ol>
         </div>
       </section>
 
@@ -6566,7 +7046,6 @@ onUnmounted(() => {
             <h2>Đơn nhập hàng / dịch vụ</h2>
             <p>Quản lý đơn shop mua từ nhà cung cấp, tách biệt với đơn bán cho khách cuối.</p>
           </div>
-          <button class="primary-btn" type="button" @click="resetPurchaseOrderForm">+ Tạo PO</button>
         </div>
 
         <div v-if="purchaseOrderError" class="product-error">{{ purchaseOrderError }}</div>
@@ -6661,7 +7140,6 @@ onUnmounted(() => {
             <h2>Workflow Automation</h2>
             <p>Tự động hóa các bước CRM theo sự kiện, có điều kiện và lịch sử chạy.</p>
           </div>
-          <button class="primary-btn" type="button" @click="resetWorkflowForm">+ Workflow mới</button>
         </div>
 
         <div v-if="workflowError" class="product-error">{{ workflowError }}</div>
@@ -7221,6 +7699,62 @@ onUnmounted(() => {
               Ngắt kết nối
             </button>
           </div>
+        </div>
+
+        <div class="settings-card chatbot-runtime-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>🤖 Chatbot bán hàng</h2>
+              <p>Cấu hình giờ hoạt động, ngưỡng RAG và các mẫu trả lời an toàn cho nhân viên.</p>
+            </div>
+            <span class="connection-badge" :class="{ connected: chatbotConfig.enabled }">{{ chatbotConfig.enabled ? 'ĐANG BẬT' : 'ĐANG TẮT' }}</span>
+          </div>
+          <div v-if="chatbotConfigError" class="settings-notice team-error">{{ chatbotConfigError }}</div>
+          <form class="chatbot-config-form" @submit.prevent="saveChatbotRuntime">
+            <label>Tên bot<input v-model="chatbotConfig.name" maxlength="120" /></label>
+            <label>Top-K RAG<input v-model.number="chatbotConfig.top_k" type="number" min="1" max="20" /></label>
+            <label>Ngưỡng liên quan<input v-model.number="chatbotConfig.similarity_threshold" type="number" min="0" max="1" step="0.05" /></label>
+            <label class="checkbox-field"><input v-model="chatbotConfig.enabled" type="checkbox" /> Cho phép chatbot trả lời</label>
+            <label class="checkbox-field"><input v-model="chatbotConfig.handoff_enabled" type="checkbox" /> Cho phép chuyển nhân viên</label>
+            <label class="chatbot-hours-field">Giờ hoạt động (JSON)
+              <textarea v-model="businessHoursJson" rows="5" spellcheck="false" placeholder='{"timezone":"Asia/Ho_Chi_Minh","mon":[["08:00","17:30"]]}'></textarea>
+            </label>
+            <button class="primary-btn" type="submit" :disabled="chatbotConfigSaving">{{ chatbotConfigSaving ? 'Đang lưu...' : 'Lưu cấu hình bot' }}</button>
+          </form>
+
+          <div class="canned-response-panel">
+            <div class="settings-card-header"><div><h3>Mẫu trả lời nhanh</h3><p>Ví dụ /cod, /doi-tra, /ship. Bot chỉ dùng những mẫu shop đã lưu.</p></div></div>
+            <div v-if="cannedResponseError" class="settings-notice team-error">{{ cannedResponseError }}</div>
+            <form class="canned-response-form" @submit.prevent="saveCannedResponse">
+              <input v-model="cannedResponseForm.shortcut" required placeholder="/cod" />
+              <input v-model="cannedResponseForm.title" required placeholder="Tên mẫu" />
+              <input v-model="cannedResponseForm.content" required placeholder="Nội dung trả lời" />
+              <button class="settings-refresh" type="submit" :disabled="cannedResponseSaving">Thêm mẫu</button>
+            </form>
+            <ul v-if="cannedResponses.length" class="canned-response-list">
+              <li v-for="item in cannedResponses" :key="item.id"><strong>{{ item.shortcut }}</strong><span>{{ item.title }}</span><small>{{ item.content }}</small></li>
+            </ul>
+            <p v-else class="settings-empty">Chưa có mẫu trả lời.</p>
+          </div>
+        </div>
+
+        <div class="settings-card followup-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>🔔 Chăm sóc chủ động</h2>
+              <p>Nhắc khách xác nhận đơn nháp hoặc chăm sóc lại theo lịch.</p>
+            </div>
+            <button type="button" class="settings-refresh" :disabled="followupDispatching" @click="dispatchFollowups">{{ followupDispatching ? 'Đang chạy...' : 'Chạy follow-up đến hạn' }}</button>
+          </div>
+          <div v-if="followupsLoading" class="settings-empty">Đang tải lịch chăm sóc...</div>
+          <div v-else-if="!followups.length" class="settings-empty">Chưa có follow-up đang chờ.</div>
+          <ul v-else class="followup-list">
+            <li v-for="item in followups" :key="item.id">
+              <div><strong>{{ item.kind }}</strong><small>{{ new Date(item.run_at).toLocaleString('vi-VN') }}</small></div>
+              <span>{{ item.message }}</span>
+              <button type="button" class="history-btn" @click="cancelFollowup(item)">Hủy</button>
+            </li>
+          </ul>
         </div>
 
         <div class="settings-card team-card">
@@ -8546,6 +9080,188 @@ onUnmounted(() => {
 .rag-chat-inputzone {
   background: var(--crm-surface);
   border-color: var(--crm-border);
+}
+
+.chatbot-runtime-card .chatbot-config-form,
+.chatbot-runtime-card .canned-response-form {
+  display: grid;
+  gap: 12px;
+}
+
+.chatbot-config-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.chatbot-config-form label,
+.canned-response-form label {
+  display: grid;
+  gap: 6px;
+  color: #7b3c3b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chatbot-config-form input,
+.chatbot-config-form textarea,
+.canned-response-form input,
+.canned-response-select {
+  border: 1px solid #f0b4ae;
+  border-radius: 10px;
+  background: #fffafa;
+  color: #64292a;
+  padding: 10px 12px;
+}
+
+.chatbot-hours-field {
+  grid-column: 1 / -1;
+}
+
+.checkbox-field {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.checkbox-field input {
+  width: auto;
+}
+
+.canned-response-panel {
+  margin-top: 18px;
+  border-top: 1px solid #f5d0cc;
+  padding-top: 18px;
+}
+
+.canned-response-form {
+  grid-template-columns: 120px 180px minmax(0, 1fr) auto;
+}
+
+.canned-response-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.canned-response-list li {
+  display: grid;
+  grid-template-columns: 100px 160px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #f4d5d0;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.canned-response-list small {
+  color: #845958;
+}
+
+.followup-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.followup-list li {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #f4d5d0;
+  border-radius: 10px;
+  padding: 10px;
+  color: #6d3a3a;
+}
+
+.followup-list li > div {
+  display: grid;
+  gap: 3px;
+}
+
+.followup-list small {
+  color: #9c7470;
+}
+
+.bot-mode-button {
+  border: 1px solid #e89b9b;
+  border-radius: 9px;
+  background: #fff4f3;
+  color: #bd2f43;
+  padding: 8px 10px;
+  font-weight: 700;
+}
+
+.bot-mode-button.human {
+  background: #e84c64;
+  color: white;
+}
+
+.canned-response-select {
+  min-width: 150px;
+}
+
+@media (max-width: 850px) {
+  .chatbot-config-form,
+  .canned-response-form,
+  .canned-response-list li,
+  .followup-list li {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Center operational screens inside one consistent workspace frame. */
+.products-layout,
+.rag-docs-layout,
+.rag-chat-layout,
+.settings-layout {
+  width: min(100%, 1480px);
+  max-width: 1480px;
+  margin-inline: auto;
+  padding-inline: clamp(16px, 2vw, 32px);
+}
+
+.products-layout > .product-form,
+.products-layout > .supplier-manager {
+  width: min(100%, 1120px);
+  max-width: 1120px;
+  margin-inline: auto;
+}
+
+.products-layout > .products-table-wrap,
+.products-layout > .report-panel,
+.products-layout > .report-filters,
+.rag-docs-layout > .rag-header-panel,
+.rag-docs-layout > .upload-dropzone,
+.rag-docs-layout > .docs-table-card {
+  width: 100%;
+  margin-inline: auto;
+}
+
+.settings-layout > .settings-card {
+  width: min(100%, 1120px);
+  margin-inline: auto;
+}
+
+@media (max-width: 900px) {
+  .products-layout,
+  .rag-docs-layout,
+  .rag-chat-layout,
+  .settings-layout {
+    width: 100%;
+    max-width: none;
+    padding-inline: 12px;
+  }
+
+  .products-layout > .product-form,
+  .products-layout > .supplier-manager,
+  .settings-layout > .settings-card {
+    width: 100%;
+    max-width: none;
+  }
 }
 
 </style>

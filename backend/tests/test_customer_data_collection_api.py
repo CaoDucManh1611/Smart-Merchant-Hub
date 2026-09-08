@@ -80,13 +80,27 @@ class CustomerDataCollectionApiTests(unittest.TestCase):
         self.assertEqual("n***@example.com", body["masked_value"])
         self.assertNotIn("value_encrypted", body)
         self.assertEqual("unverified", body["verification_status"])
+        phone = self.client.post(
+            f"/api/customers/{self.customer_id}/contacts",
+            headers=self.headers(),
+            json={
+                "kind": "phone",
+                "value": "090 123 4567",
+                "source": "chat",
+                "is_primary": True,
+            },
+        )
+        self.assertEqual(201, phone.status_code)
 
         profile = self.client.get(
             f"/api/customers/{self.customer_id}",
             headers=self.headers(),
         )
         self.assertEqual(200, profile.status_code)
-        self.assertEqual("n***@example.com", profile.json()["contacts"][0]["masked_value"])
+        profile_body = profile.json()
+        self.assertEqual("nguyen.a@example.com", profile_body["email"])
+        self.assertEqual("+84901234567", profile_body["phone"])
+        self.assertEqual({"email", "phone"}, {contact["kind"] for contact in profile_body["contacts"]})
 
         hidden = self.client.get(
             f"/api/customers/{self.customer_id}/contacts",

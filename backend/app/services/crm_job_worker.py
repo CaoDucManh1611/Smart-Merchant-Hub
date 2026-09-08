@@ -13,6 +13,7 @@ from app.models.workflow import Workflow
 from app.services.job_service import dispatch_due_jobs
 from app.services.notification_service import create_sla_notification
 from app.services.workflow_engine import execute_workflow
+from app.services.chatbot_followup import dispatch_due_followups
 from app.tenancy.context import TenantContext
 
 
@@ -71,6 +72,12 @@ def _dispatch_workflow_run_job(db: Session, business_id: int, payload: dict) -> 
         raise RuntimeError(run.error_message or "Workflow run failed")
 
 
+def _dispatch_chatbot_followup_job(db: Session, business_id: int, payload: dict) -> None:
+    result = dispatch_due_followups(db, business_id, limit=1, followup_id=int(payload.get("followup_id") or 0))
+    if result.get("failed"):
+        raise RuntimeError("Chatbot follow-up delivery failed")
+
+
 def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 100) -> int:
     """Run only CRM ticket/workflow jobs for one tenant.
 
@@ -80,6 +87,7 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
     handlers = {
         "ticket.sla_check": lambda payload: _dispatch_ticket_sla_job(db, business_id, payload),
         "workflow.run": lambda payload: _dispatch_workflow_run_job(db, business_id, payload),
+        "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),
     }
     return dispatch_due_jobs(
         db,

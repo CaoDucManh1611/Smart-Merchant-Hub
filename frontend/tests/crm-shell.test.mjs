@@ -7,6 +7,37 @@ const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url)
 const indexSource = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const channelUtilsSource = fs.readFileSync(new URL("../src/channel-utils.js", import.meta.url), "utf8");
 
+function openingButtonTags(source) {
+  const start = source.indexOf("<template>");
+  const end = source.lastIndexOf("</template>");
+  const template = source.slice(start, end);
+  const tags = [];
+  let cursor = 0;
+
+  while (cursor < template.length) {
+    const tagStart = template.indexOf("<button", cursor);
+    if (tagStart < 0) break;
+    let quote = null;
+    let tagEnd = -1;
+    for (let index = tagStart + 7; index < template.length; index += 1) {
+      const char = template[index];
+      if (quote) {
+        if (char === quote && template[index - 1] !== "\\") quote = null;
+      } else if (char === "\"" || char === "'") {
+        quote = char;
+      } else if (char === ">") {
+        tagEnd = index + 1;
+        break;
+      }
+    }
+    assert.notEqual(tagEnd, -1, "button opening tag must be closed");
+    tags.push(template.slice(tagStart, tagEnd));
+    cursor = tagEnd;
+  }
+
+  return tags;
+}
+
 test("CRM shell uses neutral product branding instead of legacy food branding", () => {
   assert.match(appSource, /Smart Merchant Hub/);
   assert.doesNotMatch(appSource, /Lunari Food|Combo gà sốt phô mai|Món yêu thích|Tokbokki|Khoai tây lắc/);
@@ -114,6 +145,29 @@ test("Customer 360 labels the complete profile timeline", () => {
   assert.match(appSource, /event\.created_by/);
 });
 
+test("Customer 360 contact cards stay readable in the narrow details panel", () => {
+  assert.match(appSource, /class="customer-contact-grid"/);
+  assert.match(styleSource, /\.customer-contact-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(210px,\s*1fr\)\)/);
+  assert.match(styleSource, /\.customer-contact-row span\s*\{[\s\S]*?white-space:\s*nowrap/);
+  assert.match(styleSource, /\.customer-contact-row span\s*\{[\s\S]*?text-overflow:\s*ellipsis/);
+});
+
+test("Customer 360 displays the collected profile name, email, and phone", () => {
+  assert.match(appSource, /nameOf\(\s*customer360\s*\|\|\s*selected\s*\)/);
+  assert.match(appSource, /item\?\.name/);
+  assert.match(appSource, /class="customer-profile-email"/);
+  assert.match(appSource, /customer360\.email/);
+  assert.match(appSource, /class="customer-profile-fields"/);
+  assert.match(appSource, /customer360\.phone/);
+  assert.match(appSource, /customer360\.name/);
+});
+
+test("Customer 360 details use a scrollable panel so the full profile remains visible", () => {
+  assert.match(appSource, /class="customer customer-panel-scroll"/);
+  assert.match(styleSource, /\.customer-panel-scroll\s*\{[\s\S]*?overflow-y:\s*auto/);
+  assert.match(styleSource, /\.customer-panel-scroll\s*\{[\s\S]*?overflow-x:\s*hidden/);
+});
+
 test("Zalo has its own channel label and branded icon fallback", () => {
   assert.match(channelUtilsSource, /zalo:\s*["']ZALO["']/);
   assert.match(styleSource, /\.social-icon\.zalo/);
@@ -135,6 +189,36 @@ test("sidebar collapse control toggles a real collapsed state", () => {
   assert.match(appSource, /aria-expanded/);
 });
 
+test("compact inbox workspace keeps every new UI control actionable", () => {
+  assert.match(appSource, /const sidebarCollapsed = ref\(true\)/);
+  assert.match(appSource, /class="inbox-filter-disclosure"/);
+  assert.match(appSource, /const customerPanelCollapsed = ref\(false\)/);
+  assert.match(appSource, /function toggleCustomerPanel\(\)/);
+  assert.match(appSource, /@click="toggleCustomerPanel"/);
+  assert.match(appSource, /customer-collapsed/);
+  assert.match(appSource, /@click="toggleVoiceRecording"/);
+  assert.match(styleSource, /\.layout\s*\{[\s\S]*?grid-template-columns:\s*218px\s+minmax\(0,\s*1fr\)/);
+  assert.match(styleSource, /\.customer\.customer-collapsed\s*>\s*:not\(\.customer-title\)/);
+});
+
+test("empty workspace explains missing data without rendering fake customer records", () => {
+  assert.match(appSource, /class="inbox-empty-state"/);
+  assert.match(appSource, /Hộp thư đang chờ tin nhắn đầu tiên/);
+  assert.match(appSource, /class="empty-chat-steps"/);
+  assert.match(appSource, /Hộp thư sẵn sàng cho khách hàng đầu tiên/);
+  assert.match(appSource, /class="customer-empty-state"/);
+  assert.match(appSource, /Hồ sơ khách hàng sẽ hiện ở đây/);
+  assert.match(appSource, /<template v-if="selected">[\s\S]*?<template v-else>/);
+});
+
+test("every rendered button declares a click handler or form behavior", () => {
+  const inactiveButtons = openingButtonTags(appSource).filter((tag) => !(
+    /@click|@submit|@mousedown|@pointerdown/.test(tag)
+    || /type\s*=\s*["'](?:submit|reset)["']/.test(tag)
+  ));
+  assert.deepEqual(inactiveButtons, []);
+});
+
 test("top workspace controls are interactive and searchable", () => {
   assert.match(appSource, /class="top-search-input"/);
   assert.match(appSource, /@keydown\.enter="runGlobalSearch"/);
@@ -142,6 +226,18 @@ test("top workspace controls are interactive and searchable", () => {
   assert.match(appSource, /@click="openNotifications"/);
   assert.match(appSource, /function openNotifications/);
   assert.match(appSource, /@click="openSettings"/);
+});
+
+test("workspace navigation and header use a consistent vector icon system", () => {
+  assert.match(appSource, /class="nav-icon nav-icon-inbox" viewBox="0 0 24 24"/);
+  assert.match(appSource, /class="nav-icon nav-icon-products" viewBox="0 0 24 24"/);
+  assert.match(appSource, /class="nav-icon nav-icon-settings" viewBox="0 0 24 24"/);
+  assert.match(appSource, /class="top-search-icon" viewBox="0 0 24 24"/);
+  assert.match(appSource, /class="top-action-icon" viewBox="0 0 24 24"/);
+  assert.match(appSource, /class="help"/);
+  assert.match(styleSource, /\.nav-icon\s*\{[\s\S]*?stroke:\s*currentColor/);
+  assert.match(styleSource, /\.top-action-icon\s*\{/);
+  assert.doesNotMatch(appSource, /nav-icon-inbox" aria-hidden="true"><\/span>/);
 });
 
 test("inbox uses a polished filter toolbar instead of a native multi-select", () => {
@@ -153,19 +249,32 @@ test("inbox uses a polished filter toolbar instead of a native multi-select", ()
   assert.doesNotMatch(appSource, /class="segment-filter" multiple/);
 });
 
-test("inbox platform filters keep complete labels in a compact channel grid", () => {
+test("inbox keeps actionable quick tabs and a complete channel selector", () => {
   assert.match(appSource, /class="inbox-channel-filter"/);
-  assert.match(appSource, /class="inbox-channel-all"/);
-  assert.match(appSource, /class="inbox-channel-grid"/);
-  assert.match(appSource, /class="channel-tab-icon"/);
-  assert.match(appSource, /class="channel-tab-label"/);
-  assert.match(styleSource, /\.inbox-channel-grid[\s\S]*?display:\s*grid/);
-  assert.match(styleSource, /\.inbox-channel-all[\s\S]*?grid-column:\s*1\s*\/\s*-1/);
-  assert.match(styleSource, /\.inbox-channel-button[\s\S]*?min-width:\s*0/);
-  assert.match(styleSource, /\.channel-tab-label[\s\S]*?white-space:\s*nowrap/);
+  assert.match(appSource, /const inboxQuickFilter = ref\("all"\)/);
+  assert.match(appSource, /class="inbox-quick-tabs"/);
+  assert.match(appSource, /inboxQuickFilter === 'unread'/);
+  assert.match(appSource, /inboxQuickFilter === 'important'/);
+  assert.match(appSource, /class="inbox-channel-select"/);
+  assert.match(appSource, /<select v-model="activeFilter"/);
+  assert.match(appSource, /channel\.label \}\} \(\{\{ channel\.count \}\}\)/);
+  assert.match(styleSource, /\.inbox-quick-tabs\s*\{/);
+  assert.match(styleSource, /\.inbox-channel-select select\s*\{/);
   assert.doesNotMatch(appSource, /class="inbox-channel-scroll"/);
   assert.doesNotMatch(styleSource, /\.inbox-channel-scroll/);
-  assert.doesNotMatch(styleSource, /\.inbox-channel-tabs button span\s*\{[^}]*text-overflow:\s*ellipsis/s);
+});
+
+test("inbox no longer renders the selected-customer order strip", () => {
+  assert.match(appSource, />Đơn bán</);
+  assert.doesNotMatch(appSource, /class="inbox-order-strip"/);
+});
+
+test("inbox workspace fills the remaining viewport instead of reserving a blank lower area", () => {
+  const refinementStart = styleSource.indexOf("INBOX DESKTOP REFINEMENT");
+  const refinementStyles = styleSource.slice(refinementStart);
+  assert.match(refinementStyles, /\.layout\s*\{[\s\S]*?height:\s*calc\(100vh - 92px\)/);
+  assert.match(refinementStyles, /\.layout\s*\{[\s\S]*?min-height:\s*0/);
+  assert.doesNotMatch(refinementStyles, /height:\s*calc\(100vh - 238px\)/);
 });
 
 test("inbox header and conversation rows expose readable status hierarchy", () => {
@@ -196,6 +305,13 @@ test("chat controls are actionable and the composer keeps a standard input hint"
   assert.doesNotMatch(appSource, /MÃ\s*\n?\s*Tạo mã giảm giá/);
   assert.doesNotMatch(appSource, /Ctrl\+V để dán ảnh/);
   assert.match(styleSource, /\.conversation-actions-popover/);
+});
+
+test("chat bot toggle stays on one line in the compact header", () => {
+  assert.match(
+    styleSource,
+    /\.chat-shell \.chat-tools\s*>\s*\.bot-mode-button\s*\{[\s\S]*?flex:\s*0\s+0\s+auto[\s\S]*?white-space:\s*nowrap/
+  );
 });
 
 test("opening a conversation marks its inbound messages as read through the Inbox API", () => {

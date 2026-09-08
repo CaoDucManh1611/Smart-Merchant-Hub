@@ -41,6 +41,13 @@ class Conversation(Base):
         default="open",
     )
 
+    bot_mode: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="auto",
+        server_default="auto",
+    )
+
     priority: Mapped[str] = mapped_column(
         String(20),
         default="normal",

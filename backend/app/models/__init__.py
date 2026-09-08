@@ -41,6 +41,8 @@ from app.models.lead import Lead
 from app.models.ticket import Ticket, TicketComment, TicketEvent
 from app.models.workflow import Workflow, WorkflowRun
 from app.models.chatbot import ChatbotConfig
+from app.models.canned_response import CannedResponse
+from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.revenue import RevenueTouchpoint, RevenueAttribution, LeadActivity, LeadConversion
 from app.models.crm_job import CrmJob
 from app.models.rag_run import RagRun
@@ -109,6 +111,8 @@ __all__ = [
     "Workflow",
     "WorkflowRun",
     "ChatbotConfig",
+    "CannedResponse",
+    "ChatbotFollowUp",
     "RevenueTouchpoint",
     "RevenueAttribution",
     "LeadActivity",

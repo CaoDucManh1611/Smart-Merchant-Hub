@@ -75,6 +75,20 @@ cập nhật tính năng, áp dụng migration mới bằng:
 docker compose exec backend python -m alembic upgrade head
 ```
 
+## Chatbot runtime
+
+Các tính năng chatbot nâng cao được quản lý theo từng `X-Business-Id`:
+
+- `GET/PUT /api/chatbot/config`: bật/tắt bot, Top-K/ngưỡng RAG và giờ hoạt động.
+- `GET/POST/PATCH/DELETE /api/chatbot/canned-responses`: mẫu trả lời nhanh như `/cod`.
+- `POST /api/chatbot/conversations/{id}/pause|resume`: nhân viên tiếp quản hoặc trả hội thoại về bot.
+- `GET /api/chatbot/conversations/{id}/memory` và `POST /api/chatbot/conversations/{id}/tools/execute`: memory và allow-list tool có kiểm tra tenant.
+- `GET/POST /api/chatbot/followups`, `POST /api/chatbot/followups/dispatch`: nhắc lại đơn nháp/bỏ giỏ và chăm sóc chủ động.
+
+Worker CRM hiện có thể xử lý job `chatbot.followup`; môi trường development có thể gọi
+endpoint dispatch theo lịch (ví dụ mỗi phút). CSAT, outbound webhook và setup wizard
+không nằm trong phạm vi bản này.
+
 Kiểm tra phiên bản schema:
 
 ```powershell
