@@ -10,7 +10,24 @@ branch_labels = None
 depends_on = None
 
 
+_COLLECTION_TABLES = {
+    "customer_contacts",
+    "customer_addresses",
+    "customer_collection_sessions",
+    "customer_verification_challenges",
+    "customer_consents",
+}
+
+
 def upgrade() -> None:
+    # Older containers call Base.metadata.create_all() during application
+    # startup. If that compatibility path already created this complete set
+    # of tables, let Alembic record the revision instead of recreating them.
+    # This preserves existing data and makes the migration safe to retry.
+    bind = op.get_bind()
+    if _COLLECTION_TABLES.issubset(set(sa.inspect(bind).get_table_names())):
+        return
+
     op.create_table(
         "customer_contacts",
         sa.Column("id", sa.Integer(), primary_key=True),
