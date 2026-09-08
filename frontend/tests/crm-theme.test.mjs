@@ -6,7 +6,7 @@ const appSource = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "u
 const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 
 test("CRM keeps the current neutral Smart Merchant Hub branding", () => {
-  assert.match(appSource, /data-testid="crm-brand-mark">SM</);
+  assert.match(appSource, /data-testid="crm-brand-mark"[\s\S]*?<svg/);
   assert.match(appSource, /Smart Merchant Hub/);
   assert.doesNotMatch(appSource, /Lunari|Food|food|món ăn|đồ ăn/i);
 });
