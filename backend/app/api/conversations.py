@@ -49,6 +49,7 @@ from app.services.facebook_service import send_facebook_media
 from app.services.instagram_service import send_instagram_media
 from app.services.telegram_service import send_telegram_media
 from app.services.zalo_service import send_zalo_media, send_zalo_message
+from app.services.channel_retry import run_with_provider_retry
 from app.services.zalo_media import normalize_zalo_audio_upload
 from app.services.media_resolver import build_media_url
 from app.services.audit_service import record_audit
@@ -953,10 +954,14 @@ def send_telegram_text(
         ) from exc
 
     try:
-        result = TelegramAdapter().send_message(
-            recipient_external_id=recipient_id,
-            text=text_content,
-            access_token=access_token,
+        result = run_with_provider_retry(
+            provider="telegram",
+            operation="text_send",
+            request=lambda: TelegramAdapter().send_message(
+                recipient_external_id=recipient_id,
+                text=text_content,
+                access_token=access_token,
+            ),
         )
     except Exception as exc:
         raise HTTPException(

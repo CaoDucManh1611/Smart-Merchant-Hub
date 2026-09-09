@@ -8,6 +8,7 @@ from app.services.meta_errors import MetaAPIError
 from app.services.meta_config_service import get_meta_config
 from app.services.channel_service import get_single_active_channel
 from app.services.channel_credentials import decrypt_token
+from app.services.channel_retry import run_with_provider_retry
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +219,7 @@ def send_instagram_request(
             "instagram",
     }
 
-    try:
-
+    def _request() -> dict[str, Any]:
         response = httpx.post(
             url,
             params=params,
@@ -241,14 +241,11 @@ def send_instagram_request(
 
         return response.json()
 
-    except MetaAPIError:
-
-        raise
-
-    except httpx.RequestError:
-        logger.warning("Instagram provider request failed")
-
-        raise
+    return run_with_provider_retry(
+        provider="instagram",
+        operation=stage,
+        request=_request,
+    )
 
 
 # =========================================================

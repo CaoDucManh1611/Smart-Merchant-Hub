@@ -8,6 +8,7 @@ from app.integrations.zalo import ZaloAdapter
 from app.models.channel import Channel
 from app.models.conversation import Conversation
 from app.services.channel_credentials import decrypt_token
+from app.services.channel_retry import run_with_provider_retry
 
 
 def send_zalo_message(
@@ -53,8 +54,10 @@ def send_zalo_message(
     }
     if str(provider).strip().lower() in {"oa", "zalo_oa", "official_account"}:
         send_kwargs["provider"] = str(provider)
-    result = ZaloAdapter().send_message(
-        **send_kwargs,
+    result = run_with_provider_retry(
+        provider="zalo",
+        operation="text_send",
+        request=lambda: ZaloAdapter().send_message(**send_kwargs),
     )
     if result.get("ok") is False:
         raise RuntimeError(result.get("description") or "Zalo rejected the message")
@@ -108,7 +111,11 @@ def send_zalo_media(
     }
     if provider.strip().lower() in {"oa", "zalo_oa", "official_account"}:
         media_kwargs["provider"] = provider
-    result = ZaloAdapter().send_media(**media_kwargs)
+    result = run_with_provider_retry(
+        provider="zalo",
+        operation=f"{media_type}_send",
+        request=lambda: ZaloAdapter().send_media(**media_kwargs),
+    )
     if result.get("ok") is False:
         raise RuntimeError(result.get("description") or "Zalo rejected the media")
     raw_message_id = result.get("message_id") or (result.get("result") or {}).get("message_id")

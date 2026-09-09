@@ -1,6 +1,6 @@
 """Tenant-scoped channel connection access."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,6 +9,44 @@ from app.core.config import settings
 from app.models.channel import Channel
 from app.services.channel_credentials import decrypt_token
 from app.services.channel_credentials import encrypt_token
+
+
+TOKEN_EXPIRY_WARNING = timedelta(days=7)
+
+
+def channel_credential_status(
+    channel: Channel | None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, str | bool | None]:
+    """Expose a non-secret credential-health summary for a channel."""
+    if channel is None or not channel.access_token_encrypted:
+        return {"state": "missing", "expires_at": None, "reauthorization_required": True}
+
+    config = channel.config if isinstance(channel.config, dict) else {}
+    expires_raw = config.get("token_expires_at")
+    if not expires_raw:
+        # Some provider-issued tokens do not publish an expiry.  Do not mark
+        # them healthy forever; callers can show that the expiry is unknown.
+        return {"state": "unknown", "expires_at": None, "reauthorization_required": False}
+    try:
+        expires_at = datetime.fromisoformat(str(expires_raw).replace("Z", "+00:00"))
+    except ValueError:
+        return {"state": "invalid_expiry", "expires_at": None, "reauthorization_required": True}
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    current = now or datetime.now(UTC)
+    if expires_at <= current:
+        state = "expired"
+    elif expires_at <= current + TOKEN_EXPIRY_WARNING:
+        state = "expiring"
+    else:
+        state = "valid"
+    return {
+        "state": state,
+        "expires_at": expires_at.isoformat(),
+        "reauthorization_required": state in {"expired", "invalid_expiry"},
+    }
 
 
 def get_active_channel(

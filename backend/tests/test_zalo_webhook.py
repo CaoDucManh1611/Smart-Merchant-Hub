@@ -255,6 +255,66 @@ class ZaloWebhookApiTests(unittest.TestCase):
             count = db.query(Message).filter(Message.external_message_id == "zalo:zalo-bot-1:z-msg-duplicate").count()
             self.assertEqual(1, count)
 
+    def test_retry_after_post_persist_failure_does_not_duplicate_message_or_bot_work(self):
+        """A failed acknowledgement must be recoverable without replaying side effects."""
+        payload = self.text_payload("z-msg-recoverable")
+        with patch(
+            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
+        ), patch(
+            "app.services.auto_reply_service.process_rag_auto_reply_background"
+        ) as auto_reply, patch(
+            "app.api.zalo.mark_channel_event_processed",
+            side_effect=RuntimeError("event status write failed"),
+        ):
+            failed = self.client.post(
+                "/api/webhooks/zalo",
+                headers={"X-Bot-Api-Secret-Token": "zalo-secret-1"},
+                json=payload,
+            )
+
+        self.assertEqual(500, failed.status_code)
+        with Session(self.engine) as db:
+            self.assertEqual(
+                1,
+                db.query(Message).filter(
+                    Message.external_message_id == "zalo:zalo-bot-1:z-msg-recoverable"
+                ).count(),
+            )
+            event = db.scalar(
+                select(ChannelEvent).where(
+                    ChannelEvent.external_event_id == "zalo:zalo-bot-1:z-msg-recoverable"
+                )
+            )
+            self.assertEqual("failed", event.status)
+
+        with patch(
+            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
+        ), patch(
+            "app.services.auto_reply_service.process_rag_auto_reply_background"
+        ) as retry_auto_reply:
+            recovered = self.client.post(
+                "/api/webhooks/zalo",
+                headers={"X-Bot-Api-Secret-Token": "zalo-secret-1"},
+                json=payload,
+            )
+
+        self.assertEqual(200, recovered.status_code, recovered.text)
+        self.assertEqual(0, recovered.json()["processed"])
+        retry_auto_reply.assert_not_called()
+        with Session(self.engine) as db:
+            self.assertEqual(
+                1,
+                db.query(Message).filter(
+                    Message.external_message_id == "zalo:zalo-bot-1:z-msg-recoverable"
+                ).count(),
+            )
+            event = db.scalar(
+                select(ChannelEvent).where(
+                    ChannelEvent.external_event_id == "zalo:zalo-bot-1:z-msg-recoverable"
+                )
+            )
+            self.assertEqual("processed", event.status)
+
     def test_multi_media_update_persists_every_attachment(self):
         payload = self.text_payload("z-msg-media")
         payload["event_name"] = "message.media.received"

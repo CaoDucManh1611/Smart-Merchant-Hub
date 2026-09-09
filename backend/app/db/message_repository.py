@@ -127,9 +127,12 @@ def save_message(
     db.commit()
 
     if row:
-        return dict(
-            row
-        )
+        created = dict(row)
+        # Internal marker used by webhook handlers to avoid broadcasting a
+        # duplicate UI event when a provider redelivers an already-persisted
+        # message after an interrupted request.
+        created["_created"] = True
+        return created
 
     existing = db.execute(
         text("""
@@ -161,8 +164,8 @@ def save_message(
     ).mappings().first()
 
     if existing:
-        return dict(
-            existing
-        )
+        duplicate = dict(existing)
+        duplicate["_created"] = False
+        return duplicate
 
     return None

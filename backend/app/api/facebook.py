@@ -13,7 +13,11 @@ from app.services.message_service import (
 from app.services.realtime import manager
 from app.tenancy.webhook import resolve_active_channel, verify_meta_signature
 from app.integrations import get_channel_adapter
-from app.services.channel_event_service import ingest_normalized_events
+from app.services.channel_event_service import (
+    ingest_normalized_events,
+    mark_channel_event_failed,
+    mark_channel_event_processed,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -72,31 +76,50 @@ async def receive_facebook_webhook(
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     adapter_events = get_channel_adapter("facebook").parse_events(payload)
-    accepted_events = ingest_normalized_events(db, adapter_events) if settings.ENVIRONMENT == "production" else []
+    # Always prefer the canonical event path when the account is registered.
+    # It is tenant-safe in every environment; the legacy path below remains
+    # only for unregistered local-demo payloads.
+    accepted_events = ingest_normalized_events(db, adapter_events)
     if settings.ENVIRONMENT == "production" and adapter_events and not accepted_events:
         return {"status": "duplicate_or_unknown_channel"}
 
     if accepted_events:
         processed = 0
         for event in accepted_events:
-            for item in event.messages:
-                message = {
-                    "channel": event.provider.value,
-                    "external_user_id": item.sender_external_id,
-                    "external_message_id": item.external_message_id,
-                    "content": item.text,
-                    "media_type": item.message_type.value,
-                    "media_url": item.attachments[0].url if item.attachments else None,
-                    "attachments": [attachment.model_dump(mode="json") for attachment in item.attachments],
-                    "raw_payload": event.raw_payload,
-                    "external_account_id": event.external_account_id,
-                    "business_id": event.business_id,
-                    "channel_id": event.channel_id,
-                }
-                saved_message = process_and_save_message(db=db, message=message)
-                if isinstance(saved_message, dict):
-                    processed += 1
-                    await manager.broadcast({"type": "message_created", "conversation_id": saved_message.get("conversation_id"), "message": saved_message})
+            try:
+                created_messages = []
+                for item in event.messages:
+                    message = {
+                        "channel": event.provider.value,
+                        "external_user_id": item.sender_external_id,
+                        "external_message_id": item.external_message_id,
+                        "content": item.text,
+                        "media_type": item.message_type.value,
+                        "media_url": item.attachments[0].url if item.attachments else None,
+                        "attachments": [attachment.model_dump(mode="json") for attachment in item.attachments],
+                        "raw_payload": event.raw_payload,
+                        "external_account_id": event.external_account_id,
+                        "business_id": event.business_id,
+                        "channel_id": event.channel_id,
+                    }
+                    saved_message = process_and_save_message(db=db, message=message)
+                    if not isinstance(saved_message, dict):
+                        raise RuntimeError("Facebook message could not be persisted")
+                    if saved_message.get("_created", True):
+                        processed += 1
+                        created_messages.append(saved_message)
+                mark_channel_event_processed(db, event)
+            except Exception as exc:
+                db.rollback()
+                mark_channel_event_failed(db, event, exc)
+                logger.error(
+                    "Webhook persistence failed: provider=facebook event_id=%s error_type=%s",
+                    event.external_event_id,
+                    type(exc).__name__,
+                )
+                raise HTTPException(status_code=500, detail="Unable to persist Facebook webhook") from exc
+            for saved_message in created_messages:
+                await manager.broadcast({"type": "message_created", "conversation_id": saved_message.get("conversation_id"), "message": {key: value for key, value in saved_message.items() if key != "_created"}})
         return {"status": "received", "processed": processed}
 
     normalized = normalize_message(
@@ -125,10 +148,7 @@ async def receive_facebook_webhook(
             message=normalized,
         )
 
-        if isinstance(
-            saved_message,
-            dict,
-        ):
+        if isinstance(saved_message, dict) and saved_message.get("_created", True):
             await manager.broadcast(
                 {
                     "type":
@@ -137,8 +157,10 @@ async def receive_facebook_webhook(
                         saved_message.get(
                             "conversation_id"
                         ),
-                    "message":
-                        saved_message,
+                    "message": {
+                        key: value for key, value in saved_message.items()
+                        if key != "_created"
+                    },
                 }
             )
 
