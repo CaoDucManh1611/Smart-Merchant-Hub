@@ -8,6 +8,7 @@ from app.integrations.telegram import TelegramAdapter
 from app.models.channel import Channel
 from app.models.conversation import Conversation
 from app.services.channel_credentials import decrypt_token
+from app.services.channel_retry import run_with_provider_retry
 
 
 def send_telegram_message(
@@ -49,10 +50,14 @@ def send_telegram_message(
         channel.access_token_encrypted,
         settings.CHANNEL_ENCRYPTION_KEY,
     )
-    result = TelegramAdapter().send_message(
-        recipient_external_id=recipient_id,
-        text=text,
-        access_token=access_token,
+    result = run_with_provider_retry(
+        provider="telegram",
+        operation="text_send",
+        request=lambda: TelegramAdapter().send_message(
+            recipient_external_id=recipient_id,
+            text=text,
+            access_token=access_token,
+        ),
     )
     if result.get("ok") is False:
         raise RuntimeError(result.get("description") or "Telegram rejected the message")
@@ -95,12 +100,16 @@ def send_telegram_media(
     if channel is None or not channel.access_token_encrypted:
         raise LookupError("Active Telegram channel credentials not found")
     access_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
-    result = TelegramAdapter().send_media(
-        recipient_external_id=recipient_id,
-        media_type=media_type,
-        media_url=media_url,
-        caption=caption,
-        access_token=access_token,
+    result = run_with_provider_retry(
+        provider="telegram",
+        operation=f"{media_type}_send",
+        request=lambda: TelegramAdapter().send_media(
+            recipient_external_id=recipient_id,
+            media_type=media_type,
+            media_url=media_url,
+            caption=caption,
+            access_token=access_token,
+        ),
     )
     if result.get("ok") is False:
         raise RuntimeError(result.get("description") or "Telegram rejected the media")

@@ -1545,6 +1545,14 @@ def process_and_save_message(
         message=message,
     )
 
+    # Provider redelivery can happen after the first request commits the CRM
+    # message but before it returns a 2xx acknowledgement.  The database
+    # correctly returns the existing row; stop here so that a duplicate never
+    # emits a second workflow, profile extraction or bot reply.
+    if saved_message is not None and not saved_message.get("_created", True):
+        logger.info("Inbound provider delivery already persisted")
+        return saved_message
+
     # Keep the legacy media columns as a compatibility mirror while storing
     # the complete canonical attachment list in the tenant-owned table.
     persisted_attachments = []

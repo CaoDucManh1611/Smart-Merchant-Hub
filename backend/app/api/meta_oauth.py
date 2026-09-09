@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
@@ -17,7 +18,7 @@ from app.auth.dependencies import require_admin_access
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.tenancy.oauth import consume_oauth_state, issue_oauth_state, register_oauth_state
-from app.services.channel_service import upsert_channel_connection
+from app.services.channel_service import channel_credential_status, upsert_channel_connection
 
 
 router = APIRouter()
@@ -61,6 +62,57 @@ def _require_oauth_settings() -> tuple[str, str, str]:
 def _graph_url(path: str) -> str:
     version = settings.META_GRAPH_VERSION.strip() or "v26.0"
     return f"https://graph.facebook.com/{version}/{path.lstrip('/')}"
+
+
+def _token_expiry_from_payload(token_data: dict) -> str | None:
+    """Store only a derived expiry, never the provider token itself."""
+    try:
+        lifetime = int(token_data.get("expires_in") or 0)
+    except (TypeError, ValueError):
+        return None
+    if lifetime <= 0:
+        return None
+    return (datetime.now(timezone.utc) + timedelta(seconds=lifetime)).isoformat()
+
+
+async def _subscribe_page_messages(
+    client: httpx.AsyncClient,
+    *,
+    page_id: str,
+    access_token: str,
+) -> str:
+    """Register Meta message delivery with bounded retries for 429/5xx."""
+    for attempt in range(1, 4):
+        try:
+            response = await client.post(
+                _graph_url(f"{page_id}/subscribed_apps"),
+                params={"access_token": access_token, "subscribed_fields": "messages"},
+                timeout=30,
+            )
+        except httpx.RequestError as exc:
+            retryable = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+            logger.warning(
+                "Meta webhook registration failed: provider=meta attempt=%s/3 retryable=%s error_type=%s",
+                attempt,
+                retryable,
+                type(exc).__name__,
+            )
+            if not retryable or attempt == 3:
+                return "subscription_failed"
+        else:
+            if response.status_code < 400:
+                return "subscribed_messages"
+            retryable = response.status_code in {408, 425, 429, 500, 502, 503, 504}
+            logger.warning(
+                "Meta webhook registration rejected: provider=meta attempt=%s/3 status=%s retryable=%s",
+                attempt,
+                response.status_code,
+                retryable,
+            )
+            if not retryable or attempt == 3:
+                return "subscription_failed"
+        await asyncio.sleep(0.25 * (2 ** (attempt - 1)))
+    return "subscription_failed"
 
 
 async def _graph_get(
@@ -116,6 +168,7 @@ async def meta_oauth_status(
         "instagram_account_id": instagram.external_account_id if instagram else "",
         "instagram_account_name": instagram.name if instagram else "",
         "subscription_status": channel_config.get("subscription_status", "not_attempted"),
+        "credential": channel_credential_status(facebook),
         "connected_at": connected_at.isoformat() if connected_at else "",
     }
 
@@ -202,6 +255,7 @@ async def meta_oauth_callback(
                 )
 
             user_token = token_data["access_token"]
+            token_expires_at = _token_expiry_from_payload(token_data)
             user = await _graph_get(
                 client,
                 "me",
@@ -248,7 +302,10 @@ async def meta_oauth_callback(
                     external_account_id=str(page["id"]),
                     name=str(page.get("name") or page["id"]),
                     access_token=str(page_token),
-                    config={"meta_user_id": str(user.get("id") or "")},
+                    config={
+                        "meta_user_id": str(user.get("id") or ""),
+                        **({"token_expires_at": token_expires_at} if token_expires_at else {}),
+                    },
                 )
                 if instagram.get("id"):
                     upsert_channel_connection(
@@ -258,21 +315,16 @@ async def meta_oauth_callback(
                         external_account_id=str(instagram["id"]),
                         name=str(instagram.get("username") or instagram["id"]),
                         access_token=str(page_token),
-                        config={"facebook_page_id": str(page["id"])},
+                        config={
+                            "facebook_page_id": str(page["id"]),
+                            **({"token_expires_at": token_expires_at} if token_expires_at else {}),
+                        },
                     )
-            subscription_status = "not_attempted"
-            subscription_response = await client.post(
-                _graph_url(f"{page['id']}/subscribed_apps"),
-                params={
-                    "access_token": page_token,
-                    "subscribed_fields": "messages",
-                },
-                timeout=30,
+            subscription_status = await _subscribe_page_messages(
+                client,
+                page_id=str(page["id"]),
+                access_token=str(page_token),
             )
-            if subscription_response.status_code < 400:
-                subscription_status = "subscribed_messages"
-            else:
-                subscription_status = "subscription_failed"
 
             with SessionLocal() as db:
                 facebook_channel = db.query(Channel).filter(

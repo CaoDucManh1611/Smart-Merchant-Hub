@@ -80,7 +80,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
                     "sender": {"id": "fb-user"},
                     "recipient": {"id": "fb-page"},
                     "timestamp": 1700000000000,
-                    "message": {"mid": "fb-unified-1", "text": "Tin Facebook"},
+                    "message": {"mid": "fb-unified-1", "text": "alo"},
                 }],
             }],
         }
@@ -92,7 +92,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
                     "sender": {"id": "ig-user"},
                     "recipient": {"id": "ig-account"},
                     "timestamp": 1700000000001,
-                    "message": {"mid": "ig-unified-1", "text": "Tin Instagram"},
+                    "message": {"mid": "ig-unified-1", "text": "alo"},
                 }],
             }],
         }
@@ -103,7 +103,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
                 "date": 1700000002,
                 "from": {"id": 3001, "first_name": "Telegram"},
                 "chat": {"id": 3001},
-                "text": "Tin Telegram",
+                "text": "alo",
             },
         }
         zalo = {
@@ -113,7 +113,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
                 "date": 1700000003000,
                 "chat": {"id": "zalo-user", "chat_type": "PRIVATE"},
                 "from": {"id": "zalo-user", "display_name": "Zalo Buyer", "is_bot": False},
-                "text": "Tin Zalo",
+                "text": "alo",
             },
         }
         fb_path, fb_body, fb_headers = self._meta_request("/api/webhooks/facebook", facebook, app_secret)
@@ -143,6 +143,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
         with Session(self.engine) as db:
             messages = db.scalars(select(Message).order_by(Message.id)).all()
             self.assertEqual(["facebook", "instagram", "telegram", "zalo"], [message.channel for message in messages])
+            self.assertEqual(["alo", "alo", "alo", "alo"], [message.content for message in messages])
             self.assertEqual(4, db.query(ChannelEvent).count())
             conversations = db.scalars(select(Conversation).order_by(Conversation.id)).all()
             self.assertEqual(4, len(conversations))

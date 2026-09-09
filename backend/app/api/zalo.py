@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.db.dependencies import get_db
 from app.integrations import get_channel_adapter
-from app.services.channel_event_service import ingest_normalized_events
+from app.services.channel_event_service import (
+    ingest_normalized_events,
+    mark_channel_event_failed,
+    mark_channel_event_processed,
+)
 from app.services.channel_credentials import decrypt_token
 from app.services.message_service import process_and_save_message
 from app.services.realtime import manager
@@ -84,50 +88,69 @@ async def receive_zalo_webhook(
     accepted_events = ingest_normalized_events(db, events)
     processed = 0
     for event in accepted_events:
-        for item in event.messages:
-            profile = item.metadata or {}
-            if not profile.get("avatar_url") and access_token:
-                try:
-                    profile = {
-                        **profile,
-                        **adapter.fetch_user_profile(
-                            user_id=item.sender_external_id,
-                            access_token=access_token,
-                        ),
-                    }
-                except Exception:
-                    logger.info(
-                        "Zalo profile enrichment unavailable for user %s",
-                        item.sender_external_id,
-                        exc_info=True,
-                    )
-            saved = process_and_save_message(
-                db=db,
-                message={
-                    "channel": event.provider.value,
-                    "external_account_id": event.external_account_id,
-                    "external_user_id": item.sender_external_id,
-                    "external_message_id": item.external_message_id,
-                    "content": item.text,
-                    "name": profile.get("display_name"),
-                    "display_name": profile.get("display_name"),
-                    "avatar_url": profile.get("avatar_url"),
-                    "media_type": item.message_type.value,
-                    "media_url": item.attachments[0].url if item.attachments else None,
-                    "attachments": [attachment.model_dump(mode="json") for attachment in item.attachments],
-                    "raw_payload": event.raw_payload,
-                    "business_id": event.business_id,
-                    "channel_id": event.channel_id,
-                },
-            )
-            if isinstance(saved, dict):
-                processed += 1
-                await manager.broadcast(
-                    {
-                        "type": "message_created",
-                        "conversation_id": saved.get("conversation_id"),
-                        "message": saved,
-                    }
+        try:
+            created_messages = []
+            for item in event.messages:
+                profile = item.metadata or {}
+                if not profile.get("avatar_url") and access_token:
+                    try:
+                        profile = {
+                            **profile,
+                            **adapter.fetch_user_profile(
+                                user_id=item.sender_external_id,
+                                access_token=access_token,
+                            ),
+                        }
+                    except Exception:
+                        logger.info(
+                            "Zalo profile enrichment unavailable for user %s",
+                            item.sender_external_id,
+                            exc_info=True,
+                        )
+                saved = process_and_save_message(
+                    db=db,
+                    message={
+                        "channel": event.provider.value,
+                        "external_account_id": event.external_account_id,
+                        "external_user_id": item.sender_external_id,
+                        "external_message_id": item.external_message_id,
+                        "content": item.text,
+                        "name": profile.get("display_name"),
+                        "display_name": profile.get("display_name"),
+                        "avatar_url": profile.get("avatar_url"),
+                        "media_type": item.message_type.value,
+                        "media_url": item.attachments[0].url if item.attachments else None,
+                        "attachments": [attachment.model_dump(mode="json") for attachment in item.attachments],
+                        "raw_payload": event.raw_payload,
+                        "business_id": event.business_id,
+                        "channel_id": event.channel_id,
+                    },
                 )
+                if not isinstance(saved, dict):
+                    raise RuntimeError("Zalo message could not be persisted")
+                if saved.get("_created", True):
+                    processed += 1
+                    created_messages.append(saved)
+            mark_channel_event_processed(db, event)
+        except Exception as exc:
+            db.rollback()
+            mark_channel_event_failed(db, event, exc)
+            logger.error(
+                "Webhook persistence failed: provider=zalo event_id=%s error_type=%s",
+                event.external_event_id,
+                type(exc).__name__,
+            )
+            raise HTTPException(status_code=500, detail="Unable to persist Zalo webhook") from exc
+        for saved in created_messages:
+            await manager.broadcast(
+                {
+                    "type": "message_created",
+                    "conversation_id": saved.get("conversation_id"),
+                    "message": {
+                        key: value for key, value in saved.items()
+                        if key != "_created"
+                    },
+                }
+            )
 
     return {"status": "received", "processed": processed}
