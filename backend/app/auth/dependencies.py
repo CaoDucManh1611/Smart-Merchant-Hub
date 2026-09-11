@@ -145,6 +145,12 @@ def require_write_access(
     session token is supplied, however, a viewer (or an unknown legacy role)
     can never mutate CRM data.
     """
+    # FastAPI resolves ``Depends`` before this function runs.  Treat an
+    # unresolved/non-user value as anonymous as a defensive guard for direct
+    # calls and custom integrations; never dereference it as an authenticated
+    # tenant user.
+    if not isinstance(user, User):
+        user = None
     if user is None:
         if settings.ENVIRONMENT.strip().lower() == "production":
             raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
@@ -163,6 +169,8 @@ def require_admin_access(
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
 ) -> User | None:
     """Require owner/admin for team, security, and configuration writes."""
+    if not isinstance(user, User):
+        user = None
     if user is None:
         if settings.ENVIRONMENT.strip().lower() == "production":
             raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
