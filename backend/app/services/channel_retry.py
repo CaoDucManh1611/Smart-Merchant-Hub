@@ -10,10 +10,12 @@ from typing import TypeVar
 import httpx
 
 from app.services.meta_errors import MetaAPIError
+from app.services.provider_circuit_breaker import ProviderCircuitBreaker, ProviderCircuitOpen
 
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+_provider_breaker = ProviderCircuitBreaker()
 
 # Retry only errors where the provider explicitly rejected the request before
 # delivery (429/5xx) or the client could not establish a connection.  A read
@@ -42,6 +44,7 @@ def run_with_provider_retry(
     request: Callable[[], T],
     max_attempts: int = 3,
     sleep: Callable[[float], None] = time.sleep,
+    circuit_breaker: ProviderCircuitBreaker | None = None,
 ) -> T:
     """Run a provider call with bounded exponential retry and safe logging.
 
@@ -49,9 +52,15 @@ def run_with_provider_retry(
     bodies, URLs and exception text, which may contain customer data or tokens.
     """
     attempts = max(1, min(int(max_attempts), 5))
+    breaker = circuit_breaker or _provider_breaker
     for attempt in range(1, attempts + 1):
         try:
-            return request()
+            breaker.before_call(provider)
+            result = request()
+            breaker.record_success(provider)
+            return result
+        except ProviderCircuitOpen:
+            raise
         except Exception as error:
             retryable = is_retryable_provider_error(error)
             logger.warning(
@@ -64,6 +73,8 @@ def run_with_provider_retry(
                 retryable,
                 type(error).__name__,
             )
+            if retryable:
+                breaker.record_failure(provider)
             if not retryable or attempt >= attempts:
                 raise
             sleep(min(2.0, 0.25 * (2 ** (attempt - 1))))

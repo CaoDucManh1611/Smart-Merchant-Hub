@@ -8,9 +8,14 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from app.services.provider_circuit_breaker import ProviderCircuitBreaker, ProviderCircuitOpen
+
 
 class ApiKeyPoolUnavailable(RuntimeError):
     """Raised when no configured key can be used for the current attempt."""
+
+
+_provider_breaker = ProviderCircuitBreaker()
 
 
 _TRANSIENT_MARKERS = (
@@ -114,11 +119,18 @@ def redact_provider_error(error: Exception) -> str:
     return message[:240]
 
 
-def call_with_key_rotation(pool: ApiKeyPool, operation):
+def call_with_key_rotation(
+    pool: ApiKeyPool,
+    operation,
+    *,
+    provider: str = "ai",
+    circuit_breaker: ProviderCircuitBreaker | None = None,
+):
     """Run an operation and retry once with a different key on transient errors."""
 
     attempted: set[str] = set()
     last_error: Exception | None = None
+    breaker = circuit_breaker or _provider_breaker
     # Walk the configured pool so a temporary quota/auth failure on one key
     # can fall through all remaining keys (the release profile uses five).
     max_attempts = pool.snapshot()["key_count"]
@@ -133,10 +145,17 @@ def call_with_key_rotation(pool: ApiKeyPool, operation):
             raise
         attempted.add(key)
         try:
-            return operation(key)
+            breaker.before_call(provider)
+            result = operation(key)
+            breaker.record_success(provider)
+            return result
+        except ProviderCircuitOpen:
+            raise
         except Exception as error:
             last_error = error
             pool.report_failure(key, error)
+            if is_retryable_provider_error(error):
+                breaker.record_failure(provider)
             if not is_retryable_provider_error(error) or len(attempted) >= max_attempts:
                 raise
     raise last_error or ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")

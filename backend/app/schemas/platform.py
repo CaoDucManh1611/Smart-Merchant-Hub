@@ -43,8 +43,11 @@ class PlatformStatusOut(BaseModel):
 
 class PlatformAuditOut(BaseModel):
     id: int
+    event_id: str
     business_id: int
     user_id: int | None = None
+    actor_type: str = "system"
+    correlation_id: str | None = None
     action: str
     resource_type: str
     resource_id: str | None = None

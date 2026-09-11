@@ -537,6 +537,21 @@ button {
   font-weight: 800;
 }
 
+.ai-quality-dashboard .ai-board-header {
+  align-items: flex-start;
+}
+
+.ai-quality-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+  .ai-quality-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .team b,
 .team small {
   display: block;

@@ -57,6 +57,10 @@ content are redacted. Audit entries contain counts and request IDs only.
 
 ## MFA and sessions
 
+Current rollout: after preparing TOTP, verify the six-digit code at
+`/api/auth/mfa/verify`. When `mfa_status=enabled`, every new session remains
+blocked until its own MFA verification succeeds.
+
 MFA is prepared per user through the auth API: the secret is encrypted before
 storage and the provisioning URI is returned only during setup. Session lists
 expose device metadata and can be revoked individually. Enabling TOTP

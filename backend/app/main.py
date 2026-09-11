@@ -74,6 +74,7 @@ app.add_middleware(
     enabled=settings.RATE_LIMIT_ENABLED,
     max_requests=settings.RATE_LIMIT_REQUESTS,
     window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
+    trusted_proxy=settings.RATE_LIMIT_TRUSTED_PROXY,
 )
 
 

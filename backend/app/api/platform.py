@@ -400,6 +400,20 @@ def list_platform_audit_logs(
     ).all()
 
 
+@router.get("/events", response_model=list[PlatformAuditOut])
+def list_unified_events(
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_platform_admin),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Read the canonical event stream used by audit and Customer 360."""
+    return db.scalars(
+        select(AuditLog)
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(limit)
+    ).all()
+
+
 @router.get("/tenant-schemas", response_model=TenantSchemaListOut)
 def list_tenant_schemas(
     db: Session = Depends(get_db),

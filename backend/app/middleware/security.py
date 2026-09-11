@@ -46,11 +46,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         enabled: bool,
         max_requests: int,
         window_seconds: int,
+        trusted_proxy: bool = False,
     ):
         super().__init__(app)
         self.enabled = enabled
         self.max_requests = max(1, int(max_requests))
         self.window_seconds = max(1, int(window_seconds))
+        self.trusted_proxy = bool(trusted_proxy)
         self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._lock = Lock()
 
@@ -60,12 +62,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # explicitly configured to overwrite it.
         return request.client.host if request.client else "unknown"
 
+    def _key(self, request: Request) -> str:
+        if self.trusted_proxy:
+            forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+            if forwarded:
+                return forwarded
+        return self._client_key(request)
+
     async def dispatch(self, request: Request, call_next) -> Response:
         if not self.enabled or request.method == "OPTIONS" or not request.url.path.startswith("/api"):
             return await call_next(request)
 
         now = monotonic()
-        key = self._client_key(request)
+        key = self._key(request)
         with self._lock:
             bucket = self._requests[key]
             cutoff = now - self.window_seconds

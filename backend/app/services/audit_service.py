@@ -28,11 +28,15 @@ def record_audit(
     resource_type: str,
     resource_id: str | int | None = None,
     user_id: int | None = None,
+    actor_type: str | None = None,
+    correlation_id: str | None = None,
     metadata: Mapping | None = None,
 ) -> AuditLog:
     row = AuditLog(
         business_id=business_id,
         user_id=user_id,
+        actor_type=actor_type or ("staff" if user_id is not None else "system"),
+        correlation_id=str(correlation_id)[:120] if correlation_id else None,
         action=action,
         resource_type=resource_type,
         resource_id=str(resource_id) if resource_id is not None else None,

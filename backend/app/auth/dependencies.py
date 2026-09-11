@@ -61,11 +61,7 @@ def _decode_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Bearer token không hợp lệ hoặc đã hết hạn.") from None
 
 
-def get_current_user(
-    request: Request,
-    authorization: str | None = Header(default=None),
-    db: Session = Depends(get_db),
-) -> User:
+def _authenticate_request(request: Request, authorization: str | None, db: Session) -> tuple[AuthSession, User]:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
     token = authorization[7:].strip()
@@ -84,7 +80,28 @@ def get_current_user(
     request.state.business_id = user.business_id
     request.state.user_id = user.id
     request.state.user_role = user.role
+    session.last_seen_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    return session, user
+
+
+def get_current_user(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> User:
+    session, user = _authenticate_request(request, authorization, db)
+    if user.mfa_status == "enabled" and not session.mfa_verified and request.url.path != "/api/auth/mfa/verify":
+        raise HTTPException(status_code=401, detail={"code": "mfa_required", "message": "Cần xác thực MFA cho phiên đăng nhập này."})
     return user
+
+
+def get_authenticated_session(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> AuthSession:
+    session, _user = _authenticate_request(request, authorization, db)
+    return session
 
 
 def get_optional_user(

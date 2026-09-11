@@ -244,6 +244,8 @@ const authSessions = ref([]);
 const securityLoading = ref(false);
 const securityError = ref("");
 const mfaProvisioningUri = ref("");
+const mfaVerifyCode = ref("");
+const mfaVerifyPending = ref(false);
 const privacyLoading = ref(false);
 const privacyResult = ref(null);
 const customerMergeSourceId = ref("");
@@ -309,6 +311,7 @@ const ruleSuggestions = ref([]);
 const experiments = ref([]);
 const modelVersions = ref([]);
 const experimentReports = ref({});
+const aiEvaluationDashboard = ref({ models: {}, experiments: {}, rag: {}, period_days: 30 });
 const banditPolicies = ref({});
 const banditPolicyForms = ref({});
 const experimentationLoading = ref(false);
@@ -3018,9 +3021,10 @@ async function login() {
     const data = await response.json();
     window.localStorage.setItem("crm_access_token", data.access_token);
     authToken.value = data.access_token;
-    authUser.value = data.user;
+    authUser.value = { ...data.user, mfa_required: Boolean(data.mfa_required) };
+    mfaVerifyPending.value = Boolean(data.mfa_required);
     loginForm.value.password = "";
-    await fetchSecuritySettings();
+    if (!mfaVerifyPending.value) await fetchSecuritySettings();
     await fetchPlatformAdmin();
   } catch (err) {
     authError.value = err.message || "Đăng nhập thất bại.";
@@ -3036,6 +3040,8 @@ async function logout() {
   authUser.value = null;
   authSessions.value = [];
   mfaProvisioningUri.value = "";
+  mfaVerifyCode.value = "";
+  mfaVerifyPending.value = false;
   privacyResult.value = null;
 }
 
@@ -3127,8 +3133,30 @@ async function prepareMfaEnrollment() {
     if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
     mfaProvisioningUri.value = detail.provisioning_uri || "";
     authUser.value = { ...authUser.value, mfa_status: detail.status || "prepared" };
+    mfaVerifyPending.value = true;
   } catch (err) {
     securityError.value = err.message || "Không thể chuẩn bị MFA.";
+  }
+}
+
+async function verifyMfaEnrollment() {
+  securityError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/mfa/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: mfaVerifyCode.value }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail?.message || detail.detail || "Mã MFA không đúng.");
+    }
+    mfaVerifyCode.value = "";
+    mfaVerifyPending.value = false;
+    authUser.value = { ...authUser.value, mfa_status: "enabled", mfa_required: false };
+    await fetchSecuritySettings();
+  } catch (err) {
+    securityError.value = err.message || "Không thể xác thực MFA.";
   }
 }
 
@@ -3721,17 +3749,19 @@ async function fetchExperimentation() {
   experimentationLoading.value = true;
   experimentationError.value = "";
   try {
-    const [suggestionsResponse, experimentsResponse, modelsResponse] = await Promise.all([
+    const [suggestionsResponse, experimentsResponse, modelsResponse, evaluationResponse] = await Promise.all([
       apiFetch(`${API_BASE}/experiments/rule-suggestions`),
       apiFetch(`${API_BASE}/experiments`),
       apiFetch(`${API_BASE}/experiments/models`),
+      apiFetch(`${API_BASE}/experiments/evaluation/dashboard?days=30`),
     ]);
-    if (!suggestionsResponse.ok || !experimentsResponse.ok || !modelsResponse.ok) {
+    if (!suggestionsResponse.ok || !experimentsResponse.ok || !modelsResponse.ok || !evaluationResponse.ok) {
       throw new Error("Không tải được dữ liệu thử nghiệm AI.");
     }
     ruleSuggestions.value = await suggestionsResponse.json();
     experiments.value = await experimentsResponse.json();
     modelVersions.value = await modelsResponse.json();
+    aiEvaluationDashboard.value = await evaluationResponse.json();
     await loadExperimentSignals(experiments.value);
   } catch (err) {
     experimentationError.value = err.message === "Failed to fetch"
@@ -7726,6 +7756,15 @@ onUnmounted(() => {
             <div class="ai-stat-card"><span>Experiments</span><strong>{{ experiments.length }}</strong><small>Đang theo dõi</small></div>
           </div>
 
+          <div class="ai-board-card ai-quality-dashboard">
+            <div class="ai-board-header"><div><span class="card-eyebrow">QUALITY MONITORING</span><h3>AI evaluation dashboard</h3><p>Tín hiệu chất lượng trong {{ aiEvaluationDashboard.period_days || 30 }} ngày gần nhất, chỉ hiển thị dữ liệu của shop hiện tại.</p></div><span class="count-badge">{{ aiEvaluationDashboard.models?.training_runs || 0 }} runs</span></div>
+            <div class="ai-lab-summary ai-quality-grid">
+              <div class="ai-stat-card"><span>Conversion</span><strong>{{ ((aiEvaluationDashboard.experiments?.conversion_rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.experiments?.outcomes || 0 }} outcomes / {{ aiEvaluationDashboard.experiments?.exposures || 0 }} exposures</small></div>
+              <div class="ai-stat-card"><span>RAG runs</span><strong>{{ aiEvaluationDashboard.rag?.runs || 0 }}</strong><small>{{ Object.entries(aiEvaluationDashboard.rag?.by_status || {}).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'Chưa có dữ liệu' }}</small></div>
+              <div class="ai-stat-card"><span>Model ready</span><strong>{{ aiEvaluationDashboard.models?.completed_runs || 0 }}</strong><small>training runs hoàn tất</small></div>
+            </div>
+          </div>
+
           <div class="ai-compose-grid">
             <form class="ai-compose-card" @submit.prevent="createRuleSuggestion">
               <div class="ai-card-heading"><div><span class="card-eyebrow">HUMAN REVIEW</span><h3>Tạo đề xuất rule</h3></div><span class="ai-card-icon">R</span></div>
@@ -8166,11 +8205,12 @@ onUnmounted(() => {
           <div v-if="securityError" class="settings-notice team-error">{{ securityError }}</div>
           <div class="security-grid">
             <div class="security-section">
-              <div class="security-section-title"><strong>MFA</strong><span class="connection-badge" :class="{ connected: authUser.mfa_status === 'prepared' }">{{ authUser.mfa_status === 'prepared' ? 'ĐÃ CHUẨN BỊ' : 'CHƯA BẬT' }}</span></div>
-              <p class="settings-muted">MFA đang ở trạng thái chuẩn bị; bước xác minh TOTP sẽ bật ở đợt production tiếp theo.</p>
+              <div class="security-section-title"><strong>MFA</strong><span class="connection-badge" :class="{ connected: ['prepared', 'enabled'].includes(authUser.mfa_status) }">{{ authUser.mfa_status === 'enabled' ? 'ĐÃ BẬT' : authUser.mfa_status === 'prepared' ? 'ĐÃ CHUẨN BỊ' : 'CHƯA BẬT' }}</span></div>
+              <p class="settings-muted">Mã TOTP được mã hóa khi lưu; phiên mới phải xác minh riêng trước khi dùng CRM.</p>
+              <form v-if="mfaVerifyPending" class="settings-actions" @submit.prevent="verifyMfaEnrollment"><input v-model="mfaVerifyCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Mã MFA 6 số" required /><button class="primary-btn" type="submit">Xác minh MFA</button></form>
               <div v-if="['owner', 'admin'].includes(authUser.role)" class="settings-actions">
-                <button v-if="authUser.mfa_status !== 'prepared'" type="button" class="settings-refresh" @click="prepareMfaEnrollment">Chuẩn bị MFA</button>
-                <button v-else type="button" class="team-toggle" @click="disableMfaEnrollment">Tắt MFA</button>
+                <button v-if="!['prepared', 'enabled'].includes(authUser.mfa_status)" type="button" class="settings-refresh" @click="prepareMfaEnrollment">Chuẩn bị MFA</button>
+                <button v-if="['prepared', 'enabled'].includes(authUser.mfa_status)" type="button" class="team-toggle" @click="disableMfaEnrollment">Tắt MFA</button>
               </div>
               <span v-else class="settings-muted">Chỉ chủ shop hoặc admin được thay đổi MFA.</span>
               <code v-if="mfaProvisioningUri" class="mfa-uri">{{ mfaProvisioningUri }}</code>

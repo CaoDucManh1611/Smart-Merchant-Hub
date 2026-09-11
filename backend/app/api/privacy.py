@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin_access
+from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models.business import User
-from app.schemas.privacy import PrivacyDeleteRequest, PrivacyRequest, PrivacyResponse
+from app.models.saas import DataLifecycleRequest
+from app.schemas.privacy import PrivacyDeleteRequest, PrivacyRequest, PrivacyRequestOut, PrivacyResponse
 from app.services.audit_service import record_audit
 from app.services.privacy_service import (
     anonymize_customer_data,
@@ -19,6 +21,27 @@ from app.tenancy.dependencies import get_tenant_context
 
 
 router = APIRouter(prefix="/privacy")
+
+
+@router.get("/requests", response_model=list[PrivacyRequestOut])
+def list_lifecycle_requests(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    _actor: User | None = Depends(require_admin_access),
+):
+    """Expose an auditable lifecycle queue without returning customer payloads."""
+    return db.query(DataLifecycleRequest).filter(
+        DataLifecycleRequest.business_id == tenant.business_id,
+    ).order_by(DataLifecycleRequest.created_at.desc(), DataLifecycleRequest.id.desc()).limit(200).all()
+
+
+@router.get("/retention")
+def retention_policy():
+    return {
+        "retention_days": max(1, int(settings.DATA_RETENTION_DAYS)),
+        "accounting_records_retained": True,
+        "customer_identifiers_redacted_on_delete": True,
+    }
 
 
 def _request_response(row, counts=None, data=None):

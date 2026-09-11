@@ -329,6 +329,18 @@ def init_db() -> None:
                 "ADD COLUMN IF NOT EXISTS mfa_verified BOOLEAN NOT NULL DEFAULT FALSE"
             )
         )
+        # Unified Timeline reads audit rows directly.  Older development
+        # databases may have been started with create_all() before the
+        # platform-quality event contract existed, so add these columns
+        # idempotently instead of making Customer 360 fail closed.
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_id VARCHAR(64)"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_type VARCHAR(20) NOT NULL DEFAULT 'system'"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(120)"))
+        conn.execute(text("UPDATE audit_logs SET event_id = md5('legacy-' || id::text) WHERE event_id IS NULL"))
+        conn.execute(text("ALTER TABLE audit_logs ALTER COLUMN event_id SET NOT NULL"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs(event_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_actor_type ON audit_logs(actor_type)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_correlation_id ON audit_logs(correlation_id)"))
 
     # pgvector HNSW indexes support at most 2,000 dimensions for vector.
     # Gemini's 3,072-dimension embeddings still work, but use an exact scan

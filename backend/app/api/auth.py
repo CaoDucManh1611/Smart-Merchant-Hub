@@ -7,15 +7,15 @@ import hashlib
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user, issue_token, require_admin_access, token_hash
+from app.auth.dependencies import get_authenticated_session, get_current_user, issue_token, require_admin_access, token_hash
 from app.auth.passwords import verify_password
 from app.db.dependencies import get_db
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
 from app.models.business import User
-from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut
+from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut, MfaVerifyOut, MfaVerifyRequest
 from app.services.audit_service import record_audit
-from app.services.mfa_service import disable_mfa, prepare_mfa
+from app.services.mfa_service import disable_mfa, enable_mfa, prepare_mfa, verify_mfa_code
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 
@@ -49,6 +49,7 @@ def login(
         device_label=(x_device_label or "").strip()[:120] or None,
         user_agent_hash=hashlib.sha256(request.headers.get("user-agent", "").encode()).hexdigest(),
         ip_hash=hashlib.sha256((request.client.host if request.client else "unknown").encode()).hexdigest(),
+        mfa_verified=user.mfa_status != "enabled",
     ))
     record_audit(
         db,
@@ -63,6 +64,7 @@ def login(
         access_token=token,
         expires_at=expires_at,
         user=AuthUserOut.model_validate(user),
+        mfa_required=user.mfa_status == "enabled",
     )
 
 
@@ -135,6 +137,22 @@ def disable_mfa_enrollment(
     disable_mfa(user)
     record_audit(db, business_id=user.business_id, user_id=user.id, action="mfa_disabled", resource_type="user", resource_id=user.id, metadata={"status": "disabled"})
     db.commit()
+
+
+@router.post("/mfa/verify", response_model=MfaVerifyOut)
+def verify_mfa_enrollment(
+    payload: MfaVerifyRequest,
+    session: AuthSession = Depends(get_authenticated_session),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, session.user_id)
+    if user is None or not verify_mfa_code(user, payload.code):
+        raise HTTPException(status_code=401, detail="Mã MFA không đúng hoặc đã hết hạn.")
+    enable_mfa(user)
+    session.mfa_verified = True
+    record_audit(db, business_id=user.business_id, user_id=user.id, actor_type="staff", action="mfa_verified", resource_type="auth_session", resource_id=session.id, metadata={"status": "enabled"})
+    db.commit()
+    return MfaVerifyOut(status="enabled", mfa_verified=True)
 
 
 @router.get("/audit-logs", response_model=list[AuditLogOut])

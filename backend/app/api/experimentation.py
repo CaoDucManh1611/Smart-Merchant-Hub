@@ -3,7 +3,7 @@
 import hashlib
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,6 +26,7 @@ from app.models.experimentation import (
     RuleSuggestion,
 )
 from app.models.workflow import Workflow
+from app.models.rag_run import RagRun
 from app.schemas.experimentation import (
     AssignmentOut,
     AssignmentRequest,
@@ -77,6 +78,61 @@ def _json_number(value):
     if isinstance(value, Decimal):
         return float(value)
     return value
+
+
+@router.get("/evaluation/dashboard")
+def evaluation_dashboard(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    """Return tenant-scoped quality signals for the AI operations dashboard."""
+    days = max(1, min(int(days), 365))
+    since = _now() - timedelta(days=days)
+    runs = db.query(ModelTrainingRun).filter(
+        ModelTrainingRun.business_id == tenant.business_id,
+        ModelTrainingRun.started_at >= since,
+    ).all()
+    metric_values: dict[str, list[float]] = {}
+    for run in runs:
+        for key, value in (run.metrics or {}).items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                metric_values.setdefault(key, []).append(float(value))
+    experiments = db.query(Experiment).filter(
+        Experiment.business_id == tenant.business_id,
+        Experiment.created_at >= since,
+    ).all()
+    exposure_count = db.query(ExperimentExposure).filter(
+        ExperimentExposure.business_id == tenant.business_id,
+        ExperimentExposure.exposed_at >= since,
+    ).count()
+    outcome_count = db.query(ExperimentOutcome).filter(
+        ExperimentOutcome.business_id == tenant.business_id,
+        ExperimentOutcome.created_at >= since,
+    ).count()
+    rag_runs = db.query(RagRun).filter(
+        RagRun.business_id == tenant.business_id,
+        RagRun.created_at >= since,
+    ).all()
+    rag_by_status: dict[str, int] = {}
+    for run in rag_runs:
+        rag_by_status[run.status] = rag_by_status.get(run.status, 0) + 1
+    return {
+        "period_days": days,
+        "models": {
+            "training_runs": len(runs),
+            "completed_runs": sum(1 for run in runs if run.status == "completed"),
+            "metrics": {key: sum(values) / len(values) for key, values in metric_values.items()},
+        },
+        "experiments": {
+            "active": sum(1 for experiment in experiments if experiment.status == "running"),
+            "completed": sum(1 for experiment in experiments if experiment.status == "completed"),
+            "exposures": exposure_count,
+            "outcomes": outcome_count,
+            "conversion_rate": outcome_count / exposure_count if exposure_count else 0.0,
+        },
+        "rag": {"runs": len(rag_runs), "by_status": rag_by_status},
+    }
 
 
 def _ensure_exposure(db: Session, *, tenant: TenantContext, experiment: Experiment, assignment: ExperimentAssignment, idempotency_key: str | None = None) -> ExperimentExposure:

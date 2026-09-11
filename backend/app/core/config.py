@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = False
     RATE_LIMIT_REQUESTS: int = 120
     RATE_LIMIT_WINDOW_SECONDS: int = 60
+    RATE_LIMIT_BACKEND: str = "memory"
+    RATE_LIMIT_TRUSTED_PROXY: bool = False
+    DATA_RETENTION_DAYS: int = 365
 
     # Meta OAuth integration
     META_APP_ID: str = ""
@@ -159,6 +162,10 @@ class Settings(BaseSettings):
             problems.append("RATE_LIMIT_ENABLED must be true")
         if self.RATE_LIMIT_REQUESTS <= 0 or self.RATE_LIMIT_WINDOW_SECONDS <= 0:
             problems.append("RATE_LIMIT_REQUESTS and RATE_LIMIT_WINDOW_SECONDS must be positive")
+        if self.RATE_LIMIT_BACKEND.strip().lower() not in {"memory", "proxy"}:
+            problems.append("RATE_LIMIT_BACKEND must be memory or proxy")
+        if self.DATA_RETENTION_DAYS <= 0:
+            problems.append("DATA_RETENTION_DAYS must be positive")
         if problems:
             raise RuntimeError("Production security configuration is incomplete: " + "; ".join(problems))
 
