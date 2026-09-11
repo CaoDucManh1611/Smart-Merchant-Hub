@@ -30,6 +30,8 @@ from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
 from app.models.chatbot import ChatbotConfig
 from app.models.canned_response import CannedResponse
 from app.models.chatbot_followup import ChatbotFollowUp
+from app.models.customer_feedback import CustomerFeedback
+from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,9 @@ def init_db() -> None:
                 "ADD COLUMN IF NOT EXISTS assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
             )
         )
+        conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_provider VARCHAR(80)"))
+        conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_code VARCHAR(160)"))
+        conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_status VARCHAR(30)"))
         conn.execute(
             text(
                 "ALTER TABLE conversations "
@@ -251,6 +256,77 @@ def init_db() -> None:
             text(
                 "ALTER TABLE messages "
                 "ADD COLUMN IF NOT EXISTS media_url TEXT"
+            )
+        )
+        # Compatibility columns for local databases that are started directly
+        # with uvicorn instead of running the Alembic container entrypoint.
+        # New SaaS tables are created by Base.metadata.create_all() above;
+        # these ALTERs only fill the columns that create_all cannot add to an
+        # already-existing table.
+        conn.execute(
+            text(
+                "ALTER TABLE service_plans "
+                "ADD COLUMN IF NOT EXISTS max_rag_chunks INTEGER NOT NULL DEFAULT 500"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE service_plans "
+                "ADD COLUMN IF NOT EXISTS max_ai_calls INTEGER NOT NULL DEFAULT 1000"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE service_plans "
+                "ADD COLUMN IF NOT EXISTS max_ai_cost NUMERIC(14,2) NOT NULL DEFAULT 100"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS mfa_secret_encrypted TEXT"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS mfa_status VARCHAR(20) NOT NULL DEFAULT 'disabled'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS mfa_prepared_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS device_label VARCHAR(120)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS user_agent_hash VARCHAR(64)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS ip_hash VARCHAR(64)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS mfa_verified BOOLEAN NOT NULL DEFAULT FALSE"
             )
         )
 

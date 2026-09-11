@@ -1,11 +1,13 @@
 from fastapi import APIRouter
-from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot
+from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy
 from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo
 
 
 api_router = APIRouter(prefix="/api")
 
 api_router.include_router(auth.router, tags=["Auth"])
+api_router.include_router(platform.router, tags=["Platform administration"])
+api_router.include_router(privacy.router, tags=["Privacy"])
 
 api_router.include_router(
     meta_oauth.router,

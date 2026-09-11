@@ -43,10 +43,12 @@ from app.models.workflow import Workflow, WorkflowRun
 from app.models.chatbot import ChatbotConfig
 from app.models.canned_response import CannedResponse
 from app.models.chatbot_followup import ChatbotFollowUp
+from app.models.customer_feedback import CustomerFeedback
 from app.models.revenue import RevenueTouchpoint, RevenueAttribution, LeadActivity, LeadConversion
 from app.models.crm_job import CrmJob
 from app.models.rag_run import RagRun
 from app.models.permission import PermissionOverride
+from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry
 
 __all__ = [
     "Customer",
@@ -113,6 +115,7 @@ __all__ = [
     "ChatbotConfig",
     "CannedResponse",
     "ChatbotFollowUp",
+    "CustomerFeedback",
     "RevenueTouchpoint",
     "RevenueAttribution",
     "LeadActivity",
@@ -120,4 +123,9 @@ __all__ = [
     "CrmJob",
     "RagRun",
     "PermissionOverride",
+    "SaaSUsage",
+    "QuotaReservation",
+    "PlatformMembership",
+    "DataLifecycleRequest",
+    "TenantSchemaRegistry",
 ]

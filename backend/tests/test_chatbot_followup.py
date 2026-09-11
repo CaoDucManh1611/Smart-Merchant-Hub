@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -10,7 +10,12 @@ from app.models.business import Business
 from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.conversation import Conversation
 from app.models.customer import Customer
-from app.services.chatbot_followup import dispatch_due_followups, schedule_followup
+from app.services.chatbot_followup import (
+    dispatch_due_followups,
+    schedule_abandoned_checkout_followup,
+    schedule_post_delivery_followup,
+    schedule_followup,
+)
 
 
 class ChatbotFollowUpTests(unittest.TestCase):
@@ -41,3 +46,38 @@ class ChatbotFollowUpTests(unittest.TestCase):
                 self.assertEqual(1, send.call_count)
                 result_again = dispatch_due_followups(db, self.business_id, limit=10)
                 self.assertEqual(0, result_again["sent"])
+
+    def test_special_followups_are_idempotent_by_business_event(self):
+        with Session(self.engine) as db:
+            abandoned = schedule_abandoned_checkout_followup(
+                db,
+                business_id=self.business_id,
+                conversation_id=self.conversation_id,
+                session_id=41,
+                run_at=datetime.now(timezone.utc) + timedelta(hours=2),
+            )
+            abandoned_again = schedule_abandoned_checkout_followup(
+                db,
+                business_id=self.business_id,
+                conversation_id=self.conversation_id,
+                session_id=41,
+                run_at=datetime.now(timezone.utc) + timedelta(hours=3),
+            )
+            delivered = schedule_post_delivery_followup(
+                db,
+                business_id=self.business_id,
+                conversation_id=self.conversation_id,
+                order_id=99,
+                run_at=datetime.now(timezone.utc) + timedelta(hours=24),
+            )
+            delivered_again = schedule_post_delivery_followup(
+                db,
+                business_id=self.business_id,
+                conversation_id=self.conversation_id,
+                order_id=99,
+                run_at=datetime.now(timezone.utc) + timedelta(hours=48),
+            )
+            self.assertEqual(abandoned.id, abandoned_again.id)
+            self.assertEqual(delivered.id, delivered_again.id)
+            self.assertEqual("cart_abandoned", abandoned.kind)
+            self.assertEqual("post_delivery", delivered.kind)

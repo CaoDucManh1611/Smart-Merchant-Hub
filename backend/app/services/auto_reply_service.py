@@ -27,6 +27,7 @@ from app.services.telegram_service import send_telegram_message
 from app.services.zalo_service import send_zalo_message
 from app.services.customer_collection_flow import is_browsing_request
 from app.services.chatbot_agent import build_agent_memory, is_business_open
+from app.services.quota_service import QuotaExceededError, record_quota_usage
 
 logger = logging.getLogger(__name__)
 
@@ -421,6 +422,22 @@ def process_rag_auto_reply(
 
         # 3. Call LLM
         run.update(phase="llm")
+        try:
+            record_quota_usage(
+                db,
+                business_id,
+                "ai_calls",
+                1,
+                idempotency_key=f"rag-llm:{run.run_id}",
+            )
+        except QuotaExceededError as exc:
+            logger.warning(
+                "AI quota exhausted for business %d, conversation %d",
+                business_id,
+                conversation_id,
+            )
+            run.finish("quota_exceeded", phase="complete", quota=exc.detail)
+            return False
         answer = call_llm(messages)
         if not answer or not answer.strip():
             logger.warning("Empty LLM answer for RAG auto-reply")

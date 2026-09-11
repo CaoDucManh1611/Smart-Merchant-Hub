@@ -2,17 +2,20 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+import hashlib
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user, issue_token, token_hash
+from app.auth.dependencies import get_current_user, issue_token, require_admin_access, token_hash
 from app.auth.passwords import verify_password
 from app.db.dependencies import get_db
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
 from app.models.business import User
-from app.schemas.auth import AuditLogOut, AuthUserOut, LoginOut, LoginRequest
+from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut
 from app.services.audit_service import record_audit
+from app.services.mfa_service import disable_mfa, prepare_mfa
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 
@@ -23,8 +26,10 @@ router = APIRouter(prefix="/auth")
 @router.post("/login", response_model=LoginOut)
 def login(
     payload: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
+    x_device_label: str | None = Header(default=None, alias="X-Device-Label"),
 ):
     query = db.query(User).filter(User.email.ilike(payload.email.strip()), User.is_active.is_(True))
     if x_business_id:
@@ -41,6 +46,9 @@ def login(
         user_id=user.id,
         token_hash=token_hash(token),
         expires_at=expires_at,
+        device_label=(x_device_label or "").strip()[:120] or None,
+        user_agent_hash=hashlib.sha256(request.headers.get("user-agent", "").encode()).hexdigest(),
+        ip_hash=hashlib.sha256((request.client.host if request.client else "unknown").encode()).hexdigest(),
     ))
     record_audit(
         db,
@@ -74,6 +82,58 @@ def logout(
     if session is not None:
         session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
     record_audit(db, business_id=user.business_id, user_id=user.id, action="logout", resource_type="auth_session")
+    db.commit()
+
+
+@router.get("/sessions", response_model=list[AuthSessionOut])
+def list_sessions(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return db.query(AuthSession).filter(
+        AuthSession.user_id == user.id,
+    ).order_by(AuthSession.created_at.desc(), AuthSession.id.desc()).all()
+
+
+@router.post("/sessions/{session_id}/revoke", status_code=204)
+def revoke_session(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session = db.query(AuthSession).filter(
+        AuthSession.id == session_id,
+        AuthSession.user_id == user.id,
+    ).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Phiên đăng nhập không tồn tại.")
+    if session.revoked_at is None:
+        session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    record_audit(db, business_id=user.business_id, user_id=user.id, action="session_revoked", resource_type="auth_session", resource_id=session.id)
+    db.commit()
+
+
+@router.post("/mfa/prepare", response_model=MfaPrepareOut)
+def prepare_mfa_enrollment(
+    user: User = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    provisioning_uri = prepare_mfa(user)
+    record_audit(db, business_id=user.business_id, user_id=user.id, action="mfa_prepared", resource_type="user", resource_id=user.id, metadata={"status": "prepared"})
+    db.commit()
+    return MfaPrepareOut(status="prepared", provisioning_uri=provisioning_uri)
+
+
+@router.post("/mfa/disable", status_code=204)
+def disable_mfa_enrollment(
+    payload: MfaDisableRequest,
+    user: User = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    if not payload.confirm:
+        raise HTTPException(status_code=422, detail="Cần xác nhận trước khi tắt MFA.")
+    disable_mfa(user)
+    record_audit(db, business_id=user.business_id, user_id=user.id, action="mfa_disabled", resource_type="user", resource_id=user.id, metadata={"status": "disabled"})
     db.commit()
 
 

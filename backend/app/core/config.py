@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     # groq | gemini | openai
 
     LLM_API_KEY: str = ""
+    LLM_API_KEYS: str = ""
     GROQ_API_KEY: str = ""
+    GROQ_API_KEYS: str = ""
 
     LLM_MODEL: str = "openai/gpt-oss-20b"
     # openai/gpt-oss-20b | gemini-3.6-flash | gpt-4o-mini
@@ -61,6 +63,8 @@ class Settings(BaseSettings):
     # local | gemini | openai
 
     EMBEDDING_API_KEY: str = ""
+    EMBEDDING_API_KEYS: str = ""
+    API_KEY_COOLDOWN_SECONDS: int = 60
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     # gemini-embedding-001 | text-embedding-3-small
 
@@ -101,6 +105,18 @@ class Settings(BaseSettings):
     def allowed_hosts(self) -> list[str]:
         return self._csv(self.ALLOWED_HOSTS) or ["*"]
 
+    @property
+    def llm_api_keys(self) -> list[str]:
+        return self._csv(self.LLM_API_KEYS) or self._csv(self.LLM_API_KEY)
+
+    @property
+    def groq_api_keys(self) -> list[str]:
+        return self._csv(self.GROQ_API_KEYS) or self._csv(self.GROQ_API_KEY)
+
+    @property
+    def embedding_api_keys(self) -> list[str]:
+        return self._csv(self.EMBEDDING_API_KEYS) or self._csv(self.EMBEDDING_API_KEY) or self.llm_api_keys
+
     def validate_runtime(self) -> None:
         """Fail closed for settings that are unsafe in production.
 
@@ -133,6 +149,12 @@ class Settings(BaseSettings):
             problems.append("HSTS_ENABLED must be true")
         if not self.FACEBOOK_VERIFY_TOKEN.strip():
             problems.append("FACEBOOK_VERIFY_TOKEN must be configured")
+        if self.LLM_PROVIDER.strip().lower() == "groq" and not self.groq_api_keys:
+            problems.append("GROQ_API_KEYS or GROQ_API_KEY must be configured")
+        if self.LLM_PROVIDER.strip().lower() in {"gemini", "openai"} and not self.llm_api_keys:
+            problems.append("LLM_API_KEYS or LLM_API_KEY must be configured")
+        if self.EMBEDDING_PROVIDER.strip().lower() != "local" and not self.embedding_api_keys:
+            problems.append("EMBEDDING_API_KEYS, EMBEDDING_API_KEY, or LLM_API_KEY must be configured")
         if not self.RATE_LIMIT_ENABLED:
             problems.append("RATE_LIMIT_ENABLED must be true")
         if self.RATE_LIMIT_REQUESTS <= 0 or self.RATE_LIMIT_WINDOW_SECONDS <= 0:

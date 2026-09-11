@@ -71,6 +71,12 @@ class OrderUpdate(BaseModel):
     metadata: dict | None = None
 
 
+class OrderLogisticsUpdate(BaseModel):
+    shipping_provider: str | None = Field(default=None, max_length=80)
+    tracking_code: str | None = Field(default=None, max_length=160)
+    shipping_status: str | None = Field(default=None, pattern="^(pending|in_transit|delivered|failed|returned)$")
+
+
 class OrderTransition(BaseModel):
     to_status: str = Field(..., min_length=1, max_length=30)
 
@@ -102,6 +108,9 @@ class OrderOut(BaseModel):
     cancel_reason: str | None = None
     shipping_address: str | None = None
     shipping_phone: str | None = None
+    shipping_provider: str | None = None
+    tracking_code: str | None = None
+    shipping_status: str | None = None
     metadata: dict | None = Field(default=None, validation_alias="metadata_")
     created_at: datetime | None = None
     updated_at: datetime | None = None

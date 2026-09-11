@@ -1650,6 +1650,31 @@ def process_and_save_message(
         bool(message.get("media_type")),
     )
 
+    # A pending CSAT survey consumes an explicit 1–5 answer before the
+    # regular commerce/RAG router can mistake it for a product quantity.
+    csat_recorded = False
+    if message.get("content") and business_id is not None:
+        try:
+            from app.services.csat_service import CSAT_THANK_YOU, consume_csat_response
+
+            csat_recorded = consume_csat_response(
+                db,
+                business_id=int(business_id),
+                conversation_id=int(conversation_id),
+                text=str(message.get("content")),
+            )
+            if csat_recorded:
+                from app.services.auto_reply_service import send_text_reply_background
+
+                send_text_reply_background(
+                    conversation_id=int(conversation_id),
+                    channel=str(channel),
+                    text=CSAT_THANK_YOU,
+                    business_id=int(business_id),
+                )
+        except Exception:
+            logger.warning("CSAT response trigger failed", exc_info=True)
+
     # Complaint and explicit human requests are routed before the normal
     # collection/RAG flow. This prevents the bot from continuing after a
     # human takeover and creates one auditable support ticket.
@@ -1682,7 +1707,7 @@ def process_and_save_message(
     # prompt is sent back through the same channel. This prevents the generic
     # knowledge-base reply from competing with the order data-collection flow.
     collection_result = None
-    if escalation_triggered:
+    if escalation_triggered or csat_recorded:
         collection_result = True
     if message.get("content") and business_id is not None:
         if saved_message and saved_message.get("message_id"):

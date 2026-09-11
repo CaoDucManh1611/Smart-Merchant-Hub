@@ -9,3 +9,18 @@ export function timelineActor(event = {}) {
   }
   return { kind: "system", label: "Hệ thống" };
 }
+
+export function conversationBotStatus(mode) {
+  if (mode === "human") {
+    return {
+      kind: "human",
+      label: "Nhân viên đang tiếp quản",
+      description: "Chatbot đang tạm dừng để nhân viên xử lý hội thoại này.",
+    };
+  }
+  return {
+    kind: "bot",
+    label: "Bot đang xử lý",
+    description: "Chatbot đang phản hồi tự động cho hội thoại này.",
+  };
+}

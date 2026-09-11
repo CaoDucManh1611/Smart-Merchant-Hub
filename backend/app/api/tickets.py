@@ -321,6 +321,26 @@ def update_ticket(
     db.commit()
     _enqueue_sla_job(db, ticket)
     db.commit()
+    if (
+        "status" in data
+        and data["status"] in ("resolved", "closed")
+        and previous_status not in ("resolved", "closed")
+        and ticket.conversation_id is not None
+    ):
+        try:
+            from app.services.csat_service import schedule_csat_survey
+
+            schedule_csat_survey(
+                db,
+                business_id=tenant.business_id,
+                conversation_id=ticket.conversation_id,
+                ticket_id=ticket.id,
+            )
+            db.commit()
+        except Exception:
+            # Feedback is a post-resolution enhancement; a provider or
+            # migration issue must not roll back the ticket update itself.
+            db.rollback()
     if "status" in data and data["status"] != previous_status:
         emit_workflow_event(
             db,

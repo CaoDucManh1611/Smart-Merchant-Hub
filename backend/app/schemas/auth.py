@@ -17,6 +17,7 @@ class AuthUserOut(BaseModel):
     email: str
     role: str
     is_active: bool
+    mfa_status: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -26,6 +27,27 @@ class LoginOut(BaseModel):
     token_type: str = "bearer"
     expires_at: datetime
     user: AuthUserOut
+
+
+class AuthSessionOut(BaseModel):
+    id: int
+    device_label: str | None = None
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    mfa_verified: bool
+    created_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MfaPrepareOut(BaseModel):
+    status: str
+    provisioning_uri: str
+
+
+class MfaDisableRequest(BaseModel):
+    confirm: bool = False
 
 
 class AuditLogOut(BaseModel):

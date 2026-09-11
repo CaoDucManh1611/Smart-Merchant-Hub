@@ -19,6 +19,7 @@ from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.tenancy.oauth import consume_oauth_state, issue_oauth_state, register_oauth_state
 from app.services.channel_service import channel_credential_status, upsert_channel_connection
+from app.services.quota_service import QuotaExceededError, release_quota
 
 
 router = APIRouter()
@@ -341,6 +342,9 @@ async def meta_oauth_callback(
                     db.commit()
 
             return _frontend_redirect("connected", subscription_status)
+    except QuotaExceededError:
+        logger.warning("Meta OAuth channel quota exhausted for tenant")
+        return _frontend_redirect("quota_exceeded", "Shop đã đạt giới hạn số kênh của gói dịch vụ.")
     except Exception:
         # Provider errors can contain request or account data.  Keep detailed
         # diagnostics only in the redacted server log and never reflect them
@@ -361,9 +365,12 @@ async def disconnect_meta(
         ).all()
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         for channel in channels:
+            was_active = channel.status == "active"
             channel.status = "inactive"
             channel.access_token = None
             channel.access_token_encrypted = None
             channel.disconnected_at = now
+            if was_active:
+                release_quota(db, tenant.business_id, "connected_channels")
         db.commit()
     return {"connected": False}

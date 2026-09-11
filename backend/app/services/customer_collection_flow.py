@@ -24,6 +24,7 @@ from app.services.customer_collection import (
     normalize_contact,
 )
 from app.services.product_resolver import resolve_product
+from app.services.notification_service import create_notification
 from app.db.database import SessionLocal
 
 
@@ -242,7 +243,9 @@ def _start_product_quote(
     source_channel: str,
     text: str,
 ) -> CollectionFlowResult:
-    quantity = _extract_quantity(text)
+    # A product-specific purchase without an explicit quantity is treated as
+    # one item, then shown for confirmation before any customer data is asked.
+    quantity = max(_extract_quantity(text), 1)
     product = _find_requested_product(db, business_id, text, conversation_id)
     if product is None:
         return CollectionFlowResult(
@@ -289,6 +292,21 @@ def _start_product_quote(
     )
     db.add(session)
     db.flush()
+    if conversation_id is not None:
+        try:
+            from app.services.chatbot_followup import schedule_abandoned_checkout_followup
+
+            schedule_abandoned_checkout_followup(
+                db,
+                business_id=business_id,
+                conversation_id=int(conversation_id),
+                session_id=session.id,
+                run_at=_now() + timedelta(hours=2),
+            )
+        except Exception:
+            # A quote must still be returned when the optional scheduler is
+            # unavailable (for example while a legacy DB is being migrated).
+            pass
     db.commit()
     return CollectionFlowResult(
         session_id=session.id,
@@ -349,6 +367,32 @@ def _get_session(db: Session, business_id: int, customer_id: int, conversation_i
     if conversation_id is not None:
         query = query.filter(CustomerCollectionSession.conversation_id == conversation_id)
     return query.order_by(CustomerCollectionSession.id.desc()).first()
+
+
+def _cancel_checkout_reminder(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int | None,
+    session_id: int,
+) -> None:
+    """Stop a quote reminder when the customer continues or changes intent."""
+    if conversation_id is None:
+        return
+    try:
+        from app.services.chatbot_followup import cancel_event_followup
+
+        cancel_event_followup(
+            db,
+            business_id=business_id,
+            conversation_id=int(conversation_id),
+            kind="cart_abandoned",
+            metadata_key="collection_session_id",
+            metadata_value=session_id,
+        )
+    except Exception:
+        # Follow-ups are optional while upgrading an older deployment.
+        pass
 
 
 def _ensure_email_field(session: CustomerCollectionSession) -> bool:
@@ -510,6 +554,21 @@ def _create_draft_order_for_session(
         product_name_snapshot=product.name,
         sku_snapshot=product.sku,
     ))
+    create_notification(
+        db,
+        business_id=session.business_id,
+        kind="chatbot_order_draft",
+        title="Đơn nháp chatbot cần xác nhận",
+        body=(
+            f"{order.order_number}: {product.name} × {quantity} đã có đủ thông tin giao hàng. "
+            "Mở Đơn bán để kiểm tra và xác nhận đơn."
+        ),
+        metadata={
+            "order_id": order.id,
+            "conversation_id": session.conversation_id,
+            "customer_id": session.customer_id,
+        },
+    )
     collected["draft_order_id"] = order.id
     session.collected_fields = collected
     return order, None
@@ -591,6 +650,12 @@ def advance_customer_collection(
         session.status = "abandoned"
         session.current_field = None
         session.last_activity_at = _now()
+        _cancel_checkout_reminder(
+            db,
+            business_id=business_id,
+            conversation_id=conversation_id,
+            session_id=session.id,
+        )
         db.commit()
         return _start_product_quote(
             db,
@@ -607,6 +672,12 @@ def advance_customer_collection(
             session.status = "abandoned"
             session.current_field = None
             session.last_activity_at = _now()
+            _cancel_checkout_reminder(
+                db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                session_id=session.id,
+            )
             db.commit()
             return CollectionFlowResult(
                 session_id=session.id,
@@ -629,6 +700,12 @@ def advance_customer_collection(
         session.current_field = REQUIRED_FIELDS[0]
         session.status = "partial"
         session.last_activity_at = _now()
+        _cancel_checkout_reminder(
+            db,
+            business_id=business_id,
+            conversation_id=conversation_id,
+            session_id=session.id,
+        )
         db.commit()
         return CollectionFlowResult(
             session_id=session.id,
@@ -651,6 +728,12 @@ def advance_customer_collection(
         session.status = "abandoned"
         session.current_field = None
         session.last_activity_at = _now()
+        _cancel_checkout_reminder(
+            db,
+            business_id=business_id,
+            conversation_id=conversation_id,
+            session_id=session.id,
+        )
         db.commit()
         return None
     value = _extract_value(field, text)

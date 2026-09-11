@@ -1,6 +1,6 @@
 """Tenant-scoped product catalog and order APIs."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,9 +13,11 @@ from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.inventory import StockMovement
 from app.models.sales import Order, OrderItem, Product
+from app.models.order_event import OrderEvent
 from app.models.business import User
 from app.schemas.sales import (
     OrderCreate,
+    OrderLogisticsUpdate,
     OrderItemOut,
     OrderListOut,
     OrderOut,
@@ -96,6 +98,9 @@ def _order_out(order: Order) -> OrderOut:
         cancel_reason=order.cancel_reason,
         shipping_address=order.shipping_address,
         shipping_phone=order.shipping_phone,
+        shipping_provider=order.shipping_provider,
+        tracking_code=order.tracking_code,
+        shipping_status=order.shipping_status,
         metadata=order.metadata_,
         created_at=order.created_at,
         updated_at=order.updated_at,
@@ -391,6 +396,47 @@ def get_order(
     return _order_out(_order(db, order_id, tenant))
 
 
+@router.patch("/orders/{order_id}/logistics", response_model=OrderOut, dependencies=[Depends(require_write_access)])
+def update_order_logistics(
+    order_id: int,
+    payload: OrderLogisticsUpdate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    values = payload.model_dump(exclude_unset=True)
+    if not values:
+        raise HTTPException(status_code=422, detail="Cần ít nhất một trường logistics để cập nhật.")
+    order = _order(db, order_id, tenant)
+    for field, value in values.items():
+        setattr(order, field, value.strip() if isinstance(value, str) else value)
+    db.add(OrderEvent(
+        business_id=tenant.business_id,
+        order_type="sales_order",
+        order_id=order.id,
+        event_type="logistics_updated",
+        actor_id=actor.id if actor else None,
+        metadata_={
+            "shipping_provider": order.shipping_provider,
+            "shipping_status": order.shipping_status,
+            "fields": list(values),
+        },
+    ))
+    db.commit()
+    if actor:
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id,
+            action="update",
+            resource_type="sales_order_logistics",
+            resource_id=str(order.id),
+            metadata={"shipping_provider": order.shipping_provider, "shipping_status": order.shipping_status},
+        )
+        db.commit()
+    return _order_out(_order(db, order.id, tenant))
+
+
 @router.patch("/orders/{order_id}", response_model=OrderOut, dependencies=[Depends(require_write_access)])
 def update_order(
     order_id: int,
@@ -436,4 +482,20 @@ def transition_order(
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="transition", resource_type="sales_order", resource_id=str(order.id), metadata={"to_status": order.status})
         db.commit()
+    if order.status == "delivered" and order.conversation_id is not None:
+        try:
+            from app.services.chatbot_followup import schedule_post_delivery_followup
+
+            schedule_post_delivery_followup(
+                db,
+                business_id=tenant.business_id,
+                conversation_id=int(order.conversation_id),
+                order_id=order.id,
+                run_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=24),
+            )
+            db.commit()
+        except Exception:
+            # Customer-care reminders are additive; a missing optional table
+            # or scheduler must not make a successful delivery look failed.
+            db.rollback()
     return _order_out(_order(db, order_id, tenant))

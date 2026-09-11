@@ -13,6 +13,9 @@ from app.models.customer_collection import (
     CustomerContact,
 )
 from app.models.message import Message
+from app.models.notification import Notification
+from app.models.conversation import Conversation
+from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.sales import Order, Product
 from app.services.customer_collection_flow import (
     advance_customer_collection,
@@ -314,6 +317,21 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertEqual("order_confirmation", result.current_field)
             self.assertIn("400.000 đồng", result.prompt)
 
+    def test_product_purchase_without_quantity_uses_one_as_the_safe_default(self):
+        with Session(self.engine) as db:
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=59,
+                source_channel="telegram",
+                text="Mình muốn mua Serum",
+            )
+
+            self.assertEqual("order_confirmation", result.current_field)
+            self.assertIn("mua 1 Serum", result.prompt)
+            self.assertNotIn("mua 0 Serum", result.prompt)
+
     def test_stock_question_reports_availability_before_collecting_customer_data(self):
         with Session(self.engine) as db:
             result = advance_customer_collection(
@@ -488,11 +506,23 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertEqual("Serum", order.items[0].product_name_snapshot)
             self.assertEqual(2, order.items[0].quantity)
             self.assertEqual("chatbot_collection", order.metadata_["source"])
+            notifications = db.query(Notification).filter_by(
+                business_id=self.business_id,
+                kind="chatbot_order_draft",
+            ).all()
+            self.assertEqual(1, len(notifications))
+            self.assertEqual("Đơn nháp chatbot cần xác nhận", notifications[0].title)
+            self.assertEqual(order.id, notifications[0].metadata_["order_id"])
+            self.assertEqual(89, notifications[0].metadata_["conversation_id"])
 
             # Repeated provider delivery after the completed session must not
             # create a duplicate draft order.
             advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=89, source_channel="telegram", text="COD")
             self.assertEqual(1, db.query(Order).filter_by(conversation_id=89).count())
+            self.assertEqual(1, db.query(Notification).filter_by(
+                business_id=self.business_id,
+                kind="chatbot_order_draft",
+            ).count())
 
     def test_combo_alias_quotes_from_product_database(self):
         with Session(self.engine) as db:
@@ -508,6 +538,50 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertTrue(result.started)
             self.assertEqual("order_confirmation", result.current_field)
             self.assertIn("4.794.000 đồng", result.prompt)
+
+    def test_quote_schedules_abandoned_reminder_and_confirmation_cancels_it(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="telegram",
+                external_user_id="abandoned-reminder-user",
+                name=None,
+            )
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                channel="telegram",
+            )
+            db.add(conversation)
+            db.flush()
+
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=customer.id,
+                conversation_id=conversation.id,
+                source_channel="telegram",
+                text="giá của 2 Serum hết bao nhiêu",
+            )
+            reminder = db.query(ChatbotFollowUp).filter_by(
+                business_id=self.business_id,
+                conversation_id=conversation.id,
+                kind="cart_abandoned",
+            ).one()
+            self.assertEqual(quote.session_id, reminder.metadata_["collection_session_id"])
+            self.assertEqual("scheduled", reminder.status)
+
+            advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=customer.id,
+                conversation_id=conversation.id,
+                source_channel="telegram",
+                text="Đồng ý đặt hàng",
+            )
+            self.assertEqual("cancelled", reminder.status)
 
     def test_short_follow_up_uses_last_customer_product_mention(self):
         with Session(self.engine) as db:

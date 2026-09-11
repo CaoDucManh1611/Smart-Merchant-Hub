@@ -23,12 +23,16 @@ from app.schemas.chatbot import (
     ChatbotConfigUpdate,
     ChatbotToolRequest,
     ChatbotToolResponse,
+    CustomerFeedbackListOut,
+    CustomerFeedbackOut,
+    CsatSummaryOut,
     FollowUpCreate,
     FollowUpListOut,
     FollowUpOut,
 )
 from app.services.chatbot_agent import AGENT_TOOLS, build_agent_memory, execute_chatbot_tool
 from app.services.chatbot_followup import dispatch_due_followups, schedule_followup
+from app.services.csat_service import summarize_csat
 from app.services.audit_service import record_audit
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
@@ -262,6 +266,25 @@ def list_followups(
         query = query.filter(ChatbotFollowUp.status == status)
     items = query.order_by(ChatbotFollowUp.run_at.asc(), ChatbotFollowUp.id.asc()).limit(500).all()
     return {"items": items, "total": len(items)}
+
+
+@router.get("/csat", response_model=CustomerFeedbackListOut)
+def list_csat_feedback(
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    from app.models.customer_feedback import CustomerFeedback
+
+    query = db.query(CustomerFeedback).filter(CustomerFeedback.business_id == tenant.business_id)
+    if status:
+        query = query.filter(CustomerFeedback.status == status)
+    items = query.order_by(CustomerFeedback.requested_at.desc(), CustomerFeedback.id.desc()).limit(500).all()
+    return {
+        "items": items,
+        "total": len(items),
+        "summary": summarize_csat(db, tenant.business_id),
+    }
 
 
 @router.post("/followups", response_model=FollowUpOut, status_code=201, dependencies=[Depends(require_write_access)])

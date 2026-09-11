@@ -13,7 +13,8 @@ import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js"
 import { filterConversationsForCustomer } from "./ticket-utils.js";
 import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
 import { getInboxChannels } from "./inbox-utils.js";
-import { timelineActor } from "./timeline-utils.js";
+import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
+import { notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
@@ -75,6 +76,9 @@ const customerTagError = ref("");
 
 const search = ref("");
 const draft = ref("");
+const quickActionOpen = ref(false);
+const quickActionQuery = ref("");
+const quickActionInput = ref(null);
 
 const loading = ref(false);
 const sending = ref(false);
@@ -160,6 +164,12 @@ const orderPaymentSaving = ref({});
 const orderTransitionSaving = ref({});
 const selectedOrderEvents = ref(null);
 const orderEventsLoading = ref(false);
+const orderLogisticsDraft = ref({
+  shipping_provider: "",
+  tracking_code: "",
+  shipping_status: "pending",
+});
+const orderLogisticsSaving = ref(false);
 const purchasePaymentDrafts = ref({});
 const purchasePaymentSaving = ref({});
 const inventoryReport = ref(null);
@@ -224,6 +234,18 @@ const authError = ref("");
 const loginForm = ref({ email: "", password: "" });
 const auditLogs = ref([]);
 const auditLoading = ref(false);
+const platformAdmin = ref(false);
+const platformShops = ref([]);
+const platformSchemas = ref([]);
+const platformAuditLogs = ref([]);
+const platformLoading = ref(false);
+const platformError = ref("");
+const authSessions = ref([]);
+const securityLoading = ref(false);
+const securityError = ref("");
+const mfaProvisioningUri = ref("");
+const privacyLoading = ref(false);
+const privacyResult = ref(null);
 const customerMergeSourceId = ref("");
 const customerMergeSaving = ref(false);
 const customerMergeError = ref("");
@@ -257,6 +279,8 @@ const ticketSaving = ref(false);
 const ticketError = ref("");
 const ticketReport = ref({ items: [], overdue_tickets: 0 });
 const slaNotifications = ref([]);
+const operationalNotifications = ref([]);
+const notificationsOpen = ref(false);
 const ticketHistory = ref({});
 const ticketHistoryLoading = ref({});
 const ticketCommentDrafts = ref({});
@@ -377,6 +401,9 @@ const botModes = ref({});
 const followups = ref([]);
 const followupsLoading = ref(false);
 const followupDispatching = ref(false);
+const csatFeedback = ref([]);
+const csatSummary = ref({ responses: 0, average_rating: 0, satisfaction_rate: 0, bot_resolution_rate: 0 });
+const csatLoading = ref(false);
 
 const metaStatus = ref({
   connected: false,
@@ -428,8 +455,80 @@ function openSettings() {
   void fetchMetaStatus();
   void fetchTeam();
   void fetchAuditLogs();
+  void fetchSecuritySettings();
+  void fetchPlatformAdmin();
   void fetchChatbotRuntime();
   void fetchFollowups();
+  void fetchCsat();
+}
+
+function openQuickActions() {
+  quickActionOpen.value = true;
+  quickActionQuery.value = "";
+  nextTick(() => quickActionInput.value?.focus());
+}
+
+function closeQuickActions() {
+  quickActionOpen.value = false;
+  quickActionQuery.value = "";
+}
+
+async function runQuickAction(actionId) {
+  switch (actionId) {
+    case "focus-search":
+      closeQuickActions();
+      nextTick(() => document.querySelector(".top-search-input")?.focus());
+      return;
+    case "customer-360":
+      currentTab.value = "inbox";
+      customerPanelCollapsed.value = false;
+      closeQuickActions();
+      return;
+    case "create-ticket":
+      currentTab.value = "tickets";
+      await fetchOrderCustomers();
+      if (selected.value?.customer_id) {
+        ticketForm.value = {
+          ...ticketForm.value,
+          customer_id: String(selected.value.customer_id),
+          conversation_id: selectedId.value ? String(selectedId.value) : "",
+        };
+      }
+      closeQuickActions();
+      return;
+    case "create-order":
+      currentTab.value = "orders";
+      await Promise.all([fetchOrderCustomers(), fetchProducts(), fetchOrders()]);
+      if (selected.value?.customer_id) {
+        orderForm.value = {
+          ...orderForm.value,
+          customer_id: String(selected.value.customer_id),
+          conversation_id: selectedId.value ? String(selectedId.value) : "",
+        };
+      }
+      closeQuickActions();
+      return;
+    case "toggle-bot":
+      closeQuickActions();
+      await toggleBotMode();
+      return;
+    case "settings":
+      closeQuickActions();
+      openSettings();
+      return;
+    default:
+      closeQuickActions();
+  }
+}
+
+function handleGlobalKeydown(event) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (quickActionOpen.value) closeQuickActions();
+    else openQuickActions();
+  } else if (event.key === "Escape" && quickActionOpen.value) {
+    closeQuickActions();
+  }
 }
 
 function toggleSidebar() {
@@ -445,10 +544,45 @@ function runGlobalSearch() {
   nextTick(() => document.querySelector(".search-box input")?.focus());
 }
 
-function openNotifications() {
-  currentTab.value = "tickets";
-  void fetchOrderCustomers();
-  void fetchTickets();
+async function fetchOperationalNotifications() {
+  try {
+    const response = await apiFetch(`${API_BASE}/notifications`);
+    if (response.ok) operationalNotifications.value = await response.json();
+  } catch (err) {
+    console.warn("Fetch operational notifications error:", err);
+  }
+}
+
+async function openNotifications() {
+  notificationsOpen.value = !notificationsOpen.value;
+  if (notificationsOpen.value) await fetchOperationalNotifications();
+}
+
+async function activateNotification(notification) {
+  if (!notification.is_read) {
+    try {
+      const response = await apiFetch(`${API_BASE}/notifications/${notification.id}/read`, { method: "POST" });
+      if (response.ok) {
+        const updated = await response.json();
+        operationalNotifications.value = operationalNotifications.value.map((item) => (
+          item.id === updated.id ? updated : item
+        ));
+      }
+    } catch (err) {
+      console.warn("Mark notification read error:", err);
+    }
+  }
+  const destination = notificationDestination(notification);
+  notificationsOpen.value = false;
+  currentTab.value = destination.tab;
+  if (destination.tab === "orders") {
+    await Promise.all([fetchOrderCustomers(), fetchProducts(), fetchOrders()]);
+  } else if (destination.tab === "inbox") {
+    await loadConversations(false);
+    if (destination.conversationId) await selectConversation(destination.conversationId);
+  } else {
+    await Promise.all([fetchOrderCustomers(), fetchTickets()]);
+  }
 }
 
 async function disconnectMeta() {
@@ -727,6 +861,23 @@ const selectedBotMode = computed(() => (
   selected.value?.conversation_id
     ? botModes.value[selected.value.conversation_id] || selected.value.bot_mode || "auto"
     : "auto"
+));
+
+const quickActionItems = computed(() => {
+  const items = [
+    { id: "focus-search", label: "Tìm kiếm khách hàng, tin nhắn, đơn hàng", hint: "Ctrl/Cmd+K" },
+    { id: "customer-360", label: "Mở Customer 360", hint: selected.value ? "Khách đang chọn" : "Chọn hội thoại trước", disabled: !selected.value },
+    { id: "create-ticket", label: "Tạo ticket nhanh", hint: selected.value ? "Từ khách đang chọn" : "Chọn hội thoại trước", disabled: !selected.value },
+    { id: "create-order", label: "Tạo đơn nháp nhanh", hint: selected.value ? "Từ khách đang chọn" : "Chọn hội thoại trước", disabled: !selected.value },
+    { id: "toggle-bot", label: selectedBotMode.value === "human" ? "Trả hội thoại về bot" : "Nhân viên tiếp quản", hint: selected.value ? "Hội thoại đang chọn" : "Chọn hội thoại trước", disabled: !selected.value },
+    { id: "settings", label: "Mở Settings", hint: "Bảo mật & vận hành" },
+  ];
+  const query = quickActionQuery.value.trim().toLowerCase();
+  return query ? items.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(query)) : items;
+});
+
+const unreadOperationalNotificationCount = computed(() => (
+  unreadNotificationCount(operationalNotifications.value)
 ));
 
 const conversationPriorityActive = computed(() => (
@@ -1998,6 +2149,7 @@ function orderEventLabel(event) {
     payment_created: "Ghi nhận thanh toán",
     refund_created: "Hoàn tiền",
     order_created: "Tạo đơn hàng",
+    logistics_updated: "Cập nhật vận chuyển",
   };
   return labels[event?.event_type] || "Sự kiện đơn hàng";
 }
@@ -2008,6 +2160,12 @@ function orderEventSummary(event) {
   }
   if (event?.event_type === "order_created") {
     return "Khởi tạo đơn ở trạng thái draft";
+  }
+  if (event?.event_type === "logistics_updated") {
+    const metadata = event?.metadata || event?.metadata_ || {};
+    const provider = metadata.shipping_provider || "Chưa có đơn vị vận chuyển";
+    const status = metadata.shipping_status || "pending";
+    return `${provider} · ${status}`;
   }
   const metadata = event?.metadata || event?.metadata_ || {};
   const amount = Number(metadata.amount || 0);
@@ -2541,6 +2699,11 @@ function orderCanConfirm(order) {
 async function loadSalesOrderEvents(order) {
   if (!order?.id) return;
   orderEventsLoading.value = true;
+  orderLogisticsDraft.value = {
+    shipping_provider: String(order.shipping_provider || ""),
+    tracking_code: String(order.tracking_code || ""),
+    shipping_status: String(order.shipping_status || "pending"),
+  };
   selectedOrderEvents.value = { order, items: [] };
   await nextTick();
   document.querySelector('[data-testid="order-events-panel"]')?.scrollIntoView({
@@ -2826,7 +2989,10 @@ async function loadAuthSession() {
   if (!authToken.value) return;
   try {
     const response = await apiFetch(`${API_BASE}/auth/me`);
-    if (response.ok) authUser.value = await response.json();
+    if (response.ok) {
+      authUser.value = await response.json();
+      await fetchSecuritySettings();
+    }
     else {
       window.localStorage.removeItem("crm_access_token");
       authToken.value = "";
@@ -2854,6 +3020,8 @@ async function login() {
     authToken.value = data.access_token;
     authUser.value = data.user;
     loginForm.value.password = "";
+    await fetchSecuritySettings();
+    await fetchPlatformAdmin();
   } catch (err) {
     authError.value = err.message || "Đăng nhập thất bại.";
   } finally {
@@ -2866,6 +3034,144 @@ async function logout() {
   window.localStorage.removeItem("crm_access_token");
   authToken.value = "";
   authUser.value = null;
+  authSessions.value = [];
+  mfaProvisioningUri.value = "";
+  privacyResult.value = null;
+}
+
+async function fetchSecuritySettings() {
+  if (!authUser.value) {
+    authSessions.value = [];
+    return;
+  }
+  securityLoading.value = true;
+  securityError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/sessions`);
+    if (response.ok) authSessions.value = await response.json();
+    else if (response.status !== 403) throw new Error(`HTTP ${response.status}`);
+  } catch (err) {
+    securityError.value = err.message || "Không thể tải bảo mật phiên đăng nhập.";
+  } finally {
+    securityLoading.value = false;
+  }
+}
+
+async function updateOrderLogistics(order) {
+  if (!order?.id || orderLogisticsSaving.value) return;
+  const draft = orderLogisticsDraft.value || {};
+  const shippingProvider = String(draft.shipping_provider || "").trim();
+  const trackingCode = String(draft.tracking_code || "").trim();
+  const shippingStatus = String(draft.shipping_status || "pending").trim();
+  if (!shippingProvider && !trackingCode && shippingStatus === "pending") {
+    orderError.value = "Nhập đơn vị vận chuyển hoặc mã vận đơn trước.";
+    return;
+  }
+  orderLogisticsSaving.value = true;
+  orderError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/orders/${order.id}/logistics`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        shipping_provider: shippingProvider || null,
+        tracking_code: trackingCode || null,
+        shipping_status: shippingStatus,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const updatedOrder = await response.json();
+    orders.value = orders.value.map((item) => (
+      Number(item.id) === Number(updatedOrder.id) ? { ...item, ...updatedOrder } : item
+    ));
+    if (selectedOrderEvents.value?.order?.id === order.id) {
+      selectedOrderEvents.value = {
+        ...selectedOrderEvents.value,
+        order: { ...selectedOrderEvents.value.order, ...updatedOrder },
+      };
+    }
+    orderLogisticsDraft.value = {
+      shipping_provider: String(updatedOrder.shipping_provider || ""),
+      tracking_code: String(updatedOrder.tracking_code || ""),
+      shipping_status: String(updatedOrder.shipping_status || "pending"),
+    };
+    await loadSalesOrderEvents({ ...order, ...updatedOrder });
+  } catch (err) {
+    orderError.value = err.message || "Không thể cập nhật thông tin vận chuyển.";
+  } finally {
+    orderLogisticsSaving.value = false;
+  }
+}
+
+async function revokeAuthSession(session) {
+  securityError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/sessions/${session.id}/revoke`, { method: "POST" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    authSessions.value = authSessions.value.map((item) => (
+      item.id === session.id ? { ...item, revoked_at: new Date().toISOString() } : item
+    ));
+  } catch (err) {
+    securityError.value = err.message || "Không thể thu hồi phiên đăng nhập.";
+  }
+}
+
+async function prepareMfaEnrollment() {
+  securityError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/mfa/prepare`, { method: "POST" });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    mfaProvisioningUri.value = detail.provisioning_uri || "";
+    authUser.value = { ...authUser.value, mfa_status: detail.status || "prepared" };
+  } catch (err) {
+    securityError.value = err.message || "Không thể chuẩn bị MFA.";
+  }
+}
+
+async function disableMfaEnrollment() {
+  if (!(await requestConfirmation("Tắt trạng thái MFA chuẩn bị cho tài khoản này?", { confirmLabel: "Tắt MFA" }))) return;
+  securityError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/mfa/disable`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    authUser.value = { ...authUser.value, mfa_status: "disabled" };
+    mfaProvisioningUri.value = "";
+  } catch (err) {
+    securityError.value = err.message || "Không thể tắt MFA.";
+  }
+}
+
+async function runPrivacyAction(kind) {
+  if (kind === "delete" && !(await requestConfirmation("Thao tác này sẽ ẩn danh dữ liệu khách hàng và giữ lại bản ghi cần thiết cho đối soát. Tiếp tục?", { confirmLabel: "Xác nhận xóa" }))) return;
+  privacyLoading.value = true;
+  securityError.value = "";
+  privacyResult.value = null;
+  try {
+    const requestKey = `crm-ui-${kind}-${Date.now()}`;
+    const body = { request_key: requestKey };
+    if (kind === "delete") body.confirmation_token = "DELETE";
+    const response = await apiFetch(`${API_BASE}/privacy/${kind}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    privacyResult.value = detail;
+  } catch (err) {
+    securityError.value = err.message || "Không thể thực hiện yêu cầu dữ liệu.";
+  } finally {
+    privacyLoading.value = false;
+  }
 }
 
 async function fetchAuditLogs() {
@@ -2876,6 +3182,101 @@ async function fetchAuditLogs() {
     if (response.ok) auditLogs.value = await response.json();
   } finally {
     auditLoading.value = false;
+  }
+}
+
+async function fetchPlatformAdmin() {
+  platformLoading.value = true;
+  platformError.value = "";
+  try {
+    if (!authUser.value) {
+      platformAdmin.value = false;
+      platformShops.value = [];
+      platformSchemas.value = [];
+      platformAuditLogs.value = [];
+      return;
+    }
+    const shopsResponse = await apiFetch(`${API_BASE}/platform/shops`);
+    if (!shopsResponse.ok) {
+      platformAdmin.value = false;
+      platformShops.value = [];
+      platformSchemas.value = [];
+      platformAuditLogs.value = [];
+      return;
+    }
+    const shopsPayload = await shopsResponse.json();
+    platformAdmin.value = true;
+    platformShops.value = shopsPayload.items || [];
+    const schemasResponse = await apiFetch(`${API_BASE}/platform/tenant-schemas`);
+    if (schemasResponse.ok) {
+      platformSchemas.value = (await schemasResponse.json()).items || [];
+    }
+    const auditResponse = await apiFetch(`${API_BASE}/platform/audit-logs?limit=30`);
+    if (auditResponse.ok) {
+      platformAuditLogs.value = await auditResponse.json();
+    } else {
+      platformAuditLogs.value = [];
+    }
+  } catch (err) {
+    platformAdmin.value = false;
+    platformAuditLogs.value = [];
+    platformError.value = err.message || "Không thể tải quản trị nền tảng.";
+  } finally {
+    platformLoading.value = false;
+  }
+}
+
+async function togglePlatformShop(shop) {
+  platformError.value = "";
+  const status = shop.status === "suspended" ? "active" : "suspended";
+  try {
+    const response = await apiFetch(`${API_BASE}/platform/shops/${shop.id}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const updated = await response.json();
+    platformShops.value = platformShops.value.map((item) => (
+      item.id === updated.id ? { ...item, status: updated.status } : item
+    ));
+  } catch (err) {
+    platformError.value = err.message || "Không thể cập nhật trạng thái shop.";
+  }
+}
+
+async function stagePlatformSchema(schema) {
+  platformError.value = "";
+  const businessId = schema.business_id;
+  const state = schema.state === "ready" ? "disabled" : "ready";
+  try {
+    const response = await apiFetch(`${API_BASE}/platform/tenant-schemas/${businessId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state, feature_enabled: state === "ready" }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const updated = await response.json();
+    platformSchemas.value = platformSchemas.value.map((item) => (
+      item.business_id === updated.business_id ? updated : item
+    ));
+  } catch (err) {
+    platformError.value = err.message || "Không thể cập nhật schema pilot.";
+  }
+}
+
+async function registerPlatformSchema(businessId) {
+  platformError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/platform/tenant-schemas/${businessId}`, { method: "POST" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const created = await response.json();
+    const existing = platformSchemas.value.some((item) => item.business_id === created.business_id);
+    platformSchemas.value = existing
+      ? platformSchemas.value.map((item) => item.business_id === created.business_id ? created : item)
+      : [...platformSchemas.value, created];
+  } catch (err) {
+    platformError.value = err.message || "Không thể đăng ký schema pilot.";
   }
 }
 
@@ -4612,6 +5013,8 @@ async function deletePermissionOverride(override) {
 
 onMounted(async () => {
 
+  window.addEventListener("keydown", handleGlobalKeydown);
+
   await loadAuthSession();
 
   await loadConversations(
@@ -4630,6 +5033,7 @@ onMounted(async () => {
   fetchPurchaseOrders();
   fetchLeads();
   fetchTickets();
+  fetchOperationalNotifications();
   fetchTeam();
   fetchWorkflows();
   fetchExperimentation();
@@ -4637,6 +5041,7 @@ onMounted(async () => {
   fetchAutoReplySetting();
   fetchChatbotRuntime();
   fetchFollowups();
+  fetchCsat();
   fetchMetaStatus();
 
   const metaResult = new URLSearchParams(window.location.search).get("meta");
@@ -4665,6 +5070,8 @@ onMounted(async () => {
         );
 
       }
+
+      void fetchOperationalNotifications();
 
     },
     25000
@@ -4795,7 +5202,25 @@ async function cancelFollowup(followup) {
   if (response.ok) followups.value = followups.value.filter((item) => item.id !== followup.id);
 }
 
+async function fetchCsat() {
+  csatLoading.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/chatbot/csat`);
+    if (response.ok) {
+      const payload = await response.json();
+      csatFeedback.value = payload.items || [];
+      csatSummary.value = payload.summary || csatSummary.value;
+    }
+  } catch (err) {
+    console.warn("Fetch CSAT error:", err);
+  } finally {
+    csatLoading.value = false;
+  }
+}
+
 onUnmounted(() => {
+
+  window.removeEventListener("keydown", handleGlobalKeydown);
 
   if (pollingTimer) {
 
@@ -4981,17 +5406,48 @@ onUnmounted(() => {
             <svg class="top-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8" /><path d="m15.2 15.2 4 4" /></svg>
           </label>
 
-
           <button
             type="button"
-            class="bell"
-            aria-label="Mở thông báo SLA"
-            title="Mở thông báo SLA"
-            @click="openNotifications"
+            class="quick-action-trigger"
+            aria-label="Mở thao tác nhanh"
+            title="Thao tác nhanh (Ctrl/Cmd+K)"
+            @click="openQuickActions"
           >
-            <svg class="top-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 10a6 6 0 0 0-12 0c0 6-2.5 6.5-2.5 8h17C20.5 16.5 18 16 18 10Z" /><path d="M10 21h4" /></svg>
-            <i v-if="slaNotifications.length">{{ slaNotifications.length }}</i>
+            <span>Thao tác nhanh</span><kbd>⌘K</kbd>
           </button>
+
+
+          <div class="notification-menu">
+            <button
+              type="button"
+              class="bell"
+              aria-label="Mở thông báo"
+              title="Mở thông báo"
+              :aria-expanded="String(notificationsOpen)"
+              @click="openNotifications"
+            >
+              <svg class="top-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 10a6 6 0 0 0-12 0c0 6-2.5 6.5-2.5 8h17C20.5 16.5 18 16 18 10Z" /><path d="M10 21h4" /></svg>
+              <i v-if="unreadOperationalNotificationCount">{{ unreadOperationalNotificationCount }}</i>
+            </button>
+            <div v-if="notificationsOpen" class="notification-popover" role="dialog" aria-label="Thông báo CRM">
+              <div class="notification-popover-head">
+                <strong>Thông báo</strong>
+                <span>{{ unreadOperationalNotificationCount }} chưa đọc</span>
+              </div>
+              <p v-if="!operationalNotifications.length" class="notification-empty">Chưa có thông báo mới.</p>
+              <button
+                v-for="notification in operationalNotifications"
+                :key="notification.id"
+                type="button"
+                class="notification-item"
+                :class="{ unread: !notification.is_read }"
+                @click="activateNotification(notification)"
+              >
+                <strong>{{ notification.title }}</strong>
+                <span>{{ notification.body || 'Mở để xem chi tiết.' }}</span>
+              </button>
+            </div>
+          </div>
 
           <button
             type="button"
@@ -5042,6 +5498,37 @@ onUnmounted(() => {
         class="error"
       >
         {{ error }}
+      </div>
+
+      <div v-if="quickActionOpen" class="quick-action-backdrop" @click.self="closeQuickActions">
+        <section class="quick-action-dialog" role="dialog" aria-modal="true" aria-label="Thao tác nhanh">
+          <div class="quick-action-heading">
+            <div><strong>Thao tác nhanh</strong><span>Tối đa 3 bước cho các tác vụ CRM thường dùng.</span></div>
+            <button type="button" class="quick-action-close" aria-label="Đóng thao tác nhanh" @click="closeQuickActions">×</button>
+          </div>
+          <input
+            ref="quickActionInput"
+            v-model="quickActionQuery"
+            class="quick-action-input"
+            type="search"
+            placeholder="Tìm thao tác..."
+            aria-label="Tìm thao tác nhanh"
+          />
+          <div class="quick-action-list">
+            <button
+              v-for="action in quickActionItems"
+              :key="action.id"
+              type="button"
+              class="quick-action-item"
+              :disabled="action.disabled"
+              @click="runQuickAction(action.id)"
+            >
+              <span><strong>{{ action.label }}</strong><small>{{ action.hint }}</small></span>
+              <b>›</b>
+            </button>
+            <p v-if="!quickActionItems.length" class="settings-empty">Không tìm thấy thao tác phù hợp.</p>
+          </div>
+        </section>
       </div>
 
 
@@ -6306,6 +6793,15 @@ onUnmounted(() => {
 
                 </p>
 
+                <span
+                  class="customer-bot-status"
+                  :class="conversationBotStatus(selectedBotMode).kind"
+                  :title="conversationBotStatus(selectedBotMode).description"
+                >
+                  <i aria-hidden="true"></i>
+                  {{ conversationBotStatus(selectedBotMode).label }}
+                </span>
+
 
                 <small>
 
@@ -7031,6 +7527,15 @@ onUnmounted(() => {
         </div>
         <div v-if="selectedOrderEvents" class="report-panel order-events-panel" data-testid="order-events-panel">
           <div class="report-panel-header"><div><h3>Toàn bộ quy trình {{ selectedOrderEvents.order.order_number }}</h3><p>Nhật ký bất biến theo thời gian; thao tác nhầm vẫn được lưu để đối soát, không rollback.</p></div><button type="button" class="settings-refresh" @click="selectedOrderEvents = null">Đóng</button></div>
+          <form class="order-logistics-card" data-testid="order-logistics-card" @submit.prevent="updateOrderLogistics(selectedOrderEvents.order)">
+            <div class="order-logistics-heading"><div><strong>Thông tin vận chuyển</strong><small>Chỉ lưu thông tin giao hàng để nhân viên và hệ thống vận hành cùng theo dõi.</small></div><span class="logistics-status" :class="orderLogisticsDraft.shipping_status">{{ orderLogisticsDraft.shipping_status }}</span></div>
+            <div class="order-logistics-grid">
+              <label>Đơn vị vận chuyển<input v-model="orderLogisticsDraft.shipping_provider" maxlength="80" placeholder="GHN, GHTK, J&amp;T..." /></label>
+              <label>Mã vận đơn<input v-model="orderLogisticsDraft.tracking_code" maxlength="160" placeholder="Nhập mã vận đơn" /></label>
+              <label>Trạng thái<select v-model="orderLogisticsDraft.shipping_status"><option value="pending">Chưa bàn giao</option><option value="in_transit">Đang vận chuyển</option><option value="delivered">Đã giao</option><option value="failed">Giao thất bại</option><option value="returned">Đã hoàn</option></select></label>
+            </div>
+            <div class="order-logistics-actions"><span v-if="selectedOrderEvents.order.shipping_updated_at" class="field-hint">Cập nhật: {{ new Date(selectedOrderEvents.order.shipping_updated_at).toLocaleString('vi-VN') }}</span><button class="table-action-btn" type="submit" :disabled="orderLogisticsSaving">{{ orderLogisticsSaving ? 'Đang lưu...' : 'Lưu vận chuyển' }}</button></div>
+          </form>
           <div v-if="orderEventsLoading" class="products-empty">Đang tải lịch sử...</div>
           <div v-else-if="!selectedOrderEvents.items?.length" class="products-empty">Chưa có event.</div>
           <ol v-else class="order-events-list"><li v-for="event in chronologicalOrderEvents(selectedOrderEvents.items)" :key="event.id"><strong>{{ orderEventLabel(event) }}</strong><span>{{ orderEventSummary(event) }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small></li></ol>
@@ -7650,6 +8155,51 @@ onUnmounted(() => {
           <div v-if="authError" class="settings-notice team-error">{{ authError }}</div>
         </div>
 
+        <div v-if="authUser" class="settings-card security-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>Bảo mật tài khoản & dữ liệu</h2>
+              <p>Quản lý phiên đăng nhập, trạng thái MFA và vòng đời dữ liệu khách hàng.</p>
+            </div>
+            <button type="button" class="settings-refresh" :disabled="securityLoading" @click="fetchSecuritySettings">{{ securityLoading ? 'Đang tải...' : 'Làm mới' }}</button>
+          </div>
+          <div v-if="securityError" class="settings-notice team-error">{{ securityError }}</div>
+          <div class="security-grid">
+            <div class="security-section">
+              <div class="security-section-title"><strong>MFA</strong><span class="connection-badge" :class="{ connected: authUser.mfa_status === 'prepared' }">{{ authUser.mfa_status === 'prepared' ? 'ĐÃ CHUẨN BỊ' : 'CHƯA BẬT' }}</span></div>
+              <p class="settings-muted">MFA đang ở trạng thái chuẩn bị; bước xác minh TOTP sẽ bật ở đợt production tiếp theo.</p>
+              <div v-if="['owner', 'admin'].includes(authUser.role)" class="settings-actions">
+                <button v-if="authUser.mfa_status !== 'prepared'" type="button" class="settings-refresh" @click="prepareMfaEnrollment">Chuẩn bị MFA</button>
+                <button v-else type="button" class="team-toggle" @click="disableMfaEnrollment">Tắt MFA</button>
+              </div>
+              <span v-else class="settings-muted">Chỉ chủ shop hoặc admin được thay đổi MFA.</span>
+              <code v-if="mfaProvisioningUri" class="mfa-uri">{{ mfaProvisioningUri }}</code>
+            </div>
+            <div class="security-section">
+              <div class="security-section-title"><strong>Yêu cầu dữ liệu khách hàng</strong><span class="settings-muted">Chỉ dành cho admin</span></div>
+              <p class="settings-muted">Xuất dữ liệu được cho phép hoặc ẩn danh/xóa dữ liệu định danh theo yêu cầu.</p>
+              <div v-if="['owner', 'admin'].includes(authUser.role)" class="privacy-actions">
+                <button type="button" class="settings-refresh" :disabled="privacyLoading" @click="runPrivacyAction('export')">Xuất dữ liệu</button>
+                <button type="button" class="settings-refresh" :disabled="privacyLoading" @click="runPrivacyAction('anonymize')">Ẩn danh</button>
+                <button type="button" class="team-toggle danger" :disabled="privacyLoading" @click="runPrivacyAction('delete')">Xóa định danh</button>
+              </div>
+              <span v-else class="settings-muted">Chỉ chủ shop hoặc admin được xử lý yêu cầu dữ liệu.</span>
+              <p v-if="privacyResult" class="settings-notice">{{ privacyResult.kind }}: {{ Object.entries(privacyResult.counts || {}).map(([key, value]) => `${key}=${value}`).join(' · ') || 'Đã hoàn tất' }}</p>
+            </div>
+          </div>
+          <div class="security-sessions">
+            <div class="security-section-title"><strong>Phiên đăng nhập</strong><span class="settings-muted">{{ authSessions.length }} phiên</span></div>
+            <div v-if="!authSessions.length" class="settings-empty">Chưa có thông tin phiên đăng nhập.</div>
+            <ul v-else class="session-list">
+              <li v-for="session in authSessions" :key="session.id">
+                <span><strong>{{ session.device_label || 'Thiết bị không đặt tên' }}</strong><small>Tạo {{ session.created_at ? new Date(session.created_at).toLocaleString('vi-VN') : '—' }} · {{ session.mfa_verified ? 'MFA đã xác minh' : 'Chưa xác minh MFA' }}</small></span>
+                <button v-if="!session.revoked_at" type="button" class="team-toggle" @click="revokeAuthSession(session)">Thu hồi</button>
+                <span v-else class="settings-muted">Đã thu hồi</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
         <div class="settings-card">
           <div class="settings-card-header">
             <div>
@@ -7755,6 +8305,79 @@ onUnmounted(() => {
               <button type="button" class="history-btn" @click="cancelFollowup(item)">Hủy</button>
             </li>
           </ul>
+        </div>
+
+        <div class="settings-card csat-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>⭐ Đánh giá CSAT</h2>
+              <p>Sau khi ticket được xử lý, bot gửi khảo sát 1–5 sao và ghi nhận phản hồi tại đây.</p>
+            </div>
+            <button type="button" class="settings-refresh" :disabled="csatLoading" @click="fetchCsat">Làm mới</button>
+          </div>
+          <div class="csat-summary-grid">
+            <div><strong>{{ csatSummary.average_rating.toFixed(1) }}/5</strong><span>Điểm CSAT</span></div>
+            <div><strong>{{ Math.round(csatSummary.satisfaction_rate * 100) }}%</strong><span>Tỷ lệ hài lòng</span></div>
+            <div><strong>{{ csatSummary.responses }}</strong><span>Lượt đánh giá</span></div>
+            <div><strong>{{ Math.round(csatSummary.bot_resolution_rate * 100) }}%</strong><span>Bot xử lý</span></div>
+          </div>
+          <div v-if="!csatLoading && !csatFeedback.length" class="settings-empty">Chưa có phản hồi CSAT.</div>
+          <ul v-else class="csat-feedback-list">
+            <li v-for="item in csatFeedback.slice(0, 5)" :key="item.id">
+              <div><strong>{{ item.rating ? `${item.rating}/5 sao` : 'Chờ đánh giá' }}</strong><small>{{ new Date(item.requested_at).toLocaleString('vi-VN') }}</small></div>
+              <span>{{ item.comment || (item.status === 'sent' ? 'Đã gửi khảo sát, đang chờ khách trả lời.' : 'Đang chờ gửi khảo sát.') }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <div v-if="platformAdmin" class="settings-card platform-admin-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>Quản trị Smart Merchant Hub</h2>
+              <p>Khóa/mở shop, xem quota và chuẩn bị pilot schema-per-tenant.</p>
+            </div>
+            <button type="button" class="settings-refresh" :disabled="platformLoading" @click="fetchPlatformAdmin">{{ platformLoading ? 'Đang tải...' : 'Làm mới' }}</button>
+          </div>
+          <div v-if="platformError" class="settings-notice team-error">{{ platformError }}</div>
+          <div v-if="!platformShops.length" class="settings-empty">Chưa có shop trên nền tảng.</div>
+          <div v-else class="platform-table-wrap">
+            <table class="team-table platform-table">
+              <thead><tr><th>Shop</th><th>Trạng thái</th><th>Quota đã dùng</th><th></th></tr></thead>
+              <tbody>
+                <tr v-for="shop in platformShops" :key="shop.id">
+                  <td><strong>{{ shop.name }}</strong><small>{{ shop.slug }} · {{ shop.plan_name || 'Chưa có gói' }}</small></td>
+                  <td><span class="team-status" :class="{ inactive: shop.status === 'suspended' }">{{ shop.status === 'suspended' ? 'Đã khóa' : 'Đang hoạt động' }}</span></td>
+                  <td><small v-if="Object.keys(shop.usage || {}).length">{{ Object.entries(shop.usage).map(([key, value]) => `${key}: ${value}`).join(' · ') }}</small><small v-else>Chưa ghi nhận</small></td>
+                  <td><button type="button" class="team-toggle" @click="togglePlatformShop(shop)">{{ shop.status === 'suspended' ? 'Mở shop' : 'Khóa shop' }}</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="platform-schema-panel">
+            <div class="settings-card-header"><div><h3>Pilot schema-per-tenant</h3><p>Chỉ ghi registry; chưa chuyển dữ liệu CRM hiện tại.</p></div></div>
+            <div v-if="!platformSchemas.length" class="settings-empty">Chưa đăng ký schema pilot.</div>
+            <ul v-else class="permission-list">
+              <li v-for="schema in platformSchemas" :key="schema.id">
+                <strong>Shop #{{ schema.business_id }} · {{ schema.schema_name }}</strong>
+                <span>{{ schema.feature_enabled ? 'Đang bật pilot' : `Trạng thái: ${schema.state}` }}</span>
+                <button type="button" class="history-btn" @click="stagePlatformSchema(schema)">{{ schema.state === 'ready' ? 'Tắt pilot' : 'Bật pilot' }}</button>
+              </li>
+            </ul>
+            <div v-if="platformShops.some((shop) => !platformSchemas.some((schema) => schema.business_id === shop.id))" class="platform-schema-actions">
+              <button v-for="shop in platformShops.filter((item) => !platformSchemas.some((schema) => schema.business_id === item.id))" :key="shop.id" type="button" class="settings-refresh" @click="registerPlatformSchema(shop.id)">Đăng ký schema cho {{ shop.name }}</button>
+            </div>
+          </div>
+          <div class="platform-audit-panel">
+            <div class="settings-card-header"><div><h3>Audit nền tảng</h3><p>Thao tác khóa/mở shop, gói, thanh toán và schema pilot.</p></div></div>
+            <p v-if="!platformAuditLogs.length" class="settings-empty">Chưa có audit nền tảng.</p>
+            <ul v-else class="audit-list">
+              <li v-for="log in platformAuditLogs.slice(0, 10)" :key="log.id">
+                <strong>{{ log.action }}</strong>
+                <span> · {{ log.resource_type }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span>
+                <small>{{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '' }}</small>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <div class="settings-card team-card">

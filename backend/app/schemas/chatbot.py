@@ -133,3 +133,32 @@ class FollowUpOut(BaseModel):
 class FollowUpListOut(BaseModel):
     items: list[FollowUpOut]
     total: int
+
+
+class CsatSummaryOut(BaseModel):
+    responses: int
+    average_rating: float
+    satisfaction_rate: float
+    bot_resolution_rate: float
+
+
+class CustomerFeedbackOut(BaseModel):
+    id: int
+    business_id: int
+    conversation_id: int
+    customer_id: int
+    ticket_id: int | None = None
+    followup_id: int | None = None
+    status: str
+    rating: int | None = None
+    comment: str | None = None
+    requested_at: datetime | None = None
+    responded_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerFeedbackListOut(BaseModel):
+    items: list[CustomerFeedbackOut]
+    total: int
+    summary: CsatSummaryOut

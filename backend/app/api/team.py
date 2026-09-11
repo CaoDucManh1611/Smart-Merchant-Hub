@@ -15,6 +15,7 @@ from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_admin_access
 from app.services.audit_service import record_audit
+from app.services.quota_service import QuotaExceededError, reserve_quota
 
 
 router = APIRouter()
@@ -172,6 +173,15 @@ def create_team_member(
 ):
     email = _normalize_email(payload.email)
     _ensure_unique_email(db, email, tenant)
+    try:
+        reserve_quota(
+            db,
+            tenant.business_id,
+            "staff_users",
+            idempotency_key=f"team-user:{tenant.business_id}:{email}",
+        )
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=exc.detail) from exc
     user = User(
         business_id=tenant.business_id,
         full_name=payload.full_name.strip(),

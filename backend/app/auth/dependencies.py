@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models.auth_session import AuthSession
-from app.models.business import User
+from app.models.business import Business, User
 from app.services.permission_service import permission_allowed
 
 
@@ -107,7 +107,37 @@ def require_permission(permission: str):
     return dependency
 
 
-def require_write_access(user: User | None = Depends(get_optional_user)) -> User | None:
+def _active_business_id(request: Request, user: User | None, x_business_id: str | None) -> int | None:
+    if user is not None:
+        return user.business_id
+    state_id = getattr(request.state, "business_id", None) or getattr(request.state, "channel_business_id", None)
+    if state_id is not None:
+        return int(state_id)
+    if x_business_id:
+        try:
+            return int(x_business_id)
+        except ValueError:
+            return None
+    return None
+
+
+def _ensure_business_active(db: Session, business_id: int | None) -> None:
+    if business_id is None:
+        return
+    business = db.get(Business, business_id)
+    if business is not None and business.status != "active":
+        raise HTTPException(
+            status_code=423,
+            detail={"code": "business_suspended", "message": "Shop đang tạm khóa bởi quản trị nền tảng."},
+        )
+
+
+def require_write_access(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+    x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
+) -> User | None:
     """Enforce write permissions whenever a caller presents a bearer token.
 
     Development deployments historically accepted the tenant header without
@@ -118,18 +148,27 @@ def require_write_access(user: User | None = Depends(get_optional_user)) -> User
     if user is None:
         if settings.ENVIRONMENT.strip().lower() == "production":
             raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
+        _ensure_business_active(db, _active_business_id(request, user, x_business_id))
         return None
+    _ensure_business_active(db, _active_business_id(request, user, x_business_id))
     if (user.role or "").lower() not in {"owner", "admin", "agent"}:
         raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này.")
     return user
 
 
-def require_admin_access(user: User | None = Depends(get_optional_user)) -> User | None:
+def require_admin_access(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+    x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
+) -> User | None:
     """Require owner/admin for team, security, and configuration writes."""
     if user is None:
         if settings.ENVIRONMENT.strip().lower() == "production":
             raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
+        _ensure_business_active(db, _active_business_id(request, user, x_business_id))
         return None
+    _ensure_business_active(db, _active_business_id(request, user, x_business_id))
     if (user.role or "").lower() not in {"owner", "admin"}:
         raise HTTPException(status_code=403, detail="Chỉ quản trị viên mới được thực hiện thao tác này.")
     return user

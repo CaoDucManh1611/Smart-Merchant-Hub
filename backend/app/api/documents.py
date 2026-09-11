@@ -28,6 +28,7 @@ from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_write_access
 from app.services.job_service import dispatch_due_jobs, enqueue_job
+from app.services.quota_service import QuotaExceededError, prime_quota, release_quota, reserve_quota
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,12 @@ def _dispatch_rag_job(db: Session, payload: dict, business_id: int) -> None:
     doc = db.query(Document).filter(Document.id == int(payload["document_id"]), Document.business_id == business_id).first()
     if run is None or doc is None:
         return
+    prior_chunk_count = int(doc.chunk_count or 0)
+    # Seed the current total before ingestion replaces chunks.  This keeps a
+    # reindex from counting the old chunks twice and leaves a safe baseline if
+    # the provider fails before producing a new index.
+    prime_quota(db, business_id, "rag_chunks")
+    db.commit()
     run.status = "processing"
     run.phase = "load"
     run.attempts = (run.attempts or 0) + 1
@@ -99,6 +106,45 @@ def _dispatch_rag_job(db: Session, payload: dict, business_id: int) -> None:
         raise
     db.refresh(doc)
     db.refresh(run)
+    if doc.status == "ready":
+        delta_chunks = max(0, int(doc.chunk_count or 0) - prior_chunk_count)
+        if int(doc.chunk_count or 0) < prior_chunk_count:
+            release_quota(
+                db,
+                business_id,
+                "rag_chunks",
+                requested=prior_chunk_count - int(doc.chunk_count or 0),
+            )
+        if delta_chunks:
+            try:
+                reserve_quota(
+                    db,
+                    business_id,
+                    "rag_chunks",
+                    requested=delta_chunks,
+                    idempotency_key=f"rag-run:{run.id}",
+                )
+            except QuotaExceededError as exc:
+                db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete(synchronize_session=False)
+                doc.status = "error"
+                doc.embedding_status = "error"
+                doc.chunk_count = 0
+                doc.error_message = "Đã vượt quota chunks RAG của gói dịch vụ."
+                if prior_chunk_count:
+                    release_quota(db, business_id, "rag_chunks", prior_chunk_count)
+                run.status = "failed"
+                run.phase = "complete"
+                run.chunk_count = 0
+                run.error_message = doc.error_message
+                run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                db.commit()
+                logger.warning(
+                    "RAG chunk quota exhausted for business %d, document %d: %s",
+                    business_id,
+                    doc.id,
+                    exc.detail,
+                )
+                return
     run.status = "completed" if doc.status == "ready" else "failed"
     run.phase = "complete"
     run.chunk_count = int(doc.chunk_count or 0)
@@ -145,6 +191,11 @@ async def upload_document(
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(400, "File rỗng.")
+
+    try:
+        reserve_quota(db, tenant.business_id, "documents")
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=exc.detail) from exc
 
     # Giới hạn kích thước (20MB)
     max_size = 20 * 1024 * 1024
@@ -350,7 +401,16 @@ async def remove_document(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Xóa tài liệu và tất cả chunks liên quan."""
+    doc = db.query(Document).filter(
+        Document.id == document_id,
+        Document.business_id == tenant.business_id,
+    ).first()
+    prior_chunks = int(doc.chunk_count or 0) if doc else 0
     deleted = delete_document(document_id, db, business_id=tenant.business_id)
     if not deleted:
         raise HTTPException(404, "Tài liệu không tồn tại.")
+    release_quota(db, tenant.business_id, "documents")
+    if prior_chunks:
+        release_quota(db, tenant.business_id, "rag_chunks", prior_chunks)
+    db.commit()
     return None

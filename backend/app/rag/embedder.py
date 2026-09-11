@@ -4,6 +4,7 @@ import time
 from functools import lru_cache
 
 from app.core.config import settings
+from app.services.api_key_pool import ApiKeyPool, ApiKeyPoolUnavailable, call_with_key_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +45,19 @@ def embedding_retry_delay(error: Exception) -> int | None:
 
 
 def _embedding_api_key() -> str:
-    """Use a dedicated embedding key, with legacy LLM_API_KEY fallback."""
-    api_key = settings.EMBEDDING_API_KEY or settings.LLM_API_KEY
-    if not api_key:
-        raise ValueError(
-            "EMBEDDING_API_KEY chưa được cấu hình trong backend/.env."
-        )
-    return api_key
+    """Return one embedding key, preserving the legacy single-key fallback."""
+    try:
+        return _embedding_pool().next_key()
+    except ApiKeyPoolUnavailable as error:
+        raise ValueError("EMBEDDING_API_KEY chưa được cấu hình trong backend/.env.") from error
+
+
+@lru_cache(maxsize=4)
+def _embedding_pool(keys: tuple[str, ...] | None = None, cooldown_seconds: int | None = None) -> ApiKeyPool:
+    return ApiKeyPool(
+        list(keys if keys is not None else settings.embedding_api_keys),
+        cooldown_seconds=cooldown_seconds or settings.API_KEY_COOLDOWN_SECONDS,
+    )
 
 
 def _validate_vectors(
@@ -82,8 +89,6 @@ def _embed_with_gemini(
     """Embed texts bằng Google Gemini API."""
     import google.generativeai as genai
 
-    genai.configure(api_key=_embedding_api_key())
-
     embeddings = []
     # Gemini hỗ trợ batch nhưng giới hạn ~100 texts/request
     batch_size = 100
@@ -91,11 +96,9 @@ def _embed_with_gemini(
         batch = texts[i : i + batch_size]
         for attempt in range(5):
             try:
-                result = genai.embed_content(
-                    model=f"models/{model}",
-                    content=batch,
-                    task_type="retrieval_document",
-                    output_dimensionality=settings.EMBEDDING_DIMENSION,
+                result = call_with_key_rotation(
+                    _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
+                    lambda key: _gemini_embed_batch_once(genai, key, batch, model),
                 )
                 break
             except Exception as error:
@@ -119,6 +122,16 @@ def _embed_with_gemini(
     return embeddings
 
 
+def _gemini_embed_batch_once(genai, api_key: str, batch: list[str], model: str):
+    genai.configure(api_key=api_key)
+    return genai.embed_content(
+        model=f"models/{model}",
+        content=batch,
+        task_type="retrieval_document",
+        output_dimensionality=settings.EMBEDDING_DIMENSION,
+    )
+
+
 def _embed_query_with_gemini(
     text: str,
     model: str,
@@ -126,15 +139,21 @@ def _embed_query_with_gemini(
     """Embed 1 query duy nhất bằng Gemini (dùng task_type khác)."""
     import google.generativeai as genai
 
-    genai.configure(api_key=_embedding_api_key())
+    result = call_with_key_rotation(
+        _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
+        lambda key: _gemini_embed_query_once(genai, key, text, model),
+    )
+    return result["embedding"]
 
-    result = genai.embed_content(
+
+def _gemini_embed_query_once(genai, api_key: str, text: str, model: str):
+    genai.configure(api_key=api_key)
+    return genai.embed_content(
         model=f"models/{model}",
         content=text,
         task_type="retrieval_query",
         output_dimensionality=settings.EMBEDDING_DIMENSION,
     )
-    return result["embedding"]
 
 
 def _embed_with_local(
@@ -182,15 +201,16 @@ def _embed_with_openai(
     """Embed texts bằng OpenAI API."""
     from openai import OpenAI
 
-    client = OpenAI(api_key=_embedding_api_key())
-
     embeddings = []
     batch_size = 2048
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        response = client.embeddings.create(
-            model=model,
-            input=batch,
+        response = call_with_key_rotation(
+            _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
+            lambda key: OpenAI(api_key=key).embeddings.create(
+                model=model,
+                input=batch,
+            ),
         )
         for item in response.data:
             embeddings.append(item.embedding)

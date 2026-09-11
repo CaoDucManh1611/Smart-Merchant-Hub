@@ -83,10 +83,12 @@ Các tính năng chatbot nâng cao được quản lý theo từng `X-Business-I
 - `GET/POST/PATCH/DELETE /api/chatbot/canned-responses`: mẫu trả lời nhanh như `/cod`.
 - `POST /api/chatbot/conversations/{id}/pause|resume`: nhân viên tiếp quản hoặc trả hội thoại về bot.
 - `GET /api/chatbot/conversations/{id}/memory` và `POST /api/chatbot/conversations/{id}/tools/execute`: memory và allow-list tool có kiểm tra tenant.
-- `GET/POST /api/chatbot/followups`, `POST /api/chatbot/followups/dispatch`: nhắc lại đơn nháp/bỏ giỏ và chăm sóc chủ động.
+- `GET/POST /api/chatbot/followups`, `POST /api/chatbot/followups/dispatch`: nhắc lại đơn nháp/bỏ giỏ và chăm sóc chủ động. Báo giá bỏ dở được nhắc sau 2 giờ; đơn chuyển `delivered` được nhắc chăm sóc sau 24 giờ; khách xác nhận hoặc hủy thì nhắc bỏ giỏ được hủy.
+- `GET /api/chatbot/csat`: danh sách phản hồi CSAT và điểm trung bình theo shop. Khi ticket chuyển sang `resolved` hoặc `closed`, hệ thống tự gửi khảo sát 1–5 sao sau follow-up.
+- Provider LLM/embedding có thể nhận danh sách key phân tách bằng dấu phẩy qua `GROQ_API_KEYS`, `LLM_API_KEYS` và `EMBEDDING_API_KEYS`. Hệ thống xoay vòng theo lượt, tạm ngưng key khi gặp lỗi quota/rate-limit/auth và không ghi raw key vào log.
 
 Worker CRM hiện có thể xử lý job `chatbot.followup`; môi trường development có thể gọi
-endpoint dispatch theo lịch (ví dụ mỗi phút). CSAT, outbound webhook và setup wizard
+endpoint dispatch theo lịch (ví dụ mỗi phút). Outbound webhook và setup wizard
 không nằm trong phạm vi bản này.
 
 Kiểm tra phiên bản schema:

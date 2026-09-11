@@ -1,3 +1,5 @@
+from datetime import datetime
+from decimal import Decimal
 from unittest.mock import Mock, patch
 
 from app.services.auto_reply_service import (
@@ -6,6 +8,7 @@ from app.services.auto_reply_service import (
     process_rag_auto_reply,
     send_text_reply,
 )
+from app.services.quota_service import QuotaDecision, QuotaExceededError
 
 
 def test_auto_reply_dispatches_telegram_through_tenant_channel():
@@ -149,3 +152,34 @@ def test_product_catalog_reply_formats_price_and_stock():
 
     assert "Serum Vitamin C — 420.000 đồng (còn 6)" in reply
     assert "Kem chống nắng — 289.000 đồng (hết hàng)" in reply
+
+
+def test_rag_auto_reply_checks_ai_quota_before_calling_llm():
+    db = Mock()
+    quota_error = QuotaExceededError(
+        QuotaDecision(
+            allowed=False,
+            resource="ai_calls",
+            used=Decimal("10"),
+            limit=Decimal("10"),
+            requested=Decimal("1"),
+            period_start=datetime(2026, 9, 1),
+        )
+    )
+    chunk = Mock(document_id=3, similarity=0.9)
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.retrieve", return_value=[chunk]), \
+        patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
+        patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "q"}]), \
+        patch("app.services.auto_reply_service.record_quota_usage", side_effect=quota_error), \
+        patch("app.services.auto_reply_service.call_llm") as call_llm:
+        result = process_rag_auto_reply(
+            db=db,
+            conversation_id=4,
+            channel="telegram",
+            query_text="giá serum",
+            business_id=1,
+        )
+
+    assert result is False
+    call_llm.assert_not_called()

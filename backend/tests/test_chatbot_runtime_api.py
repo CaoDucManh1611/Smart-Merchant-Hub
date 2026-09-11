@@ -10,6 +10,7 @@ from app.main import app
 from app.models.business import Business
 from app.models.conversation import Conversation
 from app.models.customer import Customer
+from app.models.customer_feedback import CustomerFeedback
 
 
 class ChatbotRuntimeApiTests(unittest.TestCase):
@@ -43,6 +44,7 @@ class ChatbotRuntimeApiTests(unittest.TestCase):
             db.commit()
             cls.business_id = first.id
             cls.other_business_id = second.id
+            cls.customer_id = customer.id
             cls.conversation_id = conversation.id
 
         def override_get_db():
@@ -109,3 +111,24 @@ class ChatbotRuntimeApiTests(unittest.TestCase):
         )
         self.assertEqual(200, resumed.status_code)
         self.assertEqual("auto", resumed.json()["bot_mode"])
+
+    def test_csat_endpoint_is_tenant_scoped_and_returns_summary(self):
+        with Session(self.engine) as db:
+            db.add(CustomerFeedback(
+                business_id=self.business_id,
+                conversation_id=self.conversation_id,
+                customer_id=self.customer_id,
+                idempotency_key="test-csat-api",
+                status="responded",
+                rating=4,
+            ))
+            db.commit()
+
+        visible = self.client.get("/api/chatbot/csat", headers=self.headers())
+        self.assertEqual(200, visible.status_code)
+        self.assertEqual(1, visible.json()["total"])
+        self.assertEqual(4.0, visible.json()["summary"]["average_rating"])
+
+        hidden = self.client.get("/api/chatbot/csat", headers=self.headers(self.other_business_id))
+        self.assertEqual(200, hidden.status_code)
+        self.assertEqual(0, hidden.json()["total"])

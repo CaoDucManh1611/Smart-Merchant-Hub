@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models.channel import Channel
 from app.services.channel_credentials import decrypt_token
 from app.services.channel_credentials import encrypt_token
+from app.services.quota_service import reserve_quota
 
 
 TOKEN_EXPIRY_WARNING = timedelta(days=7)
@@ -108,6 +109,14 @@ def upsert_channel_connection(
     )
     if channel is not None and channel.business_id != business_id:
         raise PermissionError("External channel account already belongs to another business")
+    needs_slot = channel is None or channel.status != "active"
+    if needs_slot:
+        reserve_quota(
+            db,
+            business_id,
+            "connected_channels",
+            idempotency_key=f"channel:{channel_type}:{external_account_id}",
+        )
     if channel is None:
         channel = Channel(
             business_id=business_id,

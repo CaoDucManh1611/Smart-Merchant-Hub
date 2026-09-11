@@ -1,6 +1,6 @@
 # Owly Agent Capabilities Implementation Plan
 
-> **For agentic workers:** Implement this plan inline task-by-task with a test checkpoint after each task. CSAT, outbound webhooks and setup wizard are explicitly out of scope.
+> **For agentic workers:** Implement this plan inline task-by-task with a test checkpoint after each task. Outbound webhooks and setup wizard are explicitly out of scope.
 
 **Goal:** Add the highest-value Owly-inspired chatbot capabilities to Smart Merchant Hub without replacing its existing RAG, CRM, order, ticket or workflow contracts.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI, SQLAlchemy, Alembic, PostgreSQL, Vue 3, Node test runner, pytest.
 
-**Spec:** Owly README and AI Tool System concepts, adapted to Smart Merchant Hub; CSAT, outbound webhooks and setup wizard excluded by user request.
+**Spec:** Owly README and AI Tool System concepts, adapted to Smart Merchant Hub; outbound webhooks and setup wizard remain excluded by user request.
 
 ## Global Constraints
 
@@ -111,3 +111,21 @@
 - [x] Run the full backend test suite with the project test environment.
 - [x] Run all frontend tests and a production Vite build.
 - [x] Run `git diff --check` and report any unrelated pre-existing dirty files without reverting them.
+
+### Task 7: CSAT feedback after resolution
+
+**Files:**
+- Create: `backend/app/models/customer_feedback.py`
+- Create: `backend/app/services/csat_service.py`
+- Create: `backend/alembic/versions/20260909_0035_customer_feedback.py`
+- Modify: `backend/app/api/tickets.py`
+- Modify: `backend/app/services/message_service.py`
+- Modify: `backend/app/services/chatbot_followup.py`
+- Modify: `backend/app/api/chatbot.py`
+- Modify: `frontend/src/App.vue`
+
+**Produces:** A one-time 1–5 survey after a ticket is resolved, persisted feedback and tenant-scoped CSAT metrics. An explicit rating is consumed before commerce/RAG intent parsing, and the CRM displays average score, satisfaction rate and bot-handled rate.
+
+- [x] Add idempotent survey scheduling and response tests.
+- [x] Trigger the survey from resolved/closed tickets and persist the response.
+- [x] Expose tenant-scoped feedback metrics in the chatbot settings UI.

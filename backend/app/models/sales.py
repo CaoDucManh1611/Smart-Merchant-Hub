@@ -73,6 +73,9 @@ class Order(Base):
     cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     shipping_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     shipping_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    shipping_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    tracking_code: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    shipping_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

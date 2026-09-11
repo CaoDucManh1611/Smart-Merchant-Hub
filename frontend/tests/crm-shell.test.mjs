@@ -129,6 +129,34 @@ test("Team settings expose tenant-scoped permission overrides", () => {
   assert.match(appSource, /Xóa quy tắc/);
 });
 
+test("platform administration exposes shop status, usage, and schema pilot controls", () => {
+  assert.match(appSource, /platformAdmin/);
+  assert.match(appSource, /platform\/shops/);
+  assert.match(appSource, /platform\/tenant-schemas/);
+  assert.match(appSource, /platform\/audit-logs/);
+  assert.match(appSource, /Khóa shop|Mở shop/);
+  assert.match(appSource, /Quota|Giới hạn/);
+  assert.match(appSource, /schema-per-tenant/);
+});
+
+test("settings expose session, MFA, and privacy controls", () => {
+  assert.match(appSource, /auth\/sessions/);
+  assert.match(appSource, /auth\/mfa\/prepare/);
+  assert.match(appSource, /auth\/mfa\/disable/);
+  assert.match(appSource, /privacy\/\$\{kind\}/);
+  assert.match(appSource, /Bảo mật tài khoản & dữ liệu/);
+  assert.match(appSource, /Thu hồi/);
+});
+
+test("CRM exposes a three-step quick action palette", () => {
+  assert.match(appSource, /quickActionOpen/);
+  assert.match(appSource, /Ctrl\+K|Cmd\+K/);
+  assert.match(appSource, /Tạo ticket nhanh/);
+  assert.match(appSource, /Tạo đơn nháp nhanh/);
+  assert.match(appSource, /Nhân viên tiếp quản/);
+  assert.match(appSource, /quick-action-dialog/);
+});
+
 test("AI navigation keeps the Rule Lab and Assistant under one group", () => {
   assert.match(appSource, /class="ai-submenu"/);
   assert.match(appSource, />AI Rule Lab</);
@@ -160,6 +188,13 @@ test("Customer 360 displays the collected profile name, email, and phone", () =>
   assert.match(appSource, /class="customer-profile-fields"/);
   assert.match(appSource, /customer360\.phone/);
   assert.match(appSource, /customer360\.name/);
+});
+
+test("chatbot settings expose CSAT results for resolved conversations", () => {
+  assert.match(appSource, /csatSummary/);
+  assert.match(appSource, /\/chatbot\/csat/);
+  assert.match(appSource, /Điểm CSAT/);
+  assert.match(appSource, /Tỷ lệ hài lòng/);
 });
 
 test("Customer 360 details use a scrollable panel so the full profile remains visible", () => {
@@ -267,6 +302,18 @@ test("inbox keeps actionable quick tabs and a complete channel selector", () => 
 test("inbox no longer renders the selected-customer order strip", () => {
   assert.match(appSource, />Đơn bán</);
   assert.doesNotMatch(appSource, /class="inbox-order-strip"/);
+});
+
+test("sales order history exposes logistics metadata without a separate delivery module", () => {
+  assert.match(appSource, /data-testid="order-logistics-card"/);
+  assert.match(appSource, /updateOrderLogistics/);
+  assert.match(appSource, /shipping_provider/);
+  assert.match(appSource, /tracking_code/);
+  assert.match(appSource, /Lưu vận chuyển/);
+  assert.match(appSource, /logistics_updated: "Cập nhật vận chuyển"/);
+  assert.match(styleSource, /\.order-logistics-card/);
+  assert.match(styleSource, /\.order-logistics-grid/);
+  assert.doesNotMatch(appSource, />Đơn giao hàng</);
 });
 
 test("inbox workspace fills the remaining viewport instead of reserving a blank lower area", () => {
