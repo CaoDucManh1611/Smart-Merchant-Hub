@@ -190,6 +190,36 @@ test("Customer 360 displays the collected profile name, email, and phone", () =>
   assert.match(appSource, /customer360\.name/);
 });
 
+test("Customer Ops masks customer PII consistently across order and CRM selectors", () => {
+  assert.match(appSource, /function customerOptionLabel\(customer\)/);
+  assert.match(appSource, /const email = maskCustomerEmail\(customer\?\.email\)/);
+  assert.match(appSource, /const phone = maskCustomerPhone\(customer\?\.phone\)/);
+  assert.match(appSource, /function orderCustomerPhone\(customerId\)[\s\S]*?maskCustomerPhone\(customer\?\.phone\)/);
+  assert.match(appSource, /const selectedOrderCustomerPhone = computed\(\(\) => \([\s\S]*?maskCustomerPhone/);
+  assert.doesNotMatch(appSource, /customer\.name \|\| customer\.email \|\| customer\.phone \|\| customer\.channel/);
+});
+
+test("Customer Ops exposes a recoverable Customer 360 error state", () => {
+  assert.match(appSource, /const customer360Error = ref\(""\)/);
+  assert.match(appSource, /class="customer-360-error" role="alert"/);
+  assert.match(appSource, /Không tải được Customer 360\. Hãy thử lại\./);
+  assert.match(appSource, /@click="loadCustomer360\(selected\?\.customer_id\)"/);
+  assert.match(styleSource, /\.customer-360-error\s*\{/);
+});
+
+test("Customer Ops refreshes the Customer 360 timeline after staff actions", () => {
+  assert.match(appSource, /async function reassignConversation[\s\S]*?conversation\.assigned_user_id = result\.assigned_user_id;[\s\S]*?await loadCustomer360\(conversation\.customer_id\)/);
+  assert.match(appSource, /async function toggleBotMode[\s\S]*?await loadCustomer360\(customerId\)/);
+});
+
+test("Internal notes save without referencing an unrelated media variable", () => {
+  const start = appSource.indexOf("async function sendComposerContent()");
+  const end = appSource.indexOf("async function fetchLeadActivities", start);
+  const internalNoteHandler = appSource.slice(start, end);
+  assert.match(internalNoteHandler, /clearImage\(\)/);
+  assert.doesNotMatch(internalNoteHandler, /removePendingMedia\(media\.id\)/);
+});
+
 test("chatbot settings expose CSAT results for resolved conversations", () => {
   assert.match(appSource, /csatSummary/);
   assert.match(appSource, /\/chatbot\/csat/);
@@ -201,6 +231,13 @@ test("Customer 360 details use a scrollable panel so the full profile remains vi
   assert.match(appSource, /class="customer customer-panel-scroll"/);
   assert.match(styleSource, /\.customer-panel-scroll\s*\{[\s\S]*?overflow-y:\s*auto/);
   assert.match(styleSource, /\.customer-panel-scroll\s*\{[\s\S]*?overflow-x:\s*hidden/);
+});
+
+test("Customer Ops has explicit tablet and mobile layout fallbacks", () => {
+  assert.match(styleSource, /@media \(max-width: 1180px\)\s*\{[\s\S]*?\.customer\s*\{\s*display:\s*none;/);
+  assert.match(styleSource, /@media \(max-width: 860px\)\s*\{[\s\S]*?\.layout\s*\{\s*grid-template-columns:\s*1fr;/);
+  assert.match(styleSource, /@media \(max-width: 620px\)\s*\{[\s\S]*?\.chat-shell \.chat-tools\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+  assert.match(styleSource, /\.products-table-wrap\s*\{[\s\S]*?overflow-x:\s*auto/);
 });
 
 test("Zalo has its own channel label and branded icon fallback", () => {

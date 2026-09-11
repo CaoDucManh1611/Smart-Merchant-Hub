@@ -2249,6 +2249,26 @@ button:hover {
   font-size: 0.85rem;
 }
 
+.customer-360-error {
+  display: grid;
+  gap: 0.45rem;
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  color: #8d2438;
+  border: 1px solid #f2c5cc;
+  border-radius: 12px;
+  background: #fff5f6;
+  font-size: 0.82rem;
+}
+
+.customer-360-error span {
+  color: #a85d68;
+}
+
+.customer-360-error .table-action-btn {
+  justify-self: start;
+}
+
 .customer-360-data .section {
   margin-top: 1rem;
 }

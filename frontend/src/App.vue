@@ -41,6 +41,7 @@ const conversations = ref([]);
 const messages = ref([]);
 const customer360 = ref(null);
 const customer360Loading = ref(false);
+const customer360Error = ref("");
 const customerFactSaving = ref(false);
 const customerFactError = ref("");
 const customerFactDraft = ref({
@@ -921,7 +922,7 @@ const selectedOrderCustomer = computed(() => (
 ));
 
 const selectedOrderCustomerPhone = computed(() => (
-  String(selectedOrderCustomer.value?.phone || "").trim()
+  maskCustomerPhone(selectedOrderCustomer.value?.phone)
 ));
 
 // The lower order strip is contextual: it only renders an actual order that
@@ -1047,14 +1048,25 @@ function orderCustomerName(customerId) {
   const customer = orderCustomers.value.find(
     (candidate) => Number(candidate.id) === Number(customerId),
   );
-  return customer?.name || customer?.email || customer?.channel || "Khách hàng";
+  return customerOptionLabel(customer);
 }
 
 function orderCustomerPhone(customerId) {
   const customer = orderCustomers.value.find(
     (candidate) => Number(candidate.id) === Number(customerId),
   );
-  return String(customer?.phone || "").trim() || "Chưa có số điện thoại";
+  return maskCustomerPhone(customer?.phone) || "Chưa có số điện thoại";
+}
+
+function customerOptionLabel(customer) {
+  const name = maskCustomerName(customer?.name);
+  if (name) return name;
+
+  const email = maskCustomerEmail(customer?.email);
+  if (email) return email;
+
+  const phone = maskCustomerPhone(customer?.phone);
+  return phone || customer?.channel || "Khách hàng";
 }
 
 function orderConversationLabel(conversation) {
@@ -1923,6 +1935,7 @@ function toggleVoiceRecording() {
 ========================================================= */
 
 function handlePaste(event) {
+  if (composerMode.value === "internal") return;
 
   const clipboardItems =
     event.clipboardData?.items
@@ -3565,6 +3578,7 @@ async function reassignConversation(conversation, assignedUserId) {
     }
     const result = await response.json();
     conversation.assigned_user_id = result.assigned_user_id;
+    await loadCustomer360(conversation.customer_id);
   } catch (err) {
     error.value = err.message || "Không thể gán hội thoại.";
   }
@@ -4061,10 +4075,12 @@ async function changeTicketStatus(ticket, status) {
 async function loadCustomer360(customerId) {
   if (!customerId) {
     customer360.value = null;
+    customer360Error.value = "";
     return;
   }
 
   customer360Loading.value = true;
+  customer360Error.value = "";
   try {
     const [profileResponse, timelineResponse, historyResponse, duplicateResponse] = await Promise.all([
       apiFetch(`${API_BASE}/customers/${customerId}`),
@@ -4092,6 +4108,7 @@ async function loadCustomer360(customerId) {
       timelineOffset: timeline.next_offset ?? (timeline.items || []).length,
       timelineHasMore: Boolean(timeline.has_more),
     };
+    customer360Error.value = "";
     customerTimelineError.value = "";
     customerMergeHistory.value = history.items || [];
     duplicateSuggestions.value = duplicates.items || [];
@@ -4101,6 +4118,7 @@ async function loadCustomer360(customerId) {
   } catch (err) {
     console.error("Customer 360 loading error:", err);
     customer360.value = null;
+    customer360Error.value = "Không tải được Customer 360. Hãy thử lại.";
   } finally {
     customer360Loading.value = false;
   }
@@ -4827,6 +4845,9 @@ function setComposerMode(mode) {
   if (mode === "internal" && voiceRecording.value) {
     discardVoiceRecording();
   }
+  if (mode === "internal") {
+    clearImage();
+  }
   composerMode.value = mode;
   nextTick(() => document.querySelector(".chat-composer textarea")?.focus());
 }
@@ -4871,7 +4892,7 @@ async function sendComposerContent() {
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
     draft.value = "";
-    removePendingMedia(media.id);
+    clearImage();
     await loadCustomer360(customerId);
   } catch (err) {
     error.value = err.message || "Không thể lưu ghi chú nội bộ.";
@@ -5163,6 +5184,7 @@ async function saveCannedResponse() {
 async function toggleBotMode() {
   if (!selected.value?.conversation_id) return;
   const mode = selectedBotMode.value === "human" ? "resume" : "pause";
+  const customerId = selected.value.customer_id;
   try {
     const response = await apiFetch(`${API_BASE}/chatbot/conversations/${selected.value.conversation_id}/${mode}`, {
       method: "POST",
@@ -5171,6 +5193,7 @@ async function toggleBotMode() {
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
     botModes.value = { ...botModes.value, [selected.value.conversation_id]: (await response.json()).bot_mode };
+    await loadCustomer360(customerId);
   } catch (err) {
     error.value = err.message || "Không thể đổi chế độ chatbot.";
   }
@@ -6825,6 +6848,12 @@ onUnmounted(() => {
               Đang tải Customer 360...
             </div>
 
+            <div v-else-if="customer360Error" class="customer-360-error" role="alert">
+              <strong>Không thể tải Customer 360</strong>
+              <span>{{ customer360Error }}</span>
+              <button type="button" class="table-action-btn" @click="loadCustomer360(selected?.customer_id)">Thử lại</button>
+            </div>
+
             <div v-else-if="customer360" class="customer-360-data">
               <div class="section customer-identities-section">
                 <div class="section-head">
@@ -7250,7 +7279,7 @@ onUnmounted(() => {
               <select v-model="leadForm.customer_id" required>
                 <option value="" disabled>Chọn khách hàng</option>
                 <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
-                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                  #{{ customer.id }} — {{ customerOptionLabel(customer) }}
                 </option>
               </select>
             </label>
@@ -7341,7 +7370,7 @@ onUnmounted(() => {
               <select v-model="ticketForm.customer_id" required @change="onTicketCustomerChange">
                 <option value="" disabled>Chọn khách hàng</option>
                 <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
-                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                  #{{ customer.id }} — {{ customerOptionLabel(customer) }}
                 </option>
               </select>
             </label>
@@ -7451,7 +7480,7 @@ onUnmounted(() => {
               <select v-model="orderForm.customer_id" required @change="onOrderCustomerChange">
                 <option value="" disabled>Chọn khách hàng</option>
                 <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
-                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                  #{{ customer.id }} — {{ customerOptionLabel(customer) }}
                 </option>
               </select>
             </label>
