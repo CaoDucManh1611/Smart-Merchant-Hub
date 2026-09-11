@@ -32,6 +32,27 @@ khách hàng, tạo đơn, vận hành và bảo mật tenant.
 - Test đa kênh và release smoke test.
 - Dashboard usage, lỗi provider, AI cost và SLA.
 
+## Phân bổ cải tiến và bug theo nhánh
+
+Các mục dưới đây là **scope cần triển khai**, không có nghĩa là code đã hoàn
+thành. Mỗi nhánh phải đánh dấu test/acceptance tương ứng trước khi mở PR.
+
+| Nhánh | Cải tiến tiếp theo | Bug/backlog liên quan |
+|---|---|---|
+| `feat/crm-ai-commerce` | `IMP-001` state machine hội thoại; `IMP-002` giữ tồn kho cho draft | `BUG-002` route tra cứu đơn; `BUG-003` trả lời trùng; `BUG-005` hủy đơn; `BUG-006` validation + OTP |
+| `feat/crm-customer-ops-ui` | `IMP-004` operations dashboard; `IMP-006` saved views/bulk actions; actor/timeline rõ ràng | `BUG-001` che PII; `BUG-004` bảng đơn bị dồn; lỗi hiển thị hệ thống thành khách hàng |
+| `feat/crm-platform-quality` | `IMP-003` AI evaluation; `IMP-005` unified audit/event; `IMP-007` data lifecycle; `IMP-008` provider circuit breaker | Tenant isolation, quota, MFA enforcement, migration, backup/restore, rate limit production |
+
+### Điều kiện hoàn thành từng nhánh
+
+- **AI commerce:** các câu hỏi giao dịch không còn rơi vào fallback RAG; một
+  inbound chỉ tạo một outbound; draft/OTP/hủy đơn có test state transition.
+- **Customer ops/UI:** mọi event có actor đúng; email/số điện thoại được che;
+  UI không vỡ ở desktop/tablet/mobile; có test empty/error/loading.
+- **Platform quality:** quota và quyền được test xuyên API; không lộ dữ liệu
+  cross-tenant; migration/backup/restore có bằng chứng; production gate không
+  bỏ qua test bằng `-k not ...`.
+
 ## P0 – smoke test bắt buộc
 
 - [ ] Đăng nhập đúng/sai, hết session, logout tất cả thiết bị.
@@ -125,16 +146,16 @@ npm run build
 
 ## Cải tiến CRM sau khi qua P0
 
-| ID | Cải tiến | Mục tiêu |
-|---|---|---|
-| IMP-001 | Conversation state machine | Bot biết đang chọn sản phẩm, lấy thông tin, chờ OTP, chờ xác nhận hay handoff. |
-| IMP-002 | Inventory reservation | Giữ tồn kho tạm thời cho draft và tự trả kho khi draft hết hạn. |
-| IMP-003 | AI evaluation dashboard | Theo dõi độ chính xác, handoff rate, tool error, duplicate reply và conversion. |
-| IMP-004 | CRM operations dashboard | Theo dõi inbox chưa xử lý, ticket quá SLA, draft và lead nóng. |
-| IMP-005 | Unified event/audit model | Truy vết một thao tác từ inbound → bot → tool → order → timeline. |
-| IMP-006 | Saved views and bulk actions | Lọc/phân công/gắn tag nhiều hội thoại an toàn, có audit. |
-| IMP-007 | Data lifecycle | Chính sách retention, export, xóa và ẩn danh theo tenant. |
-| IMP-008 | Provider circuit breaker | Tự tạm dừng provider lỗi và hiển thị trạng thái cho nhân viên. |
+| ID | Nhánh | Cải tiến | Mục tiêu |
+|---|---|---|---|
+| IMP-001 | AI commerce | Conversation state machine | Bot biết đang chọn sản phẩm, lấy thông tin, chờ OTP, chờ xác nhận hay handoff. |
+| IMP-002 | AI commerce | Inventory reservation | Giữ tồn kho tạm thời cho draft và tự trả kho khi draft hết hạn. |
+| IMP-003 | Platform quality | AI evaluation dashboard | Theo dõi độ chính xác, handoff rate, tool error, duplicate reply và conversion. |
+| IMP-004 | Customer ops/UI | CRM operations dashboard | Theo dõi inbox chưa xử lý, ticket quá SLA, draft và lead nóng. |
+| IMP-005 | Platform quality | Unified event/audit model | Truy vết một thao tác từ inbound → bot → tool → order → timeline. |
+| IMP-006 | Customer ops/UI | Saved views and bulk actions | Lọc/phân công/gắn tag nhiều hội thoại an toàn, có audit. |
+| IMP-007 | Platform quality | Data lifecycle | Chính sách retention, export, xóa và ẩn danh theo tenant. |
+| IMP-008 | Platform quality | Provider circuit breaker | Tự tạm dừng provider lỗi và hiển thị trạng thái cho nhân viên. |
 
 ## Quy tắc merge ba nhánh
 
@@ -157,4 +178,3 @@ npm run build
 - [ ] Backend/frontend build xanh.
 - [ ] Migration, backup/restore và rollback đã được thử.
 - [ ] Release checklist và bug backlog được cập nhật kết quả thực tế.
-
