@@ -80,6 +80,11 @@ const draft = ref("");
 const quickActionOpen = ref(false);
 const quickActionQuery = ref("");
 const quickActionInput = ref(null);
+const inboxSearchInput = ref(null);
+const mobileInboxTrigger = ref(null);
+const mobileCustomerTrigger = ref(null);
+const mobileCustomerClose = ref(null);
+const chatHeading = ref(null);
 
 const loading = ref(false);
 const sending = ref(false);
@@ -131,6 +136,8 @@ const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 
 // users can still expand it with the persistent control at the bottom.
 const sidebarCollapsed = ref(true);
 const customerPanelCollapsed = ref(false);
+const mobileInboxOpen = ref(false);
+const mobileCustomerOpen = ref(false);
 const workspaceGreeting = computed(() => {
   const hour = new Date().getHours();
   if (hour < 12) return "Chào buổi sáng!";
@@ -484,6 +491,7 @@ async function runQuickAction(actionId) {
       currentTab.value = "inbox";
       customerPanelCollapsed.value = false;
       closeQuickActions();
+      if (selected.value) openMobileCustomer();
       return;
     case "create-ticket":
       currentTab.value = "tickets";
@@ -529,6 +537,10 @@ function handleGlobalKeydown(event) {
     else openQuickActions();
   } else if (event.key === "Escape" && quickActionOpen.value) {
     closeQuickActions();
+  } else if (event.key === "Escape" && mobileCustomerOpen.value) {
+    closeMobileCustomer();
+  } else if (event.key === "Escape" && mobileInboxOpen.value) {
+    closeMobileInbox();
   }
 }
 
@@ -538,6 +550,30 @@ function toggleSidebar() {
 
 function toggleCustomerPanel() {
   customerPanelCollapsed.value = !customerPanelCollapsed.value;
+}
+
+function openMobileInbox() {
+  mobileCustomerOpen.value = false;
+  mobileInboxOpen.value = true;
+  nextTick(() => inboxSearchInput.value?.focus());
+}
+
+function closeMobileInbox() {
+  mobileInboxOpen.value = false;
+  nextTick(() => mobileInboxTrigger.value?.focus());
+}
+
+function openMobileCustomer() {
+  if (!selected.value) return;
+  mobileInboxOpen.value = false;
+  mobileCustomerOpen.value = true;
+  customerPanelCollapsed.value = false;
+  nextTick(() => mobileCustomerClose.value?.focus());
+}
+
+function closeMobileCustomer() {
+  mobileCustomerOpen.value = false;
+  nextTick(() => mobileCustomerTrigger.value?.focus());
 }
 
 function runGlobalSearch() {
@@ -4404,8 +4440,11 @@ async function removeCustomerFact(fact) {
 
 async function selectConversation(id) {
 
+  const compactNavigation = window.matchMedia?.("(max-width: 860px)")?.matches;
   discardVoiceRecording();
   selectedId.value = id;
+  mobileInboxOpen.value = false;
+  mobileCustomerOpen.value = false;
   conversationActionsOpen.value = false;
   composerMode.value = "reply";
 
@@ -4421,6 +4460,10 @@ async function selectConversation(id) {
   await markConversationRead(id);
 
   await loadCustomer360(selected.value?.customer_id);
+
+  if (compactNavigation) {
+    nextTick(() => chatHeading.value?.focus());
+  }
 
 }
 
@@ -5559,7 +5602,15 @@ onUnmounted(() => {
            3 CỘT
       ==================================================== -->
 
-      <section v-if="currentTab === 'inbox'" class="layout">
+      <section
+        v-if="currentTab === 'inbox'"
+        class="layout"
+        :class="{
+          'has-selected-conversation': !!selected,
+          'mobile-inbox-open': mobileInboxOpen,
+          'mobile-customer-open': mobileCustomerOpen,
+        }"
+      >
 
 
 
@@ -5567,7 +5618,7 @@ onUnmounted(() => {
              INBOX
         ================================================== -->
 
-        <aside class="inbox">
+        <aside id="crm-inbox-panel" class="inbox" aria-label="Danh sách hội thoại">
 
 
           <div class="inbox-title">
@@ -5601,7 +5652,7 @@ onUnmounted(() => {
 
           <div class="search-box inbox-search-box">
             <span aria-hidden="true">⌕</span>
-            <input v-model="search" aria-label="Tìm hội thoại" placeholder="Tìm theo tên, nội dung hoặc kênh..." @keydown.escape="clearInboxSearch" />
+            <input ref="inboxSearchInput" v-model="search" aria-label="Tìm hội thoại" placeholder="Tìm theo tên, nội dung hoặc kênh..." @keydown.escape="clearInboxSearch" />
             <button v-if="search" type="button" class="search-clear" aria-label="Xóa tìm kiếm" @click="clearInboxSearch">×</button>
             </div>
 
@@ -5806,6 +5857,15 @@ onUnmounted(() => {
 
             <header class="chat-head">
 
+              <button
+                ref="mobileInboxTrigger"
+                type="button"
+                class="mobile-inbox-trigger"
+                aria-controls="crm-inbox-panel"
+                aria-label="Quay lại danh sách hội thoại"
+                @click="openMobileInbox"
+              >←</button>
+
 
               <div class="chat-person">
 
@@ -5834,7 +5894,7 @@ onUnmounted(() => {
                 <div>
 
 
-                  <h2>
+                  <h2 ref="chatHeading" tabindex="-1">
 
                     {{ nameOf(selected) }}
 
@@ -5938,6 +5998,16 @@ onUnmounted(() => {
 
 
               <div class="chat-tools">
+
+                <button
+                  ref="mobileCustomerTrigger"
+                  type="button"
+                  class="mobile-customer-trigger"
+                  aria-controls="customer-360-panel"
+                  :aria-expanded="String(mobileCustomerOpen)"
+                  aria-label="Mở Customer 360"
+                  @click="openMobileCustomer"
+                >360</button>
 
                 <button
                   type="button"
@@ -6641,13 +6711,21 @@ onUnmounted(() => {
              CUSTOMER PANEL
         ================================================== -->
 
-        <aside class="customer customer-panel-scroll" :class="{ 'customer-collapsed': customerPanelCollapsed }">
+        <aside id="customer-360-panel" class="customer customer-panel-scroll" :class="{ 'customer-collapsed': customerPanelCollapsed }" aria-label="Customer 360">
 
           <div class="customer-title">
 
             <h3>
               Customer 360
             </h3>
+
+            <button
+              ref="mobileCustomerClose"
+              type="button"
+              class="mobile-panel-close"
+              aria-label="Đóng Customer 360"
+              @click="closeMobileCustomer"
+            >×</button>
 
             <button
               type="button"

@@ -8625,3 +8625,114 @@ body,
   font-style: normal;
   font-weight: 800;
 }
+
+/* Customer Ops responsive navigation and keyboard visibility. Keep last so
+   legacy theme breakpoints cannot hide the only route to inbox or Customer 360. */
+.chat-head .mobile-inbox-trigger,
+.chat-tools .mobile-customer-trigger,
+.customer-title .mobile-panel-close {
+  display: none;
+}
+
+:where(button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid rgba(30, 94, 183, .72);
+  outline-offset: 2px;
+}
+
+.chat-person h2:focus-visible {
+  border-radius: 6px;
+}
+
+@media (max-width: 1180px) {
+  .layout {
+    position: relative;
+  }
+
+  .chat-tools .mobile-customer-trigger {
+    display: inline-grid;
+    min-width: 42px;
+    height: 38px;
+    place-items: center;
+    color: #d72446;
+    border: 1px solid #f2cfd2;
+    border-radius: 10px;
+    background: #fff6f6;
+    font-weight: 800;
+  }
+
+  .layout.mobile-customer-open .customer {
+    position: absolute;
+    z-index: 40;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    width: min(430px, 100%);
+    max-height: 100%;
+    flex-direction: column;
+    border-radius: 14px 0 0 14px;
+    background: #fff;
+    box-shadow: -18px 0 46px rgba(21, 38, 70, .2);
+  }
+
+  .layout.mobile-customer-open .mobile-panel-close {
+    display: inline-grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+  }
+}
+
+@media (max-width: 860px) {
+  .layout:not(.has-selected-conversation) .inbox,
+  .layout.mobile-inbox-open .inbox {
+    display: flex;
+  }
+
+  .layout:not(.has-selected-conversation) .chat,
+  .layout.mobile-inbox-open .chat {
+    display: none;
+  }
+
+  .layout.has-selected-conversation:not(.mobile-inbox-open) .inbox {
+    display: none;
+  }
+
+  .layout.has-selected-conversation:not(.mobile-inbox-open) .chat {
+    display: flex;
+  }
+
+  .chat-head .mobile-inbox-trigger {
+    display: inline-grid;
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    place-items: center;
+    color: #17315c;
+    border: 1px solid #e1e6ee;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 560px) {
+  .layout.mobile-customer-open .customer {
+    left: 0;
+    width: 100%;
+    border-radius: 14px;
+  }
+
+  .chat-shell .chat-head {
+    align-items: flex-start;
+  }
+
+  .chat-shell .chat-person {
+    min-width: 0;
+  }
+
+  .chat-shell .chat-tools {
+    width: 100%;
+    padding-left: 46px;
+  }
+}

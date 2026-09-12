@@ -234,10 +234,27 @@ test("Customer 360 details use a scrollable panel so the full profile remains vi
 });
 
 test("Customer Ops has explicit tablet and mobile layout fallbacks", () => {
-  assert.match(styleSource, /@media \(max-width: 1180px\)\s*\{[\s\S]*?\.customer\s*\{\s*display:\s*none;/);
-  assert.match(styleSource, /@media \(max-width: 860px\)\s*\{[\s\S]*?\.layout\s*\{\s*grid-template-columns:\s*1fr;/);
-  assert.match(styleSource, /@media \(max-width: 620px\)\s*\{[\s\S]*?\.chat-shell \.chat-tools\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+  assert.match(appSource, /'has-selected-conversation': !!selected/);
+  assert.match(appSource, /'mobile-inbox-open': mobileInboxOpen/);
+  assert.match(appSource, /'mobile-customer-open': mobileCustomerOpen/);
+  assert.match(appSource, /aria-label="Quay lại danh sách hội thoại"[\s\S]*?@click="openMobileInbox"/);
+  assert.match(appSource, /aria-label="Mở Customer 360"[\s\S]*?@click="openMobileCustomer"/);
+  assert.match(styleSource, /\.layout\.mobile-customer-open \.customer\s*\{[\s\S]*?display:\s*flex/);
+  assert.match(styleSource, /\.layout:not\(\.has-selected-conversation\) \.inbox,[\s\S]*?\.layout\.mobile-inbox-open \.inbox\s*\{[\s\S]*?display:\s*flex/);
+  assert.match(styleSource, /\.layout\.has-selected-conversation:not\(\.mobile-inbox-open\) \.chat\s*\{[\s\S]*?display:\s*flex/);
   assert.match(styleSource, /\.products-table-wrap\s*\{[\s\S]*?overflow-x:\s*auto/);
+});
+
+test("Customer Ops restores keyboard focus when responsive panels close", () => {
+  assert.match(appSource, /function openMobileInbox\(\)[\s\S]*?inboxSearchInput\.value\?\.focus\(\)/);
+  assert.match(appSource, /function closeMobileInbox\(\)[\s\S]*?mobileInboxTrigger\.value\?\.focus\(\)/);
+  assert.match(appSource, /function openMobileCustomer\(\)[\s\S]*?mobileCustomerClose\.value\?\.focus\(\)/);
+  assert.match(appSource, /function closeMobileCustomer\(\)[\s\S]*?mobileCustomerTrigger\.value\?\.focus\(\)/);
+  assert.match(appSource, /event\.key === "Escape" && mobileCustomerOpen\.value/);
+  assert.match(appSource, /event\.key === "Escape" && mobileInboxOpen\.value/);
+  assert.match(appSource, /<h2 ref="chatHeading" tabindex="-1">/);
+  assert.match(styleSource, /:where\(button, input, select, textarea, summary, \[tabindex\]\):focus-visible/);
+  assert.match(styleSource, /\.customer-title \.mobile-panel-close\s*\{[\s\S]*?display:\s*none/);
 });
 
 test("Zalo has its own channel label and branded icon fallback", () => {
