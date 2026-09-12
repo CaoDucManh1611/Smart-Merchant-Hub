@@ -29,6 +29,8 @@ Write-Host "Only health/readiness endpoints are checked; secrets are never print
 
 if (-not $SkipHttp) {
     Test-Endpoint -Name "Backend health" -Url ($ApiBaseUrl.TrimEnd('/') + "/health")
+    Test-Endpoint -Name "Backend detailed health" -Url ($ApiBaseUrl.TrimEnd('/') + "/health/details")
+    Test-Endpoint -Name "Backend API docs" -Url ($ApiBaseUrl.TrimEnd('/') + "/docs")
     Test-Endpoint -Name "Frontend readiness" -Url ($FrontendUrl.TrimEnd('/') + "/")
 }
 
@@ -37,6 +39,10 @@ $python = Get-Command python -ErrorAction SilentlyContinue
 if ($python) {
     Push-Location $backendPath
     try {
+        $migrationDeps = Join-Path (Get-Location) ".migrationdeps"
+        if (Test-Path -LiteralPath $migrationDeps) {
+            $env:PYTHONPATH = if ($env:PYTHONPATH) { "$migrationDeps;$env:PYTHONPATH" } else { $migrationDeps }
+        }
         $alembic = Get-Command alembic -ErrorAction SilentlyContinue
         if ($alembic) {
             & $alembic.Source current

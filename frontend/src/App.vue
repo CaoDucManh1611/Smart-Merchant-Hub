@@ -42,6 +42,35 @@ const messages = ref([]);
 const customer360 = ref(null);
 const customer360Loading = ref(false);
 const customer360Error = ref("");
+const customer360OverflowOpen = ref(false);
+
+const customer360ContactGroups = computed(() => {
+  const contacts = Array.isArray(customer360.value?.contacts) ? customer360.value.contacts : [];
+  return ["phone", "email"].map((kind) => ({
+    kind,
+    items: contacts
+      .filter((contact) => contact.kind === kind)
+      .sort((left, right) => Number(right.is_primary) - Number(left.is_primary) || Number(left.id) - Number(right.id)),
+  }));
+});
+
+const customer360PrimaryContacts = computed(() => customer360ContactGroups.value
+  .map((group) => group.items[0])
+  .filter(Boolean));
+const customer360ExtraContacts = computed(() => customer360ContactGroups.value
+  .flatMap((group) => group.items.slice(1)));
+const customer360VisibleAddresses = computed(() => {
+  const addresses = Array.isArray(customer360.value?.addresses) ? customer360.value.addresses : [];
+  if (!addresses.length) return [];
+  const primary = addresses.find((address) => address.is_default) || addresses[0];
+  return [primary];
+});
+const customer360ExtraAddresses = computed(() => {
+  const addresses = Array.isArray(customer360.value?.addresses) ? customer360.value.addresses : [];
+  const visible = customer360VisibleAddresses.value[0];
+  return visible ? addresses.filter((address) => Number(address.id) !== Number(visible.id)) : [];
+});
+const customer360OverflowCount = computed(() => customer360ExtraContacts.value.length + customer360ExtraAddresses.value.length);
 const customerFactSaving = ref(false);
 const customerFactError = ref("");
 const customerFactDraft = ref({
@@ -300,6 +329,7 @@ const attributionSaving = ref(false);
 const agentPerformance = ref([]);
 const reportsLoading = ref(false);
 const reportsError = ref("");
+const qualityDashboard = ref({ period_days: 30, usage: {}, provider: {}, ai: {}, sla: {} });
 const reportFilters = ref({ start_at: "", end_at: "", channel: "", source: "", status: "", assigned_user_id: "" });
 const ticketForm = ref({
   title: "",
@@ -3367,7 +3397,7 @@ async function fetchReports() {
     const attributionParams = new URLSearchParams(params);
     attributionParams.set("model", "last_touch");
     const attributionSuffix = `?${attributionParams.toString()}`;
-    const [overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse, pipelineResponse, ticketResponse] = await Promise.all([
+    const [overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse, pipelineResponse, ticketResponse, qualityResponse] = await Promise.all([
       apiFetch(`${API_BASE}/reports/overview${suffix}`),
       apiFetch(`${API_BASE}/reports/agent-performance`),
       apiFetch(`${API_BASE}/reports/inventory`),
@@ -3375,6 +3405,7 @@ async function fetchReports() {
       apiFetch(`${API_BASE}/reports/revenue-attribution${attributionSuffix}`),
       apiFetch(`${API_BASE}/reports/pipeline${suffix}`),
       apiFetch(`${API_BASE}/reports/tickets${suffix}`),
+      apiFetch(`${API_BASE}/reports/quality?days=30`),
     ]);
     if (!overviewResponse.ok) throw new Error(`HTTP ${overviewResponse.status}`);
     crmOverview.value = await overviewResponse.json();
@@ -3386,6 +3417,7 @@ async function fetchReports() {
     if (attributionResponse.ok) revenueAttribution.value = await attributionResponse.json();
     if (pipelineResponse.ok) pipelineSummary.value = (await pipelineResponse.json()).items || [];
     if (ticketResponse.ok) ticketReport.value = await ticketResponse.json();
+    if (qualityResponse.ok) qualityDashboard.value = await qualityResponse.json();
   } catch (err) {
     console.error("Fetch reports error:", err);
     reportsError.value = "Không tải được báo cáo CRM.";
@@ -4174,6 +4206,7 @@ async function loadCustomer360(customerId) {
       timelineOffset: timeline.next_offset ?? (timeline.items || []).length,
       timelineHasMore: Boolean(timeline.has_more),
     };
+    customer360OverflowOpen.value = false;
     customer360Error.value = "";
     customerTimelineError.value = "";
     customerMergeHistory.value = history.items || [];
@@ -6984,7 +7017,7 @@ onUnmounted(() => {
               <div class="section customer-contact-section">
                 <div class="section-head">
                   <h4>Thông tin nhận hàng</h4>
-                  <span>{{ (customer360.contacts?.length || 0) + (customer360.addresses?.length || 0) }}</span>
+                  <span>{{ customer360PrimaryContacts.length + customer360VisibleAddresses.length }}</span>
                 </div>
                 <div class="customer-contact-grid">
                   <div class="customer-contact-card customer-profile-contact-card">
@@ -7003,8 +7036,8 @@ onUnmounted(() => {
                         <strong>{{ maskCustomerPhone(customer360.phone || customerContactValue('phone')) || 'Chưa thu thập' }}</strong>
                       </div>
                     </div>
-                    <div v-if="customer360.contacts?.length" class="customer-contact-status-list">
-                      <div v-for="contact in customer360.contacts" :key="contact.id" class="customer-contact-status-row">
+                    <div v-if="customer360PrimaryContacts.length" class="customer-contact-status-list">
+                      <div v-for="contact in customer360PrimaryContacts" :key="contact.id" class="customer-contact-status-row">
                         <span>{{ contact.kind === 'phone' ? 'Số điện thoại' : 'Email' }}</span>
                         <em>{{ contact.verification_status === 'verified' ? 'Đã xác minh' : 'Chưa xác minh' }}</em>
                       </div>
@@ -7012,13 +7045,33 @@ onUnmounted(() => {
                   </div>
                   <div class="customer-contact-card">
                     <small>Địa chỉ giao hàng</small>
-                    <template v-if="customer360.addresses?.length">
-                      <div v-for="address in customer360.addresses" :key="address.id" class="customer-address-row">
+                    <template v-if="customer360VisibleAddresses.length">
+                      <div v-for="address in customer360VisibleAddresses" :key="address.id" class="customer-address-row">
                         <strong v-if="address.is_default">Mặc định</strong>
                         <span>{{ [address.address_line1, address.ward, address.district, address.province].filter(Boolean).join(', ') }}</span>
                       </div>
                     </template>
                     <span v-else class="customer-contact-empty">Chưa thu thập</span>
+                  </div>
+                </div>
+                <div v-if="customer360OverflowCount" class="customer-contact-overflow">
+                  <button
+                    type="button"
+                    class="table-action-btn customer-contact-overflow-toggle"
+                    :aria-expanded="customer360OverflowOpen"
+                    @click="customer360OverflowOpen = !customer360OverflowOpen"
+                  >
+                    {{ customer360OverflowOpen ? 'Ẩn thông tin cũ' : `Xem thêm ${customer360OverflowCount} mục` }}
+                  </button>
+                  <div v-if="customer360OverflowOpen" class="customer-contact-overflow-list">
+                    <div v-for="contact in customer360ExtraContacts" :key="`extra-contact-${contact.id}`" class="customer-contact-status-row">
+                      <span>{{ contact.kind === 'phone' ? 'Số điện thoại' : 'Email' }} · {{ contact.masked_value || 'Đã lưu' }}</span>
+                      <em>{{ contact.verification_status === 'verified' ? 'Đã xác minh' : 'Chưa xác minh' }}</em>
+                    </div>
+                    <div v-for="address in customer360ExtraAddresses" :key="`extra-address-${address.id}`" class="customer-address-row">
+                      <strong>Lịch sử</strong>
+                      <span>{{ [address.address_line1, address.ward, address.district, address.province].filter(Boolean).join(', ') }}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -7646,14 +7699,14 @@ onUnmounted(() => {
                   <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order) || orderTransitionSaving[order.id]" @click.stop="transitionSalesOrder(order, 'confirmed')">{{ orderTransitionSaving[order.id] ? 'Đang cập nhật...' : 'Xác nhận đơn' }}</button>
                   <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">Thiếu tồn khả dụng</small>
                 </td>
-                <td><button type="button" class="table-action-btn" data-testid="order-history-button" @click.stop="loadSalesOrderEvents(order)">Xem toàn bộ quy trình</button><small>Nhật ký bất biến</small></td>
+                <td><button type="button" class="table-action-btn" data-testid="order-history-button" title="Xem toàn bộ quy trình" aria-label="Xem toàn bộ quy trình" @click.stop="loadSalesOrderEvents(order)">Quy trình</button><small>Nhật ký bất biến</small></td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ order.payment_status }}</span>
                   <small>{{ Number(order.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</small>
                   <div class="order-payment-actions">
                     <input v-model.number="orderPaymentDrafts[order.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" />
-                    <button type="button" :disabled="orderPaymentSaving[order.id]" @click="recordSalesPayment(order)">Thu</button>
-                    <button type="button" :disabled="orderPaymentSaving[order.id]" @click="recordSalesPayment(order, 'refund')">Hoàn</button>
+                    <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận thanh toán" title="Ghi nhận thanh toán" @click="recordSalesPayment(order)">Thu</button>
+                    <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận hoàn tiền" title="Ghi nhận hoàn tiền" @click="recordSalesPayment(order, 'refund')">Hoàn</button>
                   </div>
                 </td>
                 <td><strong>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</strong></td>
@@ -7869,6 +7922,9 @@ onUnmounted(() => {
               <div class="ai-stat-card"><span>Conversion</span><strong>{{ ((aiEvaluationDashboard.experiments?.conversion_rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.experiments?.outcomes || 0 }} outcomes / {{ aiEvaluationDashboard.experiments?.exposures || 0 }} exposures</small></div>
               <div class="ai-stat-card"><span>RAG runs</span><strong>{{ aiEvaluationDashboard.rag?.runs || 0 }}</strong><small>{{ Object.entries(aiEvaluationDashboard.rag?.by_status || {}).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'Chưa có dữ liệu' }}</small></div>
               <div class="ai-stat-card"><span>Model ready</span><strong>{{ aiEvaluationDashboard.models?.completed_runs || 0 }}</strong><small>training runs hoàn tất</small></div>
+              <div class="ai-stat-card"><span>Handoff rate</span><strong>{{ ((aiEvaluationDashboard.ai?.handoff?.rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.ai?.handoff?.count || 0 }} lượt chuyển nhân viên</small></div>
+              <div class="ai-stat-card"><span>Trùng outbound</span><strong>{{ aiEvaluationDashboard.ai?.reliability?.duplicate_reply_attempts || 0 }}</strong><small>{{ ((aiEvaluationDashboard.ai?.reliability?.duplicate_reply_rate || 0) * 100).toFixed(1) }}% trên phản hồi bot</small></div>
+              <div class="ai-stat-card"><span>Chốt đơn chatbot</span><strong>{{ ((aiEvaluationDashboard.commerce?.conversion_rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.commerce?.confirmed || 0 }} đơn xác nhận / {{ aiEvaluationDashboard.commerce?.started || 0 }} đơn bắt đầu</small></div>
             </div>
           </div>
 
@@ -8211,6 +8267,32 @@ onUnmounted(() => {
             <div class="report-card"><span>Đơn / hội thoại</span><strong>{{ crmOverview.conversation_to_order_rate }}%</strong></div>
             <div class="report-card"><span>Ticket đang mở</span><strong>{{ crmOverview.open_ticket_count }}</strong><small>{{ crmOverview.ticket_count }} ticket tổng</small></div>
             <div class="report-card"><span>Đơn nhập hàng</span><strong>{{ crmOverview.purchase_order_count || 0 }}</strong><small>Chi {{ Number(crmOverview.purchase_spend || 0).toLocaleString('vi-VN') }}đ</small></div>
+          </div>
+          <div class="report-panel quality-ops-panel">
+            <div class="report-panel-header">
+              <div><h3>Vận hành nền tảng</h3><span>Usage, provider, AI cost và SLA trong {{ qualityDashboard.period_days || 30 }} ngày gần nhất</span></div>
+              <span class="quality-health-pill" :class="{ warning: (qualityDashboard.provider?.failed_events || 0) > 0 || (qualityDashboard.sla?.overdue_tickets || 0) > 0 || Object.values(qualityDashboard.provider?.circuits || {}).some(circuit => circuit.state === 'open') }">{{ (qualityDashboard.provider?.failed_events || 0) > 0 || (qualityDashboard.sla?.overdue_tickets || 0) > 0 || Object.values(qualityDashboard.provider?.circuits || {}).some(circuit => circuit.state === 'open') ? 'Cần xử lý' : 'Ổn định' }}</span>
+            </div>
+            <div class="report-cards quality-ops-cards">
+              <div class="report-card"><span>Provider lỗi</span><strong>{{ qualityDashboard.provider?.failed_events || 0 }}</strong><small>{{ qualityDashboard.provider?.retrying_events || 0 }} đang retry</small></div>
+              <div class="report-card"><span>AI calls</span><strong>{{ qualityDashboard.ai?.calls || 0 }}</strong><small>{{ qualityDashboard.ai?.tool_errors || 0 }} lỗi tool</small></div>
+              <div class="report-card"><span>AI cost</span><strong>{{ Number(qualityDashboard.ai?.cost || 0).toLocaleString('vi-VN') }}</strong><small>theo quota kỳ hiện tại</small></div>
+              <div class="report-card"><span>Ticket quá SLA</span><strong>{{ qualityDashboard.sla?.overdue_tickets || 0 }}</strong><small>{{ qualityDashboard.sla?.due_soon_tickets || 0 }} sắp đến hạn</small></div>
+            </div>
+            <div class="quality-usage-list" v-if="Object.keys(qualityDashboard.usage || {}).length">
+              <span v-for="(quota, resource) in qualityDashboard.usage" :key="resource" class="quality-usage-chip"><b>{{ resource }}</b><em>{{ quota.used }}<template v-if="quota.limit !== null && quota.limit !== undefined"> / {{ quota.limit }}</template></em></span>
+            </div>
+            <div class="quality-circuit-list" v-if="Object.keys(qualityDashboard.provider?.circuits || {}).length">
+              <span
+                v-for="(circuit, provider) in qualityDashboard.provider.circuits"
+                :key="provider"
+                class="quality-circuit-chip"
+                :class="{ open: circuit.state === 'open', half: circuit.state === 'half_open' }"
+              >
+                <b>Circuit provider · {{ provider }}</b>
+                <em>{{ circuit.state === 'open' ? 'Đang tạm dừng' : circuit.state === 'half_open' ? 'Đang kiểm tra' : 'Đang hoạt động' }} · {{ circuit.failures || 0 }} lỗi liên tiếp</em>
+              </span>
+            </div>
           </div>
           <div class="report-panel">
             <div class="report-panel-header"><h3>Hiệu suất nhân viên</h3><span>Chỉ số theo business hiện tại</span></div>

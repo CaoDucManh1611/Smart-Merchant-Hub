@@ -16,6 +16,7 @@ from app.rag.chunker import chunk_text
 from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog
 from app.services.product_catalog_service import sync_catalog_products
+from app.services.quota_service import QuotaExceededError, reserve_ai_budget
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,33 @@ def ingest_document(
             # -------------------------------------------------
             chunk_contents = [c.content for c in chunks]
             if use_embeddings:
+                if doc.business_id is not None and settings.EMBEDDING_PROVIDER.strip().lower() != "local":
+                    try:
+                        budget = reserve_ai_budget(
+                            db,
+                            int(doc.business_id),
+                            [{"role": "user", "content": content} for content in chunk_contents],
+                            idempotency_key=f"rag-embedding:{doc.id}:{doc.reindex_count}",
+                        )
+                        # Persist the charge before calling the remote
+                        # embedding provider; retries of the same run reuse
+                        # the reservation instead of consuming quota twice.
+                        db.commit()
+                        run.update(estimated_ai_cost=float(budget["cost"]))
+                    except QuotaExceededError as exc:
+                        doc.status = "error"
+                        doc.embedding_status = "error"
+                        doc.error_message = "Đã vượt quota AI của gói dịch vụ."
+                        doc.retry_after = None
+                        db.commit()
+                        run.finish("quota_exceeded", phase="complete", quota=exc.detail)
+                        logger.warning(
+                            "AI embedding quota exhausted for business %s, document %s, resource=%s",
+                            doc.business_id,
+                            doc.id,
+                            exc.resource,
+                        )
+                        return
                 embedding_error = None
 
                 def capture_embedding_error(error: Exception) -> None:

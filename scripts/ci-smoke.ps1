@@ -41,6 +41,13 @@ try {
 
     Push-Location backend
     try {
+        # The local test image keeps migration-only packages in this folder;
+        # prepend it once so direct Python/Alembic invocations use the same
+        # environment as the migration gate.
+        $migrationDeps = Join-Path (Get-Location) ".migrationdeps"
+        if (Test-Path -LiteralPath $migrationDeps) {
+            $env:PYTHONPATH = if ($env:PYTHONPATH) { "$migrationDeps;$env:PYTHONPATH" } else { $migrationDeps }
+        }
         Invoke-Gate "Alembic upgrade" { Invoke-Python -Arguments @("-m", "alembic", "upgrade", "head") }
         Invoke-Gate "Alembic current" { Invoke-Python -Arguments @("-m", "alembic", "current") }
         Invoke-Gate "Alembic drift check" { Invoke-Python -Arguments @("-m", "alembic", "check") }
@@ -112,6 +119,8 @@ ALLOWED_HOSTS=*
                 }
 
                 Invoke-Gate "Backend health" { curl.exe --fail --silent --show-error http://localhost:8000/health }
+                Invoke-Gate "Backend detailed health" { curl.exe --fail --silent --show-error http://localhost:8000/health/details }
+                Invoke-Gate "Backend API docs" { curl.exe --fail --silent --show-error http://localhost:8000/docs }
                 Invoke-Gate "Frontend readiness" { curl.exe --fail --silent --show-error http://localhost:5173/ }
                 Invoke-Gate "Compose status" { docker compose ps }
             }

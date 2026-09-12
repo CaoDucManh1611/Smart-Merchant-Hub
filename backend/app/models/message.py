@@ -48,6 +48,16 @@ class Message(Base):
         nullable=True,
     )
 
+    # Deterministic key for a bot response produced from one inbound message.
+    # It is separate from the provider's message id because providers return
+    # that id only after delivery and may return different ids on retries.
+    auto_reply_key: Mapped[str | None] = mapped_column(
+        String(255),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
+
     direction: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

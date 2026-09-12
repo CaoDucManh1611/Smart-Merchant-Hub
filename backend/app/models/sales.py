@@ -67,6 +67,9 @@ class Order(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft")
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     reserved_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Draft orders hold inventory only for a short window.  The worker releases
+    # this reservation after the deadline while keeping the draft auditable.
+    reservation_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     payment_status: Mapped[str] = mapped_column(String(30), nullable=False, default="unpaid", server_default="unpaid")
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     refunded_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, server_default="0")

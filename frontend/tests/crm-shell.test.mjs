@@ -118,6 +118,27 @@ test("report workspace applies shared date, channel, owner, status, and source f
   assert.match(appSource, /Nguồn attribution/);
 });
 
+test("report workspace exposes tenant platform quality signals", () => {
+  assert.match(appSource, /\/reports\/quality\?days=30/);
+  assert.match(appSource, /qualityDashboard/);
+  assert.match(appSource, /Vận hành nền tảng/);
+  assert.match(appSource, /Provider lỗi/);
+  assert.match(appSource, /AI cost/);
+  assert.match(appSource, /Ticket quá SLA/);
+});
+
+test("report workspace exposes provider circuit state", () => {
+  assert.match(appSource, /qualityDashboard\.provider\?\.circuits/);
+  assert.match(appSource, /Circuit provider/);
+  assert.match(appSource, /Đang tạm dừng|Đang hoạt động/);
+});
+
+test("AI quality dashboard exposes handoff and duplicate reply signals", () => {
+  assert.match(appSource, /Handoff rate/);
+  assert.match(appSource, /Trùng outbound/);
+  assert.match(appSource, /Chốt đơn chatbot/);
+});
+
 test("Team settings expose tenant-scoped permission overrides", () => {
   assert.match(appSource, /team\/permissions/);
   assert.match(appSource, /permissionForm/);
@@ -188,6 +209,24 @@ test("Customer 360 displays the collected profile name, email, and phone", () =>
   assert.match(appSource, /class="customer-profile-fields"/);
   assert.match(appSource, /customer360\.phone/);
   assert.match(appSource, /customer360\.name/);
+});
+
+test("Customer 360 projects one primary contact/address and keeps history expandable", () => {
+  assert.match(appSource, /customer360PrimaryContacts/);
+  assert.match(appSource, /customer360VisibleAddresses/);
+  assert.match(appSource, /customer360OverflowCount/);
+  assert.match(appSource, /Xem thêm/);
+  assert.match(appSource, /:aria-expanded="customer360OverflowOpen"/);
+  assert.match(styleSource, /\.customer-contact-card\s*\{[\s\S]*?max-height:\s*13rem/);
+  assert.match(styleSource, /\.customer-contact-overflow-list\s*\{[\s\S]*?max-height:\s*8\.5rem/);
+});
+
+test("Order table keeps actions compact and keyboard discoverable", () => {
+  assert.match(appSource, /data-testid="order-history-button"[^>]*title="Xem toàn bộ quy trình"[^>]*aria-label="Xem toàn bộ quy trình"/);
+  assert.match(appSource, /aria-label="Ghi nhận thanh toán"/);
+  assert.match(appSource, /aria-label="Ghi nhận hoàn tiền"/);
+  assert.match(styleSource, /\.orders-table\s+\.table-action-btn,[\s\S]*?white-space:\s*nowrap/);
+  assert.match(styleSource, /\.orders-table\s+\.order-payment-actions\s*\{[\s\S]*?flex-wrap:\s*nowrap/);
 });
 
 test("Customer Ops masks customer PII consistently across order and CRM selectors", () => {

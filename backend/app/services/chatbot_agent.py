@@ -24,6 +24,14 @@ from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
 from app.models.ticket import Ticket, TicketEvent
 from app.services.audit_service import record_audit
+from app.services.customer_order_service import (
+    CustomerOrderActionError,
+    get_customer_order_status,
+    list_customer_orders,
+    request_order_cancellation,
+    request_order_refund,
+)
+from app.services.order_service import SalesOrderOperationError, reserve_draft_order_inventory
 
 
 AGENT_TOOLS = {
@@ -35,6 +43,10 @@ AGENT_TOOLS = {
     "chuyen_nhan_vien": "Bật takeover và chuyển hội thoại cho nhân viên.",
     "dat_lich_cham_soc": "Tạo yêu cầu chăm sóc lại để scheduler xử lý.",
     "dung_mau_tra_loi": "Lấy nội dung mẫu trả lời đã được shop duyệt.",
+    "xem_don_cua_khach": "Liệt kê đơn hàng của khách trong hội thoại hiện tại.",
+    "xem_trang_thai_don": "Xem trạng thái một đơn hàng thuộc đúng khách hiện tại.",
+    "yeu_cau_huy_don": "Hủy đơn chưa thanh toán hoặc tạo yêu cầu nhân viên duyệt.",
+    "yeu_cau_hoan_don": "Tạo yêu cầu hoàn/đổi trả và chuyển nhân viên xử lý.",
 }
 
 
@@ -215,6 +227,24 @@ def execute_chatbot_tool(db: Session, business_id: int, conversation_id: int, to
         if product is None:
             return {"found": False, "available": 0}
         return {"found": True, "product_id": product.id, "sku": product.sku, "name": product.name, "available": _available(product)}
+    if tool_name == "xem_don_cua_khach":
+        return list_customer_orders(db, business_id, conversation_id, order_number=args.get("order_number"), order_id=args.get("order_id"))
+    if tool_name == "xem_trang_thai_don":
+        return get_customer_order_status(db, business_id, conversation_id, args)
+    if tool_name == "yeu_cau_huy_don":
+        try:
+            return request_order_cancellation(db, business_id, conversation_id, args)
+        except CustomerOrderActionError as exc:
+            if exc.reason == "order_identifier_required":
+                return {"accepted": False, "reason": exc.reason}
+            raise
+    if tool_name == "yeu_cau_hoan_don":
+        try:
+            return request_order_refund(db, business_id, conversation_id, args)
+        except CustomerOrderActionError as exc:
+            if exc.reason == "order_identifier_required":
+                return {"accepted": False, "reason": exc.reason}
+            raise
     if tool_name == "gan_tag":
         conversation = _conversation(db, business_id, conversation_id)
         tag_name = str(args.get("tag") or "").strip()
@@ -285,6 +315,13 @@ def execute_chatbot_tool(db: Session, business_id: int, conversation_id: int, to
         db.add(order)
         db.flush()
         db.add(OrderItem(order_id=order.id, product_id=product.id, quantity=quantity, unit_price=product.price, line_total=total, product_name_snapshot=product.name, sku_snapshot=product.sku))
+        db.flush()
+        try:
+            reserve_draft_order_inventory(db, order=order, business_id=business_id)
+        except SalesOrderOperationError as exc:
+            db.delete(order)
+            db.flush()
+            return {"created": False, "reason": "insufficient_stock", "detail": exc.detail}
         return {"created": True, "order_id": order.id, "order_number": order.order_number, "product_id": product.id, "quantity": quantity, "total": float(total), "requires_confirmation": True}
     if tool_name == "dat_lich_cham_soc":
         from app.services.chatbot_followup import schedule_followup

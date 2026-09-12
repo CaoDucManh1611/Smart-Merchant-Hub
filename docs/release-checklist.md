@@ -27,6 +27,8 @@ repo, issue hoặc terminal transcript.
 - [ ] MFA/session/device và audit log đã kiểm tra trên tenant đúng.
 - [ ] Backup PostgreSQL đã tạo, restore thử vào staging và đối chiếu row count.
 - [ ] `alembic upgrade head` và `alembic check` không báo drift.
+- [ ] `/health` và `/health/details` đều trả readiness; endpoint chi tiết có
+      trạng thái database, queue và provider circuit nhưng không có secret.
 
 ## Gate chạy trước phát hành
 

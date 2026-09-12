@@ -14,6 +14,10 @@ from app.auth.dependencies import get_optional_user
 from app.db.dependencies import get_db
 from app.models.business import User
 from app.models.customer import Customer
+from app.models.conversation import Conversation
+from app.models.message import Message
+from app.models.audit_log import AuditLog
+from app.models.sales import Order
 from app.models.experimentation import (
     BanditDecision, BanditPolicy, BanditArmStat,
     Experiment,
@@ -117,6 +121,49 @@ def evaluation_dashboard(
     rag_by_status: dict[str, int] = {}
     for run in rag_runs:
         rag_by_status[run.status] = rag_by_status.get(run.status, 0) + 1
+    inbound_count = db.query(Message).join(Conversation, Conversation.id == Message.conversation_id).filter(
+        Conversation.business_id == tenant.business_id,
+        Message.direction == "inbound",
+        Message.received_at >= since,
+    ).count()
+    bot_outbound_count = db.query(Message).join(Conversation, Conversation.id == Message.conversation_id).filter(
+        Conversation.business_id == tenant.business_id,
+        Message.direction == "outbound",
+        Message.sender_type == "bot",
+        Message.received_at >= since,
+    ).count()
+    handoff_count = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.created_at >= since,
+        AuditLog.action.in_(
+            ("chatbot_escalated", "chatbot_human", "customer_order_hủy/hoàn", "customer_order_hoàn/đổi trả")
+        ),
+    ).count()
+    duplicate_reply_attempts = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.created_at >= since,
+        AuditLog.action == "chatbot_auto_reply_duplicate",
+    ).count()
+    tool_errors = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.created_at >= since,
+        AuditLog.action.in_(
+            ("chatbot_tool_error", "chatbot_order_tool_error"),
+        ),
+    ).count()
+    commerce_orders = db.query(Order).filter(
+        Order.business_id == tenant.business_id,
+        Order.created_at >= since,
+    ).all()
+    # Only count orders started by the chatbot collection/tool flow. Manual
+    # staff orders belong in CRM reports, not in the AI conversion signal.
+    chatbot_orders = [
+        order for order in commerce_orders
+        if isinstance(order.metadata_, dict)
+        and order.metadata_.get("source") in {"chatbot_collection", "chatbot_tool"}
+    ]
+    confirmed_states = {"confirmed", "processing", "shipped", "delivered", "completed"}
+    chatbot_confirmed = sum(1 for order in chatbot_orders if order.status in confirmed_states)
     return {
         "period_days": days,
         "models": {
@@ -132,6 +179,23 @@ def evaluation_dashboard(
             "conversion_rate": outcome_count / exposure_count if exposure_count else 0.0,
         },
         "rag": {"runs": len(rag_runs), "by_status": rag_by_status},
+        "ai": {
+            "handoff": {
+                "count": int(handoff_count),
+                "rate": round(handoff_count / inbound_count, 4) if inbound_count else 0.0,
+            },
+            "reliability": {
+                "duplicate_reply_attempts": int(duplicate_reply_attempts),
+                "duplicate_reply_rate": round(duplicate_reply_attempts / bot_outbound_count, 4) if bot_outbound_count else 0.0,
+                "tool_errors": int(tool_errors),
+            },
+        },
+        "commerce": {
+            "started": len(chatbot_orders),
+            "drafts": sum(1 for order in chatbot_orders if order.status == "draft"),
+            "confirmed": int(chatbot_confirmed),
+            "conversion_rate": round(chatbot_confirmed / len(chatbot_orders), 4) if chatbot_orders else 0.0,
+        },
     }
 
 

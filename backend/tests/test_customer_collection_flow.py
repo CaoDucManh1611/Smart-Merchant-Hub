@@ -18,6 +18,8 @@ from app.models.conversation import Conversation
 from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.sales import Order, Product
 from app.services.customer_collection_flow import (
+    _store_address,
+    _store_contact,
     advance_customer_collection,
     is_browsing_request,
     is_greeting,
@@ -25,6 +27,7 @@ from app.services.customer_collection_flow import (
     is_price_quote_request,
     is_stock_query_request,
 )
+from app.services.customer_collection import contact_hash
 
 
 class CustomerCollectionFlowTests(unittest.TestCase):
@@ -75,9 +78,51 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 metadata_={"aliases": ["combo cơ bản", "bộ chăm sóc da cơ bản"]},
                 status="active",
             ))
+            db.add(Product(
+                business_id=business.id,
+                sku="SERUM-C-01",
+                name="Serum Vitamin C Lunari",
+                price=Decimal("420000"),
+                stock_quantity=10,
+                reserved_quantity=0,
+                status="active",
+            ))
+            db.add(Product(
+                business_id=business.id,
+                sku="CLEANSER-01",
+                name="Sữa rửa mặt dịu nhẹ",
+                price=Decimal("179000"),
+                stock_quantity=18,
+                reserved_quantity=0,
+                status="active",
+            ))
+            db.add(Product(
+                business_id=business.id,
+                sku="SUN-01",
+                name="Kem chống nắng Daily Shield",
+                price=Decimal("289000"),
+                stock_quantity=25,
+                reserved_quantity=0,
+                status="active",
+            ))
             db.commit()
             cls.business_id = business.id
             cls.customer_id = customer.id
+
+    def setUp(self):
+        # Drafts now hold inventory temporarily.  Reset the shared fixture so
+        # each scenario starts from the documented catalog quantities instead
+        # of inheriting another test's reservation.
+        with Session(self.engine) as db:
+            for product in db.query(Product).filter(Product.business_id == self.business_id).all():
+                product.reserved_quantity = 0
+            for order in db.query(Order).filter(Order.business_id == self.business_id, Order.status == "draft").all():
+                order.reserved_quantity = 0
+                order.reservation_expires_at = None
+                metadata = dict(order.metadata_ or {})
+                metadata["reservation_status"] = "test_reset"
+                order.metadata_ = metadata
+            db.commit()
 
     def test_progressive_collection_persists_each_step(self):
         with Session(self.engine) as db:
@@ -270,6 +315,53 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertEqual("name", session.current_field)
             self.assertEqual("pending", session.status)
 
+    def test_repeated_contacts_and_addresses_are_normalized_and_reused(self):
+        with Session(self.engine) as db:
+            _store_contact(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                kind="email",
+                value=" Flow.User@Example.com ",
+            )
+            _store_contact(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                kind="email",
+                value="flow.user@example.com",
+            )
+            _store_address(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                value=" 12 Nguyen Hue, Quan 1 ",
+            )
+            _store_address(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                value="12 Nguyen Hue, Quan 1",
+            )
+            db.commit()
+
+            contacts = db.query(CustomerContact).filter(
+                CustomerContact.business_id == self.business_id,
+                CustomerContact.customer_id == self.customer_id,
+                CustomerContact.kind == "email",
+                CustomerContact.value_hash == contact_hash("email", "flow.user@example.com"),
+            ).all()
+            addresses = db.query(CustomerAddress).filter(
+                CustomerAddress.business_id == self.business_id,
+                CustomerAddress.customer_id == self.customer_id,
+                CustomerAddress.address_line1 == "12 Nguyen Hue, Quan 1",
+            ).all()
+
+        self.assertEqual(1, len(contacts))
+        self.assertTrue(contacts[0].is_primary)
+        self.assertEqual(1, len(addresses))
+        self.assertTrue(addresses[0].is_default)
+
     def test_product_discovery_is_detected_even_with_natural_language(self):
         self.assertTrue(is_browsing_request("Bạn có sản phẩm gì?"))
         self.assertTrue(is_browsing_request("Cho mình xem hàng với"))
@@ -301,6 +393,24 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 0,
                 db.query(CustomerCollectionSession).filter_by(conversation_id=52).count(),
             )
+
+    def test_named_product_purchase_starts_product_only_quote(self):
+        with Session(self.engine) as db:
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=121,
+                source_channel="facebook",
+                text="Tôi muốn mua 3 sản phẩm Kem chống nắng Daily Shield",
+            )
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result.started)
+        self.assertEqual("order_confirmation", result.current_field)
+        self.assertIn("3 Kem chống nắng Daily Shield", result.prompt)
+        self.assertIn("867.000 đồng", result.prompt)
+        self.assertNotIn("Danh sách sản phẩm", result.prompt)
 
     def test_natural_language_price_question_starts_quote_before_checkout(self):
         with Session(self.engine) as db:
@@ -538,6 +648,166 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertTrue(result.started)
             self.assertEqual("order_confirmation", result.current_field)
             self.assertIn("4.794.000 đồng", result.prompt)
+
+    def test_customer_can_switch_from_combo_to_single_product_before_checkout(self):
+        with Session(self.engine) as db:
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=58,
+                source_channel="instagram",
+                text="Tôi muốn mua combo chăm sóc da cơ bản",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+            self.assertIn("799.000 đồng", quote.prompt)
+
+            switched = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=58,
+                source_channel="instagram",
+                text="không, tôi muốn mua sữa rửa mặt",
+            )
+
+            self.assertEqual("order_confirmation", switched.current_field)
+            self.assertIn("Sữa rửa mặt dịu nhẹ", switched.prompt)
+            self.assertIn("179.000 đồng", switched.prompt)
+            self.assertNotIn("Combo chăm sóc da cơ bản", switched.prompt)
+
+    def test_multi_product_quote_merges_follow_up_and_creates_multi_item_draft(self):
+        with Session(self.engine) as db:
+            checkout_customer = Customer(
+                business_id=self.business_id,
+                channel="zalo",
+                external_user_id="multi-product-user",
+                name=None,
+            )
+            db.add(checkout_customer)
+            db.flush()
+
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=checkout_customer.id,
+                conversation_id=96,
+                source_channel="zalo",
+                text="Tôi muốn mua Serum Vitamin C Lunari và sữa rửa mặt dịu nhẹ",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+            self.assertIn("599.000 đồng", quote.prompt)
+
+            added = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=checkout_customer.id,
+                conversation_id=96,
+                source_channel="zalo",
+                text="và mua thêm 1 Serum Vitamin C Lunari",
+            )
+            self.assertEqual("order_confirmation", added.current_field)
+            self.assertIn("1.019.000 đồng", added.prompt)
+            self.assertIn("2 Serum Vitamin C Lunari", added.prompt)
+            self.assertIn("1 Sữa rửa mặt dịu nhẹ", added.prompt)
+
+            self.assertEqual("name", advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=checkout_customer.id,
+                conversation_id=96,
+                source_channel="zalo",
+                text="Đồng ý đặt hàng",
+            ).current_field)
+            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="Nguyễn Mai")
+            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="0912345678")
+            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="mai96@example.com")
+            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="12 Nguyễn Huệ, Quận 1")
+            completed = advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="COD")
+
+            self.assertTrue(completed.completed)
+            order = db.query(Order).filter_by(conversation_id=96).one()
+            self.assertEqual(Decimal("1019000"), order.total_amount)
+            self.assertEqual(
+                {"Serum Vitamin C Lunari": 2, "Sữa rửa mặt dịu nhẹ": 1},
+                {item.product_name_snapshot: item.quantity for item in order.items},
+            )
+
+    def test_multi_product_addition_refreshes_legacy_quote_stock(self):
+        with Session(self.engine) as db:
+            checkout_customer = Customer(
+                business_id=self.business_id,
+                channel="zalo",
+                external_user_id="legacy-multi-product-user",
+                name=None,
+            )
+            db.add(checkout_customer)
+            db.flush()
+
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=checkout_customer.id,
+                conversation_id=97,
+                source_channel="zalo",
+                text="Mình muốn mua Serum",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=97).one()
+            legacy_fields = dict(session.collected_fields)
+            legacy_fields.pop("items", None)
+            legacy_fields.pop("available", None)
+            session.collected_fields = legacy_fields
+            db.commit()
+
+            added = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=checkout_customer.id,
+                conversation_id=97,
+                source_channel="zalo",
+                text="và mua thêm 1 bin",
+            )
+            self.assertEqual("order_confirmation", added.current_field)
+            self.assertIn("1.200.000 đồng", added.prompt)
+            self.assertIn("1 Serum", added.prompt)
+            self.assertIn("1 bin", added.prompt)
+
+    def test_partial_product_names_are_merged_in_quote_and_follow_up(self):
+        with Session(self.engine) as db:
+            checkout_customer = Customer(
+                business_id=self.business_id,
+                channel="zalo",
+                external_user_id="partial-multi-product-user",
+                name=None,
+            )
+            db.add(checkout_customer)
+            db.flush()
+
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=checkout_customer.id,
+                conversation_id=98,
+                source_channel="zalo",
+                text="tôi muốn mua 2 kem chống nắng và 1 sữa rửa mặt",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+            self.assertIn("757.000 đồng", quote.prompt)
+            self.assertIn("2 Kem chống nắng Daily Shield", quote.prompt)
+            self.assertIn("1 Sữa rửa mặt dịu nhẹ", quote.prompt)
+
+            added = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=checkout_customer.id,
+                conversation_id=98,
+                source_channel="zalo",
+                text="và mua thêm 1 sữa mặt",
+            )
+            self.assertEqual("order_confirmation", added.current_field)
+            self.assertIn("936.000 đồng", added.prompt)
+            self.assertIn("2 Sữa rửa mặt dịu nhẹ", added.prompt)
 
     def test_quote_schedules_abandoned_reminder_and_confirmation_cancels_it(self):
         with Session(self.engine) as db:

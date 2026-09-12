@@ -192,11 +192,6 @@ async def upload_document(
     if not file_bytes:
         raise HTTPException(400, "File rỗng.")
 
-    try:
-        reserve_quota(db, tenant.business_id, "documents")
-    except QuotaExceededError as exc:
-        raise HTTPException(status_code=429, detail=exc.detail) from exc
-
     # Giới hạn kích thước (20MB)
     max_size = 20 * 1024 * 1024
     if len(file_bytes) > max_size:
@@ -204,6 +199,13 @@ async def upload_document(
             400,
             f"File quá lớn. Giới hạn: {max_size // (1024*1024)}MB",
         )
+
+    # Only consume the document slot after cheap validation succeeds; an
+    # oversized upload must not leave a phantom quota reservation behind.
+    try:
+        reserve_quota(db, tenant.business_id, "documents")
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=exc.detail) from exc
 
     # Tạo record Document
     doc = Document(

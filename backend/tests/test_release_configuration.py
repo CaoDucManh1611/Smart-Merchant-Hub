@@ -16,6 +16,11 @@ def production_settings(**overrides):
         "FORCE_HTTPS": True,
         "HSTS_ENABLED": True,
         "RATE_LIMIT_ENABLED": True,
+        "OTP_DELIVERY_MODE": "smtp",
+        "OTP_FROM_EMAIL": "no-reply@crm.example",
+        "OTP_SMTP_HOST": "smtp.crm.example",
+        "OTP_SMTP_USERNAME": "smtp-user",
+        "OTP_SMTP_PASSWORD": "smtp-app-password",
         "FACEBOOK_VERIFY_TOKEN": "release-verify-token",
         "LLM_PROVIDER": "groq",
         "GROQ_API_KEYS": "key-a,key-b,key-c,key-d,key-e",
@@ -37,6 +42,13 @@ def test_production_release_settings_accept_key_pool_and_explicit_security():
 
     settings.validate_runtime()
     assert settings.groq_api_keys == ["key-a", "key-b", "key-c", "key-d", "key-e"]
+
+
+def test_production_release_settings_require_smtp_credentials_for_email_otp():
+    settings = production_settings(OTP_SMTP_USERNAME="", OTP_SMTP_PASSWORD="")
+
+    with pytest.raises(RuntimeError, match="OTP_SMTP_USERNAME and OTP_SMTP_PASSWORD"):
+        settings.validate_runtime()
 
 
 def test_key_pool_configuration_never_exposes_raw_values_in_snapshot():

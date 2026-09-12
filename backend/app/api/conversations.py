@@ -1372,6 +1372,7 @@ def get_conversations(
 
             cv.channel,
             cv.status,
+            cv.bot_mode,
             cv.assigned_user_id,
             cv.created_at,
             cv.updated_at,

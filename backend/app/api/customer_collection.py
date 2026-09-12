@@ -42,12 +42,14 @@ from app.schemas.customer_collection import (
 from app.services.audit_service import record_audit
 from app.services.customer_collection import (
     contact_hash,
+    decrypt_contact,
     encrypt_contact,
     generate_verification_code,
     hash_verification_code,
     mask_contact,
     normalize_contact,
 )
+from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, deliver_otp
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 
@@ -434,6 +436,27 @@ def create_verification_challenge(
     )
     contact.verification_status = "pending"
     db.add(row)
+    db.flush()
+    try:
+        delivery = deliver_otp(
+            channel=payload.channel,
+            destination=decrypt_contact(contact.kind, contact.value_encrypted),
+            code=code,
+        )
+        if delivery.delivered or delivery.provider == "disabled":
+            row.status = "sent"
+    except (OtpDeliveryNotConfigured, OtpDeliveryError, ValueError, OSError) as error:
+        # Keep the challenge queued so an operator or a future retry can
+        # deliver it; never expose the generated code or provider details.
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="verification_delivery_failed",
+            resource_type="customer_contact",
+            resource_id=contact.id,
+            metadata={"customer_id": customer_id, "channel": payload.channel, "error_type": type(error).__name__},
+        )
     record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action="create", resource_type="verification_challenge", metadata={"customer_id": customer_id, "contact_id": contact_id, "channel": payload.channel})
     db.commit()
     db.refresh(row)

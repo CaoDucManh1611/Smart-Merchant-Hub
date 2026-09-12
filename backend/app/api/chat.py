@@ -8,8 +8,9 @@ Hỗ trợ:
 
 import json
 import logging
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,7 @@ from app.rag.prompt_builder import build_prompt
 from app.rag.llm_caller import call_llm, stream_llm
 from app.rag.run_logger import RagRunLog
 from app.schemas.rag import ChatRequest, ChatResponse, SourceChunk
+from app.services.quota_service import QuotaExceededError, reserve_ai_budget
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ async def chat(
     request: ChatRequest,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key", max_length=120),
 ):
     """
     Gửi câu hỏi → RAG tìm context → LLM trả lời.
@@ -75,6 +78,21 @@ async def chat(
 
         # Bước 3: Call LLM
         run.update(phase="llm")
+        try:
+            budget = reserve_ai_budget(
+                db,
+                tenant.business_id,
+                messages,
+                idempotency_key=(idempotency_key or "").strip() or f"chat:{uuid4().hex}",
+            )
+            # Charge before the provider call so failures cannot bypass the
+            # tenant budget.  The request key makes safe client retries free.
+            db.commit()
+            run.update(estimated_ai_cost=float(budget["cost"]))
+        except QuotaExceededError as exc:
+            db.rollback()
+            run.finish("quota_exceeded", phase="complete", quota=exc.detail)
+            raise HTTPException(status_code=429, detail=exc.detail) from exc
         answer = call_llm(messages)
         run.finish(
             "no_context" if not chunks else "success",
@@ -101,6 +119,8 @@ async def chat(
             chunks_found=len(chunks),
         )
 
+      except HTTPException:
+          raise
       except Exception as e:
           logger.exception("Chat error: %s", str(e))
           raise HTTPException(
@@ -119,6 +139,7 @@ async def chat_stream(
     request: ChatRequest,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key", max_length=120),
 ):
     """
     Gửi câu hỏi → RAG → LLM streaming response qua SSE.
@@ -158,6 +179,25 @@ async def chat_stream(
                 chunks=chunks,
                 conversation_history=request.conversation_history,
             )
+
+            try:
+                budget = reserve_ai_budget(
+                    db,
+                    tenant.business_id,
+                    messages,
+                    idempotency_key=(idempotency_key or "").strip() or f"chat-stream:{uuid4().hex}",
+                )
+                db.commit()
+                run.update(estimated_ai_cost=float(budget["cost"]))
+            except QuotaExceededError as exc:
+                db.rollback()
+                run.finish("quota_exceeded", phase="complete", quota=exc.detail)
+                error_payload = json.dumps(
+                    {"type": "error", "code": "quota_exceeded", "detail": exc.detail},
+                    ensure_ascii=False,
+                )
+                yield f"data: {error_payload}\n\n"
+                return
 
             # Gửi sources trước
             sources = [

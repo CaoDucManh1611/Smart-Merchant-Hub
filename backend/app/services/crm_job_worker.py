@@ -14,6 +14,7 @@ from app.services.job_service import dispatch_due_jobs
 from app.services.notification_service import create_sla_notification
 from app.services.workflow_engine import execute_workflow
 from app.services.chatbot_followup import dispatch_due_followups
+from app.services.order_service import release_expired_draft_reservations
 from app.tenancy.context import TenantContext
 
 
@@ -84,18 +85,25 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
     Filtering the claim query prevents this worker from accidentally retrying
     a RAG or future subsystem's job just because it shares the same table.
     """
+    # Draft reservations are intentionally cleaned on every polling cycle so
+    # a missed follow-up job cannot leave stock blocked indefinitely.
+    released_reservations = release_expired_draft_reservations(db, business_id)
+    if released_reservations:
+        db.commit()
+
     handlers = {
         "ticket.sla_check": lambda payload: _dispatch_ticket_sla_job(db, business_id, payload),
         "workflow.run": lambda payload: _dispatch_workflow_run_job(db, business_id, payload),
         "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),
     }
-    return dispatch_due_jobs(
+    processed_jobs = dispatch_due_jobs(
         db,
         business_id=business_id,
         handlers=handlers,
         kinds=handlers.keys(),
         limit=limit,
     )
+    return processed_jobs + released_reservations
 
 
 def dispatch_all_crm_jobs(db: Session, *, limit_per_business: int = 100) -> int:

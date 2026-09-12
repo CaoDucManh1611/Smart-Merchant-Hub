@@ -112,6 +112,7 @@ class UnifiedInboxActionTests(unittest.TestCase):
         self.assertEqual(200, listing.status_code, listing.text)
         row = next(item for item in listing.json()["items"] if item["conversation_id"] == self.conversation_id)
         self.assertEqual(2, row["unread_count"])
+        self.assertEqual("auto", row["bot_mode"])
 
         marked = self.client.post(
             f"/api/conversations/{self.conversation_id}/mark-read",
@@ -139,6 +140,20 @@ class UnifiedInboxActionTests(unittest.TestCase):
             headers=self.headers(self.other_business_id),
         )
         self.assertEqual(404, cross_tenant.status_code)
+
+    def test_conversation_listing_exposes_human_takeover_mode(self):
+        with Session(self.engine) as db:
+            db.get(Conversation, self.conversation_id).bot_mode = "human"
+            db.commit()
+
+        listing = self.client.get("/api/conversations", headers=self.headers())
+        self.assertEqual(200, listing.status_code, listing.text)
+        row = next(item for item in listing.json()["items"] if item["conversation_id"] == self.conversation_id)
+        self.assertEqual("human", row["bot_mode"])
+
+        with Session(self.engine) as db:
+            db.get(Conversation, self.conversation_id).bot_mode = "auto"
+            db.commit()
 
     def test_unified_send_dispatches_zalo_text_and_persists_outbound_message(self):
         with patch(

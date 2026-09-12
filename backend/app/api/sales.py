@@ -92,6 +92,7 @@ def _order_out(order: Order) -> OrderOut:
         status=order.status,
         total_amount=order.total_amount,
         reserved_quantity=int(order.reserved_quantity or 0),
+        reservation_expires_at=order.reservation_expires_at,
         payment_status=order.payment_status,
         paid_amount=order.paid_amount,
         refunded_amount=order.refunded_amount,

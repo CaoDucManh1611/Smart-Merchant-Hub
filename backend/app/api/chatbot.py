@@ -248,7 +248,17 @@ def execute_tool(
         if str(exc) == "conversation_not_found":
             raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại.") from exc
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action="chatbot_tool_executed", resource_type="conversation", resource_id=conversation_id, metadata={"tool": payload.tool})
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        actor_type="bot" if actor is None else "staff",
+        action="chatbot_tool_executed",
+        resource_type="conversation",
+        resource_id=conversation_id,
+        correlation_id=payload.correlation_id,
+        metadata={"tool": payload.tool},
+    )
     db.commit()
     return {"tool": payload.tool, "result": result}
 

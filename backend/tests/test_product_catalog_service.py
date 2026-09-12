@@ -58,6 +58,10 @@ class ProductCatalogServiceTests(unittest.TestCase):
             self.assertEqual(6, combo.stock_quantity)
             self.assertEqual(17, combo.metadata_["catalog_source_document_id"])
             self.assertIn("bộ chăm sóc da cơ bản", combo.metadata_["aliases"])
+            self.assertEqual(
+                ["sữa rửa mặt", "serum"],
+                combo.metadata_["components"],
+            )
 
 
 if __name__ == "__main__":

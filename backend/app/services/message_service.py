@@ -1553,6 +1553,16 @@ def process_and_save_message(
         logger.info("Inbound provider delivery already persisted")
         return saved_message
 
+    # Every outbound workflow spawned by this inbound event receives a
+    # deterministic idempotency namespace.  Provider retries can therefore
+    # safely re-enter the webhook without producing duplicate bot messages.
+    auto_reply_base_key = None
+    if saved_message and saved_message.get("message_id"):
+        auto_reply_base_key = (
+            f"inbound:{int(business_id)}:{int(conversation_id)}:"
+            f"{int(saved_message['message_id'])}"
+        )
+
     # Keep the legacy media columns as a compatibility mirror while storing
     # the complete canonical attachment list in the tenant-owned table.
     persisted_attachments = []
@@ -1598,6 +1608,31 @@ def process_and_save_message(
         {"customer_id": customer_id},
     )
     db.commit()
+
+    # Keep the inbound side of the unified event chain auditable without
+    # copying message content or provider payloads into the audit stream.
+    if saved_message and business_id is not None and saved_message.get("message_id"):
+        try:
+            record_audit(
+                db,
+                business_id=int(business_id),
+                actor_type="customer",
+                action="message_received",
+                resource_type="message",
+                resource_id=int(saved_message["message_id"]),
+                correlation_id=auto_reply_base_key,
+                metadata={
+                    "conversation_id": int(conversation_id),
+                    "customer_id": int(customer_id),
+                    "channel": str(channel),
+                },
+            )
+            db.commit()
+        except Exception:
+            # Audit is additive; accepting an inbound provider event must not
+            # fail because a legacy database has not created the audit table.
+            db.rollback()
+            logger.warning("Inbound audit event could not be recorded")
 
     if saved_message is not None and persisted_attachments:
         saved_message["attachments"] = [
@@ -1650,10 +1685,14 @@ def process_and_save_message(
         bool(message.get("media_type")),
     )
 
+    # Keep routing flags initialized before any branch uses them.  Media-only
+    # messages skip all text handlers, but still pass through this function.
+    escalation_triggered = False
+    csat_recorded = False
+
     # A pending CSAT survey consumes an explicit 1–5 answer before the
     # regular commerce/RAG router can mistake it for a product quantity.
-    csat_recorded = False
-    if message.get("content") and business_id is not None:
+    if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded:
         try:
             from app.services.csat_service import CSAT_THANK_YOU, consume_csat_response
 
@@ -1671,6 +1710,11 @@ def process_and_save_message(
                     channel=str(channel),
                     text=CSAT_THANK_YOU,
                     business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:csat"
+                        if auto_reply_base_key
+                        else None
+                    ),
                 )
         except Exception:
             logger.warning("CSAT response trigger failed", exc_info=True)
@@ -1678,7 +1722,6 @@ def process_and_save_message(
     # Complaint and explicit human requests are routed before the normal
     # collection/RAG flow. This prevents the bot from continuing after a
     # human takeover and creates one auditable support ticket.
-    escalation_triggered = False
     if message.get("content") and business_id is not None:
         try:
             from app.services.chatbot_agent import route_escalation
@@ -1698,18 +1741,55 @@ def process_and_save_message(
                     channel=str(channel),
                     text="Mình đã chuyển yêu cầu cho nhân viên hỗ trợ. Nhân viên sẽ liên hệ bạn sớm nhất nhé.",
                     business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:escalation"
+                        if auto_reply_base_key
+                        else None
+                    ),
                 )
         except Exception:
             logger.warning("Chatbot escalation trigger failed", exc_info=True)
+
+    # Transactional order intents must win over an in-progress profile
+    # collection session. Otherwise a message such as "hủy đơn" can be
+    # mistaken for a customer name/phone and the bot will continue checkout.
+    transactional_reply = None
+    if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded:
+        try:
+            from app.services.customer_order_service import customer_order_reply
+            transactional_reply = customer_order_reply(
+                db,
+                int(business_id),
+                int(conversation_id),
+                str(message.get("content")),
+            )
+            if transactional_reply:
+                db.commit()
+                from app.services.auto_reply_service import send_text_reply_background
+
+                send_text_reply_background(
+                    conversation_id=int(conversation_id),
+                    channel=str(channel),
+                    text=transactional_reply,
+                    business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:transactional"
+                        if auto_reply_base_key
+                        else None
+                    ),
+                )
+        except Exception:
+            db.rollback()
+            logger.warning("Transactional order trigger failed", exc_info=True)
 
     # Progressive customer-profile collection runs before RAG. Once a buyer
     # starts checkout, each inbound answer advances the session and the next
     # prompt is sent back through the same channel. This prevents the generic
     # knowledge-base reply from competing with the order data-collection flow.
     collection_result = None
-    if escalation_triggered or csat_recorded:
+    if escalation_triggered or csat_recorded or transactional_reply:
         collection_result = True
-    if message.get("content") and business_id is not None:
+    if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded and not transactional_reply:
         if saved_message and saved_message.get("message_id"):
             try:
                 from app.services.customer_fact_extractor import (
@@ -1744,6 +1824,11 @@ def process_and_save_message(
                     conversation_id=int(conversation_id),
                     channel=str(channel),
                     business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:collection"
+                        if auto_reply_base_key
+                        else None
+                    ),
                 )
         except Exception:
             # Collection is an enhancement on top of the accepted inbound
@@ -1765,6 +1850,11 @@ def process_and_save_message(
                         channel=channel,
                         text=GREETING_REPLY,
                         business_id=int(business_id),
+                        auto_reply_key=(
+                            f"{auto_reply_base_key}:greeting"
+                            if auto_reply_base_key
+                            else None
+                        ),
                     )
                 else:
                     from app.services.auto_reply_service import process_rag_auto_reply_background
@@ -1774,6 +1864,11 @@ def process_and_save_message(
                         channel=channel,
                         query_text=message.get("content"),
                         business_id=int(business_id),
+                        auto_reply_key=(
+                            f"{auto_reply_base_key}:rag"
+                            if auto_reply_base_key
+                            else None
+                        ),
                     )
             except Exception:
                 logger.warning("Auto-reply trigger failed")

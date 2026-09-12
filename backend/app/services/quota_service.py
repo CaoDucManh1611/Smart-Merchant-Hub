@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+import math
 from typing import Literal
 
 from sqlalchemy import func, select
@@ -95,6 +96,26 @@ def _amount(value: int | float | Decimal | str) -> Decimal:
     if result <= 0:
         raise ValueError("Quota amount must be greater than zero")
     return result
+
+
+def estimate_ai_cost(messages: list[dict], *, answer: str | None = None) -> Decimal:
+    """Estimate one LLM call's cost without persisting prompt or answer text.
+
+    Provider usage payloads are not uniform, so the platform uses a stable
+    conservative estimate for quota preflight.  The configured output budget
+    keeps streaming and non-streaming callers on the same accounting rule.
+    """
+    prompt_chars = sum(len(str(message.get("content") or "")) for message in messages)
+    answer_chars = len(str(answer or ""))
+    prompt_tokens = max(1, math.ceil(prompt_chars / 4))
+    output_tokens = max(
+        int(settings.AI_MAX_OUTPUT_TOKENS_ESTIMATE),
+        math.ceil(answer_chars / 4) if answer is not None else 0,
+    )
+    rate = Decimal(str(settings.AI_COST_PER_1K_TOKENS or 0))
+    if rate <= 0:
+        return Decimal("0")
+    return (rate * Decimal(prompt_tokens + output_tokens) / Decimal("1000")).quantize(Decimal("0.0001"))
 
 
 def _active_plan(db: Session, business_id: int) -> ServicePlan | None:
@@ -311,6 +332,42 @@ def record_quota_usage(
         idempotency_key=idempotency_key,
         now=now,
     )
+
+
+def reserve_ai_budget(
+    db: Session,
+    business_id: int,
+    messages: list[dict],
+    *,
+    idempotency_key: str,
+    answer: str | None = None,
+) -> dict[str, QuotaDecision | Decimal]:
+    """Guard one LLM call with both call-count and cost quotas.
+
+    The two ledger rows use distinct derived keys because reservations are
+    unique per tenant/key.  Replaying the same request therefore returns the
+    original decisions and cannot consume quota twice.
+    """
+    key = str(idempotency_key or "").strip()
+    if not key:
+        raise ValueError("idempotency_key is required for AI quota reservations")
+    calls = record_quota_usage(
+        db,
+        business_id,
+        "ai_calls",
+        1,
+        idempotency_key=f"{key}:calls",
+    )
+    cost = estimate_ai_cost(messages, answer=answer)
+    if cost > 0:
+        record_quota_usage(
+            db,
+            business_id,
+            "ai_cost",
+            cost,
+            idempotency_key=f"{key}:cost",
+        )
+    return {"calls": calls, "cost": cost}
 
 
 def release_quota(

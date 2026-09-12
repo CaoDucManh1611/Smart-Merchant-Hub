@@ -25,6 +25,7 @@ from app.models.customer import Customer
 from app.models.customer_fact import CustomerFact
 from app.models.message import Message
 from app.rag.llm_caller import call_llm
+from app.services.quota_service import reserve_ai_budget
 
 
 logger = logging.getLogger(__name__)
@@ -285,6 +286,24 @@ def extract_and_persist_customer_facts(
     source_message_id: int,
     content: str,
 ) -> list[CustomerFact]:
+    if not (content or "").strip() or (content or "").strip().startswith("/"):
+        return []
+    # Fact extraction is an LLM call too.  Reserve the tenant budget before
+    # invoking the provider; source_message_id gives webhook retries a stable
+    # idempotency key without persisting message content in the quota ledger.
+    budget = reserve_ai_budget(
+        db,
+        business_id,
+        build_extraction_messages((content or "")[:4000]),
+        idempotency_key=f"customer-facts:{source_message_id}",
+    )
+    db.commit()
+    logger.debug(
+        "Reserved customer-fact extraction AI budget: business=%s message=%s cost=%s",
+        business_id,
+        source_message_id,
+        budget["cost"],
+    )
     candidates = extract_customer_facts(content)
     return persist_extracted_facts(
         db,

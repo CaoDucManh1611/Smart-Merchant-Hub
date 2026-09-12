@@ -2445,6 +2445,31 @@ button:hover {
   font-size: 0.75rem;
 }
 
+.customer-contact-overflow {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+}
+
+.customer-contact-overflow-toggle {
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.customer-contact-overflow-list {
+  display: grid;
+  max-height: 8.5rem;
+  gap: 0.25rem;
+  overflow: auto;
+  padding-top: 0.4rem;
+  border-top: 1px dashed #f2d8d1;
+}
+
+.customer-contact-card {
+  max-height: 13rem;
+  overflow: hidden;
+}
+
 .customer-facts {
   display: grid;
   gap: 0.5rem;
@@ -2793,7 +2818,33 @@ button:hover {
 }
 
 .orders-table {
-  min-width: 1280px;
+  min-width: 1180px;
+}
+
+.orders-table th,
+.orders-table td {
+  vertical-align: top;
+}
+
+.orders-table td:nth-child(7),
+.orders-table td:nth-child(8) {
+  min-width: 11rem;
+  white-space: nowrap;
+}
+
+.orders-table .table-action-btn,
+.orders-table .inline-stage,
+.order-payment-actions button {
+  white-space: nowrap;
+}
+
+.orders-table .order-payment-actions {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.orders-table .order-payment-actions input {
+  flex: 0 0 5.2rem;
 }
 
 .order-customer-phone input[readonly] {
@@ -3354,6 +3405,106 @@ button:hover {
 .report-panel-header span {
   color: #a77c75;
   font-size: 0.75rem;
+}
+
+.quality-ops-panel {
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, #fffaf8, #fff);
+}
+
+.quality-health-pill {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 0.35rem 0.65rem;
+  color: #16734a;
+  background: #e7f8ee;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.quality-health-pill.warning {
+  color: #a33e24;
+  background: #fff0e8;
+}
+
+.quality-ops-cards {
+  margin-bottom: 0.75rem;
+}
+
+.quality-usage-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.quality-usage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #f1c7bd;
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
+  color: #8d4b43;
+  background: #fff;
+  font-size: 0.72rem;
+}
+
+.quality-usage-chip b {
+  font-weight: 600;
+}
+
+.quality-usage-chip em {
+  color: #6e2828;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.quality-circuit-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.quality-circuit-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border: 1px solid #bfe6d0;
+  border-radius: 0.65rem;
+  padding: 0.45rem 0.65rem;
+  color: #16734a;
+  background: #f2fcf6;
+  font-size: 0.72rem;
+}
+
+.quality-circuit-chip b {
+  font-weight: 700;
+}
+
+.quality-circuit-chip em {
+  color: #438464;
+  font-style: normal;
+}
+
+.quality-circuit-chip.half {
+  border-color: #f0d49a;
+  color: #9a6617;
+  background: #fffaf0;
+}
+
+.quality-circuit-chip.half em {
+  color: #a67b32;
+}
+
+.quality-circuit-chip.open {
+  border-color: #f1b8a6;
+  color: #a33e24;
+  background: #fff0e8;
+}
+
+.quality-circuit-chip.open em {
+  color: #ba654b;
 }
 
 .reports-table {

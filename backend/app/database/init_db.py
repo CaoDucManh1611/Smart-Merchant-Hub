@@ -160,6 +160,8 @@ def init_db() -> None:
         conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_provider VARCHAR(80)"))
         conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_code VARCHAR(160)"))
         conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_status VARCHAR(30)"))
+        conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS reservation_expires_at TIMESTAMP"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_reservation_expires_at ON orders (reservation_expires_at)"))
         conn.execute(
             text(
                 "ALTER TABLE conversations "
@@ -212,6 +214,18 @@ def init_db() -> None:
             text(
                 "ALTER TABLE messages "
                 "ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE messages "
+                "ADD COLUMN IF NOT EXISTS auto_reply_key VARCHAR(255)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_auto_reply_key "
+                "ON messages (auto_reply_key)"
             )
         )
         conn.execute(

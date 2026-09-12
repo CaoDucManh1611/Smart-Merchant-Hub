@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from app.models.order_event import OrderEvent
 from app.models.order_payment import OrderPayment
 from app.models.purchase_order import PurchaseOrder
 from app.models.sales import Order, OrderItem, Product
+from app.services.audit_service import record_audit
 
 
 SALES_TRANSITIONS = {
@@ -48,6 +49,7 @@ class PaymentOperationError(ValueError):
 
 
 PAYMENT_STATUSES = {"pending", "paid", "failed", "cancelled"}
+DRAFT_RESERVATION_TTL = timedelta(hours=2)
 
 
 def _payment_status(paid: Decimal, total: Decimal, refunded: Decimal = Decimal("0")) -> str:
@@ -59,6 +61,179 @@ def _payment_status(paid: Decimal, total: Decimal, refunded: Decimal = Decimal("
     if net_paid >= total:
         return "paid"
     return "partial"
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _sales_order_items(db: Session, order_id: int) -> list[OrderItem]:
+    return db.query(OrderItem).filter(
+        OrderItem.order_id == order_id,
+    ).order_by(OrderItem.id.asc()).all()
+
+
+def _quantities_by_product(items: list[OrderItem]) -> dict[int, int]:
+    quantities: dict[int, int] = {}
+    for item in items:
+        quantities[item.product_id] = quantities.get(item.product_id, 0) + int(item.quantity or 0)
+    return quantities
+
+
+def reserve_draft_order_inventory(
+    db: Session,
+    *,
+    order: Order,
+    business_id: int,
+    expires_at: datetime | None = None,
+) -> Order:
+    """Hold stock for a chatbot draft without decrementing on-hand inventory.
+
+    The operation is idempotent for an already-held draft.  Confirmation can
+    therefore reuse the reservation instead of incrementing product holds a
+    second time.
+    """
+    if order.status != "draft":
+        raise SalesOrderOperationError("Chỉ đơn nháp mới được giữ tồn tạm thời.", 409)
+    metadata = dict(order.metadata_ or {})
+    if metadata.get("reservation_status") == "held" and int(order.reserved_quantity or 0) > 0:
+        return order
+
+    items = _sales_order_items(db, order.id)
+    quantities = _quantities_by_product(items)
+    if not quantities:
+        raise SalesOrderOperationError("Đơn nháp chưa có sản phẩm để giữ tồn.", 422)
+    products = db.query(Product).filter(
+        Product.business_id == business_id,
+        Product.id.in_(sorted(quantities)),
+    ).order_by(Product.id.asc()).with_for_update().all()
+    product_map = {product.id: product for product in products}
+    missing = [product_id for product_id in quantities if product_id not in product_map]
+    if missing:
+        raise SalesOrderOperationError(f"Sản phẩm không tồn tại trong business: {missing}.", 404)
+    for product_id, quantity in quantities.items():
+        product = product_map[product_id]
+        available = int(product.stock_quantity or 0) - int(product.reserved_quantity or 0)
+        if available < quantity:
+            raise SalesOrderOperationError(
+                f"Sản phẩm {product.sku} không đủ tồn khả dụng ({available}).",
+                409,
+            )
+    for product_id, quantity in quantities.items():
+        product = product_map[product_id]
+        product.reserved_quantity = int(product.reserved_quantity or 0) + quantity
+
+    deadline = expires_at or (_now() + DRAFT_RESERVATION_TTL)
+    if deadline.tzinfo is not None:
+        deadline = deadline.astimezone(timezone.utc).replace(tzinfo=None)
+    order.reserved_quantity = sum(quantities.values())
+    order.reservation_expires_at = deadline
+    metadata.update({
+        "reservation_status": "held",
+        "reservation_expires_at": deadline.isoformat(),
+    })
+    order.metadata_ = metadata
+    db.add(OrderEvent(
+        business_id=business_id,
+        order_type="sales_order",
+        order_id=order.id,
+        event_type="reservation_created",
+        metadata_={"reserved_quantity": order.reserved_quantity, "expires_at": deadline.isoformat()},
+    ))
+    return order
+
+
+def release_draft_order_reservation(
+    db: Session,
+    *,
+    order_id: int,
+    business_id: int,
+    reason: str = "expired",
+) -> Order | None:
+    """Release a draft's held stock while retaining the draft for audit/history."""
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.business_id == business_id,
+    ).with_for_update().first()
+    if order is None or order.status != "draft" or int(order.reserved_quantity or 0) <= 0:
+        return order
+
+    quantities = _quantities_by_product(_sales_order_items(db, order.id))
+    products = db.query(Product).filter(
+        Product.business_id == business_id,
+        Product.id.in_(sorted(quantities)),
+    ).order_by(Product.id.asc()).with_for_update().all()
+    product_map = {product.id: product for product in products}
+    missing = [product_id for product_id in quantities if product_id not in product_map]
+    if missing:
+        raise SalesOrderOperationError(f"Sản phẩm không tồn tại trong business: {missing}.", 404)
+    for product_id, quantity in quantities.items():
+        product = product_map[product_id]
+        reserved = int(product.reserved_quantity or 0)
+        if reserved < quantity:
+            raise SalesOrderOperationError(
+                f"Sản phẩm {product.sku} không đủ tồn giữ để giải phóng.",
+                409,
+            )
+    for product_id, quantity in quantities.items():
+        product_map[product_id].reserved_quantity = int(product_map[product_id].reserved_quantity or 0) - quantity
+
+    metadata = dict(order.metadata_ or {})
+    metadata.update({
+        "reservation_status": reason,
+        "reservation_released_at": _now().isoformat(),
+    })
+    order.metadata_ = metadata
+    order.reserved_quantity = 0
+    order.reservation_expires_at = None
+    db.add(OrderEvent(
+        business_id=business_id,
+        order_type="sales_order",
+        order_id=order.id,
+        event_type="reservation_released",
+        metadata_={"reason": reason},
+    ))
+    record_audit(
+        db,
+        business_id=business_id,
+        actor_type="system",
+        action="sales_draft_reservation_released",
+        resource_type="sales_order",
+        resource_id=order.id,
+        metadata={"reason": reason},
+    )
+    return order
+
+
+def release_expired_draft_reservations(
+    db: Session,
+    business_id: int,
+    *,
+    now: datetime | None = None,
+    limit: int = 100,
+) -> int:
+    """Release expired draft holds for one tenant; safe to call every worker tick."""
+    current = now or _now()
+    if current.tzinfo is not None:
+        current = current.astimezone(timezone.utc).replace(tzinfo=None)
+    order_ids = [row[0] for row in db.query(Order.id).filter(
+        Order.business_id == business_id,
+        Order.status == "draft",
+        Order.reserved_quantity > 0,
+        Order.reservation_expires_at.is_not(None),
+        Order.reservation_expires_at <= current,
+    ).order_by(Order.reservation_expires_at.asc(), Order.id.asc()).limit(max(1, min(int(limit), 500))).all()]
+    released = 0
+    for order_id in order_ids:
+        order = release_draft_order_reservation(
+            db,
+            order_id=int(order_id),
+            business_id=business_id,
+            reason="expired",
+        )
+        if order is not None and order.reserved_quantity == 0:
+            released += 1
+    return released
 
 
 def _existing_payment(
@@ -370,9 +545,7 @@ def transition_sales_order(
         if net_paid < Decimal(order.total_amount or 0):
             raise SalesOrderOperationError("Chỉ có thể hoàn tất đơn khi đã thanh toán đủ.", 409)
 
-    quantities_by_product: dict[int, int] = {}
-    for item in order_items:
-        quantities_by_product[item.product_id] = quantities_by_product.get(item.product_id, 0) + item.quantity
+    quantities_by_product = _quantities_by_product(order_items)
 
     product_ids = sorted({item.product_id for item in order_items})
     products = db.query(Product).filter(
@@ -385,22 +558,40 @@ def transition_sales_order(
         raise SalesOrderOperationError(f"Sản phẩm không tồn tại trong business: {missing}.", 404)
 
     if target == "confirmed":
-        for product_id, quantity in quantities_by_product.items():
-            product = product_map[product_id]
-            stock = int(product.stock_quantity or 0)
-            reserved = int(product.reserved_quantity or 0)
-            available = stock - reserved
-            if available < quantity:
-                raise SalesOrderOperationError(
-                    f"Sản phẩm {product.sku} không đủ tồn khả dụng ({available}).",
-                    409,
-                )
-        total_reserved = 0
-        for product_id, quantity in quantities_by_product.items():
-            product = product_map[product_id]
-            product.reserved_quantity = int(product.reserved_quantity or 0) + quantity
-            total_reserved += quantity
-        order.reserved_quantity = total_reserved
+        metadata = dict(order.metadata_ or {})
+        reservation_held = (
+            metadata.get("reservation_status") == "held"
+            and int(order.reserved_quantity or 0) == sum(quantities_by_product.values())
+        )
+        if order.reservation_expires_at is not None and order.reservation_expires_at <= _now():
+            reservation_held = False
+            # A worker may not have run yet.  Release the stale hold before
+            # checking availability so confirmation does not deadlock itself.
+            for product_id, quantity in quantities_by_product.items():
+                product = product_map[product_id]
+                product.reserved_quantity = max(0, int(product.reserved_quantity or 0) - quantity)
+            order.reserved_quantity = 0
+            metadata["reservation_status"] = "expired"
+            order.reservation_expires_at = None
+        if not reservation_held:
+            for product_id, quantity in quantities_by_product.items():
+                product = product_map[product_id]
+                stock = int(product.stock_quantity or 0)
+                reserved = int(product.reserved_quantity or 0)
+                available = stock - reserved
+                if available < quantity:
+                    raise SalesOrderOperationError(
+                        f"Sản phẩm {product.sku} không đủ tồn khả dụng ({available}).",
+                        409,
+                    )
+            total_reserved = 0
+            for product_id, quantity in quantities_by_product.items():
+                product = product_map[product_id]
+                product.reserved_quantity = int(product.reserved_quantity or 0) + quantity
+                total_reserved += quantity
+            order.reserved_quantity = total_reserved
+        metadata["reservation_status"] = "held"
+        order.metadata_ = metadata
 
     elif target == "shipped":
         for product_id, quantity in quantities_by_product.items():
@@ -430,7 +621,7 @@ def transition_sales_order(
             ))
         order.reserved_quantity = 0
 
-    elif target == "cancelled" and previous in {"confirmed", "processing"}:
+    elif target == "cancelled" and previous in {"draft", "confirmed", "processing"} and int(order.reserved_quantity or 0) > 0:
         for product_id, quantity in quantities_by_product.items():
             product = product_map[product_id]
             reserved = int(product.reserved_quantity or 0)
@@ -443,6 +634,10 @@ def transition_sales_order(
             product = product_map[product_id]
             product.reserved_quantity = int(product.reserved_quantity or 0) - quantity
         order.reserved_quantity = 0
+        order.reservation_expires_at = None
+        metadata = dict(order.metadata_ or {})
+        metadata["reservation_status"] = "cancelled"
+        order.metadata_ = metadata
 
     order.status = target
     db.add(OrderEvent(

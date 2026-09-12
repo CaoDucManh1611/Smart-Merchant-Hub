@@ -102,6 +102,7 @@ class OrderOut(BaseModel):
     status: str
     total_amount: Decimal
     reserved_quantity: int = 0
+    reservation_expires_at: datetime | None = None
     payment_status: str = "unpaid"
     paid_amount: Decimal = Decimal("0")
     refunded_amount: Decimal = Decimal("0")

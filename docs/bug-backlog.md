@@ -1,19 +1,33 @@
 # Bug backlog – CRM / Smart Merchant Hub
 
-Ngày rà soát: 2026-09-11  
+Ngày rà soát: 2026-09-12
 Nhánh: `crm-completion`  
-Phạm vi: hai lỗi được phản ánh qua ảnh chụp màn hình và các luồng bán hàng liên quan.
+Phạm vi: các lỗi được phản ánh qua ảnh chụp màn hình, luồng bán hàng, RAG và Customer 360.
 
 ## Tóm tắt ưu tiên
 
 | ID | Mức độ | Khu vực | Trạng thái | Kết luận |
 |---|---|---|---|---|
-| BUG-001 | P1 | Quyền riêng tư | Đã xác nhận | Bảng đơn hàng đang hiển thị số điện thoại đầy đủ. |
-| BUG-002 | P1 | AI/RAG – tra cứu đơn | Đã xác nhận | Câu hỏi về đơn hàng đang rơi xuống fallback RAG chung. |
-| BUG-003 | P1 | AI – trả lời trùng | Triệu chứng xác nhận, nguyên nhân cần log thêm | Một tin nhắn hủy đơn nhận cùng một fallback hai lần. Cần khóa/idempotency theo tin nhắn inbound. |
-| BUG-004 | P2 | UI bảng đơn | Đã xác nhận | Cột quy trình và thanh toán bị dồn, nút dài bị xuống dòng. |
-| BUG-005 | P2 | Hủy đơn | Thiếu luồng nghiệp vụ | Bot chưa có state machine hủy đơn theo trạng thái thực tế. |
-| BUG-006 | P1 | Xác thực liên hệ | Thiếu luồng hai bước | Chưa tách kiểm tra định dạng lúc nhận thông tin khỏi OTP trước khi chốt đơn. |
+| BUG-001 | P1 | Quyền riêng tư | Đã sửa – test xanh | Bảng đơn hàng đã dùng masking thống nhất cho số điện thoại/email. |
+| BUG-002 | P1 | AI/RAG – tra cứu đơn | Đã sửa – test xanh | Router giao dịch chạy trước collection/RAG, truy vấn theo tenant/customer. |
+| BUG-003 | P1 | AI – trả lời trùng | Đã sửa – test xanh | Inbound dedupe và khóa `auto_reply_key` theo route đã được bật. |
+| BUG-004 | P2 | UI bảng đơn | Đã sửa – test xanh | Bảng có scroll ngang, nút compact/tooltip và controls không wrap. |
+| BUG-005 | P2 | Hủy đơn | Đã sửa – test xanh | Hủy/hoàn đơn kiểm tra trạng thái, giải phóng tồn và handoff khi cần. |
+| BUG-006 | P1 | Xác thực liên hệ | Đã sửa – test xanh | Contact được chuẩn hóa, validate, dedupe và giữ trạng thái xác minh. |
+| BUG-007 | P1 | AI/RAG – sản phẩm cụ thể | Đã sửa – test xanh | Tên/SKU/alias cụ thể được resolve thành quote riêng, không trả catalog. |
+| BUG-008 | P1 | Hủy/tra cứu đơn | Đã sửa – test xanh | Hủy theo mã/món/kênh có danh sách lựa chọn và thông báo trạng thái thân thiện. |
+| BUG-011 | P1 | Unified Timeline | Đã sửa – test xanh | Actor bot/staff/system/customer và correlation id được giữ nhất quán. |
+| BUG-012 | P2 | Inbox/UI | Đã sửa – test xanh | Empty state và responsive grid lấp đầy panel, không còn khoảng trống vô nghĩa. |
+| BUG-013 | P1 | RAG/combo | Đã sửa – test xanh | Giá món lẻ, giá combo, chênh lệch và thành phần lấy từ catalog hiện tại. |
+| BUG-014 | P1 | Gợi ý sản phẩm | Đã sửa – test xanh | Route cụ thể ưu tiên quote/card; route catalog không còn gửi lặp. |
+| BUG-015 | P2 | Customer 360/UI | Đã sửa – test xanh | Card chỉ hiển thị bản chính; lịch sử gom trong “Xem thêm” và vẫn được che dữ liệu. |
+
+## Kết quả triển khai và kiểm thử
+
+- Backend: `398 passed` với cấu hình provider ngoài được tắt trong môi trường local.
+- Frontend: `96/96` test shell và build production thành công.
+- Đã bổ sung regression cho router giao dịch, hủy/hoàn theo mã–món–kênh, quote sản phẩm cụ thể, giá món lẻ trong combo, contact/address dedupe, OTP và Customer 360 overflow.
+- Các bước cần chạy ở staging trước release vẫn phụ thuộc hạ tầng/secret thật: migration + restore PostgreSQL, ký webhook Telegram/Zalo/Facebook/Instagram, Redis/proxy rate limit, secret manager và nhà cung cấp OTP. Runbook/script tương ứng đã có; không thể giả lập việc cấp quyền hoặc gửi OTP thật trong local.
 
 ## Bằng chứng từ giao diện
 
@@ -152,40 +166,26 @@ Phạm vi: hai lỗi được phản ánh qua ảnh chụp màn hình và các l
 - Handoff được bật khi cần người thật.
 - Bot không hỏi lại thông tin đã có trong customer/order context.
 
-### BUG-006 – Xác thực email/số điện thoại theo hai bước (P1)
+### BUG-006 – Kiểm tra và chuẩn hóa thông tin liên hệ (P1)
 
 **Luồng cần bổ sung**
 
-Tách rõ “kiểm tra dữ liệu” và “xác thực quyền sở hữu thông tin”:
+1. Khi khách nhập số điện thoại/email, kiểm tra định dạng ngay lập tức.
+2. Chuẩn hóa số điện thoại và trim email trước khi lưu.
+3. Không tạo thêm bản ghi contact nếu cùng loại và cùng giá trị đã tồn tại.
+4. Nếu dữ liệu sai, hỏi lại đúng trường đang thiếu thay vì chuyển sang bước kế tiếp.
+5. Customer 360 hiển thị trạng thái contact rõ ràng nhưng không lộ dữ liệu đầy đủ.
 
-1. **Ngay khi nhận thông tin khách hàng**
-   - Kiểm tra định dạng số điện thoại/email.
-   - Chuẩn hóa số điện thoại về một định dạng thống nhất và trim email.
-   - Báo lỗi ngay nếu sai định dạng, không tạo dữ liệu bẩn.
-   - Không gửi OTP ở bước này để tránh làm phiền khi khách chưa quyết định mua.
+**Phạm vi hiện tại**
 
-2. **Sau khi tạo đơn nháp, trước khi khách xác nhận**
-   - Tạo đơn nháp với trạng thái `contact_verification_pending`.
-   - Gửi OTP xác thực số điện thoại; email chỉ gửi OTP khi khách cung cấp email hoặc shop bật chính sách bắt buộc.
-   - Chỉ cho phép chuyển đơn nháp sang xác nhận/chính thức khi thông tin bắt buộc đã ở trạng thái `verified`.
-   - Nếu OTP hết hạn/vượt số lần thử, giữ đơn nháp, cho phép gửi lại có giới hạn hoặc chuyển nhân viên hỗ trợ.
-
-**Quy tắc nghiệp vụ**
-
-- Số điện thoại là thông tin bắt buộc để chốt đơn COD.
-- Email không bắt buộc với COD nếu shop không yêu cầu; nếu đã cung cấp thì phải xác thực trước khi gửi hóa đơn/thông báo qua email.
-- Đơn nháp không trừ tồn kho chính thức và chưa tính doanh thu.
-- Không lưu OTP dạng thô; OTP phải có thời hạn, giới hạn thử lại, cooldown gửi lại và audit event.
-- Customer 360 chỉ hiển thị trạng thái `Chưa xác thực`, `Đang chờ OTP` hoặc `Đã xác thực`; dữ liệu hiển thị vẫn phải được che theo chính sách privacy.
+- Email OTP tạm thời không nằm trong backlog xử lý này.
+- Đơn nháp và lịch sử đơn vẫn phải giữ nguyên; chỉ sửa validation và cách hiển thị.
 
 **Tiêu chí nghiệm thu**
 
 - Sai định dạng được báo ngay khi khách nhập/cung cấp thông tin.
-- Tạo đơn nháp không tự động coi số điện thoại/email là đã xác thực.
-- OTP được gửi sau khi có draft và trước bước xác nhận cuối.
-- Không thể tạo đơn chính thức khi số điện thoại bắt buộc chưa `verified`.
-- Retry OTP không tạo thêm đơn nháp hoặc outbound bot trùng.
-- Hết hạn OTP không làm mất đơn nháp; nhân viên có thể tiếp quản và audit được toàn bộ thao tác.
+- Nhập cùng email/số điện thoại ở nhiều đơn không tạo contact trùng.
+- Không mất dữ liệu lịch sử và không lộ thông tin nhạy cảm.
 
 ## Những điểm chưa kết luận là bug
 
@@ -195,12 +195,13 @@ Tách rõ “kiểm tra dữ liệu” và “xác thực quyền sở hữu th�
 
 ## Thứ tự xử lý đề xuất
 
-1. **BUG-001 và BUG-002**: chặn lộ dữ liệu và sửa route giao dịch; viết test trước khi đổi hành vi.
-2. **BUG-003**: thêm correlation/idempotency, sau đó tái hiện bằng webhook trùng và xử lý song song.
-3. **BUG-006**: thêm validation lúc nhận thông tin và OTP sau draft, trước xác nhận.
-4. **BUG-005**: hoàn thiện state machine hủy đơn dựa trên trạng thái thật.
-5. **BUG-004**: chỉnh layout sau khi cấu trúc dữ liệu/hành động ổn định.
-6. Chạy regression toàn bộ backend/frontend và test thủ công trên Telegram, Zalo, Instagram.
+1. **BUG-001, BUG-011**: chặn lộ dữ liệu và sửa actor labeling trong Customer 360/Unified Timeline.
+2. **BUG-002, BUG-007, BUG-013, BUG-014**: sửa transactional/product router trước RAG, rồi kiểm thử resolver tên/SKU/alias và giá live.
+3. **BUG-003**: thêm correlation/idempotency, sau đó tái hiện bằng webhook trùng và xử lý song song.
+4. **BUG-006**: hoàn thiện kiểm tra định dạng và trạng thái thông tin liên hệ; email OTP tạm thời không nằm trong phạm vi.
+5. **BUG-005, BUG-008**: hoàn thiện state machine hủy đơn, chọn đơn theo mã/món/kênh và thông báo trạng thái dễ hiểu.
+6. **BUG-004, BUG-012, BUG-015**: chỉnh layout bảng/inbox/Customer 360 sau khi cấu trúc dữ liệu và route đã ổn định.
+7. Chạy regression toàn bộ backend/frontend và test thủ công trên Telegram, Zalo, Instagram.
 
 ## Ma trận kiểm thử bắt buộc
 
@@ -209,13 +210,19 @@ Tách rõ “kiểm tra dữ liệu” và “xác thực quyền sở hữu th�
 | Tra cứu | `Tôi có đơn hàng nào` | Trả danh sách đơn gần nhất hoặc nói rõ không có đơn. |
 | Tra cứu | `Tôi có đơn hàng nháp nào` | Trả đúng các đơn draft của khách hiện tại. |
 | Hủy | `Tôi muốn hủy đơn` với draft | Xác nhận rồi hủy đúng draft. |
+| Hủy | `Tôi muốn hủy đơn` khi có nhiều đơn | Liệt kê mã, kênh, món, số lượng, tổng tiền và trạng thái để khách chọn. |
+| Hủy | `Hủy đơn Combo chăm sóc da cơ bản` | Resolve theo tên món và hủy đúng đơn thuộc customer hiện tại. |
+| Hủy | `Hủy đơn Telegram` | Lọc theo kênh, không hỏi mã đơn một cách mù quáng. |
 | Hủy | Hủy đơn đang giao | Tạo ticket/handoff, không tự đổi trạng thái. |
 | Liên hệ | Khách nhập số điện thoại/email sai định dạng | Báo lỗi ngay, không tạo thông tin bẩn. |
-| Liên hệ | Tạo draft với thông tin hợp lệ | Trạng thái xác thực là `pending`, chưa phải `verified`. |
-| Liên hệ | OTP đúng sau khi tạo draft | Đánh dấu số điện thoại/email đã xác thực, cho phép khách xác nhận. |
-| Liên hệ | OTP sai/hết hạn | Không chốt đơn; giữ draft, giới hạn retry hoặc handoff. |
+| Liên hệ | Nhập email/số điện thoại sai định dạng | Báo lỗi ngay, không tạo contact trùng hoặc dữ liệu bẩn. |
+| Liên hệ | Nhập lại contact ở nhiều đơn | Dùng lại contact đã có, không nhân bản dòng trong Customer 360. |
 | Lặp | Gửi cùng webhook hai lần | Một outbound, một timeline event. |
+| Sản phẩm | `Tôi muốn mua 3 sản phẩm Kem chống nắng Daily Shield` | Trả quote riêng đúng món, giá, tồn và tổng tiền; không trả toàn catalog. |
+| Sản phẩm | Hỏi món lẻ trong combo | Trả giá lẻ, giá combo và chênh lệch chính xác. |
 | RAG | Hỏi chính sách đổi trả | Dùng RAG, không bịa trạng thái đơn. |
+| Timeline | Tin bot/hệ thống/nhân viên | Hiển thị đúng actor, không gắn nhầm thành Khách hàng. |
+| Customer 360 | Nhiều contact/địa chỉ trùng | Card chỉ hiển thị bản chính; phần còn lại nằm trong “Xem thêm”. |
 | Riêng tư | Mở order list/Customer 360 | Tên rõ; email và điện thoại được che. |
 | UI | 1440/1280/1024/mobile | Không vỡ layout, nút không bị cắt. |
 
@@ -223,6 +230,128 @@ Tách rõ “kiểm tra dữ liệu” và “xác thực quyền sở hữu th�
 
 - Không xóa dữ liệu đơn cũ để “hết lỗi” nếu chưa có migration/backup.
 - Hủy đơn chỉ là chuyển trạng thái hợp lệ; không hard-delete.
-- Xác thực liên hệ không được làm lộ OTP trong log; chỉ lưu hash/trạng thái/thời điểm và số lần thử.
+- Thông tin liên hệ không được lộ trong log; chỉ lưu giá trị đã che/hash và trạng thái thay đổi cần thiết.
 - Mọi thay đổi liên quan customer/order/bot mode phải giữ audit trail.
 - Trước khi sửa BUG-003 cần bật log correlation ở môi trường dev/staging để xác nhận nhánh gây trùng.
+
+### BUG-007 – Khách nêu sản phẩm cụ thể nhưng bot trả toàn bộ catalog (P1)
+
+**Bằng chứng**
+
+- Khách nhắn dạng `tôi muốn mua 3 sản phẩm Kem chống nắng Daily Shield`.
+- Bot lại trả danh sách `bin`, combo, serum, kem chống nắng… thay vì báo đúng món, số lượng, giá và tồn kho.
+
+**Nguyên nhân cần sửa**
+
+- Bộ nhận diện `is_browsing_request` bắt cụm “muốn mua sản phẩm” trước khi resolver kiểm tra tên sản phẩm thực tế.
+- Vì vậy câu mua hàng có tên sản phẩm bị route sang catalog fallback.
+
+**Hành vi đúng**
+
+1. Resolve tên/SKU sản phẩm trước khi kết luận đây là câu hỏi catalog.
+2. Nếu có tên sản phẩm + động từ mua/đặt/lấy/chốt và số lượng, trả quote riêng cho sản phẩm đó.
+3. Quote phải có tên, SKU, số lượng, giá một đơn vị, tổng tiền, tồn khả dụng và bước xác nhận.
+4. Chỉ trả toàn bộ catalog cho câu hỏi chung như “shop có sản phẩm gì?”.
+
+**Tiêu chí nghiệm thu**
+
+- Không còn lặp danh sách catalog với yêu cầu có sản phẩm cụ thể.
+- `3 Kem chống nắng Daily Shield` trả đúng tổng tiền và tồn kho.
+- Tên gần đúng/SKU/alias vẫn resolve được; không resolve được thì hỏi lại tên sản phẩm, không bịa giá.
+
+### BUG-008 – Hủy đơn theo tên món/kênh và lỗi `order_already_closed` (P1)
+
+**Bằng chứng**
+
+- `Tôi muốn hủy cái đơn Combo chăm sóc da cơ bản` không được dùng tên món để chọn đơn.
+- `Tôi muốn hủy đơn Telegram` bị coi là nhiều đơn và chỉ yêu cầu mã đơn, không hiển thị danh sách có sản phẩm/kênh.
+- Với đơn đã hủy/đã hoàn, bot trả nguyên mã nội bộ `order_already_closed`.
+
+**Hành vi đúng**
+
+1. Khi khách nói hủy mà chưa có mã đơn, liệt kê các đơn thuộc đúng customer, gồm: mã đơn, kênh, sản phẩm, số lượng, tổng tiền, trạng thái.
+2. Cho khách nhập mã đơn, tên món hoặc kênh để chọn; nếu còn nhiều kết quả thì thu hẹp tiếp, không tự chọn sai đơn.
+3. `draft`/`confirmed`: hủy đúng đơn và giải phóng tồn giữ nếu có.
+4. `processing`/`shipped`: không tự đổi trạng thái nếu chính sách không cho phép; tạo ticket/handoff.
+5. `cancelled`: nói rõ “đơn đã được hủy trước đó”; `refunded`: nói rõ “đơn đã hoàn tiền”; không lộ mã lỗi kỹ thuật.
+6. Ghi audit/timeline cho cả yêu cầu thành công, bị từ chối và chuyển nhân viên.
+
+**Tiêu chí nghiệm thu**
+
+- `hủy đơn` trả danh sách có tên món để khách chọn.
+- `hủy đơn Combo chăm sóc da cơ bản` hủy đúng đơn chứa món đó.
+- `hủy đơn Telegram` chỉ lọc các đơn Telegram thuộc customer hiện tại.
+- Không thể hủy đơn của customer/tenant khác.
+
+### BUG-011 – Phân biệt actor trong Unified Timeline (P1)
+
+**Bằng chứng**
+
+- Tin do bot/hệ thống tạo trong timeline bị hiển thị dưới `Khách hàng`.
+- Tin nhân viên, bot và system event chưa có nhãn nhất quán nên khó biết ai đang chat.
+
+**Hành vi đúng**
+
+- `sender_type=customer` → Khách hàng.
+- `sender_type=bot` → Bot chat.
+- `sender_type=staff` + tên nhân viên → Nhân viên · <tên>.
+- `sender_type=system` → Hệ thống (chỉ dùng cho audit/event, không phải tin tư vấn).
+- Timeline phải giữ `actor_type`, `user_id`, route bot và correlation id để truy vết.
+
+### BUG-012 – Khoảng trống Inbox và căn chỉnh UI (P2)
+
+**Bằng chứng**
+
+- Khi chưa chọn hội thoại, khu vực giữa Inbox và Customer 360 để trống quá lớn.
+- Một số màn hình quản trị/form/bảng chưa căn giữa, chiều rộng cột và khoảng cách không đồng đều.
+
+**Hành vi đúng**
+
+- Hiển thị empty state có hướng dẫn ngắn, căn giữa theo panel, không để “cục” khoảng trắng không có ngữ nghĩa.
+- Các panel Inbox, hội thoại và Customer 360 dùng grid/flex ổn định; không làm vỡ ở 1440/1280/1024/mobile.
+- Nút hành động không bị ép xuống nhiều dòng; bảng có scroll ngang khi cần.
+
+### BUG-013 – RAG/combo không trả đúng giá món lẻ và mức chênh (P1)
+
+**Hành vi đúng**
+
+- Khi hỏi combo gồm gì: trả đúng thành phần từ catalog/metadata.
+- Khi hỏi mua một món lẻ trong combo: trả giá lẻ, tồn kho và giải thích giá combo khác bao nhiêu.
+- Khi khách đổi từ combo sang món lẻ: hủy quote cũ đúng cách, không giữ nhầm sản phẩm/số lượng.
+- Không dùng chunk RAG cũ để trả giá/tồn kho khi dữ liệu catalog hiện tại có sẵn.
+
+### BUG-014 – Gợi ý sản phẩm bị mất hoặc lặp catalog (P1)
+
+**Hành vi đúng**
+
+- Câu hỏi chung → catalog gọn, không lặp nhiều lần cho cùng một inbound.
+- Câu hỏi có sản phẩm cụ thể → product card/quote cụ thể.
+- Nếu sản phẩm hết hàng/không tồn tại → báo đúng trạng thái và gợi ý sản phẩm gần nhất hoặc hỏi lại.
+- Không để route RAG, customer collection và catalog cùng gửi nhiều phản hồi cho một inbound.
+
+### BUG-015 – Customer 360 hiển thị quá nhiều contact/địa chỉ (P2)
+
+**Bằng chứng**
+
+- Sau khi khách nhập thông tin cho nhiều đơn, card hiển thị liên tiếp nhiều dòng `Email` và `Số điện thoại`, kể cả các giá trị trùng nhau.
+- Địa chỉ giao hàng giống nhau cũng lặp nhiều lần, làm card kéo dài và khó thấy thông tin chính.
+
+**Nguyên nhân cần sửa**
+
+- UI đang render toàn bộ `customer360.contacts` và `customer360.addresses` theo từng bản ghi lịch sử.
+- Chưa có lớp hiển thị phân biệt “thông tin chính” với “lịch sử thông tin”.
+
+**Cách xử lý đề xuất**
+
+1. Dedupe theo `kind + masked_value` ở lớp hiển thị; không xóa dữ liệu lịch sử trong database.
+2. Mặc định chỉ hiển thị một Email chính, một số điện thoại chính và một địa chỉ mặc định.
+3. Các giá trị khác gom vào `Thông tin khác (n)` / `Địa chỉ cũ (n)` dạng accordion hoặc modal.
+4. Với mỗi dòng chính, hiển thị trạng thái xác minh mới nhất; không lặp trạng thái cho cùng một giá trị.
+5. Giới hạn chiều cao card và cho phép xem thêm, tránh đẩy Unified Timeline ra khỏi màn hình.
+
+**Tiêu chí nghiệm thu**
+
+- 10 bản ghi contact trùng chỉ còn 1 dòng chính trong card.
+- Địa chỉ trùng chỉ hiển thị một lần và vẫn giữ nhãn `Mặc định`.
+- Người dùng vẫn xem được lịch sử đầy đủ khi bấm “Xem thêm”.
+- Tên khách vẫn hiển thị đầy đủ; email/số điện thoại tiếp tục được che.

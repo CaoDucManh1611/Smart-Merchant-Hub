@@ -124,6 +124,8 @@ class PlatformQualityTests(unittest.TestCase):
         self.assertIn("models", body)
         self.assertIn("experiments", body)
         self.assertIn("rag", body)
+        self.assertIn("commerce", body)
+        self.assertTrue({"started", "drafts", "confirmed", "conversion_rate"}.issubset(body["commerce"]))
 
 
 if __name__ == "__main__":

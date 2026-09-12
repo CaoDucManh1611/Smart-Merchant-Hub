@@ -107,6 +107,16 @@ def _timeline_message_actor_type(message: Message) -> str:
     return sender_type or ("customer" if message.direction == "inbound" else "system")
 
 
+def _timeline_message_metadata(message: Message) -> dict:
+    """Expose only safe correlation fields on Customer 360 timeline events."""
+    raw = message.metadata_ if isinstance(message.metadata_, dict) else {}
+    allowed = {"correlation_id", "inbound_message_id", "auto_reply_key", "route", "rag_source_document_ids"}
+    metadata = {key: raw[key] for key in allowed if key in raw}
+    if message.auto_reply_key and "auto_reply_key" not in metadata:
+        metadata["auto_reply_key"] = message.auto_reply_key
+    return metadata
+
+
 def _fact_out(fact: CustomerFact) -> CustomerFactOut:
     return CustomerFactOut(
         id=fact.id,
@@ -1174,6 +1184,7 @@ def customer_timeline(
                 else "Hệ thống" if actor_type == "system"
                 else None
             ),
+            metadata=_timeline_message_metadata(message),
         ))
     items.extend(CustomerTimelineItem(
         event_type="identity",

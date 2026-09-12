@@ -1,7 +1,7 @@
 """Tenant-scoped CRM reporting endpoints."""
 
 import csv
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from io import StringIO
 
@@ -20,11 +20,27 @@ from app.models.ticket import Ticket
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order import PurchaseOrderItem
 from app.models.inventory import PurchaseReceipt, PurchaseReceiptItem, StockMovement
+from app.models.channel import Channel, ChannelEvent
+from app.models.rag_run import RagRun
+from app.models.audit_log import AuditLog
+from app.models.saas import SaaSUsage
+from app.models.business import ServicePlan, Subscription
+from app.services.channel_retry import provider_breaker_snapshot
+from app.services.quota_service import PLAN_LIMIT_FIELDS, quota_period_start
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 
 
 router = APIRouter()
+
+
+def _number(value):
+    """Serialize quota counters without leaking Decimal objects to JSON."""
+    if value is None:
+        return None
+    number = Decimal(str(value))
+    integer = int(number)
+    return integer if number == integer else float(number)
 
 
 class CrmOverviewOut(BaseModel):
@@ -57,6 +73,112 @@ class AgentPerformanceItem(BaseModel):
 
 class AgentPerformanceOut(BaseModel):
     items: list[AgentPerformanceItem]
+
+
+def _active_plan(db: Session, business_id: int) -> ServicePlan | None:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return db.query(ServicePlan).join(Subscription, Subscription.plan_id == ServicePlan.id).filter(
+        Subscription.business_id == business_id,
+        Subscription.status == "active",
+        (Subscription.starts_at.is_(None) | (Subscription.starts_at <= now)),
+        (Subscription.ends_at.is_(None) | (Subscription.ends_at > now)),
+    ).order_by(Subscription.id.desc()).first()
+
+
+@router.get("/reports/quality")
+def quality_dashboard(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    days: int = Query(default=30, ge=1, le=365),
+):
+    """Return one tenant-scoped operations snapshot for the CRM dashboard.
+
+    Usage is read-only, while provider and AI signals are aggregated from the
+    durable channel/RAG/audit records.  The response intentionally contains
+    counters and redacted state only; no customer message or secret is
+    returned.
+    """
+    business_id = tenant.business_id
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=int(days))
+    period_start = quota_period_start()
+    usage_rows = db.query(SaaSUsage).filter(
+        SaaSUsage.business_id == business_id,
+        SaaSUsage.period_start == period_start,
+    ).all()
+    used = {row.resource: _number(row.used or 0) for row in usage_rows}
+    plan = _active_plan(db, business_id)
+    usage = {}
+    for resource, field in PLAN_LIMIT_FIELDS.items():
+        current = used.get(resource, 0)
+        raw_limit = getattr(plan, field, None) if plan is not None else None
+        limit = _number(raw_limit) if raw_limit is not None else None
+        usage[resource] = {
+            "used": current,
+            "limit": limit,
+            "remaining": max(0, limit - current) if limit is not None else None,
+        }
+
+    failed_events = db.query(ChannelEvent).join(Channel).filter(
+        Channel.business_id == business_id,
+        ChannelEvent.status == "failed",
+        ChannelEvent.received_at >= since,
+    ).count()
+    retrying_events = db.query(ChannelEvent).join(Channel).filter(
+        Channel.business_id == business_id,
+        ChannelEvent.status.in_(("received", "processing")),
+        ChannelEvent.received_at >= since,
+    ).count()
+    rag_runs = db.query(RagRun).filter(
+        RagRun.business_id == business_id,
+        RagRun.created_at >= since,
+    ).all()
+    rag_errors = sum(1 for run in rag_runs if run.status in {"failed", "error"})
+    tool_errors = db.query(AuditLog).filter(
+        AuditLog.business_id == business_id,
+        AuditLog.created_at >= since,
+        AuditLog.action.in_(("chatbot_tool_error", "chatbot_order_tool_error")),
+    ).count()
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    open_tickets = db.query(Ticket).filter(
+        Ticket.business_id == business_id,
+        ~Ticket.status.in_(("resolved", "closed")),
+    ).count()
+    overdue_tickets = db.query(Ticket).filter(
+        Ticket.business_id == business_id,
+        ~Ticket.status.in_(("resolved", "closed")),
+        Ticket.sla_due_at.is_not(None),
+        Ticket.sla_due_at < now,
+    ).count()
+    due_soon_tickets = db.query(Ticket).filter(
+        Ticket.business_id == business_id,
+        ~Ticket.status.in_(("resolved", "closed")),
+        Ticket.sla_due_at.is_not(None),
+        Ticket.sla_due_at >= now,
+        Ticket.sla_due_at <= now + timedelta(hours=24),
+    ).count()
+    return {
+        "period_days": int(days),
+        "period_start": period_start,
+        "usage": usage,
+        "provider": {
+            "failed_events": int(failed_events),
+            "retrying_events": int(retrying_events),
+            "circuits": provider_breaker_snapshot(),
+        },
+        "ai": {
+            "calls": used.get("ai_calls", 0),
+            "cost": used.get("ai_cost", 0),
+            "rag_runs": len(rag_runs),
+            "rag_errors": rag_errors,
+            "tool_errors": int(tool_errors),
+        },
+        "sla": {
+            "open_tickets": int(open_tickets),
+            "overdue_tickets": int(overdue_tickets),
+            "due_soon_tickets": int(due_soon_tickets),
+        },
+    }
 
 
 def _count(db: Session, model, business_id: int, *conditions) -> int:

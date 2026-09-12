@@ -37,6 +37,11 @@ def is_retryable_provider_error(error: Exception) -> bool:
     return isinstance(error, _RETRYABLE_TRANSPORT_ERRORS)
 
 
+def provider_breaker_snapshot() -> dict:
+    """Expose redacted provider circuit state for operational dashboards."""
+    return _provider_breaker.snapshot()
+
+
 def run_with_provider_retry(
     *,
     provider: str,

@@ -35,7 +35,7 @@ def _tokens(value: str) -> set[str]:
     }
 
 
-def _product_aliases(product: Product) -> list[str]:
+def product_aliases(product: Product) -> list[str]:
     metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
     aliases: list[str] = [product.name, product.sku]
     for key in ("aliases", "search_terms", "keywords"):
@@ -47,6 +47,11 @@ def _product_aliases(product: Product) -> list[str]:
     return list(dict.fromkeys(alias.strip() for alias in aliases if alias and alias.strip()))
 
 
+# Keep the private name for callers that imported it before the public helper
+# was added.  New code should use ``product_aliases``.
+_product_aliases = product_aliases
+
+
 def _resolve_from_products(products: list[Product], text: str) -> Product | None:
     query = normalize_product_text(text)
     if not query:
@@ -55,7 +60,7 @@ def _resolve_from_products(products: list[Product], text: str) -> Product | None
     best: tuple[float, int, Product] | None = None
     for product in products:
         score = 0.0
-        for alias in _product_aliases(product):
+        for alias in product_aliases(product):
             normalized_alias = normalize_product_text(alias)
             if not normalized_alias:
                 continue
@@ -77,6 +82,104 @@ def _resolve_from_products(products: list[Product], text: str) -> Product | None
     if best is None or best[0] < 0.75:
         return None
     return best[2]
+
+
+def resolve_product_mentions(
+    db: Session,
+    *,
+    business_id: int,
+    text: str,
+    conversation_id: int | None = None,
+) -> list[Product]:
+    """Resolve every explicit product mention in a customer message.
+
+    ``resolve_product`` intentionally returns one best match, which is ideal
+    for short price/stock questions but loses items in messages such as
+    ``"Serum và sữa rửa mặt"``.  This helper finds exact catalog aliases,
+    prefers the longest alias when names overlap, and falls back to the
+    single-product resolver for conversational follow-ups.
+    """
+    products = db.query(Product).filter(
+        Product.business_id == business_id,
+        Product.status == "active",
+    ).order_by(Product.id.asc()).all()
+    query = normalize_product_text(text)
+    if not query:
+        return []
+
+    candidates: list[tuple[int, int, int, Product]] = []
+    seen_candidates: set[tuple[int, int, int]] = set()
+    for product in products:
+        for alias in product_aliases(product):
+            normalized_alias = normalize_product_text(alias)
+            if len(normalized_alias) < 2:
+                continue
+            start = query.find(normalized_alias)
+            while start >= 0:
+                end = start + len(normalized_alias)
+                candidate_key = (start, end, product.id)
+                if candidate_key not in seen_candidates:
+                    candidates.append((start, -len(normalized_alias), product.id, product))
+                    seen_candidates.add(candidate_key)
+                start = query.find(normalized_alias, start + 1)
+
+            # Customers often omit descriptive suffixes ("kem chống nắng",
+            # "sữa rửa mặt", or even "sữa mặt").  When the full alias is not
+            # present, accept at least two meaningful catalog tokens with a
+            # conservative coverage threshold.  Exact aliases above always
+            # win, so a specific product such as "Serum Vitamin C Lunari" is
+            # not shadowed by the generic "Serum" product.
+            if query.find(normalized_alias) >= 0:
+                continue
+            alias_tokens = [
+                token
+                for token in normalized_alias.split()
+                if token not in _STOP_WORDS and len(token) >= 2
+            ]
+            if len(alias_tokens) < 2:
+                continue
+            query_token_positions = [
+                (match.group(0), match.start(), match.end())
+                for match in re.finditer(r"\S+", query)
+            ]
+            matched_positions = []
+            for token in alias_tokens:
+                position = next(
+                    (item for item in query_token_positions if item[0] == token),
+                    None,
+                )
+                if position is not None:
+                    matched_positions.append(position)
+            required_matches = max(2, (len(alias_tokens) + 2) // 3)
+            if len(matched_positions) < required_matches:
+                continue
+            start = min(item[1] for item in matched_positions)
+            end = max(item[2] for item in matched_positions)
+            candidate_key = (start, end, product.id)
+            if candidate_key not in seen_candidates:
+                candidates.append((start, -(end - start), product.id, product))
+                seen_candidates.add(candidate_key)
+
+    selected: list[Product] = []
+    occupied: list[tuple[int, int]] = []
+    for start, neg_length, _product_id, product in sorted(candidates, key=lambda item: (item[0], item[1], item[2])):
+        end = start - neg_length
+        if product in selected:
+            continue
+        if any(start < other_end and end > other_start for other_start, other_end in occupied):
+            continue
+        selected.append(product)
+        occupied.append((start, end))
+
+    if selected:
+        return selected
+    fallback = resolve_product(
+        db,
+        business_id=business_id,
+        text=text,
+        conversation_id=conversation_id,
+    )
+    return [fallback] if fallback is not None else []
 
 
 def resolve_product(

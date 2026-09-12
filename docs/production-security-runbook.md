@@ -85,6 +85,12 @@ a per-IP sliding-window limit to `/api` requests. The built-in limiter is
 per-process; multi-replica deployments must also enforce a shared proxy/Redis
 limit.
 
+For a multi-replica deployment, configure the load balancer/API gateway with
+the same window and burst policy, set `RATE_LIMIT_BACKEND=proxy` and
+`RATE_LIMIT_TRUSTED_PROXY=true`, and make the proxy overwrite (not append)
+`X-Forwarded-For`. The app keeps its local guard as a second line of defense;
+do not rely on in-process state as the shared quota.
+
 ## 5. Logs and customer audit history
 
 Application handlers install a redaction filter for authorization headers,
@@ -114,6 +120,18 @@ Verify row counts, tenant isolation, login, webhook delivery and application
 smoke tests. Promote the restored database only through the normal change
 window. The restore script requires an explicit switch because `--clean` is
 destructive.
+
+For a repeatable rehearsal that verifies the archive, restores it, applies
+migrations, and runs tenant/webhook smoke tests:
+
+```powershell
+./scripts/staging-rehearsal.ps1 `
+  -BackupFile ./backups/crm_chatbot_YYYYMMDD_HHMMSS.dump `
+  -StagingDatabaseUrl $env:STAGING_DATABASE_URL
+```
+
+Pass `-Overwrite` only when the staging database is isolated and the change
+window explicitly allows cleaning existing objects.
 
 ## Deployment order
 

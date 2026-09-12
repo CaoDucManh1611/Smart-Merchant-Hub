@@ -182,6 +182,12 @@ class Customer360ApiTests(unittest.TestCase):
                     direction="outbound",
                     sender_type="bot",
                     content="actor-bot",
+                    auto_reply_key="inbound:1:1:700:rag",
+                    metadata_={
+                        "correlation_id": "inbound:1:1:700:rag",
+                        "inbound_message_id": "700",
+                        "route": "rag",
+                    },
                 ),
                 Message(
                     conversation_id=conversation.id,
@@ -213,6 +219,8 @@ class Customer360ApiTests(unittest.TestCase):
         }
         self.assertEqual("customer", messages["actor-customer"]["actor_type"])
         self.assertEqual("bot", messages["actor-bot"]["actor_type"])
+        self.assertEqual("700", messages["actor-bot"]["metadata"]["inbound_message_id"])
+        self.assertEqual("rag", messages["actor-bot"]["metadata"]["route"])
         self.assertEqual("bot", messages["actor-legacy-bot"]["actor_type"])
         self.assertEqual("staff", messages["actor-staff"]["actor_type"])
         self.assertEqual("Linh tư vấn", messages["actor-staff"]["actor_name"])

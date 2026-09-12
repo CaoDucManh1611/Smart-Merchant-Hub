@@ -3,6 +3,13 @@
 Mục tiêu: kiểm thử và hoàn thiện toàn bộ luồng từ nhận tin nhắn đến chăm sóc
 khách hàng, tạo đơn, vận hành và bảo mật tenant.
 
+## Trạng thái kiểm thử trên `crm-completion`
+
+- [x] Backend regression: 398 test passed; migration chain và tenant-isolation suite nằm trong gate.
+- [x] Frontend shell: 96 test passed và production build thành công.
+- [x] Regression cho tra cứu/hủy/hoàn đơn, quote sản phẩm, giá món lẻ trong combo, OTP, idempotency và Customer 360 overflow.
+- [ ] Staging gates: PostgreSQL migration/restore, webhook chữ ký với tài khoản thật, Redis/proxy rate limit, secret manager và provider OTP thật.
+
 ## Phân chia workstream
 
 ### `feat/crm-ai-commerce`
@@ -61,6 +68,7 @@ thành. Mỗi nhánh phải đánh dấu test/acceptance tương ứng trước 
 - [ ] Hỏi sản phẩm trả đúng tên, giá và tồn kho.
 - [ ] `20 cái bin` và `6 combo` được hiểu đúng số lượng.
 - [ ] Tạo draft không tạo đơn trùng và không trừ tồn kho hai lần.
+- [ ] Draft giữ tồn tạm thời, hiển thị hạn giữ và tự trả tồn sau khi hết hạn/hủy.
 - [ ] Sai định dạng email/số điện thoại bị chặn ngay.
 - [ ] OTP chỉ gửi sau khi draft được tạo.
 - [ ] Chưa xác thực không thể chốt đơn chính thức.
@@ -111,6 +119,7 @@ thành. Mỗi nhánh phải đánh dấu test/acceptance tương ứng trước 
 - [ ] Xóa tài liệu không còn được truy hồi.
 - [ ] Hỏi chính sách dùng RAG.
 - [ ] Hỏi trạng thái/giá/đơn dùng database/tool, không dùng RAG để bịa.
+- [ ] `Tôi có đơn hàng nào` và `Tôi có đơn hàng nháp nào` trả đúng dữ liệu của khách hiện tại.
 - [ ] Không tìm thấy context có fallback an toàn.
 - [ ] LLM/embedding key lỗi thì xoay key và không log raw secret.
 - [ ] Tool không được gọi ngoài allow-list hoặc ngoài tenant.

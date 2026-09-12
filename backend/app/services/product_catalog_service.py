@@ -19,6 +19,7 @@ class CatalogProductRecord:
     stock_quantity: int
     description: str
     aliases: tuple[str, ...]
+    components: tuple[str, ...] = ()
 
 
 def extract_catalog_products(text: str) -> list[CatalogProductRecord]:
@@ -52,6 +53,7 @@ def extract_catalog_products(text: str) -> list[CatalogProductRecord]:
         price = _parse_integer(price_match.group(1))
         stock_quantity = _parse_integer(stock_match.group(1))
         aliases = _build_aliases(name)
+        components = _extract_combo_components(body)
         records.append(CatalogProductRecord(
             sku=sku,
             name=name,
@@ -59,6 +61,7 @@ def extract_catalog_products(text: str) -> list[CatalogProductRecord]:
             stock_quantity=stock_quantity,
             description=body,
             aliases=tuple(aliases),
+            components=tuple(components),
         ))
     return records
 
@@ -78,6 +81,27 @@ def _build_aliases(name: str) -> list[str]:
             if "cơ bản" in remainder.casefold():
                 aliases.append("combo cơ bản")
     return list(dict.fromkeys(aliases))
+
+
+def _extract_combo_components(body: str) -> list[str]:
+    """Extract component names without guessing their product ids."""
+    match = re.search(
+        r"(?:gồm|bao\s+gồm)\s*:?\s*(.+?)(?=(?:\.\s*(?:giá|tồn|ton)|;\s*(?:giá|tồn|ton)|$))",
+        body,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return []
+    segment = " ".join(match.group(1).split()).strip(" .;:")
+    if not segment:
+        return []
+    segment = re.sub(r"\s+và\s+", ", ", segment, flags=re.IGNORECASE)
+    components = []
+    for item in re.split(r"[,;]", segment):
+        cleaned = re.sub(r"^[-–•]\s*", "", item).strip(" .;:")
+        if cleaned:
+            components.append(cleaned)
+    return list(dict.fromkeys(components))
 
 
 def sync_catalog_products(
@@ -106,6 +130,7 @@ def sync_catalog_products(
                     "aliases": list(record.aliases),
                     "catalog_source_document_id": source_document_id,
                     "catalog_source": "knowledge_document",
+                    **({"components": list(record.components)} if record.components else {}),
                 },
             )
             db.add(product)
@@ -124,6 +149,8 @@ def sync_catalog_products(
                 "catalog_source_document_id": source_document_id,
                 "catalog_source": "knowledge_document",
             })
+            if record.components:
+                metadata["components"] = list(record.components)
             product.metadata_ = metadata
             synced.append(product)
         elif source_id is None:

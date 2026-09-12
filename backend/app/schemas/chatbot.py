@@ -99,6 +99,10 @@ class BotModeOut(BaseModel):
 class ChatbotToolRequest(BaseModel):
     tool: str = Field(..., min_length=1, max_length=60)
     arguments: dict[str, Any] = Field(default_factory=dict)
+    # Optional inbound/run correlation for the unified audit stream. Keep it
+    # separate from tool arguments so models cannot smuggle arbitrary audit
+    # metadata through a tool implementation.
+    correlation_id: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class ChatbotToolResponse(BaseModel):

@@ -126,6 +126,52 @@ async def health_check():
     }
 
 
+@app.get("/health/details")
+def health_details():
+    """Expose safe component readiness counters for operators and probes.
+
+    The legacy ``/health`` contract stays intentionally minimal for load
+    balancers.  This diagnostic endpoint checks the database-backed queue and
+    reports provider circuit state without exposing exception text or secrets.
+    """
+    from sqlalchemy import text
+
+    from app.db.database import SessionLocal
+    from app.models.crm_job import CrmJob
+    from app.services.channel_retry import provider_breaker_snapshot
+
+    checks = {
+        "database": {"status": "ok"},
+        "queue": {"status": "unknown", "pending": None, "running": None},
+        "provider": {"status": "ok", "circuits": provider_breaker_snapshot()},
+    }
+    db = None
+    try:
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        pending = db.query(CrmJob).filter(CrmJob.status == "pending").count()
+        running = db.query(CrmJob).filter(CrmJob.status == "running").count()
+        checks["queue"] = {
+            "status": "ok",
+            "pending": int(pending),
+            "running": int(running),
+        }
+    except Exception as error:
+        # Keep the probe response useful during a database outage while only
+        # returning a stable error class, never connection details.
+        checks["database"] = {"status": "error", "error_type": type(error).__name__}
+        checks["queue"] = {"status": "error", "pending": None, "running": None}
+    finally:
+        if db is not None:
+            db.close()
+
+    circuits = checks["provider"]["circuits"]
+    if any(item.get("state") == "open" for item in circuits.values()):
+        checks["provider"]["status"] = "degraded"
+    overall = "ok" if all(item["status"] == "ok" for item in checks.values()) else "degraded"
+    return {"status": overall, "checks": checks}
+
+
 @app.get("/{filename:path}", include_in_schema=False)
 async def zalo_domain_verification_file(filename: str):
     """Serve only Zalo's downloaded domain-verification HTML files."""

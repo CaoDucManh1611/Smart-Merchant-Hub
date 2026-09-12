@@ -4,10 +4,13 @@ Auto Reply Service – Tự động trả lời tin nhắn từ RAG knowledge ba
 
 import json
 import logging
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
-from threading import Thread
+from datetime import datetime, timezone
+from threading import Lock, Thread
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -15,6 +18,7 @@ from app.db.database import SessionLocal
 from app.models.business_setting import BusinessSetting
 from app.models.chatbot import ChatbotConfig
 from app.models.conversation import Conversation
+from app.models.message import Message
 from app.models.sales import Product
 
 from app.rag.retriever import retrieve
@@ -27,7 +31,9 @@ from app.services.telegram_service import send_telegram_message
 from app.services.zalo_service import send_zalo_message
 from app.services.customer_collection_flow import is_browsing_request
 from app.services.chatbot_agent import build_agent_memory, is_business_open
-from app.services.quota_service import QuotaExceededError, record_quota_usage
+from app.services.customer_order_service import customer_order_reply
+from app.services.audit_service import record_audit
+from app.services.quota_service import QuotaExceededError, estimate_ai_cost, record_quota_usage
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +46,72 @@ OUT_OF_HOURS_REPLY = (
     "Shop hiện đang ngoài giờ hỗ trợ. Mình đã ghi nhận tin nhắn và nhân viên sẽ phản hồi "
     "vào khung giờ làm việc gần nhất nhé."
 )
+
+_reply_locks: dict[str, Lock] = defaultdict(Lock)
+
+
+def _reply_metadata(source_document_ids: list[int] | None, auto_reply_key: str | None) -> dict:
+    metadata = {"rag_source_document_ids": source_document_ids or []}
+    if auto_reply_key:
+        metadata["auto_reply_key"] = auto_reply_key
+        parts = auto_reply_key.split(":")
+        if len(parts) >= 4 and parts[0] == "inbound":
+            metadata["correlation_id"] = auto_reply_key
+            metadata["inbound_message_id"] = parts[3]
+            if len(parts) >= 5:
+                metadata["route"] = parts[4]
+    return metadata
+
+
+def _record_duplicate_reply_attempt(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int,
+    auto_reply_key: str,
+) -> None:
+    """Persist a redacted quality signal when an outbound is deduplicated."""
+    try:
+        record_audit(
+            db,
+            business_id=business_id,
+            actor_type="system",
+            action="chatbot_auto_reply_duplicate",
+            resource_type="conversation",
+            resource_id=conversation_id,
+            correlation_id=auto_reply_key,
+            metadata={"conversation_id": conversation_id, "auto_reply_key": auto_reply_key},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("Could not persist duplicate auto-reply quality signal", exc_info=True)
+
+
+def _record_auto_reply_sent(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int,
+    message_id: int,
+    external_message_id: str | None,
+    auto_reply_key: str | None,
+) -> None:
+    """Record a redacted outbound event for the unified inbound→bot trace."""
+    record_audit(
+        db,
+        business_id=business_id,
+        actor_type="bot",
+        action="chatbot_auto_reply_sent",
+        resource_type="message",
+        resource_id=message_id,
+        correlation_id=auto_reply_key,
+        metadata={
+            "conversation_id": conversation_id,
+            "external_message_id": external_message_id,
+            "route": (auto_reply_key.split(":", 4)[4] if auto_reply_key and auto_reply_key.startswith("inbound:") and len(auto_reply_key.split(":", 4)) == 5 else None),
+        },
+    )
 
 
 def _send_channel_reply(
@@ -123,8 +195,34 @@ def _save_auto_reply_outbound(
     content: str,
     meta_response: dict,
     source_document_ids: list[int] | None = None,
+    auto_reply_key: str | None = None,
 ) -> None:
     """Persist the external reply so it appears in the CRM inbox."""
+    conversation_business_id = db.query(Conversation.business_id).filter(
+        Conversation.id == conversation_id,
+    ).scalar()
+    if auto_reply_key:
+        # A claimed row is updated after delivery.  The unique key protects
+        # retries even when the provider returns a different message id.
+        updated = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
+        if updated is not None:
+            updated.external_message_id = external_message_id
+            updated.content = content
+            updated.raw_payload = meta_response
+            updated.metadata_ = _reply_metadata(source_document_ids, auto_reply_key)
+            updated.status = "sent"
+            updated.sent_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            if conversation_business_id is not None:
+                _record_auto_reply_sent(
+                    db,
+                    business_id=int(conversation_business_id),
+                    conversation_id=conversation_id,
+                    message_id=updated.id,
+                    external_message_id=external_message_id,
+                    auto_reply_key=auto_reply_key,
+                )
+            db.commit()
+            return
     db.execute(
         text(
             """
@@ -133,6 +231,7 @@ def _save_auto_reply_outbound(
                 channel,
                 external_user_id,
                 external_message_id,
+                auto_reply_key,
                 sender_type,
                 direction,
                 content,
@@ -144,6 +243,7 @@ def _save_auto_reply_outbound(
                 :channel,
                 :external_user_id,
                 :external_message_id,
+                :auto_reply_key,
                 'bot',
                 'outbound',
                 :content,
@@ -158,11 +258,91 @@ def _save_auto_reply_outbound(
             "channel": channel,
             "external_user_id": recipient_id,
             "external_message_id": external_message_id,
+            "auto_reply_key": auto_reply_key,
             "content": content,
             "raw_payload": json.dumps(meta_response, ensure_ascii=False, default=str),
-            "metadata": json.dumps({"rag_source_document_ids": source_document_ids or []}, ensure_ascii=False),
+            "metadata": json.dumps(_reply_metadata(source_document_ids, auto_reply_key), ensure_ascii=False),
         },
     )
+    db.commit()
+    if auto_reply_key:
+        sent = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
+        if sent is not None:
+            if conversation_business_id is not None:
+                _record_auto_reply_sent(
+                    db,
+                    business_id=int(conversation_business_id),
+                    conversation_id=conversation_id,
+                    message_id=sent.id,
+                    external_message_id=external_message_id,
+                    auto_reply_key=auto_reply_key,
+                )
+                db.commit()
+
+
+def _claim_auto_reply(
+    db: Session,
+    *,
+    conversation_id: int,
+    channel: str,
+    recipient_id: str,
+    content: str,
+    business_id: int,
+    auto_reply_key: str,
+) -> bool:
+    """Claim one deterministic response before calling an external provider."""
+    lock = _reply_locks[auto_reply_key]
+    with lock:
+        existing = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
+        if existing is not None and existing.status in {"sending", "sent"}:
+            _record_duplicate_reply_attempt(
+                db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                auto_reply_key=auto_reply_key,
+            )
+            return False
+        if existing is None:
+            db.add(Message(
+                conversation_id=conversation_id,
+                channel=channel,
+                external_user_id=recipient_id,
+                auto_reply_key=auto_reply_key,
+                sender_type="bot",
+                direction="outbound",
+                content=content,
+                status="sending",
+                metadata_={"auto_reply_key": auto_reply_key, "business_id": business_id},
+            ))
+        else:
+            existing.status = "sending"
+            existing.content = content
+        try:
+            db.commit()
+        except IntegrityError:
+            # Another process may have won the unique key.  Recover the
+            # session and let that process own the delivery.
+            db.rollback()
+            _record_duplicate_reply_attempt(
+                db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                auto_reply_key=auto_reply_key,
+            )
+            return False
+        except Exception:
+            db.rollback()
+            raise
+        return True
+
+
+def _mark_auto_reply_failed(db: Session, auto_reply_key: str, error: Exception) -> None:
+    row = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
+    if row is None:
+        return
+    row.status = "failed"
+    # Keep provider/customer payloads out of the message metadata and logs.
+    row.metadata_ = {"auto_reply_key": auto_reply_key, "error_type": type(error).__name__}
     db.commit()
 
 
@@ -209,6 +389,7 @@ def send_text_reply(
     channel: str,
     text: str,
     business_id: int,
+    auto_reply_key: str | None = None,
 ) -> dict:
     """Send and persist a deterministic non-RAG reply on the conversation channel."""
     stored_channel, recipient_id = _get_conversation_recipient(
@@ -223,24 +404,46 @@ def send_text_reply(
             stored_channel,
         )
         channel = stored_channel
-    response = _send_channel_reply(
-        db=db,
+    if auto_reply_key and not _claim_auto_reply(
+        db,
         conversation_id=conversation_id,
         channel=channel,
         recipient_id=recipient_id,
-        text=text,
-        business_id=business_id,
-    )
-    _save_auto_reply_outbound(
-        db=db,
-        conversation_id=conversation_id,
-        channel=channel,
-        recipient_id=recipient_id,
-        external_message_id=response.get("message_id"),
         content=text,
-        meta_response=response,
-        source_document_ids=[],
-    )
+        business_id=business_id,
+        auto_reply_key=auto_reply_key,
+    ):
+        existing = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
+        return {
+            "message_id": existing.external_message_id if existing is not None else None,
+            "idempotent": True,
+        }
+    try:
+        response = _send_channel_reply(
+            db=db,
+            conversation_id=conversation_id,
+            channel=channel,
+            recipient_id=recipient_id,
+            text=text,
+            business_id=business_id,
+        )
+        save_kwargs = {
+            "db": db,
+            "conversation_id": conversation_id,
+            "channel": channel,
+            "recipient_id": recipient_id,
+            "external_message_id": response.get("message_id"),
+            "content": text,
+            "meta_response": response,
+            "source_document_ids": [],
+        }
+        if auto_reply_key:
+            save_kwargs["auto_reply_key"] = auto_reply_key
+        _save_auto_reply_outbound(**save_kwargs)
+    except Exception as error:
+        if auto_reply_key:
+            _mark_auto_reply_failed(db, auto_reply_key, error)
+        raise
     return response
 
 
@@ -250,6 +453,7 @@ def send_text_reply_background(
     channel: str,
     text: str,
     business_id: int,
+    auto_reply_key: str | None = None,
 ) -> None:
     """Send a deterministic reply without delaying the webhook response."""
 
@@ -262,6 +466,7 @@ def send_text_reply_background(
                 channel=channel,
                 text=text,
                 business_id=business_id,
+                auto_reply_key=auto_reply_key,
             )
         except Exception:
             logger.exception(
@@ -308,6 +513,7 @@ def process_rag_auto_reply(
     channel: str,
     query_text: str,
     business_id: int,
+    auto_reply_key: str | None = None,
 ) -> bool:
     """
     Tự động tra cứu RAG và gửi tin nhắn phản hồi cho khách hàng.
@@ -325,6 +531,18 @@ def process_rag_auto_reply(
         if config and isinstance(config.similarity_threshold, (int, float))
         else 0.3
     )
+    def send_reply(text_value: str) -> dict:
+        kwargs = {
+            "db": db,
+            "conversation_id": conversation_id,
+            "channel": channel,
+            "text": text_value,
+            "business_id": business_id,
+        }
+        if auto_reply_key:
+            kwargs["auto_reply_key"] = auto_reply_key
+        return send_text_reply(**kwargs)
+
     with RagRunLog(
         "auto_reply",
         conversation_id=conversation_id,
@@ -353,17 +571,61 @@ def process_rag_auto_reply(
           return False
 
       if not is_business_open(db, business_id):
-          send_text_reply(
-              db=db,
-              conversation_id=conversation_id,
-              channel=channel,
-              text=OUT_OF_HOURS_REPLY,
-              business_id=business_id,
-          )
+          send_reply(OUT_OF_HOURS_REPLY)
           run.finish("outside_business_hours", phase="complete")
           return True
 
       try:
+        deterministic_order_reply = customer_order_reply(
+            db,
+            business_id,
+            conversation_id,
+            query_text,
+        )
+        if deterministic_order_reply:
+            send_reply(deterministic_order_reply)
+            run.finish(
+                "order_action",
+                phase="complete",
+                chunks_found=0,
+                answer_chars=len(deterministic_order_reply),
+            )
+            return True
+
+        # Combo savings are calculated from the live product catalog.  Do not
+        # let the language model infer prices from an old knowledge chunk.
+        from app.services.product_pricing import combo_price_comparison_reply
+
+        combo_reply = combo_price_comparison_reply(
+            db,
+            business_id=business_id,
+            conversation_id=conversation_id,
+            text=query_text,
+        )
+        if combo_reply:
+            send_reply(combo_reply)
+            run.finish(
+                "combo_price_comparison",
+                phase="complete",
+                chunks_found=0,
+                answer_chars=len(combo_reply),
+            )
+            return True
+
+        # Broad product-discovery questions should show the live catalog
+        # deterministically.  Letting them enter RAG first can return a
+        # generic greeting even when the knowledge base has unrelated chunks.
+        if is_browsing_request(query_text):
+            catalog_reply = build_product_catalog_reply(db, business_id)
+            send_reply(catalog_reply)
+            run.finish(
+                "catalog_direct",
+                phase="complete",
+                chunks_found=0,
+                answer_chars=len(catalog_reply),
+            )
+            return True
+
         run.update(phase="retrieve")
         logger.info("Executing RAG auto-reply for conversation %d (query: %s)", conversation_id, query_text[:50])
 
@@ -378,13 +640,7 @@ def process_rag_auto_reply(
         if not chunks:
             if is_browsing_request(query_text):
                 catalog_reply = build_product_catalog_reply(db, business_id)
-                send_text_reply(
-                    db=db,
-                    conversation_id=conversation_id,
-                    channel=channel,
-                    text=catalog_reply,
-                    business_id=business_id,
-                )
+                send_reply(catalog_reply)
                 logger.info(
                     "Product catalog fallback sent via %s to conversation %d",
                     channel,
@@ -430,11 +686,30 @@ def process_rag_auto_reply(
                 1,
                 idempotency_key=f"rag-llm:{run.run_id}",
             )
+            estimated_cost = estimate_ai_cost(messages)
+            if estimated_cost > 0:
+                # Reserve the conservative estimate before the provider call,
+                # so an exhausted AI budget cannot still trigger billable work.
+                # The run id makes webhook retries idempotent.
+                record_quota_usage(
+                    db,
+                    business_id,
+                    "ai_cost",
+                    estimated_cost,
+                    idempotency_key=f"rag-cost:{run.run_id}",
+                )
+                run.update(estimated_ai_cost=float(estimated_cost))
+            # Persist the reservation before the external provider call so a
+            # timeout or process restart cannot let a billable retry bypass
+            # the tenant quota.
+            db.commit()
         except QuotaExceededError as exc:
+            db.rollback()
             logger.warning(
-                "AI quota exhausted for business %d, conversation %d",
+                "AI quota exhausted for business %d, conversation %d, resource=%s",
                 business_id,
                 conversation_id,
+                exc.resource,
             )
             run.finish("quota_exceeded", phase="complete", quota=exc.detail)
             return False
@@ -458,30 +733,49 @@ def process_rag_auto_reply(
             )
             channel = stored_channel
 
-        meta_response = _send_channel_reply(
-            db=db,
+        if auto_reply_key and not _claim_auto_reply(
+            db,
             conversation_id=conversation_id,
             channel=channel,
             recipient_id=recipient_id,
-            text=answer,
+            content=answer,
             business_id=business_id,
-        )
+            auto_reply_key=auto_reply_key,
+        ):
+            run.finish("idempotent", phase="complete", chunks_found=len(chunks))
+            return True
+        try:
+            meta_response = _send_channel_reply(
+                db=db,
+                conversation_id=conversation_id,
+                channel=channel,
+                recipient_id=recipient_id,
+                text=answer,
+                business_id=business_id,
+            )
+        except Exception as error:
+            if auto_reply_key:
+                _mark_auto_reply_failed(db, auto_reply_key, error)
+            raise
         logger.info(
             "RAG auto-reply sent via %s to conversation %d",
             channel,
             conversation_id,
         )
 
-        _save_auto_reply_outbound(
-            db=db,
-            conversation_id=conversation_id,
-            channel=channel,
-            recipient_id=recipient_id,
-            external_message_id=meta_response.get("message_id"),
-            content=answer,
-            meta_response=meta_response,
-            source_document_ids=sorted({chunk.document_id for chunk in chunks}),
-        )
+        save_kwargs = {
+            "db": db,
+            "conversation_id": conversation_id,
+            "channel": channel,
+            "recipient_id": recipient_id,
+            "external_message_id": meta_response.get("message_id"),
+            "content": answer,
+            "meta_response": meta_response,
+            "source_document_ids": sorted({chunk.document_id for chunk in chunks}),
+        }
+        if auto_reply_key:
+            save_kwargs["auto_reply_key"] = auto_reply_key
+        _save_auto_reply_outbound(**save_kwargs)
         logger.info(
             "Auto-reply completed for conversation %d, external_message_id=%s",
             conversation_id,
@@ -508,6 +802,7 @@ def process_rag_auto_reply_background(
     channel: str,
     query_text: str,
     business_id: int,
+    auto_reply_key: str | None = None,
 ) -> None:
     """Run RAG auto-reply off the webhook request path."""
 
@@ -525,6 +820,7 @@ def process_rag_auto_reply_background(
                 channel=channel,
                 query_text=query_text,
                 business_id=business_id,
+                auto_reply_key=auto_reply_key,
             )
         except Exception:
             # Background work must never leak an unhandled thread exception

@@ -26,8 +26,10 @@ against a restored copy of one shop and pass the tenant-isolation suite.
    four weekly, and twelve monthly copies.
 2. Record backup success, duration, size, and checksum in the operations log;
    never place database credentials in that log.
-3. Test a restore to an isolated database at least monthly. Run migrations,
-   the backend test suite, and a tenant-isolation smoke test against it.
+3. Test a restore to an isolated database at least monthly with
+   `scripts/backup-verify.ps1 -RestoreDatabaseUrl`; run migrations, the backend
+   test suite, and a tenant-isolation smoke test against it. Use `-Overwrite`
+   only for an approved maintenance-window replacement.
 4. For a single-shop recovery, restore to a temporary database first, export
    only that shop's rows, review the export, and then import through an
    approved change window. Do not restore a whole production volume over a
@@ -63,6 +65,7 @@ blocked until its own MFA verification succeeds.
 
 MFA is prepared per user through the auth API: the secret is encrypted before
 storage and the provisioning URI is returned only during setup. Session lists
-expose device metadata and can be revoked individually. Enabling TOTP
-verification is a follow-up rollout once the authenticator verification flow is
-enabled; until then, keep `mfa_status=prepared` clearly visible to operators.
+expose device metadata and can be revoked individually. A successful code
+changes the user to `mfa_status=enabled`, marks only the current session as
+verified, and writes an audit event; subsequent sessions must complete their
+own verification.

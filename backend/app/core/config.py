@@ -36,6 +36,20 @@ class Settings(BaseSettings):
     RATE_LIMIT_TRUSTED_PROXY: bool = False
     DATA_RETENTION_DAYS: int = 365
 
+    # Contact verification delivery.  Keep disabled for local/demo runs; a
+    # production secret manager should select smtp (email) or twilio (SMS).
+    OTP_DELIVERY_MODE: str = "disabled"
+    OTP_DELIVERY_FALLBACK: str = "disabled"
+    OTP_FROM_EMAIL: str = ""
+    OTP_SMTP_HOST: str = ""
+    OTP_SMTP_PORT: int = 587
+    OTP_SMTP_USERNAME: str = ""
+    OTP_SMTP_PASSWORD: str = ""
+    OTP_SMTP_USE_TLS: bool = True
+    OTP_TWILIO_ACCOUNT_SID: str = ""
+    OTP_TWILIO_AUTH_TOKEN: str = ""
+    OTP_TWILIO_FROM_NUMBER: str = ""
+
     # Meta OAuth integration
     META_APP_ID: str = ""
     META_APP_SECRET: str = ""
@@ -89,6 +103,13 @@ class Settings(BaseSettings):
     # False keeps embeddings for every seeded document so semantic retrieval
     # is available. Set to true only when intentionally using lexical fallback.
     RAG_AUTO_SEED_FAST_MODE: bool = False
+
+    # The provider response does not expose a uniform token-usage contract
+    # across Groq, Gemini and OpenAI. Keep a conservative, configurable
+    # estimate so tenant AI-cost quotas are enforced consistently; production
+    # deployments can replace the rate with their billing price.
+    AI_COST_PER_1K_TOKENS: float = 0.002
+    AI_MAX_OUTPUT_TOKENS_ESTIMATE: int = 512
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -166,6 +187,19 @@ class Settings(BaseSettings):
             problems.append("RATE_LIMIT_BACKEND must be memory or proxy")
         if self.DATA_RETENTION_DAYS <= 0:
             problems.append("DATA_RETENTION_DAYS must be positive")
+        otp_mode = self.OTP_DELIVERY_MODE.strip().lower()
+        if otp_mode not in {"smtp", "twilio"}:
+            problems.append("OTP_DELIVERY_MODE must be smtp or twilio in production")
+        elif otp_mode == "smtp":
+            if not self.OTP_SMTP_HOST.strip() or not self.OTP_FROM_EMAIL.strip():
+                problems.append("OTP_SMTP_HOST and OTP_FROM_EMAIL must be configured for SMTP OTP")
+            if not self.OTP_SMTP_USERNAME.strip() or not self.OTP_SMTP_PASSWORD:
+                problems.append("OTP_SMTP_USERNAME and OTP_SMTP_PASSWORD must be configured for SMTP OTP")
+        elif otp_mode == "twilio":
+            if not self.OTP_TWILIO_ACCOUNT_SID.strip() or not self.OTP_TWILIO_AUTH_TOKEN.strip() or not self.OTP_TWILIO_FROM_NUMBER.strip():
+                problems.append("Twilio OTP credentials and sender number must be configured")
+        if self.OTP_DELIVERY_FALLBACK.strip().lower() == "in_chat":
+            problems.append("OTP_DELIVERY_FALLBACK=in_chat is not allowed in production")
         if problems:
             raise RuntimeError("Production security configuration is incomplete: " + "; ".join(problems))
 
