@@ -41,6 +41,7 @@ const conversations = ref([]);
 const messages = ref([]);
 const customer360 = ref(null);
 const customer360Loading = ref(false);
+const customer360Error = ref("");
 const customerFactSaving = ref(false);
 const customerFactError = ref("");
 const customerFactDraft = ref({
@@ -79,6 +80,11 @@ const draft = ref("");
 const quickActionOpen = ref(false);
 const quickActionQuery = ref("");
 const quickActionInput = ref(null);
+const inboxSearchInput = ref(null);
+const mobileInboxTrigger = ref(null);
+const mobileCustomerTrigger = ref(null);
+const mobileCustomerClose = ref(null);
+const chatHeading = ref(null);
 
 const loading = ref(false);
 const sending = ref(false);
@@ -130,6 +136,8 @@ const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 
 // users can still expand it with the persistent control at the bottom.
 const sidebarCollapsed = ref(true);
 const customerPanelCollapsed = ref(false);
+const mobileInboxOpen = ref(false);
+const mobileCustomerOpen = ref(false);
 const workspaceGreeting = computed(() => {
   const hour = new Date().getHours();
   if (hour < 12) return "Chào buổi sáng!";
@@ -486,6 +494,7 @@ async function runQuickAction(actionId) {
       currentTab.value = "inbox";
       customerPanelCollapsed.value = false;
       closeQuickActions();
+      if (selected.value) openMobileCustomer();
       return;
     case "create-ticket":
       currentTab.value = "tickets";
@@ -531,6 +540,10 @@ function handleGlobalKeydown(event) {
     else openQuickActions();
   } else if (event.key === "Escape" && quickActionOpen.value) {
     closeQuickActions();
+  } else if (event.key === "Escape" && mobileCustomerOpen.value) {
+    closeMobileCustomer();
+  } else if (event.key === "Escape" && mobileInboxOpen.value) {
+    closeMobileInbox();
   }
 }
 
@@ -540,6 +553,30 @@ function toggleSidebar() {
 
 function toggleCustomerPanel() {
   customerPanelCollapsed.value = !customerPanelCollapsed.value;
+}
+
+function openMobileInbox() {
+  mobileCustomerOpen.value = false;
+  mobileInboxOpen.value = true;
+  nextTick(() => inboxSearchInput.value?.focus());
+}
+
+function closeMobileInbox() {
+  mobileInboxOpen.value = false;
+  nextTick(() => mobileInboxTrigger.value?.focus());
+}
+
+function openMobileCustomer() {
+  if (!selected.value) return;
+  mobileInboxOpen.value = false;
+  mobileCustomerOpen.value = true;
+  customerPanelCollapsed.value = false;
+  nextTick(() => mobileCustomerClose.value?.focus());
+}
+
+function closeMobileCustomer() {
+  mobileCustomerOpen.value = false;
+  nextTick(() => mobileCustomerTrigger.value?.focus());
 }
 
 function runGlobalSearch() {
@@ -924,7 +961,7 @@ const selectedOrderCustomer = computed(() => (
 ));
 
 const selectedOrderCustomerPhone = computed(() => (
-  String(selectedOrderCustomer.value?.phone || "").trim()
+  maskCustomerPhone(selectedOrderCustomer.value?.phone)
 ));
 
 // The lower order strip is contextual: it only renders an actual order that
@@ -1050,14 +1087,25 @@ function orderCustomerName(customerId) {
   const customer = orderCustomers.value.find(
     (candidate) => Number(candidate.id) === Number(customerId),
   );
-  return customer?.name || customer?.email || customer?.channel || "Khách hàng";
+  return customerOptionLabel(customer);
 }
 
 function orderCustomerPhone(customerId) {
   const customer = orderCustomers.value.find(
     (candidate) => Number(candidate.id) === Number(customerId),
   );
-  return String(customer?.phone || "").trim() || "Chưa có số điện thoại";
+  return maskCustomerPhone(customer?.phone) || "Chưa có số điện thoại";
+}
+
+function customerOptionLabel(customer) {
+  const name = maskCustomerName(customer?.name);
+  if (name) return name;
+
+  const email = maskCustomerEmail(customer?.email);
+  if (email) return email;
+
+  const phone = maskCustomerPhone(customer?.phone);
+  return phone || customer?.channel || "Khách hàng";
 }
 
 function orderConversationLabel(conversation) {
@@ -1926,6 +1974,7 @@ function toggleVoiceRecording() {
 ========================================================= */
 
 function handlePaste(event) {
+  if (composerMode.value === "internal") return;
 
   const clipboardItems =
     event.clipboardData?.items
@@ -3593,6 +3642,7 @@ async function reassignConversation(conversation, assignedUserId) {
     }
     const result = await response.json();
     conversation.assigned_user_id = result.assigned_user_id;
+    await loadCustomer360(conversation.customer_id);
   } catch (err) {
     error.value = err.message || "Không thể gán hội thoại.";
   }
@@ -4091,10 +4141,12 @@ async function changeTicketStatus(ticket, status) {
 async function loadCustomer360(customerId) {
   if (!customerId) {
     customer360.value = null;
+    customer360Error.value = "";
     return;
   }
 
   customer360Loading.value = true;
+  customer360Error.value = "";
   try {
     const [profileResponse, timelineResponse, historyResponse, duplicateResponse] = await Promise.all([
       apiFetch(`${API_BASE}/customers/${customerId}`),
@@ -4122,6 +4174,7 @@ async function loadCustomer360(customerId) {
       timelineOffset: timeline.next_offset ?? (timeline.items || []).length,
       timelineHasMore: Boolean(timeline.has_more),
     };
+    customer360Error.value = "";
     customerTimelineError.value = "";
     customerMergeHistory.value = history.items || [];
     duplicateSuggestions.value = duplicates.items || [];
@@ -4131,6 +4184,7 @@ async function loadCustomer360(customerId) {
   } catch (err) {
     console.error("Customer 360 loading error:", err);
     customer360.value = null;
+    customer360Error.value = "Không tải được Customer 360. Hãy thử lại.";
   } finally {
     customer360Loading.value = false;
   }
@@ -4416,8 +4470,11 @@ async function removeCustomerFact(fact) {
 
 async function selectConversation(id) {
 
+  const compactNavigation = window.matchMedia?.("(max-width: 860px)")?.matches;
   discardVoiceRecording();
   selectedId.value = id;
+  mobileInboxOpen.value = false;
+  mobileCustomerOpen.value = false;
   conversationActionsOpen.value = false;
   composerMode.value = "reply";
 
@@ -4433,6 +4490,10 @@ async function selectConversation(id) {
   await markConversationRead(id);
 
   await loadCustomer360(selected.value?.customer_id);
+
+  if (compactNavigation) {
+    nextTick(() => chatHeading.value?.focus());
+  }
 
 }
 
@@ -4857,6 +4918,9 @@ function setComposerMode(mode) {
   if (mode === "internal" && voiceRecording.value) {
     discardVoiceRecording();
   }
+  if (mode === "internal") {
+    clearImage();
+  }
   composerMode.value = mode;
   nextTick(() => document.querySelector(".chat-composer textarea")?.focus());
 }
@@ -4901,7 +4965,7 @@ async function sendComposerContent() {
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
     draft.value = "";
-    removePendingMedia(media.id);
+    clearImage();
     await loadCustomer360(customerId);
   } catch (err) {
     error.value = err.message || "Không thể lưu ghi chú nội bộ.";
@@ -5193,6 +5257,7 @@ async function saveCannedResponse() {
 async function toggleBotMode() {
   if (!selected.value?.conversation_id) return;
   const mode = selectedBotMode.value === "human" ? "resume" : "pause";
+  const customerId = selected.value.customer_id;
   try {
     const response = await apiFetch(`${API_BASE}/chatbot/conversations/${selected.value.conversation_id}/${mode}`, {
       method: "POST",
@@ -5201,6 +5266,7 @@ async function toggleBotMode() {
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
     botModes.value = { ...botModes.value, [selected.value.conversation_id]: (await response.json()).bot_mode };
+    await loadCustomer360(customerId);
   } catch (err) {
     error.value = err.message || "Không thể đổi chế độ chatbot.";
   }
@@ -5566,7 +5632,15 @@ onUnmounted(() => {
            3 CỘT
       ==================================================== -->
 
-      <section v-if="currentTab === 'inbox'" class="layout">
+      <section
+        v-if="currentTab === 'inbox'"
+        class="layout"
+        :class="{
+          'has-selected-conversation': !!selected,
+          'mobile-inbox-open': mobileInboxOpen,
+          'mobile-customer-open': mobileCustomerOpen,
+        }"
+      >
 
 
 
@@ -5574,7 +5648,7 @@ onUnmounted(() => {
              INBOX
         ================================================== -->
 
-        <aside class="inbox">
+        <aside id="crm-inbox-panel" class="inbox" aria-label="Danh sách hội thoại">
 
 
           <div class="inbox-title">
@@ -5608,7 +5682,7 @@ onUnmounted(() => {
 
           <div class="search-box inbox-search-box">
             <span aria-hidden="true">⌕</span>
-            <input v-model="search" aria-label="Tìm hội thoại" placeholder="Tìm theo tên, nội dung hoặc kênh..." @keydown.escape="clearInboxSearch" />
+            <input ref="inboxSearchInput" v-model="search" aria-label="Tìm hội thoại" placeholder="Tìm theo tên, nội dung hoặc kênh..." @keydown.escape="clearInboxSearch" />
             <button v-if="search" type="button" class="search-clear" aria-label="Xóa tìm kiếm" @click="clearInboxSearch">×</button>
             </div>
 
@@ -5813,6 +5887,15 @@ onUnmounted(() => {
 
             <header class="chat-head">
 
+              <button
+                ref="mobileInboxTrigger"
+                type="button"
+                class="mobile-inbox-trigger"
+                aria-controls="crm-inbox-panel"
+                aria-label="Quay lại danh sách hội thoại"
+                @click="openMobileInbox"
+              >←</button>
+
 
               <div class="chat-person">
 
@@ -5841,7 +5924,7 @@ onUnmounted(() => {
                 <div>
 
 
-                  <h2>
+                  <h2 ref="chatHeading" tabindex="-1">
 
                     {{ nameOf(selected) }}
 
@@ -5945,6 +6028,16 @@ onUnmounted(() => {
 
 
               <div class="chat-tools">
+
+                <button
+                  ref="mobileCustomerTrigger"
+                  type="button"
+                  class="mobile-customer-trigger"
+                  aria-controls="customer-360-panel"
+                  :aria-expanded="String(mobileCustomerOpen)"
+                  aria-label="Mở Customer 360"
+                  @click="openMobileCustomer"
+                >360</button>
 
                 <button
                   type="button"
@@ -6648,13 +6741,21 @@ onUnmounted(() => {
              CUSTOMER PANEL
         ================================================== -->
 
-        <aside class="customer customer-panel-scroll" :class="{ 'customer-collapsed': customerPanelCollapsed }">
+        <aside id="customer-360-panel" class="customer customer-panel-scroll" :class="{ 'customer-collapsed': customerPanelCollapsed }" aria-label="Customer 360">
 
           <div class="customer-title">
 
             <h3>
               Customer 360
             </h3>
+
+            <button
+              ref="mobileCustomerClose"
+              type="button"
+              class="mobile-panel-close"
+              aria-label="Đóng Customer 360"
+              @click="closeMobileCustomer"
+            >×</button>
 
             <button
               type="button"
@@ -6853,6 +6954,12 @@ onUnmounted(() => {
 
             <div v-if="customer360Loading" class="customer-360-loading">
               Đang tải Customer 360...
+            </div>
+
+            <div v-else-if="customer360Error" class="customer-360-error" role="alert">
+              <strong>Không thể tải Customer 360</strong>
+              <span>{{ customer360Error }}</span>
+              <button type="button" class="table-action-btn" @click="loadCustomer360(selected?.customer_id)">Thử lại</button>
             </div>
 
             <div v-else-if="customer360" class="customer-360-data">
@@ -7280,7 +7387,7 @@ onUnmounted(() => {
               <select v-model="leadForm.customer_id" required>
                 <option value="" disabled>Chọn khách hàng</option>
                 <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
-                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                  #{{ customer.id }} — {{ customerOptionLabel(customer) }}
                 </option>
               </select>
             </label>
@@ -7371,7 +7478,7 @@ onUnmounted(() => {
               <select v-model="ticketForm.customer_id" required @change="onTicketCustomerChange">
                 <option value="" disabled>Chọn khách hàng</option>
                 <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
-                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                  #{{ customer.id }} — {{ customerOptionLabel(customer) }}
                 </option>
               </select>
             </label>
@@ -7481,7 +7588,7 @@ onUnmounted(() => {
               <select v-model="orderForm.customer_id" required @change="onOrderCustomerChange">
                 <option value="" disabled>Chọn khách hàng</option>
                 <option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">
-                  #{{ customer.id }} — {{ customer.name || customer.email || customer.phone || customer.channel }}
+                  #{{ customer.id }} — {{ customerOptionLabel(customer) }}
                 </option>
               </select>
             </label>
