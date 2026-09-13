@@ -1,6 +1,6 @@
 """Tenant-scoped controls for the sales chatbot runtime."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
@@ -31,7 +31,7 @@ from app.schemas.chatbot import (
     FollowUpOut,
 )
 from app.services.chatbot_agent import AGENT_TOOLS, build_agent_memory, execute_chatbot_tool
-from app.services.chatbot_followup import dispatch_due_followups, schedule_followup
+from app.services.chatbot_followup import dispatch_due_followups, schedule_followup, schedule_inactive_customer_followups
 from app.services.csat_service import summarize_csat
 from app.services.audit_service import record_audit
 from app.tenancy.context import TenantContext
@@ -276,6 +276,34 @@ def list_followups(
         query = query.filter(ChatbotFollowUp.status == status)
     items = query.order_by(ChatbotFollowUp.run_at.asc(), ChatbotFollowUp.id.asc()).limit(500).all()
     return {"items": items, "total": len(items)}
+
+
+@router.post("/proactive/inactive-customers", dependencies=[Depends(require_write_access)])
+def schedule_inactive_customers(
+    inactive_days: int = Query(default=30, ge=7, le=3650),
+    run_in_minutes: int = Query(default=5, ge=0, le=1440),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    result = schedule_inactive_customer_followups(
+        db,
+        business_id=tenant.business_id,
+        inactive_days=inactive_days,
+        run_at=datetime.now(timezone.utc) + timedelta(minutes=run_in_minutes),
+        limit=limit,
+    )
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="proactive_inactive_customers_scheduled",
+        resource_type="chatbot_followup",
+        metadata={"inactive_days": inactive_days, "scheduled": result["scheduled"], "skipped": result["skipped"]},
+    )
+    db.commit()
+    return result
 
 
 @router.get("/csat", response_model=CustomerFeedbackListOut)

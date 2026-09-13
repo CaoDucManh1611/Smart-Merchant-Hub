@@ -15,6 +15,7 @@ class PlatformShopOut(BaseModel):
     plan_code: str | None = None
     plan_name: str | None = None
     usage: dict[str, int | float] = Field(default_factory=dict)
+    quota: dict = Field(default_factory=dict)
     period_start: datetime
 
 
@@ -33,6 +34,8 @@ class PlatformUsageOut(BaseModel):
     plan_code: str | None = None
     limits: dict[str, int | float | None] = Field(default_factory=dict)
     usage: dict[str, int | float] = Field(default_factory=dict)
+    quota: dict = Field(default_factory=dict)
+    warnings: list[dict] = Field(default_factory=list)
 
 
 class PlatformStatusOut(BaseModel):
@@ -140,3 +143,27 @@ class PlatformPaymentOut(PlatformPaymentCreate):
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PlatformProviderErrorOut(BaseModel):
+    id: int
+    business_id: int
+    channel_id: int | None = None
+    channel_type: str | None = None
+    event_type: str
+    status: str
+    error_type: str | None = None
+    received_at: datetime | None = None
+
+
+class PlatformPrivacyRequest(BaseModel):
+    request_key: str = Field(..., min_length=8, max_length=180)
+    confirmation_token: str | None = None
+
+
+class PlatformPrivacyOut(BaseModel):
+    id: int
+    business_id: int
+    kind: str
+    status: str
+    counts: dict[str, int] = Field(default_factory=dict)

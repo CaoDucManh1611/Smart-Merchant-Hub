@@ -11,11 +11,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.dependencies import get_db
 from app.integrations.telegram import TelegramAdapter
+from app.integrations.zalo import ZaloAdapter
 from app.models.channel import Channel
 from app.models.customer import Customer
 from app.models.customer_identity import CustomerIdentity
 from app.services.channel_credentials import decrypt_token
 from app.services.customer_avatar import verify_customer_avatar_url
+from app.services.message_service import fetch_instagram_customer_profile
 from app.tenancy.context import TenantContext, resolve_tenant_context
 
 
@@ -32,7 +34,7 @@ def get_customer_avatar(
     db: Session = Depends(get_db),
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
 ):
-    """Stream a Telegram profile photo without exposing the bot token."""
+    """Stream a provider profile photo without exposing channel credentials."""
     try:
         tenant = resolve_tenant_context(
             authenticated_business_id=getattr(request.state, "business_id", None),
@@ -69,40 +71,69 @@ def get_customer_avatar(
         .where(
             CustomerIdentity.business_id == tenant.business_id,
             CustomerIdentity.customer_id == customer.id,
-            CustomerIdentity.channel == "telegram",
+            CustomerIdentity.channel == customer.channel,
         )
         .order_by(CustomerIdentity.last_seen_at.desc())
     )
     if identity is None:
-        raise HTTPException(status_code=404, detail="Telegram avatar not available")
+        raise HTTPException(status_code=404, detail="Customer avatar not available")
 
     channel = db.scalar(
         select(Channel).where(
             Channel.business_id == tenant.business_id,
-            Channel.channel_type == "telegram",
+            Channel.channel_type == customer.channel,
             Channel.external_account_id == identity.external_account_id,
             Channel.status == "active",
         )
     )
+    if channel is None:
+        # Imported conversations can retain an older account identifier even
+        # after the shop reconnects the same provider.  A tenant's current
+        # active connection is still the correct credential source.
+        active_channels = db.scalars(
+            select(Channel).where(
+                Channel.business_id == tenant.business_id,
+                Channel.channel_type == customer.channel,
+                Channel.status == "active",
+            )
+        ).all()
+        channel = active_channels[0] if len(active_channels) == 1 else None
     if channel is None or not channel.access_token_encrypted:
-        raise HTTPException(status_code=404, detail="Telegram avatar not available")
+        raise HTTPException(status_code=404, detail="Customer avatar not available")
 
     try:
         access_token = decrypt_token(
             channel.access_token_encrypted,
             settings.CHANNEL_ENCRYPTION_KEY,
         )
-        adapter = TelegramAdapter()
-        file_path = adapter.fetch_profile_avatar_file_path(
-            user_id=identity.external_user_id,
-            access_token=access_token,
-        )
-        if not file_path:
-            raise HTTPException(status_code=404, detail="Telegram avatar not available")
-        provider_url = adapter.build_file_url(
-            file_path=file_path,
-            access_token=access_token,
-        )
+        if customer.channel == "telegram":
+            adapter = TelegramAdapter()
+            file_path = adapter.fetch_profile_avatar_file_path(
+                user_id=identity.external_user_id,
+                access_token=access_token,
+            )
+            if not file_path:
+                raise HTTPException(status_code=404, detail="Customer avatar not available")
+            provider_url = adapter.build_file_url(
+                file_path=file_path,
+                access_token=access_token,
+            )
+        elif customer.channel == "zalo":
+            profile = ZaloAdapter().fetch_user_profile(
+                user_id=identity.external_user_id,
+                access_token=access_token,
+            )
+            provider_url = str(profile.get("avatar_url") or "").strip()
+        elif customer.channel == "instagram":
+            profile = fetch_instagram_customer_profile(
+                identity.external_user_id,
+                access_token=access_token,
+            )
+            provider_url = str(profile.get("avatar_url") or "").strip()
+        else:
+            raise HTTPException(status_code=404, detail="Customer avatar not available")
+        if not provider_url:
+            raise HTTPException(status_code=404, detail="Customer avatar not available")
         response = httpx.get(
             provider_url,
             timeout=20,

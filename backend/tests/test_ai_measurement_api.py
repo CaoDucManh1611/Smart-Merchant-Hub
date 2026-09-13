@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -10,6 +11,10 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models.business import Business
 from app.models.customer import Customer
+from app.models.conversation import Conversation
+from app.models.sales import Order
+from app.models.chatbot_followup import ChatbotFollowUp
+from app.models.customer_feedback import CustomerFeedback
 
 
 class AiMeasurementApiTests(unittest.TestCase):
@@ -84,6 +89,69 @@ class AiMeasurementApiTests(unittest.TestCase):
         # A completed experiment cannot be selected; this is an explicit safety boundary.
         blocked = self.client.post(f"/api/experiments/{experiment_id}/bandit/select", headers=self.headers(), json={"subject_key": "s3", "context": {"channel": "telegram"}})
         self.assertEqual(409, blocked.status_code)
+
+    def test_conversation_to_revenue_reports_recovery_and_bot_resolution(self):
+        current = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            conversation = Conversation(business_id=self.business_id, customer_id=self.customer_id, channel="telegram", bot_mode="auto")
+            db.add(conversation)
+            db.flush()
+            db.add_all([
+                Order(
+                    business_id=self.business_id,
+                    customer_id=self.customer_id,
+                    conversation_id=conversation.id,
+                    order_number="AI-RECOVERED-1",
+                    status="confirmed",
+                    total_amount=Decimal("120000"),
+                    metadata_={"source": "chatbot_collection"},
+                    created_at=current - timedelta(days=2),
+                    updated_at=current,
+                ),
+                Order(
+                    business_id=self.business_id,
+                    customer_id=self.customer_id,
+                    conversation_id=conversation.id,
+                    order_number="AI-DRAFT-1",
+                    status="draft",
+                    total_amount=Decimal("80000"),
+                    metadata_={"source": "chatbot_tool"},
+                    created_at=current,
+                    updated_at=current,
+                ),
+                ChatbotFollowUp(
+                    business_id=self.business_id,
+                    conversation_id=conversation.id,
+                    customer_id=self.customer_id,
+                    kind="cart_abandoned",
+                    message="Nhắc giỏ hàng",
+                    run_at=current - timedelta(days=1),
+                    status="sent",
+                    sent_at=current - timedelta(hours=12),
+                    idempotency_key="ai-recovery-followup",
+                ),
+                CustomerFeedback(
+                    business_id=self.business_id,
+                    conversation_id=conversation.id,
+                    customer_id=self.customer_id,
+                    idempotency_key="ai-resolution-feedback",
+                    status="responded",
+                    rating=5,
+                    metadata_={"handled_by": "bot"},
+                    responded_at=current,
+                ),
+            ])
+            db.commit()
+
+        response = self.client.get("/api/experiments/evaluation/dashboard", headers=self.headers())
+        self.assertEqual(200, response.status_code, response.text)
+        commerce = response.json()["commerce"]
+        self.assertEqual(2, commerce["started"])
+        self.assertEqual(1, commerce["confirmed"])
+        self.assertEqual(0.5, commerce["draft_to_confirmed_rate"])
+        self.assertEqual(1, commerce["recovered_orders"])
+        self.assertEqual(120000.0, commerce["recovered_revenue"])
+        self.assertEqual(1.0, commerce["bot_resolution_rate"])
 
 
 if __name__ == "__main__":

@@ -16,6 +16,18 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: crm_chatbot_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: ./backend
@@ -26,13 +38,19 @@ services:
       # Trong Docker, PostgreSQL được truy cập qua tên service `db`,
       # không phải localhost/127.0.0.1.
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in backend/.env or compose environment}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      # Keep the running container's migration directory aligned with the
+      # checkout so a restart applies additive P1 revisions immediately.
+      - ./backend/alembic:/app/alembic
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); raise SystemExit(0 if response.status == 200 else 1)"]
       interval: 10s
@@ -83,3 +101,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

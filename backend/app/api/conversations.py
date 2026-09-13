@@ -1505,6 +1505,7 @@ def get_conversations(
                     row.get("avatar_url"),
                     customer_id=int(row["customer_id"]),
                     business_id=tenant.business_id,
+                    channel=row.get("channel"),
                 ),
                 "customer_tags": tag_map.get(int(row["customer_id"]), []),
             }

@@ -1,11 +1,15 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.secret_manager import load_runtime_secrets
+
 
 class Settings(BaseSettings):
     APP_NAME: str = "CRM Chatbot API"
     ENVIRONMENT: str = "development"
     CHANNEL_ENCRYPTION_KEY: str = ""
     AUTH_SECRET: str = ""
+    SECRET_MANAGER_MODE: str = "env"
+    SECRET_MANAGER_FILE: str = ""
 
     DATABASE_URL: str
 
@@ -34,7 +38,12 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW_SECONDS: int = 60
     RATE_LIMIT_BACKEND: str = "memory"
     RATE_LIMIT_TRUSTED_PROXY: bool = False
+    REDIS_URL: str = ""
+    ALERT_QUEUE_PENDING_THRESHOLD: int = 100
+    ALERT_AI_COST_THRESHOLD: float = 50.0
     DATA_RETENTION_DAYS: int = 365
+    QUOTA_WARNING_PERCENT: float = 0.8
+    TICKET_SLA_WARNING_MINUTES: int = 60
 
     # Contact verification delivery.  Keep disabled for local/demo runs; a
     # production secret manager should select smtp (email) or twilio (SMS).
@@ -183,8 +192,18 @@ class Settings(BaseSettings):
             problems.append("RATE_LIMIT_ENABLED must be true")
         if self.RATE_LIMIT_REQUESTS <= 0 or self.RATE_LIMIT_WINDOW_SECONDS <= 0:
             problems.append("RATE_LIMIT_REQUESTS and RATE_LIMIT_WINDOW_SECONDS must be positive")
-        if self.RATE_LIMIT_BACKEND.strip().lower() not in {"memory", "proxy"}:
-            problems.append("RATE_LIMIT_BACKEND must be memory or proxy")
+        rate_limit_backend = self.RATE_LIMIT_BACKEND.strip().lower()
+        if rate_limit_backend not in {"memory", "redis", "proxy"}:
+            problems.append("RATE_LIMIT_BACKEND must be memory, redis or proxy")
+        if rate_limit_backend == "redis" and not self.REDIS_URL.strip():
+            problems.append("REDIS_URL must be configured when RATE_LIMIT_BACKEND=redis")
+        if rate_limit_backend == "proxy" and not self.RATE_LIMIT_TRUSTED_PROXY:
+            problems.append("RATE_LIMIT_TRUSTED_PROXY must be true when RATE_LIMIT_BACKEND=proxy")
+        secret_mode = self.SECRET_MANAGER_MODE.strip().lower()
+        if secret_mode not in {"env", "environment", "injected", "file", "json", "mounted_file", "disabled", "none"}:
+            problems.append("SECRET_MANAGER_MODE must be env or file")
+        if secret_mode in {"file", "json", "mounted_file"} and not self.SECRET_MANAGER_FILE.strip():
+            problems.append("SECRET_MANAGER_FILE must be configured when file secret-manager mode is enabled")
         if self.DATA_RETENTION_DAYS <= 0:
             problems.append("DATA_RETENTION_DAYS must be positive")
         otp_mode = self.OTP_DELIVERY_MODE.strip().lower()
@@ -205,3 +224,10 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+_secret_overrides = load_runtime_secrets(
+    allowed_keys=set(Settings.model_fields),
+    mode=settings.SECRET_MANAGER_MODE,
+    path=settings.SECRET_MANAGER_FILE,
+)
+if _secret_overrides:
+    settings = Settings(**_secret_overrides)

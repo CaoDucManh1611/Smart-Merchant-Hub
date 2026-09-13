@@ -118,6 +118,7 @@ const chatHeading = ref(null);
 const loading = ref(false);
 const sending = ref(false);
 const sendingImage = ref(false);
+const failedAvatarUrls = ref(new Set());
 
 const error = ref("");
 const appDialog = ref(null);
@@ -269,12 +270,21 @@ const authToken = ref(window.localStorage.getItem("crm_access_token") || "");
 const authLoading = ref(false);
 const authError = ref("");
 const loginForm = ref({ email: "", password: "" });
+const onboardingOpen = ref(false);
+const onboardingLoading = ref(false);
+const onboardingError = ref("");
+const onboardingPlans = ref([]);
+const onboardingForm = ref({ shop_name: "", owner_name: "", owner_email: "", password: "", plan_code: "starter" });
+const quotaSnapshot = ref(null);
+const quotaLoading = ref(false);
+const quotaError = ref("");
 const auditLogs = ref([]);
 const auditLoading = ref(false);
 const platformAdmin = ref(false);
 const platformShops = ref([]);
 const platformSchemas = ref([]);
 const platformAuditLogs = ref([]);
+const platformProviderErrors = ref([]);
 const platformLoading = ref(false);
 const platformError = ref("");
 const authSessions = ref([]);
@@ -329,6 +339,8 @@ const attributionSaving = ref(false);
 const agentPerformance = ref([]);
 const reportsLoading = ref(false);
 const reportsError = ref("");
+const reportCsvDownloading = ref(false);
+const reportCsvStatus = ref("");
 const qualityDashboard = ref({ period_days: 30, usage: {}, provider: {}, ai: {}, sla: {} });
 const reportFilters = ref({ start_at: "", end_at: "", channel: "", source: "", status: "", assigned_user_id: "" });
 const ticketForm = ref({
@@ -421,6 +433,9 @@ const ragQuery = ref("");
 const ragTopK = ref(5);
 const ragSending = ref(false);
 const autoReplyEnabled = ref(false);
+const autoReplySaving = ref(false);
+const autoReplyNotice = ref("");
+const autoReplyError = ref("");
 const ragChatBox = ref(null);
 const chatbotConfig = ref({
   name: "Trợ lý AI",
@@ -442,9 +457,12 @@ const botModes = ref({});
 const followups = ref([]);
 const followupsLoading = ref(false);
 const followupDispatching = ref(false);
+const followupNotice = ref("");
+const followupError = ref("");
 const csatFeedback = ref([]);
 const csatSummary = ref({ responses: 0, average_rating: 0, satisfaction_rate: 0, bot_resolution_rate: 0 });
 const csatLoading = ref(false);
+const csatError = ref("");
 
 const metaStatus = ref({
   connected: false,
@@ -455,15 +473,21 @@ const metaStatus = ref({
 });
 const metaLoading = ref(false);
 const metaNotice = ref("");
+const notificationError = ref("");
 
 
 /* META OAUTH */
 async function fetchMetaStatus() {
   try {
     const res = await apiFetch(`${API_BASE}/oauth/meta/status`);
-    if (res.ok) metaStatus.value = await res.json();
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${res.status}`);
+    }
+    metaStatus.value = await res.json();
   } catch (e) {
     console.error("Fetch Meta OAuth status error:", e);
+    metaNotice.value = e.message || "Không thể kiểm tra trạng thái kết nối Meta.";
   }
 }
 
@@ -501,6 +525,7 @@ function openSettings() {
   void fetchChatbotRuntime();
   void fetchFollowups();
   void fetchCsat();
+  void fetchQuotaUsage();
 }
 
 function openQuickActions() {
@@ -615,11 +640,17 @@ function runGlobalSearch() {
 }
 
 async function fetchOperationalNotifications() {
+  notificationError.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/notifications`);
-    if (response.ok) operationalNotifications.value = await response.json();
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    operationalNotifications.value = await response.json();
   } catch (err) {
     console.warn("Fetch operational notifications error:", err);
+    notificationError.value = err.message || "Không thể tải thông báo.";
   }
 }
 
@@ -666,12 +697,14 @@ async function disconnectMeta() {
     const res = await apiFetch(`${API_BASE}/oauth/meta/disconnect`, {
       method: "DELETE",
     });
-    if (res.ok) {
-      metaStatus.value = { connected: false };
-      metaNotice.value = "Đã ngắt kết nối Meta.";
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${res.status}`);
     }
+    metaStatus.value = { connected: false };
+    metaNotice.value = "Đã ngắt kết nối Meta.";
   } catch (e) {
-    metaNotice.value = "Không thể ngắt kết nối Meta.";
+    metaNotice.value = e.message || "Không thể ngắt kết nối Meta.";
   } finally {
     metaLoading.value = false;
   }
@@ -699,24 +732,31 @@ async function fetchDocuments() {
     // Drain one durable ingestion batch before refreshing the list. The same
     // endpoint is safe for a background worker, so the UI remains useful in
     // development without spawning request-owned threads.
-    await apiFetch(`${API_BASE}/documents/jobs/dispatch`, { method: "POST" });
+    const dispatchResponse = await apiFetch(`${API_BASE}/documents/jobs/dispatch`, { method: "POST" });
+    if (!dispatchResponse.ok) {
+      const detail = await dispatchResponse.json().catch(() => ({}));
+      docUploadError.value = detail.detail || `Không thể chạy hàng đợi tài liệu (HTTP ${dispatchResponse.status}).`;
+    }
     const res = await apiFetch(`${API_BASE}/documents`);
-    if (res.ok) {
-      const data = await res.json();
-      documents.value = data.documents || [];
-      await fetchDocumentRuns(documents.value);
-      const hasProcessing = documents.value.some(
-        d => d.status === "pending" || d.status === "processing"
-      );
-      if (hasProcessing && !docPollingTimer) {
-        docPollingTimer = setInterval(fetchDocuments, 3000);
-      } else if (!hasProcessing && docPollingTimer) {
-        clearInterval(docPollingTimer);
-        docPollingTimer = null;
-      }
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    documents.value = data.documents || [];
+    await fetchDocumentRuns(documents.value);
+    const hasProcessing = documents.value.some(
+      d => d.status === "pending" || d.status === "processing"
+    );
+    if (hasProcessing && !docPollingTimer) {
+      docPollingTimer = setInterval(fetchDocuments, 3000);
+    } else if (!hasProcessing && docPollingTimer) {
+      clearInterval(docPollingTimer);
+      docPollingTimer = null;
     }
   } catch (err) {
     console.error("Fetch documents error:", err);
+    docUploadError.value = err.message || "Không tải được danh sách tài liệu.";
   } finally {
     docsLoading.value = false;
   }
@@ -771,11 +811,15 @@ async function deleteDoc(docId) {
     const res = await apiFetch(`${API_BASE}/documents/${docId}`, {
       method: "DELETE",
     });
-    if (res.ok) {
-      documents.value = documents.value.filter(d => d.id !== docId);
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${res.status}`);
     }
+    documents.value = documents.value.filter(d => d.id !== docId);
+    docUploadError.value = "";
   } catch (err) {
     console.error("Delete doc error:", err);
+    docUploadError.value = err.message || "Không thể xóa tài liệu.";
   }
 }
 
@@ -790,18 +834,26 @@ function formatFileSize(bytes) {
 
 /* RAG CHAT PLAYGROUND METHODS */
 async function fetchAutoReplySetting() {
+  autoReplyError.value = "";
   try {
     const res = await apiFetch(`${API_BASE}/conversations/auto-reply-status`);
-    if (res.ok) {
-      const data = await res.json();
-      autoReplyEnabled.value = Boolean(data.auto_reply_enabled);
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${res.status}`);
     }
+    const data = await res.json();
+    autoReplyEnabled.value = Boolean(data.auto_reply_enabled);
   } catch (e) {
     console.error("Fetch auto reply error:", e);
+    autoReplyError.value = e.message || "Không thể tải trạng thái Auto-Reply.";
   }
 }
 
 async function toggleAutoReply() {
+  if (autoReplySaving.value) return;
+  autoReplySaving.value = true;
+  autoReplyNotice.value = "";
+  autoReplyError.value = "";
   try {
     const nextState = !autoReplyEnabled.value;
     const res = await apiFetch(`${API_BASE}/conversations/auto-reply-status`, {
@@ -809,12 +861,18 @@ async function toggleAutoReply() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ auto_reply_enabled: nextState }),
     });
-    if (res.ok) {
-      const data = await res.json();
-      autoReplyEnabled.value = Boolean(data.auto_reply_enabled);
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${res.status}`);
     }
+    const data = await res.json();
+    autoReplyEnabled.value = Boolean(data.auto_reply_enabled);
+    autoReplyNotice.value = autoReplyEnabled.value ? "Đã bật Auto-Reply." : "Đã tắt Auto-Reply.";
   } catch (e) {
     console.error("Toggle auto reply error:", e);
+    autoReplyError.value = e.message || "Không thể cập nhật Auto-Reply.";
+  } finally {
+    autoReplySaving.value = false;
   }
 }
 
@@ -1293,6 +1351,40 @@ function initials(item) {
         word[0]?.toUpperCase() || ""
     )
     .join("");
+
+}
+
+
+function resolvedAvatarUrl(item) {
+
+  const value = String(item?.avatar_url || "").trim();
+  if (!value || failedAvatarUrls.value.has(value)) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(value, window.location.origin);
+    if (/^\/api\/customers\/\d+\/avatar\/?$/.test(parsed.pathname)) {
+      const apiOrigin = new URL(API_BASE, window.location.origin).origin;
+      return `${apiOrigin}${parsed.pathname}${parsed.search}`;
+    }
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+
+}
+
+
+function markAvatarFailed(item) {
+
+  const value = String(item?.avatar_url || "").trim();
+  if (value) {
+    failedAvatarUrls.value = new Set([
+      ...failedAvatarUrls.value,
+      value,
+    ]);
+  }
 
 }
 
@@ -2221,6 +2313,8 @@ function timelineLabel(event) {
     customer_merge_undo: "Hoàn tác gộp hồ sơ",
     customer_profile: "Thay đổi hồ sơ",
     customer_tag: "Thay đổi tag",
+    ai_tool: "AI dùng dữ liệu/tool",
+    ai_handoff: "AI chuyển nhân viên",
   };
   return labels[event?.event_type] || channelLabel(event?.channel) || "Sự kiện CRM";
 }
@@ -3074,6 +3168,7 @@ async function loadAuthSession() {
     if (response.ok) {
       authUser.value = await response.json();
       await fetchSecuritySettings();
+      await fetchQuotaUsage();
     }
     else {
       window.localStorage.removeItem("crm_access_token");
@@ -3081,6 +3176,85 @@ async function loadAuthSession() {
     }
   } catch {
     // Keep the legacy development header path available when auth is offline.
+  }
+}
+
+function timelineExplainability(event) {
+  const metadata = event?.metadata || {};
+  if (event?.event_type === "ai_tool") {
+    return metadata.tool ? `Tool: ${metadata.tool}` : "Tool đã được ghi audit";
+  }
+  if (event?.event_type === "ai_handoff") {
+    return metadata.reason ? `Lý do: ${metadata.reason}` : "Lý do chuyển đã được ghi audit";
+  }
+  if (event?.event_type === "message" && timelineActor(event).kind === "bot") {
+    const route = metadata.route ? `Nguồn xử lý: ${metadata.route}` : "";
+    const documentIds = Array.isArray(metadata.rag_source_document_ids) ? metadata.rag_source_document_ids : [];
+    const sources = documentIds.length ? `Tài liệu RAG: #${documentIds.join(", #")}` : "";
+    return [route, sources].filter(Boolean).join(" · ");
+  }
+  return "";
+}
+
+async function openOnboarding() {
+  onboardingOpen.value = true;
+  onboardingError.value = "";
+  if (onboardingPlans.value.length) return;
+  try {
+    const response = await fetch(`${API_BASE}/onboarding/plans`);
+    const detail = await response.json().catch(() => []);
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    onboardingPlans.value = Array.isArray(detail) ? detail : [];
+    if (!onboardingForm.value.plan_code && onboardingPlans.value[0]) onboardingForm.value.plan_code = onboardingPlans.value[0].code;
+  } catch (err) {
+    onboardingError.value = err.message || "Không thể tải các gói dịch vụ.";
+  }
+}
+
+function closeOnboarding() {
+  onboardingOpen.value = false;
+  onboardingError.value = "";
+}
+
+async function createOnboardingShop() {
+  onboardingLoading.value = true;
+  onboardingError.value = "";
+  try {
+    const response = await fetch(`${API_BASE}/onboarding/shops`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(onboardingForm.value),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    window.localStorage.setItem("crm_access_token", detail.access_token);
+    authToken.value = detail.access_token;
+    authUser.value = { id: detail.owner_id, business_id: detail.business_id, full_name: onboardingForm.value.owner_name, email: detail.owner_email, role: "owner", is_active: true, mfa_status: "disabled" };
+    onboardingForm.value = { shop_name: "", owner_name: "", owner_email: "", password: "", plan_code: "starter" };
+    closeOnboarding();
+    await Promise.all([fetchSecuritySettings(), fetchQuotaUsage(), fetchPlatformAdmin()]);
+  } catch (err) {
+    onboardingError.value = err.message || "Không thể tạo shop.";
+  } finally {
+    onboardingLoading.value = false;
+  }
+}
+
+async function fetchQuotaUsage() {
+  quotaLoading.value = true;
+  quotaError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/usage`);
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) return;
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    quotaSnapshot.value = detail;
+  } catch (err) {
+    quotaError.value = err.message || "Không thể tải quota hiện tại.";
+  } finally {
+    quotaLoading.value = false;
   }
 }
 
@@ -3103,7 +3277,10 @@ async function login() {
     authUser.value = { ...data.user, mfa_required: Boolean(data.mfa_required) };
     mfaVerifyPending.value = Boolean(data.mfa_required);
     loginForm.value.password = "";
-    if (!mfaVerifyPending.value) await fetchSecuritySettings();
+    if (!mfaVerifyPending.value) {
+      await fetchSecuritySettings();
+      await fetchQuotaUsage();
+    }
     await fetchPlatformAdmin();
   } catch (err) {
     authError.value = err.message || "Đăng nhập thất bại.";
@@ -3301,6 +3478,7 @@ async function fetchPlatformAdmin() {
       platformShops.value = [];
       platformSchemas.value = [];
       platformAuditLogs.value = [];
+      platformProviderErrors.value = [];
       return;
     }
     const shopsResponse = await apiFetch(`${API_BASE}/platform/shops`);
@@ -3309,6 +3487,7 @@ async function fetchPlatformAdmin() {
       platformShops.value = [];
       platformSchemas.value = [];
       platformAuditLogs.value = [];
+      platformProviderErrors.value = [];
       return;
     }
     const shopsPayload = await shopsResponse.json();
@@ -3324,9 +3503,12 @@ async function fetchPlatformAdmin() {
     } else {
       platformAuditLogs.value = [];
     }
+    const providerResponse = await apiFetch(`${API_BASE}/platform/provider-errors?limit=30`);
+    platformProviderErrors.value = providerResponse.ok ? await providerResponse.json() : [];
   } catch (err) {
     platformAdmin.value = false;
     platformAuditLogs.value = [];
+    platformProviderErrors.value = [];
     platformError.value = err.message || "Không thể tải quản trị nền tảng.";
   } finally {
     platformLoading.value = false;
@@ -3423,6 +3605,41 @@ async function fetchReports() {
     reportsError.value = "Không tải được báo cáo CRM.";
   } finally {
     reportsLoading.value = false;
+  }
+}
+
+async function downloadReportCsv() {
+  if (reportCsvDownloading.value) return;
+  reportCsvDownloading.value = true;
+  reportCsvStatus.value = "";
+  reportsError.value = "";
+  let objectUrl = "";
+  try {
+    // A normal anchor cannot attach the tenant header or bearer token. Use
+    // apiFetch so CSV export follows the same authentication boundary as the
+    // report cards instead of opening a misleading 401/403 browser tab.
+    const response = await apiFetch(reportCsvUrl.value);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const disposition = response.headers.get("content-disposition") || "";
+    const filenameMatch = disposition.match(/filename\*?=(?:UTF-8''|["']?)([^"';\r\n]+)/i);
+    const filename = filenameMatch?.[1]?.trim() || "crm-overview.csv";
+    objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.hidden = true;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    reportCsvStatus.value = `Đã tải ${filename}`;
+  } catch (err) {
+    reportsError.value = err.message || "Không thể tải báo cáo CSV.";
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    reportCsvDownloading.value = false;
   }
 }
 
@@ -5307,19 +5524,36 @@ async function toggleBotMode() {
 
 async function fetchFollowups() {
   followupsLoading.value = true;
+  followupError.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/chatbot/followups?status=scheduled`);
-    if (response.ok) followups.value = (await response.json()).items || [];
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    followups.value = (await response.json()).items || [];
+  } catch (err) {
+    followupError.value = err.message || "Không tải được lịch chăm sóc chủ động.";
   } finally {
     followupsLoading.value = false;
   }
 }
 
 async function dispatchFollowups() {
+  if (followupDispatching.value) return;
   followupDispatching.value = true;
+  followupError.value = "";
+  followupNotice.value = "";
   try {
-    await apiFetch(`${API_BASE}/chatbot/followups/dispatch`, { method: "POST" });
+    const response = await apiFetch(`${API_BASE}/chatbot/followups/dispatch`, { method: "POST" });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
     await fetchFollowups();
+    followupNotice.value = "Đã xử lý các follow-up đến hạn.";
+  } catch (err) {
+    followupError.value = err.message || "Không thể chạy follow-up đến hạn.";
   } finally {
     followupDispatching.value = false;
   }
@@ -5327,21 +5561,41 @@ async function dispatchFollowups() {
 
 async function cancelFollowup(followup) {
   if (!followup?.id) return;
-  const response = await apiFetch(`${API_BASE}/chatbot/followups/${followup.id}/cancel`, { method: "POST" });
-  if (response.ok) followups.value = followups.value.filter((item) => item.id !== followup.id);
+  if (!(await requestConfirmation("Hủy lịch chăm sóc này?", {
+    title: "Hủy follow-up",
+    confirmLabel: "Hủy lịch",
+    tone: "danger",
+  }))) return;
+  followupError.value = "";
+  followupNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/chatbot/followups/${followup.id}/cancel`, { method: "POST" });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    followups.value = followups.value.filter((item) => item.id !== followup.id);
+    followupNotice.value = "Đã hủy lịch chăm sóc.";
+  } catch (err) {
+    followupError.value = err.message || "Không thể hủy lịch chăm sóc.";
+  }
 }
 
 async function fetchCsat() {
   csatLoading.value = true;
+  csatError.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/chatbot/csat`);
-    if (response.ok) {
-      const payload = await response.json();
-      csatFeedback.value = payload.items || [];
-      csatSummary.value = payload.summary || csatSummary.value;
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
     }
+    const payload = await response.json();
+    csatFeedback.value = payload.items || [];
+    csatSummary.value = payload.summary || csatSummary.value;
   } catch (err) {
     console.warn("Fetch CSAT error:", err);
+    csatError.value = err.message || "Không tải được dữ liệu CSAT.";
   } finally {
     csatLoading.value = false;
   }
@@ -5563,7 +5817,8 @@ onUnmounted(() => {
                 <strong>Thông báo</strong>
                 <span>{{ unreadOperationalNotificationCount }} chưa đọc</span>
               </div>
-              <p v-if="!operationalNotifications.length" class="notification-empty">Chưa có thông báo mới.</p>
+              <p v-if="notificationError" class="notification-empty notification-error" role="alert">{{ notificationError }}</p>
+              <p v-else-if="!operationalNotifications.length" class="notification-empty">Chưa có thông báo mới.</p>
               <button
                 v-for="notification in operationalNotifications"
                 :key="notification.id"
@@ -5779,14 +6034,15 @@ onUnmounted(() => {
 
                 <img
                   v-if="
-                    item.avatar_url
+                    resolvedAvatarUrl(item)
                   "
                   :src="
-                    item.avatar_url
+                    resolvedAvatarUrl(item)
                   "
                   :alt="
                     nameOf(item)
                   "
+                  @error="markAvatarFailed(item)"
                 />
 
                 <span v-else>
@@ -5937,14 +6193,15 @@ onUnmounted(() => {
 
                   <img
                     v-if="
-                      selected.avatar_url
+                      resolvedAvatarUrl(selected)
                     "
                     :src="
-                      selected.avatar_url
+                      resolvedAvatarUrl(selected)
                     "
                     :alt="
                       nameOf(selected)
                     "
+                    @error="markAvatarFailed(selected)"
                   />
 
                   <span v-else>
@@ -6180,16 +6437,17 @@ onUnmounted(() => {
 
                   <img
                     v-if="
-                      selected.avatar_url
+                      resolvedAvatarUrl(selected)
                     "
 
                     :src="
-                      selected.avatar_url
+                      resolvedAvatarUrl(selected)
                     "
 
                     :alt="
                       nameOf(selected)
                     "
+                    @error="markAvatarFailed(selected)"
                   />
 
                   <span v-else>
@@ -6817,16 +7075,17 @@ onUnmounted(() => {
 
                 <img
                   v-if="
-                    selected.avatar_url
+                    resolvedAvatarUrl(selected)
                   "
 
                   :src="
-                    selected.avatar_url
+                    resolvedAvatarUrl(selected)
                   "
 
                   :alt="
                     nameOf(selected)
                   "
+                  @error="markAvatarFailed(selected)"
                 />
 
                 <span v-else>
@@ -7091,6 +7350,7 @@ onUnmounted(() => {
                     <div>
                       <small>{{ timelineLabel(event) }}<span v-if="event.channel"> · {{ channelLabel(event.channel) }}</span></small>
                       <p>{{ event.content || 'Sự kiện không có nội dung' }}</p>
+                      <small v-if="timelineExplainability(event)" class="timeline-explainability">{{ timelineExplainability(event) }}</small>
                       <small class="customer-timeline-meta">
                         {{ event.occurred_at ? new Date(event.occurred_at).toLocaleString('vi-VN') : 'Không rõ thời gian' }}
                         <span
@@ -7925,6 +8185,8 @@ onUnmounted(() => {
               <div class="ai-stat-card"><span>Handoff rate</span><strong>{{ ((aiEvaluationDashboard.ai?.handoff?.rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.ai?.handoff?.count || 0 }} lượt chuyển nhân viên</small></div>
               <div class="ai-stat-card"><span>Trùng outbound</span><strong>{{ aiEvaluationDashboard.ai?.reliability?.duplicate_reply_attempts || 0 }}</strong><small>{{ ((aiEvaluationDashboard.ai?.reliability?.duplicate_reply_rate || 0) * 100).toFixed(1) }}% trên phản hồi bot</small></div>
               <div class="ai-stat-card"><span>Chốt đơn chatbot</span><strong>{{ ((aiEvaluationDashboard.commerce?.conversion_rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.commerce?.confirmed || 0 }} đơn xác nhận / {{ aiEvaluationDashboard.commerce?.started || 0 }} đơn bắt đầu</small></div>
+              <div class="ai-stat-card"><span>Doanh thu cứu lại</span><strong>{{ Number(aiEvaluationDashboard.commerce?.recovered_revenue || 0).toLocaleString('vi-VN') }}đ</strong><small>{{ aiEvaluationDashboard.commerce?.recovered_orders || 0 }} đơn sau follow-up giỏ bỏ dở</small></div>
+              <div class="ai-stat-card"><span>Bot tự xử lý</span><strong>{{ ((aiEvaluationDashboard.commerce?.bot_resolution_rate || 0) * 100).toFixed(1) }}%</strong><small>Hội thoại được giải quyết không cần handoff</small></div>
             </div>
           </div>
 
@@ -8142,12 +8404,15 @@ onUnmounted(() => {
               <button
                 class="toggle-switch"
                 :class="{ active: autoReplyEnabled }"
+                :disabled="autoReplySaving"
                 @click="toggleAutoReply"
               >
                 <span class="toggle-knob"></span>
-                <span class="toggle-text">{{ autoReplyEnabled ? 'ĐANG BẬT' : 'TẮT' }}</span>
+                <span class="toggle-text">{{ autoReplySaving ? 'ĐANG LƯU' : (autoReplyEnabled ? 'ĐANG BẬT' : 'TẮT') }}</span>
               </button>
             </div>
+            <p v-if="autoReplyNotice" class="settings-notice" role="status" aria-live="polite">{{ autoReplyNotice }}</p>
+            <p v-if="autoReplyError" class="settings-notice team-error" role="alert">{{ autoReplyError }}</p>
           </div>
 
           <div class="setting-card">
@@ -8254,8 +8519,9 @@ onUnmounted(() => {
           <label>Trạng thái<select v-model="reportFilters.status"><option value="">Tất cả</option><option value="open">Đang mở</option><option value="pending">Đang chờ</option><option value="qualified">Đã đủ điều kiện</option><option value="won">Đã thắng</option><option value="resolved">Đã xử lý</option><option value="closed">Đã đóng</option></select></label>
           <label>Nhân viên<select v-model="reportFilters.assigned_user_id"><option value="">Tất cả nhân viên</option><option v-for="member in teamUsers" :key="member.id" :value="member.id">{{ member.full_name }}</option></select></label>
           <button class="primary-btn" type="submit">Áp dụng</button>
-          <a class="settings-refresh" :href="reportCsvUrl" target="_blank" rel="noreferrer">Tải CSV</a>
+          <button type="button" class="settings-refresh" :disabled="reportCsvDownloading" @click="downloadReportCsv">{{ reportCsvDownloading ? 'Đang tải CSV...' : 'Tải CSV' }}</button>
         </form>
+        <p v-if="reportCsvStatus" class="settings-notice" role="status" aria-live="polite">{{ reportCsvStatus }}</p>
         <div v-if="reportsLoading" class="products-empty">Đang tải báo cáo...</div>
         <template v-else-if="crmOverview">
           <div class="report-cards">
@@ -8376,11 +8642,43 @@ onUnmounted(() => {
             <input v-model="loginForm.password" required type="password" placeholder="Mật khẩu" />
             <button class="primary-btn" type="submit" :disabled="authLoading">{{ authLoading ? 'Đang đăng nhập...' : 'Đăng nhập' }}</button>
           </form>
-          <div v-else class="auth-session-row">
+          <div v-if="!authUser" class="onboarding-entry">
+            <span class="settings-muted">Chưa có shop?</span>
+            <button type="button" class="settings-refresh" @click="openOnboarding">Tạo shop mới</button>
+          </div>
+          <div v-if="onboardingOpen" class="onboarding-panel">
+            <div class="settings-card-header"><div><h3>Khởi tạo shop trong vài bước</h3><p>Tạo shop, chọn gói và nhận phiên owner ngay sau khi hoàn tất.</p></div><button type="button" class="history-btn" @click="closeOnboarding">Đóng</button></div>
+            <form class="team-form" @submit.prevent="createOnboardingShop">
+              <input v-model="onboardingForm.shop_name" required maxlength="255" placeholder="Tên shop" />
+              <input v-model="onboardingForm.owner_name" required maxlength="255" placeholder="Tên chủ shop" />
+              <input v-model="onboardingForm.owner_email" required type="email" maxlength="255" placeholder="Email chủ shop" />
+              <input v-model="onboardingForm.password" required type="password" minlength="8" maxlength="256" placeholder="Mật khẩu (≥ 8 ký tự)" />
+              <select v-model="onboardingForm.plan_code" required><option v-for="plan in onboardingPlans" :key="plan.code" :value="plan.code">{{ plan.name }} · {{ Number(plan.price || 0).toLocaleString('vi-VN') }}đ</option></select>
+              <button class="primary-btn" type="submit" :disabled="onboardingLoading">{{ onboardingLoading ? 'Đang tạo shop...' : 'Tạo shop & đăng nhập' }}</button>
+            </form>
+            <div v-if="onboardingError" class="settings-notice team-error">{{ onboardingError }}</div>
+          </div>
+          <div v-if="authUser" class="auth-session-row">
             <span><strong>{{ authUser.full_name }}</strong> · {{ authUser.role }} · {{ authUser.email }}</span>
             <button type="button" class="settings-refresh" @click="logout">Đăng xuất</button>
           </div>
           <div v-if="authError" class="settings-notice team-error">{{ authError }}</div>
+        </div>
+
+        <div class="settings-card quota-card">
+          <div class="settings-card-header">
+            <div><h2>Quota & quyền lợi gói</h2><p>Usage ledger theo kỳ UTC; cảnh báo khi chạm {{ quotaSnapshot ? Math.round(Number(quotaSnapshot.warning_percent || 0) * 100) : 80 }}% giới hạn.</p></div>
+            <button type="button" class="settings-refresh" :disabled="quotaLoading" @click="fetchQuotaUsage">{{ quotaLoading ? 'Đang tải...' : 'Làm mới' }}</button>
+          </div>
+          <div v-if="quotaError" class="settings-notice team-error">{{ quotaError }}</div>
+          <div v-if="!quotaSnapshot && quotaLoading" class="settings-empty">Đang tải quota...</div>
+          <div v-else-if="quotaSnapshot" class="quota-grid">
+            <div v-for="(item, resource) in quotaSnapshot.resources" :key="resource" class="quota-item" :class="{ warning: item.near_limit, exceeded: item.exceeded }">
+              <div><strong>{{ resource }}</strong><span>{{ item.limit === null ? `${item.used} đã dùng` : `${item.used} / ${item.limit}` }}</span></div>
+              <div class="quota-track"><span :style="{ width: `${Math.min(100, Number(item.percent || 0))}%` }"></span></div>
+              <small v-if="item.exceeded">Đã vượt giới hạn</small><small v-else-if="item.near_limit">Sắp chạm quota</small>
+            </div>
+          </div>
         </div>
 
         <div v-if="authUser" class="settings-card security-card">
@@ -8464,9 +8762,10 @@ onUnmounted(() => {
               v-if="!metaStatus.connected"
               class="btn-meta-connect"
               type="button"
+              :disabled="metaLoading"
               @click="connectMeta"
             >
-              Kết nối với Facebook
+              {{ metaLoading ? 'Đang kết nối...' : 'Kết nối với Facebook' }}
             </button>
             <button
               v-else
@@ -8525,6 +8824,8 @@ onUnmounted(() => {
             </div>
             <button type="button" class="settings-refresh" :disabled="followupDispatching" @click="dispatchFollowups">{{ followupDispatching ? 'Đang chạy...' : 'Chạy follow-up đến hạn' }}</button>
           </div>
+          <div v-if="followupNotice" class="settings-notice" role="status" aria-live="polite">{{ followupNotice }}</div>
+          <div v-if="followupError" class="settings-notice team-error" role="alert">{{ followupError }}</div>
           <div v-if="followupsLoading" class="settings-empty">Đang tải lịch chăm sóc...</div>
           <div v-else-if="!followups.length" class="settings-empty">Chưa có follow-up đang chờ.</div>
           <ul v-else class="followup-list">
@@ -8544,6 +8845,7 @@ onUnmounted(() => {
             </div>
             <button type="button" class="settings-refresh" :disabled="csatLoading" @click="fetchCsat">Làm mới</button>
           </div>
+          <div v-if="csatError" class="settings-notice team-error" role="alert">{{ csatError }}</div>
           <div class="csat-summary-grid">
             <div><strong>{{ csatSummary.average_rating.toFixed(1) }}/5</strong><span>Điểm CSAT</span></div>
             <div><strong>{{ Math.round(csatSummary.satisfaction_rate * 100) }}%</strong><span>Tỷ lệ hài lòng</span></div>
@@ -8605,6 +8907,13 @@ onUnmounted(() => {
                 <span> · {{ log.resource_type }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span>
                 <small>{{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '' }}</small>
               </li>
+            </ul>
+          </div>
+          <div class="platform-audit-panel provider-error-panel">
+            <div class="settings-card-header"><div><h3>Lỗi provider gần đây</h3><p>Chỉ hiển thị loại lỗi và kênh; không hiển thị payload hay secret.</p></div></div>
+            <p v-if="!platformProviderErrors.length" class="settings-empty">Chưa có lỗi provider.</p>
+            <ul v-else class="audit-list">
+              <li v-for="errorItem in platformProviderErrors.slice(0, 10)" :key="errorItem.id"><strong>{{ errorItem.channel_type || 'provider' }}</strong><span> · {{ errorItem.event_type }} · {{ errorItem.error_type || 'error' }}</span><small>{{ errorItem.received_at ? new Date(errorItem.received_at).toLocaleString('vi-VN') : '' }}</small></li>
             </ul>
           </div>
         </div>

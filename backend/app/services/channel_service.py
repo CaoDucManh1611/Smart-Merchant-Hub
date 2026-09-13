@@ -115,7 +115,6 @@ def upsert_channel_connection(
             db,
             business_id,
             "connected_channels",
-            idempotency_key=f"channel:{channel_type}:{external_account_id}",
         )
     if channel is None:
         channel = Channel(

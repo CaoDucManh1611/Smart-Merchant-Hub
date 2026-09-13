@@ -69,9 +69,23 @@ def list_workflows(db: Session = Depends(get_db), tenant: TenantContext = Depend
     return WorkflowListOut(items=[_out(item) for item in items], total=len(items))
 
 
-@router.get("/workflows/runs/dispatch", response_model=list[WorkflowRunOut])
+@router.post(
+    "/workflows/runs/dispatch",
+    response_model=list[WorkflowRunOut],
+    dependencies=[Depends(require_write_access)],
+)
 def dispatch_due_workflows(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
     """Execute due scheduled runs; safe to call repeatedly from a scheduler."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Capture the run ids before dispatch.  The job handler changes a run from
+    # ``scheduled`` to its terminal state, so querying only scheduled rows
+    # after dispatch would incorrectly return an empty result to the caller.
+    due_run_ids = [run.id for run in db.query(WorkflowRun.id).filter(
+        WorkflowRun.business_id == tenant.business_id,
+        WorkflowRun.status == "scheduled",
+        WorkflowRun.next_run_at <= now,
+    ).order_by(WorkflowRun.next_run_at.asc(), WorkflowRun.id.asc()).limit(100).all()]
+
     def handle_job(payload: dict) -> None:
         workflow = _workflow(db, int(payload["workflow_id"]), tenant)
         execute_workflow(
@@ -90,25 +104,13 @@ def dispatch_due_workflows(db: Session = Depends(get_db), tenant: TenantContext 
         handlers={"workflow.run": handle_job},
         kinds={"workflow.run"},
     )
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if not due_run_ids:
+        return []
     runs = db.query(WorkflowRun).filter(
         WorkflowRun.business_id == tenant.business_id,
-        WorkflowRun.status == "scheduled",
-        WorkflowRun.next_run_at <= now,
-    ).order_by(WorkflowRun.next_run_at.asc(), WorkflowRun.id.asc()).limit(100).all()
-    results = []
-    for run in runs:
-        workflow = _workflow(db, run.workflow_id, tenant)
-        results.append(execute_workflow(
-            db,
-            workflow,
-            run.event_id,
-            run.event_type or workflow.event_type,
-            run.payload or {},
-            tenant,
-            allow_retry=True,
-        ))
-    return [_run_out(run) for run in results]
+        WorkflowRun.id.in_(due_run_ids),
+    ).order_by(WorkflowRun.next_run_at.asc(), WorkflowRun.id.asc()).all()
+    return [_run_out(run) for run in runs]
 
 
 @router.post("/workflows", response_model=WorkflowOut, status_code=201, dependencies=[Depends(require_write_access)])

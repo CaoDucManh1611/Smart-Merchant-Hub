@@ -41,7 +41,11 @@ def login(
     if len(users) != 1 or not verify_password(payload.password, users[0].password_hash):
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")
     user = users[0]
-    token, expires_at = issue_token(user.id)
+    token, expires_at = issue_token(
+        user.id,
+        business_id=user.business_id,
+        role=user.role,
+    )
     db.add(AuthSession(
         user_id=user.id,
         token_hash=token_hash(token),

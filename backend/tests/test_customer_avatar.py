@@ -83,6 +83,16 @@ class CustomerAvatarUrlTests(unittest.TestCase):
             )
         )
 
+    def test_provider_channel_uses_proxy_even_when_stored_avatar_is_missing(self):
+        refreshed = customer_avatar.refresh_customer_avatar_url(
+            None,
+            customer_id=7,
+            business_id=3,
+            channel="zalo",
+            base_url="https://crm.example.test",
+        )
+        self.assertTrue(refreshed.startswith("https://crm.example.test/api/customers/7/avatar?"))
+
 
 class CustomerAvatarApiTests(unittest.TestCase):
     @classmethod
@@ -170,6 +180,90 @@ class CustomerAvatarApiTests(unittest.TestCase):
         self.assertEqual(b"fake-jpeg", response.content)
         self.assertEqual("image/jpeg", response.headers["content-type"])
         self.assertNotIn("bot-token-secret", get.call_args.args[0])
+
+    def _create_provider_customer(self, channel_type: str, suffix: str) -> int:
+        with Session(self.engine) as db:
+            channel = Channel(
+                business_id=self.business_id,
+                channel_type=channel_type,
+                name=channel_type.title(),
+                external_account_id=f"{channel_type}-account-{suffix}",
+                access_token_encrypted=encrypt_token(
+                    f"{channel_type}-token-secret",
+                    settings.CHANNEL_ENCRYPTION_KEY,
+                ),
+            )
+            db.add(channel)
+            db.flush()
+            customer = Customer(
+                business_id=self.business_id,
+                channel=channel_type,
+                external_user_id=f"{channel_type}-user-{suffix}",
+                name=f"{channel_type.title()} Buyer",
+            )
+            db.add(customer)
+            db.flush()
+            db.add(
+                CustomerIdentity(
+                    business_id=self.business_id,
+                    customer_id=customer.id,
+                    channel=channel_type,
+                    external_account_id=channel.external_account_id,
+                    external_user_id=customer.external_user_id,
+                )
+            )
+            db.commit()
+            return customer.id
+
+    def test_signed_avatar_route_streams_zalo_profile_image(self):
+        customer_id = self._create_provider_customer("zalo", "proxy")
+        signed = build_customer_avatar_url(
+            customer_id=customer_id,
+            business_id=self.business_id,
+            base_url="http://testserver",
+        )
+        provider_response = Mock()
+        provider_response.content = b"zalo-jpeg"
+        provider_response.headers = {"content-type": "image/jpeg"}
+        provider_response.raise_for_status.return_value = None
+
+        with patch(
+            "app.api.customer_avatar.ZaloAdapter.fetch_user_profile",
+            return_value={"display_name": "Buyer", "avatar_url": "https://cdn.zalo.test/avatar.jpg"},
+        ) as profile, patch(
+            "app.api.customer_avatar.httpx.get", return_value=provider_response
+        ) as download:
+            response = self.client.get(signed.removeprefix("http://testserver"))
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(b"zalo-jpeg", response.content)
+        self.assertEqual("zalo-token-secret", profile.call_args.kwargs["access_token"])
+        self.assertEqual("https://cdn.zalo.test/avatar.jpg", download.call_args.args[0])
+
+    def test_signed_avatar_route_refreshes_instagram_profile_image(self):
+        customer_id = self._create_provider_customer("instagram", "proxy")
+        signed = build_customer_avatar_url(
+            customer_id=customer_id,
+            business_id=self.business_id,
+            base_url="http://testserver",
+        )
+        provider_response = Mock()
+        provider_response.content = b"instagram-jpeg"
+        provider_response.headers = {"content-type": "image/jpeg"}
+        provider_response.raise_for_status.return_value = None
+
+        with patch(
+            "app.api.customer_avatar.fetch_instagram_customer_profile",
+            return_value={"name": "Buyer", "avatar_url": "https://cdn.instagram.test/avatar.jpg"},
+        ) as profile, patch(
+            "app.api.customer_avatar.httpx.get", return_value=provider_response
+        ) as download:
+            response = self.client.get(signed.removeprefix("http://testserver"))
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(b"instagram-jpeg", response.content)
+        self.assertEqual("instagram-token-secret", profile.call_args.kwargs["access_token"])
+        self.assertEqual("https://cdn.instagram.test/avatar.jpg", download.call_args.args[0])
 
 
 if __name__ == "__main__":

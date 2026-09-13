@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.business import Business
 from app.models.chatbot_followup import ChatbotFollowUp
+from app.models.sales import Order
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.services.chatbot_followup import (
@@ -15,6 +16,7 @@ from app.services.chatbot_followup import (
     schedule_abandoned_checkout_followup,
     schedule_post_delivery_followup,
     schedule_followup,
+    schedule_inactive_customer_followups,
 )
 
 
@@ -37,7 +39,14 @@ class ChatbotFollowUpTests(unittest.TestCase):
 
     def test_schedule_and_dispatch_is_idempotent(self):
         with Session(self.engine) as db:
-            row = schedule_followup(db, self.business_id, self.conversation_id, "Nhắc khách xác nhận đơn", datetime.utcnow() - timedelta(minutes=1), kind="cart_abandoned")
+            row = schedule_followup(
+                db,
+                self.business_id,
+                self.conversation_id,
+                "Nhắc khách xác nhận đơn",
+                datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1),
+                kind="cart_abandoned",
+            )
             db.commit()
             self.assertEqual("scheduled", row.status)
             with patch("app.services.chatbot_followup._send_followup", return_value={"message_id": "followup-1"}) as send:
@@ -81,3 +90,36 @@ class ChatbotFollowUpTests(unittest.TestCase):
             self.assertEqual(delivered.id, delivered_again.id)
             self.assertEqual("cart_abandoned", abandoned.kind)
             self.assertEqual("post_delivery", delivered.kind)
+
+    def test_inactive_prior_buyer_gets_one_monthly_winback(self):
+        current = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            db.add(Order(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=self.conversation_id,
+                order_number="WINBACK-OLD-1",
+                status="completed",
+                total_amount=100,
+                created_at=current - timedelta(days=90),
+                updated_at=current - timedelta(days=90),
+            ))
+            db.commit()
+            first = schedule_inactive_customer_followups(
+                db,
+                business_id=self.business_id,
+                inactive_days=30,
+                now=current,
+                run_at=current + timedelta(minutes=5),
+            )
+            db.commit()
+            second = schedule_inactive_customer_followups(
+                db,
+                business_id=self.business_id,
+                inactive_days=30,
+                now=current,
+                run_at=current + timedelta(minutes=10),
+            )
+            self.assertEqual(1, first["scheduled"])
+            self.assertEqual(0, second["scheduled"])
+            self.assertEqual(1, db.query(ChatbotFollowUp).filter(ChatbotFollowUp.kind == "customer_winback").count())

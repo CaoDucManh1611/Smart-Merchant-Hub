@@ -11,6 +11,7 @@ from app.models.customer import Customer
 from app.models.ticket import Ticket, TicketEvent
 from app.models.workflow import Workflow, WorkflowRun
 from app.services.job_service import enqueue_job
+from app.core.config import settings
 from app.tenancy.context import TenantContext
 
 
@@ -78,12 +79,26 @@ def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext)
         )
         db.add(ticket)
         db.flush()
+        expected_due_at = ticket.sla_due_at.isoformat()
+        warning_at = max(
+            now,
+            ticket.sla_due_at - timedelta(minutes=max(1, int(settings.TICKET_SLA_WARNING_MINUTES))),
+        )
+        if warning_at < ticket.sla_due_at:
+            enqueue_job(
+                db,
+                business_id=tenant.business_id,
+                kind="ticket.sla_warning",
+                payload={"ticket_id": ticket.id, "sla_due_at": expected_due_at},
+                idempotency_key=f"ticket:{ticket.id}:sla-warning:{expected_due_at}",
+                run_at=warning_at,
+            )
         enqueue_job(
             db,
             business_id=tenant.business_id,
             kind="ticket.sla_check",
-            payload={"ticket_id": ticket.id},
-            idempotency_key=f"ticket:{ticket.id}:sla:{ticket.sla_due_at.isoformat()}",
+            payload={"ticket_id": ticket.id, "sla_due_at": expected_due_at},
+            idempotency_key=f"ticket:{ticket.id}:sla:{expected_due_at}",
             run_at=ticket.sla_due_at,
         )
         db.add(TicketEvent(

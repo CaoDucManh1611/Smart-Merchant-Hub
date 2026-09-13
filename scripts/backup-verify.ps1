@@ -8,6 +8,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Invoke-NativeChecked {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Command,
+    [Parameter(Mandatory = $true)] [string[]]$Arguments
+  )
+
+  & $Command @Arguments
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0) {
+    throw "$Command failed with exit code $exitCode."
+  }
+}
+
 if (-not (Get-Command pg_restore -ErrorAction SilentlyContinue)) {
   throw "pg_restore is required. Install PostgreSQL client tools on the backup runner."
 }
@@ -16,7 +29,7 @@ if ($VerifyOnly) {
   if ($RestoreDatabaseUrl) {
     throw "VerifyOnly cannot be combined with RestoreDatabaseUrl."
   }
-  & pg_restore --list $BackupFile | Out-Null
+  Invoke-NativeChecked -Command "pg_restore" -Arguments @("--list", $BackupFile) | Out-Null
   Write-Host "Backup archive is readable: $BackupFile"
   exit 0
 }
@@ -34,8 +47,8 @@ if ($RestoreDatabaseUrl) {
   if ($Overwrite) {
     $restoreArgs += @("--clean", "--if-exists")
   }
-  & pg_restore @restoreArgs $BackupFile
-  & pg_restore --list $BackupFile | Out-Null
+  Invoke-NativeChecked -Command "pg_restore" -Arguments ($restoreArgs + $BackupFile)
+  Invoke-NativeChecked -Command "pg_restore" -Arguments @("--list", $BackupFile) | Out-Null
   Write-Host "Backup restored and verified. Overwrite=$Overwrite"
   exit 0
 }
@@ -47,6 +60,12 @@ if (-not $env:DATABASE_URL) {
   throw "DATABASE_URL must be supplied by the secret manager or protected environment."
 }
 
-& pg_dump --dbname=$env:DATABASE_URL --format=custom --file=$BackupFile --no-owner --no-privileges
-& pg_restore --list $BackupFile | Out-Null
+Invoke-NativeChecked -Command "pg_dump" -Arguments @(
+  "--dbname=$($env:DATABASE_URL)",
+  "--format=custom",
+  "--file=$BackupFile",
+  "--no-owner",
+  "--no-privileges"
+)
+Invoke-NativeChecked -Command "pg_restore" -Arguments @("--list", $BackupFile) | Out-Null
 Write-Host "Backup created and verified: $BackupFile"

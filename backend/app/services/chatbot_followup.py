@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.conversation import Conversation
+from app.models.sales import Order
 
 
 ABANDONED_CHECKOUT_MESSAGE = "Shop nhắc bạn: sản phẩm bạn vừa hỏi vẫn còn sẵn. Nếu muốn đặt, bạn xác nhận để shop hỗ trợ lên đơn nhé."
 POST_DELIVERY_MESSAGE = "Shop muốn hỏi thăm: bạn đã nhận được hàng chưa? Nếu cần hỗ trợ hoặc muốn mua thêm, cứ nhắn shop nhé."
+INACTIVE_CUSTOMER_MESSAGE = "Đã lâu bạn chưa ghé shop. Nếu cần tư vấn sản phẩm mới hoặc mua lại món trước đây, shop luôn sẵn sàng hỗ trợ nhé."
+REVENUE_ORDER_STATUSES = {"confirmed", "processing", "shipped", "delivered", "completed", "paid"}
 
 
 def _now() -> datetime:
@@ -158,6 +162,65 @@ def schedule_post_delivery_followup(
         kind="post_delivery",
         metadata={"order_id": order_id},
     )
+
+
+def schedule_inactive_customer_followups(
+    db: Session,
+    *,
+    business_id: int,
+    inactive_days: int = 30,
+    run_at: datetime | None = None,
+    now: datetime | None = None,
+    limit: int = 100,
+) -> dict:
+    """Schedule one monthly win-back for each inactive prior buyer."""
+    current = now or _now()
+    if current.tzinfo is not None:
+        current = current.astimezone(timezone.utc).replace(tzinfo=None)
+    inactive_days = max(7, min(int(inactive_days), 3650))
+    cutoff = current - timedelta(days=inactive_days)
+    scheduled_for = run_at or (current + timedelta(minutes=5))
+    campaign_period = current.strftime("%Y-%m")
+    last_order_at = func.max(func.coalesce(Order.updated_at, Order.created_at)).label("last_order_at")
+    candidates = db.query(Order.customer_id, last_order_at).filter(
+        Order.business_id == business_id,
+        Order.status.in_(REVENUE_ORDER_STATUSES),
+    ).group_by(Order.customer_id).having(last_order_at <= cutoff).order_by(last_order_at.asc()).limit(limit).all()
+
+    scheduled_ids: list[int] = []
+    skipped = 0
+    for customer_id, last_purchase in candidates:
+        conversation = db.query(Conversation).filter(
+            Conversation.business_id == business_id,
+            Conversation.customer_id == customer_id,
+        ).order_by(Conversation.last_message_at.desc(), Conversation.updated_at.desc(), Conversation.id.desc()).first()
+        if conversation is None or conversation.bot_mode == "human":
+            skipped += 1
+            continue
+        existing_rows = db.query(ChatbotFollowUp).filter(
+            ChatbotFollowUp.business_id == business_id,
+            ChatbotFollowUp.customer_id == customer_id,
+            ChatbotFollowUp.kind == "customer_winback",
+        ).all()
+        if any((row.metadata_ or {}).get("campaign_period") == campaign_period for row in existing_rows):
+            skipped += 1
+            continue
+        row = schedule_followup(
+            db,
+            business_id,
+            conversation.id,
+            INACTIVE_CUSTOMER_MESSAGE,
+            scheduled_for,
+            kind="customer_winback",
+            metadata={
+                "customer_id": customer_id,
+                "last_order_at": last_purchase.isoformat() if last_purchase else None,
+                "inactive_days": inactive_days,
+                "campaign_period": campaign_period,
+            },
+        )
+        scheduled_ids.append(row.id)
+    return {"scheduled": len(scheduled_ids), "skipped": skipped, "followup_ids": scheduled_ids}
 
 
 def cancel_event_followup(

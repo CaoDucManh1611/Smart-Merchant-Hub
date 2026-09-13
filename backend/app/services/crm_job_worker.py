@@ -11,7 +11,7 @@ from app.models.business import Business
 from app.models.ticket import Ticket
 from app.models.workflow import Workflow
 from app.services.job_service import dispatch_due_jobs
-from app.services.notification_service import create_sla_notification
+from app.services.notification_service import create_sla_notification, create_sla_warning_notification
 from app.services.workflow_engine import execute_workflow
 from app.services.chatbot_followup import dispatch_due_followups
 from app.services.order_service import release_expired_draft_reservations
@@ -28,12 +28,14 @@ def _dispatch_ticket_sla_job(db: Session, business_id: int, payload: dict) -> No
         Ticket.id == ticket_id,
         Ticket.business_id == business_id,
     ).first()
+    expected_due_at = str(payload.get("sla_due_at") or "")
     # A deleted, completed, or rescheduled ticket is a successful no-op.  The
     # job has done its job by re-checking the current tenant-owned state.
     if (
         ticket is None
         or ticket.status in {"resolved", "closed"}
         or ticket.sla_due_at is None
+        or (expected_due_at and ticket.sla_due_at.isoformat() != expected_due_at)
         or ticket.sla_due_at > _now()
     ):
         return
@@ -43,6 +45,31 @@ def _dispatch_ticket_sla_job(db: Session, business_id: int, payload: dict) -> No
         ticket_id=ticket.id,
         user_id=ticket.assigned_user_id,
         title=f"SLA quá hạn: {ticket.title}",
+        due_at=ticket.sla_due_at.isoformat(),
+    )
+
+
+def _dispatch_ticket_sla_warning_job(db: Session, business_id: int, payload: dict) -> None:
+    ticket_id = int(payload.get("ticket_id") or 0)
+    ticket = db.query(Ticket).filter(
+        Ticket.id == ticket_id,
+        Ticket.business_id == business_id,
+    ).first()
+    expected_due_at = str(payload.get("sla_due_at") or "")
+    if (
+        ticket is None
+        or ticket.status in {"resolved", "closed"}
+        or ticket.sla_due_at is None
+        or (expected_due_at and ticket.sla_due_at.isoformat() != expected_due_at)
+        or ticket.sla_due_at <= _now()
+    ):
+        return
+    create_sla_warning_notification(
+        db,
+        business_id=business_id,
+        ticket_id=ticket.id,
+        user_id=ticket.assigned_user_id,
+        title=f"SLA sắp đến hạn: {ticket.title}",
         due_at=ticket.sla_due_at.isoformat(),
     )
 
@@ -92,6 +119,7 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         db.commit()
 
     handlers = {
+        "ticket.sla_warning": lambda payload: _dispatch_ticket_sla_warning_job(db, business_id, payload),
         "ticket.sla_check": lambda payload: _dispatch_ticket_sla_job(db, business_id, payload),
         "workflow.run": lambda payload: _dispatch_workflow_run_job(db, business_id, payload),
         "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),

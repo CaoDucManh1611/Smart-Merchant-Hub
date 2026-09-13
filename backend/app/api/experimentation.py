@@ -18,6 +18,7 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.audit_log import AuditLog
 from app.models.sales import Order
+from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.experimentation import (
     BanditDecision, BanditPolicy, BanditArmStat,
     Experiment,
@@ -57,6 +58,7 @@ from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_write_access
 from app.services.audit_service import record_audit
 from app.services.rule_recommendation import suggest_tag_rule
+from app.services.csat_service import summarize_csat
 
 
 router = APIRouter(prefix="/experiments")
@@ -162,8 +164,26 @@ def evaluation_dashboard(
         if isinstance(order.metadata_, dict)
         and order.metadata_.get("source") in {"chatbot_collection", "chatbot_tool"}
     ]
-    confirmed_states = {"confirmed", "processing", "shipped", "delivered", "completed"}
+    confirmed_states = {"confirmed", "paid", "processing", "shipped", "delivered", "completed"}
     chatbot_confirmed = sum(1 for order in chatbot_orders if order.status in confirmed_states)
+    abandoned_followups = db.query(ChatbotFollowUp).filter(
+        ChatbotFollowUp.business_id == tenant.business_id,
+        ChatbotFollowUp.kind == "cart_abandoned",
+        ChatbotFollowUp.status == "sent",
+        ChatbotFollowUp.sent_at.is_not(None),
+    ).all()
+    first_abandoned_by_conversation: dict[int, datetime] = {}
+    for followup in abandoned_followups:
+        current_sent = first_abandoned_by_conversation.get(followup.conversation_id)
+        if current_sent is None or followup.sent_at < current_sent:
+            first_abandoned_by_conversation[followup.conversation_id] = followup.sent_at
+    recovered_orders = []
+    for order in chatbot_orders:
+        sent_at = first_abandoned_by_conversation.get(order.conversation_id or 0)
+        converted_at = order.updated_at or order.created_at
+        if order.status in confirmed_states and sent_at is not None and converted_at is not None and converted_at >= sent_at:
+            recovered_orders.append(order)
+    csat = summarize_csat(db, tenant.business_id)
     return {
         "period_days": days,
         "models": {
@@ -195,6 +215,10 @@ def evaluation_dashboard(
             "drafts": sum(1 for order in chatbot_orders if order.status == "draft"),
             "confirmed": int(chatbot_confirmed),
             "conversion_rate": round(chatbot_confirmed / len(chatbot_orders), 4) if chatbot_orders else 0.0,
+            "draft_to_confirmed_rate": round(chatbot_confirmed / len(chatbot_orders), 4) if chatbot_orders else 0.0,
+            "recovered_orders": len(recovered_orders),
+            "recovered_revenue": _json_number(sum((Decimal(order.total_amount or 0) for order in recovered_orders), Decimal("0"))),
+            "bot_resolution_rate": csat["bot_resolution_rate"],
         },
     }
 

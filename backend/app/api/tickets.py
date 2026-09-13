@@ -33,6 +33,7 @@ from app.services.notification_service import create_notification
 from app.services.audit_service import record_audit
 from app.services.job_service import dispatch_due_jobs, enqueue_job
 from app.services.notification_service import create_sla_notification
+from app.core.config import settings
 
 
 router = APIRouter()
@@ -136,12 +137,26 @@ def _out(ticket: Ticket) -> TicketOut:
 def _enqueue_sla_job(db: Session, ticket: Ticket) -> None:
     if ticket.sla_due_at is None or ticket.status in ("resolved", "closed"):
         return
+    expected_due_at = ticket.sla_due_at.isoformat()
+    warning_at = max(
+        _utcnow(),
+        ticket.sla_due_at - timedelta(minutes=max(1, int(settings.TICKET_SLA_WARNING_MINUTES))),
+    )
+    if warning_at < ticket.sla_due_at:
+        enqueue_job(
+            db,
+            business_id=ticket.business_id,
+            kind="ticket.sla_warning",
+            payload={"ticket_id": ticket.id, "sla_due_at": expected_due_at},
+            idempotency_key=f"ticket:{ticket.id}:sla-warning:{expected_due_at}",
+            run_at=warning_at,
+        )
     enqueue_job(
         db,
         business_id=ticket.business_id,
         kind="ticket.sla_check",
-        payload={"ticket_id": ticket.id},
-        idempotency_key=f"ticket:{ticket.id}:sla:{ticket.sla_due_at.isoformat()}",
+        payload={"ticket_id": ticket.id, "sla_due_at": expected_due_at},
+        idempotency_key=f"ticket:{ticket.id}:sla:{expected_due_at}",
         run_at=ticket.sla_due_at,
     )
 

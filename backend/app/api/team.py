@@ -15,7 +15,7 @@ from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_admin_access
 from app.services.audit_service import record_audit
-from app.services.quota_service import QuotaExceededError, reserve_quota
+from app.services.quota_service import QuotaExceededError, release_quota, reserve_quota
 
 
 router = APIRouter()
@@ -212,14 +212,24 @@ def update_team_member(
     actor: User | None = Depends(require_admin_access),
 ):
     user = _get_user(db, user_id, tenant)
+    was_active = bool(user.is_active)
     data = payload.model_dump(exclude_unset=True)
     if "email" in data:
         data["email"] = _normalize_email(data["email"])
         _ensure_unique_email(db, data["email"], tenant, exclude_id=user.id)
     if "full_name" in data:
         data["full_name"] = data["full_name"].strip()
+    will_be_active = bool(data.get("is_active", user.is_active))
+    if not was_active and will_be_active:
+        try:
+            # A retry observes the user as active and does not reserve twice.
+            reserve_quota(db, tenant.business_id, "staff_users")
+        except QuotaExceededError as exc:
+            raise HTTPException(status_code=429, detail=exc.detail) from exc
     for field, value in data.items():
         setattr(user, field, value)
+    if was_active and not will_be_active:
+        release_quota(db, tenant.business_id, "staff_users")
     try:
         db.commit()
     except IntegrityError as exc:

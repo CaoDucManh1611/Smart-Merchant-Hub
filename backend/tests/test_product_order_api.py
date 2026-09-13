@@ -220,7 +220,8 @@ class ProductOrderApiTests(unittest.TestCase):
             "/api/orders",
             headers={"X-Business-Id": "1"},
         )
-        if not existing.json()["items"]:
+        report_order = next((item for item in existing.json()["items"] if item.get("conversation_id") == self.conversation_id), None)
+        if report_order is None:
             create = self.client.post(
                 "/api/orders",
                 headers={"X-Business-Id": "1"},
@@ -232,6 +233,14 @@ class ProductOrderApiTests(unittest.TestCase):
                 },
             )
             self.assertEqual(201, create.status_code)
+            report_order = create.json()
+        if report_order["status"] == "draft":
+            confirmed = self.client.post(
+                f"/api/orders/{report_order['id']}/transition",
+                headers={"X-Business-Id": "1"},
+                json={"to_status": "confirmed"},
+            )
+            self.assertEqual(200, confirmed.status_code, confirmed.text)
         response = self.client.get(
             "/api/reports/revenue-by-channel",
             headers={"X-Business-Id": "1"},

@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -13,6 +14,7 @@ from app.models.customer import Customer
 from app.models.crm_extended import CustomerTag, Tag
 from app.models.audit_log import AuditLog
 from app.models.customer_identity import CustomerIdentity
+from app.models.message import Message
 from app.services.customer_merge_service import duplicate_evidence
 
 
@@ -137,6 +139,57 @@ class Customer360FinalApiTests(unittest.TestCase):
         )
         self.assertEqual(200, cross_tenant.status_code)
         self.assertEqual([], cross_tenant.json()["items"])
+
+    def test_timeline_exposes_safe_ai_tool_and_handoff_explanations(self):
+        with Session(self.engine) as db:
+            customer = Customer(business_id=self.business_id, channel="instagram", external_user_id="ai-explain-customer", name="AI Explain")
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(business_id=self.business_id, customer_id=customer.id, channel="instagram")
+            db.add(conversation)
+            db.flush()
+            db.add(Message(
+                conversation_id=conversation.id,
+                channel="instagram",
+                direction="outbound",
+                sender_type="bot",
+                content="Giá hiện tại là 100.000đ",
+                metadata_={"route": "product_database", "rag_source_document_ids": [7], "api_key": "must-not-leak"},
+                received_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            ))
+            db.add_all([
+                AuditLog(
+                    business_id=self.business_id,
+                    actor_type="bot",
+                    action="chatbot_tool_executed",
+                    resource_type="conversation",
+                    resource_id=str(conversation.id),
+                    correlation_id="trace-safe-1",
+                    metadata_={"tool": "xem_ton_kho", "arguments": {"token": "must-not-leak"}},
+                ),
+                AuditLog(
+                    business_id=self.business_id,
+                    actor_type="bot",
+                    action="chatbot_human",
+                    resource_type="conversation",
+                    resource_id=str(conversation.id),
+                    metadata_={"reason": "Khách yêu cầu gặp nhân viên", "authorization": "must-not-leak"},
+                ),
+            ])
+            db.commit()
+            customer_id = customer.id
+
+        response = self.client.get(f"/api/customers/{customer_id}/timeline", headers=self.headers())
+        self.assertEqual(200, response.status_code, response.text)
+        items = response.json()["items"]
+        tool = next(item for item in items if item["event_type"] == "ai_tool")
+        handoff = next(item for item in items if item["event_type"] == "ai_handoff")
+        message = next(item for item in items if item["event_type"] == "message")
+        self.assertEqual("xem_ton_kho", tool["metadata"]["tool"])
+        self.assertEqual("Khách yêu cầu gặp nhân viên", handoff["metadata"]["reason"])
+        self.assertEqual("product_database", message["metadata"]["route"])
+        self.assertEqual([7], message["metadata"]["rag_source_document_ids"])
+        self.assertNotIn("must-not-leak", str(items))
 
     def test_duplicate_evidence_considers_linked_channel_identity(self):
         with Session(self.engine) as db:

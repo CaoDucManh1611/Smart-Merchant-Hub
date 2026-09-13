@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.models import Business, Conversation, CrmJob, Customer, Notification, Ticket, Workflow, WorkflowRun
 from app.services.crm_job_worker import dispatch_all_crm_jobs
 from app.services.job_service import enqueue_job
+from app.api.tickets import _enqueue_sla_job
 
 
 class CrmJobWorkerTests(unittest.TestCase):
@@ -164,6 +165,42 @@ class CrmJobWorkerTests(unittest.TestCase):
             self.assertIsNotNone(job.last_error)
             self.assertIsNotNone(run)
             self.assertEqual("failed", run.status)
+
+    def test_worker_warns_before_sla_and_stale_rescheduled_job_is_a_noop(self):
+        with Session(self.engine) as db:
+            ticket = Ticket(
+                business_id=self.primary_id,
+                customer_id=self.customer_id,
+                conversation_id=self.conversation_id,
+                title="Sắp chạm SLA",
+                status="open",
+                priority="urgent",
+                sla_due_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30),
+            )
+            db.add(ticket)
+            db.flush()
+            _enqueue_sla_job(db, ticket)
+            db.commit()
+            self.assertEqual(1, dispatch_all_crm_jobs(db))
+            warning = db.scalar(select(Notification).where(Notification.business_id == self.primary_id, Notification.kind == "sla_warning"))
+            self.assertIsNotNone(warning)
+            self.assertEqual(ticket.id, warning.metadata_["ticket_id"])
+            self.assertEqual(0, db.query(Notification).filter(Notification.kind == "sla").count())
+
+            # Simulate rescheduling after the old warning job was created.
+            old_due = ticket.sla_due_at.isoformat()
+            ticket.sla_due_at = ticket.sla_due_at + timedelta(hours=2)
+            enqueue_job(
+                db,
+                business_id=self.primary_id,
+                kind="ticket.sla_warning",
+                payload={"ticket_id": ticket.id, "sla_due_at": old_due},
+                idempotency_key=f"stale-warning:{ticket.id}",
+                run_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            db.commit()
+            self.assertEqual(1, dispatch_all_crm_jobs(db))
+            self.assertEqual(1, db.query(Notification).filter(Notification.kind == "sla_warning").count())
 
 
 if __name__ == "__main__":

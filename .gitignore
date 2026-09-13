@@ -31,3 +31,9 @@ ngrok.exe
 backups/
 *.dump
 *.dump.list
+*.secrets.json
+backend/.pytest_tmp/
+.pytest_tmp/
+
+# Local QA scratch copies and downloaded test dependencies.
+/work/

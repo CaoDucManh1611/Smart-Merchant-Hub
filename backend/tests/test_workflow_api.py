@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -7,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.dependencies import get_db
 from app.main import app
-from app.models import Business, Conversation, Customer, User, CrmJob
+from app.models import Business, Conversation, Customer, User, CrmJob, WorkflowRun
 from app.models.crm_extended import CustomerTag
 
 
@@ -94,6 +95,10 @@ class WorkflowApiTests(unittest.TestCase):
                 "conversation_id": self.conversation_id,
             },
         }
+        before_tickets = self.client.get(
+            "/api/tickets",
+            headers={"X-Business-Id": str(self.business_one)},
+        ).json()["total"]
         first = self.client.post(
             f"/api/workflows/{workflow_id}/run",
             headers={"X-Business-Id": str(self.business_one)},
@@ -110,7 +115,7 @@ class WorkflowApiTests(unittest.TestCase):
         self.assertEqual(200, duplicate.status_code)
         self.assertEqual("duplicate", duplicate.json()["status"])
         tickets = self.client.get("/api/tickets", headers={"X-Business-Id": str(self.business_one)})
-        self.assertEqual(1, tickets.json()["total"])
+        self.assertEqual(before_tickets + 1, tickets.json()["total"])
 
     def test_condition_mismatch_does_not_execute(self):
         created = self.client.post(
@@ -210,6 +215,50 @@ class WorkflowApiTests(unittest.TestCase):
         self.assertEqual(200, run.status_code)
         with Session(self.engine) as db:
             self.assertEqual(1, db.query(CrmJob).filter(CrmJob.business_id == self.business_one, CrmJob.kind == "workflow.run").count())
+
+    def test_dispatch_endpoint_returns_runs_completed_by_the_job_handler(self):
+        created = self.client.post(
+            "/api/workflows",
+            headers={"X-Business-Id": str(self.business_one)},
+            json={
+                "name": "Dispatch result",
+                "event_type": "message.created",
+                "actions": [{"type": "create_ticket", "title": "Dispatch result"}],
+            },
+        )
+        self.assertEqual(201, created.status_code)
+        workflow_id = created.json()["id"]
+        scheduled = self.client.post(
+            f"/api/workflows/{workflow_id}/run",
+            headers={"X-Business-Id": str(self.business_one)},
+            json={
+                "event_id": "dispatch-result-1",
+                "event_type": "message.created",
+                "delay_seconds": 60,
+                "payload": {"customer_id": self.customer_id, "conversation_id": self.conversation_id},
+            },
+        )
+        self.assertEqual("scheduled", scheduled.json()["status"])
+        with Session(self.engine) as db:
+            run = db.query(WorkflowRun).filter(WorkflowRun.id == scheduled.json()["id"]).one()
+            job = db.query(CrmJob).filter(CrmJob.kind == "workflow.run", CrmJob.idempotency_key == f"workflow:{workflow_id}:dispatch-result-1").one()
+            past = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+            run.next_run_at = past
+            job.run_at = past
+            db.commit()
+
+        dispatched = self.client.post(
+            "/api/workflows/runs/dispatch",
+            headers={"X-Business-Id": str(self.business_one)},
+        )
+        self.assertEqual(200, dispatched.status_code, dispatched.text)
+        self.assertEqual(1, len(dispatched.json()))
+        self.assertEqual("completed", dispatched.json()[0]["status"])
+        again = self.client.post(
+            "/api/workflows/runs/dispatch",
+            headers={"X-Business-Id": str(self.business_one)},
+        )
+        self.assertEqual([], again.json())
 
 
 if __name__ == "__main__":

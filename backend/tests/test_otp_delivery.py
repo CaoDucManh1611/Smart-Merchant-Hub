@@ -133,3 +133,46 @@ def test_twilio_trial_can_fall_back_to_in_chat_when_provider_is_unavailable():
     assert result.provider == "in_chat"
     assert result.delivered is True
     assert result.reason == "provider_fallback"
+
+
+def test_production_never_allows_in_chat_otp():
+    config = Settings(
+        DATABASE_URL="postgresql://crm:password@db/crm",
+        ENVIRONMENT="production",
+        OTP_DELIVERY_MODE="in_chat",
+    )
+    with patch("app.services.otp_delivery.settings", config), pytest.raises(
+        OtpDeliveryNotConfigured, match="development"
+    ):
+        deliver_otp(channel="email", destination="customer@example.test", code="123456")
+
+
+@pytest.mark.parametrize(
+    ("mode", "channel"),
+    [("smtp", "sms"), ("twilio", "email")],
+)
+def test_provider_rejects_the_wrong_otp_channel_before_network_io(mode, channel):
+    config = Settings(
+        DATABASE_URL="sqlite:///./test.db",
+        OTP_DELIVERY_MODE=mode,
+        OTP_SMTP_HOST="smtp.example.test",
+        OTP_FROM_EMAIL="mailer@example.test",
+        OTP_SMTP_USERNAME="mailer@example.test",
+        OTP_SMTP_PASSWORD="secret",
+        OTP_TWILIO_ACCOUNT_SID="AC123",
+        OTP_TWILIO_AUTH_TOKEN="secret-token",
+        OTP_TWILIO_FROM_NUMBER="+15005550006",
+    )
+    with patch("app.services.otp_delivery.settings", config), patch(
+        "app.services.otp_delivery.smtplib.SMTP"
+    ) as smtp, patch("app.services.otp_delivery.httpx.post") as post, pytest.raises(
+        OtpDeliveryNotConfigured
+    ):
+        deliver_otp(
+            channel=channel,
+            destination="customer@example.test",
+            code="123456",
+        )
+
+    smtp.assert_not_called()
+    post.assert_not_called()

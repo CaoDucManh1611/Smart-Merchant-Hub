@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, User
+from app.models.business import ServicePlan, Subscription
 
 
 class TeamApiTests(unittest.TestCase):
@@ -91,6 +92,30 @@ class TeamApiTests(unittest.TestCase):
             json={"full_name": "Unknown", "email": "unknown@example.test", "role": "superuser"},
         )
         self.assertEqual(422, response.status_code)
+
+    def test_reactivation_reserves_and_deactivation_releases_staff_capacity(self):
+        with Session(self.engine) as db:
+            business = Business(name="Team Quota", slug="team-quota-reactivation")
+            plan = ServicePlan(code="team-reactivation", name="Team Reactivation", max_users=2)
+            db.add_all([business, plan])
+            db.flush()
+            db.add(Subscription(business_id=business.id, plan_id=plan.id, status="active"))
+            owner = User(business_id=business.id, full_name="Quota Owner", email="quota-owner@test", role="owner", is_active=True)
+            first = User(business_id=business.id, full_name="First", email="quota-first@test", role="agent", is_active=False)
+            second = User(business_id=business.id, full_name="Second", email="quota-second@test", role="agent", is_active=False)
+            db.add_all([owner, first, second])
+            db.commit()
+            business_id, first_id, second_id = business.id, first.id, second.id
+
+        headers = {"X-Business-Id": str(business_id)}
+        activated = self.client.patch(f"/api/team/{first_id}", headers=headers, json={"is_active": True})
+        self.assertEqual(200, activated.status_code, activated.text)
+        blocked = self.client.patch(f"/api/team/{second_id}", headers=headers, json={"is_active": True})
+        self.assertEqual(429, blocked.status_code, blocked.text)
+        disabled = self.client.patch(f"/api/team/{first_id}", headers=headers, json={"is_active": False})
+        self.assertEqual(200, disabled.status_code, disabled.text)
+        retried = self.client.patch(f"/api/team/{second_id}", headers=headers, json={"is_active": True})
+        self.assertEqual(200, retried.status_code, retried.text)
 
 
 if __name__ == "__main__":

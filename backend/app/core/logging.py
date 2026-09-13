@@ -10,9 +10,12 @@ import traceback
 _SECRET_PATTERN = re.compile(
     r"(?i)(authorization|access[_-]?token|refresh[_-]?token|api[_-]?key|"
     r"client[_-]?secret|app[_-]?secret|channel[_-]?encryption[_-]?key|"
-    r"auth[_-]?secret|password|passwd|secret|database[_-]?url|"
+    r"auth[_-]?secret|password|passwd|secret|database[_-]?url|verify[._-]?token|"
     r"webhook[_-]?(?:secret|token)|facebook[_-]?page[_-]?access[_-]?token)"
-    r"(['\"]?)(\s*[=:]\s*)(?:(?:Bearer|Token)\s+)?(['\"]?)([^'\"\s,;}]+)\4",
+    r"(['\"]?)(\s*[=:]\s*)(?:(?:Bearer|Token)\s+)?(['\"]?)([^'\"\s,;}&]+)\4",
+)
+_TELEGRAM_BOT_TOKEN_PATTERN = re.compile(
+    r"(?i)(api\.telegram\.org/(?:file/)?bot)[^/\s?]+"
 )
 
 
@@ -21,7 +24,8 @@ def redact_secrets(value: object) -> str:
     # Keep an optional JSON quote around the replacement.  Besides being more
     # readable, this means a structured log line remains valid JSON after its
     # credential value has been removed.
-    return _SECRET_PATTERN.sub(r"\1\2\3\4[REDACTED]\4", str(value))
+    redacted = _SECRET_PATTERN.sub(r"\1\2\3\4[REDACTED]\4", str(value))
+    return _TELEGRAM_BOT_TOKEN_PATTERN.sub(r"\1[REDACTED]", redacted)
 
 
 class RedactingFilter(logging.Filter):

@@ -13,7 +13,9 @@ from app.services.quota_service import (
     check_quota,
     release_quota,
     reserve_quota,
+    quota_snapshot,
 )
+from app.services.channel_service import upsert_channel_connection
 
 
 class QuotaServiceTests(unittest.TestCase):
@@ -89,6 +91,57 @@ class QuotaServiceTests(unittest.TestCase):
             decision = check_quota(db, self.business_id, "documents")
             self.assertTrue(decision.allowed)
             self.assertEqual(Decimal("0"), decision.used)
+
+    def test_idempotency_key_cannot_be_reused_for_another_amount_or_resource(self):
+        with Session(self.engine) as db:
+            reserve_quota(db, self.business_id, "ai_calls", 1, idempotency_key="shared-key")
+            with self.assertRaises(ValueError):
+                reserve_quota(db, self.business_id, "ai_calls", 2, idempotency_key="shared-key")
+            with self.assertRaises(ValueError):
+                reserve_quota(db, self.business_id, "ai_cost", 1, idempotency_key="shared-key")
+
+    def test_snapshot_warns_at_threshold_and_marks_only_true_overage_as_exceeded(self):
+        with Session(self.engine) as db:
+            reserve_quota(db, self.business_id, "ai_calls", 2, idempotency_key="near-limit")
+            snapshot = quota_snapshot(db, self.business_id, warning_percent=0.8)
+            self.assertTrue(snapshot["resources"]["ai_calls"]["near_limit"])
+            self.assertFalse(snapshot["resources"]["ai_calls"]["exceeded"])
+
+    def test_disconnected_channel_can_reactivate_without_losing_capacity_accounting(self):
+        with Session(self.engine) as db:
+            channel = upsert_channel_connection(
+                db,
+                business_id=self.business_id,
+                channel_type="telegram",
+                external_account_id="quota-reactivate-bot",
+                name="Quota bot",
+                access_token="secret",
+                encryption_key="quota-test-encryption-key",
+            )
+            channel.status = "inactive"
+            release_quota(db, self.business_id, "connected_channels")
+            db.commit()
+            reactivated = upsert_channel_connection(
+                db,
+                business_id=self.business_id,
+                channel_type="telegram",
+                external_account_id="quota-reactivate-bot",
+                name="Quota bot",
+                access_token="new-secret",
+                encryption_key="quota-test-encryption-key",
+            )
+            self.assertEqual(channel.id, reactivated.id)
+            self.assertEqual(Decimal("1"), check_quota(db, self.business_id, "connected_channels").used)
+            with self.assertRaises(QuotaExceededError):
+                upsert_channel_connection(
+                    db,
+                    business_id=self.business_id,
+                    channel_type="zalo",
+                    external_account_id="quota-second-channel",
+                    name="Second",
+                    access_token="secret",
+                    encryption_key="quota-test-encryption-key",
+                )
 
 
 if __name__ == "__main__":

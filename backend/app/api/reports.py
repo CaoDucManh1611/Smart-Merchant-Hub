@@ -32,6 +32,7 @@ from app.tenancy.dependencies import get_tenant_context
 
 
 router = APIRouter()
+REVENUE_ORDER_STATUSES = ("confirmed", "processing", "shipped", "delivered", "completed", "paid")
 
 
 def _number(value):
@@ -261,10 +262,11 @@ def crm_overview(
     lead_count = lead_query.count()
     won_lead_count = lead_query.filter(Lead.stage == "won").count()
     order_count = order_query.count()
+    revenue_order_query = order_query.filter(Order.status.in_(REVENUE_ORDER_STATUSES))
     total_revenue = Decimal("0")
-    if order_count:
+    if revenue_order_query.count():
         total_revenue = db.query(func.coalesce(func.sum(Order.total_amount), Decimal("0"))).filter(
-            Order.id.in_(order_query.with_entities(Order.id))
+            Order.id.in_(revenue_order_query.with_entities(Order.id))
         ).scalar() or Decimal("0")
 
     # Keep the summary endpoint useful for dashboards without forcing each
@@ -278,12 +280,12 @@ def crm_overview(
         Conversation,
         (Conversation.id == Order.conversation_id)
         & (Conversation.business_id == business_id),
-    ).filter(Order.id.in_(order_query.with_entities(Order.id))).group_by(
+    ).filter(Order.id.in_(revenue_order_query.with_entities(Order.id))).group_by(
         # Group by the source column, not a separately-bound COALESCE
         # expression.  PostgreSQL treats the different bind parameters as
         # distinct expressions and otherwise raises a GROUP BY error.
         Conversation.channel
-    ).order_by(Conversation.channel).all() if order_count else []
+    ).order_by(Conversation.channel).all() if revenue_order_query.count() else []
     channel_breakdown = [
         {"channel": str(row.channel), "order_count": int(row.order_count), "revenue": Decimal(row.revenue or 0)}
         for row in breakdown_rows
@@ -296,7 +298,8 @@ def crm_overview(
         key = order.created_at.date().isoformat() if order.created_at else "unknown"
         bucket = series_map.setdefault(key, {"date": key, "conversations": 0, "orders": 0, "revenue": Decimal("0")})
         bucket["orders"] += 1
-        bucket["revenue"] += Decimal(order.total_amount or 0)
+        if order.status in REVENUE_ORDER_STATUSES:
+            bucket["revenue"] += Decimal(order.total_amount or 0)
     time_series = sorted(series_map.values(), key=lambda item: item["date"])
     purchase_query = db.query(PurchaseOrder).filter(PurchaseOrder.business_id == business_id)
     if start:

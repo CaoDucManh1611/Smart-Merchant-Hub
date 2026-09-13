@@ -160,6 +160,25 @@ class ReportsApiTests(unittest.TestCase):
         self.assertEqual(200, other.status_code)
         self.assertEqual([], other.json()["items"])
 
+    def test_draft_and_cancelled_orders_do_not_inflate_recognized_revenue(self):
+        with Session(self.engine) as db:
+            customer = db.query(Customer).filter(Customer.business_id == 1).first()
+            conversation = db.query(Conversation).filter(Conversation.business_id == 1).first()
+            db.add_all([
+                Order(business_id=1, customer_id=customer.id, conversation_id=conversation.id, order_number="REPORT-DRAFT", status="draft", total_amount=Decimal("900000")),
+                Order(business_id=1, customer_id=customer.id, conversation_id=conversation.id, order_number="REPORT-CANCELLED", status="cancelled", total_amount=Decimal("800000")),
+            ])
+            db.commit()
+        overview = self.client.get("/api/reports/overview", headers={"X-Business-Id": "1"})
+        self.assertEqual(200, overview.status_code, overview.text)
+        self.assertEqual("150000.00", overview.json()["total_revenue"])
+        by_channel = self.client.get("/api/reports/revenue-by-channel", headers={"X-Business-Id": "1"})
+        self.assertEqual(200, by_channel.status_code, by_channel.text)
+        self.assertEqual("150000.00", by_channel.json()["total_revenue"])
+        with Session(self.engine) as db:
+            db.query(Order).filter(Order.order_number.in_(("REPORT-DRAFT", "REPORT-CANCELLED"))).delete(synchronize_session=False)
+            db.commit()
+
 
 if __name__ == "__main__":
     unittest.main()

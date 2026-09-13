@@ -106,3 +106,39 @@ def test_combo_comparison_returns_a_safe_fallback_when_component_price_is_missin
         assert reply is not None
         assert "chưa đủ" in reply.lower()
         assert "đoán" not in reply.lower()
+
+
+def test_out_of_stock_combo_returns_grounded_alternative_suggestions():
+    engine = _engine()
+    with Session(engine) as db:
+        business = Business(name="Alternative Shop", slug="alternative-pricing-shop")
+        db.add(business)
+        db.flush()
+        cleanser = Product(business_id=business.id, sku="ALT-CLEAN", name="Sữa rửa mặt thay thế", price=Decimal("150000"), stock_quantity=5, status="active")
+        serum = Product(business_id=business.id, sku="ALT-SERUM", name="Serum thay thế", price=Decimal("250000"), stock_quantity=3, status="active")
+        combo = Product(
+            business_id=business.id,
+            sku="ALT-COMBO",
+            name="Combo hết hàng",
+            price=Decimal("350000"),
+            stock_quantity=0,
+            status="active",
+            metadata_={"components": [{"product_id": cleanser.id}, {"product_id": serum.id}]},
+        )
+        db.add_all([cleanser, serum])
+        db.flush()
+        combo.metadata_ = {"components": [{"product_id": cleanser.id}, {"product_id": serum.id}]}
+        db.add(combo)
+        db.commit()
+
+        reply = combo_price_comparison_reply(
+            db,
+            business_id=business.id,
+            text="Combo hết hàng rẻ hơn mua lẻ bao nhiêu và có gì thay thế?",
+        )
+        assert reply is not None
+        assert "không đủ tồn kho" in reply
+        assert "Gợi ý thay thế" in reply
+        # The individual components are the grounded replacement path.
+        assert "Sữa rửa mặt thay thế" in reply
+        assert "Serum thay thế" in reply

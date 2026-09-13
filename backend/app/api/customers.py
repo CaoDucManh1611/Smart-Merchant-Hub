@@ -768,6 +768,7 @@ def get_customer(
             customer.avatar_url,
             customer_id=customer.id,
             business_id=tenant.business_id,
+            channel=customer.channel,
         ),
         created_at=customer.created_at,
         updated_at=customer.updated_at,
@@ -1092,6 +1093,11 @@ def customer_timeline(
         Conversation.business_id == tenant.business_id,
         Conversation.customer_id == customer_id,
     ).all()
+    conversation_ids = {message.conversation_id for message in messages}
+    ai_audits = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.action.in_(("chatbot_tool_executed", "chatbot_human", "chatbot_escalated")),
+    ).all()
     notes = db.query(CustomerNote).filter(
         CustomerNote.business_id == tenant.business_id,
         CustomerNote.customer_id == customer_id,
@@ -1185,6 +1191,37 @@ def customer_timeline(
                 else None
             ),
             metadata=_timeline_message_metadata(message),
+        ))
+    for audit in ai_audits:
+        raw = audit.metadata_ if isinstance(audit.metadata_, dict) else {}
+        raw_conversation_id = raw.get("conversation_id")
+        if raw_conversation_id is None and audit.resource_type == "conversation":
+            raw_conversation_id = audit.resource_id
+        try:
+            audit_conversation_id = int(raw_conversation_id)
+        except (TypeError, ValueError):
+            continue
+        if audit_conversation_id not in conversation_ids:
+            continue
+        is_tool = audit.action == "chatbot_tool_executed"
+        safe_metadata = {
+            "action": audit.action,
+            "correlation_id": audit.correlation_id,
+        }
+        if is_tool and raw.get("tool"):
+            safe_metadata["tool"] = str(raw["tool"])[:60]
+        if not is_tool and raw.get("reason"):
+            safe_metadata["reason"] = str(raw["reason"])[:500]
+        items.append(CustomerTimelineItem(
+            event_type="ai_tool" if is_tool else "ai_handoff",
+            event_id=audit.id,
+            occurred_at=audit.created_at,
+            content=(f"AI đã dùng tool {safe_metadata.get('tool')}" if is_tool else "Hội thoại được chuyển cho nhân viên"),
+            conversation_id=audit_conversation_id,
+            created_by=audit.user_id,
+            actor_type=audit.actor_type or "bot",
+            actor_name="Chatbot" if (audit.actor_type or "bot") == "bot" else None,
+            metadata=safe_metadata,
         ))
     items.extend(CustomerTimelineItem(
         event_type="identity",

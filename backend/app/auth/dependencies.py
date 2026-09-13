@@ -37,9 +37,22 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def issue_token(user_id: int, *, ttl_seconds: int = AUTH_TTL_SECONDS) -> tuple[str, datetime]:
+def issue_token(
+    user_id: int,
+    *,
+    business_id: int | None = None,
+    role: str | None = None,
+    ttl_seconds: int = AUTH_TTL_SECONDS,
+) -> tuple[str, datetime]:
     expires_at = datetime.now(timezone.utc).replace(tzinfo=None).timestamp() + ttl_seconds
     payload = {"sub": int(user_id), "exp": int(expires_at), "jti": secrets.token_urlsafe(16)}
+    # Tenant and role claims make the trust boundary explicit.  The values
+    # are still re-checked against the database on every request so a token
+    # cannot outlive a membership/role change.
+    if business_id is not None:
+        payload["business_id"] = int(business_id)
+    if role:
+        payload["role"] = str(role).strip().lower()
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
     signature = hmac.new(_secret(), encoded.encode(), hashlib.sha256).digest()
     token = f"{encoded}.{base64.urlsafe_b64encode(signature).decode().rstrip('=')}"
@@ -77,6 +90,16 @@ def _authenticate_request(request: Request, authorization: str | None, db: Sessi
     user = db.query(User).filter(User.id == session.user_id, User.is_active.is_(True)).first()
     if user is None or user.business_id is None:
         raise HTTPException(status_code=401, detail="Tài khoản không còn hoạt động.")
+    claimed_business_id = payload.get("business_id")
+    if claimed_business_id is not None:
+        try:
+            if int(claimed_business_id) != int(user.business_id):
+                raise HTTPException(status_code=401, detail="Tenant trong phiên đăng nhập không hợp lệ.")
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Bearer token không hợp lệ.") from None
+    claimed_role = payload.get("role")
+    if claimed_role is not None and str(claimed_role).strip().lower() != str(user.role or "").strip().lower():
+        raise HTTPException(status_code=401, detail="Role trong phiên đăng nhập đã thay đổi.")
     request.state.business_id = user.business_id
     request.state.user_id = user.id
     request.state.user_role = user.role

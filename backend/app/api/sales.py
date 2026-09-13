@@ -39,6 +39,7 @@ from app.services.order_service import SalesOrderOperationError, SALES_TRANSITIO
 
 
 router = APIRouter()
+REVENUE_ORDER_STATUSES = ("confirmed", "processing", "shipped", "delivered", "completed", "paid")
 
 SALES_TRANSITIONS = ORDER_TRANSITIONS
 
@@ -282,6 +283,7 @@ def revenue_by_channel(
             & (Conversation.business_id == tenant.business_id),
         )
         .filter(Order.business_id == tenant.business_id)
+        .filter(Order.status.in_(REVENUE_ORDER_STATUSES))
         .group_by(channel_expr)
         .order_by(channel_expr.asc())
         .all()

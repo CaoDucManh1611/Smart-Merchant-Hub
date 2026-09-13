@@ -4,7 +4,10 @@ from fastapi import APIRouter, Request
 
 from app.services.message_service import normalize_message
 
-router = APIRouter(prefix="/webhooks/shopee", tags=["Shopee"])
+# The application router already mounts this module at ``/webhooks/shopee``.
+# Keeping another prefix here exposed the accidental route
+# ``/api/webhooks/shopee/webhooks/shopee`` instead of the public contract.
+router = APIRouter(tags=["Shopee"])
 logger = logging.getLogger(__name__)
 
 

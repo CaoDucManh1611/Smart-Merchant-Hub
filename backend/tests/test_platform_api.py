@@ -1,4 +1,5 @@
 import unittest
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -9,7 +10,8 @@ from app.auth.passwords import hash_password
 from app.db.dependencies import get_db
 from app.main import app
 from app.models.audit_log import AuditLog
-from app.models.business import Business, User
+from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.channel import Channel, ChannelEvent
 from app.models.saas import PlatformMembership
 
 
@@ -193,6 +195,55 @@ class PlatformApiTests(unittest.TestCase):
         )
         self.assertEqual(200, replay.status_code, replay.text)
         self.assertEqual(payment.json()["id"], replay.json()["id"])
+
+    def test_pending_payment_can_advance_once_but_conflicting_replay_is_rejected(self):
+        with Session(self.engine) as db:
+            plan = ServicePlan(code="payment-state-plan", name="Payment State", price=Decimal("100"))
+            db.add(plan)
+            db.flush()
+            subscription = Subscription(business_id=self.business_id, plan_id=plan.id, status="pending")
+            db.add(subscription)
+            db.commit()
+            subscription_id = subscription.id
+
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        pending = self.client.post(
+            f"/api/platform/shops/{self.business_id}/payments",
+            headers=headers,
+            json={"subscription_id": subscription_id, "amount": "100", "currency": "VND", "provider": "manual", "provider_transaction_id": "state-tx-1", "status": "pending"},
+        )
+        self.assertEqual(201, pending.status_code, pending.text)
+        paid = self.client.post(
+            f"/api/platform/shops/{self.business_id}/payments",
+            headers=headers,
+            json={"subscription_id": subscription_id, "amount": "100", "currency": "vnd", "provider": "MANUAL", "provider_transaction_id": " state-tx-1 ", "status": "paid"},
+        )
+        self.assertEqual(200, paid.status_code, paid.text)
+        self.assertEqual("paid", paid.json()["status"])
+        with Session(self.engine) as db:
+            self.assertEqual("active", db.get(Subscription, subscription_id).status)
+        conflict = self.client.post(
+            f"/api/platform/shops/{self.business_id}/payments",
+            headers=headers,
+            json={"subscription_id": subscription_id, "amount": "999", "currency": "VND", "provider": "manual", "provider_transaction_id": "state-tx-1", "status": "paid"},
+        )
+        self.assertEqual(409, conflict.status_code, conflict.text)
+
+    def test_provider_errors_are_classified_without_returning_payload_or_message(self):
+        with Session(self.engine) as db:
+            channel = Channel(business_id=self.business_id, channel_type="telegram", external_account_id="platform-error-bot", name="Error bot")
+            db.add(channel)
+            db.flush()
+            db.add(ChannelEvent(channel_id=channel.id, event_type="message", external_event_id="platform-error-1", payload={"token": "must-not-leak", "message": "private"}, status="failed", error_message="Provider returned 429: token abc"))
+            db.commit()
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        response = self.client.get(f"/api/platform/provider-errors?business_id={self.business_id}", headers=headers)
+        self.assertEqual(200, response.status_code, response.text)
+        item = next(row for row in response.json() if row["event_type"] == "message")
+        self.assertEqual("rate_limit", item["error_type"])
+        serialized = str(item).lower()
+        self.assertNotIn("must-not-leak", serialized)
+        self.assertNotIn("token abc", serialized)
 
 
 if __name__ == "__main__":

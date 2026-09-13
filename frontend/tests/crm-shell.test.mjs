@@ -6,6 +6,7 @@ const appSource = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "u
 const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 const indexSource = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const channelUtilsSource = fs.readFileSync(new URL("../src/channel-utils.js", import.meta.url), "utf8");
+const templateSource = appSource.slice(appSource.indexOf("<template>"), appSource.lastIndexOf("</template>"));
 
 function openingButtonTags(source) {
   const start = source.indexOf("<template>");
@@ -43,6 +44,13 @@ test("CRM shell uses neutral product branding instead of legacy food branding", 
   assert.doesNotMatch(appSource, /Lunari Food|Combo gà sốt phô mai|Món yêu thích|Tokbokki|Khoai tây lắc/);
   assert.doesNotMatch(styleSource, /Patrick Hand|lunari-logo|food-cup|side-heart|decor-heart/);
   assert.doesNotMatch(indexSource, /Lunari/);
+});
+
+test("customer avatars use the local API proxy and fall back when providers reject stale URLs", () => {
+  assert.match(appSource, /function resolvedAvatarUrl\(item\)/);
+  assert.match(appSource, /\/api\\\/customers\\\/\\d\+\\\/avatar/);
+  assert.match(appSource, /function markAvatarFailed\(item\)/);
+  assert.equal((appSource.match(/@error="markAvatarFailed\(/g) || []).length, 4);
 });
 
 test("CRM shell exposes the product's operational navigation", () => {
@@ -158,6 +166,52 @@ test("platform administration exposes shop status, usage, and schema pilot contr
   assert.match(appSource, /Khóa shop|Mở shop/);
   assert.match(appSource, /Quota|Giới hạn/);
   assert.match(appSource, /schema-per-tenant/);
+});
+
+test("P1 onboarding and quota surfaces are wired to tenant APIs", () => {
+  assert.match(appSource, /onboarding\/plans/);
+  assert.match(appSource, /onboarding\/shops/);
+  assert.match(appSource, /createOnboardingShop/);
+  assert.match(appSource, /usage/);
+  assert.match(appSource, /quotaSnapshot/);
+  assert.match(appSource, /near_limit/);
+  assert.match(appSource, /provider-errors/);
+  assert.match(appSource, /Tạo shop & đăng nhập/);
+});
+
+test("P1 explainable AI evidence is visible in the unified timeline", () => {
+  assert.match(appSource, /function timelineExplainability\(event\)/);
+  assert.match(appSource, /AI dùng dữ liệu\/tool/);
+  assert.match(appSource, /AI chuyển nhân viên/);
+  assert.match(appSource, /Tài liệu RAG:/);
+  assert.match(appSource, /class="timeline-explainability"/);
+  assert.match(styleSource, /\.timeline-explainability/);
+});
+
+test("P1 conversation revenue metrics are visible in the AI dashboard", () => {
+  assert.match(appSource, /Doanh thu cứu lại/);
+  assert.match(appSource, /recovered_revenue/);
+  assert.match(appSource, /recovered_orders/);
+  assert.match(appSource, /Bot tự xử lý/);
+  assert.match(appSource, /bot_resolution_rate/);
+});
+
+test("P2 workflow builder exposes durable trigger, action and run controls", () => {
+  assert.match(appSource, /currentTab === 'workflows'/);
+  assert.match(appSource, /fetchWorkflows/);
+  assert.match(appSource, /workflows\/\$\{workflow\.id\}\/runs/);
+  assert.match(appSource, /toggleWorkflow/);
+  assert.match(appSource, /Retry/);
+  assert.match(appSource, /Tạo workflow/);
+});
+
+test("P2 logistics and payment history remain actionable in sales orders", () => {
+  assert.match(appSource, /order-logistics-card/);
+  assert.match(appSource, /updateOrderLogistics/);
+  assert.match(appSource, /shipping_status/);
+  assert.match(appSource, /recordSalesPayment/);
+  assert.match(appSource, /"refunds"/);
+  assert.match(appSource, /Xem toàn bộ quy trình/);
 });
 
 test("settings expose session, MFA, and privacy controls", () => {
@@ -345,6 +399,48 @@ test("every rendered button declares a click handler or form behavior", () => {
     || /type\s*=\s*["'](?:submit|reset)["']/.test(tag)
   ));
   assert.deepEqual(inactiveButtons, []);
+});
+
+test("every directly referenced UI event handler exists", () => {
+  const handlerPattern = /@(?:click|submit|change|keyup|keydown)(?:\.[\w]+)*\s*=\s*(["'])\s*([A-Za-z_][\w]*)\s*(?=\(|\1)/g;
+  const handlers = new Set(Array.from(templateSource.matchAll(handlerPattern), (match) => match[2]));
+  const missing = Array.from(handlers).filter((handler) => !new RegExp(`\\b(?:async\\s+)?function\\s+${handler}\\s*\\(`).test(appSource));
+  assert.deepEqual(missing, []);
+});
+
+test("CSV export uses authenticated apiFetch and visible feedback", () => {
+  assert.match(appSource, /async function downloadReportCsv\(\)/);
+  assert.match(appSource, /const response = await apiFetch\(reportCsvUrl\.value\)/);
+  assert.match(appSource, /response\.blob\(\)/);
+  assert.match(appSource, /reportCsvDownloading/);
+  assert.match(appSource, /reportCsvStatus/);
+  assert.match(appSource, /@click="downloadReportCsv"/);
+  assert.doesNotMatch(templateSource, /<a[^>]+:href="reportCsvUrl"/);
+});
+
+test("network-backed controls expose busy, success, and failure feedback", () => {
+  assert.match(appSource, /notificationError\.value/);
+  assert.match(templateSource, /notification-error" role="alert"/);
+  assert.match(appSource, /autoReplySaving\.value/);
+  assert.match(appSource, /autoReplyNotice\.value/);
+  assert.match(appSource, /autoReplyError\.value/);
+  assert.match(templateSource, /:disabled="autoReplySaving"/);
+  assert.match(appSource, /followupNotice\.value/);
+  assert.match(appSource, /followupError\.value/);
+  assert.match(appSource, /csatError\.value/);
+  assert.match(templateSource, /v-if="followupError"[^>]+role="alert"/);
+  assert.match(templateSource, /v-if="csatError"[^>]+role="alert"/);
+  assert.match(templateSource, /class="btn-meta-connect"[\s\S]*?:disabled="metaLoading"/);
+});
+
+test("destructive follow-up cancellation requires confirmation and reports errors", () => {
+  const start = appSource.indexOf("async function cancelFollowup");
+  const end = appSource.indexOf("async function fetchCsat", start);
+  const body = appSource.slice(start, end);
+  assert.match(body, /requestConfirmation\("Hủy lịch chăm sóc này\?"/);
+  assert.match(body, /if \(!response\.ok\)/);
+  assert.match(body, /followupError\.value/);
+  assert.match(body, /followupNotice\.value/);
 });
 
 test("top workspace controls are interactive and searchable", () => {

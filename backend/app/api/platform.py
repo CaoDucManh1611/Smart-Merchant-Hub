@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.auth.platform import require_platform_admin
 from app.db.dependencies import get_db
 from app.models.audit_log import AuditLog
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
+from app.models.channel import Channel, ChannelEvent
 from app.models.saas import SaaSUsage
 from app.schemas.platform import (
     PlatformAuditOut,
@@ -30,13 +31,62 @@ from app.schemas.platform import (
     PlatformSubscriptionUpdate,
     PlatformPaymentCreate,
     PlatformPaymentOut,
+    PlatformProviderErrorOut,
+    PlatformPrivacyRequest,
+    PlatformPrivacyOut,
 )
 from app.services.audit_service import record_audit
-from app.services.quota_service import PLAN_LIMIT_FIELDS, quota_period_start
+from app.services.quota_service import PLAN_LIMIT_FIELDS, quota_period_start, quota_snapshot
+from app.services.privacy_service import anonymize_customer_data, complete_request, export_customer_data, get_or_create_request
 from app.services.tenant_schema_service import ensure_registry, update_registry
 
 
 router = APIRouter(prefix="/platform")
+
+
+def _provider_error_type(message: str | None) -> str | None:
+    """Classify a provider failure without returning customer text or secrets."""
+    if not message:
+        return None
+    folded = str(message).casefold()
+    if any(term in folded for term in ("401", "403", "unauthorized", "forbidden", "invalid token", "signature")):
+        return "authentication"
+    if any(term in folded for term in ("429", "rate limit", "too many")):
+        return "rate_limit"
+    if any(term in folded for term in ("timeout", "timed out", "deadline")):
+        return "timeout"
+    if any(term in folded for term in ("500", "502", "503", "504", "server error")):
+        return "provider_unavailable"
+    if any(term in folded for term in ("400", "invalid", "validation", "bad request")):
+        return "validation"
+    return "unknown"
+
+
+def _same_payment_identity(existing: Payment, payload: PlatformPaymentCreate) -> bool:
+    return (
+        existing.subscription_id == payload.subscription_id
+        and existing.amount == payload.amount
+        and existing.currency.upper() == payload.currency.strip().upper()
+        and existing.provider == payload.provider.strip().lower()
+    )
+
+
+def _apply_payment_status(existing: Payment, payload: PlatformPaymentCreate) -> bool:
+    """Apply a legitimate provider status transition; reject regressions."""
+    if existing.status == payload.status:
+        return False
+    allowed = {
+        "pending": {"paid", "failed"},
+        "paid": {"refunded"},
+        "failed": set(),
+        "refunded": set(),
+    }
+    if payload.status not in allowed.get(existing.status, set()):
+        raise HTTPException(status_code=409, detail="Trạng thái giao dịch không thể chuyển đổi theo thứ tự này.")
+    existing.status = payload.status
+    if existing.status == "paid":
+        existing.paid_at = payload.paid_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    return True
 
 
 def _number(value):
@@ -73,6 +123,7 @@ def _usage_for(db: Session, business_id: int, period_start):
 
 def _shop_out(db: Session, business: Business, period_start) -> PlatformShopOut:
     plan = _plan_for(db, business.id)
+    quota = quota_snapshot(db, business.id, now=period_start)
     return PlatformShopOut(
         id=business.id,
         name=business.name,
@@ -81,6 +132,7 @@ def _shop_out(db: Session, business: Business, period_start) -> PlatformShopOut:
         plan_code=plan.code if plan else None,
         plan_name=plan.name if plan else None,
         usage=_usage_for(db, business.id, period_start),
+        quota=quota,
         period_start=period_start,
     )
 
@@ -185,12 +237,16 @@ def update_plan(
 def list_shops(
     db: Session = Depends(get_db),
     _actor: User = Depends(require_platform_admin),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
     period_start = quota_period_start()
-    shops = db.scalars(select(Business).order_by(Business.id.asc())).all()
+    query = select(Business).order_by(Business.id.asc())
+    shops = db.scalars(query.offset(offset).limit(limit)).all()
+    total_count = db.scalar(select(func.count(Business.id))) or 0
     return PlatformShopListOut(
         items=[_shop_out(db, shop, period_start) for shop in shops],
-        total=len(shops),
+        total=int(total_count),
     )
 
 
@@ -291,12 +347,30 @@ def record_shop_payment(
     )
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription không thuộc shop.")
+    transaction_id = payload.provider_transaction_id.strip()
     existing = db.scalar(
-        select(Payment).where(Payment.provider_transaction_id == payload.provider_transaction_id)
+        select(Payment).where(Payment.provider_transaction_id == transaction_id)
     )
     if existing is not None:
         if existing.business_id != business_id:
             raise HTTPException(status_code=409, detail="Mã giao dịch đã thuộc shop khác.")
+        if not _same_payment_identity(existing, payload):
+            raise HTTPException(status_code=409, detail="Mã giao dịch đã tồn tại với số tiền hoặc nguồn khác.")
+        changed = _apply_payment_status(existing, payload)
+        if changed:
+            if existing.status == "paid" and subscription.status == "pending":
+                subscription.status = "active"
+            record_audit(
+                db,
+                business_id=business_id,
+                user_id=actor.id,
+                action="platform_payment_updated",
+                resource_type="subscription_payment",
+                resource_id=existing.id,
+                metadata={"subscription_id": subscription.id, "status": existing.status, "provider": existing.provider},
+            )
+            db.commit()
+            db.refresh(existing)
         response.status_code = 200
         return existing
     payment = Payment(
@@ -305,7 +379,7 @@ def record_shop_payment(
         amount=payload.amount,
         currency=payload.currency.upper(),
         provider=payload.provider.strip().lower(),
-        provider_transaction_id=payload.provider_transaction_id.strip(),
+        provider_transaction_id=transaction_id,
         status=payload.status,
         paid_at=payload.paid_at,
     )
@@ -318,9 +392,11 @@ def record_shop_payment(
         db.flush()
     except IntegrityError as exc:
         db.rollback()
-        existing = db.scalar(select(Payment).where(Payment.provider_transaction_id == payload.provider_transaction_id))
+        existing = db.scalar(select(Payment).where(Payment.provider_transaction_id == transaction_id))
         if existing is None or existing.business_id != business_id:
             raise HTTPException(status_code=409, detail="Mã giao dịch đã tồn tại.") from exc
+        if not _same_payment_identity(existing, payload) or existing.status != payload.status:
+            raise HTTPException(status_code=409, detail="Mã giao dịch đã tồn tại với dữ liệu khác.") from exc
         response.status_code = 200
         return existing
     record_audit(
@@ -377,13 +453,128 @@ def get_shop_usage(
         for resource, field in PLAN_LIMIT_FIELDS.items()
     }
     period_start = quota_period_start()
+    quota = quota_snapshot(db, business_id, now=period_start)
     return PlatformUsageOut(
         business_id=business_id,
         period_start=period_start,
         plan_code=plan.code if plan else None,
         limits=limits,
         usage=_usage_for(db, business_id, period_start),
+        quota=quota,
+        warnings=[
+            {"resource": resource, **details}
+            for resource, details in quota["resources"].items()
+            if details.get("near_limit")
+        ],
     )
+
+
+@router.get("/provider-errors", response_model=list[PlatformProviderErrorOut])
+def list_provider_errors(
+    business_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_platform_admin),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Return redacted provider delivery failures for platform operators."""
+    query = (
+        select(ChannelEvent, Channel.channel_type)
+        .join(Channel, Channel.id == ChannelEvent.channel_id)
+        .where(ChannelEvent.status == "failed")
+        .order_by(ChannelEvent.received_at.desc(), ChannelEvent.id.desc())
+        .limit(limit)
+    )
+    if business_id is not None:
+        query = query.where(Channel.business_id == business_id)
+    rows = db.execute(query).all()
+    return [
+        PlatformProviderErrorOut(
+            id=event.id,
+            business_id=event.channel.business_id,
+            channel_id=event.channel_id,
+            channel_type=channel_type,
+            event_type=event.event_type,
+            status=event.status,
+            error_type=_provider_error_type(event.error_message),
+            received_at=event.received_at,
+        )
+        for event, channel_type in rows
+    ]
+
+
+def _platform_privacy_business(db: Session, business_id: int) -> Business:
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    return business
+
+
+@router.post("/shops/{business_id}/privacy/export", response_model=PlatformPrivacyOut)
+def platform_export_data(
+    business_id: int,
+    payload: PlatformPrivacyRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_platform_admin),
+):
+    _platform_privacy_business(db, business_id)
+    try:
+        row, created = get_or_create_request(
+            db,
+            business_id=business_id,
+            request_key=payload.request_key,
+            kind="export",
+            requested_by=actor.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if created:
+        _data, counts = export_customer_data(db, business_id)
+        complete_request(row, counts=counts)
+        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_export", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"counts": counts})
+        db.commit()
+    return PlatformPrivacyOut(id=row.id, business_id=business_id, kind=row.kind, status=row.status, counts=(row.result_metadata or {}).get("counts", {}))
+
+
+@router.post("/shops/{business_id}/privacy/anonymize", response_model=PlatformPrivacyOut)
+def platform_anonymize_data(
+    business_id: int,
+    payload: PlatformPrivacyRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_platform_admin),
+):
+    _platform_privacy_business(db, business_id)
+    try:
+        row, created = get_or_create_request(db, business_id=business_id, request_key=payload.request_key, kind="anonymize", requested_by=actor.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if created:
+        counts = anonymize_customer_data(db, business_id)
+        complete_request(row, counts=counts)
+        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_anonymize", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"counts": counts})
+        db.commit()
+    return PlatformPrivacyOut(id=row.id, business_id=business_id, kind=row.kind, status=row.status, counts=(row.result_metadata or {}).get("counts", {}))
+
+
+@router.post("/shops/{business_id}/privacy/delete", response_model=PlatformPrivacyOut)
+def platform_delete_data(
+    business_id: int,
+    payload: PlatformPrivacyRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_platform_admin),
+):
+    if payload.confirmation_token != "DELETE":
+        raise HTTPException(status_code=422, detail="Cần confirmation_token=DELETE để xác nhận.")
+    _platform_privacy_business(db, business_id)
+    try:
+        row, created = get_or_create_request(db, business_id=business_id, request_key=payload.request_key, kind="delete", requested_by=actor.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if created:
+        counts = anonymize_customer_data(db, business_id, deleted=True)
+        complete_request(row, counts=counts)
+        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_delete", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"counts": counts, "mode": "anonymized_retained_orders"})
+        db.commit()
+    return PlatformPrivacyOut(id=row.id, business_id=business_id, kind=row.kind, status=row.status, counts=(row.result_metadata or {}).get("counts", {}))
 
 
 @router.get("/audit-logs", response_model=list[PlatformAuditOut])

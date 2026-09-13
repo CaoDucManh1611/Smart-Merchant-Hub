@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.business import ServicePlan, Subscription, User
+from app.models.business import Business, ServicePlan, Subscription, User
 from app.models.channel import Channel
 from app.models.document import Document, DocumentChunk
 from app.models.saas import QuotaReservation, SaaSUsage
@@ -88,6 +88,51 @@ def quota_period_start(now: datetime | None = None) -> datetime:
     return _period_start(now)
 
 
+def quota_snapshot(
+    db: Session,
+    business_id: int,
+    *,
+    now: datetime | None = None,
+    warning_percent: float | None = None,
+) -> dict:
+    """Return a read-only usage/entitlement snapshot for one tenant.
+
+    This function never creates or increments ledger rows.  ``near_limit``
+    is deliberately exposed per resource so both the shop UI and platform
+    operators can warn before a hard 429 rejection.
+    """
+    period_start = _period_start(now)
+    threshold = float(
+        settings.QUOTA_WARNING_PERCENT if warning_percent is None else warning_percent
+    )
+    threshold = min(1.0, max(0.0, threshold))
+    plan = _active_plan(db, business_id)
+    resources: dict[str, dict] = {}
+    for resource, field in PLAN_LIMIT_FIELDS.items():
+        _row, used = _used_value(db, business_id, resource, period_start)
+        limit = Decimal(str(getattr(plan, field) or 0)) if plan is not None else None
+        percent = None
+        if limit is not None and limit > 0:
+            percent = float((used / limit) * Decimal("100"))
+        elif limit == 0:
+            percent = 100.0 if used > 0 else 0.0
+        resources[resource] = {
+            "used": _json_number(used),
+            "limit": _json_number(limit),
+            "percent": percent,
+            "near_limit": bool(limit is not None and (used >= limit * Decimal(str(threshold)))),
+            "exceeded": bool(limit is not None and used > limit),
+        }
+    return {
+        "business_id": int(business_id),
+        "period_start": period_start,
+        "plan_code": plan.code if plan is not None else None,
+        "plan_name": plan.name if plan is not None else None,
+        "warning_percent": threshold,
+        "resources": resources,
+    }
+
+
 def _amount(value: int | float | Decimal | str) -> Decimal:
     try:
         result = Decimal(str(value))
@@ -155,6 +200,19 @@ def _current_usage(db: Session, business_id: int, resource: str, period_start: d
             SaaSUsage.resource == resource,
             SaaSUsage.period_start == period_start,
         )
+    )
+
+
+def _locked_usage(db: Session, business_id: int, resource: str, period_start: datetime) -> SaaSUsage | None:
+    """Read a usage row with a row lock where the database supports it."""
+    return db.scalar(
+        select(SaaSUsage)
+        .where(
+            SaaSUsage.business_id == business_id,
+            SaaSUsage.resource == resource,
+            SaaSUsage.period_start == period_start,
+        )
+        .with_for_update()
     )
 
 
@@ -259,6 +317,15 @@ def reserve_quota(
     resource_name = str(resource)
     period_start = _period_start(now)
 
+    # Serialize reservations per tenant before reading either the reservation
+    # or usage rows. A row lock on SaaSUsage alone cannot protect the first
+    # reservation because there is no row to lock yet.
+    db.execute(
+        select(Business.id)
+        .where(Business.id == business_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
     if idempotency_key:
         existing = db.scalar(
             select(QuotaReservation).where(
@@ -267,6 +334,8 @@ def reserve_quota(
             )
         )
         if existing is not None:
+            if existing.resource != resource_name or Decimal(str(existing.amount)) != amount:
+                raise ValueError("Idempotency key was already used for a different quota reservation")
             usage = db.get(SaaSUsage, existing.usage_id)
             return QuotaDecision(
                 allowed=True,
@@ -283,7 +352,18 @@ def reserve_quota(
     if decision.limit is None:
         return decision
 
-    usage, baseline = _used_value(db, business_id, resource_name, period_start)
+    usage = _locked_usage(db, business_id, resource_name, period_start)
+    baseline = _baseline_usage(db, business_id, resource_name)
+    current_used = Decimal(str(usage.used or 0)) if usage is not None else baseline
+    if decision.limit is not None and current_used + amount > decision.limit:
+        raise QuotaExceededError(QuotaDecision(
+            allowed=False,
+            resource=resource_name,
+            used=current_used,
+            limit=decision.limit,
+            requested=amount,
+            period_start=period_start,
+        ))
     if usage is None:
         usage = SaaSUsage(
             business_id=business_id,
@@ -293,7 +373,7 @@ def reserve_quota(
         )
         db.add(usage)
         db.flush()
-    usage.used = Decimal(str(usage.used or 0)) + amount
+    usage.used = current_used + amount
     if idempotency_key:
         db.add(
             QuotaReservation(

@@ -11,7 +11,12 @@ from uvicorn.logging import AccessFormatter
 from app.auth.dependencies import require_admin_access, require_write_access
 from app.core.config import Settings
 from app.core.logging import RedactingFilter, redact_secrets
-from app.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
+from app.middleware.security import (
+    RateLimitBackendUnavailable,
+    RateLimitMiddleware,
+    RedisRateLimiter,
+    SecurityHeadersMiddleware,
+)
 from app.services.meta_errors import MetaAPIError
 from app.services.message_service import process_and_save_message
 
@@ -66,6 +71,35 @@ class SecurityHardeningTests(unittest.TestCase):
         rendered = AccessFormatter("%(message)s").format(record)
         self.assertIn("GET /health", rendered)
 
+    def test_logging_filter_redacts_meta_webhook_verify_token(self):
+        record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg='%s - "%s %s HTTP/%s" %d',
+            args=(
+                "127.0.0.1:1234",
+                "GET",
+                "/api/webhooks/facebook?hub.mode=subscribe&hub.verify_token=private-token&hub.challenge=ok",
+                "1.1",
+                200,
+            ),
+            exc_info=None,
+        )
+        self.assertTrue(RedactingFilter().filter(record))
+        rendered = AccessFormatter("%(message)s").format(record)
+        self.assertNotIn("private-token", rendered)
+        self.assertIn("hub.verify_token=[REDACTED]", rendered)
+        self.assertIn("hub.challenge=ok", rendered)
+
+    def test_secret_redaction_removes_telegram_token_from_url_path(self):
+        message = redact_secrets(
+            "GET https://api.telegram.org/file/bot123456:private-token/photos/avatar.jpg"
+        )
+        self.assertNotIn("123456:private-token", message)
+        self.assertIn("api.telegram.org/file/bot[REDACTED]/photos/avatar.jpg", message)
+
     def test_rate_limit_defaults_are_positive(self):
         middleware = RateLimitMiddleware(
             lambda scope, receive, send: None,
@@ -97,6 +131,129 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertEqual("2", limited.headers["X-RateLimit-Limit"])
         self.assertEqual("0", limited.headers["X-RateLimit-Remaining"])
         self.assertIn("Retry-After", limited.headers)
+
+    def test_redis_rate_limiter_uses_atomic_script_and_shared_key(self):
+        class FakeRedis:
+            def __init__(self):
+                self.calls = []
+
+            def eval(self, script, key_count, key, maximum, window):
+                self.calls.append((script, key_count, key, maximum, window))
+                return [1, 4, 0, 1_700_000_000_000]
+
+        client = FakeRedis()
+        limiter = RedisRateLimiter("redis://unused", client=client)
+        decision = limiter.consume("203.0.113.10", max_requests=5, window_seconds=60)
+        self.assertTrue(decision.allowed)
+        self.assertEqual(4, decision.remaining)
+        self.assertEqual(1_700_000_000, decision.reset_at)
+        self.assertEqual(1, client.calls[0][1])
+        self.assertTrue(client.calls[0][2].startswith("crm:rate-limit:"))
+        self.assertNotIn("203.0.113.10", client.calls[0][2])
+
+    def test_redis_rate_limiter_fails_closed_when_backend_is_unavailable(self):
+        class BrokenRedis:
+            def eval(self, *args):
+                raise OSError("connection refused")
+
+        limiter = RedisRateLimiter("redis://unused", client=BrokenRedis())
+        with self.assertRaises(RateLimitBackendUnavailable):
+            limiter.consume("198.51.100.5", max_requests=5, window_seconds=60)
+
+    def test_redis_middleware_returns_429_with_shared_limit_headers(self):
+        class ScriptedRedis:
+            def __init__(self):
+                self.responses = [
+                    [1, 1, 0, 1_700_000_000_000],
+                    [1, 0, 0, 1_700_000_000_000],
+                    [0, 0, 12_000, 1_700_000_012_000],
+                ]
+
+            def eval(self, *_args):
+                return self.responses.pop(0)
+
+        app = FastAPI()
+
+        @app.get("/api/ping")
+        def ping():
+            return {"ok": True}
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            enabled=True,
+            max_requests=2,
+            window_seconds=60,
+            backend="redis",
+            redis_client=ScriptedRedis(),
+        )
+        client = TestClient(app)
+
+        first = client.get("/api/ping")
+        second = client.get("/api/ping")
+        limited = client.get("/api/ping")
+
+        self.assertEqual(200, first.status_code)
+        self.assertEqual("1", first.headers["X-RateLimit-Remaining"])
+        self.assertEqual(200, second.status_code)
+        self.assertEqual("0", second.headers["X-RateLimit-Remaining"])
+        self.assertEqual(429, limited.status_code)
+        self.assertEqual("12", limited.headers["Retry-After"])
+        self.assertEqual("1700000012", limited.headers["X-RateLimit-Reset"])
+
+    def test_redis_middleware_fails_api_closed_but_keeps_health_available(self):
+        class BrokenRedis:
+            def eval(self, *_args):
+                raise ConnectionError("redis unavailable")
+
+        app = FastAPI()
+
+        @app.get("/api/ping")
+        def ping():
+            return {"ok": True}
+
+        @app.get("/health")
+        def health():
+            return {"status": "ok"}
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            enabled=True,
+            max_requests=2,
+            window_seconds=60,
+            backend="redis",
+            redis_client=BrokenRedis(),
+        )
+        client = TestClient(app)
+
+        unavailable = client.get("/api/ping")
+        health = client.get("/health")
+
+        self.assertEqual(503, unavailable.status_code)
+        self.assertEqual("5", unavailable.headers["Retry-After"])
+        self.assertNotIn("redis", unavailable.text.lower())
+        self.assertEqual(200, health.status_code)
+
+    def test_untrusted_forwarded_for_cannot_bypass_memory_limit(self):
+        app = FastAPI()
+
+        @app.get("/api/ping")
+        def ping():
+            return {"ok": True}
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            enabled=True,
+            max_requests=1,
+            window_seconds=60,
+            trusted_proxy=False,
+        )
+        client = TestClient(app)
+
+        first = client.get("/api/ping", headers={"X-Forwarded-For": "203.0.113.1"})
+        spoofed = client.get("/api/ping", headers={"X-Forwarded-For": "203.0.113.2"})
+
+        self.assertEqual(200, first.status_code)
+        self.assertEqual(429, spoofed.status_code)
 
     def test_security_headers_include_hsts_when_enabled(self):
         app = FastAPI()

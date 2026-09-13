@@ -11,6 +11,7 @@ from app.core.config import settings
 
 
 CUSTOMER_AVATAR_TTL_SECONDS = 15 * 60
+PROVIDER_PROXY_CHANNELS = frozenset({"instagram", "telegram", "zalo"})
 
 
 def _signing_secret() -> bytes:
@@ -65,6 +66,7 @@ def refresh_customer_avatar_url(
     *,
     customer_id: int,
     business_id: int,
+    channel: str | None = None,
     base_url: str | None = None,
 ) -> str | None:
     """Re-issue a stored signed avatar URL before returning it to a client.
@@ -76,6 +78,12 @@ def refresh_customer_avatar_url(
     returned unchanged.
     """
     text = str(value or "").strip()
+    if str(channel or "").strip().lower() in PROVIDER_PROXY_CHANNELS:
+        return build_customer_avatar_url(
+            customer_id=customer_id,
+            business_id=business_id,
+            base_url=base_url,
+        )
     if not text:
         return None
 

@@ -87,7 +87,8 @@ def _embed_with_gemini(
     model: str,
 ) -> list[list[float]]:
     """Embed texts bằng Google Gemini API."""
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
     embeddings = []
     # Gemini hỗ trợ batch nhưng giới hạn ~100 texts/request
@@ -98,7 +99,7 @@ def _embed_with_gemini(
             try:
                 result = call_with_key_rotation(
                     _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
-                    lambda key: _gemini_embed_batch_once(genai, key, batch, model),
+                    lambda key: _gemini_embed_batch_once(genai, types, key, batch, model),
                 )
                 break
             except Exception as error:
@@ -113,23 +114,22 @@ def _embed_with_gemini(
                     attempt + 1,
                 )
                 time.sleep(delay)
-        # result["embedding"] là list[list[float]] khi input là list
-        if isinstance(result["embedding"][0], list):
-            embeddings.extend(result["embedding"])
-        else:
-            embeddings.append(result["embedding"])
+        embeddings.extend(result)
 
     return embeddings
 
 
-def _gemini_embed_batch_once(genai, api_key: str, batch: list[str], model: str):
-    genai.configure(api_key=api_key)
-    return genai.embed_content(
-        model=f"models/{model}",
-        content=batch,
-        task_type="retrieval_document",
-        output_dimensionality=settings.EMBEDDING_DIMENSION,
-    )
+def _gemini_embed_batch_once(genai, types, api_key: str, batch: list[str], model: str) -> list[list[float]]:
+    with genai.Client(api_key=api_key) as client:
+        response = client.models.embed_content(
+            model=model.removeprefix("models/"),
+            contents=batch,
+            config=types.EmbedContentConfig(
+                task_type="RETRIEVAL_DOCUMENT",
+                output_dimensionality=settings.EMBEDDING_DIMENSION,
+            ),
+        )
+    return [list(item.values) for item in response.embeddings or []]
 
 
 def _embed_query_with_gemini(
@@ -137,23 +137,29 @@ def _embed_query_with_gemini(
     model: str,
 ) -> list[float]:
     """Embed 1 query duy nhất bằng Gemini (dùng task_type khác)."""
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
     result = call_with_key_rotation(
         _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
-        lambda key: _gemini_embed_query_once(genai, key, text, model),
+        lambda key: _gemini_embed_query_once(genai, types, key, text, model),
     )
-    return result["embedding"]
+    return result
 
 
-def _gemini_embed_query_once(genai, api_key: str, text: str, model: str):
-    genai.configure(api_key=api_key)
-    return genai.embed_content(
-        model=f"models/{model}",
-        content=text,
-        task_type="retrieval_query",
-        output_dimensionality=settings.EMBEDDING_DIMENSION,
-    )
+def _gemini_embed_query_once(genai, types, api_key: str, text: str, model: str) -> list[float]:
+    with genai.Client(api_key=api_key) as client:
+        response = client.models.embed_content(
+            model=model.removeprefix("models/"),
+            contents=text,
+            config=types.EmbedContentConfig(
+                task_type="RETRIEVAL_QUERY",
+                output_dimensionality=settings.EMBEDDING_DIMENSION,
+            ),
+        )
+    if not response.embeddings:
+        raise ValueError("Gemini embedding provider returned no query vector.")
+    return list(response.embeddings[0].values)
 
 
 def _embed_with_local(

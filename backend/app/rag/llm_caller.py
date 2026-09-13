@@ -140,31 +140,29 @@ def _messages_to_gemini_format(
 
 def _call_gemini_once(messages: list[dict], api_key: str) -> str:
     """Gọi một lần Gemini API với key đã được chọn."""
-    import google.generativeai as genai
-
-    genai.configure(api_key=api_key)
+    from google import genai
+    from google.genai import types
 
     system_instruction, history = _messages_to_gemini_format(
         messages
     )
 
-    model = genai.GenerativeModel(
-        model_name=settings.LLM_MODEL,
-        system_instruction=system_instruction or None,
-    )
-
-    # Phần cuối cùng trong history là user message
     if not history:
         return ""
-
-    # Tạo chat và gửi tin nhắn
-    user_message = history[-1]
-    chat_history = history[:-1] if len(history) > 1 else []
-
-    chat = model.start_chat(history=chat_history)
-    response = chat.send_message(user_message["parts"][0])
-
-    return response.text
+    contents = [
+        types.Content(
+            role=item["role"],
+            parts=[types.Part.from_text(text=str(part)) for part in item["parts"]],
+        )
+        for item in history
+    ]
+    with genai.Client(api_key=api_key) as client:
+        response = client.models.generate_content(
+            model=settings.LLM_MODEL.removeprefix("models/"),
+            contents=contents,
+            config=types.GenerateContentConfig(system_instruction=system_instruction or None),
+        )
+    return response.text or ""
 
 
 def call_gemini(messages: list[dict]) -> str:
@@ -179,7 +177,8 @@ async def stream_gemini(
     messages: list[dict],
 ) -> AsyncGenerator[str, None]:
     """Gọi Gemini API với streaming."""
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
     pool = _provider_pool("gemini")
     attempted: set[str] = set()
@@ -191,21 +190,26 @@ async def stream_gemini(
         attempted.add(key)
         emitted = False
         try:
-            genai.configure(api_key=key)
             system_instruction, history = _messages_to_gemini_format(messages)
-            model = genai.GenerativeModel(
-                model_name=settings.LLM_MODEL,
-                system_instruction=system_instruction or None,
-            )
             if not history:
                 return
-            user_message = history[-1]
-            chat = model.start_chat(history=history[:-1] if len(history) > 1 else [])
-            response = chat.send_message(user_message["parts"][0], stream=True)
-            for chunk in response:
-                if chunk.text:
-                    emitted = True
-                    yield chunk.text
+            contents = [
+                types.Content(
+                    role=item["role"],
+                    parts=[types.Part.from_text(text=str(part)) for part in item["parts"]],
+                )
+                for item in history
+            ]
+            with genai.Client(api_key=key) as client:
+                response = client.models.generate_content_stream(
+                    model=settings.LLM_MODEL.removeprefix("models/"),
+                    contents=contents,
+                    config=types.GenerateContentConfig(system_instruction=system_instruction or None),
+                )
+                for chunk in response:
+                    if chunk.text:
+                        emitted = True
+                        yield chunk.text
             return
         except Exception as error:
             pool.report_failure(key, error)

@@ -18,6 +18,27 @@ Do this in the provider dashboard/secret manager, not in source code:
 4. Update the webhook verify token and provider webhook configuration.
 5. Redeploy, verify health/webhooks, then revoke every old credential.
 
+For LLM/embedding providers, place a comma-separated pool in the secret
+manager (`GROQ_API_KEYS`, `LLM_API_KEYS` or `EMBEDDING_API_KEYS`). The runtime
+round-robins keys, cools down transiently failing keys and redacts key values;
+replace the pool and restart the deployment to complete a rotation.
+
+For encrypted rows, use the repository rotation command instead of changing
+`CHANNEL_ENCRYPTION_KEY` in place. Put the old and new values in protected
+secret-manager variables (never command-line arguments), take a backup, run a
+dry-run, then commit the rotation:
+
+```powershell
+$env:OLD_CHANNEL_ENCRYPTION_KEY = '<old value from the secret manager>'
+$env:CHANNEL_ENCRYPTION_KEY = '<new value from the secret manager>'
+python backend/scripts/rotate_channel_secrets.py
+python backend/scripts/rotate_channel_secrets.py --confirm
+```
+
+The command re-encrypts channel tokens, MFA/contact material and OA secret
+configuration; outstanding OTP challenges are expired so they cannot be
+verified with the old key.
+
 Example generators (the output must stay private):
 
 ```powershell
@@ -57,6 +78,35 @@ Only after checking the counts and channel mapping:
 python backend/scripts/retire_legacy_credentials.py --confirm
 ```
 
+## 4. P1 tenant and SaaS operations
+
+Run the additive migration before starting application replicas:
+
+```powershell
+alembic upgrade head
+alembic check
+```
+
+The current head is `20260913_0042_p1_saas_platform`. On PostgreSQL it enables
+tenant RLS policies for applicable `business_id` tables. Application requests
+set a transaction-local `app.business_id`; platform-admin operations must use
+the explicit platform context. Do not run the application with a database role
+that bypasses RLS in production.
+
+For a new shop, use the onboarding API in this order:
+
+1. `GET /api/onboarding/plans` and display only the plan metadata.
+2. `POST /api/onboarding/shops` to create the shop owner and subscription.
+3. Add channels through the tenant-authenticated channel endpoint; verify that
+   the response contains no token or secret.
+4. Import products and confirm the returned imported/updated/skipped counts.
+5. Check `GET /api/usage` and `/api/usage/warnings` before enabling campaigns.
+
+Platform operators should page `/api/platform/shops`, review quota warnings and
+provider-error metadata, and use the privacy lifecycle endpoints for export,
+anonymization or deletion. These endpoints intentionally return counts and
+status only; never copy customer payloads or credentials into tickets or logs.
+
 The command deletes only the known legacy token keys in `app_settings` and
 never prints their values. It refuses to delete anything when no encrypted
 channel credential exists.
@@ -91,7 +141,58 @@ the same window and burst policy, set `RATE_LIMIT_BACKEND=proxy` and
 `X-Forwarded-For`. The app keeps its local guard as a second line of defense;
 do not rely on in-process state as the shared quota.
 
-## 5. Logs and customer audit history
+If the gateway does not provide a shared limiter, use the included Redis
+backend instead. Redis is provisioned by `docker-compose.yml`; set:
+
+```dotenv
+RATE_LIMIT_BACKEND=redis
+REDIS_URL=redis://redis:6379/0
+```
+
+The limiter uses one atomic Redis script per hashed client key. A Redis outage
+fails API requests closed with `503` and is visible in `/health/details`,
+`/health/alerts` and `/metrics`.
+
+## 5. Provider webhook signature gate
+
+Before enabling a channel in staging, run the provider contract suite. It
+computes the same signed raw request bytes used by the adapters and verifies
+both acceptance and rejection for Facebook/Instagram Meta HMAC, Telegram bot
+secret headers and Zalo Bot/OA signatures:
+
+```powershell
+$env:CHANNEL_ENCRYPTION_KEY = '<test-only value>'
+python -m pytest backend/tests/test_unified_inbox_webhooks.py `
+  backend/tests/test_webhook_oauth_security.py `
+  backend/tests/test_zalo_webhook.py `
+  backend/tests/test_instagram_webhook.py -q
+```
+
+The final staging gate must additionally deliver one real callback from each
+provider dashboard and confirm a single `channel_events` row/message per
+delivery. Do not put provider secrets or callback payloads in Git or logs.
+
+## 6. Real OTP delivery
+
+Production rejects disabled or in-chat OTP. Configure a real SMTP provider
+(Gmail requires an App Password) in the secret manager and keep the fallback
+disabled:
+
+```dotenv
+OTP_DELIVERY_MODE=smtp
+OTP_DELIVERY_FALLBACK=disabled
+OTP_FROM_EMAIL=your-shop@example.com
+OTP_SMTP_HOST=smtp.example.com
+OTP_SMTP_PORT=587
+OTP_SMTP_USERNAME=your-shop@example.com
+OTP_SMTP_PASSWORD=<provider app password>
+OTP_SMTP_USE_TLS=true
+```
+
+Run one staging checkout verification to the controlled test mailbox, then
+check the provider delivery result and the redacted application audit event.
+
+## 7. Logs and customer audit history
 
 Application handlers install a redaction filter for authorization headers,
 tokens, passwords, secrets and database URLs. Do not log raw webhook payloads
@@ -99,7 +200,11 @@ or exception bodies from provider SDKs. Customer profile/tag changes are
 append-only audit events and are exposed in the tenant-scoped Customer 360
 timeline.
 
-## 6. PostgreSQL backup and restore
+Mounting a JSON secret object is also supported for Docker/Kubernetes secret
+volumes. Set `SECRET_MANAGER_MODE=file` and `SECRET_MANAGER_FILE` to the
+mounted path; unknown fields are ignored and non-scalar values are rejected.
+
+## 8. PostgreSQL backup and restore
 
 Create and validate a custom-format backup:
 
@@ -142,4 +247,14 @@ window explicitly allows cleaning existing objects.
 5. Apply `alembic upgrade head` on PostgreSQL.
 6. Deploy with production settings and run smoke tests.
 7. Confirm monitoring, redacted logs and backup retention.
+
+## 9. Monitoring and alerting
+
+Scrape `GET /metrics` from Prometheus and route these alert names from
+`GET /health/alerts` to Alertmanager: `database_unavailable`,
+`queue_backlog`, `queue_failed_jobs`, `provider_circuit_open`,
+`shared_rate_limit_unavailable` and `ai_cost_threshold`. Thresholds are
+configured with `ALERT_QUEUE_PENDING_THRESHOLD` and
+`ALERT_AI_COST_THRESHOLD`; payloads contain counters and error classes only,
+never customer content or credentials.
 

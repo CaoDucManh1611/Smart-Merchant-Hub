@@ -51,6 +51,29 @@ def test_production_release_settings_require_smtp_credentials_for_email_otp():
         settings.validate_runtime()
 
 
+def test_production_release_settings_require_redis_url_for_shared_limiter():
+    settings = production_settings(RATE_LIMIT_BACKEND="redis", REDIS_URL="")
+
+    with pytest.raises(RuntimeError, match="REDIS_URL"):
+        settings.validate_runtime()
+
+
+def test_production_release_settings_accept_shared_redis_limiter():
+    settings = production_settings(
+        RATE_LIMIT_BACKEND="redis",
+        REDIS_URL="redis://redis.example:6379/0",
+    )
+
+    settings.validate_runtime()
+
+
+def test_production_release_settings_require_trusted_proxy_for_proxy_limiter():
+    settings = production_settings(RATE_LIMIT_BACKEND="proxy", RATE_LIMIT_TRUSTED_PROXY=False)
+
+    with pytest.raises(RuntimeError, match="RATE_LIMIT_TRUSTED_PROXY"):
+        settings.validate_runtime()
+
+
 def test_key_pool_configuration_never_exposes_raw_values_in_snapshot():
     from app.services.api_key_pool import ApiKeyPool
 

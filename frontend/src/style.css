@@ -7899,6 +7899,95 @@ body,
   }
 }
 
+.timeline-explainability {
+  display: block;
+  margin: 4px 0;
+  color: #355b9a;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+/* P1 SaaS onboarding and tenant quota surfaces */
+.onboarding-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.onboarding-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #f3ccd4;
+  border-radius: 14px;
+  background: #fff8fa;
+}
+
+.onboarding-panel .settings-card-header {
+  margin-bottom: 12px;
+}
+
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.quota-item {
+  padding: 12px;
+  border: 1px solid #e6eaf2;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.quota-item.warning {
+  border-color: #f0c26b;
+  background: #fffaf0;
+}
+
+.quota-item.exceeded {
+  border-color: #e66a7c;
+  background: #fff1f3;
+}
+
+.quota-item > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.quota-item > div:first-child span {
+  color: #68758a;
+  white-space: nowrap;
+}
+
+.quota-track {
+  height: 7px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0f5;
+}
+
+.quota-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #ef476f;
+}
+
+.quota-item small {
+  display: block;
+  margin-top: 7px;
+  color: #b03b4d;
+  font-size: 11px;
+}
+
+.provider-error-panel {
+  margin-top: 14px;
+}
+
 /* =========================================================
    INBOX DESKTOP REFINEMENT
    Matches the approved chat-first CRM composition: a quiet icon rail,

@@ -151,6 +151,90 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             customers = db.scalars(select(Customer).order_by(Customer.id)).all()
             self.assertTrue(all(customer.business_id == self.business_id for customer in customers))
 
+    def test_invalid_signatures_for_all_core_channels_are_rejected_before_persistence(self):
+        facebook = {
+            "object": "page",
+            "entry": [{
+                "id": "fb-page",
+                "messaging": [{
+                    "sender": {"id": "fb-attacker"},
+                    "recipient": {"id": "fb-page"},
+                    "timestamp": 1700000010000,
+                    "message": {"mid": "fb-invalid-signature", "text": "tampered"},
+                }],
+            }],
+        }
+        instagram = {
+            "object": "instagram",
+            "entry": [{
+                "id": "ig-account",
+                "messaging": [{
+                    "sender": {"id": "ig-attacker"},
+                    "recipient": {"id": "ig-account"},
+                    "timestamp": 1700000010001,
+                    "message": {"mid": "ig-invalid-signature", "text": "tampered"},
+                }],
+            }],
+        }
+        telegram = {
+            "update_id": 9991,
+            "message": {
+                "message_id": 9991,
+                "date": 1700000011,
+                "from": {"id": 9991, "first_name": "Attacker"},
+                "chat": {"id": 9991},
+                "text": "tampered",
+            },
+        }
+        zalo = {
+            "event_name": "message.text.received",
+            "message": {
+                "message_id": "zalo-invalid-signature",
+                "date": 1700000012000,
+                "chat": {"id": "zalo-attacker", "chat_type": "PRIVATE"},
+                "from": {"id": "zalo-attacker", "display_name": "Attacker", "is_bot": False},
+                "text": "tampered",
+            },
+        }
+        invalid_meta_headers = {
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": "sha256=" + ("0" * 64),
+        }
+        with Session(self.engine) as db:
+            before_messages = db.query(Message).count()
+            before_events = db.query(ChannelEvent).count()
+
+        with patch.object(settings, "ENVIRONMENT", "production"), patch.object(
+            settings, "META_APP_SECRET", "unified-inbox-meta-secret"
+        ):
+            responses = [
+                self.client.post(
+                    "/api/webhooks/facebook",
+                    content=json.dumps(facebook, separators=(",", ":")).encode(),
+                    headers=invalid_meta_headers,
+                ),
+                self.client.post(
+                    "/api/webhooks/instagram",
+                    content=json.dumps(instagram, separators=(",", ":")).encode(),
+                    headers=invalid_meta_headers,
+                ),
+                self.client.post(
+                    "/api/webhooks/telegram",
+                    json=telegram,
+                    headers={"X-Telegram-Bot-Api-Secret-Token": "wrong-secret"},
+                ),
+                self.client.post(
+                    "/api/webhooks/zalo",
+                    json=zalo,
+                    headers={"X-Bot-Api-Secret-Token": "wrong-secret"},
+                ),
+            ]
+
+        self.assertEqual([401, 401, 401, 401], [response.status_code for response in responses])
+        with Session(self.engine) as db:
+            self.assertEqual(before_messages, db.query(Message).count())
+            self.assertEqual(before_events, db.query(ChannelEvent).count())
+
 
 if __name__ == "__main__":
     unittest.main()

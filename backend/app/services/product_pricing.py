@@ -114,6 +114,27 @@ def _format_vnd(value: Decimal | int | float | str) -> str:
     return f"{amount:,.0f}".replace(",", ".")
 
 
+def _available(product: Product) -> int:
+    return max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+
+
+def _alternative_hint(db: Session, *, business_id: int, excluded_ids: set[int]) -> str:
+    candidates = db.query(Product).filter(
+        Product.business_id == business_id,
+        Product.status == "active",
+        Product.stock_quantity > Product.reserved_quantity,
+        ~Product.id.in_(excluded_ids),
+    ).order_by(Product.price.asc(), Product.id.asc()).all()
+    alternatives = [product for product in candidates if not _is_combo(product)][:3]
+    if not alternatives:
+        return ""
+    choices = ", ".join(
+        f"{product.name} ({_format_vnd(product.price)} đồng, còn {_available(product)})"
+        for product in alternatives
+    )
+    return f" Gợi ý thay thế đang còn hàng: {choices}."
+
+
 def combo_price_comparison_reply(
     db: Session,
     *,
@@ -152,6 +173,7 @@ def combo_price_comparison_reply(
             return (
                 f"Mình đã thấy {combo.name} giá {_format_vnd(combo.price)} đồng, "
                 "nhưng catalog chưa đủ giá từng món thành phần nên chưa thể tính chính xác phần chênh lệch."
+                + _alternative_hint(db, business_id=business_id, excluded_ids={combo.id})
             )
         components.append((product, quantity))
 
@@ -168,20 +190,33 @@ def combo_price_comparison_reply(
         f"{quantity} {product.name} ({_format_vnd(product.price)} đồng)"
         for product, quantity in components
     )
+    availability_note = ""
+    if _available(combo) <= 0 or any(_available(product) < quantity for product, quantity in components):
+        excluded_ids = {combo.id}
+        if _available(combo) > 0:
+            excluded_ids.update(product.id for product, _quantity in components)
+        availability_note = (
+            " Hiện combo hoặc một món thành phần không đủ tồn kho."
+            + _alternative_hint(
+                db,
+                business_id=business_id,
+                excluded_ids=excluded_ids,
+            )
+        )
     if savings > 0 and retail_total > 0:
         percent = (savings / retail_total * Decimal("100")).quantize(Decimal("0.1"))
         percent_text = str(percent).replace(".", ",")
         return (
             f"Nếu mua lẻ gồm {component_text} thì khoảng {_format_vnd(retail_total)} đồng. "
             f"Mua {combo.name} là {_format_vnd(combo_price)} đồng, "
-            f"rẻ hơn {_format_vnd(savings)} đồng ({percent_text}%)."
+            f"rẻ hơn {_format_vnd(savings)} đồng ({percent_text}%).{availability_note}"
         )
     if savings == 0:
         return (
             f"Các món trong {combo.name} mua lẻ cũng khoảng {_format_vnd(retail_total)} đồng, "
-            "nên hiện chưa có chênh lệch giá."
+            f"nên hiện chưa có chênh lệch giá.{availability_note}"
         )
     return (
         f"Nếu mua lẻ gồm {component_text} thì khoảng {_format_vnd(retail_total)} đồng; "
-        f"giá combo hiện là {_format_vnd(combo_price)} đồng, cao hơn {_format_vnd(-savings)} đồng."
+        f"giá combo hiện là {_format_vnd(combo_price)} đồng, cao hơn {_format_vnd(-savings)} đồng.{availability_note}"
     )
