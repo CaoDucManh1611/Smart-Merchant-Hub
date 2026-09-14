@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Chuyển Smart Merchant Hub thành SaaS có một control-plane database và một tenant database, trong đó mỗi shop có schema riêng, nhân viên chỉ truy cập shop của mình và platform admin không đọc dữ liệu khách nếu không có quyền hỗ trợ tạm thời.
+**Goal:** Chuyển Smart Merchant Hub thành SaaS có một control-plane database và một tenant database, trong đó mỗi shop có schema riêng, nhân viên chỉ truy cập shop của mình, kết nối độc lập Telegram/Zalo/Facebook/Instagram và platform admin không đọc dữ liệu khách nếu không có quyền hỗ trợ tạm thời.
 
 **Architecture:** `platform_db` giữ định danh shop, tài khoản, gói cước, quota, route webhook và audit nền tảng. `tenant_db` giữ các schema `shop_<business_id>` chứa toàn bộ dữ liệu CRM, hội thoại, bán hàng, tồn kho, kênh và RAG của từng shop. API xác thực trên platform DB, tra registry, rồi mở tenant session bằng `SET LOCAL search_path`; webhook tra route tối thiểu ở platform DB trước khi vào schema shop. Việc chuyển dữ liệu dùng copy/checksum/cutover theo từng shop, không dual-write dài hạn.
 
@@ -16,6 +16,8 @@
 - Mọi tenant transaction dùng `SET LOCAL search_path TO <quoted_schema>, public`; không thay đổi search path cấp connection/session lâu dài.
 - Platform DB không lưu nội dung hội thoại, khách hàng, sản phẩm, đơn hàng, tài liệu RAG hoặc token kênh. Route webhook chỉ lưu fingerprint/hash và khóa định tuyến tối thiểu.
 - Token kênh được mã hóa và lưu trong schema shop. Log, metric và platform response không được chứa token, payload webhook hoặc dữ liệu khách.
+- Telegram và Zalo Bot Creator dùng luồng mở trang tạo bot bằng QR/deep-link rồi dán token đúng một lần; Facebook và Instagram dùng Meta OAuth, không yêu cầu shop dán access token thủ công.
+- Bốn kênh dùng chung trạng thái UI `disconnected`, `verifying`, `connected`, `reconnect_required`, `error`, nhưng giữ adapter và quyền provider riêng biệt.
 - Platform admin không được dùng tenant session theo mặc định. Support session bắt buộc có grant, lý do, scope, thời hạn, người cấp và audit bất biến.
 - Giữ `backend/alembic` làm legacy chain trong thời gian chuyển đổi. Tạo hai chain mới; chỉ xóa fallback ở cổng release cuối.
 - Không stage/commit chung các thay đổi onboarding Telegram/Zalo hiện đang chưa commit. Mỗi task dưới đây phải có commit riêng.
@@ -338,20 +340,30 @@ class TenantJobEnvelope:
 
 ## Workstream D — Webhooks and exceptional support access
 
-### Task 12: Tạo webhook route registry fail-closed
+### Task 12: Kết nối và định tuyến Telegram, Zalo, Facebook, Instagram theo từng shop
 
 **Files:**
 - Create: `backend/app/tenancy/registry.py`
 - Modify: `backend/app/tenancy/webhook.py`
+- Modify: `backend/app/services/provider_connection.py`
+- Modify: `backend/app/services/channel_service.py`
+- Modify: `backend/app/services/meta_config_service.py`
 - Modify: `backend/app/api/telegram.py`
 - Modify: `backend/app/api/zalo.py`
 - Modify: `backend/app/api/facebook.py`
 - Modify: `backend/app/api/instagram.py`
+- Modify: `backend/app/api/meta_oauth.py`
 - Modify: `backend/app/api/shopee.py`
 - Modify: `backend/app/api/tiktok.py`
 - Modify: `backend/app/api/onboarding.py`
+- Modify: `backend/app/schemas/onboarding.py`
+- Modify: `frontend/src/App.vue`
+- Modify: `frontend/src/style.css`
 - Modify: `backend/tests/test_webhook_channel_resolution.py`
 - Modify: `backend/tests/test_unified_inbox_webhooks.py`
+- Modify: `backend/tests/test_onboarding_api.py`
+- Modify: `backend/tests/test_meta_oauth_tenant_security.py`
+- Modify: `frontend/tests/crm-shell.test.mjs`
 
 **Interfaces:**
 
@@ -365,14 +377,28 @@ class WebhookRoute:
 def resolve_webhook_route(platform_db: Session, provider: str, route_key: str) -> WebhookRoute | None: ...
 ```
 
-- [ ] Add failing tests for Telegram secret hash and provider account hash routing, ambiguous/no route rejection, inactive shop rejection and no scan over tenant channel tables.
-- [ ] Confirm current `resolve_telegram_channel`/`resolve_zalo_channel` scans shared `Channel` rows.
-- [ ] During channel connection, atomically coordinate tenant token storage and platform route creation with an idempotent operation and compensating cleanup on failure.
+- `GET /api/onboarding/shops/{business_id}/channels` returns one normalized connection record per linked provider account with state `disconnected`, `verifying`, `connected`, `reconnect_required` or `error`.
+- `POST /api/onboarding/shops/{business_id}/channels/verify` accepts only `telegram` or `zalo` plus a one-time token; the response never echoes that token.
+- `GET /api/oauth/meta/start` and `GET /api/oauth/meta/callback` remain the Facebook/Instagram entry points and bind the OAuth state to the authenticated shop.
+
+- [ ] Add failing contract tests for the shared four-provider connection card, normalized states, masked account details and absence of tokens in every API response.
+- [ ] Add failing Telegram tests for QR/deep-link to BotFather, one-time token submission, `getMe`, generated secret, `setWebhook`, `getWebhookInfo`, reconnect and disconnect.
+- [ ] Add failing Zalo tests for QR/deep-link to Bot Manager, one-time Bot Creator token submission, provider identity verification, webhook registration/status, reconnect and disconnect.
+- [ ] Add failing Meta OAuth tests for CSRF-bound state, authenticated-shop binding, Page selection, Instagram Business Account discovery, required permissions, long-lived/Page token storage, webhook subscription and reconnect-required status after token expiry/revocation.
+- [ ] Add failing UI tests proving Telegram/Zalo render the QR/deep-link plus token field while Facebook/Instagram render an OAuth button and never render a manual access-token input.
+- [ ] Add failing routing tests for Telegram secret hash and provider account hash routing, ambiguous/no route rejection, inactive shop rejection and no scan over tenant channel tables.
+- [ ] Confirm current `resolve_telegram_channel`/`resolve_zalo_channel` scans shared `Channel` rows and document the exact replacement boundary.
+- [ ] Normalize provider results into one connection DTO while keeping separate Telegram, Zalo and Meta adapters; one provider failure must not alter another provider's connection.
+- [ ] For Facebook, save the selected Page identity and subscribe the Page webhook; for Instagram, require a professional account linked to the selected Page and subscribe only supported messaging fields.
+- [ ] During every channel connection, atomically coordinate encrypted tenant token storage and platform route creation with an idempotent operation and compensating cleanup on failure.
 - [ ] Verify provider signature before persisting payload; resolve route in platform DB, then store event/content only in tenant schema.
 - [ ] Store route keys as keyed HMAC hashes using a route-secret separate from `CHANNEL_ENCRYPTION_KEY`.
+- [ ] Encrypt Telegram/Zalo bot tokens and Meta user/page tokens inside the shop schema; store expiry, granted scopes and provider account metadata needed for health checks without exposing secret values.
+- [ ] Implement scheduled connection health checks: mark `reconnect_required` on expired/revoked Meta permission or invalid bot token; never silently switch to a global/default credential.
 - [ ] Keep provider retry/idempotency keys schema-local; duplicate webhooks return success without duplicate messages/replies.
-- [ ] Run all webhook/channel tests: `pytest -q tests/test_webhook_channel_resolution.py tests/test_unified_inbox_webhooks.py tests/test_auto_reply_channels.py tests/test_channel_reliability.py tests/test_zalo_webhook.py tests/test_instagram_webhook.py tests/test_tiktok_webhook.py`.
-- [ ] Commit: `git commit -m "feat: route webhooks through minimal control-plane registry"`.
+- [ ] Run all onboarding/webhook/channel tests: `pytest -q tests/test_onboarding_api.py tests/test_meta_oauth_tenant_security.py tests/test_webhook_channel_resolution.py tests/test_unified_inbox_webhooks.py tests/test_auto_reply_channels.py tests/test_channel_reliability.py tests/test_zalo_webhook.py tests/test_instagram_webhook.py tests/test_tiktok_webhook.py`.
+- [ ] Run frontend contract tests: `node --test tests/crm-shell.test.mjs`.
+- [ ] Commit: `git commit -m "feat: connect and route tenant-owned messaging channels"`.
 
 ### Task 13: Thêm quyền hỗ trợ tạm thời có chủ shop cấp
 
@@ -507,5 +533,6 @@ def rollback_cutover(*, business_id: int, operation_id: str) -> None: ...
 - Platform admin quản lý lifecycle/gói/quota/billing/health nhưng không thấy dữ liệu khách.
 - Support chỉ truy cập đúng shop, đúng scope và đúng thời hạn do owner cấp, có audit đầy đủ.
 - Webhook không scan schema, không đoán tenant và không dùng token mặc định.
+- Mỗi shop kết nối độc lập Telegram/Zalo bằng token một lần và Facebook/Instagram bằng Meta OAuth; UI hiển thị đúng trạng thái, tài khoản provider và yêu cầu kết nối lại mà không lộ token.
 - Mỗi shop có thể migrate, backup, restore và rollback độc lập.
 - Toàn bộ backend tests, frontend tests/build và release smoke test xanh trên PostgreSQL/pgvector 16.
