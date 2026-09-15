@@ -40,7 +40,7 @@
 - Produce `Settings.TENANT_DATABASE_URL: str`.
 - Consume legacy `DATABASE_URL` only through an explicitly named compatibility property during rollout.
 
-- [ ] Add a failing test that production rejects identical/missing platform and tenant URLs and that development can temporarily map legacy `DATABASE_URL` to both.
+- [x] Add a failing test that production rejects identical/missing platform and tenant URLs and that development can temporarily map legacy `DATABASE_URL` to both.
 
 ```python
 def test_production_requires_two_database_urls():
@@ -49,9 +49,9 @@ def test_production_requires_two_database_urls():
 ```
 
 - [ ] Run `docker compose run --rm backend pytest -q tests/test_two_database_config.py` and confirm the failure is caused by missing settings.
-- [ ] Add the two settings plus `platform_database_url` and `tenant_database_url` compatibility properties; warn once in non-production when falling back.
-- [ ] Update Compose backend/worker environment and health checks to use both URLs; keep the existing PostgreSQL service for local work by creating `crm_platform` and `crm_tenant` databases in an idempotent init script.
-- [ ] Run the focused test, then `docker compose config`.
+- [x] Add the two settings plus `platform_database_url` and `tenant_database_url` compatibility properties; warn once in non-production when falling back.
+- [x] Update Compose backend/worker environment and health checks to use both URLs; keep the existing PostgreSQL service for local work by creating `crm_platform` and `crm_tenant` databases in an idempotent init script.
+- [x] Run the focused test, then `docker compose config`.
 - [ ] Commit only these files: `git commit -m "feat: define platform and tenant database boundaries"`.
 
 ### Task 2: Tách SQLAlchemy base, engine và dependency
@@ -74,13 +74,13 @@ def get_platform_db() -> Iterator[Session]: ...
 def tenant_session(schema_name: str) -> ContextManager[Session]: ...
 ```
 
-- [ ] Write tests proving platform metadata excludes `customers/messages/orders/documents` and tenant metadata excludes `businesses/subscriptions/platform_memberships/support_grants`.
-- [ ] Write a PostgreSQL test that two consecutive pooled tenant sessions cannot inherit one another's `search_path`.
+- [x] Write tests proving platform metadata excludes `customers/messages/orders/documents` and tenant metadata excludes `businesses/subscriptions/platform_memberships/support_grants`.
+- [x] Write a PostgreSQL test that two consecutive pooled tenant sessions cannot inherit one another's `search_path`.
 - [ ] Run `docker compose run --rm backend pytest -q tests/test_database_boundaries.py` and confirm both tests fail.
-- [ ] Introduce distinct bases/engines/sessionmakers; retain `app.database.session.Base/SessionLocal` as a deprecated rollout alias only.
-- [ ] Implement `tenant_session` with validated schema, quoted identifier and transaction-local `set_config('search_path', ..., true)` or equivalent safe SQLAlchemy statement.
-- [ ] Make `get_db` a temporary alias for `get_platform_db`; new code must name its database dependency explicitly.
-- [ ] Run focused tests and `python -m compileall app/database app/db` inside backend container.
+- [x] Introduce distinct bases/engines/sessionmakers; retain `app.database.session.Base/SessionLocal` as a deprecated rollout alias only.
+- [x] Implement `tenant_session` with validated schema, quoted identifier and transaction-local `set_config('search_path', ..., true)` or equivalent safe SQLAlchemy statement.
+- [x] Make `get_db` a temporary alias for `get_platform_db`; new code must name its database dependency explicitly.
+- [x] Run focused tests and `python -m compileall app/database app/db` inside backend container.
 - [ ] Commit: `git commit -m "refactor: split platform and tenant database sessions"`.
 
 ### Task 3: Tạo control-plane models và Alembic chain
@@ -101,12 +101,12 @@ def tenant_session(schema_name: str) -> ContextManager[Session]: ...
 - `SupportGrant(business_id, granted_by_user_id, support_user_id, reason, scopes, expires_at, revoked_at)`.
 - `ProvisioningOperation(idempotency_key, business_id, state, attempt_count, last_error_code)`.
 
-- [ ] Add schema tests asserting unique constraints, allowed states and absence of customer-content columns.
+- [x] Add schema tests asserting unique constraints, allowed states and absence of customer-content columns.
 - [ ] Run the focused test and confirm model imports/tables are missing.
-- [ ] Move control-plane ownership to `PlatformBase`; do not yet move tenant models.
-- [ ] Implement initial platform migration for businesses, users, sessions, roles/permissions, plans, subscriptions, payments, usage/quota, registry, routes, support grants and platform audit.
-- [ ] Store only sanitized error codes in provisioning/platform records; detailed stack traces stay in protected operational logs.
-- [ ] Run `alembic -c alembic-platform.ini upgrade head` against a fresh `crm_platform_test` database and run `pytest -q tests/test_platform_schema.py`.
+- [x] Move control-plane ownership to `PlatformBase`; do not yet move tenant models.
+- [x] Implement initial platform migration for businesses, users, sessions, roles/permissions, plans, subscriptions, payments, usage/quota, registry, routes, support grants and platform audit.
+- [x] Store only sanitized error codes in provisioning/platform records; detailed stack traces stay in protected operational logs.
+- [x] Run `alembic -c alembic-platform.ini upgrade head` against a fresh `crm_platform_test` database and run `pytest -q tests/test_platform_schema.py`.
 - [ ] Commit: `git commit -m "feat: add SaaS control-plane schema"`.
 
 ### Task 4: Tạo tenant template và migration runner
@@ -128,12 +128,12 @@ def upgrade_tenant_schema(connection: Connection, schema_name: str, revision: st
 def current_tenant_revision(connection: Connection, schema_name: str) -> str | None: ...
 ```
 
-- [ ] Add failing tests for invalid identifiers, schema creation, per-schema `alembic_version`, idempotent upgrade and independent revision state.
+- [x] Add failing tests for invalid identifiers, schema creation, per-schema `alembic_version`, idempotent upgrade and independent revision state.
 - [ ] Run the focused test and capture the expected missing-module failure.
-- [ ] Classify current ORM tables into `PlatformBase` or `TenantBase`; tenant template includes channels/events, CRM, sales, inventory, workflows, tickets, notifications, lifecycle records and pgvector/RAG tables.
-- [ ] Implement schema translation/configuration so Alembic creates objects only inside the requested validated schema.
-- [ ] Create two test schemas, upgrade both, assert equal table sets and separate version rows.
-- [ ] Run `pytest -q tests/test_tenant_migration_runner.py tests/test_rag_tenant_isolation.py`.
+- [x] Classify current ORM tables into `PlatformBase` or `TenantBase`; tenant template includes channels/events, CRM, sales, inventory, workflows, tickets, notifications, lifecycle records and pgvector/RAG tables.
+- [x] Implement schema translation/configuration so Alembic creates objects only inside the requested validated schema.
+- [x] Create two test schemas, upgrade both, assert equal table sets and separate version rows.
+- [x] Run `pytest -q tests/test_tenant_migration_runner.py tests/test_rag_tenant_isolation.py`.
 - [ ] Commit: `git commit -m "feat: add versioned tenant schema template"`.
 
 ---
