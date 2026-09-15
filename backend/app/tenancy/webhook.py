@@ -8,6 +8,24 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.channel import Channel
+from app.core.config import settings
+from app.services.channel_credentials import decrypt_token
+
+
+def _channel_webhook_secret(channel: Channel) -> str:
+    """Read a channel secret whether legacy plaintext or encrypted config."""
+
+    config = channel.config if isinstance(channel.config, dict) else {}
+    plaintext = config.get("webhook_secret")
+    if plaintext:
+        return str(plaintext)
+    encrypted = config.get("webhook_secret_encrypted")
+    if encrypted and settings.CHANNEL_ENCRYPTION_KEY:
+        try:
+            return decrypt_token(str(encrypted), settings.CHANNEL_ENCRYPTION_KEY)
+        except (ValueError, TypeError):
+            return ""
+    return ""
 
 
 def verify_zalo_oa_signature(
@@ -144,8 +162,7 @@ def resolve_telegram_channel(db: Session, secret_token: str | None) -> Channel |
     matches = [
         channel
         for channel in channels
-        if isinstance(channel.config, dict)
-        and hmac.compare_digest(str(channel.config.get("webhook_secret", "")), secret_token)
+        if hmac.compare_digest(_channel_webhook_secret(channel), secret_token)
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -172,8 +189,7 @@ def resolve_zalo_channel(db: Session, secret_token: str | None) -> Channel | Non
     matches = [
         channel
         for channel in channels
-        if isinstance(channel.config, dict)
-        and hmac.compare_digest(str(channel.config.get("webhook_secret", "")), secret_token)
+        if hmac.compare_digest(_channel_webhook_secret(channel), secret_token)
     ]
     return matches[0] if len(matches) == 1 else None
 

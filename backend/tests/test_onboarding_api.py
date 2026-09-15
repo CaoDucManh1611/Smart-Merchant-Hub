@@ -1,5 +1,6 @@
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -124,7 +125,10 @@ class OnboardingApiTests(unittest.TestCase):
             self.assertEqual("visible", row.config["nested"]["label"])
             self.assertEqual(
                 1,
-                db.query(AuditLog).filter(AuditLog.action == "onboarding_channel_connected").count(),
+                db.query(AuditLog).filter(
+                    AuditLog.business_id == created["business_id"],
+                    AuditLog.action == "onboarding_channel_connected",
+                ).count(),
             )
         imported = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/products/import",
@@ -145,6 +149,151 @@ class OnboardingApiTests(unittest.TestCase):
             movements = db.query(StockMovement).filter(StockMovement.product_id == product.id).order_by(StockMovement.id).all()
             self.assertEqual([4, 3], [movement.quantity for movement in movements])
             self.assertEqual("onboarding_reconcile", movements[-1].movement_type)
+
+    def test_verified_telegram_connection_discovers_bot_and_registers_webhook(self):
+        settings.CHANNEL_ENCRYPTION_KEY = "test-onboarding-channel-key"
+        settings.PUBLIC_BASE_URL = "https://crm.example.test"
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={"shop_name": "Telegram Verify", "owner_name": "Verify Owner", "owner_email": "verify-telegram@onboarding.test", "password": "strong-pass-1"},
+        ).json()
+        headers = {"Authorization": f"Bearer {created['access_token']}"}
+        calls = []
+
+        class FakeResponse:
+            def __init__(self, body):
+                self._body = body
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self._body
+
+        def fake_post(url, **kwargs):
+            calls.append((url, kwargs))
+            if url.endswith("/getMe"):
+                return FakeResponse({"ok": True, "result": {"id": 12345, "first_name": "Verify Bot", "username": "verify_bot"}})
+            if url.endswith("/setWebhook"):
+                return FakeResponse({"ok": True, "result": {"url": kwargs["json"]["url"]}})
+            if url.endswith("/getWebhookInfo"):
+                return FakeResponse({"ok": True, "result": {"url": "https://crm.example.test/api/webhooks/telegram"}})
+            raise AssertionError(f"unexpected provider call: {url}")
+
+        with patch("httpx.post", side_effect=fake_post):
+            response = self.client.post(
+                f"/api/onboarding/shops/{created['business_id']}/channels/verify",
+                headers=headers,
+                json={"channel_type": "telegram", "access_token": "telegram-verify-token"},
+            )
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertEqual("telegram", body["channel_type"])
+        self.assertEqual("12345", body["external_account_id"])
+        self.assertEqual("Verify Bot", body["name"])
+        self.assertEqual("connected", body["webhook_status"])
+        self.assertEqual(3, len(calls))
+        self.assertTrue(calls[1][0].endswith("/setWebhook"))
+        self.assertEqual("https://crm.example.test/api/webhooks/telegram", calls[1][1]["json"]["url"])
+        self.assertTrue(calls[1][1]["json"]["secret_token"])
+        with Session(self.engine) as db:
+            row = db.query(Channel).filter(Channel.business_id == created["business_id"]).one()
+            self.assertEqual("12345", row.external_account_id)
+            self.assertEqual("webhook_secret_encrypted", next(key for key in row.config if key.endswith("_encrypted")))
+            self.assertNotIn("telegram-verify-token", str(row.config))
+
+    def test_verified_zalo_connection_discovers_bot_and_registers_webhook(self):
+        settings.CHANNEL_ENCRYPTION_KEY = "test-onboarding-channel-key"
+        settings.PUBLIC_BASE_URL = "https://crm.example.test"
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={"shop_name": "Zalo Verify", "owner_name": "Verify Owner", "owner_email": "verify-zalo@onboarding.test", "password": "strong-pass-1"},
+        ).json()
+        headers = {"Authorization": f"Bearer {created['access_token']}"}
+
+        class FakeResponse:
+            def __init__(self, body):
+                self._body = body
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self._body
+
+        def fake_post(url, **kwargs):
+            if url.endswith("/getMe"):
+                return FakeResponse({"ok": True, "result": {"id": "zalo-9988", "account_name": "Bot Zalo Verify"}})
+            if url.endswith("/setWebhook"):
+                return FakeResponse({"ok": True, "result": {"url": kwargs["json"]["url"]}})
+            if url.endswith("/getWebhookInfo"):
+                return FakeResponse({"ok": True, "result": {"url": "https://crm.example.test/api/webhooks/zalo"}})
+            raise AssertionError(f"unexpected provider call: {url}")
+
+        with patch("httpx.post", side_effect=fake_post):
+            response = self.client.post(
+                f"/api/onboarding/shops/{created['business_id']}/channels/verify",
+                headers=headers,
+                json={"channel_type": "zalo", "access_token": "zalo-verify-token"},
+            )
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertEqual("zalo", body["channel_type"])
+        self.assertEqual("zalo-9988", body["external_account_id"])
+        self.assertEqual("Bot Zalo Verify", body["name"])
+        self.assertEqual("connected", body["webhook_status"])
+
+    def test_bot_connection_status_and_disconnect_hide_secrets_and_preserve_history(self):
+        settings.CHANNEL_ENCRYPTION_KEY = "test-onboarding-channel-key"
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={"shop_name": "Bot Lifecycle", "owner_name": "Lifecycle Owner", "owner_email": "bot-lifecycle@onboarding.test", "password": "strong-pass-1"},
+        ).json()
+        headers = {"Authorization": f"Bearer {created['access_token']}"}
+        connected = self.client.post(
+            f"/api/onboarding/shops/{created['business_id']}/channels",
+            headers=headers,
+            json={
+                "channel_type": "telegram",
+                "external_account_id": "bot-lifecycle",
+                "name": "Lifecycle Bot",
+                "access_token": "telegram-lifecycle-secret",
+                "config": {"webhook_secret": "lifecycle-webhook-secret", "webhook_url": "https://crm.example.test/api/webhooks/telegram"},
+            },
+        )
+        self.assertEqual(200, connected.status_code, connected.text)
+        channel_id = connected.json()["id"]
+
+        listed = self.client.get(
+            f"/api/onboarding/shops/{created['business_id']}/channels",
+            headers=headers,
+        )
+        self.assertEqual(200, listed.status_code, listed.text)
+        self.assertEqual(1, len(listed.json()))
+        self.assertEqual("Lifecycle Bot", listed.json()[0]["name"])
+        self.assertNotIn("access_token", listed.text)
+        self.assertNotIn("lifecycle-webhook-secret", listed.text)
+
+        disconnected = self.client.delete(
+            f"/api/onboarding/shops/{created['business_id']}/channels/{channel_id}",
+            headers=headers,
+        )
+        self.assertEqual(200, disconnected.status_code, disconnected.text)
+        self.assertEqual(channel_id, disconnected.json()["channel_id"])
+        self.assertEqual([], self.client.get(
+            f"/api/onboarding/shops/{created['business_id']}/channels",
+            headers=headers,
+        ).json())
+        with Session(self.engine) as db:
+            row = db.get(Channel, channel_id)
+            self.assertEqual("disconnected", row.status)
+            self.assertEqual(
+                1,
+                db.query(AuditLog).filter(
+                    AuditLog.business_id == created["business_id"],
+                    AuditLog.action == "onboarding_bot_disconnected",
+                ).count(),
+            )
 
 
 if __name__ == "__main__":

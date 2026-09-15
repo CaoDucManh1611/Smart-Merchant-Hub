@@ -179,6 +179,18 @@ test("P1 onboarding and quota surfaces are wired to tenant APIs", () => {
   assert.match(appSource, /Tạo shop & đăng nhập/);
 });
 
+test("channel onboarding exposes guided Telegram and Zalo Bot Creator token verification", () => {
+  assert.match(appSource, /botConnections/);
+  assert.match(appSource, /Kết nối Telegram\/Zalo/);
+  assert.match(appSource, /Quét QR để tạo bot/);
+  assert.match(appSource, /Sao chép token/);
+  assert.match(appSource, /Kiểm tra và kết nối/);
+  assert.match(appSource, /channels\/verify/);
+  assert.match(appSource, /BotFather/);
+  assert.match(appSource, /Zalo Bot Manager/);
+  assert.match(styleSource, /\.channel-connect-card/);
+});
+
 test("P1 explainable AI evidence is visible in the unified timeline", () => {
   assert.match(appSource, /function timelineExplainability\(event\)/);
   assert.match(appSource, /AI dùng dữ liệu\/tool/);

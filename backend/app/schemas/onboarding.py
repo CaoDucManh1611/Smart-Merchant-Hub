@@ -76,6 +76,43 @@ class OnboardingChannelCreate(BaseModel):
     config: dict | None = None
 
 
+class OnboardingChannelVerify(BaseModel):
+    """A provider token submitted for one-time bot verification."""
+
+    channel_type: Literal["telegram", "zalo"]
+    access_token: str = Field(..., min_length=1, max_length=10000)
+
+
+class OnboardingChannelVerifyOut(BaseModel):
+    id: int
+    business_id: int
+    channel_type: str
+    external_account_id: str
+    name: str
+    status: str
+    connected_at: datetime | None = None
+    provider_account: dict | None = None
+    webhook_url: str
+    webhook_status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OnboardingChannelStatusOut(BaseModel):
+    id: int
+    business_id: int
+    channel_type: str
+    external_account_id: str
+    name: str
+    status: str
+    connected_at: datetime | None = None
+    provider_account: dict | None = None
+    webhook_url: str | None = None
+    webhook_status: str = "unknown"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OnboardingChannelOut(BaseModel):
     id: int
     business_id: int

@@ -10,6 +10,172 @@
   background: #eef2f7;
 }
 
+/* Guided Telegram/Zalo Bot Creator onboarding */
+.channel-connect-card {
+  overflow: hidden;
+}
+
+.bot-connect-guides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.bot-guide-card {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border, #ead8d5);
+  border-radius: 14px;
+  background: #fffafa;
+}
+
+.bot-guide-card h3 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
+
+.bot-guide-card ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  color: #6f6870;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.bot-guide-qr-wrap {
+  flex: 0 0 88px;
+  width: 88px;
+  height: 88px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #ead8d5;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.bot-guide-qr-wrap img {
+  display: block;
+  width: 84px;
+  height: 84px;
+}
+
+.bot-guide-link {
+  color: #c53c51;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.bot-guide-link:hover {
+  text-decoration: underline;
+}
+
+.bot-connect-form {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 8px;
+}
+
+.bot-connect-form label {
+  display: grid;
+  gap: 6px;
+  color: #75666b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.bot-connect-form select,
+.bot-connect-form input {
+  width: 100%;
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid #e4d5d3;
+  border-radius: 10px;
+  background: #fff;
+  color: #2d2730;
+  padding: 9px 11px;
+  font: inherit;
+}
+
+.bot-token-input-wrap {
+  display: flex;
+  gap: 6px;
+}
+
+.bot-token-input-wrap input {
+  min-width: 0;
+  flex: 1;
+}
+
+.token-visibility-btn {
+  border: 1px solid #e4d5d3;
+  border-radius: 10px;
+  background: #fff;
+  color: #8a5a63;
+  padding: 0 11px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.bot-connect-submit {
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+.bot-connect-note {
+  margin: 12px 0 0;
+  color: #8b777c;
+  font-size: 0.76rem;
+}
+
+.bot-connection-list {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bot-connection-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e9ddda;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.bot-connection-list strong,
+.bot-connection-list small {
+  display: block;
+}
+
+.bot-connection-list small {
+  margin-top: 3px;
+  color: #88787d;
+  font-size: 0.74rem;
+}
+
+@media (max-width: 860px) {
+  .bot-connect-guides {
+    grid-template-columns: 1fr;
+  }
+
+  .bot-connect-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

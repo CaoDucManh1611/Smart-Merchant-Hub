@@ -473,6 +473,13 @@ const metaStatus = ref({
 });
 const metaLoading = ref(false);
 const metaNotice = ref("");
+const botConnections = ref([]);
+const botConnectionLoading = ref(false);
+const botConnectionSaving = ref(false);
+const botConnectionError = ref("");
+const botConnectionNotice = ref("");
+const botTokenVisible = ref(false);
+const botConnectionForm = ref({ channel_type: "telegram", access_token: "" });
 const notificationError = ref("");
 
 
@@ -515,9 +522,106 @@ async function connectMeta() {
   }
 }
 
+const botGuideUrls = Object.freeze({
+  telegram: "https://t.me/BotFather",
+  zalo: "https://miniapp.zaloplatforms.com/",
+});
+
+function botGuideUrl(channelType) {
+  return botGuideUrls[channelType] || botGuideUrls.telegram;
+}
+
+function botQrUrl(channelType) {
+  const target = botGuideUrl(channelType);
+  return `https://quickchart.io/qr?size=160&margin=2&text=${encodeURIComponent(target)}`;
+}
+
+function botChannelLabel(channelType) {
+  return channelType === "zalo" ? "Zalo Bot Creator" : "Telegram BotFather";
+}
+
+function botConnectionErrorMessage(payload, fallback) {
+  const detail = payload?.detail;
+  if (detail && typeof detail === "object") return detail.message || fallback;
+  return detail || fallback;
+}
+
+async function fetchBotConnections() {
+  botConnectionLoading.value = true;
+  botConnectionError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels`);
+    const detail = await response.json().catch(() => []);
+    if (!response.ok) throw new Error(botConnectionErrorMessage(detail, `HTTP ${response.status}`));
+    botConnections.value = Array.isArray(detail)
+      ? detail.filter((item) => ["telegram", "zalo"].includes(item.channel_type))
+      : [];
+  } catch (err) {
+    if (![401, 403].includes(Number(err?.status))) {
+      botConnectionError.value = err.message || "Không thể tải trạng thái bot.";
+    }
+  } finally {
+    botConnectionLoading.value = false;
+  }
+}
+
+async function connectBotChannel() {
+  const token = String(botConnectionForm.value.access_token || "").trim();
+  if (!token) {
+    botConnectionError.value = "Bạn cần dán Bot Token trước khi kết nối.";
+    return;
+  }
+  botConnectionSaving.value = true;
+  botConnectionError.value = "";
+  botConnectionNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        channel_type: botConnectionForm.value.channel_type,
+        access_token: token,
+      }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(botConnectionErrorMessage(detail, `HTTP ${response.status}`));
+    botConnectionForm.value.access_token = "";
+    botTokenVisible.value = false;
+    botConnectionNotice.value = `${botChannelLabel(botConnectionForm.value.channel_type)} đã kết nối và webhook đang hoạt động.`;
+    await fetchBotConnections();
+  } catch (err) {
+    botConnectionError.value = err.message || "Không thể kiểm tra và kết nối bot.";
+  } finally {
+    botConnectionSaving.value = false;
+  }
+}
+
+async function disconnectBotChannel(connection) {
+  if (!(await requestConfirmation(`Ngắt kết nối ${connection?.name || "bot này"}?`, {
+    title: "Ngắt kết nối bot",
+    confirmLabel: "Ngắt kết nối",
+    tone: "danger",
+  }))) return;
+  botConnectionLoading.value = true;
+  botConnectionError.value = "";
+  botConnectionNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels/${connection.id}`, { method: "DELETE" });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(botConnectionErrorMessage(detail, `HTTP ${response.status}`));
+    botConnectionNotice.value = "Đã ngắt kết nối bot nhưng vẫn giữ nguyên lịch sử hội thoại.";
+    await fetchBotConnections();
+  } catch (err) {
+    botConnectionError.value = err.message || "Không thể ngắt kết nối bot.";
+  } finally {
+    botConnectionLoading.value = false;
+  }
+}
+
 function openSettings() {
   currentTab.value = "settings";
   void fetchMetaStatus();
+  void fetchBotConnections();
   void fetchTeam();
   void fetchAuditLogs();
   void fetchSecuritySettings();
@@ -8777,6 +8881,94 @@ onUnmounted(() => {
               Ngắt kết nối
             </button>
           </div>
+        </div>
+
+        <div class="settings-card channel-connect-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>Kết nối Telegram/Zalo</h2>
+              <p>Tạo bot trên nền tảng, dán token một lần; CRM sẽ tự xác minh và đăng ký webhook.</p>
+            </div>
+            <span class="connection-badge" :class="{ connected: botConnections.length }">
+              {{ botConnections.length ? `${botConnections.length} BOT ĐANG CHẠY` : 'CHƯA CÓ BOT' }}
+            </span>
+          </div>
+
+          <div v-if="botConnectionError" class="settings-notice team-error">{{ botConnectionError }}</div>
+          <div v-if="botConnectionNotice" class="settings-notice">{{ botConnectionNotice }}</div>
+
+          <div class="bot-connect-guides">
+            <article class="bot-guide-card">
+              <div class="bot-guide-qr-wrap">
+                <img :src="botQrUrl('telegram')" alt="QR mở Telegram BotFather" loading="lazy" />
+              </div>
+              <div>
+                <h3>Telegram BotFather</h3>
+                <ol>
+                  <li>Quét QR để tạo bot hoặc mở BotFather.</li>
+                  <li>Gõ <code>/newbot</code> và tạo bot.</li>
+                  <li>Sao chép token BotFather gửi.</li>
+                </ol>
+                <a class="bot-guide-link" :href="botGuideUrl('telegram')" target="_blank" rel="noreferrer">Mở BotFather</a>
+              </div>
+            </article>
+            <article class="bot-guide-card">
+              <div class="bot-guide-qr-wrap">
+                <img :src="botQrUrl('zalo')" alt="QR mở Zalo Bot Manager" loading="lazy" />
+              </div>
+              <div>
+                <h3>Zalo Bot Creator</h3>
+                <ol>
+                  <li>Quét QR để tạo bot hoặc mở Zalo Bot Manager.</li>
+                  <li>Chọn <strong>Tạo bot</strong>.</li>
+                  <li>Sao chép token được gửi trong Zalo.</li>
+                </ol>
+                <a class="bot-guide-link" :href="botGuideUrl('zalo')" target="_blank" rel="noreferrer">Mở Zalo Bot Manager</a>
+              </div>
+            </article>
+          </div>
+
+          <form class="bot-connect-form" @submit.prevent="connectBotChannel">
+            <label>
+              Kênh
+              <select v-model="botConnectionForm.channel_type">
+                <option value="telegram">Telegram</option>
+                <option value="zalo">Zalo Bot Creator</option>
+              </select>
+            </label>
+            <label class="bot-token-field">
+              Bot Token
+              <div class="bot-token-input-wrap">
+                <input
+                  v-model="botConnectionForm.access_token"
+                  :type="botTokenVisible ? 'text' : 'password'"
+                  autocomplete="off"
+                  required
+                  placeholder="Dán token được nhà cung cấp gửi"
+                />
+                <button type="button" class="token-visibility-btn" @click="botTokenVisible = !botTokenVisible">
+                  {{ botTokenVisible ? 'Ẩn' : 'Hiện' }}
+                </button>
+              </div>
+            </label>
+            <button class="primary-btn bot-connect-submit" type="submit" :disabled="botConnectionSaving">
+              {{ botConnectionSaving ? 'Đang kiểm tra...' : 'Kiểm tra và kết nối' }}
+            </button>
+          </form>
+
+          <p class="bot-connect-note">QR chỉ chứa đường dẫn công khai tới trang tạo bot; CRM không đọc hoặc lưu mật khẩu tài khoản của shop.</p>
+
+          <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái bot...</div>
+          <ul v-else-if="botConnections.length" class="bot-connection-list">
+            <li v-for="connection in botConnections" :key="connection.id">
+              <div>
+                <strong>{{ connection.name }}</strong>
+                <small>{{ connection.channel_type === 'zalo' ? 'Zalo Bot' : 'Telegram Bot' }} · ID {{ connection.external_account_id }} · Webhook {{ connection.webhook_status === 'connected' ? 'hoạt động' : 'cần kiểm tra' }}</small>
+              </div>
+              <button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button>
+            </li>
+          </ul>
+          <div v-else class="settings-empty">Chưa có Telegram/Zalo Bot nào được kết nối.</div>
         </div>
 
         <div class="settings-card chatbot-runtime-card">

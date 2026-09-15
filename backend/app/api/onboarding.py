@@ -15,11 +15,15 @@ from app.database.bootstrap import ensure_default_plans
 from app.db.dependencies import get_db
 from app.models.auth_session import AuthSession
 from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.channel import Channel
 from app.models.inventory import StockMovement
 from app.models.sales import Product
 from app.schemas.onboarding import (
     OnboardingChannelCreate,
     OnboardingChannelOut,
+    OnboardingChannelVerify,
+    OnboardingChannelVerifyOut,
+    OnboardingChannelStatusOut,
     OnboardingPlanOut,
     OnboardingProductImport,
     OnboardingProductImportOut,
@@ -30,7 +34,8 @@ from app.schemas.onboarding import (
 from app.services.audit_service import record_audit
 from app.services.channel_credentials import encrypt_token
 from app.services.channel_service import upsert_channel_connection
-from app.services.quota_service import QuotaExceededError
+from app.services.quota_service import QuotaExceededError, release_quota
+from app.services.provider_connection import ProviderConnectionError, verify_and_configure_bot
 from app.core.config import settings
 from app.tenancy.context import TenantContext
 
@@ -225,6 +230,153 @@ def connect_channel(
     )
     db.commit()
     return OnboardingChannelOut.model_validate(channel)
+
+
+@router.get("/shops/{business_id}/channels", response_model=list[OnboardingChannelStatusOut])
+def list_connected_channels(
+    business_id: int,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Return safe connection metadata without exposing provider secrets."""
+
+    _require_shop_admin(db, business_id, actor)
+    channels = (
+        db.query(Channel)
+        .filter(Channel.business_id == business_id, Channel.status == "active")
+        .order_by(Channel.channel_type.asc(), Channel.id.asc())
+        .all()
+    )
+    output = []
+    for channel in channels:
+        config = channel.config if isinstance(channel.config, dict) else {}
+        provider_account = config.get("provider_account")
+        output.append(
+            OnboardingChannelStatusOut(
+                id=channel.id,
+                business_id=channel.business_id,
+                channel_type=channel.channel_type,
+                external_account_id=channel.external_account_id,
+                name=channel.name,
+                status=channel.status,
+                connected_at=channel.connected_at,
+                provider_account=provider_account if isinstance(provider_account, dict) else None,
+                webhook_url=str(config.get("webhook_url") or "") or None,
+                webhook_status="connected" if config.get("webhook_url") else "unknown",
+            )
+        )
+    return output
+
+
+@router.delete("/shops/{business_id}/channels/{channel_id}")
+def disconnect_bot_channel(
+    business_id: int,
+    channel_id: int,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Disconnect a Bot Creator/BotFather channel while preserving history."""
+
+    _require_shop_admin(db, business_id, actor)
+    channel = db.get(Channel, channel_id)
+    if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo"}:
+        raise HTTPException(status_code=404, detail="Kênh bot không tồn tại.")
+    if channel.status == "active":
+        channel.status = "disconnected"
+        channel.disconnected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        release_quota(db, business_id, "connected_channels")
+    record_audit(
+        db,
+        business_id=business_id,
+        user_id=actor.id,
+        action="onboarding_bot_disconnected",
+        resource_type="channel",
+        resource_id=channel.id,
+        metadata={"channel_type": channel.channel_type, "external_account_id": channel.external_account_id},
+    )
+    db.commit()
+    return {"connected": False, "channel_id": channel.id}
+
+
+@router.post("/shops/{business_id}/channels/verify", response_model=OnboardingChannelVerifyOut)
+def verify_bot_channel(
+    business_id: int,
+    payload: OnboardingChannelVerify,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Verify a Telegram/Zalo Bot token and configure its tenant webhook."""
+
+    _require_shop_admin(db, business_id, actor)
+    public_base = str(settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
+    if not public_base.lower().startswith("https://"):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "public_https_required",
+                "message": "Cần cấu hình PUBLIC_BASE_URL bằng URL HTTPS công khai trước khi kết nối bot.",
+            },
+        )
+    webhook_url = f"{public_base}/api/webhooks/{payload.channel_type}"
+    # Hex is accepted by both Telegram and Zalo and avoids unsupported base64
+    # padding characters in the provider secret header.
+    import secrets
+
+    webhook_secret = secrets.token_hex(32)
+    try:
+        verification = verify_and_configure_bot(
+            channel_type=payload.channel_type,
+            access_token=payload.access_token,
+            webhook_url=webhook_url,
+            webhook_secret=webhook_secret,
+        )
+        channel = upsert_channel_connection(
+            db,
+            business_id=business_id,
+            channel_type=payload.channel_type,
+            external_account_id=verification["external_account_id"],
+            name=verification["name"],
+            access_token=payload.access_token.strip(),
+            config=_safe_channel_config(
+                {
+                    "provider": f"{payload.channel_type}_bot",
+                    "webhook_url": verification["webhook_url"],
+                    "webhook_secret": webhook_secret,
+                    "provider_account": verification["provider_account"],
+                }
+            ),
+        )
+    except ProviderConnectionError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail="Bot này đã thuộc shop khác.") from exc
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=exc.detail) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="Secret manager chưa sẵn sàng để lưu token.") from exc
+
+    record_audit(
+        db,
+        business_id=business_id,
+        user_id=actor.id,
+        action="onboarding_bot_verified",
+        resource_type="channel",
+        resource_id=channel.id,
+        metadata={"channel_type": channel.channel_type, "external_account_id": channel.external_account_id},
+    )
+    db.commit()
+    return OnboardingChannelVerifyOut(
+        id=channel.id,
+        business_id=channel.business_id,
+        channel_type=channel.channel_type,
+        external_account_id=channel.external_account_id,
+        name=channel.name,
+        status=channel.status,
+        connected_at=channel.connected_at,
+        provider_account=verification["provider_account"],
+        webhook_url=verification["webhook_url"],
+        webhook_status=verification["webhook_status"],
+    )
 
 
 @router.post("/shops/{business_id}/products/import", response_model=OnboardingProductImportOut)
