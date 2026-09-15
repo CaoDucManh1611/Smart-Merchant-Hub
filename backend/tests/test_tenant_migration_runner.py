@@ -14,6 +14,10 @@ def test_schema_name_is_server_generated_and_strict():
             validate_schema_name(invalid)
 
 
+@pytest.mark.skipif(
+    tenant_engine.dialect.name != "postgresql",
+    reason="tenant schema migrations require PostgreSQL",
+)
 def test_two_tenant_schemas_upgrade_independently_and_idempotently():
     schemas = ("shop_91001", "shop_91002")
     with tenant_engine.connect() as connection:

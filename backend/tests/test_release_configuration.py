@@ -6,6 +6,8 @@ from app.core.config import Settings
 def production_settings(**overrides):
     values = {
         "DATABASE_URL": "postgresql+psycopg://crm:password@db.example/crm",
+        "PLATFORM_DATABASE_URL": "postgresql+psycopg://crm:password@db.example/crm_platform",
+        "TENANT_DATABASE_URL": "postgresql+psycopg://crm:password@db.example/crm_tenant",
         "ENVIRONMENT": "production",
         "AUTH_SECRET": "auth-secret-for-release-checks-0123456789",
         "CHANNEL_ENCRYPTION_KEY": "channel-key-for-release-checks-0123456789",

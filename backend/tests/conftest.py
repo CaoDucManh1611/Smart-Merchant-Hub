@@ -20,6 +20,8 @@ _TEST_RUNTIME.mkdir(parents=True, exist_ok=True)
 (Path.cwd() / ".pytest_tmp").mkdir(parents=True, exist_ok=True)
 _GLOBAL_TEST_DATABASE = _TEST_RUNTIME / "global.db"
 os.environ["DATABASE_URL"] = "sqlite:///" + _GLOBAL_TEST_DATABASE.as_posix()
+os.environ["PLATFORM_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "platform.db").as_posix()
+os.environ["TENANT_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "tenant.db").as_posix()
 os.environ["ENVIRONMENT"] = "test"
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["RATE_LIMIT_BACKEND"] = "memory"
