@@ -63,6 +63,7 @@ class OnboardingShopOut(BaseModel):
     access_token: str
     expires_at: datetime
     subscription: OnboardingSubscriptionOut
+    provisioning_state: str = "pending"
 
 
 ChannelType = Literal["facebook", "instagram", "telegram", "zalo"]

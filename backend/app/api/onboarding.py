@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user, issue_token, require_admin_access, token_hash
 from app.auth.passwords import hash_password
 from app.database.bootstrap import ensure_default_plans
-from app.db.dependencies import get_db
+from app.database.platform_session import PlatformSessionLocal
+from app.db.dependencies import get_db, get_platform_db
 from app.models.auth_session import AuthSession
 from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.platform_control import PlatformBusiness
+from app.tenancy.provisioning import provision_shop, retry_provision_shop, ProvisioningValidationError
 from app.models.channel import Channel
 from app.models.inventory import StockMovement
 from app.models.sales import Product
@@ -31,6 +35,7 @@ from app.schemas.onboarding import (
     OnboardingShopOut,
     OnboardingSubscriptionOut,
 )
+from app.schemas.platform import ProvisioningOut, ProvisioningRequest
 from app.services.audit_service import record_audit
 from app.services.channel_credentials import encrypt_token
 from app.services.channel_service import upsert_channel_connection
@@ -41,6 +46,7 @@ from app.tenancy.context import TenantContext
 
 
 router = APIRouter(prefix="/onboarding")
+logger = logging.getLogger(__name__)
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _SECRET_KEY_RE = re.compile(r"(?i)(token|secret|password|authorization|api[_-]?key)")
 
@@ -69,6 +75,37 @@ def _active_plan(db: Session, code: str) -> ServicePlan:
     if plan is None:
         raise HTTPException(status_code=422, detail="Gói dịch vụ không tồn tại hoặc đã lưu trữ.")
     return plan
+
+
+def _start_platform_provisioning(business: Business) -> str:
+    """Mirror identity and start the schema saga without blocking signup.
+
+    Signup is committed in the legacy compatibility store first.  A temporary
+    platform/tenant outage therefore leaves a retryable ``provision_failed``
+    operation rather than losing the newly created shop.
+    """
+
+    try:
+        with PlatformSessionLocal() as platform_db:
+            platform_business = platform_db.get(PlatformBusiness, business.id)
+            if platform_business is None:
+                platform_business = PlatformBusiness(
+                    id=business.id,
+                    name=business.name,
+                    slug=business.slug,
+                    status=business.status,
+                )
+                platform_db.add(platform_business)
+                platform_db.commit()
+            registry = provision_shop(
+                platform_db,
+                business_id=business.id,
+                idempotency_key=f"onboarding-{business.id}",
+            )
+            return registry.state
+    except Exception as exc:  # noqa: BLE001 - signup must remain available
+        logger.warning("Shop provisioning deferred (%s)", type(exc).__name__)
+        return "provision_failed"
 
 
 def _require_shop_admin(db: Session, business_id: int, actor: User | None) -> User:
@@ -181,6 +218,7 @@ def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Không thể tạo shop với thông tin đã nhập.") from exc
+    provisioning_state = _start_platform_provisioning(business)
     return OnboardingShopOut(
         business_id=business.id,
         shop_name=business.name,
@@ -190,7 +228,63 @@ def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
         access_token=token,
         expires_at=expires_at,
         subscription=OnboardingSubscriptionOut(id=subscription.id, plan_code=plan.code, plan_name=plan.name, status=subscription.status),
+        provisioning_state=provisioning_state,
     )
+
+
+def _authorize_provisioning(actor: User, business_id: int) -> None:
+    if actor.business_id != business_id or actor.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+
+
+def _ensure_platform_identity(platform_db: Session, legacy_db: Session, business_id: int) -> None:
+    if platform_db.get(PlatformBusiness, business_id) is not None:
+        return
+    business = legacy_db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    platform_db.add(PlatformBusiness(id=business.id, name=business.name, slug=business.slug, status=business.status))
+    platform_db.commit()
+
+
+@router.post("/shops/{business_id}/provision", response_model=ProvisioningOut)
+def provision_onboarding_shop(
+    business_id: int,
+    payload: ProvisioningRequest | None = Body(default=None),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    actor: User = Depends(get_current_user),
+    legacy_db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+):
+    _authorize_provisioning(actor, business_id)
+    _ensure_platform_identity(platform_db, legacy_db, business_id)
+    key = (payload.idempotency_key if payload else None) or idempotency_key
+    if not key:
+        raise HTTPException(status_code=422, detail="Cần idempotency_key hoặc Idempotency-Key.")
+    try:
+        return provision_shop(platform_db, business_id=business_id, idempotency_key=key)
+    except ProvisioningValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/shops/{business_id}/provision/retry", response_model=ProvisioningOut)
+def retry_onboarding_shop(
+    business_id: int,
+    payload: ProvisioningRequest | None = Body(default=None),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    actor: User = Depends(get_current_user),
+    legacy_db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+):
+    _authorize_provisioning(actor, business_id)
+    _ensure_platform_identity(platform_db, legacy_db, business_id)
+    key = (payload.idempotency_key if payload else None) or idempotency_key
+    if not key:
+        raise HTTPException(status_code=422, detail="Cần idempotency_key hoặc Idempotency-Key.")
+    try:
+        return retry_provision_shop(platform_db, business_id=business_id, idempotency_key=key)
+    except ProvisioningValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/shops/{business_id}/channels", response_model=OnboardingChannelOut)

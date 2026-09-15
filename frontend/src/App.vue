@@ -16,20 +16,17 @@ import { getInboxChannels } from "./inbox-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
 import { notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
+import { apiFetch } from "./api-client.js";
+import { clearAuthToken, readAuthToken, storeAuthToken } from "./auth-context.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const BUSINESS_ID = "1";
 
-function apiFetch(input, init = {}) {
-  const headers = new Headers(init.headers || {});
-  if (!headers.has("X-Business-Id")) {
-    headers.set("X-Business-Id", BUSINESS_ID);
+function currentBusinessId() {
+  const businessId = Number(authUser.value?.business_id);
+  if (!Number.isInteger(businessId) || businessId < 1) {
+    throw new Error("Phiên đăng nhập chưa có shop hợp lệ.");
   }
-  const token = window.localStorage.getItem("crm_access_token");
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  return fetch(input, { ...init, headers });
+  return businessId;
 }
 
 
@@ -266,10 +263,10 @@ function salesStatusOptions(order) {
 }
 
 const authUser = ref(null);
-const authToken = ref(window.localStorage.getItem("crm_access_token") || "");
+const authToken = ref(readAuthToken());
 const authLoading = ref(false);
 const authError = ref("");
-const loginForm = ref({ email: "", password: "" });
+const loginForm = ref({ email: "", password: "", shop_slug: "" });
 const onboardingOpen = ref(false);
 const onboardingLoading = ref(false);
 const onboardingError = ref("");
@@ -550,7 +547,7 @@ async function fetchBotConnections() {
   botConnectionLoading.value = true;
   botConnectionError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels`);
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${currentBusinessId()}/channels`);
     const detail = await response.json().catch(() => []);
     if (!response.ok) throw new Error(botConnectionErrorMessage(detail, `HTTP ${response.status}`));
     botConnections.value = Array.isArray(detail)
@@ -575,7 +572,7 @@ async function connectBotChannel() {
   botConnectionError.value = "";
   botConnectionNotice.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels/verify`, {
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${currentBusinessId()}/channels/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -606,7 +603,7 @@ async function disconnectBotChannel(connection) {
   botConnectionError.value = "";
   botConnectionNotice.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels/${connection.id}`, { method: "DELETE" });
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${currentBusinessId()}/channels/${connection.id}`, { method: "DELETE" });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(botConnectionErrorMessage(detail, `HTTP ${response.status}`));
     botConnectionNotice.value = "Đã ngắt kết nối bot nhưng vẫn giữ nguyên lịch sử hội thoại.";
@@ -3275,7 +3272,7 @@ async function loadAuthSession() {
       await fetchQuotaUsage();
     }
     else {
-      window.localStorage.removeItem("crm_access_token");
+      clearAuthToken();
       authToken.value = "";
     }
   } catch {
@@ -3331,7 +3328,7 @@ async function createOnboardingShop() {
     });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
-    window.localStorage.setItem("crm_access_token", detail.access_token);
+    storeAuthToken(detail.access_token);
     authToken.value = detail.access_token;
     authUser.value = { id: detail.owner_id, business_id: detail.business_id, full_name: onboardingForm.value.owner_name, email: detail.owner_email, role: "owner", is_active: true, mfa_status: "disabled" };
     onboardingForm.value = { shop_name: "", owner_name: "", owner_email: "", password: "", plan_code: "starter" };
@@ -3366,21 +3363,27 @@ async function login() {
   authLoading.value = true;
   authError.value = "";
   try {
+    const credentials = {
+      email: loginForm.value.email,
+      password: loginForm.value.password,
+      ...(loginForm.value.shop_slug.trim() ? { shop_slug: loginForm.value.shop_slug.trim() } : {}),
+    };
     const response = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Business-Id": BUSINESS_ID },
-      body: JSON.stringify(loginForm.value),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(credentials),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || "Đăng nhập thất bại.");
     }
     const data = await response.json();
-    window.localStorage.setItem("crm_access_token", data.access_token);
+    storeAuthToken(data.access_token);
     authToken.value = data.access_token;
     authUser.value = { ...data.user, mfa_required: Boolean(data.mfa_required) };
     mfaVerifyPending.value = Boolean(data.mfa_required);
     loginForm.value.password = "";
+    loginForm.value.shop_slug = "";
     if (!mfaVerifyPending.value) {
       await fetchSecuritySettings();
       await fetchQuotaUsage();
@@ -3395,7 +3398,7 @@ async function login() {
 
 async function logout() {
   try { if (authToken.value) await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" }); } catch { /* session may already be expired */ }
-  window.localStorage.removeItem("crm_access_token");
+  clearAuthToken();
   authToken.value = "";
   authUser.value = null;
   authSessions.value = [];
@@ -5464,6 +5467,9 @@ onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
 
   await loadAuthSession();
+  // Tenant data is only loaded after the platform session identifies an
+  // active shop.  Anonymous mode intentionally exposes onboarding/login only.
+  if (!authUser.value) return;
 
   await loadConversations(
     true
@@ -8739,11 +8745,12 @@ onUnmounted(() => {
               <h2>Đăng nhập CRM</h2>
               <p>Phiên đăng nhập giúp áp dụng vai trò và ghi audit log cho thao tác.</p>
             </div>
-            <span class="connection-badge" :class="{ connected: authUser }">{{ authUser ? 'ĐÃ ĐĂNG NHẬP' : 'ĐANG DÙNG CHẾ ĐỘ DEV' }}</span>
+            <span class="connection-badge" :class="{ connected: authUser }">{{ authUser ? 'ĐÃ ĐĂNG NHẬP' : 'CẦN ĐĂNG NHẬP' }}</span>
           </div>
           <form v-if="!authUser" class="team-form" @submit.prevent="login">
             <input v-model="loginForm.email" required type="email" placeholder="Email công việc" />
             <input v-model="loginForm.password" required type="password" placeholder="Mật khẩu" />
+            <input v-model="loginForm.shop_slug" type="text" maxlength="120" placeholder="Mã shop (nếu email dùng nhiều shop)" />
             <button class="primary-btn" type="submit" :disabled="authLoading">{{ authLoading ? 'Đang đăng nhập...' : 'Đăng nhập' }}</button>
           </form>
           <div v-if="!authUser" class="onboarding-entry">

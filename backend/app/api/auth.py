@@ -9,10 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_authenticated_session, get_current_user, issue_token, require_admin_access, token_hash
 from app.auth.passwords import verify_password
+from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
-from app.models.business import User
+from app.models.business import Business, User
 from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut, MfaVerifyOut, MfaVerifyRequest
 from app.services.audit_service import record_audit
 from app.services.mfa_service import disable_mfa, enable_mfa, prepare_mfa, verify_mfa_code
@@ -31,12 +32,16 @@ def login(
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
     x_device_label: str | None = Header(default=None, alias="X-Device-Label"),
 ):
+    if x_business_id and settings.ENVIRONMENT.strip().lower() == "production":
+        raise HTTPException(status_code=400, detail="X-Business-Id không được dùng trong production.")
     query = db.query(User).filter(User.email.ilike(payload.email.strip()), User.is_active.is_(True))
     if x_business_id:
         try:
             query = query.filter(User.business_id == int(x_business_id))
         except ValueError:
             raise HTTPException(status_code=422, detail="X-Business-Id không hợp lệ.") from None
+    if payload.shop_slug:
+        query = query.join(Business, Business.id == User.business_id).filter(Business.slug == payload.shop_slug.strip().lower())
     users = query.all()
     if len(users) != 1 or not verify_password(payload.password, users[0].password_hash):
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")

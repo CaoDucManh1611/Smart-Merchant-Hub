@@ -82,6 +82,21 @@ class TenantSchemaUpdate(BaseModel):
     feature_enabled: bool | None = None
 
 
+class ProvisioningOut(BaseModel):
+    business_id: int
+    schema_name: str
+    state: str
+    feature_enabled: bool
+    tenant_revision: str | None = None
+    migration_error: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProvisioningRequest(BaseModel):
+    idempotency_key: str = Field(..., min_length=8, max_length=180)
+
+
 class PlatformPlanCreate(BaseModel):
     code: str = Field(..., min_length=2, max_length=50, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
     name: str = Field(..., min_length=2, max_length=120)

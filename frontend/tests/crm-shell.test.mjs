@@ -6,6 +6,8 @@ const appSource = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "u
 const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 const indexSource = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const channelUtilsSource = fs.readFileSync(new URL("../src/channel-utils.js", import.meta.url), "utf8");
+const apiClientSource = fs.readFileSync(new URL("../src/api-client.js", import.meta.url), "utf8");
+const authContextSource = fs.readFileSync(new URL("../src/auth-context.js", import.meta.url), "utf8");
 const templateSource = appSource.slice(appSource.indexOf("<template>"), appSource.lastIndexOf("</template>"));
 
 function openingButtonTags(source) {
@@ -44,6 +46,15 @@ test("CRM shell uses neutral product branding instead of legacy food branding", 
   assert.doesNotMatch(appSource, /Lunari Food|Combo gà sốt phô mai|Món yêu thích|Tokbokki|Khoai tây lắc/);
   assert.doesNotMatch(styleSource, /Patrick Hand|lunari-logo|food-cup|side-heart|decor-heart/);
   assert.doesNotMatch(indexSource, /Lunari/);
+});
+
+test("tenant identity comes from the authenticated session, never a hardcoded browser selector", () => {
+  assert.doesNotMatch(appSource, /BUSINESS_ID\s*=|X-Business-Id/);
+  assert.match(appSource, /from "\.\/api-client\.js"/);
+  assert.match(appSource, /from "\.\/auth-context\.js"/);
+  assert.match(apiClientSource, /Authorization/);
+  assert.doesNotMatch(apiClientSource, /X-Business-Id|BUSINESS_ID/);
+  assert.match(authContextSource, /AUTH_TOKEN_KEY/);
 });
 
 test("customer avatars use the local API proxy and fall back when providers reject stale URLs", () => {
