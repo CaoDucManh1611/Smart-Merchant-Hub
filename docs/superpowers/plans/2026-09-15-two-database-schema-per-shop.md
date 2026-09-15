@@ -52,7 +52,7 @@ def test_production_requires_two_database_urls():
 - [x] Add the two settings plus `platform_database_url` and `tenant_database_url` compatibility properties; warn once in non-production when falling back.
 - [x] Update Compose backend/worker environment and health checks to use both URLs; keep the existing PostgreSQL service for local work by creating `crm_platform` and `crm_tenant` databases in an idempotent init script.
 - [x] Run the focused test, then `docker compose config`.
-- [ ] Commit only these files: `git commit -m "feat: define platform and tenant database boundaries"`.
+- [x] Commit only these files: `git commit -m "feat: define platform and tenant database boundaries"`.
 
 ### Task 2: Tách SQLAlchemy base, engine và dependency
 
@@ -81,7 +81,7 @@ def tenant_session(schema_name: str) -> ContextManager[Session]: ...
 - [x] Implement `tenant_session` with validated schema, quoted identifier and transaction-local `set_config('search_path', ..., true)` or equivalent safe SQLAlchemy statement.
 - [x] Make `get_db` a temporary alias for `get_platform_db`; new code must name its database dependency explicitly.
 - [x] Run focused tests and `python -m compileall app/database app/db` inside backend container.
-- [ ] Commit: `git commit -m "refactor: split platform and tenant database sessions"`.
+- [x] Commit: `git commit -m "refactor: split platform and tenant database sessions"`.
 
 ### Task 3: Tạo control-plane models và Alembic chain
 
@@ -107,7 +107,7 @@ def tenant_session(schema_name: str) -> ContextManager[Session]: ...
 - [x] Implement initial platform migration for businesses, users, sessions, roles/permissions, plans, subscriptions, payments, usage/quota, registry, routes, support grants and platform audit.
 - [x] Store only sanitized error codes in provisioning/platform records; detailed stack traces stay in protected operational logs.
 - [x] Run `alembic -c alembic-platform.ini upgrade head` against a fresh `crm_platform_test` database and run `pytest -q tests/test_platform_schema.py`.
-- [ ] Commit: `git commit -m "feat: add SaaS control-plane schema"`.
+- [x] Commit: `git commit -m "feat: add SaaS control-plane schema"`.
 
 ### Task 4: Tạo tenant template và migration runner
 
@@ -134,7 +134,7 @@ def current_tenant_revision(connection: Connection, schema_name: str) -> str | N
 - [x] Implement schema translation/configuration so Alembic creates objects only inside the requested validated schema.
 - [x] Create two test schemas, upgrade both, assert equal table sets and separate version rows.
 - [x] Run `pytest -q tests/test_tenant_migration_runner.py tests/test_rag_tenant_isolation.py`.
-- [ ] Commit: `git commit -m "feat: add versioned tenant schema template"`.
+- [x] Commit: `git commit -m "feat: add versioned tenant schema template"`.
 
 ---
 
