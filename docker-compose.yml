@@ -10,6 +10,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-multi-db.sh:/docker-entrypoint-initdb.d/10-multi-db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -28,6 +29,20 @@ services:
       timeout: 3s
       retries: 10
 
+  db-init:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      PGHOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./docker/postgres/init-multi-db.sh:/opt/init-multi-db.sh:ro
+    entrypoint: ["/bin/sh", "/opt/init-multi-db.sh"]
+    restart: "no"
+
   backend:
     build:
       context: ./backend
@@ -38,12 +53,14 @@ services:
       # Trong Docker, PostgreSQL được truy cập qua tên service `db`,
       # không phải localhost/127.0.0.1.
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in backend/.env or compose environment}
+      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_platform}
+      TENANT_DATABASE_URL: ${TENANT_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_tenant}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     volumes:
@@ -51,8 +68,12 @@ services:
       # Keep the running container's migration directory aligned with the
       # checkout so a restart applies additive P1 revisions immediately.
       - ./backend/alembic:/app/alembic
+      - ./backend/alembic_platform:/app/alembic_platform
+      - ./backend/alembic_tenant:/app/alembic_tenant
+      - ./backend/alembic-platform.ini:/app/alembic-platform.ini:ro
+      - ./backend/alembic-tenant.ini:/app/alembic-tenant.ini:ro
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); raise SystemExit(0 if response.status == 200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request; from sqlalchemy import text; from app.database.platform_session import PlatformSessionLocal; from app.database.tenant_session import TenantSessionLocal; p=PlatformSessionLocal(); t=TenantSessionLocal(); p.execute(text('SELECT 1')); t.execute(text('SELECT 1')); p.close(); t.close(); response=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); raise SystemExit(0 if response.status == 200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -86,13 +107,15 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in backend/.env or compose environment}
+      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_platform}
+      TENANT_DATABASE_URL: ${TENANT_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_tenant}
     depends_on:
       backend:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
     healthcheck:
-      test: ["CMD", "python", "-c", "from sqlalchemy import text; from app.database.session import SessionLocal; db = SessionLocal(); db.execute(text('SELECT 1')); db.close()"]
+      test: ["CMD", "python", "-c", "from sqlalchemy import text; from app.database.platform_session import PlatformSessionLocal; from app.database.tenant_session import TenantSessionLocal; p=PlatformSessionLocal(); t=TenantSessionLocal(); p.execute(text('SELECT 1')); t.execute(text('SELECT 1')); p.close(); t.close()"]
       interval: 10s
       timeout: 5s
       retries: 12

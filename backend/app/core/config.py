@@ -1,9 +1,14 @@
+import warnings
+
+from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.secret_manager import load_runtime_secrets
 
 
 class Settings(BaseSettings):
+    _database_fallback_warned: set[str] = PrivateAttr(default_factory=set)
+
     APP_NAME: str = "CRM Chatbot API"
     ENVIRONMENT: str = "development"
     CHANNEL_ENCRYPTION_KEY: str = ""
@@ -11,7 +16,9 @@ class Settings(BaseSettings):
     SECRET_MANAGER_MODE: str = "env"
     SECRET_MANAGER_FILE: str = ""
 
-    DATABASE_URL: str
+    DATABASE_URL: str = ""
+    PLATFORM_DATABASE_URL: str = ""
+    TENANT_DATABASE_URL: str = ""
 
     # Never rely on this development value in a deployed environment.  A
     # real value must be supplied through the secret manager/.env file.
@@ -150,6 +157,30 @@ class Settings(BaseSettings):
     def embedding_api_keys(self) -> list[str]:
         return self._csv(self.EMBEDDING_API_KEYS) or self._csv(self.EMBEDDING_API_KEY) or self.llm_api_keys
 
+    def _database_url(self, explicit_value: str, setting_name: str) -> str:
+        value = str(explicit_value or "").strip()
+        if value:
+            return value
+        legacy = str(self.DATABASE_URL or "").strip()
+        if legacy and self.ENVIRONMENT.strip().lower() != "production":
+            if setting_name not in self._database_fallback_warned:
+                warnings.warn(
+                    f"{setting_name} is falling back to legacy DATABASE_URL; configure the explicit URL before production",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self._database_fallback_warned.add(setting_name)
+            return legacy
+        return ""
+
+    @property
+    def platform_database_url(self) -> str:
+        return self._database_url(self.PLATFORM_DATABASE_URL, "PLATFORM_DATABASE_URL")
+
+    @property
+    def tenant_database_url(self) -> str:
+        return self._database_url(self.TENANT_DATABASE_URL, "TENANT_DATABASE_URL")
+
     def validate_runtime(self) -> None:
         """Fail closed for settings that are unsafe in production.
 
@@ -166,8 +197,18 @@ class Settings(BaseSettings):
             problems.append("AUTH_SECRET must be a random value of at least 32 characters")
         if self.CHANNEL_ENCRYPTION_KEY.strip().lower() in placeholders or len(self.CHANNEL_ENCRYPTION_KEY.strip()) < 32:
             problems.append("CHANNEL_ENCRYPTION_KEY must be a random value of at least 32 characters")
-        if not self.DATABASE_URL.lower().startswith(("postgresql://", "postgresql+psycopg://")):
-            problems.append("DATABASE_URL must point to PostgreSQL")
+        platform_url = self.PLATFORM_DATABASE_URL.strip()
+        tenant_url = self.TENANT_DATABASE_URL.strip()
+        if not platform_url:
+            problems.append("PLATFORM_DATABASE_URL must be configured in production")
+        elif not platform_url.lower().startswith(("postgresql://", "postgresql+psycopg://")):
+            problems.append("PLATFORM_DATABASE_URL must point to PostgreSQL")
+        if not tenant_url:
+            problems.append("TENANT_DATABASE_URL must be configured in production")
+        elif not tenant_url.lower().startswith(("postgresql://", "postgresql+psycopg://")):
+            problems.append("TENANT_DATABASE_URL must point to PostgreSQL")
+        if platform_url and tenant_url and platform_url == tenant_url:
+            problems.append("PLATFORM_DATABASE_URL and TENANT_DATABASE_URL must be different in production")
         if not self.cors_origins or "*" in self.cors_origins:
             problems.append("CORS_ORIGINS must be an explicit allowlist")
         if not self.allowed_hosts or "*" in self.allowed_hosts:
