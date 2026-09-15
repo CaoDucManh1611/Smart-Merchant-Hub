@@ -119,3 +119,24 @@ class TenantSchemaRegistry(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     business = relationship("Business")
+
+
+class SupportGrant(Base):
+    """Owner-approved, time-bound operational support grant.
+
+    This compatibility copy lives in the legacy control database while the
+    platform schema is being rolled out.  It intentionally contains only
+    identity, scope and audit metadata—never customer content or credentials.
+    """
+
+    __tablename__ = "support_grants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    granted_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    support_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    scopes: Mapped[list | dict] = mapped_column(JSON, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
