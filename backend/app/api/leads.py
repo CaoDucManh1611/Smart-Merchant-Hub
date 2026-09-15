@@ -8,7 +8,8 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
+from app.database.platform_session import get_platform_db
 from app.models.business import User
 from app.models.conversation import Conversation
 from app.models.customer import Customer
@@ -64,10 +65,10 @@ def _get_conversation(db: Session, conversation_id: int, customer_id: int, tenan
     return conversation
 
 
-def _validate_assignee(db: Session, user_id: int | None, tenant: TenantContext) -> None:
+def _validate_assignee(platform_db: Session, user_id: int | None, tenant: TenantContext) -> None:
     if user_id is None:
         return
-    user = db.query(User).filter(
+    user = platform_db.query(User).filter(
         User.id == user_id,
         User.business_id == tenant.business_id,
         User.is_active.is_(True),
@@ -113,7 +114,7 @@ def _out(lead: Lead) -> LeadOut:
 
 @router.get("/leads", response_model=LeadListOut)
 def list_leads(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     stage: str | None = None,
     status: str | None = None,
@@ -134,7 +135,8 @@ def list_leads(
 @router.post("/leads", response_model=LeadOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_lead(
     payload: LeadCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _validate_stage(payload.stage)
@@ -142,7 +144,7 @@ def create_lead(
     conversation = None
     if payload.conversation_id is not None:
         conversation = _get_conversation(db, payload.conversation_id, customer.id, tenant)
-    _validate_assignee(db, payload.assigned_user_id, tenant)
+    _validate_assignee(platform_db, payload.assigned_user_id, tenant)
     lead = Lead(
         business_id=tenant.business_id,
         customer_id=customer.id,
@@ -166,12 +168,13 @@ def create_lead(
         "lead.stage_changed",
         f"lead:{lead.id}:stage:{lead.stage}",
         {"lead_id": lead.id, "customer_id": lead.customer_id, "conversation_id": lead.conversation_id, "stage": lead.stage, "value": float(lead.value or 0)},
+        platform_db=platform_db,
     )
     return _out(_get_lead(db, lead.id, tenant))
 
 
 @router.get("/leads/{lead_id}", response_model=LeadOut)
-def get_lead(lead_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def get_lead(lead_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return _out(_get_lead(db, lead_id, tenant))
 
 
@@ -179,7 +182,8 @@ def get_lead(lead_id: int, db: Session = Depends(get_db), tenant: TenantContext 
 def update_lead(
     lead_id: int,
     payload: LeadUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     lead = _get_lead(db, lead_id, tenant)
@@ -196,7 +200,7 @@ def update_lead(
     if "conversation_id" in data and data["conversation_id"] is not None:
         conversation = _get_conversation(db, data["conversation_id"], customer_id, tenant)
         data["source_channel"] = data.get("source_channel") or conversation.channel
-    _validate_assignee(db, data.get("assigned_user_id", lead.assigned_user_id), tenant)
+    _validate_assignee(platform_db, data.get("assigned_user_id", lead.assigned_user_id), tenant)
     for field, value in data.items():
         field = "metadata_" if field == "metadata" else field
         if field in {"title", "notes", "source_channel"} and isinstance(value, str):
@@ -210,13 +214,14 @@ def update_lead(
             "lead.stage_changed",
             f"lead:{lead.id}:stage:{lead.stage}",
             {"lead_id": lead.id, "customer_id": lead.customer_id, "conversation_id": lead.conversation_id, "stage": lead.stage, "value": float(lead.value or 0)},
+            platform_db=platform_db,
         )
     return _out(_get_lead(db, lead_id, tenant))
 
 
 @router.get("/reports/pipeline", response_model=PipelineReportOut)
 def pipeline_report(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     start_at: datetime | None = None,
     end_at: datetime | None = None,
@@ -251,7 +256,7 @@ def pipeline_report(
 
 
 @router.get("/leads/{lead_id}/activities", response_model=LeadActivityListOut)
-def list_lead_activities(lead_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_lead_activities(lead_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     _get_lead(db, lead_id, tenant)
     query = db.query(LeadActivity).filter(LeadActivity.business_id == tenant.business_id, LeadActivity.lead_id == lead_id)
     total = query.count()
@@ -263,7 +268,7 @@ def list_lead_activities(lead_id: int, db: Session = Depends(get_db), tenant: Te
 def create_lead_activity(
     lead_id: int,
     payload: LeadActivityCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -288,7 +293,7 @@ def create_lead_activity(
 def convert_lead(
     lead_id: int,
     payload: LeadConversionCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):

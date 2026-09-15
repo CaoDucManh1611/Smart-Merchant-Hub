@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
+from app.database.platform_session import get_platform_db
 from app.models.business import User
 from app.models.conversation import Conversation
 from app.models.customer import Customer
@@ -72,10 +73,10 @@ def _conversation(db: Session, conversation_id: int, customer_id: int, tenant: T
     return conversation
 
 
-def _assignee(db: Session, user_id: int | None, tenant: TenantContext) -> None:
+def _assignee(platform_db: Session, user_id: int | None, tenant: TenantContext) -> None:
     if user_id is None:
         return
-    user = db.query(User).filter(User.id == user_id, User.business_id == tenant.business_id, User.is_active.is_(True)).first()
+    user = platform_db.query(User).filter(User.id == user_id, User.business_id == tenant.business_id, User.is_active.is_(True)).first()
     if user is None:
         raise HTTPException(status_code=404, detail="Nhân viên không thuộc business hoặc đã bị vô hiệu hóa.")
 
@@ -163,7 +164,7 @@ def _enqueue_sla_job(db: Session, ticket: Ticket) -> None:
 
 @router.get("/tickets", response_model=TicketListOut)
 def list_tickets(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     status: str | None = None,
     priority: str | None = None,
@@ -188,7 +189,8 @@ def list_tickets(
 @router.post("/tickets", response_model=TicketOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_ticket(
     payload: TicketCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -197,7 +199,7 @@ def create_ticket(
     conversation = None
     if payload.conversation_id is not None:
         conversation = _conversation(db, payload.conversation_id, customer.id, tenant)
-    _assignee(db, payload.assigned_user_id, tenant)
+    _assignee(platform_db, payload.assigned_user_id, tenant)
     now = _utcnow()
     resolved_at = now if payload.status in ("resolved", "closed") else None
     due_at = payload.sla_due_at or (now + timedelta(hours=SLA_HOURS[payload.priority]))
@@ -256,6 +258,7 @@ def create_ticket(
         "ticket.created",
         f"ticket:{ticket.id}:created",
         {"ticket_id": ticket.id, "customer_id": ticket.customer_id, "conversation_id": ticket.conversation_id, "priority": ticket.priority, "status": ticket.status},
+        platform_db=platform_db,
     )
     return _out(_ticket(db, ticket.id, tenant))
 
@@ -264,7 +267,8 @@ def create_ticket(
 def update_ticket(
     ticket_id: int,
     payload: TicketUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -280,7 +284,7 @@ def update_ticket(
         data["conversation_id"] = None
     if "conversation_id" in data and data["conversation_id"] is not None:
         _conversation(db, data["conversation_id"], customer_id, tenant)
-    _assignee(db, data.get("assigned_user_id", ticket.assigned_user_id), tenant)
+    _assignee(platform_db, data.get("assigned_user_id", ticket.assigned_user_id), tenant)
     for field, value in data.items():
         setattr(ticket, field, value.strip() if isinstance(value, str) else value)
     if "status" in data:
@@ -363,6 +367,7 @@ def update_ticket(
             "ticket.status_changed",
             f"ticket:{ticket.id}:status:{ticket.status}",
             {"ticket_id": ticket.id, "customer_id": ticket.customer_id, "conversation_id": ticket.conversation_id, "priority": ticket.priority, "status": ticket.status},
+            platform_db=platform_db,
         )
     return _out(_ticket(db, ticket_id, tenant))
 
@@ -371,7 +376,7 @@ def update_ticket(
 def add_ticket_comment(
     ticket_id: int,
     payload: TicketCommentCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -407,7 +412,7 @@ def add_ticket_comment(
 
 @router.get("/tickets/sla-notifications", response_model=SlaNotificationListOut)
 def sla_notifications(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     now = _utcnow()
@@ -466,7 +471,7 @@ def sla_notifications(
 @router.get("/tickets/{ticket_id}/history", response_model=TicketHistoryOut)
 def ticket_history(
     ticket_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _ticket(db, ticket_id, tenant)
@@ -481,13 +486,13 @@ def ticket_history(
 
 
 @router.get("/tickets/{ticket_id}", response_model=TicketOut)
-def get_ticket(ticket_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def get_ticket(ticket_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return _out(_ticket(db, ticket_id, tenant))
 
 
 @router.get("/reports/tickets", response_model=TicketReportOut)
 def ticket_report(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     start_at: datetime | None = None,
     end_at: datetime | None = None,

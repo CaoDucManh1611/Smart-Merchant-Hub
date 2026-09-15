@@ -8,13 +8,13 @@ from decimal import Decimal
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class RuleSuggestion(Base):
+class RuleSuggestion(TenantBase):
     __tablename__ = "rule_suggestions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     workflow_id: Mapped[int | None] = mapped_column(ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
@@ -24,7 +24,7 @@ class RuleSuggestion(Base):
     source_event_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     proposed_workflow_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
-    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reviewer_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     converted_workflow_id: Mapped[int | None] = mapped_column(ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -33,10 +33,10 @@ class RuleSuggestion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class FeatureSnapshot(Base):
+class FeatureSnapshot(TenantBase):
     __tablename__ = "feature_snapshots"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
     feature_version: Mapped[str] = mapped_column(String(40), nullable=False)
     features: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -44,10 +44,10 @@ class FeatureSnapshot(Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
-class Experiment(Base):
+class Experiment(TenantBase):
     __tablename__ = "experiments"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     variants: Mapped[list] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft", index=True)
@@ -57,24 +57,24 @@ class Experiment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class ExperimentAssignment(Base):
+class ExperimentAssignment(TenantBase):
     __tablename__ = "experiment_assignments"
     __table_args__ = (UniqueConstraint("experiment_id", "subject_key", name="uq_experiment_assignment_subject"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_key: Mapped[str] = mapped_column(String(255), nullable=False)
     variant: Mapped[str] = mapped_column(String(80), nullable=False)
     assigned_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class ExperimentExposure(Base):
+class ExperimentExposure(TenantBase):
     __tablename__ = "experiment_exposures"
     __table_args__ = (
         UniqueConstraint("experiment_id", "idempotency_key", name="uq_experiment_exposure_idempotency"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False, index=True)
     assignment_id: Mapped[int | None] = mapped_column(ForeignKey("experiment_assignments.id", ondelete="CASCADE"), nullable=True, index=True)
     subject_key: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -83,10 +83,10 @@ class ExperimentExposure(Base):
     exposed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
-class ExperimentOutcome(Base):
+class ExperimentOutcome(TenantBase):
     __tablename__ = "experiment_outcomes"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     assignment_id: Mapped[int] = mapped_column(ForeignKey("experiment_assignments.id", ondelete="CASCADE"), nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String(80), nullable=False)
     value: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
@@ -94,13 +94,13 @@ class ExperimentOutcome(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class ExperimentMetricAggregate(Base):
+class ExperimentMetricAggregate(TenantBase):
     __tablename__ = "experiment_metric_aggregates"
     __table_args__ = (
         UniqueConstraint("experiment_id", "metric", "variant", name="uq_experiment_metric_variant"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String(80), nullable=False)
     variant: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -110,13 +110,13 @@ class ExperimentMetricAggregate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
-class ModelVersion(Base):
+class ModelVersion(TenantBase):
     __tablename__ = "model_versions"
     __table_args__ = (
         UniqueConstraint("business_id", "name", "version", name="uq_model_version_business_name_version"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     version: Mapped[str] = mapped_column(String(40), nullable=False)
     feature_version: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -128,10 +128,10 @@ class ModelVersion(Base):
     trained_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
-class ModelTrainingRun(Base):
+class ModelTrainingRun(TenantBase):
     __tablename__ = "model_training_runs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     model_version_id: Mapped[int] = mapped_column(ForeignKey("model_versions.id", ondelete="CASCADE"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running", index=True)
     snapshot_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
@@ -144,23 +144,23 @@ class ModelTrainingRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
-class ModelEvaluationMetric(Base):
+class ModelEvaluationMetric(TenantBase):
     __tablename__ = "model_evaluation_metrics"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     training_run_id: Mapped[int] = mapped_column(ForeignKey("model_training_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String(80), nullable=False)
     split: Mapped[str] = mapped_column(String(30), nullable=False, default="holdout")
     value: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False)
 
 
-class BanditPolicy(Base):
+class BanditPolicy(TenantBase):
     __tablename__ = "bandit_policies"
     __table_args__ = (
         UniqueConstraint("experiment_id", "version", name="uq_bandit_policy_experiment_version"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False, index=True)
     version: Mapped[str] = mapped_column(String(40), nullable=False)
     epsilon: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False, default=Decimal("0.10"))
@@ -169,13 +169,13 @@ class BanditPolicy(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class BanditArmStat(Base):
+class BanditArmStat(TenantBase):
     __tablename__ = "bandit_arm_stats"
     __table_args__ = (
         UniqueConstraint("policy_id", "arm", "context_hash", name="uq_bandit_arm_context"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     policy_id: Mapped[int] = mapped_column(ForeignKey("bandit_policies.id", ondelete="CASCADE"), nullable=False, index=True)
     arm: Mapped[str] = mapped_column(String(80), nullable=False)
     context_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -184,10 +184,10 @@ class BanditArmStat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
-class BanditDecision(Base):
+class BanditDecision(TenantBase):
     __tablename__ = "bandit_decisions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_key: Mapped[str] = mapped_column(String(255), nullable=False)
     arm: Mapped[str] = mapped_column(String(80), nullable=False)

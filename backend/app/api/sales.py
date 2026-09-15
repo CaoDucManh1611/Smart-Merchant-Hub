@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
+from app.database.platform_session import get_platform_db
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.inventory import StockMovement
@@ -121,7 +122,7 @@ def _order_out(order: Order) -> OrderOut:
 
 @router.get("/products", response_model=ProductListOut)
 def list_products(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     status: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
@@ -138,7 +139,7 @@ def list_products(
 @router.post("/products", response_model=ProductOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_product(
     payload: ProductCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -183,7 +184,7 @@ def create_product(
 @router.get("/products/{product_id}", response_model=ProductOut)
 def get_product(
     product_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     return _product(db, product_id, tenant)
@@ -193,7 +194,7 @@ def get_product(
 def update_product(
     product_id: int,
     payload: ProductUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -223,7 +224,7 @@ def update_product(
 @router.delete("/products/{product_id}", status_code=204, dependencies=[Depends(require_write_access)])
 def delete_product(
     product_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -237,7 +238,7 @@ def delete_product(
 
 @router.get("/orders", response_model=OrderListOut)
 def list_orders(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     status: str | None = None,
     customer_id: int | None = None,
@@ -261,7 +262,7 @@ def list_orders(
 
 @router.get("/reports/revenue-by-channel", response_model=RevenueByChannelOut)
 def revenue_by_channel(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Aggregate tenant orders by the channel of their originating conversation.
@@ -302,7 +303,8 @@ def revenue_by_channel(
 @router.post("/orders", response_model=OrderOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_order(
     payload: OrderCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -383,6 +385,7 @@ def create_order(
         "order.created",
         f"order:{order.id}:created",
         {"order_id": order.id, "customer_id": order.customer_id, "conversation_id": order.conversation_id, "status": order.status, "total_amount": float(order.total_amount or 0)},
+        platform_db=platform_db,
     )
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="create", resource_type="sales_order", resource_id=str(order.id), metadata={"order_number": order.order_number, "total_amount": float(order.total_amount or 0)})
@@ -393,7 +396,7 @@ def create_order(
 @router.get("/orders/{order_id}", response_model=OrderOut)
 def get_order(
     order_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     return _order_out(_order(db, order_id, tenant))
@@ -403,7 +406,7 @@ def get_order(
 def update_order_logistics(
     order_id: int,
     payload: OrderLogisticsUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -444,7 +447,7 @@ def update_order_logistics(
 def update_order(
     order_id: int,
     payload: OrderUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -465,7 +468,7 @@ def update_order(
 def transition_order(
     order_id: int,
     payload: OrderTransition,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):

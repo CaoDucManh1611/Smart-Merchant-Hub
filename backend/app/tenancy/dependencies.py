@@ -1,13 +1,15 @@
 """FastAPI dependency for obtaining a trusted tenant context."""
 
 from fastapi import Depends, Header, HTTPException, Request
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.database.platform_session import get_platform_db
 from app.tenancy.context import TenantContext, resolve_tenant_context
 from app.auth.dependencies import get_optional_user
 from app.models.business import User
+from app.models.platform_control import TenantRegistry
 from app.db.dependencies import get_db
 
 
@@ -42,6 +44,7 @@ def get_tenant_context(
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
     authenticated_user: User | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
 ) -> TenantContext:
     """Resolve tenant set by authentication/webhook middleware or dev header."""
     try:
@@ -56,6 +59,26 @@ def get_tenant_context(
             environment=settings.ENVIRONMENT,
         )
         _set_database_tenant(db, tenant.business_id)
+        # Production never opens a shop schema merely because a user row or
+        # bearer claim exists.  The platform registry is the source of truth
+        # for provisioning/cutover state and prevents access to a partial or
+        # disabled schema.  Development keeps the legacy header workflow so
+        # local smoke tests can run before the pilot registry is populated.
+        if settings.ENVIRONMENT.strip().lower() == "production":
+            try:
+                registry = platform_db.scalar(
+                    select(TenantRegistry).where(
+                        TenantRegistry.business_id == tenant.business_id,
+                    )
+                )
+            except Exception as exc:
+                raise PermissionError("Tenant registry is unavailable") from exc
+            if (
+                registry is None
+                or registry.state != "active"
+                or not bool(registry.feature_enabled)
+            ):
+                raise PermissionError("Tenant is not active")
         return tenant
     except PermissionError as exc:
         # Tenant resolution is an HTTP boundary.  A bad/missing context must

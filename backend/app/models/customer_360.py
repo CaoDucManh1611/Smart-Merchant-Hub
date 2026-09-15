@@ -21,14 +21,14 @@ from sqlalchemy import (
     text,
 )
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
 customer_merge_operations = Table(
     "customer_merge_operations",
-    Base.metadata,
+    TenantBase.metadata,
     Column("id", Integer, primary_key=True),
-    Column("business_id", Integer, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("business_id", Integer, nullable=False, index=True),
     Column("customer_merge_id", Integer, ForeignKey("customer_merges.id", ondelete="CASCADE"), nullable=False, index=True),
     Column("status", String(20), nullable=False, server_default="completed", index=True),
     Column("confidence_score", Numeric(5, 4), nullable=True),
@@ -36,7 +36,7 @@ customer_merge_operations = Table(
     Column("moved_records", JSON, nullable=False, server_default=text("'{}'")),
     Column("confirmed_at", DateTime, nullable=True),
     Column("undone_at", DateTime, nullable=True),
-    Column("undone_by", Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+    Column("undone_by", Integer, nullable=True),
     Column("undo_reason", Text, nullable=True),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
     UniqueConstraint("customer_merge_id", name="uq_customer_merge_operations_merge"),
@@ -45,14 +45,14 @@ customer_merge_operations = Table(
 
 customer_segments = Table(
     "customer_segments",
-    Base.metadata,
+    TenantBase.metadata,
     Column("id", Integer, primary_key=True),
-    Column("business_id", Integer, ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("business_id", Integer, nullable=False, index=True),
     Column("name", String(160), nullable=False),
     Column("description", String(2000), nullable=True),
     Column("tag_ids", JSON, nullable=False),
     Column("match_mode", String(10), nullable=False, server_default="all"),
-    Column("created_by", Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True),
+    Column("created_by", Integer, nullable=True, index=True),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
     Column("updated_at", DateTime, nullable=False, server_default=func.now()),
     UniqueConstraint("business_id", "name", name="uq_customer_segments_business_name"),

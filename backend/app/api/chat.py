@@ -14,13 +14,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.rag.retriever import retrieve
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.rag.prompt_builder import build_prompt
 from app.rag.llm_caller import call_llm, stream_llm
-from app.rag.run_logger import RagRunLog
+from app.rag.run_logger import RagRunLog, safe_error_message
 from app.schemas.rag import ChatRequest, ChatResponse, SourceChunk
 from app.services.quota_service import QuotaExceededError, reserve_ai_budget
 
@@ -37,7 +37,7 @@ router = APIRouter()
 @router.post("", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key", max_length=120),
 ):
@@ -49,6 +49,7 @@ async def chat(
     """
     with RagRunLog(
         "chat",
+        business_id=tenant.business_id,
         query_preview=request.query[:500],
         top_k=request.top_k,
     ) as run:
@@ -122,10 +123,10 @@ async def chat(
       except HTTPException:
           raise
       except Exception as e:
-          logger.exception("Chat error: %s", str(e))
+          logger.exception("Chat error: %s", safe_error_message(e))
           raise HTTPException(
               500,
-              f"Lỗi khi xử lý câu hỏi: {str(e)}",
+              "Lỗi khi xử lý câu hỏi. Vui lòng thử lại sau.",
           )
 
 
@@ -137,7 +138,7 @@ async def chat(
 @router.post("/stream")
 async def chat_stream(
     request: ChatRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key", max_length=120),
 ):
@@ -153,6 +154,7 @@ async def chat_stream(
     async def event_generator():
         with RagRunLog(
             "chat_stream",
+            business_id=tenant.business_id,
             query_preview=request.query[:500],
             top_k=request.top_k,
         ) as run:
@@ -234,15 +236,15 @@ async def chat_stream(
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
           except Exception as e:
-              logger.exception("Stream error: %s", str(e))
+              logger.exception("Stream error: %s", safe_error_message(e))
               run.finish(
                   "error",
                   phase="complete",
                   error_type=type(e).__name__,
-                  error=str(e)[:1000],
+                  error=safe_error_message(e),
               )
               error_payload = json.dumps(
-                  {"type": "error", "message": str(e)},
+                  {"type": "error", "message": "Lỗi khi xử lý câu hỏi. Vui lòng thử lại sau."},
                   ensure_ascii=False,
               )
               yield f"data: {error_payload}\n\n"

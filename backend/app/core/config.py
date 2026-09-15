@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "CRM Chatbot API"
     ENVIRONMENT: str = "development"
     CHANNEL_ENCRYPTION_KEY: str = ""
+    CHANNEL_ROUTE_SECRET: str = ""
     AUTH_SECRET: str = ""
     SECRET_MANAGER_MODE: str = "env"
     SECRET_MANAGER_FILE: str = ""
@@ -51,6 +52,7 @@ class Settings(BaseSettings):
     DATA_RETENTION_DAYS: int = 365
     QUOTA_WARNING_PERCENT: float = 0.8
     TICKET_SLA_WARNING_MINUTES: int = 60
+    CHANNEL_HEALTH_INTERVAL_SECONDS: int = 60
 
     # Contact verification delivery.  Keep disabled for local/demo runs; a
     # production secret manager should select smtp (email) or twilio (SMS).
@@ -197,6 +199,8 @@ class Settings(BaseSettings):
             problems.append("AUTH_SECRET must be a random value of at least 32 characters")
         if self.CHANNEL_ENCRYPTION_KEY.strip().lower() in placeholders or len(self.CHANNEL_ENCRYPTION_KEY.strip()) < 32:
             problems.append("CHANNEL_ENCRYPTION_KEY must be a random value of at least 32 characters")
+        if self.CHANNEL_ROUTE_SECRET.strip().lower() in placeholders or len(self.CHANNEL_ROUTE_SECRET.strip()) < 32:
+            problems.append("CHANNEL_ROUTE_SECRET must be a random value of at least 32 characters")
         platform_url = self.PLATFORM_DATABASE_URL.strip()
         tenant_url = self.TENANT_DATABASE_URL.strip()
         if not platform_url:
@@ -247,6 +251,8 @@ class Settings(BaseSettings):
             problems.append("SECRET_MANAGER_FILE must be configured when file secret-manager mode is enabled")
         if self.DATA_RETENTION_DAYS <= 0:
             problems.append("DATA_RETENTION_DAYS must be positive")
+        if self.CHANNEL_HEALTH_INTERVAL_SECONDS <= 0:
+            problems.append("CHANNEL_HEALTH_INTERVAL_SECONDS must be positive")
         otp_mode = self.OTP_DELIVERY_MODE.strip().lower()
         if otp_mode not in {"smtp", "twilio"}:
             problems.append("OTP_DELIVERY_MODE must be smtp or twilio in production")

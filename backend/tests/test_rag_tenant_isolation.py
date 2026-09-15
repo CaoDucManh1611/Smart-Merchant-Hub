@@ -2,6 +2,7 @@ import unittest
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from app.database.bases import TenantBase
 
 from app.models.business import Business
 from app.models.document import Document, DocumentChunk
@@ -12,6 +13,7 @@ class RagTenantIsolationTests(unittest.TestCase):
     def test_lexical_retrieval_excludes_other_tenant_documents(self):
         engine = create_engine("sqlite://")
         Business.metadata.create_all(engine)
+        TenantBase.metadata.create_all(engine)
         with Session(engine) as db:
             one = Business(name="One", slug="one")
             two = Business(name="Two", slug="two")

@@ -7,10 +7,10 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class CustomerContact(Base):
+class CustomerContact(TenantBase):
     __tablename__ = "customer_contacts"
     __table_args__ = (
         UniqueConstraint(
@@ -22,7 +22,7 @@ class CustomerContact(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     value_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
@@ -36,16 +36,15 @@ class CustomerContact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    business = relationship("Business")
     customer = relationship("Customer", back_populates="contacts")
     verification_challenges = relationship("CustomerVerificationChallenge", back_populates="contact", cascade="all, delete-orphan")
 
 
-class CustomerAddress(Base):
+class CustomerAddress(TenantBase):
     __tablename__ = "customer_addresses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     recipient_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -62,15 +61,14 @@ class CustomerAddress(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    business = relationship("Business")
     customer = relationship("Customer", back_populates="addresses")
 
 
-class CustomerCollectionSession(Base):
+class CustomerCollectionSession(TenantBase):
     __tablename__ = "customer_collection_sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     conversation_id: Mapped[int | None] = mapped_column(ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True)
     purpose: Mapped[str] = mapped_column(String(40), nullable=False, default="order", server_default="order")
@@ -83,16 +81,15 @@ class CustomerCollectionSession(Base):
     last_activity_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    business = relationship("Business")
     customer = relationship("Customer", back_populates="collection_sessions")
     conversation = relationship("Conversation")
 
 
-class CustomerVerificationChallenge(Base):
+class CustomerVerificationChallenge(TenantBase):
     __tablename__ = "customer_verification_challenges"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     contact_id: Mapped[int] = mapped_column(ForeignKey("customer_contacts.id", ondelete="CASCADE"), nullable=False, index=True)
     channel: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -104,16 +101,15 @@ class CustomerVerificationChallenge(Base):
     requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    business = relationship("Business")
     customer = relationship("Customer")
     contact = relationship("CustomerContact", back_populates="verification_challenges")
 
 
-class CustomerConsent(Base):
+class CustomerConsent(TenantBase):
     __tablename__ = "customer_consents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     purpose: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
@@ -125,6 +121,5 @@ class CustomerConsent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    business = relationship("Business")
     customer = relationship("Customer", back_populates="consents")
     evidence_message = relationship("Message")

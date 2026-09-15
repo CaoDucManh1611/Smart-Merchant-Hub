@@ -7,14 +7,14 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class Workflow(Base):
+class Workflow(TenantBase):
     __tablename__ = "workflows"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     event_type: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     conditions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -23,18 +23,17 @@ class Workflow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    business = relationship("Business")
     runs = relationship("WorkflowRun", back_populates="workflow", cascade="all, delete-orphan")
 
 
-class WorkflowRun(Base):
+class WorkflowRun(TenantBase):
     __tablename__ = "workflow_runs"
     __table_args__ = (
         UniqueConstraint("workflow_id", "event_id", name="uq_workflow_runs_event"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     workflow_id: Mapped[int] = mapped_column(ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
     event_id: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -47,5 +46,4 @@ class WorkflowRun(Base):
     executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    business = relationship("Business")
     workflow = relationship("Workflow", back_populates="runs")

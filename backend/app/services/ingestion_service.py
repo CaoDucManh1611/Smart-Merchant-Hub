@@ -14,7 +14,7 @@ from app.models.document import Document, DocumentChunk
 from app.rag.loader import load_document, detect_file_type
 from app.rag.chunker import chunk_text
 from app.rag.embedder import embed_texts, embedding_retry_delay
-from app.rag.run_logger import RagRunLog
+from app.rag.run_logger import RagRunLog, safe_error_message
 from app.services.product_catalog_service import sync_catalog_products
 from app.services.quota_service import QuotaExceededError, reserve_ai_budget
 
@@ -262,14 +262,14 @@ def ingest_document(
             failed_doc = db.get(Document, document_id)
             if failed_doc is not None:
                 failed_doc.status = "error"
-                failed_doc.error_message = str(e)[:500]
+                failed_doc.error_message = safe_error_message(e)
                 failed_doc.embedding_status = "error"
                 db.commit()
             run.finish(
                 "error",
                 phase="complete",
                 error_type=type(e).__name__,
-                error=str(e)[:1000],
+                error=safe_error_message(e),
             )
 
 

@@ -8,24 +8,14 @@ DocumentChunk – từng đoạn text đã được chunk + vector embedding.
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import (
-    DateTime,
-    ForeignKey,
-    Integer,
-    Index,
-    LargeBinary,
-    JSON,
-    String,
-    Text,
-    func,
-)
+from sqlalchemy import DateTime, ForeignKey, Integer, Index, LargeBinary, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 from app.core.config import settings
 
 
-class Document(Base):
+class Document(TenantBase):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(
@@ -34,7 +24,7 @@ class Document(Base):
     )
 
     business_id: Mapped[int | None] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+Integer,
         nullable=True,
         index=True,
     )
@@ -96,10 +86,7 @@ class Document(Base):
         cascade="all, delete-orphan",
     )
 
-    business = relationship("Business", back_populates="documents")
-
-
-class DocumentChunk(Base):
+class DocumentChunk(TenantBase):
     __tablename__ = "document_chunks"
     __table_args__ = (
         (

@@ -65,6 +65,16 @@ class OnboardingShopOut(BaseModel):
     subscription: OnboardingSubscriptionOut
 
 
+class OnboardingProvisionOut(BaseModel):
+    """Safe provisioning status; never contains tenant rows or credentials."""
+
+    business_id: int
+    schema_name: str
+    state: str
+    tenant_revision: str | None = None
+    feature_enabled: bool
+
+
 ChannelType = Literal["facebook", "instagram", "telegram", "zalo"]
 
 

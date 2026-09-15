@@ -7,10 +7,10 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, JSON, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class MessageAttachment(Base):
+class MessageAttachment(TenantBase):
     __tablename__ = "message_attachments"
     __table_args__ = (
         Index("ix_message_attachments_business_id", "business_id"),
@@ -29,7 +29,7 @@ class MessageAttachment(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+        Integer, nullable=False
     )
     message_id: Mapped[int] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE"), nullable=False

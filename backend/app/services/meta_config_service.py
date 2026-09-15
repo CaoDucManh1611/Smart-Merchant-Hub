@@ -1,109 +1,115 @@
-"""Persistent Meta display configuration.
+"""Tenant-scoped Meta display configuration.
 
-Tenant-owned OAuth credentials live encrypted in ``channels``.  This module
-keeps only non-secret display metadata in ``app_settings`` while the old
-single-shop/demo setup continues to use environment-variable fallbacks.
+Provider credentials are owned by the tenant ``channels`` table. This module
+only reads non-secret display settings from the active shop session; there is
+no process-wide global settings or environment-token fallback in the runtime path.
+Callers obtain that session through the ``get_tenant_db`` dependency.
 """
 
 from __future__ import annotations
 
 from typing import Mapping
 
-from app.core.config import settings
-from app.db.database import SessionLocal
-from app.models.setting import AppSetting
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.business_setting import BusinessSetting
 
 
 META_KEYS = {
     "facebook_page_id": "meta.facebook_page_id",
     "facebook_page_name": "meta.facebook_page_name",
-    "facebook_page_access_token": "meta.facebook_page_access_token",
     "instagram_account_id": "meta.instagram_account_id",
     "instagram_account_name": "meta.instagram_account_name",
     "meta_user_id": "meta.user_id",
     "meta_user_name": "meta.user_name",
     "connected_at": "meta.connected_at",
-    "oauth_state": "meta.oauth_state",
-    "oauth_state_created_at": "meta.oauth_state_created_at",
     "subscription_status": "meta.subscription_status",
 }
 
 
-def get_setting_value(key: str, default: str = "") -> str:
-    try:
-        with SessionLocal() as db:
-            setting = db.get(AppSetting, key)
-            if setting and setting.value:
-                return setting.value
-    except Exception:
-        # Startup and webhook paths should still work from .env if the DB is
-        # temporarily unavailable.
-        pass
-    return default
+def _tenant_value(db: Session | None, business_id: int | None, key: str, default: str = "") -> str:
+    if db is None or business_id is None:
+        return default
+    row = db.scalar(
+        select(BusinessSetting).where(
+            BusinessSetting.business_id == int(business_id),
+            BusinessSetting.key == key,
+        )
+    )
+    return str(row.value) if row is not None and row.value else default
 
 
-def save_settings(values: Mapping[str, str]) -> None:
-    with SessionLocal() as db:
-        for key, value in values.items():
-            setting = db.get(AppSetting, key)
-            if setting is None:
-                db.add(AppSetting(key=key, value=str(value)))
-            else:
-                setting.value = str(value)
-        db.commit()
+def get_setting_value(
+    key: str,
+    default: str = "",
+    *,
+    db: Session | None = None,
+    business_id: int | None = None,
+) -> str:
+    """Read a tenant setting; missing tenant context fails closed."""
+    return _tenant_value(db, business_id, key, default)
 
 
-def get_meta_config() -> dict[str, str]:
-    # Legacy token columns in app_settings are retained only for the
-    # controlled migration command. Normal runtime code must not read them in
-    # production; channel_service decrypts tenant-scoped credentials instead.
-    legacy_token_fallback = settings.ENVIRONMENT.strip().lower() != "production"
+def save_settings(db: Session, business_id: int, values: Mapping[str, str]) -> None:
+    """Upsert display settings in the current shop schema."""
+    for key, value in values.items():
+        row = db.scalar(
+            select(BusinessSetting).where(
+                BusinessSetting.business_id == int(business_id),
+                BusinessSetting.key == key,
+            )
+        )
+        if row is None:
+            db.add(BusinessSetting(business_id=int(business_id), key=key, value=str(value)))
+        else:
+            row.value = str(value)
+    db.flush()
+
+
+def get_meta_config(db: Session | None = None, business_id: int | None = None) -> dict[str, str]:
+    """Return safe Meta display metadata for one shop.
+
+    The access-token field is always empty. Callers that send through Meta
+    must load and decrypt the matching tenant ``Channel`` row.
+    """
     return {
-        "facebook_page_id": get_setting_value(
-            META_KEYS["facebook_page_id"],
-            settings.FACEBOOK_PAGE_ID,
-        ),
-        "facebook_page_name": get_setting_value(
-            META_KEYS["facebook_page_name"],
-        ),
-        "facebook_page_access_token": get_setting_value(
-            META_KEYS["facebook_page_access_token"],
-            settings.FACEBOOK_PAGE_ACCESS_TOKEN if legacy_token_fallback else "",
-        ) if legacy_token_fallback else "",
-        "instagram_account_id": get_setting_value(
-            META_KEYS["instagram_account_id"],
-            settings.INSTAGRAM_ACCOUNT_ID,
-        ),
-        "instagram_account_name": get_setting_value(
-            META_KEYS["instagram_account_name"],
-        ),
-        "meta_user_id": get_setting_value(META_KEYS["meta_user_id"]),
-        "meta_user_name": get_setting_value(META_KEYS["meta_user_name"]),
-        "connected_at": get_setting_value(META_KEYS["connected_at"]),
-        "subscription_status": get_setting_value(
-            META_KEYS["subscription_status"],
-        ),
+        # A missing tenant session must never fall back to process-wide
+        # provider identities.  The caller should fail closed and ask the
+        # shop to reconnect instead of sending through another shop's page.
+        "facebook_page_id": _tenant_value(db, business_id, META_KEYS["facebook_page_id"]),
+        "facebook_page_name": _tenant_value(db, business_id, META_KEYS["facebook_page_name"]),
+        "facebook_page_access_token": "",
+        "instagram_account_id": _tenant_value(db, business_id, META_KEYS["instagram_account_id"]),
+        "instagram_account_name": _tenant_value(db, business_id, META_KEYS["instagram_account_name"]),
+        "meta_user_id": _tenant_value(db, business_id, META_KEYS["meta_user_id"]),
+        "meta_user_name": _tenant_value(db, business_id, META_KEYS["meta_user_name"]),
+        "connected_at": _tenant_value(db, business_id, META_KEYS["connected_at"]),
+        "subscription_status": _tenant_value(db, business_id, META_KEYS["subscription_status"]),
     }
 
 
-def save_meta_config(values: Mapping[str, str]) -> None:
+def save_meta_config(db: Session, business_id: int, values: Mapping[str, str]) -> None:
+    """Persist only non-secret Meta display values for one shop."""
     save_settings(
+        db,
+        business_id,
         {
             META_KEYS[key]: value
             for key, value in values.items()
-            if key in META_KEYS
-            and value is not None
-            # OAuth access tokens belong in encrypted channels, never in the
-            # generic app_settings table.
-            and key not in {"facebook_page_access_token"}
-        }
+            if key in META_KEYS and value is not None
+        },
     )
 
 
-def clear_meta_config() -> None:
-    with SessionLocal() as db:
-        for key in META_KEYS.values():
-            setting = db.get(AppSetting, key)
-            if setting is not None:
-                db.delete(setting)
-        db.commit()
+def clear_meta_config(db: Session, business_id: int) -> None:
+    """Remove display settings for one shop; channel credentials are separate."""
+    rows = db.scalars(
+        select(BusinessSetting).where(
+            BusinessSetting.business_id == int(business_id),
+            BusinessSetting.key.in_(tuple(META_KEYS.values())),
+        )
+    ).all()
+    for row in rows:
+        db.delete(row)
+    db.flush()

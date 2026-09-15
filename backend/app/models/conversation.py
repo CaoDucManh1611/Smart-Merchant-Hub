@@ -3,10 +3,10 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class Conversation(Base):
+class Conversation(TenantBase):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(
@@ -15,7 +15,7 @@ class Conversation(Base):
     )
 
     business_id: Mapped[int | None] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=True,
         index=True,
     )
@@ -55,7 +55,7 @@ class Conversation(Base):
     )
 
     assigned_user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        Integer,
         nullable=True,
         index=True,
     )
@@ -74,7 +74,6 @@ class Conversation(Base):
 
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    business = relationship("Business", back_populates="conversations")
 
     customer = relationship(
         "Customer",

@@ -8,10 +8,10 @@ from decimal import Decimal
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class Product(Base):
+class Product(TenantBase):
     __tablename__ = "products"
     __table_args__ = (
         UniqueConstraint("business_id", "sku", name="uq_products_business_sku"),
@@ -19,7 +19,7 @@ class Product(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=False,
         index=True,
     )
@@ -38,11 +38,10 @@ class Product(Base):
         onupdate=func.now(),
     )
 
-    business = relationship("Business", back_populates="products")
     order_items = relationship("OrderItem", back_populates="product")
 
 
-class Order(Base):
+class Order(TenantBase):
     __tablename__ = "orders"
     __table_args__ = (
         UniqueConstraint("business_id", "order_number", name="uq_orders_business_number"),
@@ -50,7 +49,7 @@ class Order(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=False,
         index=True,
     )
@@ -87,14 +86,13 @@ class Order(Base):
         onupdate=func.now(),
     )
 
-    business = relationship("Business", back_populates="orders")
     customer = relationship("Customer", back_populates="orders")
     conversation = relationship("Conversation", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     payments = relationship("OrderPayment", back_populates="order", cascade="all, delete-orphan")
 
 
-class OrderItem(Base):
+class OrderItem(TenantBase):
     __tablename__ = "order_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

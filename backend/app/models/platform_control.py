@@ -169,7 +169,7 @@ class TenantRegistry(PlatformBase):
     __table_args__ = (
         UniqueConstraint("business_id", name="uq_tenant_registry_business"),
         UniqueConstraint("schema_name", name="uq_tenant_registry_schema"),
-        CheckConstraint("state IN ('provisioning','ready','migrating','error','disabled')", name="ck_tenant_registry_state"),
+        CheckConstraint("state IN ('provisioning','ready','active','migrating','error','disabled')", name="ck_tenant_registry_state"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

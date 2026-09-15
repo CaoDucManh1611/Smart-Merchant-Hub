@@ -8,15 +8,15 @@ from typing import Any
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class CustomerFact(Base):
+class CustomerFact(TenantBase):
     __tablename__ = "customer_facts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer, nullable=False, index=True
     )
     customer_id: Mapped[int] = mapped_column(
         ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
@@ -47,7 +47,6 @@ class CustomerFact(Base):
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    business = relationship("Business")
     customer = relationship("Customer", back_populates="facts")
     source_message = relationship("Message", foreign_keys=[source_message_id])
     source_order = relationship("Order", foreign_keys=[source_order_id])

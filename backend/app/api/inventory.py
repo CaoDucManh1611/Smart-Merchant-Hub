@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.business import User
 from app.models.inventory import StockMovement
 from app.models.sales import Product
@@ -39,7 +39,7 @@ def _balance(product: Product) -> InventoryBalanceOut:
 @router.get("/inventory/products/{product_id}", response_model=InventoryBalanceOut)
 def get_inventory_balance(
     product_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     product = db.query(Product).filter(
@@ -60,7 +60,7 @@ def get_inventory_balance(
 def adjust_inventory(
     product_id: int,
     payload: StockAdjustmentCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -109,7 +109,7 @@ def adjust_inventory(
 
 @router.get("/inventory/movements", response_model=StockMovementListOut)
 def list_inventory_movements(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     product_id: int | None = Query(default=None, ge=1),
     source_type: str | None = Query(default=None, max_length=40),

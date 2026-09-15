@@ -3,10 +3,10 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class Message(Base):
+class Message(TenantBase):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(
@@ -22,7 +22,7 @@ class Message(Base):
     )
 
     sender_user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        Integer,
         nullable=True,
     )
 
@@ -112,5 +112,3 @@ class Message(Base):
         cascade="all, delete-orphan",
         order_by="MessageAttachment.id",
     )
-
-    sender_user = relationship("User")

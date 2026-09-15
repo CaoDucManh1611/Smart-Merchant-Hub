@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
+from app.database.platform_session import get_platform_db
 from app.models.workflow import Workflow, WorkflowRun
 from app.schemas.workflow import (
     WorkflowCreate,
@@ -64,7 +65,7 @@ def _out(workflow: Workflow) -> WorkflowOut:
 
 
 @router.get("/workflows", response_model=WorkflowListOut)
-def list_workflows(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_workflows(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     items = db.query(Workflow).filter(Workflow.business_id == tenant.business_id).order_by(Workflow.id.desc()).all()
     return WorkflowListOut(items=[_out(item) for item in items], total=len(items))
 
@@ -74,7 +75,7 @@ def list_workflows(db: Session = Depends(get_db), tenant: TenantContext = Depend
     response_model=list[WorkflowRunOut],
     dependencies=[Depends(require_write_access)],
 )
-def dispatch_due_workflows(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def dispatch_due_workflows(db: Session = Depends(get_tenant_db), platform_db: Session = Depends(get_platform_db), tenant: TenantContext = Depends(get_tenant_context)):
     """Execute due scheduled runs; safe to call repeatedly from a scheduler."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     # Capture the run ids before dispatch.  The job handler changes a run from
@@ -95,6 +96,7 @@ def dispatch_due_workflows(db: Session = Depends(get_db), tenant: TenantContext 
             str(payload.get("event_type") or workflow.event_type),
             payload.get("event_payload") or {},
             tenant,
+            platform_db=platform_db,
             allow_retry=True,
         )
 
@@ -114,7 +116,7 @@ def dispatch_due_workflows(db: Session = Depends(get_db), tenant: TenantContext 
 
 
 @router.post("/workflows", response_model=WorkflowOut, status_code=201, dependencies=[Depends(require_write_access)])
-def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     workflow = Workflow(
         business_id=tenant.business_id,
         name=payload.name.strip(),
@@ -130,7 +132,7 @@ def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_db), tena
 
 
 @router.patch("/workflows/{workflow_id}", response_model=WorkflowOut, dependencies=[Depends(require_write_access)])
-def update_workflow(workflow_id: int, payload: WorkflowUpdate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def update_workflow(workflow_id: int, payload: WorkflowUpdate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     workflow = _workflow(db, workflow_id, tenant)
     data = payload.model_dump(exclude_unset=True)
     if "name" in data:
@@ -145,7 +147,7 @@ def update_workflow(workflow_id: int, payload: WorkflowUpdate, db: Session = Dep
 
 
 @router.post("/workflows/{workflow_id}/run", response_model=WorkflowRunOut, dependencies=[Depends(require_write_access)])
-def run_workflow(workflow_id: int, payload: WorkflowRunRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def run_workflow(workflow_id: int, payload: WorkflowRunRequest, db: Session = Depends(get_tenant_db), platform_db: Session = Depends(get_platform_db), tenant: TenantContext = Depends(get_tenant_context)):
     workflow = _workflow(db, workflow_id, tenant)
     existing = db.query(WorkflowRun).filter(
         WorkflowRun.workflow_id == workflow.id,
@@ -184,12 +186,12 @@ def run_workflow(workflow_id: int, payload: WorkflowRunRequest, db: Session = De
         db.commit()
         db.refresh(run)
         return _run_out(run)
-    run = execute_workflow(db, workflow, payload.event_id, payload.event_type, payload.payload, tenant)
+    run = execute_workflow(db, workflow, payload.event_id, payload.event_type, payload.payload, tenant, platform_db=platform_db)
     return _run_out(run)
 
 
 @router.get("/workflows/{workflow_id}/runs", response_model=list[WorkflowRunOut])
-def list_workflow_runs(workflow_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_workflow_runs(workflow_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     workflow = _workflow(db, workflow_id, tenant)
     runs = db.query(WorkflowRun).filter(
         WorkflowRun.business_id == tenant.business_id,
@@ -199,7 +201,7 @@ def list_workflow_runs(workflow_id: int, db: Session = Depends(get_db), tenant: 
 
 
 @router.post("/workflows/{workflow_id}/runs/{run_id}/retry", response_model=WorkflowRunOut, dependencies=[Depends(require_write_access)])
-def retry_workflow_run(workflow_id: int, run_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def retry_workflow_run(workflow_id: int, run_id: int, db: Session = Depends(get_tenant_db), platform_db: Session = Depends(get_platform_db), tenant: TenantContext = Depends(get_tenant_context)):
     workflow = _workflow(db, workflow_id, tenant)
     run = db.query(WorkflowRun).filter(
         WorkflowRun.id == run_id,
@@ -218,10 +220,11 @@ def retry_workflow_run(workflow_id: int, run_id: int, db: Session = Depends(get_
         run.payload or {},
         tenant,
         allow_retry=True,
+        platform_db=platform_db,
     )
     return _run_out(result)
 
 
 @router.get("/workflows/{workflow_id}", response_model=WorkflowOut)
-def get_workflow(workflow_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def get_workflow(workflow_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return _out(_workflow(db, workflow_id, tenant))

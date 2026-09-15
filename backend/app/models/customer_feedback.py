@@ -7,17 +7,17 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class CustomerFeedback(Base):
+class CustomerFeedback(TenantBase):
     __tablename__ = "customer_feedback"
     __table_args__ = (
         UniqueConstraint("business_id", "idempotency_key", name="uq_customer_feedback_business_key"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
     ticket_id: Mapped[int | None] = mapped_column(ForeignKey("tickets.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -30,7 +30,6 @@ class CustomerFeedback(Base):
     requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    business = relationship("Business")
     conversation = relationship("Conversation")
     customer = relationship("Customer")
     ticket = relationship("Ticket")

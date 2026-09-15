@@ -20,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.session import Base
+from app.database.bases import TenantBase
 
 
 SCHEMA_NAME_RE = re.compile(r"^tenant_[1-9][0-9]*$")
@@ -83,24 +84,22 @@ class PlatformMembership(Base):
     user = relationship("User")
 
 
-class DataLifecycleRequest(Base):
+class DataLifecycleRequest(TenantBase):
     __tablename__ = "data_lifecycle_requests"
     __table_args__ = (
         UniqueConstraint("business_id", "request_key", name="uq_data_lifecycle_business_key"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     request_key: Mapped[str] = mapped_column(String(180), nullable=False)
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued", index=True)
-    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    requested_by: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     result_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    business = relationship("Business")
-    requester = relationship("User", foreign_keys=[requested_by])
 
 
 class TenantSchemaRegistry(Base):

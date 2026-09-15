@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding
+from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding, support
 from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo
 
 
@@ -10,6 +10,7 @@ api_router.include_router(platform.router, tags=["Platform administration"])
 api_router.include_router(usage.router, tags=["Tenant usage"])
 api_router.include_router(onboarding.router, tags=["Self-service onboarding"])
 api_router.include_router(privacy.router, tags=["Privacy"])
+api_router.include_router(support.router, tags=["Support access"])
 
 api_router.include_router(
     meta_oauth.router,

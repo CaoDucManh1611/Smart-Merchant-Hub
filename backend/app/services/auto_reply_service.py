@@ -13,8 +13,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.database.platform_session import PlatformSessionLocal
 from app.core.config import settings
-from app.db.database import SessionLocal
+from app.database.tenant_session import tenant_session
+from app.tenancy.schema import schema_name_for
 from app.models.business_setting import BusinessSetting
 from app.models.chatbot import ChatbotConfig
 from app.models.conversation import Conversation
@@ -24,7 +26,7 @@ from app.models.sales import Product
 from app.rag.retriever import retrieve
 from app.rag.prompt_builder import build_prompt
 from app.rag.llm_caller import call_llm
-from app.rag.run_logger import RagRunLog
+from app.rag.run_logger import RagRunLog, query_metadata
 from app.services.facebook_service import send_facebook_message
 from app.services.instagram_service import send_instagram_message
 from app.services.telegram_service import send_telegram_message
@@ -458,23 +460,21 @@ def send_text_reply_background(
     """Send a deterministic reply without delaying the webhook response."""
 
     def worker() -> None:
-        db = SessionLocal()
         try:
-            send_text_reply(
-                db=db,
-                conversation_id=conversation_id,
-                channel=channel,
-                text=text,
-                business_id=business_id,
-                auto_reply_key=auto_reply_key,
-            )
+            with tenant_session(schema_name_for(business_id)) as db:
+                send_text_reply(
+                    db=db,
+                    conversation_id=conversation_id,
+                    channel=channel,
+                    text=text,
+                    business_id=business_id,
+                    auto_reply_key=auto_reply_key,
+                )
         except Exception:
             logger.exception(
                 "Deterministic reply failed for conversation %d",
                 conversation_id,
             )
-        finally:
-            db.close()
 
     Thread(target=worker, daemon=True).start()
 
@@ -514,6 +514,7 @@ def process_rag_auto_reply(
     query_text: str,
     business_id: int,
     auto_reply_key: str | None = None,
+    platform_db: Session | None = None,
 ) -> bool:
     """
     Tự động tra cứu RAG và gửi tin nhắn phản hồi cho khách hàng.
@@ -545,6 +546,7 @@ def process_rag_auto_reply(
 
     with RagRunLog(
         "auto_reply",
+        business_id=business_id,
         conversation_id=conversation_id,
         channel=channel,
         query_preview=(query_text or "")[:500],
@@ -581,6 +583,7 @@ def process_rag_auto_reply(
             business_id,
             conversation_id,
             query_text,
+            platform_db=platform_db,
         )
         if deterministic_order_reply:
             send_reply(deterministic_order_reply)
@@ -627,7 +630,13 @@ def process_rag_auto_reply(
             return True
 
         run.update(phase="retrieve")
-        logger.info("Executing RAG auto-reply for conversation %d (query: %s)", conversation_id, query_text[:50])
+        query_meta = query_metadata(query_text)
+        logger.info(
+            "Executing RAG auto-reply for conversation %d (query_chars=%s query_hash=%s)",
+            conversation_id,
+            query_meta["query_chars"],
+            query_meta["query_hash"],
+        )
 
         # 1. Retrieve
         chunks = retrieve(
@@ -807,21 +816,23 @@ def process_rag_auto_reply_background(
     """Run RAG auto-reply off the webhook request path."""
 
     def worker() -> None:
-        db = SessionLocal()
         try:
-            logger.info(
-                "Auto-reply worker started for conversation %d, channel=%s",
-                conversation_id,
-                channel,
-            )
-            process_rag_auto_reply(
-                db=db,
-                conversation_id=conversation_id,
-                channel=channel,
-                query_text=query_text,
-                business_id=business_id,
-                auto_reply_key=auto_reply_key,
-            )
+            with PlatformSessionLocal() as platform_db:
+                with tenant_session(schema_name_for(business_id)) as db:
+                    logger.info(
+                        "Auto-reply worker started for conversation %d, channel=%s",
+                        conversation_id,
+                        channel,
+                    )
+                    process_rag_auto_reply(
+                        db=db,
+                        conversation_id=conversation_id,
+                        channel=channel,
+                        query_text=query_text,
+                        business_id=business_id,
+                        auto_reply_key=auto_reply_key,
+                        platform_db=platform_db,
+                    )
         except Exception:
             # Background work must never leak an unhandled thread exception
             # into request/test runners. The operation is already recorded by
@@ -831,7 +842,6 @@ def process_rag_auto_reply_background(
                 conversation_id,
             )
         finally:
-            db.close()
             logger.info(
                 "Auto-reply worker finished for conversation %d",
                 conversation_id,

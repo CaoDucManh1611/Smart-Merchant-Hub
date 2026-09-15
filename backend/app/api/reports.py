@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
+from app.database.platform_session import get_platform_db
 from app.models.business import User
 from app.models.conversation import Conversation
 from app.models.customer import Customer
@@ -25,6 +26,7 @@ from app.models.rag_run import RagRun
 from app.models.audit_log import AuditLog
 from app.models.saas import SaaSUsage
 from app.models.business import ServicePlan, Subscription
+from app.models.platform_control import PlatformServicePlan, PlatformSubscription, PlatformUsage
 from app.services.channel_retry import provider_breaker_snapshot
 from app.services.quota_service import PLAN_LIMIT_FIELDS, quota_period_start
 from app.tenancy.context import TenantContext
@@ -76,9 +78,29 @@ class AgentPerformanceOut(BaseModel):
     items: list[AgentPerformanceItem]
 
 
-def _active_plan(db: Session, business_id: int) -> ServicePlan | None:
+def _active_plan(platform_db: Session, business_id: int):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    return db.query(ServicePlan).join(Subscription, Subscription.plan_id == ServicePlan.id).filter(
+    # Plan/subscription metadata is control-plane data.  Never issue this
+    # query through a tenant-bound session: a tenant schema intentionally has
+    # no service_plans or subscriptions tables.
+    try:
+        native = platform_db.query(PlatformServicePlan).join(
+            PlatformSubscription,
+            PlatformSubscription.plan_id == PlatformServicePlan.id,
+        ).filter(
+            PlatformSubscription.business_id == business_id,
+            PlatformSubscription.status == "active",
+            (PlatformSubscription.starts_at.is_(None) | (PlatformSubscription.starts_at <= now)),
+            (PlatformSubscription.ends_at.is_(None) | (PlatformSubscription.ends_at > now)),
+        ).order_by(PlatformSubscription.id.desc()).first()
+        if native is not None:
+            return native
+    except Exception:
+        # During the staged rollout a platform database may still expose the
+        # legacy control tables.  Clear the failed transaction before using
+        # that explicitly scoped compatibility path.
+        platform_db.rollback()
+    return platform_db.query(ServicePlan).join(Subscription, Subscription.plan_id == ServicePlan.id).filter(
         Subscription.business_id == business_id,
         Subscription.status == "active",
         (Subscription.starts_at.is_(None) | (Subscription.starts_at <= now)),
@@ -86,9 +108,38 @@ def _active_plan(db: Session, business_id: int) -> ServicePlan | None:
     ).order_by(Subscription.id.desc()).first()
 
 
+def _plan_limit(plan, field: str):
+    """Read one quota from either the native or rollout plan shape."""
+    value = getattr(plan, field, None)
+    if value is not None:
+        return value
+    quotas = getattr(plan, "quotas", None)
+    if isinstance(quotas, dict):
+        return quotas.get(field.removeprefix("max_"), quotas.get(field))
+    return None
+
+
+def _platform_usage_rows(platform_db: Session, business_id: int, period_start):
+    """Return platform-owned usage counters without touching tenant tables."""
+    try:
+        rows = platform_db.query(PlatformUsage).filter(
+            PlatformUsage.business_id == business_id,
+            PlatformUsage.period_start == period_start,
+        ).all()
+        if rows:
+            return rows
+    except Exception:
+        platform_db.rollback()
+    return platform_db.query(SaaSUsage).filter(
+        SaaSUsage.business_id == business_id,
+        SaaSUsage.period_start == period_start,
+    ).all()
+
+
 @router.get("/reports/quality")
 def quality_dashboard(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     days: int = Query(default=30, ge=1, le=365),
 ):
@@ -102,16 +153,13 @@ def quality_dashboard(
     business_id = tenant.business_id
     since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=int(days))
     period_start = quota_period_start()
-    usage_rows = db.query(SaaSUsage).filter(
-        SaaSUsage.business_id == business_id,
-        SaaSUsage.period_start == period_start,
-    ).all()
+    usage_rows = _platform_usage_rows(platform_db, business_id, period_start)
     used = {row.resource: _number(row.used or 0) for row in usage_rows}
-    plan = _active_plan(db, business_id)
+    plan = _active_plan(platform_db, business_id)
     usage = {}
     for resource, field in PLAN_LIMIT_FIELDS.items():
         current = used.get(resource, 0)
-        raw_limit = getattr(plan, field, None) if plan is not None else None
+        raw_limit = _plan_limit(plan, field) if plan is not None else None
         limit = _number(raw_limit) if raw_limit is not None else None
         usage[resource] = {
             "used": current,
@@ -204,7 +252,7 @@ def _parse_date(value: str | None, name: str, *, end_of_day: bool = False) -> da
 
 @router.get("/reports/overview", response_model=CrmOverviewOut)
 def crm_overview(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     start_at: str | None = Query(default=None),
     end_at: str | None = Query(default=None),
@@ -333,7 +381,8 @@ def crm_overview(
 
 @router.get("/reports/overview.csv")
 def crm_overview_csv(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     start_at: str | None = Query(default=None),
     end_at: str | None = Query(default=None),
@@ -344,6 +393,7 @@ def crm_overview_csv(
     """Export the headline CRM metrics in a spreadsheet-friendly format."""
     overview = crm_overview(
         db=db,
+        platform_db=platform_db,
         tenant=tenant,
         start_at=start_at,
         end_at=end_at,
@@ -377,7 +427,7 @@ def crm_overview_csv(
 
 
 @router.get("/reports/spend-by-supplier")
-def spend_by_supplier(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def spend_by_supplier(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     rows = db.query(
         PurchaseOrder.supplier_name,
         func.count(PurchaseOrder.id).label("order_count"),
@@ -387,7 +437,7 @@ def spend_by_supplier(db: Session = Depends(get_db), tenant: TenantContext = Dep
 
 
 @router.get("/reports/inventory")
-def inventory_report(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def inventory_report(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     """Return on-hand, reserved and ledger totals for every tenant product."""
     products = db.query(Product).filter(Product.business_id == tenant.business_id).order_by(Product.name.asc(), Product.id.asc()).all()
     movement_rows = db.query(
@@ -422,7 +472,7 @@ def inventory_report(db: Session = Depends(get_db), tenant: TenantContext = Depe
 
 @router.get("/reports/purchase-costs")
 def purchase_cost_report(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     start_at: str | None = Query(default=None),
     end_at: str | None = Query(default=None),
@@ -466,11 +516,14 @@ def purchase_cost_report(
 
 @router.get("/reports/agent-performance", response_model=AgentPerformanceOut)
 def agent_performance(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     business_id = tenant.business_id
-    users = db.query(User).filter(User.business_id == business_id).order_by(User.full_name.asc(), User.id.asc()).all()
+    # Staff identities are platform-owned.  Assignment counters remain
+    # tenant-local and are joined by the stable user id only.
+    users = platform_db.query(User).filter(User.business_id == business_id).order_by(User.full_name.asc(), User.id.asc()).all()
     items: list[AgentPerformanceItem] = []
     for user in users:
         assigned_conversations = int(db.query(func.count(Conversation.id)).filter(

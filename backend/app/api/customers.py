@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app.db.dependencies import get_db
+from app.database.platform_session import get_platform_db
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_360 import customer_segments as customer_segments_table
@@ -57,6 +57,7 @@ from app.schemas.customer_merge import (
     CustomerSegmentUpdate,
 )
 from app.tenancy.context import TenantContext
+from app.tenancy.crm_session import get_tenant_db
 from app.tenancy.dependencies import get_tenant_context
 from app.services.customer_fact_extractor import (
     FACT_EXTRACTION_SETTING_KEY,
@@ -282,7 +283,7 @@ def _customer_list_out(db: Session, query, *, offset: int = 0, limit: int = 200)
 
 @router.get("/duplicates", response_model=dict)
 def list_duplicate_suggestions(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     customer_id: int | None = Query(default=None, ge=1),
     threshold: float = Query(default=0.55, ge=0.0, le=1.0),
@@ -300,7 +301,7 @@ def list_duplicate_suggestions(
 
 @router.get("/segments", response_model=dict)
 def list_customer_segments(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     rows = db.execute(select(customer_segments_table).where(
@@ -313,7 +314,7 @@ def list_customer_segments(
 @router.post("/segments", response_model=CustomerSegmentOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_customer_segment(
     payload: CustomerSegmentCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -354,7 +355,7 @@ def create_customer_segment(
 def update_customer_segment(
     segment_id: int,
     payload: CustomerSegmentUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -398,7 +399,7 @@ def update_customer_segment(
 @router.delete("/segments/{segment_id}", status_code=204, dependencies=[Depends(require_write_access)])
 def delete_customer_segment(
     segment_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -423,7 +424,7 @@ def delete_customer_segment(
 @router.get("/segments/{segment_id}/customers", response_model=CustomerListOut)
 def list_segment_customers(
     segment_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -439,7 +440,7 @@ def list_segment_customers(
 
 @router.get("", response_model=CustomerListOut)
 def list_customers(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -504,7 +505,7 @@ def list_customers(
 def customer_merge_preview(
     customer_id: int,
     payload: CustomerMergeRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Preview how many tenant-owned records would move to the survivor."""
@@ -529,7 +530,7 @@ def customer_merge_preview(
 def customer_merge(
     customer_id: int,
     payload: CustomerMergeRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -587,7 +588,7 @@ def customer_merge(
 @router.get("/{customer_id}/merge-history", response_model=dict)
 def customer_merge_history(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _get_customer(db, customer_id, tenant)
@@ -600,7 +601,7 @@ def undo_customer_merge_endpoint(
     customer_id: int,
     merge_id: int,
     payload: CustomerMergeUndoRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -636,7 +637,7 @@ def undo_customer_merge_endpoint(
 
 @router.get("/fact-extraction-status", response_model=CustomerFactExtractionStatusOut)
 def get_fact_extraction_status(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     return CustomerFactExtractionStatusOut(
@@ -647,7 +648,7 @@ def get_fact_extraction_status(
 @router.post("/fact-extraction-status", response_model=CustomerFactExtractionStatusOut, dependencies=[Depends(require_write_access)])
 def set_fact_extraction_status(
     payload: CustomerFactExtractionStatusRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -680,7 +681,7 @@ def set_fact_extraction_status(
 
 @router.get("/tags/catalog")
 def list_customer_tag_catalog(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """List tags used by this tenant for segmentation controls."""
@@ -714,7 +715,7 @@ def list_customer_tag_catalog(
 @router.get("/{customer_id}", response_model=CustomerProfileOut)
 def get_customer(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     customer = _get_customer(db, customer_id, tenant)
@@ -785,7 +786,7 @@ def get_customer(
 @router.get("/{customer_id}/facts", response_model=CustomerFactListOut)
 def list_customer_facts(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     fact_type: str | None = Query(default=None, min_length=1, max_length=50),
     verified: bool | None = Query(default=None),
@@ -815,7 +816,7 @@ def list_customer_facts(
 def create_customer_fact(
     customer_id: int,
     payload: CustomerFactCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -894,7 +895,7 @@ def update_customer_fact(
     customer_id: int,
     fact_id: int,
     payload: CustomerFactUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -933,7 +934,7 @@ def update_customer_fact(
 def delete_customer_fact(
     customer_id: int,
     fact_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -955,7 +956,7 @@ def delete_customer_fact(
 @router.get("/{customer_id}/tags", response_model=CustomerTagListOut)
 def list_customer_tags(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     customer = _get_customer(db, customer_id, tenant)
@@ -976,7 +977,7 @@ def list_customer_tags(
 def add_customer_tag(
     customer_id: int,
     payload: CustomerTagCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -1025,7 +1026,7 @@ def add_customer_tag(
 def remove_customer_tag(
     customer_id: int,
     tag_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -1055,7 +1056,7 @@ def remove_customer_tag(
 @router.get("/{customer_id}/identities", response_model=list[CustomerIdentityOut])
 def list_customer_identities(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _get_customer(db, customer_id, tenant)
@@ -1069,7 +1070,8 @@ def list_customer_identities(
 @router.get("/{customer_id}/timeline", response_model=CustomerTimelineOut)
 def customer_timeline(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -1077,7 +1079,7 @@ def customer_timeline(
     _get_customer(db, customer_id, tenant)
     actor_names = {
         user.id: user.full_name or user.email
-        for user in db.query(User).filter(User.business_id == tenant.business_id).all()
+        for user in platform_db.query(User).filter(User.business_id == tenant.business_id).all()
     }
     identities = db.query(CustomerIdentity).filter(
         CustomerIdentity.business_id == tenant.business_id,
@@ -1411,7 +1413,7 @@ def customer_timeline(
 def create_customer_note(
     customer_id: int,
     payload: CustomerNoteCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
 from app.models.business import User
 from app.models.sales import Product
@@ -85,7 +85,7 @@ def _out(order: PurchaseOrder) -> PurchaseOrderOut:
 
 @router.get("/purchase-orders", response_model=PurchaseOrderListOut)
 def list_purchase_orders(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     status: str | None = Query(default=None, max_length=30),
     supplier: str | None = Query(default=None, max_length=255),
@@ -107,7 +107,7 @@ def list_purchase_orders(
 @router.post("/purchase-orders", response_model=PurchaseOrderOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_purchase_order(
     payload: PurchaseOrderCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -177,7 +177,7 @@ def create_purchase_order(
 
 
 @router.get("/purchase-orders/{order_id}", response_model=PurchaseOrderOut)
-def get_purchase_order(order_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def get_purchase_order(order_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return _out(_purchase_order(db, order_id, tenant))
 
 
@@ -185,7 +185,7 @@ def get_purchase_order(order_id: int, db: Session = Depends(get_db), tenant: Ten
 def update_purchase_order(
     order_id: int,
     payload: PurchaseOrderUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -227,7 +227,7 @@ def update_purchase_order(
 def transition_purchase_order(
     order_id: int,
     payload: PurchaseOrderTransition,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -284,7 +284,7 @@ def receive_order(
     order_id: int,
     payload: PurchaseReceiptCreate,
     response: Response,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):

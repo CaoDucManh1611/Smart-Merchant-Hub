@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.business import User
 from app.models.customer import Customer
 from app.models.customer_collection import (
@@ -109,7 +109,7 @@ def _session_out(row: CustomerCollectionSession) -> CustomerCollectionSessionOut
 def create_contact(
     customer_id: int,
     payload: CustomerContactCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -166,7 +166,7 @@ def create_contact(
 @router.get("/{customer_id}/contacts", response_model=CustomerContactListOut)
 def list_contacts(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _customer(db, customer_id, tenant)
@@ -182,7 +182,7 @@ def update_contact(
     customer_id: int,
     contact_id: int,
     payload: CustomerContactUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -236,7 +236,7 @@ def update_contact(
 def create_address(
     customer_id: int,
     payload: CustomerAddressCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -261,7 +261,7 @@ def create_address(
 @router.get("/{customer_id}/addresses", response_model=CustomerAddressListOut)
 def list_addresses(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _customer(db, customer_id, tenant)
@@ -276,7 +276,7 @@ def list_addresses(
 def create_collection_session(
     customer_id: int,
     payload: CustomerCollectionSessionCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -312,7 +312,7 @@ def update_collection_session(
     customer_id: int,
     session_id: int,
     payload: CustomerCollectionSessionUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -345,7 +345,7 @@ def update_collection_session(
 @router.get("/{customer_id}/collection-sessions", response_model=list[CustomerCollectionSessionOut])
 def list_collection_sessions(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _customer(db, customer_id, tenant)
@@ -360,7 +360,7 @@ def list_collection_sessions(
 def create_consent(
     customer_id: int,
     payload: CustomerConsentCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -394,7 +394,7 @@ def create_consent(
 @router.get("/{customer_id}/consents", response_model=CustomerConsentListOut)
 def list_consents(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _customer(db, customer_id, tenant)
@@ -410,7 +410,7 @@ def create_verification_challenge(
     customer_id: int,
     contact_id: int,
     payload: VerificationChallengeCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -469,7 +469,7 @@ def verify_challenge(
     contact_id: int,
     challenge_id: int,
     payload: VerificationChallengeVerify,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):

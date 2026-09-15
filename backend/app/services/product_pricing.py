@@ -8,7 +8,7 @@ import re
 from sqlalchemy.orm import Session
 
 from app.models.sales import Product
-from app.services.product_resolver import normalize_product_text, resolve_product
+from app.services.product_resolver import normalize_product_text, product_aliases, resolve_product
 
 
 COMBO_COMPARISON_TERMS = (
@@ -118,6 +118,42 @@ def _available(product: Product) -> int:
     return max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
 
 
+def _requested_component(
+    text: str,
+    components: list[tuple[Product, int]],
+) -> tuple[Product, int] | None:
+    """Find the explicitly named bundle item, if the customer named one.
+
+    A combo has one price, so a request such as "mua lẻ sữa rửa mặt" must
+    not silently turn into a quote for the whole bundle.  We use the same
+    catalog aliases as product resolution and choose the longest match to
+    avoid a generic alias (for example ``serum``) shadowing a more specific
+    product name.
+    """
+    folded = normalize_product_text(text)
+    matches: list[tuple[int, int, Product, int]] = []
+    for product, quantity in components:
+        for alias in product_aliases(product):
+            normalized = normalize_product_text(alias)
+            if not normalized:
+                continue
+            if normalized in folded:
+                matches.append((len(normalized), -int(product.id or 0), product, quantity))
+                continue
+            # Mirror the resolver's conservative abbreviated-name behavior:
+            # "sữa rửa mặt" should still identify "sữa rửa mặt dịu nhẹ".
+            alias_tokens = {token for token in normalized.split() if len(token) >= 2}
+            query_tokens = set(folded.split())
+            if len(alias_tokens) >= 2:
+                matched = len(alias_tokens & query_tokens)
+                if matched >= 2 and matched / len(alias_tokens) >= 0.5:
+                    matches.append((matched * 100 + len(normalized), -int(product.id or 0), product, quantity))
+    if not matches:
+        return None
+    _length, _id, product, quantity = max(matches)
+    return product, quantity
+
+
 def _alternative_hint(db: Session, *, business_id: int, excluded_ids: set[int]) -> str:
     candidates = db.query(Product).filter(
         Product.business_id == business_id,
@@ -186,6 +222,7 @@ def combo_price_comparison_reply(
     retail_total = sum(Decimal(product.price or 0) * quantity for product, quantity in components)
     combo_price = Decimal(combo.price or 0)
     savings = retail_total - combo_price
+    requested_component = _requested_component(text, components)
     component_text = ", ".join(
         f"{quantity} {product.name} ({_format_vnd(product.price)} đồng)"
         for product, quantity in components
@@ -206,8 +243,21 @@ def combo_price_comparison_reply(
     if savings > 0 and retail_total > 0:
         percent = (savings / retail_total * Decimal("100")).quantize(Decimal("0.1"))
         percent_text = str(percent).replace(".", ",")
+        component_note = ""
+        if requested_component is not None:
+            product, quantity = requested_component
+            component_retail = Decimal(product.price or 0) * quantity
+            allocated_discount = (savings * component_retail / retail_total).quantize(Decimal("1"))
+            allocated_combo_price = component_retail - allocated_discount
+            component_note = (
+                f" {product.name} mua lẻ là {_format_vnd(component_retail)} đồng. "
+                f"Catalog chưa tách giá combo theo từng món; nếu phân bổ theo tỷ trọng, "
+                f"phần ưu đãi của món này khoảng {_format_vnd(allocated_discount)} đồng "
+                f"(giá quy đổi khoảng {_format_vnd(allocated_combo_price)} đồng)."
+            )
         return (
-            f"Nếu mua lẻ gồm {component_text} thì khoảng {_format_vnd(retail_total)} đồng. "
+            f"Nếu mua lẻ gồm {component_text} thì khoảng {_format_vnd(retail_total)} đồng."
+            f"{component_note} "
             f"Mua {combo.name} là {_format_vnd(combo_price)} đồng, "
             f"rẻ hơn {_format_vnd(savings)} đồng ({percent_text}%).{availability_note}"
         )

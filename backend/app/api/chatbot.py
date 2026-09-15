@@ -7,7 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
-from app.db.dependencies import get_db
+from app.database.platform_session import get_platform_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.business import User
 from app.models.canned_response import CannedResponse
 from app.models.chatbot import ChatbotConfig
@@ -62,7 +63,7 @@ def _conversation(db: Session, conversation_id: int, tenant: TenantContext) -> C
 
 @router.get("/config", response_model=ChatbotConfigOut)
 def get_config(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     return _config(db, tenant)
@@ -71,7 +72,7 @@ def get_config(
 @router.put("/config", response_model=ChatbotConfigOut, dependencies=[Depends(require_write_access)])
 def update_config(
     payload: ChatbotConfigUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -94,7 +95,7 @@ def update_config(
 @router.get("/canned-responses", response_model=CannedResponseListOut)
 def list_canned_responses(
     enabled: bool | None = Query(default=None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     query = db.query(CannedResponse).filter(CannedResponse.business_id == tenant.business_id)
@@ -107,7 +108,7 @@ def list_canned_responses(
 @router.post("/canned-responses", response_model=CannedResponseOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_canned_response(
     payload: CannedResponseCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -135,7 +136,7 @@ def create_canned_response(
 def update_canned_response(
     response_id: int,
     payload: CannedResponseUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -161,7 +162,7 @@ def update_canned_response(
 @router.delete("/canned-responses/{response_id}", status_code=204, dependencies=[Depends(require_write_access)])
 def delete_canned_response(
     response_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -196,7 +197,7 @@ def _set_bot_mode(db: Session, conversation: Conversation, mode: str, reason: st
 def pause_bot(
     conversation_id: int,
     payload: BotModeRequest | None = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -207,7 +208,7 @@ def pause_bot(
 def resume_bot(
     conversation_id: int,
     payload: BotModeRequest | None = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -223,7 +224,7 @@ def list_tools():
 @router.get("/conversations/{conversation_id}/memory")
 def get_memory(
     conversation_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     try:
@@ -236,12 +237,20 @@ def get_memory(
 def execute_tool(
     conversation_id: int,
     payload: ChatbotToolRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
     try:
-        result = execute_chatbot_tool(db, tenant.business_id, conversation_id, payload.tool, payload.arguments)
+        result = execute_chatbot_tool(
+            db,
+            tenant.business_id,
+            conversation_id,
+            payload.tool,
+            payload.arguments,
+            platform_db=platform_db,
+        )
     except ValueError as exc:
         if str(exc) == "tool_not_allowed":
             raise HTTPException(status_code=422, detail="Tool chưa được cho phép.") from exc
@@ -266,7 +275,7 @@ def execute_tool(
 @router.get("/followups", response_model=FollowUpListOut)
 def list_followups(
     status: str | None = Query(default=None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     from app.models.chatbot_followup import ChatbotFollowUp
@@ -283,7 +292,7 @@ def schedule_inactive_customers(
     inactive_days: int = Query(default=30, ge=7, le=3650),
     run_in_minutes: int = Query(default=5, ge=0, le=1440),
     limit: int = Query(default=100, ge=1, le=500),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -309,7 +318,7 @@ def schedule_inactive_customers(
 @router.get("/csat", response_model=CustomerFeedbackListOut)
 def list_csat_feedback(
     status: str | None = Query(default=None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     from app.models.customer_feedback import CustomerFeedback
@@ -328,7 +337,7 @@ def list_csat_feedback(
 @router.post("/followups", response_model=FollowUpOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_followup(
     payload: FollowUpCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -353,7 +362,7 @@ def create_followup(
 @router.post("/followups/dispatch", dependencies=[Depends(require_write_access)])
 def dispatch_followups(
     limit: int = Query(default=50, ge=1, le=500),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -366,7 +375,7 @@ def dispatch_followups(
 @router.post("/followups/{followup_id}/cancel", response_model=FollowUpOut, dependencies=[Depends(require_write_access)])
 def cancel_followup(
     followup_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):

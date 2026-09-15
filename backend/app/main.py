@@ -1,7 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from threading import Thread
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +12,9 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.database.init_db import init_db
+from app.database.platform_session import PlatformSessionLocal
 from app.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
 from app.services.realtime import manager
-from app.services.knowledge_seed_service import seed_knowledge_base
 from app.services.observability import (
     collect_operational_snapshot,
     evaluate_alerts,
@@ -34,11 +33,6 @@ def initialize_database() -> None:
     try:
         settings.validate_runtime()
         init_db()
-        Thread(
-            target=seed_knowledge_base,
-            name="knowledge-base-seed",
-            daemon=True,
-        ).start()
     except Exception:
         logger.exception("Database initialization failed")
         raise
@@ -142,8 +136,7 @@ def health_details():
     balancers.  This diagnostic endpoint checks the database-backed queue and
     reports provider circuit state without exposing exception text or secrets.
     """
-    from app.db.database import SessionLocal
-    with SessionLocal() as db:
+    with PlatformSessionLocal() as db:
         checks = collect_operational_snapshot(db)
     alerts = evaluate_alerts(checks)
     overall = "ok" if all(item["status"] in {"ok", "disabled"} for item in checks.values()) else "degraded"
@@ -153,9 +146,7 @@ def health_details():
 @app.get("/health/alerts")
 def health_alerts():
     """Return threshold alerts for Prometheus/Alertmanager polling."""
-    from app.db.database import SessionLocal
-
-    with SessionLocal() as db:
+    with PlatformSessionLocal() as db:
         snapshot = collect_operational_snapshot(db)
     return {"alerts": evaluate_alerts(snapshot), "observed_at": observed_at()}
 
@@ -163,9 +154,7 @@ def health_alerts():
 @app.get("/metrics", response_class=PlainTextResponse)
 def metrics():
     """Prometheus-safe counters and gauges for database/queue/AI cost."""
-    from app.db.database import SessionLocal
-
-    with SessionLocal() as db:
+    with PlatformSessionLocal() as db:
         snapshot = collect_operational_snapshot(db)
     return PlainTextResponse(prometheus_text(snapshot), media_type="text/plain; version=0.0.4")
 

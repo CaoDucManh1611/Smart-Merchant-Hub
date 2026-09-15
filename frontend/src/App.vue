@@ -16,20 +16,17 @@ import { getInboxChannels } from "./inbox-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
 import { notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
+import { createApiClient } from "./api-client.js";
+import { requireBusinessId } from "./auth-context.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const BUSINESS_ID = "1";
+const apiClient = createApiClient({
+  baseUrl: API_BASE,
+  getToken: () => window.localStorage.getItem("crm_access_token") || "",
+});
 
 function apiFetch(input, init = {}) {
-  const headers = new Headers(init.headers || {});
-  if (!headers.has("X-Business-Id")) {
-    headers.set("X-Business-Id", BUSINESS_ID);
-  }
-  const token = window.localStorage.getItem("crm_access_token");
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  return fetch(input, { ...init, headers });
+  return apiClient.fetch(input, init);
 }
 
 
@@ -481,6 +478,7 @@ const botConnectionNotice = ref("");
 const botTokenVisible = ref(false);
 const botConnectionForm = ref({ channel_type: "telegram", access_token: "" });
 const notificationError = ref("");
+const activeBotConnections = computed(() => botConnections.value.filter((item) => ["connected", "active"].includes(String(item.status || "").toLowerCase())));
 
 
 /* META OAUTH */
@@ -540,6 +538,18 @@ function botChannelLabel(channelType) {
   return channelType === "zalo" ? "Zalo Bot Creator" : "Telegram BotFather";
 }
 
+function botConnectionStateLabel(state) {
+  const labels = {
+    connected: "Đang hoạt động",
+    active: "Đang hoạt động",
+    disconnected: "Đã ngắt kết nối",
+    reconnect_required: "Cần kết nối lại",
+    verifying: "Đang xác minh",
+    error: "Lỗi kết nối",
+  };
+  return labels[String(state || "").toLowerCase()] || "Chưa xác định";
+}
+
 function botConnectionErrorMessage(payload, fallback) {
   const detail = payload?.detail;
   if (detail && typeof detail === "object") return detail.message || fallback;
@@ -550,7 +560,7 @@ async function fetchBotConnections() {
   botConnectionLoading.value = true;
   botConnectionError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels`);
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels`);
     const detail = await response.json().catch(() => []);
     if (!response.ok) throw new Error(botConnectionErrorMessage(detail, `HTTP ${response.status}`));
     botConnections.value = Array.isArray(detail)
@@ -575,7 +585,7 @@ async function connectBotChannel() {
   botConnectionError.value = "";
   botConnectionNotice.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels/verify`, {
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -606,7 +616,7 @@ async function disconnectBotChannel(connection) {
   botConnectionError.value = "";
   botConnectionNotice.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/onboarding/shops/${BUSINESS_ID}/channels/${connection.id}`, { method: "DELETE" });
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels/${connection.id}`, { method: "DELETE" });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(botConnectionErrorMessage(detail, `HTTP ${response.status}`));
     botConnectionNotice.value = "Đã ngắt kết nối bot nhưng vẫn giữ nguyên lịch sử hội thoại.";
@@ -3368,7 +3378,7 @@ async function login() {
   try {
     const response = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Business-Id": BUSINESS_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(loginForm.value),
     });
     if (!response.ok) {
@@ -8889,8 +8899,8 @@ onUnmounted(() => {
               <h2>Kết nối Telegram/Zalo</h2>
               <p>Tạo bot trên nền tảng, dán token một lần; CRM sẽ tự xác minh và đăng ký webhook.</p>
             </div>
-            <span class="connection-badge" :class="{ connected: botConnections.length }">
-              {{ botConnections.length ? `${botConnections.length} BOT ĐANG CHẠY` : 'CHƯA CÓ BOT' }}
+            <span class="connection-badge" :class="{ connected: activeBotConnections.length }">
+              {{ activeBotConnections.length ? `${activeBotConnections.length} BOT ĐANG CHẠY` : 'CHƯA CÓ BOT ĐANG CHẠY' }}
             </span>
           </div>
 
@@ -8963,9 +8973,10 @@ onUnmounted(() => {
             <li v-for="connection in botConnections" :key="connection.id">
               <div>
                 <strong>{{ connection.name }}</strong>
-                <small>{{ connection.channel_type === 'zalo' ? 'Zalo Bot' : 'Telegram Bot' }} · ID {{ connection.external_account_id }} · Webhook {{ connection.webhook_status === 'connected' ? 'hoạt động' : 'cần kiểm tra' }}</small>
+                <small>{{ connection.channel_type === 'zalo' ? 'Zalo Bot' : 'Telegram Bot' }} · ID {{ connection.external_account_id }} · {{ botConnectionStateLabel(connection.status) }} · Webhook {{ connection.webhook_status === 'connected' ? 'hoạt động' : connection.webhook_status === 'disconnected' ? 'đã ngắt' : 'cần kiểm tra' }}</small>
               </div>
-              <button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button>
+              <button v-if="['connected', 'active', 'verifying', 'reconnect_required', 'error'].includes(String(connection.status || '').toLowerCase())" type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button>
+              <span v-else class="connection-state-muted">Đã lưu lịch sử</span>
             </li>
           </ul>
           <div v-else class="settings-empty">Chưa có Telegram/Zalo Bot nào được kết nối.</div>

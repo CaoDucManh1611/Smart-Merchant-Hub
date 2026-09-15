@@ -13,6 +13,9 @@ from app.auth.dependencies import get_current_user, issue_token, require_admin_a
 from app.auth.passwords import hash_password
 from app.database.bootstrap import ensure_default_plans
 from app.db.dependencies import get_db
+from app.database.platform_session import get_platform_db
+from app.database.tenant_session import tenant_session
+from app.tenancy.crm_session import get_tenant_db
 from app.models.auth_session import AuthSession
 from app.models.business import Business, ServicePlan, Subscription, User
 from app.models.channel import Channel
@@ -30,14 +33,19 @@ from app.schemas.onboarding import (
     OnboardingShopCreate,
     OnboardingShopOut,
     OnboardingSubscriptionOut,
+    OnboardingProvisionOut,
 )
 from app.services.audit_service import record_audit
 from app.services.channel_credentials import encrypt_token
-from app.services.channel_service import upsert_channel_connection
+from app.services.channel_service import normalized_connection_state, upsert_channel_connection
+from app.services.channel_health import check_channel_health
 from app.services.quota_service import QuotaExceededError, release_quota
 from app.services.provider_connection import ProviderConnectionError, verify_and_configure_bot
 from app.core.config import settings
 from app.tenancy.context import TenantContext
+from app.tenancy.schema import schema_name_for
+from app.tenancy.registry import register_webhook_route, deactivate_route_for_channel
+from app.tenancy.provisioning import provision_shop
 
 
 router = APIRouter(prefix="/onboarding")
@@ -198,74 +206,115 @@ def connect_channel(
     business_id: int,
     payload: OnboardingChannelCreate,
     db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
     actor: User | None = Depends(require_admin_access),
 ):
     _require_shop_admin(db, business_id, actor)
+    raw_config = dict(payload.config or {})
+    # A manually supplied webhook secret is used only for route hashing.  The
+    # persisted tenant config is scrubbed/encrypted below and the secret is
+    # never returned in the response or written to platform audit metadata.
+    webhook_secret = str(raw_config.get("webhook_secret") or "").strip() or None
+    schema_name = schema_name_for(business_id)
     try:
-        channel = upsert_channel_connection(
-            db,
-            business_id=business_id,
-            channel_type=payload.channel_type,
-            external_account_id=payload.external_account_id.strip(),
-            name=payload.name.strip(),
-            access_token=payload.access_token,
-            config=_safe_channel_config(payload.config),
-        )
+        with tenant_session(schema_name) as tenant_db:
+            channel = upsert_channel_connection(
+                tenant_db,
+                business_id=business_id,
+                channel_type=payload.channel_type,
+                external_account_id=payload.external_account_id.strip(),
+                name=payload.name.strip(),
+                access_token=payload.access_token,
+                config=_safe_channel_config(raw_config),
+                reserve_channel_slot=lambda: __import__("app.services.quota_service", fromlist=["reserve_quota"]).reserve_quota(platform_db, business_id, "connected_channels"),
+                commit=False,
+            )
+            channel_payload = OnboardingChannelOut.model_validate(channel)
+            register_webhook_route(
+                platform_db,
+                provider=channel.channel_type,
+                external_account_id=channel.external_account_id,
+                webhook_secret=webhook_secret,
+                business_id=business_id,
+                schema_name=schema_name,
+                channel_id=channel.id,
+            )
+            record_audit(
+                tenant_db,
+                business_id=business_id,
+                user_id=actor.id,
+                action="onboarding_channel_connected",
+                resource_type="channel",
+                resource_id=channel.id,
+                metadata={"channel_type": channel.channel_type, "external_account_id": channel.external_account_id},
+            )
+        # Quota reservations live in the platform database while the
+        # encrypted credential lives in the shop schema.  Persist the quota
+        # only after the tenant write succeeds; failures leave the platform
+        # transaction rolled back by the dependency cleanup.
+        platform_db.commit()
     except PermissionError as exc:
+        platform_db.rollback()
         raise HTTPException(status_code=409, detail="Kênh này đã thuộc shop khác.") from exc
     except QuotaExceededError as exc:
+        platform_db.rollback()
         raise HTTPException(status_code=429, detail=exc.detail) from exc
     except ValueError as exc:
+        platform_db.rollback()
         # Never fall back to plaintext channel credentials when the key is
         # missing or malformed.  The caller gets an actionable setup error.
         raise HTTPException(status_code=503, detail="Kênh chưa thể kết nối vì secret manager chưa sẵn sàng.") from exc
-    record_audit(
-        db,
-        business_id=business_id,
-        user_id=actor.id,
-        action="onboarding_channel_connected",
-        resource_type="channel",
-        resource_id=channel.id,
-        metadata={"channel_type": channel.channel_type, "external_account_id": channel.external_account_id},
-    )
-    db.commit()
-    return OnboardingChannelOut.model_validate(channel)
+    except Exception:
+        platform_db.rollback()
+        raise
+    return channel_payload
 
 
 @router.get("/shops/{business_id}/channels", response_model=list[OnboardingChannelStatusOut])
 def list_connected_channels(
     business_id: int,
     db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
     actor: User | None = Depends(require_admin_access),
 ):
     """Return safe connection metadata without exposing provider secrets."""
 
     _require_shop_admin(db, business_id, actor)
-    channels = (
-        db.query(Channel)
-        .filter(Channel.business_id == business_id, Channel.status == "active")
-        .order_by(Channel.channel_type.asc(), Channel.id.asc())
-        .all()
-    )
-    output = []
-    for channel in channels:
-        config = channel.config if isinstance(channel.config, dict) else {}
-        provider_account = config.get("provider_account")
-        output.append(
-            OnboardingChannelStatusOut(
-                id=channel.id,
-                business_id=channel.business_id,
-                channel_type=channel.channel_type,
-                external_account_id=channel.external_account_id,
-                name=channel.name,
-                status=channel.status,
-                connected_at=channel.connected_at,
-                provider_account=provider_account if isinstance(provider_account, dict) else None,
-                webhook_url=str(config.get("webhook_url") or "") or None,
-                webhook_status="connected" if config.get("webhook_url") else "unknown",
-            )
+    with tenant_session(schema_name_for(business_id)) as tenant_db:
+        channels = (
+            tenant_db.query(Channel)
+            # Keep disconnected/reconnect-required records visible so the
+            # shared connection card can explain what needs attention and
+            # preserve one stable row per provider account.
+            .filter(Channel.business_id == business_id)
+            .order_by(Channel.channel_type.asc(), Channel.id.asc())
+            .all()
         )
-    return output
+        output = []
+        for channel in channels:
+            config = channel.config if isinstance(channel.config, dict) else {}
+            provider_account = config.get("provider_account")
+            output.append(
+                OnboardingChannelStatusOut(
+                    id=channel.id,
+                    business_id=channel.business_id,
+                    channel_type=channel.channel_type,
+                    external_account_id=channel.external_account_id,
+                    name=channel.name,
+                    status=normalized_connection_state(channel),
+                    connected_at=channel.connected_at,
+                    provider_account=provider_account if isinstance(provider_account, dict) else None,
+                    webhook_url=str(config.get("webhook_url") or "") or None,
+                    webhook_status=(
+                        "disconnected"
+                        if normalized_connection_state(channel) == "disconnected"
+                        else "connected"
+                        if config.get("webhook_url")
+                        else "unknown"
+                    ),
+                )
+            )
+        return output
 
 
 @router.delete("/shops/{business_id}/channels/{channel_id}")
@@ -273,29 +322,48 @@ def disconnect_bot_channel(
     business_id: int,
     channel_id: int,
     db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
     actor: User | None = Depends(require_admin_access),
 ):
     """Disconnect a Bot Creator/BotFather channel while preserving history."""
 
     _require_shop_admin(db, business_id, actor)
-    channel = db.get(Channel, channel_id)
-    if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo"}:
-        raise HTTPException(status_code=404, detail="Kênh bot không tồn tại.")
-    if channel.status == "active":
-        channel.status = "disconnected"
-        channel.disconnected_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        release_quota(db, business_id, "connected_channels")
-    record_audit(
-        db,
-        business_id=business_id,
-        user_id=actor.id,
-        action="onboarding_bot_disconnected",
-        resource_type="channel",
-        resource_id=channel.id,
-        metadata={"channel_type": channel.channel_type, "external_account_id": channel.external_account_id},
-    )
-    db.commit()
-    return {"connected": False, "channel_id": channel.id}
+    with tenant_session(schema_name_for(business_id)) as tenant_db:
+        channel = tenant_db.get(Channel, channel_id)
+        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo"}:
+            raise HTTPException(status_code=404, detail="Kênh bot không tồn tại.")
+        config = channel.config if isinstance(channel.config, dict) else {}
+        if channel.status == "active":
+            channel.status = "disconnected"
+            channel.disconnected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            release_quota(platform_db, business_id, "connected_channels")
+            deactivate_route_for_channel(platform_db, channel.id)
+        channel_id = channel.id
+        channel_type = channel.channel_type
+        external_account_id = channel.external_account_id
+        record_audit(
+            tenant_db,
+            business_id=business_id,
+            user_id=actor.id,
+            action="onboarding_bot_disconnected",
+            resource_type="channel",
+            resource_id=channel_id,
+            metadata={"channel_type": channel_type, "external_account_id": external_account_id},
+        )
+    platform_db.commit()
+    return {"connected": False, "channel_id": channel_id}
+
+
+@router.post("/shops/{business_id}/channels/health")
+def check_shop_channel_health(
+    business_id: int,
+    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Refresh connection states without returning or logging credentials."""
+    _require_shop_admin(db, business_id, actor)
+    return {"items": check_channel_health(tenant_db, business_id)}
 
 
 @router.post("/shops/{business_id}/channels/verify", response_model=OnboardingChannelVerifyOut)
@@ -303,6 +371,7 @@ def verify_bot_channel(
     business_id: int,
     payload: OnboardingChannelVerify,
     db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
     actor: User | None = Depends(require_admin_access),
 ):
     """Verify a Telegram/Zalo Bot token and configure its tenant webhook."""
@@ -330,52 +399,134 @@ def verify_bot_channel(
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
         )
-        channel = upsert_channel_connection(
-            db,
-            business_id=business_id,
-            channel_type=payload.channel_type,
-            external_account_id=verification["external_account_id"],
-            name=verification["name"],
-            access_token=payload.access_token.strip(),
-            config=_safe_channel_config(
-                {
-                    "provider": f"{payload.channel_type}_bot",
-                    "webhook_url": verification["webhook_url"],
-                    "webhook_secret": webhook_secret,
-                    "provider_account": verification["provider_account"],
-                }
-            ),
-        )
+        with tenant_session(schema_name_for(business_id)) as tenant_db:
+            channel = upsert_channel_connection(
+                tenant_db,
+                business_id=business_id,
+                channel_type=payload.channel_type,
+                external_account_id=verification["external_account_id"],
+                name=verification["name"],
+                access_token=payload.access_token.strip(),
+                config=_safe_channel_config(
+                    {
+                        "provider": f"{payload.channel_type}_bot",
+                        "webhook_url": verification["webhook_url"],
+                        "webhook_secret": webhook_secret,
+                        "provider_account": verification["provider_account"],
+                    }
+                ),
+                reserve_channel_slot=lambda: __import__("app.services.quota_service", fromlist=["reserve_quota"]).reserve_quota(platform_db, business_id, "connected_channels"),
+                commit=False,
+            )
+            channel_id = channel.id
+            channel_business_id = channel.business_id
+            channel_type = channel.channel_type
+            channel_external_account_id = channel.external_account_id
+            channel_name = channel.name
+            channel_status = normalized_connection_state(channel)
+            channel_connected_at = channel.connected_at
+            register_webhook_route(
+                platform_db,
+                provider=payload.channel_type,
+                # Route by both the provider account and the generated
+                # secret.  The account hash prevents the same bot being
+                # attached to two shops; the secret hash is what Telegram /
+                # Zalo send back on each webhook request.
+                external_account_id=channel.external_account_id,
+                webhook_secret=webhook_secret,
+                business_id=business_id,
+                schema_name=schema_name_for(business_id),
+                channel_id=channel.id,
+            )
+            record_audit(
+                tenant_db,
+                business_id=business_id,
+                user_id=actor.id,
+                action="onboarding_bot_verified",
+                resource_type="channel",
+                resource_id=channel.id,
+                metadata={"channel_type": channel.channel_type, "external_account_id": channel.external_account_id},
+            )
+        # The tenant context commits before the route transaction is made
+        # durable.  If the platform commit fails, the route is absent and the
+        # channel remains discoverable for a compensating retry instead of
+        # exposing a half-created webhook route.
+        platform_db.commit()
     except ProviderConnectionError as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail="Bot này đã thuộc shop khác.") from exc
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=exc.detail) from exc
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail="Secret manager chưa sẵn sàng để lưu token.") from exc
 
-    record_audit(
-        db,
-        business_id=business_id,
-        user_id=actor.id,
-        action="onboarding_bot_verified",
-        resource_type="channel",
-        resource_id=channel.id,
-        metadata={"channel_type": channel.channel_type, "external_account_id": channel.external_account_id},
-    )
-    db.commit()
     return OnboardingChannelVerifyOut(
-        id=channel.id,
-        business_id=channel.business_id,
-        channel_type=channel.channel_type,
-        external_account_id=channel.external_account_id,
-        name=channel.name,
-        status=channel.status,
-        connected_at=channel.connected_at,
+        id=channel_id,
+        business_id=channel_business_id,
+        channel_type=channel_type,
+        external_account_id=channel_external_account_id,
+        name=channel_name,
+        status=channel_status,
+        connected_at=channel_connected_at,
         provider_account=verification["provider_account"],
         webhook_url=verification["webhook_url"],
         webhook_status=verification["webhook_status"],
+    )
+
+
+def _provision_response(registry) -> OnboardingProvisionOut:
+    return OnboardingProvisionOut(
+        business_id=int(registry.business_id),
+        schema_name=str(registry.schema_name),
+        state=str(registry.state),
+        tenant_revision=registry.tenant_revision,
+        feature_enabled=bool(registry.feature_enabled),
+    )
+
+
+@router.post("/shops/{business_id}/provision", response_model=OnboardingProvisionOut)
+def provision_onboarding_shop(
+    business_id: int,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=180),
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Create/migrate one shop schema through the retryable provisioning saga."""
+    _require_shop_admin(db, business_id, actor)
+    try:
+        registry = provision_shop(
+            platform_db,
+            business_id=business_id,
+            idempotency_key=(idempotency_key or f"onboarding:provision:{business_id}").strip(),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Shop chưa có control-plane identity để provision.") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Không thể provision schema shop; thao tác có thể retry.") from exc
+    return _provision_response(registry)
+
+
+@router.post("/shops/{business_id}/provision/retry", response_model=OnboardingProvisionOut)
+def retry_onboarding_shop_provision(
+    business_id: int,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=180),
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Retry a failed provision without dropping its existing schema."""
+    return provision_onboarding_shop(
+        business_id=business_id,
+        idempotency_key=idempotency_key or f"onboarding:provision:{business_id}",
+        db=db,
+        platform_db=platform_db,
+        actor=actor,
     )
 
 
@@ -384,12 +535,13 @@ def import_products(
     business_id: int,
     payload: OnboardingProductImport,
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
     actor: User | None = Depends(require_admin_access),
 ):
     _require_shop_admin(db, business_id, actor)
     existing_skus = {
         str(row[0]).casefold(): row[1]
-        for row in db.query(Product.sku, Product).filter(Product.business_id == business_id).all()
+        for row in tenant_db.query(Product.sku, Product).filter(Product.business_id == business_id).all()
     }
     seen: set[str] = set()
     imported = updated = skipped = 0
@@ -414,10 +566,10 @@ def import_products(
                 status=item.status,
                 metadata_=item.metadata,
             )
-            db.add(product)
-            db.flush()
+            tenant_db.add(product)
+            tenant_db.flush()
             if item.stock_quantity > 0:
-                db.add(StockMovement(
+                tenant_db.add(StockMovement(
                     business_id=business_id,
                     product_id=product.id,
                     movement_type="opening_balance",
@@ -445,7 +597,7 @@ def import_products(
             product.metadata_ = item.metadata
             if "stock_quantity" in item.model_fields_set and item.stock_quantity != old_stock:
                 product.stock_quantity = item.stock_quantity
-                db.add(StockMovement(
+                tenant_db.add(StockMovement(
                     business_id=business_id,
                     product_id=product.id,
                     movement_type="onboarding_reconcile",
@@ -459,10 +611,10 @@ def import_products(
                 ))
             updated += 1
     try:
-        db.commit()
+        tenant_db.commit()
     except IntegrityError as exc:
-        db.rollback()
+        tenant_db.rollback()
         raise HTTPException(status_code=409, detail="File import chứa SKU không hợp lệ hoặc trùng dữ liệu.") from exc
-    record_audit(db, business_id=business_id, user_id=actor.id if actor else None, action="onboarding_products_imported", resource_type="product_import", metadata={"imported": imported, "updated": updated, "skipped": skipped})
-    db.commit()
+    record_audit(tenant_db, business_id=business_id, user_id=actor.id if actor else None, action="onboarding_products_imported", resource_type="product_import", metadata={"imported": imported, "updated": updated, "skipped": skipped})
+    tenant_db.commit()
     return OnboardingProductImportOut(imported=imported, updated=updated, skipped=skipped, errors=errors)

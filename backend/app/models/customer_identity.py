@@ -7,10 +7,10 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class CustomerIdentity(Base):
+class CustomerIdentity(TenantBase):
     __tablename__ = "customer_identities"
     __table_args__ = (
         UniqueConstraint(
@@ -24,7 +24,7 @@ class CustomerIdentity(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer, nullable=False, index=True
     )
     customer_id: Mapped[int] = mapped_column(
         ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True
@@ -39,5 +39,4 @@ class CustomerIdentity(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    business = relationship("Business")
     customer = relationship("Customer", back_populates="identities")

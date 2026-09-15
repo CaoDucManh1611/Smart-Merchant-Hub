@@ -17,6 +17,8 @@ def test_schema_name_is_server_generated_and_strict():
 def test_two_tenant_schemas_upgrade_independently_and_idempotently():
     schemas = ("shop_91001", "shop_91002")
     with tenant_engine.connect() as connection:
+        if connection.dialect.name != "postgresql":
+            pytest.skip("tenant schema migration requires PostgreSQL schemas")
         try:
             for schema in schemas:
                 connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))

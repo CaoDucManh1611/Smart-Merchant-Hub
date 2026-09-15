@@ -46,7 +46,8 @@ from app.services.product_resolver import (
     resolve_product_mentions,
 )
 from app.services.notification_service import create_notification
-from app.db.database import SessionLocal
+from app.database.tenant_session import tenant_session
+from app.tenancy.schema import schema_name_for
 
 
 REQUIRED_FIELDS = ("name", "phone", "email", "address", "payment_method")
@@ -1863,69 +1864,68 @@ def send_collection_prompt_background(
     """Send and persist the next collection prompt off the webhook path."""
 
     def worker() -> None:
-        db = SessionLocal()
-        try:
-            # These helpers are imported lazily to avoid coupling the model
-            # collection service to provider integrations during unit tests.
-            from app.services.auto_reply_service import (
-                _claim_auto_reply,
-                _get_conversation_recipient,
-                _mark_auto_reply_failed,
-                _save_auto_reply_outbound,
-                _send_channel_reply,
-            )
+        # The webhook request may have already returned, so recreate the
+        # tenant context from the trusted business id before touching CRM
+        # conversations or channels.  Never reopen the legacy shared session.
+        with tenant_session(schema_name_for(business_id)) as db:
+            try:
+                # These helpers are imported lazily to avoid coupling the model
+                # collection service to provider integrations during unit tests.
+                from app.services.auto_reply_service import (
+                    _claim_auto_reply,
+                    _get_conversation_recipient,
+                    _mark_auto_reply_failed,
+                    _save_auto_reply_outbound,
+                    _send_channel_reply,
+                )
 
-            stored_channel, recipient_id = _get_conversation_recipient(
-                db,
-                conversation_id,
-                business_id,
-            )
-            if auto_reply_key and not _claim_auto_reply(
-                db,
-                conversation_id=conversation_id,
-                channel=stored_channel,
-                recipient_id=recipient_id,
-                content=result.prompt,
-                business_id=business_id,
-                auto_reply_key=auto_reply_key,
-            ):
-                return
-            meta_response = _send_channel_reply(
-                db=db,
-                conversation_id=conversation_id,
-                channel=stored_channel,
-                recipient_id=recipient_id,
-                text=result.prompt,
-                business_id=business_id,
-            )
-            save_kwargs = {
-                "db": db,
-                "conversation_id": conversation_id,
-                "channel": stored_channel,
-                "recipient_id": recipient_id,
-                "external_message_id": meta_response.get("message_id"),
-                "content": result.prompt,
-                "meta_response": meta_response,
-                "source_document_ids": [],
-            }
-            if auto_reply_key:
-                save_kwargs["auto_reply_key"] = auto_reply_key
-            _save_auto_reply_outbound(**save_kwargs)
-        except Exception as error:
-            if auto_reply_key:
-                try:
-                    _mark_auto_reply_failed(db, auto_reply_key, error)
-                except Exception:
-                    pass
-            # The collection state is already committed. A provider outage
-            # must not turn a successful inbound webhook into a 5xx response.
-            import logging
-            logging.getLogger(__name__).exception(
-                "Customer collection prompt failed for conversation %d",
-                conversation_id,
-            )
-        finally:
-            db.close()
+                stored_channel, recipient_id = _get_conversation_recipient(
+                    db, conversation_id, business_id
+                )
+                if auto_reply_key and not _claim_auto_reply(
+                    db,
+                    conversation_id=conversation_id,
+                    channel=stored_channel,
+                    recipient_id=recipient_id,
+                    content=result.prompt,
+                    business_id=business_id,
+                    auto_reply_key=auto_reply_key,
+                ):
+                    return
+                meta_response = _send_channel_reply(
+                    db=db,
+                    conversation_id=conversation_id,
+                    channel=stored_channel,
+                    recipient_id=recipient_id,
+                    text=result.prompt,
+                    business_id=business_id,
+                )
+                save_kwargs = {
+                    "db": db,
+                    "conversation_id": conversation_id,
+                    "channel": stored_channel,
+                    "recipient_id": recipient_id,
+                    "external_message_id": meta_response.get("message_id"),
+                    "content": result.prompt,
+                    "meta_response": meta_response,
+                    "source_document_ids": [],
+                }
+                if auto_reply_key:
+                    save_kwargs["auto_reply_key"] = auto_reply_key
+                _save_auto_reply_outbound(**save_kwargs)
+            except Exception as error:
+                if auto_reply_key:
+                    try:
+                        _mark_auto_reply_failed(db, auto_reply_key, error)
+                    except Exception:
+                        pass
+                # The collection state is already committed. A provider outage
+                # must not turn a successful inbound webhook into a 5xx response.
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Customer collection prompt failed for conversation %d",
+                    conversation_id,
+                )
 
     Thread(
         target=worker,

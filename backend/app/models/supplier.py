@@ -7,10 +7,10 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class Supplier(Base):
+class Supplier(TenantBase):
     __tablename__ = "suppliers"
     __table_args__ = (
         UniqueConstraint("business_id", "code", name="uq_suppliers_business_code"),
@@ -18,7 +18,7 @@ class Supplier(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=False,
         index=True,
     )
@@ -33,5 +33,4 @@ class Supplier(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    business = relationship("Business", back_populates="suppliers")
     purchase_orders = relationship("PurchaseOrder", back_populates="supplier")

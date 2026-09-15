@@ -3,18 +3,17 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class Customer(Base):
+class Customer(TenantBase):
     __tablename__ = "customers"
 
     __table_args__ = (
         UniqueConstraint(
-            "business_id",
             "channel",
             "external_user_id",
-            name="uq_customers_business_channel_user",
+            name="uq_customers_channel_user",
         ),
     )
 
@@ -23,9 +22,9 @@ class Customer(Base):
         primary_key=True,
     )
 
-    # Nullable keeps the original single-shop webhook flow backward compatible.
+    # Redundant platform identity retained only as audit data; schema selects ownership.
     business_id: Mapped[int | None] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=True,
         index=True,
     )
@@ -81,7 +80,6 @@ class Customer(Base):
         onupdate=func.now(),
     )
 
-    business = relationship("Business", back_populates="customers")
 
     merged_into = relationship(
         "Customer",

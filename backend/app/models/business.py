@@ -40,22 +40,7 @@ class Business(Base):
     )
 
     users = relationship("User", back_populates="business", cascade="all, delete-orphan")
-    channels = relationship("Channel", back_populates="business", cascade="all, delete-orphan")
-    customers = relationship("Customer", back_populates="business")
-    conversations = relationship("Conversation", back_populates="business")
-    documents = relationship("Document", back_populates="business")
-    products = relationship("Product", back_populates="business")
-    orders = relationship("Order", back_populates="business")
-    suppliers = relationship("Supplier", back_populates="business", cascade="all, delete-orphan")
-    leads = relationship("Lead", back_populates="business", cascade="all, delete-orphan")
-    tickets = relationship("Ticket", back_populates="business", cascade="all, delete-orphan")
     subscriptions = relationship("Subscription", back_populates="business")
-    chatbot_config = relationship(
-        "ChatbotConfig",
-        back_populates="business",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
 
 
 class User(Base):
@@ -86,11 +71,6 @@ class User(Base):
     )
 
     business = relationship("Business", back_populates="users")
-    assignments = relationship(
-        "ConversationAssignment",
-        foreign_keys="ConversationAssignment.user_id",
-        back_populates="user",
-    )
 
 
 class ServicePlan(Base):

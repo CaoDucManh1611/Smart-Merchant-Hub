@@ -7,15 +7,15 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class CustomerMerge(Base):
+class CustomerMerge(TenantBase):
     __tablename__ = "customer_merges"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer, nullable=False, index=True
     )
     survivor_customer_id: Mapped[int] = mapped_column(
         ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True
@@ -27,7 +27,7 @@ class CustomerMerge(Base):
     before_counts: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     after_counts: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_by: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        Integer, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

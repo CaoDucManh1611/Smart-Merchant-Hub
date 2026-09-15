@@ -7,16 +7,42 @@ import logging
 import time
 
 from app.core.config import settings
-from app.database.session import SessionLocal
+from app.database.platform_session import PlatformSessionLocal
+from app.database.tenant_session import tenant_session
 from app.services.crm_job_worker import dispatch_all_crm_jobs
+from app.services.channel_health import run_scheduled_channel_health
 
 
 logger = logging.getLogger(__name__)
+_last_health_check = 0.0
 
 
 def run_once() -> int:
-    with SessionLocal() as db:
-        return dispatch_all_crm_jobs(db)
+    global _last_health_check
+    with PlatformSessionLocal() as platform_db:
+        processed = dispatch_all_crm_jobs(
+            platform_db,
+            tenant_session_factory=tenant_session,
+        )
+        now = time.monotonic()
+        interval = max(5, int(settings.CHANNEL_HEALTH_INTERVAL_SECONDS))
+        if now - _last_health_check >= interval:
+            try:
+                health = run_scheduled_channel_health(
+                    platform_db,
+                    tenant_session_factory=tenant_session,
+                )
+                degraded = sum(1 for item in health if item.get("status") != "ok")
+                logger.info(
+                    "Channel health cycle complete: shops=%s degraded=%s",
+                    len(health),
+                    degraded,
+                )
+            except Exception:  # noqa: BLE001 - jobs continue if health is unavailable
+                logger.exception("Channel health cycle failed")
+            finally:
+                _last_health_check = now
+        return processed
 
 
 def main() -> None:

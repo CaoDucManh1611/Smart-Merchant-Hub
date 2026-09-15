@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_optional_user
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.business import User
 from app.models.notification import Notification
 from app.schemas.notification import NotificationOut
@@ -18,7 +18,7 @@ router = APIRouter()
 
 @router.get("/notifications", response_model=list[NotificationOut])
 def list_notifications(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     user: User | None = Depends(get_optional_user),
 ):
@@ -33,7 +33,7 @@ def list_notifications(
 @router.post("/notifications/{notification_id}/read", response_model=NotificationOut, dependencies=[Depends(require_write_access)])
 def mark_notification_read(
     notification_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     row = db.query(Notification).filter(

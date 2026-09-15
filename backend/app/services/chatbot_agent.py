@@ -156,15 +156,25 @@ def _available(product: Product) -> int:
     return max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
 
 
-def _find_assignee(db: Session, business_id: int) -> User | None:
-    return db.query(User).filter(
+def _find_assignee(db: Session, business_id: int, *, platform_db: Session | None = None) -> User | None:
+    """Staff identity belongs to platform DB; tenant workers may omit it."""
+    if platform_db is None:
+        return None
+    return platform_db.query(User).filter(
         User.business_id == business_id,
         User.is_active.is_(True),
         User.role.in_(("agent", "business_agent", "admin", "business_admin", "owner")),
     ).order_by(User.id.asc()).first()
 
 
-def route_escalation(db: Session, business_id: int, conversation_id: int, text: str) -> Ticket | None:
+def route_escalation(
+    db: Session,
+    business_id: int,
+    conversation_id: int,
+    text: str,
+    *,
+    platform_db: Session | None = None,
+) -> Ticket | None:
     if not any(term in (text or "").casefold() for term in ESCALATION_TERMS):
         return None
     conversation = _conversation(db, business_id, conversation_id)
@@ -176,7 +186,7 @@ def route_escalation(db: Session, business_id: int, conversation_id: int, text: 
     if existing:
         conversation.bot_mode = "human"
         return existing
-    assignee = _find_assignee(db, business_id)
+    assignee = _find_assignee(db, business_id, platform_db=platform_db)
     ticket = Ticket(
         business_id=business_id,
         customer_id=conversation.customer_id,
@@ -207,7 +217,15 @@ def _search_products(db: Session, business_id: int, query: str | None = None):
     return q.order_by(Product.name.asc(), Product.id.asc()).limit(20).all()
 
 
-def execute_chatbot_tool(db: Session, business_id: int, conversation_id: int, tool_name: str, arguments: dict | None = None) -> dict:
+def execute_chatbot_tool(
+    db: Session,
+    business_id: int,
+    conversation_id: int,
+    tool_name: str,
+    arguments: dict | None = None,
+    *,
+    platform_db: Session | None = None,
+) -> dict:
     if tool_name not in AGENT_TOOLS:
         raise ValueError("tool_not_allowed")
     _conversation(db, business_id, conversation_id)
@@ -233,14 +251,26 @@ def execute_chatbot_tool(db: Session, business_id: int, conversation_id: int, to
         return get_customer_order_status(db, business_id, conversation_id, args)
     if tool_name == "yeu_cau_huy_don":
         try:
-            return request_order_cancellation(db, business_id, conversation_id, args)
+            return request_order_cancellation(
+                db,
+                business_id,
+                conversation_id,
+                args,
+                platform_db=platform_db,
+            )
         except CustomerOrderActionError as exc:
             if exc.reason == "order_identifier_required":
                 return {"accepted": False, "reason": exc.reason}
             raise
     if tool_name == "yeu_cau_hoan_don":
         try:
-            return request_order_refund(db, business_id, conversation_id, args)
+            return request_order_refund(
+                db,
+                business_id,
+                conversation_id,
+                args,
+                platform_db=platform_db,
+            )
         except CustomerOrderActionError as exc:
             if exc.reason == "order_identifier_required":
                 return {"accepted": False, "reason": exc.reason}
@@ -261,7 +291,7 @@ def execute_chatbot_tool(db: Session, business_id: int, conversation_id: int, to
         return {"tag": tag.name, "customer_id": conversation.customer_id}
     if tool_name == "chuyen_nhan_vien":
         conversation = _conversation(db, business_id, conversation_id)
-        assignee = _find_assignee(db, business_id)
+        assignee = _find_assignee(db, business_id, platform_db=platform_db)
         conversation.bot_mode = "human"
         if assignee:
             conversation.assigned_user_id = assignee.id
@@ -269,7 +299,13 @@ def execute_chatbot_tool(db: Session, business_id: int, conversation_id: int, to
         record_audit(db, business_id=business_id, action="chatbot_human", resource_type="conversation", resource_id=conversation_id, metadata={"reason": args.get("reason") or "tool_call"})
         return {"bot_mode": "human", "assigned_user_id": assignee.id if assignee else None}
     if tool_name == "tao_ticket":
-        ticket = route_escalation(db, business_id, conversation_id, str(args.get("description") or args.get("title") or "Yêu cầu hỗ trợ từ chatbot"))
+        ticket = route_escalation(
+            db,
+            business_id,
+            conversation_id,
+            str(args.get("description") or args.get("title") or "Yêu cầu hỗ trợ từ chatbot"),
+            platform_db=platform_db,
+        )
         if ticket is None:
             conversation = _conversation(db, business_id, conversation_id)
             ticket = Ticket(business_id=business_id, customer_id=conversation.customer_id, conversation_id=conversation_id, title=str(args.get("title") or "Yêu cầu hỗ trợ"), description=str(args.get("description") or ""), priority=str(args.get("priority") or "normal"), status="open")

@@ -29,7 +29,8 @@ import httpx
 from PIL import Image
 
 from app.core.config import settings
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
+from app.database.platform_session import get_platform_db
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.models.message_attachment import MessageAttachment
@@ -1356,7 +1357,7 @@ async def send_and_save_outbound(
 @router.get("")
 def get_conversations(
     db: Session = Depends(
-        get_db
+        get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
@@ -1517,7 +1518,7 @@ def get_conversations(
 @router.post("/{conversation_id}/mark-read", dependencies=[Depends(require_write_access)])
 def mark_conversation_read(
     conversation_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -1569,7 +1570,8 @@ def mark_conversation_read(
 def reassign_conversation(
     conversation_id: int,
     payload: ConversationAssignmentRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -1581,7 +1583,7 @@ def reassign_conversation(
         raise HTTPException(status_code=404, detail="Conversation không tồn tại.")
 
     if payload.assigned_user_id is not None:
-        assignee = db.query(User).filter(
+        assignee = platform_db.query(User).filter(
             User.id == payload.assigned_user_id,
             User.business_id == tenant.business_id,
             User.is_active.is_(True),
@@ -1635,7 +1637,7 @@ def reassign_conversation(
 @router.get("/{conversation_id}/assignments")
 def get_conversation_assignments(
     conversation_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     conversation = db.query(Conversation).filter(
@@ -1678,7 +1680,7 @@ def get_conversation_assignments(
 def get_conversation_messages(
     conversation_id: int,
     db: Session = Depends(
-        get_db
+        get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
@@ -1809,7 +1811,7 @@ def send_message(
     conversation_id: int,
     body: SendMessageRequest,
     db: Session = Depends(
-        get_db
+        get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
@@ -2214,7 +2216,7 @@ async def unified_send(
         None
     ),
     db: Session = Depends(
-        get_db
+        get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
@@ -2358,7 +2360,7 @@ async def unified_send(
 async def send_media_message(
     conversation_id: int,
     body: SendMediaRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Send one canonical media attachment through the linked channel."""
@@ -2494,7 +2496,7 @@ def send_media(
     conversation_id: int,
     body: SendMediaRequest,
     db: Session = Depends(
-        get_db
+        get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
@@ -2938,7 +2940,7 @@ async def upload_and_send_image(
     ),
 
     db: Session = Depends(
-        get_db
+        get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
@@ -3514,7 +3516,7 @@ async def upload_and_send_generic_media(
     file: UploadFile = File(...),
     media_type: str = Form("file"),
     caption: str | None = Form(None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Upload and send audio/video/sticker/file (and non-normalized images).
@@ -3609,7 +3611,7 @@ class AutoReplyStatusRequest(BaseModel):
 
 @router.get("/auto-reply-status")
 async def get_auto_reply_status(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     from app.services.auto_reply_service import get_auto_reply_enabled
@@ -3619,7 +3621,7 @@ async def get_auto_reply_status(
 @router.post("/auto-reply-status", dependencies=[Depends(require_write_access)])
 async def set_auto_reply_status(
     req: AutoReplyStatusRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     from app.services.auto_reply_service import set_auto_reply_enabled

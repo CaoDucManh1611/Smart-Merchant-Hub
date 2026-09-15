@@ -9,6 +9,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.platform_control import PlatformUsage
 from app.models.crm_job import CrmJob
 from app.models.saas import SaaSUsage
 from app.services.channel_retry import provider_breaker_snapshot
@@ -17,6 +18,7 @@ from app.services.quota_service import quota_period_start
 
 def collect_operational_snapshot(db: Session) -> dict:
     """Collect counters only; never include message bodies, URLs or secrets."""
+    tenant_bound = bool(getattr(db, "info", {}).get("tenant_schema"))
     snapshot = {
         "database": {"status": "ok"},
         "queue": {"status": "unknown", "pending": None, "running": None, "failed": None},
@@ -26,16 +28,35 @@ def collect_operational_snapshot(db: Session) -> dict:
     }
     try:
         db.execute(text("SELECT 1"))
-        snapshot["queue"] = {
-            "status": "ok",
-            "pending": int(db.query(CrmJob).filter(CrmJob.status == "pending").count()),
-            "running": int(db.query(CrmJob).filter(CrmJob.status == "running").count()),
-            "failed": int(db.query(CrmJob).filter(CrmJob.status == "failed").count()),
-        }
-        ai_cost = db.query(func.coalesce(func.sum(SaaSUsage.used), 0)).filter(
-            SaaSUsage.resource == "ai_cost",
-            SaaSUsage.period_start == quota_period_start(),
-        ).scalar()
+        # Queue rows live in each tenant schema.  A platform-only health
+        # probe must not query a shared/legacy jobs table (which could leak
+        # or accidentally mix shops), so it reports queue counters only when
+        # the caller explicitly supplies a tenant-bound session.
+        if tenant_bound:
+            snapshot["queue"] = {
+                "status": "ok",
+                "pending": int(db.query(CrmJob).filter(CrmJob.status == "pending").count()),
+                "running": int(db.query(CrmJob).filter(CrmJob.status == "running").count()),
+                "failed": int(db.query(CrmJob).filter(CrmJob.status == "failed").count()),
+            }
+
+        period_start = quota_period_start()
+        try:
+            usage_model = SaaSUsage if tenant_bound else PlatformUsage
+            ai_cost = db.query(func.coalesce(func.sum(usage_model.used), 0)).filter(
+                usage_model.resource == "ai_cost",
+                usage_model.period_start == period_start,
+            ).scalar()
+        except Exception:
+            # Development databases may still expose the legacy aggregate
+            # table.  Keep this compatibility fallback read-only and never
+            # use it for tenant content.
+            if tenant_bound:
+                raise
+            ai_cost = db.query(func.coalesce(func.sum(SaaSUsage.used), 0)).filter(
+                SaaSUsage.resource == "ai_cost",
+                SaaSUsage.period_start == period_start,
+            ).scalar()
         snapshot["ai"]["cost"] = float(Decimal(str(ai_cost or 0)))
     except Exception as error:
         snapshot["database"] = {"status": "error", "error_type": type(error).__name__}

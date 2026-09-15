@@ -5,7 +5,8 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.dependencies import get_db
+from app.database.platform_session import get_platform_db
+from app.tenancy.crm_session import get_tenant_db
 from app.auth.passwords import hash_password
 from app.models.business import User
 from app.schemas.team import TeamUserCreate, TeamUserListOut, TeamUserOut, TeamUserUpdate, PermissionOverrideCreate, PermissionOverrideListOut, PermissionOverrideOut, EffectivePermissionListOut, EffectivePermissionOut
@@ -61,7 +62,7 @@ def _out(user: User) -> TeamUserOut:
 
 @router.get("/team", response_model=TeamUserListOut)
 def list_team(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     active_only: bool = Query(default=False),
 ):
@@ -73,7 +74,7 @@ def list_team(
 
 
 @router.get("/team/permissions", response_model=PermissionOverrideListOut)
-def list_permission_overrides(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_permission_overrides(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     rows = db.query(PermissionOverride).filter(PermissionOverride.business_id == tenant.business_id).order_by(PermissionOverride.resource.asc(), PermissionOverride.action.asc(), PermissionOverride.id.asc()).all()
     return PermissionOverrideListOut(items=rows, total=len(rows))
 
@@ -81,13 +82,14 @@ def list_permission_overrides(db: Session = Depends(get_db), tenant: TenantConte
 @router.post("/team/permissions", response_model=PermissionOverrideOut, status_code=201)
 def create_permission_override(
     payload: PermissionOverrideCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):
     if payload.role is None and payload.user_id is None:
         raise HTTPException(status_code=422, detail="Permission cần role hoặc user_id.")
-    if payload.user_id is not None and db.query(User.id).filter(User.id == payload.user_id, User.business_id == tenant.business_id).first() is None:
+    if payload.user_id is not None and platform_db.query(User.id).filter(User.id == payload.user_id, User.business_id == tenant.business_id).first() is None:
         raise HTTPException(status_code=404, detail="Nhân viên không thuộc business.")
     row = PermissionOverride(
         business_id=tenant.business_id,
@@ -126,7 +128,7 @@ def create_permission_override(
 @router.delete("/team/permissions/{override_id}", status_code=204)
 def delete_permission_override(
     override_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):
@@ -158,7 +160,7 @@ def delete_permission_override(
 @router.get("/team/{user_id}", response_model=TeamUserOut)
 def get_team_member(
     user_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_platform_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     return _out(_get_user(db, user_id, tenant))
@@ -167,7 +169,8 @@ def get_team_member(
 @router.post("/team", response_model=TeamUserOut, status_code=201, dependencies=[Depends(require_admin_access)])
 def create_team_member(
     payload: TeamUserCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_platform_db),
+    audit_db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):
@@ -198,8 +201,8 @@ def create_team_member(
         raise HTTPException(status_code=409, detail="Email nhân viên đã tồn tại trong business.") from exc
     db.refresh(user)
     if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="create", resource_type="team_user", resource_id=str(user.id), metadata={"role": user.role, "email": user.email})
-        db.commit()
+        record_audit(audit_db, business_id=tenant.business_id, user_id=actor.id, action="create", resource_type="team_user", resource_id=str(user.id), metadata={"role": user.role, "email": user.email})
+        audit_db.commit()
     return _out(user)
 
 
@@ -207,7 +210,8 @@ def create_team_member(
 def update_team_member(
     user_id: int,
     payload: TeamUserUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_platform_db),
+    audit_db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):
@@ -236,14 +240,14 @@ def update_team_member(
         db.rollback()
         raise HTTPException(status_code=409, detail="Email nhân viên đã tồn tại trong business.") from exc
     if actor:
-        record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="update", resource_type="team_user", resource_id=str(user.id), metadata={"fields": list(payload.model_dump(exclude_unset=True))})
-        db.commit()
+        record_audit(audit_db, business_id=tenant.business_id, user_id=actor.id, action="update", resource_type="team_user", resource_id=str(user.id), metadata={"fields": list(payload.model_dump(exclude_unset=True))})
+        audit_db.commit()
     return _out(_get_user(db, user.id, tenant))
 
 
 @router.get("/team/{user_id}/permissions/effective", response_model=EffectivePermissionListOut)
-def effective_permissions(user_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
-    user = _get_user(db, user_id, tenant)
+def effective_permissions(user_id: int, db: Session = Depends(get_tenant_db), platform_db: Session = Depends(get_platform_db), tenant: TenantContext = Depends(get_tenant_context)):
+    user = _get_user(platform_db, user_id, tenant)
     overrides = db.query(PermissionOverride).filter(PermissionOverride.business_id == tenant.business_id).filter((PermissionOverride.user_id == user.id) | (PermissionOverride.role == user.role)).all()
     keys = {(row.resource, row.action) for row in overrides}
     keys.update({("customers", "read"), ("customers", "write"), ("orders", "read"), ("orders", "write"), ("tickets", "read"), ("tickets", "write"), ("team", "read"), ("team", "write"), ("reports", "read"), ("documents", "read"), ("documents", "write")})

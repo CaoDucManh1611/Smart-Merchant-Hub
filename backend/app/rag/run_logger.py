@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -17,6 +19,21 @@ from app.core.config import settings
 _write_lock = threading.Lock()
 logger = logging.getLogger(__name__)
 
+_SENSITIVE_ERROR = re.compile(
+    r"(?i)(token|secret|authorization|api[_-]?key|password)\s*[=:]\s*[^\s,;]+"
+)
+_EMAIL = re.compile(r"(?i)\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b")
+_PHONE = re.compile(r"(?<!\d)(?:\+?\d[\d .()-]{7,}\d)(?!\d)")
+_PRIVATE_FIELDS = {
+    "query_preview",
+    "prompt",
+    "answer",
+    "content",
+    "raw_payload",
+    "message_body",
+    "customer_text",
+}
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -28,6 +45,38 @@ def _log_path() -> Path:
         # Keep the default log beside the backend, regardless of the process cwd.
         configured_path = Path(__file__).resolve().parents[2] / configured_path
     return configured_path
+
+
+def safe_error_message(error: Exception | str | None, *, limit: int = 500) -> str:
+    """Return diagnostics without credentials or common customer identifiers."""
+    message = str(error or "").strip()
+    message = _SENSITIVE_ERROR.sub(r"\1=[redacted]", message)
+    message = _EMAIL.sub("[email]", message)
+    message = _PHONE.sub("[phone]", message)
+    return message[:limit] or "RAG operation failed"
+
+
+def query_metadata(value: Any) -> dict[str, Any]:
+    query = str(value or "")
+    return {
+        "query_chars": len(query),
+        "query_hash": hashlib.sha256(query.encode("utf-8")).hexdigest()[:16],
+    }
+
+
+def _safe_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """Drop prompt/customer payloads from logs while retaining safe counters."""
+    safe: dict[str, Any] = {}
+    for key, value in fields.items():
+        if key in _PRIVATE_FIELDS:
+            if key == "query_preview":
+                safe.update(query_metadata(value))
+            continue
+        if key == "error":
+            safe[key] = safe_error_message(value, limit=500)
+            continue
+        safe[key] = value
+    return safe
 
 
 class RagRunLog:
@@ -44,7 +93,7 @@ class RagRunLog:
             "model": settings.LLM_MODEL,
             "embedding_provider": settings.EMBEDDING_PROVIDER,
             "embedding_model": settings.EMBEDDING_MODEL,
-            **fields,
+            **_safe_fields(fields),
         }
         self._finished = False
 
@@ -54,13 +103,13 @@ class RagRunLog:
 
     def update(self, **fields: Any) -> None:
         """Add final-run fields without logging raw prompts or answers."""
-        self._record.update(fields)
+        self._record.update(_safe_fields(fields))
 
     def finish(self, status: str = "success", **fields: Any) -> None:
         if self._finished:
             return
 
-        self._record.update(fields)
+        self._record.update(_safe_fields(fields))
         self._record["status"] = status
         self._record["finished_at"] = _utc_now()
         self._record["duration_ms"] = round(
@@ -95,7 +144,7 @@ class RagRunLog:
             self.finish(
                 "error",
                 error_type=exc_type.__name__ if exc_type else "Exception",
-                error=str(exc_value)[:1000],
+                error=safe_error_message(exc_value),
             )
         elif not self._finished:
             self.finish()

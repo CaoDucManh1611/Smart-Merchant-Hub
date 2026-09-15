@@ -10,16 +10,19 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from app.db.database import SessionLocal
+from app.database.platform_session import PlatformSessionLocal, get_platform_db
+from app.database.tenant_session import tenant_session
 
 from app.core.config import settings
 from app.models.channel import Channel
 from app.auth.dependencies import require_admin_access
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
-from app.tenancy.oauth import consume_oauth_state, issue_oauth_state, register_oauth_state
+from app.tenancy.oauth import consume_oauth_state, issue_oauth_state, register_oauth_state, verify_oauth_state
+from app.tenancy.schema import schema_name_for
+from app.tenancy.registry import register_webhook_route, deactivate_route_for_channel
 from app.services.channel_service import channel_credential_status, upsert_channel_connection
-from app.services.quota_service import QuotaExceededError, release_quota
+from app.services.quota_service import QuotaExceededError, release_quota, reserve_quota
 
 
 router = APIRouter()
@@ -144,7 +147,7 @@ async def meta_oauth_status(
     # Credential state is tenant-owned in ``channels``.  app_settings only
     # retains non-secret display metadata during the transition from the old
     # single-shop integration.
-    with SessionLocal() as db:
+    with tenant_session(schema_name_for(tenant.business_id)) as db:
         facebook = db.query(Channel).filter(
             Channel.business_id == tenant.business_id,
             Channel.channel_type == "facebook",
@@ -190,7 +193,7 @@ async def start_meta_oauth(
     if not app_secret:
         raise HTTPException(status_code=500, detail="META_APP_SECRET is required for signed OAuth state")
     state = issue_oauth_state(tenant.business_id, app_secret)
-    with SessionLocal() as db:
+    with tenant_session(schema_name_for(tenant.business_id)) as db:
         register_oauth_state(db, state, app_secret)
     scope = (
         "pages_show_list,pages_read_engagement,pages_manage_metadata,"
@@ -227,9 +230,12 @@ async def meta_oauth_callback(
         return _frontend_redirect("error", error_description or error)
 
     try:
-        with SessionLocal() as db:
+        # Verify the signed state before selecting a tenant schema.  The
+        # business id is trusted only after the HMAC and expiry checks pass.
+        state_payload = verify_oauth_state(state or "", settings.META_APP_SECRET)
+        with tenant_session(schema_name_for(int(state_payload["business_id"]))) as db:
             state_payload = consume_oauth_state(db, state or "", settings.META_APP_SECRET)
-    except PermissionError:
+    except (PermissionError, ValueError, KeyError):
         return _frontend_redirect("error", "OAuth state không hợp lệ hoặc đã hết hạn.")
     if not code:
         return _frontend_redirect("error", "OAuth code không hợp lệ.")
@@ -295,41 +301,75 @@ async def meta_oauth_callback(
             instagram = page.get("instagram_business_account") or {}
             if not settings.CHANNEL_ENCRYPTION_KEY:
                 raise RuntimeError("CHANNEL_ENCRYPTION_KEY is required for channel credentials")
-            with SessionLocal() as db:
-                upsert_channel_connection(
-                    db,
-                    business_id=int(state_payload["business_id"]),
-                    channel_type="facebook",
-                    external_account_id=str(page["id"]),
-                    name=str(page.get("name") or page["id"]),
-                    access_token=str(page_token),
-                    config={
-                        "meta_user_id": str(user.get("id") or ""),
-                        **({"token_expires_at": token_expires_at} if token_expires_at else {}),
-                    },
-                )
-                if instagram.get("id"):
-                    upsert_channel_connection(
+            business_id = int(state_payload["business_id"])
+            schema_name = schema_name_for(business_id)
+            with PlatformSessionLocal() as platform_db:
+                with tenant_session(schema_name) as db:
+                    facebook_channel = upsert_channel_connection(
                         db,
-                        business_id=int(state_payload["business_id"]),
-                        channel_type="instagram",
-                        external_account_id=str(instagram["id"]),
-                        name=str(instagram.get("username") or instagram["id"]),
+                        business_id=business_id,
+                        channel_type="facebook",
+                        external_account_id=str(page["id"]),
+                        name=str(page.get("name") or page["id"]),
                         access_token=str(page_token),
                         config={
-                            "facebook_page_id": str(page["id"]),
+                            "meta_user_id": str(user.get("id") or ""),
                             **({"token_expires_at": token_expires_at} if token_expires_at else {}),
                         },
+                        reserve_channel_slot=lambda: reserve_quota(
+                            platform_db, business_id, "connected_channels"
+                        ),
+                        commit=False,
                     )
+                    instagram_channel = None
+                    if instagram.get("id"):
+                        instagram_channel = upsert_channel_connection(
+                            db,
+                            business_id=business_id,
+                            channel_type="instagram",
+                            external_account_id=str(instagram["id"]),
+                            name=str(instagram.get("username") or instagram["id"]),
+                            access_token=str(page_token),
+                            config={
+                                "facebook_page_id": str(page["id"]),
+                                **({"token_expires_at": token_expires_at} if token_expires_at else {}),
+                            },
+                            reserve_channel_slot=lambda: reserve_quota(
+                                platform_db, business_id, "connected_channels"
+                            ),
+                            commit=False,
+                        )
+                    # Meta deliveries use the Page/Instagram account id as the
+                    # opaque route key; only its HMAC is retained globally.
+                    register_webhook_route(
+                        platform_db,
+                        provider="facebook",
+                        external_account_id=str(page["id"]),
+                        webhook_secret=None,
+                        business_id=business_id,
+                        schema_name=schema_name,
+                        channel_id=facebook_channel.id,
+                    )
+                    if instagram_channel is not None:
+                        register_webhook_route(
+                            platform_db,
+                            provider="instagram",
+                            external_account_id=str(instagram["id"]),
+                            webhook_secret=None,
+                            business_id=business_id,
+                            schema_name=schema_name,
+                            channel_id=instagram_channel.id,
+                        )
+                platform_db.commit()
             subscription_status = await _subscribe_page_messages(
                 client,
                 page_id=str(page["id"]),
                 access_token=str(page_token),
             )
 
-            with SessionLocal() as db:
+            with tenant_session(schema_name) as db:
                 facebook_channel = db.query(Channel).filter(
-                    Channel.business_id == int(state_payload["business_id"]),
+                    Channel.business_id == business_id,
                     Channel.channel_type == "facebook",
                     Channel.external_account_id == str(page["id"]),
                 ).first()
@@ -358,19 +398,21 @@ async def disconnect_meta(
     tenant: TenantContext = Depends(get_tenant_context),
 ) -> dict:
     """Revoke only this tenant's stored Meta channel credentials."""
-    with SessionLocal() as db:
-        channels = db.query(Channel).filter(
-            Channel.business_id == tenant.business_id,
-            Channel.channel_type.in_(("facebook", "instagram")),
-        ).all()
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        for channel in channels:
-            was_active = channel.status == "active"
-            channel.status = "inactive"
-            channel.access_token = None
-            channel.access_token_encrypted = None
-            channel.disconnected_at = now
-            if was_active:
-                release_quota(db, tenant.business_id, "connected_channels")
-        db.commit()
+    with PlatformSessionLocal() as platform_db:
+        with tenant_session(schema_name_for(tenant.business_id)) as db:
+            channels = db.query(Channel).filter(
+                Channel.business_id == tenant.business_id,
+                Channel.channel_type.in_(("facebook", "instagram")),
+            ).all()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            for channel in channels:
+                was_active = channel.status == "active"
+                channel.status = "inactive"
+                channel.access_token = None
+                channel.access_token_encrypted = None
+                channel.disconnected_at = now
+                if was_active:
+                    release_quota(platform_db, tenant.business_id, "connected_channels")
+                deactivate_route_for_channel(platform_db, channel.id)
+        platform_db.commit()
     return {"connected": False}

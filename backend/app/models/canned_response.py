@@ -7,10 +7,10 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class CannedResponse(Base):
+class CannedResponse(TenantBase):
     __tablename__ = "canned_responses"
     __table_args__ = (
         UniqueConstraint("business_id", "shortcut", name="uq_canned_responses_business_shortcut"),
@@ -18,7 +18,7 @@ class CannedResponse(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer, nullable=False, index=True
     )
     shortcut: Mapped[str] = mapped_column(String(40), nullable=False)
     title: Mapped[str] = mapped_column(String(160), nullable=False)

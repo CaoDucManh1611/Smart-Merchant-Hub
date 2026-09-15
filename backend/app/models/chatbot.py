@@ -7,15 +7,15 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class ChatbotConfig(Base):
+class ChatbotConfig(TenantBase):
     __tablename__ = "chatbot_configs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+Integer,
         nullable=False,
         unique=True,
         index=True,
@@ -34,5 +34,3 @@ class ChatbotConfig(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-
-    business = relationship("Business", back_populates="chatbot_config")

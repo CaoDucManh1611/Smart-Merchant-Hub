@@ -126,6 +126,8 @@ def customer_order_reply(
     business_id: int,
     conversation_id: int,
     text: str,
+    *,
+    platform_db: Session | None = None,
 ) -> str | None:
     """Handle safe order intents before RAG and return a customer reply.
 
@@ -192,7 +194,11 @@ def customer_order_reply(
     elif intent in {"cancel", "refund"}:
         candidates = _action_order_candidates(listed["items"], text)
         if len(candidates) != 1:
-            return _format_action_choices(candidates or listed["items"], action=intent)
+            return _format_action_choices(
+                candidates or listed["items"],
+                action=intent,
+                query_text=text,
+            )
         resolved_number = candidates[0]["order_number"]
     else:
         if listed.get("requires_order_identifier"):
@@ -202,7 +208,13 @@ def customer_order_reply(
 
     arguments = {"order_number": resolved_number, "reason": text[:500]}
     if intent == "cancel":
-        result = request_order_cancellation(db, business_id, conversation_id, arguments)
+        result = request_order_cancellation(
+            db,
+            business_id,
+            conversation_id,
+            arguments,
+            platform_db=platform_db,
+        )
         if not result.get("accepted"):
             reason = result.get("reason")
             if reason in {"order_cancelled", "order_refunded"}:
@@ -214,7 +226,13 @@ def customer_order_reply(
             return f"Mình đã hủy đơn {resolved_number} theo yêu cầu của bạn."
         return f"Mình đã chuyển yêu cầu hủy đơn {resolved_number} cho nhân viên kiểm tra. Mã ticket: {result['ticket_id']}."
 
-    result = request_order_refund(db, business_id, conversation_id, arguments)
+    result = request_order_refund(
+        db,
+        business_id,
+        conversation_id,
+        arguments,
+        platform_db=platform_db,
+    )
     if not result.get("accepted"):
         reason = result.get("reason")
         return f"Mình chưa thể tiếp nhận yêu cầu hoàn đơn {resolved_number}: {_friendly_action_reason(reason, action='refund')}."
@@ -282,16 +300,58 @@ def _order_payload(order: Order) -> dict:
     }
 
 
-def _format_action_choices(items: list[dict], *, action: str) -> str:
+def _meaningful_tokens(value: object) -> set[str]:
+    return {
+        token
+        for token in _fold_order_text(value).split()
+        if len(token) >= 2 and token not in {"don", "hang", "mon", "san", "pham", "muon", "huy", "hoan", "tra"}
+    }
+
+
+def _line_matches_text(line: dict, text: str | None) -> bool:
+    """Match a customer phrase to a concrete order line, not the catalog."""
+    folded = _fold_order_text(text)
+    if not folded:
+        return False
+    query_tokens = _meaningful_tokens(folded)
+    if not query_tokens:
+        return False
+    for value in (line.get("name"), line.get("sku")):
+        normalized = _fold_order_text(value)
+        if normalized and normalized in folded:
+            return True
+        line_tokens = _meaningful_tokens(value)
+        if line_tokens and (
+            len(line_tokens & query_tokens) >= max(1, (len(line_tokens) + 1) // 2)
+            or any(len(token) >= 3 for token in line_tokens & query_tokens)
+        ):
+            return True
+    return False
+
+
+def _format_action_choices(
+    items: list[dict],
+    *,
+    action: str,
+    query_text: str | None = None,
+) -> str:
     """Show enough context for a customer to select the right order."""
     if not items:
         return "Mình chưa tìm thấy đơn phù hợp với mã món hoặc kênh bạn vừa gửi. Bạn kiểm tra lại giúp mình nhé."
     verb = "hủy" if action == "cancel" else "hoàn/đổi trả"
     lines = []
     for item in items[:5]:
+        order_lines = item.get("items", [])
+        matching_lines = [row for row in order_lines if _line_matches_text(row, query_text)]
+        # If the phrase was not a product reference (for example just
+        # "Telegram"), retain the complete order summary.  When a product is
+        # named, show only that concrete line so the customer can distinguish
+        # multiple items in a combo/order without dumping the catalog.
+        visible_lines = matching_lines or order_lines
         products = ", ".join(
             f"{row.get('name') or row.get('sku') or 'sản phẩm'} ×{row.get('quantity', 1)}"
-            for row in item.get("items", [])
+            f" ({_format_vnd(row.get('line_total') or row.get('unit_price') or 0)} đồng)"
+            for row in visible_lines
         ) or "chưa có sản phẩm"
         channel = item.get("channel") or "không rõ kênh"
         lines.append(
@@ -316,7 +376,7 @@ def _action_order_candidates(items: list[dict], text: str) -> list[dict]:
         values = []
         for product in item.get("items", []):
             values.extend((product.get("name"), product.get("sku")))
-        if any(value and _fold_order_text(value) in folded for value in values):
+        if any(_line_matches_text(product, text) for product in item.get("items", [])):
             product_matches.append(item)
     candidates = product_matches or list(items)
     if channel_terms:
@@ -386,8 +446,11 @@ def get_customer_order_status(db: Session, business_id: int, conversation_id: in
     return payload
 
 
-def _assignee(db: Session, business_id: int) -> User | None:
-    return db.query(User).filter(
+def _assignee(db: Session, business_id: int, *, platform_db: Session | None = None) -> User | None:
+    """Resolve staff only from the control plane, never a shop schema."""
+    if platform_db is None:
+        return None
+    return platform_db.query(User).filter(
         User.business_id == business_id,
         User.is_active.is_(True),
         User.role.in_(("agent", "business_agent", "admin", "business_admin", "owner")),
@@ -397,6 +460,7 @@ def _assignee(db: Session, business_id: int) -> User | None:
 def _staff_ticket(
     db: Session,
     *,
+    platform_db: Session | None = None,
     business_id: int,
     conversation: Conversation,
     order: Order,
@@ -414,7 +478,7 @@ def _staff_ticket(
             conversation.bot_mode = "human"
             return ticket
 
-    assignee = _assignee(db, business_id)
+    assignee = _assignee(platform_db, business_id)
     ticket = Ticket(
         business_id=business_id,
         customer_id=conversation.customer_id,
@@ -464,7 +528,14 @@ def _staff_ticket(
     return ticket
 
 
-def request_order_cancellation(db: Session, business_id: int, conversation_id: int, arguments: dict) -> dict:
+def request_order_cancellation(
+    db: Session,
+    business_id: int,
+    conversation_id: int,
+    arguments: dict,
+    *,
+    platform_db: Session | None = None,
+) -> dict:
     conversation, order = _resolve_order(db, business_id, conversation_id, arguments)
     if order is None:
         return {"accepted": False, "reason": "order_not_found"}
@@ -500,6 +571,7 @@ def request_order_cancellation(db: Session, business_id: int, conversation_id: i
 
     ticket = _staff_ticket(
         db,
+        platform_db=platform_db,
         business_id=business_id,
         conversation=conversation,
         order=order,
@@ -515,7 +587,14 @@ def request_order_cancellation(db: Session, business_id: int, conversation_id: i
     }
 
 
-def request_order_refund(db: Session, business_id: int, conversation_id: int, arguments: dict) -> dict:
+def request_order_refund(
+    db: Session,
+    business_id: int,
+    conversation_id: int,
+    arguments: dict,
+    *,
+    platform_db: Session | None = None,
+) -> dict:
     conversation, order = _resolve_order(db, business_id, conversation_id, arguments)
     if order is None:
         return {"accepted": False, "reason": "order_not_found"}
@@ -524,6 +603,7 @@ def request_order_refund(db: Session, business_id: int, conversation_id: int, ar
     reason = str(arguments.get("reason") or "Khách yêu cầu hoàn/đổi trả").strip()
     ticket = _staff_ticket(
         db,
+        platform_db=platform_db,
         business_id=business_id,
         conversation=conversation,
         order=order,

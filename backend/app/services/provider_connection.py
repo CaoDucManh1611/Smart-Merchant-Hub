@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 
+from app.rag.run_logger import safe_error_message
+
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"
 ZALO_API_BASE = "https://bot-api.zaloplatforms.com/bot"
@@ -32,9 +34,10 @@ def _post_json(url: str, *, json: dict[str, Any] | None = None) -> dict[str, Any
         ) from exc
     if not isinstance(body, dict) or body.get("ok") is not True:
         detail = body.get("description") if isinstance(body, dict) else None
+        safe_detail = safe_error_message(detail, limit=300) if detail else ""
         raise ProviderConnectionError(
             "invalid_provider_response",
-            str(detail or "Token không hợp lệ hoặc nhà cung cấp từ chối yêu cầu."),
+            safe_detail or "Token không hợp lệ hoặc nhà cung cấp từ chối yêu cầu.",
         )
     return body
 

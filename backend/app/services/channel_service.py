@@ -1,6 +1,7 @@
 """Tenant-scoped channel connection access."""
 
 from datetime import UTC, datetime, timedelta, timezone
+from collections.abc import Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,10 +10,24 @@ from app.core.config import settings
 from app.models.channel import Channel
 from app.services.channel_credentials import decrypt_token
 from app.services.channel_credentials import encrypt_token
-from app.services.quota_service import reserve_quota
 
 
 TOKEN_EXPIRY_WARNING = timedelta(days=7)
+
+
+def normalized_connection_state(channel: Channel | None) -> str:
+    """Map provider/storage states to the shared four-provider UI contract."""
+    if channel is None:
+        return "disconnected"
+    status = str(channel.status or "").strip().lower()
+    if status in {"disconnected", "inactive"}:
+        return "disconnected"
+    if status in {"verifying", "error", "reconnect_required"}:
+        return status
+    credential = channel_credential_status(channel)
+    if credential["state"] in {"expired", "invalid_expiry"}:
+        return "reconnect_required"
+    return "connected" if status == "active" else "error"
 
 
 def channel_credential_status(
@@ -99,8 +114,16 @@ def upsert_channel_connection(
     access_token: str,
     config: dict | None = None,
     encryption_key: str | None = None,
+    reserve_channel_slot: Callable[[], None] | None = None,
+    commit: bool = True,
 ) -> Channel:
-    """Create/update one globally-owned external account for one tenant."""
+    """Create/update a schema-local connection after platform orchestration.
+
+    The caller owns global ChannelRoute uniqueness and quota reservation in
+    platform_db. This repository must never use its tenant session to read
+    businesses, subscriptions or quota rows. New/reactivated slots fail closed
+    unless the caller supplies that platform reservation operation.
+    """
     channel = db.scalar(
         select(Channel).where(
             Channel.channel_type == channel_type,
@@ -111,11 +134,9 @@ def upsert_channel_connection(
         raise PermissionError("External channel account already belongs to another business")
     needs_slot = channel is None or channel.status != "active"
     if needs_slot:
-        reserve_quota(
-            db,
-            business_id,
-            "connected_channels",
-        )
+        if reserve_channel_slot is None:
+            raise RuntimeError("A platform channel quota reservation is required")
+        reserve_channel_slot()
     if channel is None:
         channel = Channel(
             business_id=business_id,
@@ -133,6 +154,12 @@ def upsert_channel_connection(
     channel.config = config
     channel.connected_at = datetime.now(timezone.utc).replace(tzinfo=None)
     channel.disconnected_at = None
-    db.commit()
+    # Cross-database onboarding can delay the tenant commit until the
+    # platform route has been flushed, giving the connection saga a rollback
+    # boundary if route registration fails.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(channel)
     return channel

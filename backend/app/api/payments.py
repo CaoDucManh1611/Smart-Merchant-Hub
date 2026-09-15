@@ -8,7 +8,7 @@ from app.api.purchase_orders import _out as purchase_order_out
 from app.api.purchase_orders import _purchase_order
 from app.api.sales import _order, _order_out
 from app.auth.dependencies import require_write_access
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.business import User
 from app.models.order_event import OrderEvent
 from app.models.order_payment import OrderPayment
@@ -79,7 +79,7 @@ def create_order_payment(
     order_id: int,
     payload: PaymentCreate,
     response: Response,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -125,7 +125,7 @@ def create_order_refund(
     order_id: int,
     payload: RefundCreate,
     response: Response,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -167,7 +167,7 @@ def create_order_refund(
 @router.get("/orders/{order_id}/payments", response_model=PaymentListOut)
 def list_order_payments(
     order_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _order(db, order_id, tenant)
@@ -180,7 +180,7 @@ def create_purchase_order_payment(
     order_id: int,
     payload: PaymentCreate,
     response: Response,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -224,7 +224,7 @@ def create_purchase_order_payment(
 @router.get("/purchase-orders/{order_id}/payments", response_model=PaymentListOut)
 def list_purchase_order_payments(
     order_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _purchase_order(db, order_id, tenant)
@@ -233,12 +233,12 @@ def list_purchase_order_payments(
 
 
 @router.get("/orders/{order_id}/events", response_model=OrderEventListOut)
-def list_order_events(order_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_order_events(order_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     _order(db, order_id, tenant)
     return _events(db, business_id=tenant.business_id, order_type="sales_order", order_id=order_id)
 
 
 @router.get("/purchase-orders/{order_id}/events", response_model=OrderEventListOut)
-def list_purchase_order_events(order_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_purchase_order_events(order_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     _purchase_order(db, order_id, tenant)
     return _events(db, business_id=tenant.business_id, order_type="purchase_order", order_id=order_id)

@@ -10,7 +10,8 @@ from app.integrations.telegram import TelegramAdapter
 from app.services.customer_identity import get_existing_name_priority, resolve_customer
 from app.services.audit_service import record_audit
 from app.services.customer_profile import merge_profile, profile_change_metadata
-from app.services.channel_service import get_single_active_channel
+from app.services.channel_service import get_active_channel
+from app.models.channel import Channel
 from app.services.channel_credentials import decrypt_token
 from app.services.workflow_engine import emit_workflow_event
 from sqlalchemy.orm import Session
@@ -331,7 +332,9 @@ def fetch_facebook_customer_profile(
     access_token: str | None = None,
 ) -> dict[str, Any]:
 
-    access_token = str(access_token or get_meta_config()["facebook_page_access_token"] or "").strip()
+    # Profile enrichment is tenant-owned.  A missing tenant session must not
+    # fall back to a process-wide Page token, even in development.
+    access_token = str(access_token or "").strip()
 
     if not access_token:
 
@@ -418,7 +421,9 @@ def fetch_instagram_customer_profile(
     access_token: str | None = None,
 ) -> dict[str, Any]:
 
-    access_token = str(access_token or get_meta_config()["facebook_page_access_token"] or "").strip()
+    # Profile enrichment is tenant-owned.  A missing tenant session must not
+    # fall back to a process-wide Page token, even in development.
+    access_token = str(access_token or "").strip()
 
     if not access_token:
 
@@ -1193,20 +1198,38 @@ def process_and_save_message(
     # 2. TÌM CUSTOMER
     # =====================================================
 
-    # Prefer the tenant-scoped identity resolver whenever a business is
-    # available.  The development-only fallback preserves the old local demo;
-    # production must never assign an unbound event to a default business.
+    # The caller has already resolved the shop and bound this session to its
+    # schema. Never query the platform database through a tenant session.
     business_id = message.get("business_id")
-    if business_id is None and settings.ENVIRONMENT.strip().lower() != "production":
-        business_id = db.execute(
-            text("SELECT id FROM businesses WHERE slug = 'default-business' LIMIT 1")
-        ).scalar()
 
     # A message without a resolved tenant must never create a legacy/global
     # conversation.  In production this is a rejected webhook; keeping the
     # guard here also protects direct callers of this service.
     if business_id is None:
         logger.warning("Inbound message ignored: tenant could not be resolved")
+        return False
+    if db.info.get("business_id") is not None and int(db.info["business_id"]) != int(business_id):
+        logger.warning("Inbound message ignored: resolved business differs from routed session")
+        return False
+
+    channel_row = None
+    if message.get("channel_id") is not None:
+        channel_row = db.get(Channel, int(message["channel_id"]))
+        if (
+            channel_row is None or channel_row.business_id != int(business_id)
+            or channel_row.channel_type != channel or channel_row.status != "active"
+            or (message.get("external_account_id") is not None
+                and channel_row.external_account_id != message["external_account_id"])
+        ):
+            logger.warning("Inbound message ignored: channel does not match routed shop")
+            return False
+    elif message.get("external_account_id"):
+        channel_row = get_active_channel(db, int(business_id), channel, message["external_account_id"])
+        if channel_row is None:
+            return False
+        message["channel_id"] = channel_row.id
+    elif settings.ENVIRONMENT.strip().lower() == "production":
+        logger.warning("Inbound message ignored: resolved channel is required")
         return False
 
     if business_id is not None:
@@ -1234,22 +1257,16 @@ def process_and_save_message(
         ).first()
 
     profile_access_token = None
-    if business_id is not None and channel in {"facebook", "instagram", "telegram"}:
+    if channel_row is not None and channel in {"facebook", "instagram", "telegram"}:
         try:
-            channel_row = get_single_active_channel(
-                db,
-                int(business_id),
-                "facebook" if channel == "instagram" else channel,
-            )
             if channel_row.access_token_encrypted:
                 profile_access_token = decrypt_token(
                     channel_row.access_token_encrypted,
                     settings.CHANNEL_ENCRYPTION_KEY,
                 )
         except (LookupError, ValueError):
-            # Development can still use its explicitly configured fallback;
-            # production simply skips profile enrichment until the encrypted
-            # tenant channel is connected.
+            # A missing/invalid credential skips enrichment. Never select a
+            # different account's token just because the provider is the same.
             profile_access_token = None
 
 

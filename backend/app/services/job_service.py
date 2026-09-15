@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.crm_job import CrmJob
+from app.rag.run_logger import safe_error_message
 
 
 MAX_ERROR_LENGTH = 500
@@ -119,7 +120,7 @@ def dispatch_due_jobs(
             if job is None:
                 processed += 1
                 continue
-            job.last_error = str(exc)[:MAX_ERROR_LENGTH]
+            job.last_error = safe_error_message(exc, limit=MAX_ERROR_LENGTH)
             if job.attempts >= job.max_attempts:
                 job.status = "failed"
             else:

@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.models.business import User
+from app.models.platform_control import PlatformUser
 from app.models.conversation import Conversation
 from app.models.crm_extended import ConversationAssignment, CustomerTag, Tag
 from app.models.customer import Customer
 from app.models.ticket import Ticket, TicketEvent
 from app.models.workflow import Workflow, WorkflowRun
 from app.services.job_service import enqueue_job
+from app.rag.run_logger import safe_error_message
 from app.core.config import settings
 from app.tenancy.context import TenantContext
 
@@ -43,18 +45,31 @@ def _conversation(db: Session, conversation_id: int, tenant: TenantContext) -> C
     return conversation
 
 
-def _active_user(db: Session, user_id: int, tenant: TenantContext) -> User:
-    user = db.query(User).filter(
-        User.id == user_id,
-        User.business_id == tenant.business_id,
-        User.is_active.is_(True),
-    ).first()
+def _active_user(db: Session, user_id: int, tenant: TenantContext, *, platform_db: Session | None = None) -> User:
+    if platform_db is None and db.info.get("tenant_schema"):
+        raise ValueError("Platform session is required to validate workflow assignees")
+    lookup_db = platform_db or db
+    # New deployments keep identities in the platform database.  During the
+    # staged rollout a legacy ``users`` table may still be present, so fall
+    # back to it only when the new control-plane table is unavailable.
+    try:
+        user = lookup_db.query(PlatformUser).filter(
+            PlatformUser.id == user_id,
+            PlatformUser.business_id == tenant.business_id,
+            PlatformUser.is_active.is_(True),
+        ).first()
+    except Exception:
+        user = lookup_db.query(User).filter(
+            User.id == user_id,
+            User.business_id == tenant.business_id,
+            User.is_active.is_(True),
+        ).first()
     if user is None:
         raise ValueError("Nhân viên không thuộc business hoặc đã bị vô hiệu hóa.")
     return user
 
 
-def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext) -> None:
+def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext, *, platform_db: Session | None = None) -> None:
     action_type = action.get("type")
     if action_type == "create_ticket":
         customer_id = payload.get("customer_id")
@@ -113,7 +128,7 @@ def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext)
         user_id = action.get("user_id")
         if not user_id:
             raise ValueError("Action assign_user cần user_id.")
-        _active_user(db, int(user_id), tenant)
+        _active_user(db, int(user_id), tenant, platform_db=platform_db)
         if payload.get("ticket_id"):
             ticket = db.query(Ticket).filter(
                 Ticket.id == int(payload["ticket_id"]),
@@ -190,6 +205,7 @@ def execute_workflow(
     tenant: TenantContext,
     *,
     allow_retry: bool = False,
+    platform_db: Session | None = None,
 ) -> WorkflowRun:
     existing = db.query(WorkflowRun).filter(
         WorkflowRun.workflow_id == workflow.id,
@@ -223,7 +239,7 @@ def execute_workflow(
 
     try:
         for action in workflow.actions or []:
-            _run_action(db, action, payload, tenant)
+            _run_action(db, action, payload, tenant, platform_db=platform_db)
         run.status = "completed"
         run.matched = True
         run.executed_at = _utcnow()
@@ -235,7 +251,7 @@ def execute_workflow(
             run = db.get(WorkflowRun, existing.id)
             run.status = "failed"
             run.matched = True
-            run.error_message = str(exc)
+            run.error_message = safe_error_message(exc)
             run.event_type = event_type
             run.payload = payload or {}
         else:
@@ -245,7 +261,7 @@ def execute_workflow(
                 event_id=event_id,
                 status="failed",
                 matched=True,
-                error_message=str(exc),
+                error_message=safe_error_message(exc),
                 event_type=event_type,
                 payload=payload or {},
                 attempts=(run.attempts or 1),
@@ -262,6 +278,8 @@ def emit_workflow_event(
     event_type: str,
     event_id: str,
     payload: dict,
+    *,
+    platform_db: Session | None = None,
 ) -> list[WorkflowRun]:
     """Run enabled workflows for one committed CRM event.
 
@@ -273,4 +291,4 @@ def emit_workflow_event(
         Workflow.event_type == event_type,
         Workflow.enabled.is_(True),
     ).order_by(Workflow.id.asc()).all()
-    return [execute_workflow(db, workflow, event_id, event_type, payload, tenant) for workflow in workflows]
+    return [execute_workflow(db, workflow, event_id, event_type, payload, tenant, platform_db=platform_db) for workflow in workflows]

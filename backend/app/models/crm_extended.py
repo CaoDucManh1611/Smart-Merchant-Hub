@@ -7,10 +7,10 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class ConversationAssignment(Base):
+class ConversationAssignment(TenantBase):
     __tablename__ = "conversation_assignments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -20,12 +20,12 @@ class ConversationAssignment(Base):
         index=True,
     )
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"),
+        Integer,
         nullable=False,
         index=True,
     )
     assigned_by: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        Integer,
         nullable=True,
     )
     assignment_type: Mapped[str] = mapped_column(String(30), nullable=False, default="manual")
@@ -33,11 +33,9 @@ class ConversationAssignment(Base):
     unassigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     conversation = relationship("Conversation", back_populates="assignments")
-    user = relationship("User", foreign_keys=[user_id], back_populates="assignments")
-    assigned_by_user = relationship("User", foreign_keys=[assigned_by])
 
 
-class Tag(Base):
+class Tag(TenantBase):
     __tablename__ = "tags"
     __table_args__ = (
         UniqueConstraint("business_id", "name", name="uq_tags_business_name"),
@@ -45,7 +43,7 @@ class Tag(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=False,
         index=True,
     )
@@ -56,7 +54,7 @@ class Tag(Base):
     conversations = relationship("ConversationTag", back_populates="tag", cascade="all, delete-orphan")
 
 
-class ConversationTag(Base):
+class ConversationTag(TenantBase):
     __tablename__ = "conversation_tags"
     __table_args__ = (
         UniqueConstraint("conversation_id", "tag_id", name="uq_conversation_tags_pair"),
@@ -74,7 +72,7 @@ class ConversationTag(Base):
         index=True,
     )
     created_by: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        Integer,
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -83,7 +81,7 @@ class ConversationTag(Base):
     tag = relationship("Tag", back_populates="conversations")
 
 
-class CustomerTag(Base):
+class CustomerTag(TenantBase):
     """Tenant-scoped labels that belong to a customer across conversations."""
 
     __tablename__ = "customer_tags"
@@ -93,7 +91,7 @@ class CustomerTag(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=False,
         index=True,
     )
@@ -108,7 +106,7 @@ class CustomerTag(Base):
         index=True,
     )
     created_by: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
+        Integer,
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

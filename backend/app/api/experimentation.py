@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_optional_user
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.business import User
 from app.models.customer import Customer
 from app.models.conversation import Conversation
@@ -89,7 +89,7 @@ def _json_number(value):
 @router.get("/evaluation/dashboard")
 def evaluation_dashboard(
     days: int = 30,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Return tenant-scoped quality signals for the AI operations dashboard."""
@@ -308,7 +308,7 @@ def _experiment_report(db: Session, experiment: Experiment) -> dict:
 
 
 @router.post("/rule-suggestions", response_model=RuleSuggestionOut, status_code=201, dependencies=[Depends(require_write_access)])
-def create_rule_suggestion(payload: RuleSuggestionCreate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def create_rule_suggestion(payload: RuleSuggestionCreate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     if payload.workflow_id is not None and db.query(Workflow.id).filter(Workflow.id == payload.workflow_id, Workflow.business_id == tenant.business_id).first() is None:
         raise HTTPException(status_code=404, detail="Workflow không thuộc business này.")
     row = RuleSuggestion(
@@ -330,7 +330,7 @@ def create_rule_suggestion(payload: RuleSuggestionCreate, db: Session = Depends(
 
 
 @router.post("/rule-suggestions/generate", response_model=RuleSuggestionOut, status_code=201, dependencies=[Depends(require_write_access)])
-def generate_rule_suggestion(payload: RuleSuggestionGenerate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def generate_rule_suggestion(payload: RuleSuggestionGenerate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     suggestion = suggest_tag_rule(channel=payload.channel.strip(), sample_size=payload.sample_size, tag=payload.tag.strip())
     row = RuleSuggestion(
         business_id=tenant.business_id,
@@ -350,7 +350,7 @@ def generate_rule_suggestion(payload: RuleSuggestionGenerate, db: Session = Depe
 
 
 @router.get("/rule-suggestions", response_model=list[RuleSuggestionOut])
-def list_rule_suggestions(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_rule_suggestions(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return db.query(RuleSuggestion).filter(RuleSuggestion.business_id == tenant.business_id).order_by(RuleSuggestion.created_at.desc(), RuleSuggestion.id.desc()).limit(200).all()
 
 
@@ -358,7 +358,7 @@ def list_rule_suggestions(db: Session = Depends(get_db), tenant: TenantContext =
 def review_rule_suggestion(
     suggestion_id: int,
     payload: RuleSuggestionReview,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     user: User | None = Depends(get_optional_user),
 ):
@@ -378,7 +378,7 @@ def review_rule_suggestion(
 
 
 @router.post("/rule-suggestions/{suggestion_id}/convert", response_model=RuleSuggestionConvertOut, dependencies=[Depends(require_write_access)])
-def convert_rule_suggestion(suggestion_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context), user: User | None = Depends(get_optional_user)):
+def convert_rule_suggestion(suggestion_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context), user: User | None = Depends(get_optional_user)):
     row = db.query(RuleSuggestion).filter(RuleSuggestion.id == suggestion_id, RuleSuggestion.business_id == tenant.business_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Rule suggestion không tồn tại.")
@@ -407,7 +407,7 @@ def convert_rule_suggestion(suggestion_id: int, db: Session = Depends(get_db), t
 
 
 @router.post("/rule-suggestions/{suggestion_id}/rollback", response_model=RuleSuggestionOut, dependencies=[Depends(require_write_access)])
-def rollback_rule_suggestion(suggestion_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context), user: User | None = Depends(get_optional_user)):
+def rollback_rule_suggestion(suggestion_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context), user: User | None = Depends(get_optional_user)):
     row = db.query(RuleSuggestion).filter(RuleSuggestion.id == suggestion_id, RuleSuggestion.business_id == tenant.business_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Rule suggestion không tồn tại.")
@@ -423,7 +423,7 @@ def rollback_rule_suggestion(suggestion_id: int, db: Session = Depends(get_db), 
 
 
 @router.post("/features/snapshots", response_model=FeatureSnapshotOut, status_code=201, dependencies=[Depends(require_write_access)])
-def create_feature_snapshot(payload: FeatureSnapshotCreate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def create_feature_snapshot(payload: FeatureSnapshotCreate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     if payload.customer_id is not None and db.query(Customer.id).filter(Customer.id == payload.customer_id, Customer.business_id == tenant.business_id).first() is None:
         raise HTTPException(status_code=404, detail="Customer không thuộc business này.")
     row = FeatureSnapshot(business_id=tenant.business_id, customer_id=payload.customer_id, feature_version=payload.feature_version.strip(), features=payload.features, label=payload.label)
@@ -434,7 +434,7 @@ def create_feature_snapshot(payload: FeatureSnapshotCreate, db: Session = Depend
 
 
 @router.get("/features/snapshots", response_model=list[FeatureSnapshotOut])
-def list_feature_snapshots(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_feature_snapshots(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return db.query(FeatureSnapshot).filter(FeatureSnapshot.business_id == tenant.business_id).order_by(FeatureSnapshot.captured_at.desc(), FeatureSnapshot.id.desc()).limit(200).all()
 
 
@@ -448,7 +448,7 @@ def _model_version_payload(row: ModelVersion) -> dict:
 
 
 @router.post("/models", response_model=ModelVersionOut, status_code=201, dependencies=[Depends(require_write_access)])
-def create_model_version(payload: ModelVersionCreate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def create_model_version(payload: ModelVersionCreate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     existing = db.query(ModelVersion).filter(ModelVersion.business_id == tenant.business_id, ModelVersion.name == payload.name.strip(), ModelVersion.version == payload.version.strip()).first()
     if existing:
         raise HTTPException(status_code=409, detail="Model version đã tồn tại.")
@@ -458,12 +458,12 @@ def create_model_version(payload: ModelVersionCreate, db: Session = Depends(get_
 
 
 @router.get("/models", response_model=list[ModelVersionOut])
-def list_model_versions(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_model_versions(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return [_model_version_payload(row) for row in db.query(ModelVersion).filter(ModelVersion.business_id == tenant.business_id).order_by(ModelVersion.id.desc()).limit(200).all()]
 
 
 @router.get("/models/{model_id}", response_model=ModelVersionOut)
-def get_model_version(model_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def get_model_version(model_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     row = db.query(ModelVersion).filter(ModelVersion.id == model_id, ModelVersion.business_id == tenant.business_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Model version không tồn tại.")
@@ -471,7 +471,7 @@ def get_model_version(model_id: int, db: Session = Depends(get_db), tenant: Tena
 
 
 @router.post("/models/{model_id}/train", response_model=ModelTrainingRunOut, status_code=201, dependencies=[Depends(require_write_access)])
-def train_model(model_id: int, payload: ModelTrainRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def train_model(model_id: int, payload: ModelTrainRequest, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     model = db.query(ModelVersion).filter(ModelVersion.id == model_id, ModelVersion.business_id == tenant.business_id).first()
     if model is None:
         raise HTTPException(status_code=404, detail="Model version không tồn tại.")
@@ -521,7 +521,7 @@ def train_model(model_id: int, payload: ModelTrainRequest, db: Session = Depends
 
 
 @router.post("/models/{model_id}/infer", response_model=ModelInferenceOut)
-def infer_model(model_id: int, payload: ModelInferenceRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def infer_model(model_id: int, payload: ModelInferenceRequest, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     model = db.query(ModelVersion).filter(ModelVersion.id == model_id, ModelVersion.business_id == tenant.business_id).first()
     if model is None:
         raise HTTPException(status_code=404, detail="Model version không tồn tại.")
@@ -540,7 +540,7 @@ def infer_model(model_id: int, payload: ModelInferenceRequest, db: Session = Dep
 
 
 @router.post("", response_model=ExperimentOut, status_code=201, dependencies=[Depends(require_write_access)])
-def create_experiment(payload: ExperimentCreate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def create_experiment(payload: ExperimentCreate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     variants = list(dict.fromkeys(item.strip() for item in payload.variants if item.strip()))
     if len(variants) < 2:
         raise HTTPException(status_code=422, detail="Experiment cần ít nhất hai variant khác nhau.")
@@ -552,12 +552,12 @@ def create_experiment(payload: ExperimentCreate, db: Session = Depends(get_db), 
 
 
 @router.get("", response_model=list[ExperimentOut])
-def list_experiments(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_experiments(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return db.query(Experiment).filter(Experiment.business_id == tenant.business_id).order_by(Experiment.id.desc()).all()
 
 
 @router.post("/{experiment_id}/exposures", response_model=ExposureOut, status_code=201, dependencies=[Depends(require_write_access)])
-def record_exposure(experiment_id: int, payload: ExposureRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def record_exposure(experiment_id: int, payload: ExposureRequest, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     if experiment.status != "running":
         raise HTTPException(status_code=409, detail="Experiment chưa ở trạng thái running.")
@@ -580,7 +580,7 @@ def record_exposure(experiment_id: int, payload: ExposureRequest, db: Session = 
 
 
 @router.get("/{experiment_id}/report", response_model=ExperimentReportOut)
-def experiment_report(experiment_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def experiment_report(experiment_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     _maybe_stop_experiment(db, experiment)
     db.commit()
@@ -588,7 +588,7 @@ def experiment_report(experiment_id: int, db: Session = Depends(get_db), tenant:
 
 
 @router.post("/{experiment_id}/assign", response_model=AssignmentOut, dependencies=[Depends(require_write_access)])
-def assign_experiment(experiment_id: int, payload: AssignmentRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def assign_experiment(experiment_id: int, payload: AssignmentRequest, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     if experiment.status != "running":
         raise HTTPException(status_code=409, detail="Experiment chưa ở trạng thái running.")
@@ -615,7 +615,7 @@ def assign_experiment(experiment_id: int, payload: AssignmentRequest, db: Sessio
 
 
 @router.post("/{experiment_id}/assignments/{assignment_id}/outcome", response_model=OutcomeOut, status_code=201, dependencies=[Depends(require_write_access)])
-def record_outcome(experiment_id: int, assignment_id: int, payload: OutcomeRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def record_outcome(experiment_id: int, assignment_id: int, payload: OutcomeRequest, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     assignment = db.query(ExperimentAssignment).filter(ExperimentAssignment.id == assignment_id, ExperimentAssignment.experiment_id == experiment.id, ExperimentAssignment.business_id == tenant.business_id).first()
     if assignment is None:
@@ -639,7 +639,7 @@ def record_outcome(experiment_id: int, assignment_id: int, payload: OutcomeReque
 
 
 @router.post("/{experiment_id}/bandit/policies", response_model=BanditPolicyOut, status_code=201, dependencies=[Depends(require_write_access)])
-def create_bandit_policy(experiment_id: int, payload: BanditPolicyCreate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def create_bandit_policy(experiment_id: int, payload: BanditPolicyCreate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     if db.query(BanditPolicy).filter(BanditPolicy.experiment_id == experiment.id, BanditPolicy.version == payload.version.strip()).first():
         raise HTTPException(status_code=409, detail="Policy version đã tồn tại.")
@@ -649,7 +649,7 @@ def create_bandit_policy(experiment_id: int, payload: BanditPolicyCreate, db: Se
 
 
 @router.get("/{experiment_id}/bandit/policies", response_model=list[BanditPolicyOut])
-def list_bandit_policies(experiment_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def list_bandit_policies(experiment_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     return db.query(BanditPolicy).filter(BanditPolicy.experiment_id == experiment.id, BanditPolicy.business_id == tenant.business_id).order_by(BanditPolicy.id.desc()).all()
 
@@ -664,7 +664,7 @@ def _active_bandit_policy(db: Session, experiment: Experiment, tenant: TenantCon
 
 
 @router.post("/{experiment_id}/bandit/select", response_model=BanditDecisionOut, status_code=201, dependencies=[Depends(require_write_access)])
-def bandit_select(experiment_id: int, payload: BanditSelectRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def bandit_select(experiment_id: int, payload: BanditSelectRequest, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     if experiment.status != "running":
         raise HTTPException(status_code=409, detail="Experiment chưa ở trạng thái running.")
@@ -690,7 +690,7 @@ def bandit_select(experiment_id: int, payload: BanditSelectRequest, db: Session 
 
 
 @router.post("/{experiment_id}/bandit/decision", response_model=BanditDecisionOut, status_code=201, dependencies=[Depends(require_write_access)])
-def bandit_decision(experiment_id: int, payload: BanditDecisionRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def bandit_decision(experiment_id: int, payload: BanditDecisionRequest, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     if experiment.status != "running":
         raise HTTPException(status_code=409, detail="Experiment chưa ở trạng thái running.")
@@ -707,7 +707,7 @@ def bandit_decision(experiment_id: int, payload: BanditDecisionRequest, db: Sess
 
 
 @router.post("/{experiment_id}/bandit/{decision_id}/reward", response_model=BanditDecisionOut, dependencies=[Depends(require_write_access)])
-def bandit_reward(experiment_id: int, decision_id: int, payload: OutcomeRequest, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def bandit_reward(experiment_id: int, decision_id: int, payload: OutcomeRequest, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     experiment = _experiment(db, experiment_id, tenant)
     row = db.query(BanditDecision).filter(BanditDecision.id == decision_id, BanditDecision.experiment_id == experiment.id, BanditDecision.business_id == tenant.business_id).first()
     if row is None:

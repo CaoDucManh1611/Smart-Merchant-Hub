@@ -4,7 +4,6 @@ from typing import Any
 import httpx
 
 from app.services.meta_errors import MetaAPIError
-from app.services.meta_config_service import get_meta_config
 from app.services.channel_service import get_single_active_channel
 from app.core.config import settings
 from app.services.channel_retry import run_with_provider_retry
@@ -21,8 +20,6 @@ def get_facebook_config(db=None, business_id: int | None = None) -> tuple[str, s
     Lấy cấu hình Facebook Page.
     """
 
-    if settings.ENVIRONMENT == "production" and (db is None or business_id is None):
-        raise PermissionError("Tenant context is required for production outbound messaging")
     if db is not None and business_id is not None:
         channel = get_single_active_channel(db, business_id, "facebook")
         if not channel.access_token_encrypted:
@@ -31,28 +28,7 @@ def get_facebook_config(db=None, business_id: int | None = None) -> tuple[str, s
         return channel.external_account_id, decrypt_token(
             channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY
         )
-    meta_config = get_meta_config()
-    page_id = str(meta_config["facebook_page_id"] or "").strip()
-
-    access_token = str(
-        meta_config["facebook_page_access_token"] or ""
-    ).strip()
-
-    if not page_id:
-        raise ValueError(
-            "FACEBOOK_PAGE_ID chưa được cấu hình"
-        )
-
-    if not access_token:
-        raise ValueError(
-            "FACEBOOK_PAGE_ACCESS_TOKEN "
-            "chưa được cấu hình"
-        )
-
-    return (
-        page_id,
-        access_token,
-    )
+    raise PermissionError("Tenant context is required for Facebook outbound messaging")
 
 
 def parse_meta_response(

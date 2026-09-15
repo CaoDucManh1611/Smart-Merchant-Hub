@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.channel import Channel
 from app.core.config import settings
 from app.services.channel_credentials import decrypt_token
+from app.tenancy.registry import resolve_webhook_route
 
 
 def _channel_webhook_secret(channel: Channel) -> str:
@@ -140,7 +141,11 @@ def resolve_active_channel(
         return None
 
 
-def resolve_telegram_channel(db: Session, secret_token: str | None) -> Channel | None:
+def resolve_telegram_channel(
+    platform_db: Session,
+    secret_token: str | None,
+    tenant_db: Session | None = None,
+) -> Channel | None:
     """Resolve a Telegram webhook to its tenant-owned Channel.
 
     Telegram does not include the bot identity in an update. The secret
@@ -149,25 +154,32 @@ def resolve_telegram_channel(db: Session, secret_token: str | None) -> Channel |
     """
     if not secret_token:
         return None
-    try:
-        channels = db.scalars(
-            select(Channel).where(
-                Channel.channel_type == "telegram",
-                Channel.status == "active",
-            )
-        ).all()
-    except OperationalError:
-        db.rollback()
+    if tenant_db is not None:
+        route = resolve_webhook_route(platform_db, "telegram", secret_token)
+        if route is None:
+            return None
+        channel = tenant_db.get(Channel, route.channel_id)
+        if channel is None or channel.status != "active" or channel.channel_type != "telegram":
+            return None
+        return channel
+    # Compatibility is limited to local development databases. Production
+    # must always resolve through the platform route registry.
+    if settings.ENVIRONMENT.strip().lower() == "production":
         return None
-    matches = [
-        channel
-        for channel in channels
-        if hmac.compare_digest(_channel_webhook_secret(channel), secret_token)
-    ]
+    try:
+        channels = platform_db.scalars(select(Channel).where(Channel.channel_type == "telegram", Channel.status == "active")).all()
+    except OperationalError:
+        platform_db.rollback()
+        return None
+    matches = [channel for channel in channels if hmac.compare_digest(_channel_webhook_secret(channel), secret_token)]
     return matches[0] if len(matches) == 1 else None
 
 
-def resolve_zalo_channel(db: Session, secret_token: str | None) -> Channel | None:
+def resolve_zalo_channel(
+    platform_db: Session,
+    secret_token: str | None,
+    tenant_db: Session | None = None,
+) -> Channel | None:
     """Resolve a Zalo Bot webhook to its tenant-owned Channel.
 
     Zalo identifies the connection with the secret header, so the value is
@@ -176,25 +188,30 @@ def resolve_zalo_channel(db: Session, secret_token: str | None) -> Channel | Non
     """
     if not secret_token:
         return None
-    try:
-        channels = db.scalars(
-            select(Channel).where(
-                Channel.channel_type == "zalo",
-                Channel.status == "active",
-            )
-        ).all()
-    except OperationalError:
-        db.rollback()
+    if tenant_db is not None:
+        route = resolve_webhook_route(platform_db, "zalo", secret_token)
+        if route is None:
+            return None
+        channel = tenant_db.get(Channel, route.channel_id)
+        if channel is None or channel.status != "active" or channel.channel_type != "zalo":
+            return None
+        return channel
+    if settings.ENVIRONMENT.strip().lower() == "production":
         return None
-    matches = [
-        channel
-        for channel in channels
-        if hmac.compare_digest(_channel_webhook_secret(channel), secret_token)
-    ]
+    try:
+        channels = platform_db.scalars(select(Channel).where(Channel.channel_type == "zalo", Channel.status == "active")).all()
+    except OperationalError:
+        platform_db.rollback()
+        return None
+    matches = [channel for channel in channels if hmac.compare_digest(_channel_webhook_secret(channel), secret_token)]
     return matches[0] if len(matches) == 1 else None
 
 
-def resolve_zalo_oa_channel(db: Session, payload: dict) -> Channel | None:
+def resolve_zalo_oa_channel(
+    platform_db: Session,
+    payload: dict,
+    tenant_db: Session | None = None,
+) -> Channel | None:
     """Resolve an Official Account webhook to its tenant-owned channel."""
     if not isinstance(payload, dict):
         return None
@@ -204,15 +221,21 @@ def resolve_zalo_oa_channel(db: Session, payload: dict) -> Channel | None:
     oa_id = str(payload.get("oa_id") or recipient_id or "").strip()
     if not app_id and not oa_id:
         return None
+    if tenant_db is not None:
+        route_key = oa_id or app_id
+        route = resolve_webhook_route(platform_db, "zalo", route_key)
+        if route is None:
+            return None
+        channel = tenant_db.get(Channel, route.channel_id)
+        if channel is None or channel.status != "active" or channel.channel_type != "zalo":
+            return None
+        return channel
+    if settings.ENVIRONMENT.strip().lower() == "production":
+        return None
     try:
-        channels = db.scalars(
-            select(Channel).where(
-                Channel.channel_type == "zalo",
-                Channel.status == "active",
-            )
-        ).all()
+        channels = platform_db.scalars(select(Channel).where(Channel.channel_type == "zalo", Channel.status == "active")).all()
     except OperationalError:
-        db.rollback()
+        platform_db.rollback()
         return None
 
     matches: list[Channel] = []

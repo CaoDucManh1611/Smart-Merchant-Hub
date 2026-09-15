@@ -18,7 +18,8 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.database.session import SessionLocal
+from app.database.tenant_session import tenant_session
+from app.tenancy.schema import schema_name_for
 from app.models.business_setting import BusinessSetting
 from app.models.conversation import Conversation
 from app.models.customer import Customer
@@ -334,34 +335,34 @@ def process_customer_fact_extraction_background(
     """Run extraction outside the webhook request path."""
 
     def worker() -> None:
-        db = SessionLocal()
         try:
-            if not get_customer_fact_extraction_enabled(db, business_id):
-                logger.info("Customer fact extraction disabled for business=%s", business_id)
-                return
-            already_extracted = db.query(CustomerFact.id).filter(
-                CustomerFact.business_id == business_id,
-                CustomerFact.customer_id == customer_id,
-                CustomerFact.source_message_id == source_message_id,
-                CustomerFact.extractor == EXTRACTOR_NAME,
-            ).first()
-            if already_extracted is not None:
-                logger.info("Customer fact extraction already completed for message=%s", source_message_id)
-                return
-            facts = extract_and_persist_customer_facts(
-                db,
-                business_id=business_id,
-                customer_id=customer_id,
-                source_message_id=source_message_id,
-                content=content,
-            )
-            logger.info(
-                "Customer fact extraction completed: business=%s customer=%s message=%s facts=%s",
-                business_id,
-                customer_id,
-                source_message_id,
-                len(facts),
-            )
+            with tenant_session(schema_name_for(business_id)) as db:
+                if not get_customer_fact_extraction_enabled(db, business_id):
+                    logger.info("Customer fact extraction disabled for business=%s", business_id)
+                    return
+                already_extracted = db.query(CustomerFact.id).filter(
+                    CustomerFact.business_id == business_id,
+                    CustomerFact.customer_id == customer_id,
+                    CustomerFact.source_message_id == source_message_id,
+                    CustomerFact.extractor == EXTRACTOR_NAME,
+                ).first()
+                if already_extracted is not None:
+                    logger.info("Customer fact extraction already completed for message=%s", source_message_id)
+                    return
+                facts = extract_and_persist_customer_facts(
+                    db,
+                    business_id=business_id,
+                    customer_id=customer_id,
+                    source_message_id=source_message_id,
+                    content=content,
+                )
+                logger.info(
+                    "Customer fact extraction completed: business=%s customer=%s message=%s facts=%s",
+                    business_id,
+                    customer_id,
+                    source_message_id,
+                    len(facts),
+                )
         except Exception:
             logger.exception(
                 "Customer fact extraction failed: business=%s customer=%s message=%s",
@@ -369,7 +370,5 @@ def process_customer_fact_extraction_background(
                 customer_id,
                 source_message_id,
             )
-        finally:
-            db.close()
 
     Thread(target=worker, name="customer-fact-extractor", daemon=True).start()

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin_access
 from app.core.config import settings
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.business import User
 from app.models.saas import DataLifecycleRequest
 from app.schemas.privacy import PrivacyDeleteRequest, PrivacyRequest, PrivacyRequestOut, PrivacyResponse
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/privacy")
 
 @router.get("/requests", response_model=list[PrivacyRequestOut])
 def list_lifecycle_requests(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     _actor: User | None = Depends(require_admin_access),
 ):
@@ -58,7 +58,7 @@ def _request_response(row, counts=None, data=None):
 @router.post("/export", response_model=PrivacyResponse)
 def export_data(
     payload: PrivacyRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):
@@ -79,7 +79,7 @@ def export_data(
 @router.post("/anonymize", response_model=PrivacyResponse)
 def anonymize_data(
     payload: PrivacyRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):
@@ -99,7 +99,7 @@ def anonymize_data(
 @router.post("/delete", response_model=PrivacyResponse)
 def delete_data(
     payload: PrivacyDeleteRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):

@@ -5,8 +5,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+from app.database.bases import TenantBase
 
 from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.main import app
 from app.models.business import Business
 from app.models.conversation import Conversation
@@ -23,6 +25,7 @@ class ProductOrderApiTests(unittest.TestCase):
             poolclass=StaticPool,
         )
         Business.metadata.create_all(cls.engine)
+        TenantBase.metadata.create_all(cls.engine)
         with Session(cls.engine) as db:
             one = Business(name="Sales One", slug="sales-one")
             two = Business(name="Sales Two", slug="sales-two")
@@ -72,7 +75,13 @@ class ProductOrderApiTests(unittest.TestCase):
             with Session(cls.engine) as db:
                 yield db
 
+        def override_get_tenant_db():
+            with Session(cls.engine) as db:
+                db.info["tenant_schema"] = "shop_test"
+                yield db
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_tenant_db] = override_get_tenant_db
         cls.client = TestClient(app)
 
     @classmethod

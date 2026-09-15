@@ -8,14 +8,14 @@ from decimal import Decimal
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class RevenueTouchpoint(Base):
+class RevenueTouchpoint(TenantBase):
     __tablename__ = "revenue_touchpoints"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
     conversation_id: Mapped[int | None] = mapped_column(ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True)
     lead_id: Mapped[int | None] = mapped_column(ForeignKey("leads.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -26,20 +26,19 @@ class RevenueTouchpoint(Base):
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
-    business = relationship("Business")
     customer = relationship("Customer")
     conversation = relationship("Conversation")
     lead = relationship("Lead")
 
 
-class RevenueAttribution(Base):
+class RevenueAttribution(TenantBase):
     __tablename__ = "revenue_attributions"
     __table_args__ = (
         UniqueConstraint("business_id", "order_id", "touchpoint_id", "model", name="uq_revenue_attribution_allocation"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
     touchpoint_id: Mapped[int] = mapped_column(ForeignKey("revenue_touchpoints.id", ondelete="CASCADE"), nullable=False, index=True)
     model: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
@@ -51,25 +50,24 @@ class RevenueAttribution(Base):
     touchpoint = relationship("RevenueTouchpoint")
 
 
-class LeadActivity(Base):
+class LeadActivity(TenantBase):
     __tablename__ = "lead_activities"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"), nullable=False, index=True)
     activity_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), index=True)
-    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     lead = relationship("Lead")
-    actor = relationship("User")
 
 
-class LeadConversion(Base):
+class LeadConversion(TenantBase):
     __tablename__ = "lead_conversions"
     __table_args__ = (
         UniqueConstraint("business_id", "lead_id", name="uq_lead_conversion_lead"),
@@ -77,12 +75,11 @@ class LeadConversion(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    business_id: Mapped[int] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"), nullable=False, index=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
-    converted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    converted_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     converted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     lead = relationship("Lead")
     order = relationship("Order")
-    actor = relationship("User")

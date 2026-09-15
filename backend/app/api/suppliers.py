@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.business import User
 from app.models.supplier import Supplier
 from app.schemas.supplier import SupplierCreate, SupplierListOut, SupplierOut, SupplierUpdate
@@ -33,7 +33,7 @@ def _clean(value: str | None) -> str | None:
 
 @router.get("/suppliers", response_model=SupplierListOut)
 def list_suppliers(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     status: str | None = Query(default=None, max_length=30),
     search: str | None = Query(default=None, max_length=255),
@@ -54,7 +54,7 @@ def list_suppliers(
 @router.post("/suppliers", response_model=SupplierOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_supplier(
     payload: SupplierCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -93,7 +93,7 @@ def create_supplier(
 @router.get("/suppliers/{supplier_id}", response_model=SupplierOut)
 def get_supplier(
     supplier_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     return _supplier(db, supplier_id, tenant)
@@ -103,7 +103,7 @@ def get_supplier(
 def update_supplier(
     supplier_id: int,
     payload: SupplierUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -135,7 +135,7 @@ def update_supplier(
 @router.delete("/suppliers/{supplier_id}", status_code=204, dependencies=[Depends(require_write_access)])
 def archive_supplier(
     supplier_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):

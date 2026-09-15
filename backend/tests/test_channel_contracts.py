@@ -14,11 +14,11 @@ from app.contracts.channel_event import (
 from app.integrations.facebook import FacebookAdapter
 from app.integrations.instagram import InstagramAdapter
 from app.integrations import get_channel_adapter
-from app.models.business import Business
 from app.models.channel import Channel, ChannelEvent
-from app.database.session import Base
+from app.database.bases import TenantBase
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
 from app.services.channel_event_service import ingest_normalized_events
 
 
@@ -30,6 +30,36 @@ def load_fixture(name: str) -> dict:
 
 
 class ChannelContractTests(unittest.TestCase):
+    def test_inbox_rejects_event_bound_to_another_shop_before_persistence(self):
+        engine = create_engine("sqlite://")
+        try:
+            TenantBase.metadata.create_all(engine)
+            with Session(engine) as db:
+                db.add(Channel(id=1, business_id=1, channel_type="facebook", name="Page", external_account_id="page-1"))
+                db.commit()
+                event = NormalizedChannelEvent(
+                    provider="facebook", external_event_id="bound-elsewhere", event_type="message",
+                    external_account_id="page-1", channel_id=1, business_id=2, raw_payload={},
+                )
+                with self.assertRaises(PermissionError):
+                    ingest_normalized_events(db, [event])
+                self.assertEqual(0, db.query(ChannelEvent).count())
+        finally:
+            engine.dispose()
+
+    def test_missing_tenant_tables_do_not_silently_fall_back_to_legacy_inbox(self):
+        engine = create_engine("sqlite://")
+        try:
+            with Session(engine) as db:
+                event = NormalizedChannelEvent(
+                    provider="facebook", external_event_id="evt", event_type="message",
+                    external_account_id="page-1", raw_payload={},
+                )
+                with self.assertRaises(OperationalError):
+                    ingest_normalized_events(db, [event])
+        finally:
+            engine.dispose()
+
     def test_adapter_registry_returns_provider_adapter(self):
         self.assertIsInstance(get_channel_adapter("facebook"), FacebookAdapter)
         self.assertIsInstance(get_channel_adapter("instagram"), InstagramAdapter)
@@ -148,12 +178,9 @@ class InstagramAdapterTests(unittest.TestCase):
 
     def test_inbox_is_idempotent_and_uses_channel_business(self):
         engine = create_engine("sqlite://")
-        Base.metadata.create_all(engine)
+        TenantBase.metadata.create_all(engine)
         with Session(engine) as db:
-            business = Business(name="Inbox", slug="inbox")
-            db.add(business)
-            db.commit()
-            channel = Channel(business_id=business.id, channel_type="facebook", name="Page", external_account_id="page-1")
+            channel = Channel(business_id=1, channel_type="facebook", name="Page", external_account_id="page-1")
             db.add(channel)
             db.commit()
             event = NormalizedChannelEvent(provider="facebook", external_event_id="evt-1", event_type="message", external_account_id="page-1", raw_payload={})

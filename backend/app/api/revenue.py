@@ -8,7 +8,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.lead import Lead
@@ -31,7 +31,7 @@ def _touchpoint(db: Session, touchpoint_id: int, tenant: TenantContext) -> Reven
 
 
 @router.post("/revenue/touchpoints", response_model=TouchpointOut, status_code=201, dependencies=[Depends(require_write_access)])
-def create_touchpoint(payload: TouchpointCreate, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+def create_touchpoint(payload: TouchpointCreate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     if payload.customer_id is not None and db.query(Customer.id).filter(Customer.id == payload.customer_id, Customer.business_id == tenant.business_id).first() is None:
         raise HTTPException(status_code=404, detail="Customer không thuộc business này.")
     if payload.conversation_id is not None:
@@ -61,7 +61,7 @@ def create_touchpoint(payload: TouchpointCreate, db: Session = Depends(get_db), 
 
 @router.get("/revenue/touchpoints", response_model=TouchpointListOut)
 def list_touchpoints(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     customer_id: int | None = Query(default=None, ge=1),
     lead_id: int | None = Query(default=None, ge=1),
@@ -82,7 +82,7 @@ def list_touchpoints(
 def recalculate_attribution(
     order_id: int,
     payload: AttributionRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     order = db.query(Order).filter(Order.id == order_id, Order.business_id == tenant.business_id).first()
@@ -153,7 +153,7 @@ def recalculate_attribution(
 
 @router.get("/reports/revenue-attribution")
 def revenue_attribution_report(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     model: str = Query(default="last_touch"),
     start_at: datetime | None = None,

@@ -4,26 +4,24 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.models.business import Business
+from app.database.bases import TenantBase
 from app.models.sales import Product
 from app.services.product_pricing import combo_price_comparison_reply
 
 
 def _engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Business.metadata.create_all(engine)
+    TenantBase.metadata.create_all(engine)
     return engine
 
 
 def test_combo_comparison_uses_current_component_prices_and_returns_savings():
     engine = _engine()
     with Session(engine) as db:
-        business = Business(name="Pricing Shop", slug="pricing-shop")
-        db.add(business)
-        db.flush()
+        business_id = 1
         db.add_all([
             Product(
-                business_id=business.id,
+                business_id=business_id,
                 sku="CLEANSER-01",
                 name="Sữa rửa mặt dịu nhẹ",
                 price=Decimal("179000"),
@@ -31,7 +29,7 @@ def test_combo_comparison_uses_current_component_prices_and_returns_savings():
                 status="active",
             ),
             Product(
-                business_id=business.id,
+                business_id=business_id,
                 sku="SERUM-01",
                 name="Serum Vitamin C",
                 price=Decimal("420000"),
@@ -39,7 +37,7 @@ def test_combo_comparison_uses_current_component_prices_and_returns_savings():
                 status="active",
             ),
             Product(
-                business_id=business.id,
+                business_id=business_id,
                 sku="SUN-01",
                 name="Kem chống nắng Daily Shield",
                 price=Decimal("289000"),
@@ -47,7 +45,7 @@ def test_combo_comparison_uses_current_component_prices_and_returns_savings():
                 status="active",
             ),
             Product(
-                business_id=business.id,
+                business_id=business_id,
                 sku="COMBO-01",
                 name="Combo chăm sóc da cơ bản",
                 description="gồm Sữa rửa mặt dịu nhẹ, Serum Vitamin C và Kem chống nắng Daily Shield. Giá niêm yết 888.000 đồng; giá combo 799.000 đồng.",
@@ -60,7 +58,7 @@ def test_combo_comparison_uses_current_component_prices_and_returns_savings():
 
         reply = combo_price_comparison_reply(
             db,
-            business_id=business.id,
+            business_id=business_id,
             text="Nếu mua combo thì sẽ rẻ hơn so với mua lẻ bao nhiêu?",
         )
 
@@ -72,22 +70,30 @@ def test_combo_comparison_uses_current_component_prices_and_returns_savings():
 
         component_reply = combo_price_comparison_reply(
             db,
-            business_id=business.id,
+            business_id=business_id,
             text="Món lẻ trong combo sữa rửa mặt lệch giá bao nhiêu?",
         )
         assert component_reply is not None
         assert "Sữa rửa mặt dịu nhẹ" in component_reply
         assert "89.000" in component_reply
 
+        item_reply = combo_price_comparison_reply(
+            db,
+            business_id=business_id,
+            text="Nếu mua riêng sữa rửa mặt trong combo thì lệch giá bao nhiêu?",
+        )
+        assert item_reply is not None
+        assert "Sữa rửa mặt dịu nhẹ mua lẻ là 179.000 đồng" in item_reply
+        assert "phân bổ theo tỷ trọng" in item_reply
+        assert "17.940" in item_reply
+
 
 def test_combo_comparison_returns_a_safe_fallback_when_component_price_is_missing():
     engine = _engine()
     with Session(engine) as db:
-        business = Business(name="Incomplete Pricing Shop", slug="incomplete-pricing-shop")
-        db.add(business)
-        db.flush()
+        business_id = 2
         db.add(Product(
-            business_id=business.id,
+            business_id=business_id,
             sku="COMBO-01",
             name="Combo chăm sóc da cơ bản",
             description="gồm Sữa rửa mặt dịu nhẹ và Serum Vitamin C.",
@@ -99,7 +105,7 @@ def test_combo_comparison_returns_a_safe_fallback_when_component_price_is_missin
 
         reply = combo_price_comparison_reply(
             db,
-            business_id=business.id,
+            business_id=business_id,
             text="Mua lẻ trong combo này thì lệch giá bao nhiêu?",
         )
 
@@ -111,13 +117,11 @@ def test_combo_comparison_returns_a_safe_fallback_when_component_price_is_missin
 def test_out_of_stock_combo_returns_grounded_alternative_suggestions():
     engine = _engine()
     with Session(engine) as db:
-        business = Business(name="Alternative Shop", slug="alternative-pricing-shop")
-        db.add(business)
-        db.flush()
-        cleanser = Product(business_id=business.id, sku="ALT-CLEAN", name="Sữa rửa mặt thay thế", price=Decimal("150000"), stock_quantity=5, status="active")
-        serum = Product(business_id=business.id, sku="ALT-SERUM", name="Serum thay thế", price=Decimal("250000"), stock_quantity=3, status="active")
+        business_id = 3
+        cleanser = Product(business_id=business_id, sku="ALT-CLEAN", name="Sữa rửa mặt thay thế", price=Decimal("150000"), stock_quantity=5, status="active")
+        serum = Product(business_id=business_id, sku="ALT-SERUM", name="Serum thay thế", price=Decimal("250000"), stock_quantity=3, status="active")
         combo = Product(
-            business_id=business.id,
+            business_id=business_id,
             sku="ALT-COMBO",
             name="Combo hết hàng",
             price=Decimal("350000"),
@@ -133,7 +137,7 @@ def test_out_of_stock_combo_returns_grounded_alternative_suggestions():
 
         reply = combo_price_comparison_reply(
             db,
-            business_id=business.id,
+            business_id=business_id,
             text="Combo hết hàng rẻ hơn mua lẻ bao nhiêu và có gì thay thế?",
         )
         assert reply is not None

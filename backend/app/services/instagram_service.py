@@ -5,7 +5,6 @@ import httpx
 
 from app.core.config import settings
 from app.services.meta_errors import MetaAPIError
-from app.services.meta_config_service import get_meta_config
 from app.services.channel_service import get_single_active_channel
 from app.services.channel_credentials import decrypt_token
 from app.services.channel_retry import run_with_provider_retry
@@ -43,43 +42,26 @@ def get_instagram_access_token(db=None, business_id: int | None = None) -> str:
     dùng để gửi tin nhắn Instagram.
     """
 
-    if settings.ENVIRONMENT == "production" and (db is None or business_id is None):
-        raise PermissionError("Tenant context is required for production outbound messaging")
     if db is not None and business_id is not None:
         channel = get_single_active_channel(db, business_id, "instagram")
         if not channel.access_token_encrypted:
             raise ValueError("Encrypted Instagram channel token is missing")
         return decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
-    access_token = str(
-        settings.INSTAGRAM_ACCESS_TOKEN
-        or ""
-    ).strip()
-
-    if not access_token:
-        raise ValueError(
-            "INSTAGRAM_ACCESS_TOKEN "
-            "chưa được cấu hình"
-        )
-
-    return access_token
+    raise PermissionError("Tenant context is required for Instagram outbound messaging")
 
 
-def get_instagram_account_id() -> str:
+def get_instagram_account_id(db=None, business_id: int | None = None) -> str:
     """
     Lấy Instagram Professional Account ID
     dùng cho Instagram Attachment Upload API.
     """
 
-    account_id = str(
-        get_meta_config()["instagram_account_id"] or ""
-    ).strip()
-
+    if db is None or business_id is None:
+        raise PermissionError("Tenant context is required for Instagram media uploads")
+    channel = get_single_active_channel(db, business_id, "instagram")
+    account_id = str(channel.external_account_id or "").strip()
     if not account_id:
-        raise ValueError(
-            "INSTAGRAM_ACCOUNT_ID "
-            "chưa được cấu hình"
-        )
-
+        raise ValueError("Instagram channel account id is missing")
     return account_id
 
 
@@ -92,8 +74,6 @@ def get_instagram_page_messaging_config(db=None, business_id: int | None = None)
     nen outbound phai dung Page Send API voi platform=instagram.
     """
 
-    if settings.ENVIRONMENT == "production" and (db is None or business_id is None):
-        raise PermissionError("Tenant context is required for production outbound messaging")
     if db is not None and business_id is not None:
         channel = get_single_active_channel(db, business_id, "facebook")
         if not channel.access_token_encrypted:
@@ -101,29 +81,7 @@ def get_instagram_page_messaging_config(db=None, business_id: int | None = None)
         return channel.external_account_id, decrypt_token(
             channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY
         )
-    meta_config = get_meta_config()
-    page_id = str(meta_config["facebook_page_id"] or "").strip()
-
-    access_token = str(
-        meta_config["facebook_page_access_token"] or ""
-    ).strip()
-
-    if not page_id:
-        raise ValueError(
-            "FACEBOOK_PAGE_ID "
-            "chua duoc cau hinh"
-        )
-
-    if not access_token:
-        raise ValueError(
-            "FACEBOOK_PAGE_ACCESS_TOKEN "
-            "chua duoc cau hinh"
-        )
-
-    return (
-        page_id,
-        access_token,
-    )
+    raise PermissionError("Tenant context is required for Instagram outbound messaging")
 
 
 def parse_meta_response(
@@ -306,6 +264,8 @@ def send_instagram_message(
 
 def upload_instagram_image_attachment(
     image_url: str,
+    db=None,
+    business_id: int | None = None,
 ) -> str:
     """
     Upload ảnh lên Instagram Attachment Upload API.
@@ -345,13 +305,9 @@ def upload_instagram_image_attachment(
         )
 
 
-    instagram_account_id = (
-        get_instagram_account_id()
-    )
+    instagram_account_id = get_instagram_account_id(db=db, business_id=business_id)
 
-    access_token = (
-        get_instagram_access_token()
-    )
+    access_token = get_instagram_access_token(db=db, business_id=business_id)
 
 
     url = (

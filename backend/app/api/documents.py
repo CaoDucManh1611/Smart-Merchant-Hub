@@ -3,7 +3,6 @@ Document Management API – upload, list, delete tài liệu.
 """
 
 import logging
-import re
 from datetime import datetime, timezone
 
 from fastapi import (
@@ -15,10 +14,11 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from app.db.dependencies import get_db
+from app.tenancy.crm_session import get_tenant_db
 from app.models.document import Document, DocumentChunk
 from app.models.rag_run import RagRun
 from app.rag.loader import detect_file_type, LOADERS
+from app.rag.run_logger import safe_error_message
 from app.schemas.rag import DocumentChunkOut, DocumentListOut, DocumentOut
 from app.services.ingestion_service import (
     delete_document,
@@ -32,15 +32,9 @@ from app.services.quota_service import QuotaExceededError, prime_quota, release_
 
 logger = logging.getLogger(__name__)
 
-_SENSITIVE_ERROR = re.compile(
-    r"(?i)(token|secret|authorization|api[_-]?key)\s*[=:]\s*[^\s,;]+"
-)
-
-
 def _safe_error(exc: Exception) -> str:
     """Keep provider credentials out of persisted RAG diagnostics."""
-    message = _SENSITIVE_ERROR.sub(r"\1=[redacted]", str(exc or ""))
-    return message[:500] or "RAG ingestion failed"
+    return safe_error_message(exc)
 
 router = APIRouter()
 
@@ -113,7 +107,7 @@ def _dispatch_rag_job(db: Session, payload: dict, business_id: int) -> None:
                 db,
                 business_id,
                 "rag_chunks",
-                requested=prior_chunk_count - int(doc.chunk_count or 0),
+                amount=prior_chunk_count - int(doc.chunk_count or 0),
             )
         if delta_chunks:
             try:
@@ -166,7 +160,7 @@ def _dispatch_rag_job(db: Session, payload: dict, business_id: int) -> None:
 )
 async def upload_document(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """
@@ -235,7 +229,7 @@ async def upload_document(
 @router.post("/{document_id}/reindex", response_model=DocumentOut, dependencies=[Depends(require_write_access)])
 async def reindex_document(
     document_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Rebuild chunks/embeddings from the retained source file."""
@@ -259,7 +253,7 @@ async def reindex_document(
 
 
 @router.get("/{document_id}/runs")
-async def list_document_runs(document_id: int, db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+async def list_document_runs(document_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     if db.query(Document.id).filter(Document.id == document_id, Document.business_id == tenant.business_id).first() is None:
         raise HTTPException(404, "Tài liệu không tồn tại.")
     runs = db.query(RagRun).filter(RagRun.document_id == document_id, RagRun.business_id == tenant.business_id).order_by(RagRun.id.desc()).limit(100).all()
@@ -269,7 +263,7 @@ async def list_document_runs(document_id: int, db: Session = Depends(get_db), te
 @router.post("/runs/{run_id}/retry", status_code=201, dependencies=[Depends(require_write_access)])
 async def retry_failed_run(
     run_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Queue a new durable run for one failed ingestion without mutating history."""
@@ -297,7 +291,7 @@ async def retry_failed_run(
 
 
 @router.post("/jobs/dispatch")
-async def dispatch_document_jobs(db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
+async def dispatch_document_jobs(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     processed = dispatch_due_jobs(
         db,
         business_id=tenant.business_id,
@@ -314,7 +308,7 @@ async def dispatch_document_jobs(db: Session = Depends(get_db), tenant: TenantCo
 
 @router.get("", response_model=DocumentListOut)
 async def list_documents(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Danh sách tất cả tài liệu đã upload."""
@@ -341,7 +335,7 @@ async def list_documents(
 )
 async def get_document(
     document_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Xem chi tiết 1 tài liệu."""
@@ -360,7 +354,7 @@ async def get_document(
 )
 async def list_document_chunks(
     document_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Xem các chunks đã tạo và trạng thái embedding của một tài liệu."""
@@ -399,7 +393,7 @@ async def list_document_chunks(
 @router.delete("/{document_id}", status_code=204, dependencies=[Depends(require_write_access)])
 async def remove_document(
     document_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Xóa tài liệu và tất cả chunks liên quan."""

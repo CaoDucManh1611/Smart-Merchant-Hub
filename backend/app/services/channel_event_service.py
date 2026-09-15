@@ -23,7 +23,7 @@ def ingest_normalized_events(
     db: Session,
     events: list[NormalizedChannelEvent],
 ) -> list[NormalizedChannelEvent]:
-    """Resolve each external account to its Channel and persist new inbox rows.
+    """Persist inbox rows using a session already routed to the shop schema.
 
     The provider payload is never allowed to select ``business_id``. Unknown
     accounts are ignored so callers can return a safe 404 in webhook paths.
@@ -44,6 +44,11 @@ def ingest_normalized_events(
             )
             if channel is None:
                 continue
+            if (
+                (event.channel_id is not None and event.channel_id != channel.id)
+                or (event.business_id is not None and event.business_id != channel.business_id)
+            ):
+                raise PermissionError("Channel event does not match the routed shop channel")
 
             existing = (
                 db.query(ChannelEvent)
@@ -95,9 +100,8 @@ def ingest_normalized_events(
             accepted.append(bound)
             changed = True
     except OperationalError:
-        # Pre-migration development databases still use the legacy path.
         db.rollback()
-        return []
+        raise
 
     if changed:
         db.commit()

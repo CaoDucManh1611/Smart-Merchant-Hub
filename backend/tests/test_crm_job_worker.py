@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+from app.database.bases import TenantBase
 
 from app.models import Business, Conversation, CrmJob, Customer, Notification, Ticket, Workflow, WorkflowRun
 from app.services.crm_job_worker import dispatch_all_crm_jobs
@@ -19,6 +20,7 @@ class CrmJobWorkerTests(unittest.TestCase):
             poolclass=StaticPool,
         )
         Business.metadata.create_all(self.engine)
+        TenantBase.metadata.create_all(self.engine)
         with Session(self.engine) as db:
             primary = Business(name="Worker primary", slug="worker-primary")
             other = Business(name="Worker other", slug="worker-other")
