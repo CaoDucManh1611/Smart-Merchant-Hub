@@ -37,6 +37,9 @@ def upgrade_tenant_schema(
     revision: str = "head",
 ) -> str:
     schema = validate_schema_name(schema_name)
+    # pgvector is installed per database, while every shop schema shares the
+    # tenant database. Enable it before the template creates embedding columns.
+    connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
     command.upgrade(_config(connection, schema), revision)
     current = current_tenant_revision(connection, schema)
