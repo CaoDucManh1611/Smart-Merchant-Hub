@@ -21,6 +21,17 @@ function Invoke-NativeChecked {
   }
 }
 
+function Assert-Archive {
+  param([Parameter(Mandatory = $true)] [string]$Path)
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "Backup archive was not created: $Path"
+  }
+  $length = (Get-Item -LiteralPath $Path).Length
+  if ($length -le 0) {
+    throw "Backup archive is empty: $Path"
+  }
+}
+
 if (-not (Get-Command pg_restore -ErrorAction SilentlyContinue)) {
   throw "pg_restore is required. Install PostgreSQL client tools on the backup runner."
 }
@@ -48,6 +59,8 @@ if ($RestoreDatabaseUrl) {
     $restoreArgs += @("--clean", "--if-exists")
   }
   Invoke-NativeChecked -Command "pg_restore" -Arguments ($restoreArgs + $BackupFile)
+  Assert-Archive -Path $BackupFile
+  Assert-Archive -Path $BackupFile
   Invoke-NativeChecked -Command "pg_restore" -Arguments @("--list", $BackupFile) | Out-Null
   Write-Host "Backup restored and verified. Overwrite=$Overwrite"
   exit 0
@@ -67,5 +80,6 @@ Invoke-NativeChecked -Command "pg_dump" -Arguments @(
   "--no-owner",
   "--no-privileges"
 )
+Assert-Archive -Path $BackupFile
 Invoke-NativeChecked -Command "pg_restore" -Arguments @("--list", $BackupFile) | Out-Null
 Write-Host "Backup created and verified: $BackupFile"
