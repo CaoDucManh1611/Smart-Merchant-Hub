@@ -617,6 +617,7 @@ async function disconnectBotChannel(connection) {
 
 function openSettings() {
   currentTab.value = "settings";
+  if (!authUser.value) return;
   void fetchMetaStatus();
   void fetchBotConnections();
   void fetchTeam();
@@ -8776,7 +8777,7 @@ onUnmounted(() => {
           <div v-if="authError" class="settings-notice team-error">{{ authError }}</div>
         </div>
 
-        <div class="settings-card quota-card">
+        <div v-if="authUser" class="settings-card quota-card">
           <div class="settings-card-header">
             <div><h2>Quota & quyền lợi gói</h2><p>Usage ledger theo kỳ UTC; cảnh báo khi chạm {{ quotaSnapshot ? Math.round(Number(quotaSnapshot.warning_percent || 0) * 100) : 80 }}% giới hạn.</p></div>
             <button type="button" class="settings-refresh" :disabled="quotaLoading" @click="fetchQuotaUsage">{{ quotaLoading ? 'Đang tải...' : 'Làm mới' }}</button>
@@ -8838,7 +8839,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-card">
+        <div v-if="authUser" class="settings-card">
           <div class="settings-card-header">
             <div>
               <h2>Kết nối kênh bán hàng</h2>
@@ -8890,7 +8891,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-card channel-connect-card">
+        <div v-if="authUser" class="settings-card channel-connect-card">
           <div class="settings-card-header">
             <div>
               <h2>Kết nối Telegram/Zalo</h2>
@@ -8978,7 +8979,7 @@ onUnmounted(() => {
           <div v-else class="settings-empty">Chưa có Telegram/Zalo Bot nào được kết nối.</div>
         </div>
 
-        <div class="settings-card chatbot-runtime-card">
+        <div v-if="authUser" class="settings-card chatbot-runtime-card">
           <div class="settings-card-header">
             <div>
               <h2>🤖 Chatbot bán hàng</h2>
@@ -9015,7 +9016,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-card followup-card">
+        <div v-if="authUser" class="settings-card followup-card">
           <div class="settings-card-header">
             <div>
               <h2>🔔 Chăm sóc chủ động</h2>
@@ -9036,7 +9037,7 @@ onUnmounted(() => {
           </ul>
         </div>
 
-        <div class="settings-card csat-card">
+        <div v-if="authUser" class="settings-card csat-card">
           <div class="settings-card-header">
             <div>
               <h2>⭐ Đánh giá CSAT</h2>
@@ -9117,7 +9118,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-card team-card">
+        <div v-if="authUser" class="settings-card team-card">
           <div class="settings-card-header">
             <div>
               <h2>👥 Đội ngũ & phân quyền</h2>

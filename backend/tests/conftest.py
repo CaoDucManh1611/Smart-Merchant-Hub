@@ -19,9 +19,15 @@ _TEST_RUNTIME.mkdir(parents=True, exist_ok=True)
 # which may be either the repository root or ``backend``.
 (Path.cwd() / ".pytest_tmp").mkdir(parents=True, exist_ok=True)
 _GLOBAL_TEST_DATABASE = _TEST_RUNTIME / "global.db"
-os.environ["DATABASE_URL"] = "sqlite:///" + _GLOBAL_TEST_DATABASE.as_posix()
-os.environ["PLATFORM_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "platform.db").as_posix()
-os.environ["TENANT_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "tenant.db").as_posix()
+_RUN_POSTGRES_TESTS = os.environ.get("RUN_POSTGRES_TESTS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+if not _RUN_POSTGRES_TESTS:
+    os.environ["DATABASE_URL"] = "sqlite:///" + _GLOBAL_TEST_DATABASE.as_posix()
+    os.environ["PLATFORM_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "platform.db").as_posix()
+    os.environ["TENANT_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "tenant.db").as_posix()
 os.environ["ENVIRONMENT"] = "test"
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["RATE_LIMIT_BACKEND"] = "memory"
@@ -77,6 +83,12 @@ def _isolated_global_application_database():
     global session must point to an isolated SQLite database rather than the
     restored PostgreSQL instance.
     """
+    if _RUN_POSTGRES_TESTS:
+        # PostgreSQL integration tests own their setup/cleanup and must not
+        # receive legacy Base tables as a side effect of the global fixture.
+        yield
+        return
+
     import app.models  # noqa: F401 - register every model on Base.metadata
     from app.database.session import Base, engine
 

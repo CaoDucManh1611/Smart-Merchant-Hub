@@ -55,6 +55,10 @@ test("tenant identity comes from the authenticated session, never a hardcoded br
   assert.match(apiClientSource, /Authorization/);
   assert.doesNotMatch(apiClientSource, /X-Business-Id|BUSINESS_ID/);
   assert.match(authContextSource, /AUTH_TOKEN_KEY/);
+  assert.match(appSource, /function openSettings\(\)\s*\{[\s\S]*?if \(!authUser\.value\) return;/);
+  for (const card of ["quota-card", "channel-connect-card", "chatbot-runtime-card", "followup-card", "csat-card", "team-card"]) {
+    assert.match(appSource, new RegExp(`<div v-if="authUser" class="settings-card ${card}"`));
+  }
 });
 
 test("customer avatars use the local API proxy and fall back when providers reject stale URLs", () => {
