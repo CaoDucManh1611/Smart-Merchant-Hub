@@ -12,6 +12,7 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.database.init_db import init_db
+from app.database.release_readiness import assert_release_database_ready
 from app.database.platform_session import PlatformSessionLocal
 from app.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
 from app.services.realtime import manager
@@ -29,10 +30,13 @@ ZALO_VERIFICATION_DIR = Path(__file__).resolve().parent / "zalo_verification"
 
 
 def initialize_database() -> None:
-    """Ensure pgvector, tables and indexes exist before serving requests."""
+    """Validate production migrations; mutate schemas only in local legacy mode."""
     try:
         settings.validate_runtime()
-        init_db()
+        if settings.ENVIRONMENT.strip().lower() == "production":
+            assert_release_database_ready()
+        else:
+            init_db()
     except Exception:
         logger.exception("Database initialization failed")
         raise

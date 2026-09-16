@@ -29,6 +29,7 @@ if not _RUN_POSTGRES_TESTS:
     os.environ["PLATFORM_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "platform.db").as_posix()
     os.environ["TENANT_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "tenant.db").as_posix()
 os.environ["ENVIRONMENT"] = "test"
+os.environ["ALLOW_LEGACY_TENANT_HEADER"] = "true"
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["RATE_LIMIT_BACKEND"] = "memory"
 os.environ["REDIS_URL"] = ""

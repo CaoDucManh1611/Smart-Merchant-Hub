@@ -187,7 +187,7 @@ def _active_business_id(request: Request, user: User | None, x_business_id: str 
     state_id = getattr(request.state, "business_id", None) or getattr(request.state, "channel_business_id", None)
     if state_id is not None:
         return int(state_id)
-    if x_business_id:
+    if x_business_id and settings.ALLOW_LEGACY_TENANT_HEADER:
         try:
             return int(x_business_id)
         except ValueError:

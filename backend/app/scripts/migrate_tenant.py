@@ -12,8 +12,12 @@ from app.services.tenant_cutover_service import (
     DEFAULT_TABLE_ORDER,
     begin_cutover,
     complete_cutover,
+    mark_cutover_verified,
     migrate_business,
+    record_migration_results,
     rollback_cutover,
+    validate_destination_foreign_keys,
+    verify_business,
 )
 from app.models.platform_control import TenantRegistry
 from sqlalchemy import select
@@ -31,6 +35,7 @@ def main() -> int:
     )
     parser.add_argument("--tables", nargs="*", default=list(DEFAULT_TABLE_ORDER))
     parser.add_argument("--complete", metavar="REVISION")
+    parser.add_argument("--operation-id", help="Stable audit id for cutover, retry, or rollback")
     parser.add_argument(
         "--rollback",
         action="store_true",
@@ -39,12 +44,14 @@ def main() -> int:
     args = parser.parse_args()
     business_id = int(args.business_id)
 
-    if not args.dry_run and not args.rollback and not args.cutover:
+    if not args.dry_run and not args.rollback and not args.cutover and not args.complete:
         parser.error("a write migration requires explicit --cutover approval")
-    if args.dry_run and args.cutover:
-        parser.error("--dry-run cannot be combined with --cutover")
-    if args.rollback and args.cutover:
-        parser.error("--rollback cannot be combined with --cutover")
+    if args.dry_run and (args.cutover or args.rollback or args.complete):
+        parser.error("--dry-run cannot be combined with --cutover, --rollback, or --complete")
+    if args.rollback and (args.cutover or args.complete):
+        parser.error("--rollback cannot be combined with --cutover or --complete")
+    if (args.cutover or args.rollback or args.complete) and not args.operation_id:
+        parser.error("--operation-id is required for cutover, complete, and rollback")
 
     platform_db = PlatformSessionLocal()
     source_db = SessionLocal()
@@ -57,11 +64,10 @@ def main() -> int:
         if str(registry.schema_name) != schema_name_for(business_id):
             raise RuntimeError("Tenant registry schema does not match business")
         if args.rollback:
-            if args.dry_run or args.complete:
-                parser.error("--rollback cannot be combined with --dry-run or --complete")
             rolled_back = rollback_cutover(
                 platform_db,
                 business_id,
+                operation_id=args.operation_id,
                 error_code="manual_rollback",
             )
             platform_db.commit()
@@ -73,19 +79,81 @@ def main() -> int:
                 "schema_retained": True,
             }, ensure_ascii=False))
             return 0
-        if not args.dry_run:
-            begin_cutover(platform_db, business_id)
+        if args.complete and not args.cutover:
+            # Completion is intentionally a separate, read-only decision point
+            # after the copy/verification command. This gives the operator a
+            # chance to review counts and checksums before enabling traffic.
+            completed = complete_cutover(
+                platform_db,
+                business_id,
+                operation_id=args.operation_id,
+                revision=args.complete,
+            )
             platform_db.commit()
+            print(json.dumps({
+                "business_id": int(completed.business_id),
+                "schema_name": str(completed.schema_name),
+                "state": str(completed.state),
+                "feature_enabled": bool(completed.feature_enabled),
+                "tenant_revision": str(completed.tenant_revision or ""),
+            }, ensure_ascii=False))
+            return 0
+        if not args.dry_run:
+            begin_cutover(
+                platform_db,
+                business_id,
+                operation_id=args.operation_id,
+                approved=True,
+            )
+            platform_db.commit()
+        migration_cursors: dict[str, int | None] = {}
+        if not args.dry_run:
+            operation = platform_db.scalar(
+                select(TenantMigrationOperation).where(
+                    TenantMigrationOperation.operation_id == args.operation_id
+                )
+            )
+            if operation is None:
+                raise RuntimeError("Tenant migration operation not found after approval")
+            # A retry resumes strictly after the last committed cursor for
+            # each table. The ledger contains metadata only, never row content.
+            migration_cursors = {
+                str(table): int(cursor)
+                for table, cursor in (operation.cursors or {}).items()
+                if cursor is not None
+            }
         with tenant_session(schema_name_for(business_id)) as tenant_db:
             results = migrate_business(
                 source_db,
                 tenant_db,
                 business_id=business_id,
                 tables=args.tables,
+                cursors=migration_cursors,
                 dry_run=args.dry_run,
             )
+            if not args.dry_run:
+                tenant_db.commit()
+                report = verify_business(
+                    source_db,
+                    tenant_db,
+                    business_id=business_id,
+                    tables=args.tables,
+                )
+                if not report.ok:
+                    raise RuntimeError("Migration verification failed; cutover remains disabled")
+                if not validate_destination_foreign_keys(tenant_db):
+                    raise RuntimeError("Migration foreign-key verification failed; cutover remains disabled")
+        if not args.dry_run:
+            record_migration_results(platform_db, args.operation_id, results)
+            mark_cutover_verified(platform_db, args.operation_id)
+            platform_db.commit()
         if not args.dry_run and args.complete:
-            complete_cutover(platform_db, business_id, revision=args.complete)
+            complete_cutover(
+                platform_db,
+                business_id,
+                operation_id=args.operation_id,
+                revision=args.complete,
+            )
             platform_db.commit()
         print(json.dumps([result.__dict__ for result in results], ensure_ascii=False, default=str))
         return 0
@@ -93,7 +161,11 @@ def main() -> int:
         platform_db.rollback()
         if not args.dry_run:
             try:
-                rollback_cutover(platform_db, business_id)
+                rollback_cutover(
+                    platform_db,
+                    business_id,
+                    operation_id=args.operation_id,
+                )
                 platform_db.commit()
             except Exception:
                 platform_db.rollback()

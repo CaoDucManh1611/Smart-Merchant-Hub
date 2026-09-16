@@ -53,12 +53,12 @@ def migrate_legacy_channels(
     """
     values = _settings(db)
     candidates = [
-        ("facebook", values.get("meta.facebook_page_id") or settings.FACEBOOK_PAGE_ID, values.get("meta.facebook_page_name"), values.get("meta.facebook_page_access_token") or settings.FACEBOOK_PAGE_ACCESS_TOKEN),
+        ("facebook", values.get("meta.facebook_page_id"), values.get("meta.facebook_page_name"), values.get("meta.facebook_page_access_token")),
         (
             "instagram",
-            values.get("meta.instagram_account_id") or settings.INSTAGRAM_ACCOUNT_ID,
+            values.get("meta.instagram_account_id"),
             values.get("meta.instagram_account_name"),
-            values.get("meta.instagram_access_token") or settings.INSTAGRAM_ACCESS_TOKEN,
+            values.get("meta.instagram_access_token"),
         ),
     ]
     items = []

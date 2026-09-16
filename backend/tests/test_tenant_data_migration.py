@@ -7,9 +7,13 @@ from app.services.tenant_data_migration import (
 )
 from app.services.tenant_cutover_service import migrate_business
 from app.services.tenant_cutover_service import DEFAULT_TABLE_ORDER
-from app.database.bases import TenantBase
+from app.services import tenant_cutover_service as cutover
+from app.database.bases import PlatformBase, TenantBase
+from app.models import platform_control
+from app.models.platform_control import PlatformBusiness, TenantRegistry
+from app.services.tenant_data_migration import TableMigrationResult
 from pathlib import Path
-from sqlalchemy import Column, Integer, MetaData, Table, create_engine
+from sqlalchemy import Column, ForeignKey, Integer, MetaData, Table, create_engine, select
 from sqlalchemy.orm import Session
 
 
@@ -76,6 +80,8 @@ def test_migration_cli_exposes_explicit_non_destructive_rollback():
     assert '"--rollback"' in source
     assert "rollback_cutover" in source
     assert '"--cutover"' in source
+    assert "if args.complete and not args.cutover" in source
+    assert "operation_id=args.operation_id" in source
     assert "a write migration requires explicit --cutover approval" in source
 
 
@@ -143,3 +149,141 @@ def test_migrate_business_walks_nested_message_attachment_ownership():
         )
         tenant_db.commit()
         assert tenant_db.execute(destination_metadata.tables["message_attachments"].select()).mappings().all() == [{"id": 21, "message_id": 11}]
+
+
+def test_cutover_ledger_records_only_counts_hashes_and_cursors():
+    engine = create_engine("sqlite://")
+    PlatformBase.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(PlatformBusiness(id=7, name="Pilot", slug="pilot"))
+        db.add(TenantRegistry(business_id=7, schema_name="shop_7", state="ready"))
+        db.commit()
+
+        registry = cutover.begin_cutover(db, 7, operation_id="pilot-7", approved=True)
+        assert registry.state == "migrating"
+        cutover.record_migration_results(
+            db,
+            "pilot-7",
+            [
+                TableMigrationResult(
+                    table="customers",
+                    source_rows=2,
+                    copied_rows=2,
+                    source_checksum="a" * 64,
+                    destination_checksum="a" * 64,
+                    cursor=9,
+                    dry_run=False,
+                )
+            ],
+        )
+        operation = db.scalar(
+            select(platform_control.TenantMigrationOperation).where(
+                platform_control.TenantMigrationOperation.operation_id == "pilot-7"
+            )
+        )
+        assert operation.state == "copied"
+        assert operation.cursors == {"customers": 9}
+        assert operation.row_counts == {"customers": {"source": 2, "copied": 2}}
+        assert operation.checksums == {"customers": {"source": "a" * 64, "destination": "a" * 64}}
+        assert "Pilot" not in str(operation.row_counts)
+
+
+def test_cutover_cannot_activate_until_verification_succeeds():
+    engine = create_engine("sqlite://")
+    PlatformBase.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(PlatformBusiness(id=8, name="Verify", slug="verify"))
+        db.add(TenantRegistry(business_id=8, schema_name="shop_8", state="ready"))
+        db.commit()
+        cutover.begin_cutover(db, 8, operation_id="pilot-8", approved=True)
+
+        import pytest
+
+        with pytest.raises(RuntimeError, match="verified"):
+            cutover.complete_cutover(db, 8, operation_id="pilot-8", revision="20260915_0001")
+
+        cutover.record_migration_results(db, "pilot-8", [])
+        cutover.mark_cutover_verified(db, "pilot-8")
+        registry = cutover.complete_cutover(db, 8, operation_id="pilot-8", revision="20260915_0001")
+        assert registry.state == "active"
+        assert registry.feature_enabled is True
+
+
+def test_cutover_ledger_keeps_cursors_when_retrying_a_subset_of_tables():
+    engine = create_engine("sqlite://")
+    PlatformBase.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(PlatformBusiness(id=9, name="Resume", slug="resume"))
+        db.add(TenantRegistry(business_id=9, schema_name="shop_9", state="ready"))
+        db.commit()
+        cutover.begin_cutover(db, 9, operation_id="pilot-9", approved=True)
+        cutover.record_migration_results(
+            db,
+            "pilot-9",
+            [
+                TableMigrationResult(
+                    table="customers",
+                    source_rows=4,
+                    copied_rows=4,
+                    source_checksum="a" * 64,
+                    destination_checksum="a" * 64,
+                    cursor=12,
+                    dry_run=False,
+                ),
+                TableMigrationResult(
+                    table="orders",
+                    source_rows=2,
+                    copied_rows=2,
+                    source_checksum="b" * 64,
+                    destination_checksum="b" * 64,
+                    cursor=7,
+                    dry_run=False,
+                ),
+            ],
+        )
+        db.commit()
+
+        # A retry that only copied customers must not erase the orders cursor.
+        cutover.rollback_cutover(db, 9, operation_id="pilot-9")
+        db.commit()
+        cutover.begin_cutover(db, 9, operation_id="pilot-9", approved=True)
+        cutover.record_migration_results(
+            db,
+            "pilot-9",
+            [
+                TableMigrationResult(
+                    table="customers",
+                    source_rows=5,
+                    copied_rows=1,
+                    source_checksum="c" * 64,
+                    destination_checksum="c" * 64,
+                    cursor=13,
+                    dry_run=False,
+                )
+            ],
+        )
+        operation = db.scalar(
+            select(platform_control.TenantMigrationOperation).where(
+                platform_control.TenantMigrationOperation.operation_id == "pilot-9"
+            )
+        )
+        assert operation.cursors == {"customers": 13, "orders": 7}
+        assert set(operation.row_counts) == {"customers", "orders"}
+        assert set(operation.checksums) == {"customers", "orders"}
+
+
+def test_foreign_key_validation_rejects_orphaned_destination_rows():
+    engine = create_engine("sqlite://")
+    metadata = MetaData()
+    Table("parents", metadata, Column("id", Integer, primary_key=True))
+    children = Table(
+        "children",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("parent_id", Integer, ForeignKey("parents.id"), nullable=False),
+    )
+    metadata.create_all(engine)
+    with Session(engine) as db:
+        db.execute(children.insert().values(id=1, parent_id=999))
+        db.commit()
+        assert cutover.validate_destination_foreign_keys(db) is False

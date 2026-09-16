@@ -45,11 +45,12 @@ Use the dry run first. Output is limited to counts and checksums:
 python -m app.scripts.migrate_tenant 42 --dry-run
 ```
 
-After review, copy the rows only with an explicit cutover approval, then
-verify them before enabling the shop:
+After review, copy the rows only with an explicit cutover approval and a
+stable operation ID. The first cutover run remains disabled until verification
+has completed:
 
 ```powershell
-python -m app.scripts.migrate_tenant 42 --cutover
+python -m app.scripts.migrate_tenant 42 --cutover --operation-id pilot-42-20260916
 python -m app.scripts.verify_tenant_migration 42
 ```
 
@@ -57,21 +58,29 @@ If the pilot must be stopped, disable the route while retaining the schema so
 the copy can be resumed:
 
 ```powershell
-python -m app.scripts.migrate_tenant 42 --rollback
+python -m app.scripts.migrate_tenant 42 --rollback --operation-id pilot-42-20260916
 ```
 
 Rollback never drops the copied schema or deletes legacy rows. Re-run the
-verification after any retry and only use `--complete <tenant_revision>` once
-the operator has reviewed the report and smoke-test results.
+verification after any retry. Only after the report and smoke-test results are
+reviewed should the operator complete the cutover with the same operation ID:
+
+```powershell
+python -m app.scripts.migrate_tenant 42 `
+  --complete 20260915_0001 --operation-id pilot-42-20260916
+```
 
 ## Backup rehearsal
 
 Create and validate the source archive before restoring into a new scratch
-database. Every command must stop on a non-zero `pg_dump`/`pg_restore` exit:
+database. Every command must stop on a non-zero `pg_dump`/`pg_restore` exit and
+the restore must be given the matching manifest:
 
 ```powershell
 .\scripts\backup-verify.ps1 -BackupFile .\artifacts\crm-staging.dump
-.\scripts\backup-verify.ps1 -BackupFile .\artifacts\crm-staging.dump -VerifyOnly
+.\scripts\backup-verify.ps1 `
+  -BackupFile .\artifacts\crm-staging.dump `
+  -ManifestFile .\artifacts\crm-staging.dump.manifest.json
 ```
 
 Restore only to an isolated database unless an approved maintenance window

@@ -33,8 +33,8 @@ def login(
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
     x_device_label: str | None = Header(default=None, alias="X-Device-Label"),
 ):
-    if x_business_id and settings.ENVIRONMENT.strip().lower() == "production":
-        raise HTTPException(status_code=400, detail="X-Business-Id không được dùng trong production.")
+    if x_business_id and not settings.ALLOW_LEGACY_TENANT_HEADER:
+        raise HTTPException(status_code=400, detail="X-Business-Id không được dùng trong runtime này.")
     query = db.query(User).filter(User.email.ilike(payload.email.strip()), User.is_active.is_(True))
     if x_business_id:
         try:

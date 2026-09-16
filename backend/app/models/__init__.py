@@ -49,7 +49,7 @@ from app.models.crm_job import CrmJob
 from app.models.rag_run import RagRun
 from app.models.permission import PermissionOverride
 from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry
-from app.models.platform_control import TenantRegistry, SupportGrant, ProvisioningOperation, PlatformAudit, PlatformProviderIncident
+from app.models.platform_control import TenantRegistry, SupportGrant, ProvisioningOperation, TenantMigrationOperation, PlatformAudit, PlatformProviderIncident
 from app.models.channel_route import ChannelRoute
 
 __all__ = [
@@ -133,6 +133,7 @@ __all__ = [
     "TenantRegistry",
     "SupportGrant",
     "ProvisioningOperation",
+    "TenantMigrationOperation",
     "PlatformAudit",
     "PlatformProviderIncident",
     "ChannelRoute",

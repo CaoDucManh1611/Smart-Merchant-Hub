@@ -9,7 +9,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.platform_control import PlatformUsage
+from app.models.platform_control import PlatformUsage, TenantMigrationOperation, TenantRegistry
 from app.models.crm_job import CrmJob
 from app.models.saas import SaaSUsage
 from app.services.channel_retry import provider_breaker_snapshot
@@ -23,6 +23,13 @@ def collect_operational_snapshot(db: Session) -> dict:
         "database": {"status": "ok"},
         "platform_database": {"status": "unknown"},
         "tenant_database": {"status": "unknown"},
+        "tenant_migrations": {
+            "status": "unknown",
+            "active": None,
+            "migrating": None,
+            "failed": None,
+            "operations_pending": None,
+        },
         "queue": {"status": "unknown", "pending": None, "running": None, "failed": None},
         "provider": {"status": "ok", "circuits": provider_breaker_snapshot()},
         "rate_limit": {"backend": settings.RATE_LIMIT_BACKEND, "status": "disabled" if not settings.RATE_LIMIT_ENABLED else "ok"},
@@ -60,6 +67,22 @@ def collect_operational_snapshot(db: Session) -> dict:
                 SaaSUsage.period_start == period_start,
             ).scalar()
         snapshot["ai"]["cost"] = float(Decimal(str(ai_cost or 0)))
+        if not tenant_bound:
+            snapshot["tenant_migrations"] = {
+                "status": "ok",
+                "active": int(db.query(TenantRegistry).filter(TenantRegistry.state == "active").count()),
+                "migrating": int(db.query(TenantRegistry).filter(TenantRegistry.state == "migrating").count()),
+                "failed": int(
+                    db.query(TenantRegistry)
+                    .filter(TenantRegistry.state.in_(("error", "provision_failed")))
+                    .count()
+                ),
+                "operations_pending": int(
+                    db.query(TenantMigrationOperation)
+                    .filter(TenantMigrationOperation.state.in_(("migrating", "copied", "verified")))
+                    .count()
+                ),
+            }
     except Exception as error:
         snapshot["database"] = {"status": "error", "error_type": type(error).__name__}
         snapshot["queue"] = {"status": "error", "pending": None, "running": None, "failed": None}

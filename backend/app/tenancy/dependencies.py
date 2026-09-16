@@ -128,7 +128,9 @@ def get_tenant_context(
                 else getattr(request.state, "business_id", None)
             ),
             channel_business_id=getattr(request.state, "channel_business_id", None),
-            development_header=x_business_id,
+            development_header=(
+                x_business_id if settings.ALLOW_LEGACY_TENANT_HEADER else None
+            ),
             environment=settings.ENVIRONMENT,
         )
         _set_database_tenant(db, tenant.business_id)

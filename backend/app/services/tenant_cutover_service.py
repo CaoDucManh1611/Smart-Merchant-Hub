@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from sqlalchemy import MetaData, Table, select
+from sqlalchemy import MetaData, Table, select, text
 from sqlalchemy.orm import Session
 
-from app.models.platform_control import TenantRegistry
+from app.models.platform_control import TenantMigrationOperation, TenantRegistry
 from app.services.tenant_data_migration import (
     TableMigrationResult,
     checksum_rows,
@@ -307,8 +307,49 @@ def verify_business(
     return VerificationReport(int(business_id), tuple(checks))
 
 
-def begin_cutover(platform_db: Session, business_id: int) -> TenantRegistry:
+def validate_destination_foreign_keys(tenant_db: Session) -> bool:
+    """Validate schema-local foreign keys without returning row content."""
+
+    dialect = tenant_db.get_bind().dialect.name
+    if dialect == "sqlite":
+        return tenant_db.execute(text("PRAGMA foreign_key_check")).first() is None
+    if dialect == "postgresql":
+        tenant_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        invalid = tenant_db.execute(
+            text(
+                "SELECT count(*) FROM pg_constraint "
+                "WHERE contype='f' AND connamespace = current_schema()::regnamespace "
+                "AND convalidated IS NOT TRUE"
+            )
+        ).scalar_one()
+        return int(invalid or 0) == 0
+    return True
+
+
+def _migration_operation(platform_db: Session, operation_id: str) -> TenantMigrationOperation:
+    operation = platform_db.scalar(
+        select(TenantMigrationOperation).where(
+            TenantMigrationOperation.operation_id == str(operation_id)
+        ).with_for_update()
+    )
+    if operation is None:
+        raise LookupError("Tenant migration operation not found")
+    return operation
+
+
+def begin_cutover(
+    platform_db: Session,
+    business_id: int,
+    *,
+    operation_id: str,
+    approved: bool,
+) -> TenantRegistry:
     """Move a registry entry to ``migrating`` without deleting any schema."""
+    if not approved:
+        raise PermissionError("Cutover requires explicit operator approval")
+    normalized_operation_id = str(operation_id).strip()
+    if not normalized_operation_id or len(normalized_operation_id) > 64:
+        raise ValueError("operation_id must contain 1-64 characters")
     registry = platform_db.scalar(select(TenantRegistry).where(TenantRegistry.business_id == int(business_id)).with_for_update())
     if registry is None:
         raise LookupError("Tenant registry entry not found")
@@ -319,11 +360,92 @@ def begin_cutover(platform_db: Session, business_id: int) -> TenantRegistry:
     registry.state = "migrating"
     registry.feature_enabled = False
     registry.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    existing = platform_db.scalar(
+        select(TenantMigrationOperation).where(
+            TenantMigrationOperation.operation_id == normalized_operation_id
+        )
+    )
+    if existing is not None:
+        if existing.business_id != int(business_id):
+            raise ValueError("operation_id already belongs to another business")
+        if existing.state not in {"failed", "rolled_back"}:
+            raise RuntimeError("migration operation is already active")
+        existing.state = "migrating"
+        existing.error_code = None
+        existing.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        existing.verified_at = None
+        existing.completed_at = None
+    else:
+        platform_db.add(
+            TenantMigrationOperation(
+                operation_id=normalized_operation_id,
+                business_id=int(business_id),
+                state="migrating",
+                cursors={},
+                row_counts={},
+                checksums={},
+                approved_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+        )
     platform_db.flush()
     return registry
 
 
-def complete_cutover(platform_db: Session, business_id: int, *, revision: str) -> TenantRegistry:
+def record_migration_results(
+    platform_db: Session,
+    operation_id: str,
+    results: Iterable[TableMigrationResult],
+) -> TenantMigrationOperation:
+    operation = _migration_operation(platform_db, operation_id)
+    if operation.state != "migrating":
+        raise RuntimeError("migration operation is not accepting copy results")
+    result_list = list(results)
+    operation.cursors = {
+        **dict(operation.cursors or {}),
+        **{item.table: item.cursor for item in result_list if item.cursor is not None},
+    }
+    operation.row_counts = {
+        **dict(operation.row_counts or {}),
+        **{
+            item.table: {"source": int(item.source_rows), "copied": int(item.copied_rows)}
+            for item in result_list
+        },
+    }
+    operation.checksums = {
+        **dict(operation.checksums or {}),
+        **{
+            item.table: {
+                "source": str(item.source_checksum),
+                "destination": str(item.destination_checksum),
+            }
+            for item in result_list
+        },
+    }
+    operation.state = "copied"
+    platform_db.flush()
+    return operation
+
+
+def mark_cutover_verified(platform_db: Session, operation_id: str) -> TenantMigrationOperation:
+    operation = _migration_operation(platform_db, operation_id)
+    if operation.state != "copied":
+        raise RuntimeError("migration operation must be copied before verification")
+    operation.state = "verified"
+    operation.verified_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    platform_db.flush()
+    return operation
+
+
+def complete_cutover(
+    platform_db: Session,
+    business_id: int,
+    *,
+    operation_id: str,
+    revision: str,
+) -> TenantRegistry:
+    operation = _migration_operation(platform_db, operation_id)
+    if operation.business_id != int(business_id) or operation.state != "verified":
+        raise RuntimeError("Tenant migration operation is not verified")
     registry = platform_db.scalar(select(TenantRegistry).where(TenantRegistry.business_id == int(business_id)).with_for_update())
     if registry is None or registry.state != "migrating":
         raise RuntimeError("Tenant is not in migrating state")
@@ -332,11 +454,19 @@ def complete_cutover(platform_db: Session, business_id: int, *, revision: str) -
     registry.feature_enabled = True
     registry.migration_error = None
     registry.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    operation.state = "active"
+    operation.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     platform_db.flush()
     return registry
 
 
-def rollback_cutover(platform_db: Session, business_id: int, *, error_code: str = "cutover_rolled_back") -> TenantRegistry:
+def rollback_cutover(
+    platform_db: Session,
+    business_id: int,
+    *,
+    operation_id: str | None = None,
+    error_code: str = "cutover_rolled_back",
+) -> TenantRegistry:
     """Disable routing while retaining all tenant data for a retry."""
     registry = platform_db.scalar(select(TenantRegistry).where(TenantRegistry.business_id == int(business_id)).with_for_update())
     if registry is None:
@@ -345,6 +475,13 @@ def rollback_cutover(platform_db: Session, business_id: int, *, error_code: str 
     registry.feature_enabled = False
     registry.migration_error = str(error_code).strip()[:80] or "cutover_failed"
     registry.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    if operation_id:
+        operation = _migration_operation(platform_db, operation_id)
+        if operation.business_id != int(business_id):
+            raise ValueError("migration operation belongs to another business")
+        operation.state = "rolled_back"
+        operation.error_code = registry.migration_error
+        operation.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     platform_db.flush()
     return registry
 
@@ -353,9 +490,12 @@ __all__ = [
     "DEFAULT_TABLE_ORDER",
     "begin_cutover",
     "complete_cutover",
+    "mark_cutover_verified",
     "migrate_business",
+    "record_migration_results",
     "TableVerification",
     "VerificationReport",
     "verify_business",
+    "validate_destination_foreign_keys",
     "rollback_cutover",
 ]

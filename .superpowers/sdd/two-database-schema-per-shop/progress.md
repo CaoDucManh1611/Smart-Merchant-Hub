@@ -1,6 +1,6 @@
 # SDD ledger — plan: docs/superpowers/plans/2026-09-15-two-database-schema-per-shop.md
 
-Branch: feat/saas-tenant-channels (created from crm-completion at 18019f8)
+Branch: crm-completion (integrated from feat/saas-tenant-channels and feat/saas-platform-control-tested)
 
 Scope owned by this branch: Tasks 8, 9, 10, 11, 12, 14, plus tenant load-test coverage for webhook/RAG/worker.
 
@@ -34,7 +34,27 @@ Post-merge reconciliation (2026-09-16):
 The task split covers every Task 1-16 in the implementation plan. The plan's
 historical checkboxes are not used as proof of completion because several
 red-phase steps intentionally remain unchecked. Verification after resolving
-the branch integration conflicts: backend `537 passed, 2 skipped`; frontend
-`110 passed`; frontend production build and Python compileall passed. The two
-skipped PostgreSQL-only checks and Docker release smoke remain environment
-gates and must be rerun before a production cutover.
+the branch integration conflicts and completing the Task 14–16 hardening pass
+(2026-09-16):
+
+- Backend: `548 passed, 2 skipped` with `python -m pytest -q tests -rs --tb=short`.
+- Frontend: `110 passed`; Vite production build succeeds.
+- Python bytecode compilation succeeds for application, migration and test
+  packages; all PowerShell scripts parse successfully; `git diff --check` is clean.
+- Task 14 records resumable migration operation IDs, row counts, cursors and
+  checksums, requires explicit approval before cutover, verifies foreign keys,
+  and supports verified rollback without deleting copied schemas.
+- Task 15 emits platform/tenant manifests, validates archive hashes, schema
+  revision, table counts, per-table row checksums and PostgreSQL client/server
+  major compatibility, and fails closed on backup/restore errors.
+- Task 16 rejects legacy tenant headers in production, removes global
+  Facebook/Instagram credential fallback, performs read-only production release
+  readiness checks, gates webhook delivery on an active tenant registry, and
+  runs PostgreSQL isolation tests in CI.
+
+The two skipped tests are PostgreSQL-only boundary/migration checks in the local
+SQLite run. Docker Desktop was unavailable because of a stale Windows AF_UNIX
+runtime socket, and the temporary local PostgreSQL cluster did not have the
+`vector` extension. A staging PostgreSQL 16/pgvector environment must still run
+the release smoke, backup/restore and live provider gates before production
+cutover; these are environment gates, not unverified code claims.

@@ -20,6 +20,7 @@ def production_settings(**overrides):
         "FRONTEND_BASE_URL": "https://crm.example",
         "FORCE_HTTPS": True,
         "HSTS_ENABLED": True,
+        "ALLOW_LEGACY_TENANT_HEADER": False,
         "RATE_LIMIT_ENABLED": True,
         "OTP_DELIVERY_MODE": "smtp",
         "OTP_FROM_EMAIL": "no-reply@crm.example",

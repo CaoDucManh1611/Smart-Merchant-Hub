@@ -1,6 +1,5 @@
 import pytest
 from sqlalchemy import text
-import pytest
 
 from app.database.bases import PlatformBase, TenantBase
 from app.database.tenant_session import TenantSessionLocal, tenant_engine, tenant_session

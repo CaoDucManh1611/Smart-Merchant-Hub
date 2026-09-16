@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, Channel, ChannelEvent, Conversation, Customer, Message
+from app.models.platform_control import TenantRegistry
 from app.tenancy.registry import register_webhook_route
 
 
@@ -31,6 +32,12 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             business = Business(name="Unified inbox", slug="unified-inbox")
             db.add(business)
             db.flush()
+            db.add(TenantRegistry(
+                business_id=business.id,
+                schema_name=f"shop_{business.id}",
+                state="active",
+                feature_enabled=True,
+            ))
             db.add_all([
                 Channel(business_id=business.id, channel_type="facebook", name="Facebook", external_account_id="fb-page", status="active"),
                 Channel(business_id=business.id, channel_type="instagram", name="Instagram", external_account_id="ig-account", status="active"),

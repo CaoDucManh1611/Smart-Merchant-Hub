@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.database.bases import PlatformBase
-from app.models.platform_control import PlatformBusiness  # noqa: F401
+from app.models.platform_control import PlatformBusiness, TenantRegistry  # noqa: F401
 from app.tenancy.registry import (
     hash_route_key,
     register_webhook_route,
@@ -69,3 +69,37 @@ def test_same_provider_account_cannot_be_registered_for_two_shops(monkeypatch):
         except PermissionError:
             return
     raise AssertionError("a provider account must be globally unique")
+
+
+def test_route_is_drained_while_tenant_cutover_is_in_progress(monkeypatch):
+    engine = _engine()
+    PlatformBase.metadata.create_all(engine)
+    monkeypatch.setattr("app.tenancy.registry.settings.CHANNEL_ROUTE_SECRET", "route-test-secret")
+    with Session(engine) as db:
+        db.add(PlatformBusiness(id=77, name="Migrating", slug="migrating"))
+        db.add(TenantRegistry(
+            business_id=77,
+            schema_name="shop_77",
+            state="migrating",
+            feature_enabled=False,
+        ))
+        db.commit()
+        register_webhook_route(
+            db,
+            provider="telegram",
+            external_account_id="bot-77",
+            webhook_secret="secret-77",
+            business_id=77,
+            channel_id=7,
+        )
+        db.commit()
+
+        assert resolve_webhook_route(db, "telegram", "secret-77") is None
+
+        registry = db.query(TenantRegistry).filter_by(business_id=77).one()
+        registry.state = "active"
+        registry.feature_enabled = True
+        db.commit()
+        resolved = resolve_webhook_route(db, "telegram", "secret-77")
+        assert resolved is not None
+        assert resolved.business_id == 77

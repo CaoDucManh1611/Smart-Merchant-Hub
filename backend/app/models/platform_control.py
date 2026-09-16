@@ -216,6 +216,35 @@ class ProvisioningOperation(PlatformBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class TenantMigrationOperation(PlatformBase):
+    """Content-free ledger for one approved shop migration/cutover."""
+
+    __tablename__ = "tenant_migration_operations"
+    __table_args__ = (
+        UniqueConstraint("operation_id", name="uq_tenant_migration_operation_id"),
+        CheckConstraint(
+            "state IN ('migrating','copied','verified','active','rolled_back','failed')",
+            name="ck_tenant_migration_operation_state",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    operation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("platform_businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    state: Mapped[str] = mapped_column(String(30), nullable=False, default="migrating")
+    cursors: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    row_counts: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    checksums: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    approved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class PlatformAudit(PlatformBase):
     __tablename__ = "platform_audit"
 

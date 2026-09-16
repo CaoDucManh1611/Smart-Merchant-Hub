@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = ""
     PLATFORM_DATABASE_URL: str = ""
     TENANT_DATABASE_URL: str = ""
+    # Compatibility is opt-in for local fixtures only. Production tenant
+    # identity always comes from the authenticated session or webhook route.
+    ALLOW_LEGACY_TENANT_HEADER: bool = False
 
     # Never rely on this development value in a deployed environment.  A
     # real value must be supplied through the secret manager/.env file.
@@ -213,6 +216,8 @@ class Settings(BaseSettings):
             problems.append("TENANT_DATABASE_URL must point to PostgreSQL")
         if platform_url and tenant_url and platform_url == tenant_url:
             problems.append("PLATFORM_DATABASE_URL and TENANT_DATABASE_URL must be different in production")
+        if self.ALLOW_LEGACY_TENANT_HEADER:
+            problems.append("ALLOW_LEGACY_TENANT_HEADER must be false in production")
         if not self.cors_origins or "*" in self.cors_origins:
             problems.append("CORS_ORIGINS must be an explicit allowlist")
         if not self.allowed_hosts or "*" in self.allowed_hosts:

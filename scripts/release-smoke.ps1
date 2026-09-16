@@ -36,63 +36,49 @@ if (-not $SkipHttp) {
 
 $backendPath = Join-Path $PSScriptRoot "..\backend"
 $python = Get-Command python -ErrorAction SilentlyContinue
-if ($python) {
-    Push-Location $backendPath
+if (-not $python) { throw "Python is required for the release gate." }
+$alembic = Get-Command alembic -ErrorAction SilentlyContinue
+if (-not $alembic) { throw "Alembic CLI is required for the release gate." }
+Push-Location $backendPath
+try {
+    & $alembic.Source -c alembic-platform.ini current
+    if ($LASTEXITCODE -ne 0) { throw "Platform Alembic current failed." }
+    & $alembic.Source -c alembic-platform.ini check
+    if ($LASTEXITCODE -ne 0) { throw "Platform Alembic drift check failed." }
+    & $alembic.Source -c alembic-tenant.ini heads
+    if ($LASTEXITCODE -ne 0) { throw "Tenant Alembic head check failed." }
+    & $python.Source -m compileall -q app alembic alembic_platform alembic_tenant tests
+    if ($LASTEXITCODE -ne 0) { throw "Backend compile failed." }
+    & $python.Source -m pytest -q
+    if ($LASTEXITCODE -ne 0) { throw "Backend tests failed." }
+    $previousPostgresMode = $env:RUN_POSTGRES_TESTS
     try {
-        $migrationDeps = Join-Path (Get-Location) ".migrationdeps"
-        if (Test-Path -LiteralPath $migrationDeps) {
-            $env:PYTHONPATH = if ($env:PYTHONPATH) { "$migrationDeps;$env:PYTHONPATH" } else { $migrationDeps }
-        }
-        $alembic = Get-Command alembic -ErrorAction SilentlyContinue
-        if ($alembic) {
-            & $alembic.Source current
-            if ($LASTEXITCODE -ne 0) { throw "Alembic current failed." }
-            Write-Host "  OK  Alembic current" -ForegroundColor Green
-        }
-        else {
-            Write-Warning "Alembic CLI is not available; skipped migration current check."
-        }
-        & $python.Source -m compileall -q app alembic
-        if ($LASTEXITCODE -ne 0) { throw "Backend compile failed." }
-        Write-Host "  OK  Backend compile" -ForegroundColor Green
+        $env:RUN_POSTGRES_TESTS = "1"
+        & $python.Source -m pytest -q tests/test_database_boundaries.py tests/test_tenant_migration_runner.py
+        if ($LASTEXITCODE -ne 0) { throw "PostgreSQL tenant isolation tests failed." }
     }
     finally {
-        Pop-Location
+        $env:RUN_POSTGRES_TESTS = $previousPostgresMode
     }
+    Write-Host "  OK  Backend migrations, compile and tests" -ForegroundColor Green
 }
-else {
-    Write-Warning "Python is not available; skipped Alembic and backend compile checks."
+finally {
+    Pop-Location
 }
 
 $frontendPath = Join-Path $PSScriptRoot "..\frontend"
 $npm = Get-Command npm -ErrorAction SilentlyContinue
-if ($npm) {
-    Push-Location $frontendPath
-    try {
-        & $npm.Source run build
-        if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
-        Write-Host "  OK  Frontend build" -ForegroundColor Green
-    }
-    finally {
-        Pop-Location
-    }
+if (-not $npm) { throw "npm is required for the release gate." }
+Push-Location $frontendPath
+try {
+    & $npm.Source test
+    if ($LASTEXITCODE -ne 0) { throw "Frontend tests failed." }
+    & $npm.Source run build
+    if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
+    Write-Host "  OK  Frontend tests and build" -ForegroundColor Green
 }
-else {
-    $viteCommand = Join-Path $frontendPath "node_modules\.bin\vite.cmd"
-    if (Test-Path $viteCommand) {
-        Push-Location $frontendPath
-        try {
-            & $viteCommand build
-            if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
-            Write-Host "  OK  Frontend build (local Vite)" -ForegroundColor Green
-        }
-        finally {
-            Pop-Location
-        }
-    }
-    else {
-        Write-Warning "npm and a local Vite binary are not available; skipped frontend build."
-    }
+finally {
+    Pop-Location
 }
 
 Write-Host "Release smoke checks completed." -ForegroundColor Green

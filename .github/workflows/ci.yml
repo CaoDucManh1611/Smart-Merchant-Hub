@@ -73,11 +73,22 @@ jobs:
 
       - name: Compile backend sources
         working-directory: backend
-        run: python -m compileall -q app alembic tests
+        run: python -m compileall -q app alembic alembic_platform alembic_tenant tests
 
       - name: Run backend tests
         working-directory: backend
         run: pytest -v
+
+      - name: Run PostgreSQL tenant isolation tests
+        working-directory: backend
+        env:
+          RUN_POSTGRES_TESTS: "1"
+          PLATFORM_DATABASE_URL: postgresql+psycopg://ci_user:ci_password@localhost:5432/crm_chatbot
+          TENANT_DATABASE_URL: postgresql+psycopg://ci_user:ci_password@localhost:5432/crm_chatbot
+        run: >-
+          pytest -v
+          tests/test_database_boundaries.py
+          tests/test_tenant_migration_runner.py
 
   frontend-test:
     runs-on: ubuntu-latest

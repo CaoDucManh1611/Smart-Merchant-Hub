@@ -3,6 +3,7 @@ param(
   [string]$BackupFile,
   [switch]$VerifyOnly,
   [string]$RestoreDatabaseUrl,
+  [string]$ManifestFile,
   [switch]$Overwrite
 )
 
@@ -58,10 +59,22 @@ if ($RestoreDatabaseUrl) {
   if ($Overwrite) {
     $restoreArgs += @("--clean", "--if-exists")
   }
+  if (-not $ManifestFile) { throw "ManifestFile is required for a verified platform restore." }
+  if (-not (Test-Path -LiteralPath $ManifestFile -PathType Leaf)) { throw "Manifest file does not exist: $ManifestFile" }
+  Assert-Archive -Path $BackupFile
+  $manifest = Get-Content -LiteralPath $ManifestFile -Raw | ConvertFrom-Json
+  if ([string]$manifest.backup_type -ne "platform") { throw "Backup manifest is not a platform archive." }
+  $actualHash = (Get-FileHash -LiteralPath $BackupFile -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actualHash -ne [string]$manifest.sha256) { throw "Backup checksum does not match its manifest." }
+  if (-not (Get-Command psql -ErrorAction SilentlyContinue)) { throw "psql is required to verify a platform restore." }
   Invoke-NativeChecked -Command "pg_restore" -Arguments ($restoreArgs + $BackupFile)
-  Assert-Archive -Path $BackupFile
-  Assert-Archive -Path $BackupFile
   Invoke-NativeChecked -Command "pg_restore" -Arguments @("--list", $BackupFile) | Out-Null
+  $serverVersionNum = (& psql "--dbname=$RestoreDatabaseUrl" "--tuples-only" "--no-align" "--command=SHOW server_version_num;")
+  if ($LASTEXITCODE -ne 0 -or -not ($serverVersionNum.Trim() -match '^\d+$')) { throw "Unable to determine restored PostgreSQL server version." }
+  $serverMajor = [int][Math]::Floor(([int]$serverVersionNum.Trim()) / 10000)
+  if ($serverMajor -ne [int]$manifest.server_major_version) { throw "Restored server major version does not match the backup manifest." }
+  $alembicRevision = (& psql "--dbname=$RestoreDatabaseUrl" "--tuples-only" "--no-align" "--command=SELECT version_num FROM alembic_version;")
+  if ($LASTEXITCODE -ne 0 -or $alembicRevision.Trim() -ne [string]$manifest.alembic_revision) { throw "Restored platform Alembic revision does not match the backup manifest." }
   Write-Host "Backup restored and verified. Overwrite=$Overwrite"
   exit 0
 }
@@ -82,4 +95,22 @@ Invoke-NativeChecked -Command "pg_dump" -Arguments @(
 )
 Assert-Archive -Path $BackupFile
 Invoke-NativeChecked -Command "pg_restore" -Arguments @("--list", $BackupFile) | Out-Null
+if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
+  throw "psql is required to create a verified backup manifest."
+}
+$serverVersionNum = (& psql "--dbname=$($env:DATABASE_URL)" "--tuples-only" "--no-align" "--command=SHOW server_version_num;")
+if ($LASTEXITCODE -ne 0 -or -not ($serverVersionNum.Trim() -match '^\d+$')) { throw "Unable to determine PostgreSQL server version." }
+$serverMajor = [int][Math]::Floor(([int]$serverVersionNum.Trim()) / 10000)
+$alembicRevision = (& psql "--dbname=$($env:DATABASE_URL)" "--tuples-only" "--no-align" "--command=SELECT version_num FROM alembic_version;")
+if ($LASTEXITCODE -ne 0 -or -not $alembicRevision.Trim()) { throw "Unable to determine platform Alembic revision." }
+if (-not $ManifestFile) { $ManifestFile = "$BackupFile.manifest.json" }
+$manifest = [ordered]@{
+  created_at = [DateTime]::UtcNow.ToString("o")
+  backup_type = "platform"
+  server_major_version = $serverMajor
+  alembic_revision = $alembicRevision.Trim()
+  archive = (Resolve-Path -LiteralPath $BackupFile).Path
+  sha256 = (Get-FileHash -LiteralPath $BackupFile -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ManifestFile -Encoding UTF8
 Write-Host "Backup created and verified: $BackupFile"

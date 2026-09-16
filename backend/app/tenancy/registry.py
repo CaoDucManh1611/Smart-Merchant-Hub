@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.channel_route import ChannelRoute
+from app.models.platform_control import TenantRegistry
 from app.tenancy.schema import schema_name_for, validate_schema_name
 
 
@@ -178,6 +179,30 @@ def resolve_webhook_route(
     if schema != schema_name_for(int(route.business_id)):
         return None
     if not route.channel_id:
+        return None
+    # A cutover marks the registry as ``migrating`` and disables the feature
+    # before any copy starts. Do not deliver new webhook events while that
+    # maintenance window is open; rollback can safely re-enable the route.
+    # Local databases created before the registry migration may have no row, so
+    # retain their development compatibility path. Production fails closed.
+    try:
+        registry = platform_db.scalar(
+            select(TenantRegistry).where(
+                TenantRegistry.business_id == int(route.business_id)
+            )
+        )
+    except Exception:
+        if str(getattr(settings, "ENVIRONMENT", "development")).strip().lower() == "production":
+            raise
+        registry = None
+    if registry is None:
+        if str(getattr(settings, "ENVIRONMENT", "development")).strip().lower() == "production":
+            return None
+    elif (
+        registry.state != "active"
+        or not bool(registry.feature_enabled)
+        or validate_schema_name(str(registry.schema_name)) != schema
+    ):
         return None
     return WebhookRoute(
         business_id=int(route.business_id),

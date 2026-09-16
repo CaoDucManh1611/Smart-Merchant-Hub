@@ -28,8 +28,10 @@ Set `TENANT_VERIFY_DATABASE_URL` to a newly created PostgreSQL 16 database:
 
 Restore is non-destructive by default. `-Overwrite` is required before
 `pg_restore --clean --if-exists` can be used during an approved maintenance
-window. The verifier checks the archive checksum, schema derivation, table
-presence, and restore/list exit codes.
+window. The verifier checks the archive checksum, schema derivation,
+PostgreSQL client/server major compatibility, restored schema table count,
+per-table row checksums, Alembic revision, and restore/list exit codes.
+`-ManifestFile` is mandatory for a verified restore.
 
 ## Platform backup
 
