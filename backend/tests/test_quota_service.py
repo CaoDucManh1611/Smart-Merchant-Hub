@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime
 from decimal import Decimal
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -83,6 +84,18 @@ class QuotaServiceTests(unittest.TestCase):
             decision = check_quota(db, legacy.id, "ai_calls", requested=999)
             self.assertTrue(decision.allowed)
             self.assertIsNone(decision.limit)
+
+    def test_missing_subscription_fails_closed_in_production(self):
+        with Session(self.engine) as db:
+            legacy = Business(name="Production No Plan", slug="production-no-plan")
+            db.add(legacy)
+            db.commit()
+            with patch("app.services.quota_service.settings.ENVIRONMENT", "production"):
+                decision = check_quota(db, legacy.id, "ai_calls", requested=1)
+                self.assertFalse(decision.allowed)
+                self.assertEqual(Decimal("0"), decision.limit)
+                with self.assertRaises(QuotaExceededError):
+                    reserve_quota(db, legacy.id, "ai_calls", requested=1, idempotency_key="production-no-plan")
 
     def test_release_quota_frees_capacity_for_deleted_resources(self):
         with Session(self.engine) as db:

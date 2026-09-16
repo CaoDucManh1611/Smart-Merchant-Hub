@@ -54,7 +54,9 @@ def test_owner_grant_issues_scoped_session_and_revocation_is_immediate():
         session = client.post("/api/platform/support-sessions", headers=support_headers, json={"grant_id": grant_id})
         assert session.status_code == 200, session.text
         scoped_headers = {"Authorization": f"Bearer {session.json()['access_token']}"}
-        assert client.get("/api/support/health", headers=scoped_headers).status_code == 200
+        support_health = client.get("/api/support/health", headers=scoped_headers)
+        assert support_health.status_code == 200, support_health.text
+        assert client.post("/api/support/jobs/7/retry", headers=scoped_headers).status_code == 403
         # A support token can never fall through to ordinary customer APIs.
         assert client.get("/api/customers", headers=scoped_headers).status_code == 403
 
@@ -63,5 +65,29 @@ def test_owner_grant_issues_scoped_session_and_revocation_is_immediate():
         assert client.get("/api/support/health", headers=scoped_headers).status_code == 403
         with Session(engine) as db:
             assert db.get(SupportGrant, grant_id).revoked_at is not None
+
+        too_long = client.post(
+            "/api/support/grants",
+            headers=owner_headers,
+            json={
+                "support_user_id": support_id,
+                "reason": "Support window is too long",
+                "scopes": ["settings:read"],
+                "expires_at": (datetime.now(timezone.utc) + timedelta(hours=25)).isoformat(),
+            },
+        )
+        assert too_long.status_code == 422
+
+        duplicate_scope = client.post(
+            "/api/support/grants",
+            headers=owner_headers,
+            json={
+                "support_user_id": support_id,
+                "reason": "Duplicate scope must fail",
+                "scopes": ["settings:read", "settings:read"],
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+            },
+        )
+        assert duplicate_scope.status_code == 422
     finally:
         app.dependency_overrides.clear()

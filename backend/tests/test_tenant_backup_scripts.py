@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = next(
     candidate
     for candidate in (Path(__file__).parents[1], Path(__file__).parents[2], Path(__file__).parents[0])
-    if (candidate / "scripts").is_dir()
+    if (candidate / "scripts" / "tenant-backup.ps1").is_file()
 )
 SCRIPT_DIR = Path(os.environ.get("ROOT_SCRIPTS", str(ROOT / "scripts")))
 

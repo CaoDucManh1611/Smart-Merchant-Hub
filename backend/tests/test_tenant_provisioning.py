@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -67,3 +68,25 @@ def test_failed_provisioning_is_retryable_and_never_drops_schema(monkeypatch):
         assert retried.tenant_revision == "20260915_0001"
         assert db.query(TenantRegistry).one().schema_name == "shop_8"
 
+
+def test_provisioning_rejects_invalid_identity_and_cross_shop_idempotency_reuse(monkeypatch):
+    engine = _engine()
+
+    @contextmanager
+    def connect():
+        yield _Connection()
+
+    monkeypatch.setattr(provisioning, "upgrade_tenant_schema", lambda _conn, _schema: "20260915_0001")
+    monkeypatch.setattr(provisioning, "current_tenant_revision", lambda _conn, _schema: "20260915_0001")
+    with Session(engine) as db:
+        db.add_all([
+            PlatformBusiness(id=10, name="First", slug="first-10"),
+            PlatformBusiness(id=11, name="Second", slug="second-11"),
+        ])
+        db.commit()
+        provisioning.provision_shop(db, business_id=10, idempotency_key="shared-request", tenant_connect=connect)
+        with pytest.raises(provisioning.ProvisioningValidationError):
+            provisioning.provision_shop(db, business_id=11, idempotency_key="shared-request", tenant_connect=connect)
+        for invalid_id in (0, -1, "not-a-number"):
+            with pytest.raises(provisioning.ProvisioningValidationError):
+                provisioning.provision_shop(db, business_id=invalid_id, idempotency_key="valid-request", tenant_connect=connect)

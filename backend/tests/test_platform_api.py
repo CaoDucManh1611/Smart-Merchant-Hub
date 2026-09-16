@@ -78,7 +78,7 @@ class PlatformApiTests(unittest.TestCase):
         self.assertIn(self.business_id, [item["id"] for item in listed.json()["items"]])
 
         changed = self.client.patch(
-            f"/api/platform/shops/{self.business_id}/status",
+            f"/api/platform/shops/{self.other_business_id}/status",
             headers=headers,
             json={"status": "suspended"},
         )
@@ -86,14 +86,14 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual("suspended", changed.json()["status"])
         blocked = self.client.post(
             "/api/team",
-            headers={"X-Business-Id": str(self.business_id)},
+            headers={"X-Business-Id": str(self.other_business_id)},
             json={"full_name": "Blocked", "email": "blocked@test", "role": "agent"},
         )
         self.assertEqual(423, blocked.status_code, blocked.text)
         with Session(self.engine) as db:
             audit = db.scalar(
                 select(AuditLog).where(
-                    AuditLog.business_id == self.business_id,
+                    AuditLog.business_id == self.other_business_id,
                     AuditLog.resource_type == "business",
                     AuditLog.action == "platform_status_changed",
                 )
@@ -195,6 +195,27 @@ class PlatformApiTests(unittest.TestCase):
         )
         self.assertEqual(200, replay.status_code, replay.text)
         self.assertEqual(payment.json()["id"], replay.json()["id"])
+
+    def test_subscription_rejects_an_impossible_billing_period(self):
+        token = self.login("platform-admin@test", "platform-password")
+        headers = {"Authorization": f"Bearer {token}"}
+        plan = self.client.post(
+            "/api/platform/plans",
+            headers=headers,
+            json={"code": "invalid-period-plan", "name": "Invalid Period", "price": "10"},
+        )
+        self.assertEqual(201, plan.status_code, plan.text)
+        response = self.client.put(
+            f"/api/platform/shops/{self.other_business_id}/subscription",
+            headers=headers,
+            json={
+                "plan_id": plan.json()["id"],
+                "status": "active",
+                "starts_at": "2026-09-30T00:00:00Z",
+                "ends_at": "2026-09-01T00:00:00Z",
+            },
+        )
+        self.assertEqual(422, response.status_code, response.text)
 
     def test_pending_payment_can_advance_once_but_conflicting_replay_is_rejected(self):
         with Session(self.engine) as db:

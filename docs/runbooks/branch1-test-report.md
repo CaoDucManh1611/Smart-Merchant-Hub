@@ -26,22 +26,32 @@ Phạm vi: `feat/saas-platform-control`, chỉ các năng lực control-plane/pr
 | B1-UI-01 | Anonymous boundary | Chưa đăng nhập không tải/hiện hội thoại hoặc card cài đặt tenant; chỉ hiện login/onboarding. | PASS |
 | B1-UI-02 | UI feedback | Mở/đóng form tạo shop có phản hồi; đăng nhập sai hiện thông báo rõ ràng, không tạo chức năng “ma”. | PASS |
 | B1-UI-03 | Browser runtime | Reload ở trạng thái anonymous không phát sinh lỗi/warning console từ API tenant. | PASS |
+| B1-AUTH-UTC | Token expiry | Token 15 phút vẫn còn hiệu lực đúng TTL trên máy UTC+7; `exp` dùng UTC instant, không phụ thuộc timezone host. | PASS |
+| B1-LIFE-02 | Suspension | Shop bị khóa không thể tạo session mới; Platform Admin vẫn đăng nhập được để thực hiện phục hồi nhưng không được dùng tenant API của shop bị khóa. | PASS |
+| B1-BILL-03 | Subscription period | Từ chối kỳ dịch vụ có `ends_at <= starts_at`. | PASS |
+| B1-SUP-03 | Least privilege | Từ chối TTL support quá 24 giờ, scope lặp và thao tác ngoài scope đã cấp. | PASS |
+| B1-PROV-04 | Idempotency isolation | Một idempotency key không thể tái sử dụng cho shop khác; business id không hợp lệ bị từ chối trước migration. | PASS |
+| B1-QUOTA-03 | Production fail-closed | Shop production không có subscription bị giới hạn quota về 0 thay vì được dùng không giới hạn. | PASS |
 
 ## Lệnh xác minh
 
 ```text
-backend: 470 passed, 5 skipped
-PowerShell backup/restore: 3 passed
+backend: 478 passed, 2 skipped
+focused Branch 1 edge/security: 23 passed
+PowerShell/backup focused: 5 passed
 PostgreSQL integration (isolated database): 4 passed
 frontend unit: 108 passed
 frontend build: passed
-focused Branch 1: 17 passed
 ```
 
-Năm case bị skip trong bộ regression mặc định không bị bỏ qua: 3 case PowerShell đã chạy trực tiếp trên Windows và 2 nhóm PostgreSQL đã chạy opt-in trên database cô lập `crm_branch1_validation_20260915`. Database tạm đã được xóa sau test; database CRM và dữ liệu hội thoại không bị thay đổi. Smoke test Docker cũng xác nhận provisioning shop 1 thành công và revision tenant `20260915_0001`.
+Hai case bị skip trong bộ regression mặc định là PostgreSQL-only và đã được chạy opt-in cùng nhóm database-boundary trên database cô lập `crm_branch1_validation_20260916_001` (4/4 pass). Database tạm đã được xóa sau test; database CRM và dữ liệu hội thoại không bị thay đổi. Smoke test Docker cũng xác nhận provisioning shop 1 thành công và revision tenant `20260915_0001`.
 
 ## Lỗi phát hiện và đã sửa trong vòng retest
 
 1. Test harness trước đây luôn ép URL database về SQLite nên các test PostgreSQL vẫn skip dù đã cấp database thật. Đã thêm chế độ `RUN_POSTGRES_TESTS=1` và cô lập fixture để chạy integration thật an toàn.
 2. Trang Cài đặt khi chưa đăng nhập vẫn render các card tenant và âm thầm gọi API, gây lỗi `403`/`Tenant context is required`. Đã gate cả UI lẫn request theo authenticated session; reload thực tế xác nhận console sạch.
 3. Vite dev server từng giữ transform cũ sau khi source thay đổi. Đã restart frontend container và xác minh bundle đang phục vụ đúng logic mới.
+4. Token expiry được tính từ UTC datetime đã bỏ timezone, khiến Python hiểu là giờ local và token support 15 phút hết hạn ngay trên máy UTC+7. Đã giữ datetime timezone-aware đến lúc đổi sang Unix timestamp và thêm regression theo thời gian thực.
+5. Shop đã bị suspend vẫn có thể đăng nhập lại để nhận token mới. Đã chặn session mới và chặn tenant API theo trạng thái shop; chỉ Platform Admin được dùng đường auth/platform để phục hồi.
+6. Subscription trước đây nhận kỳ thời gian đảo ngược. Đã thêm validation `ends_at > starts_at` ở contract API.
+7. Test backup cục bộ chọn nhầm `backend/scripts` chỉ vì thư mục tồn tại. Đã định vị script theo đúng file `tenant-backup.ps1`, giúp Windows và Docker chạy nhất quán.

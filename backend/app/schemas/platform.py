@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PlatformShopOut(BaseModel):
@@ -126,6 +126,12 @@ class PlatformSubscriptionUpdate(BaseModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     auto_renew: bool = False
+
+    @model_validator(mode="after")
+    def validate_period(self):
+        if self.starts_at is not None and self.ends_at is not None and self.ends_at <= self.starts_at:
+            raise ValueError("ends_at phải sau starts_at")
+        return self
 
 
 class PlatformSubscriptionOut(BaseModel):
