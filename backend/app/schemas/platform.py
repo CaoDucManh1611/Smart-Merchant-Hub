@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PlatformShopOut(BaseModel):
@@ -82,6 +82,21 @@ class TenantSchemaUpdate(BaseModel):
     feature_enabled: bool | None = None
 
 
+class ProvisioningOut(BaseModel):
+    business_id: int
+    schema_name: str
+    state: str
+    feature_enabled: bool
+    tenant_revision: str | None = None
+    migration_error: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProvisioningRequest(BaseModel):
+    idempotency_key: str = Field(..., min_length=8, max_length=180)
+
+
 class PlatformPlanCreate(BaseModel):
     code: str = Field(..., min_length=2, max_length=50, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
     name: str = Field(..., min_length=2, max_length=120)
@@ -111,6 +126,12 @@ class PlatformSubscriptionUpdate(BaseModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     auto_renew: bool = False
+
+    @model_validator(mode="after")
+    def validate_period(self):
+        if self.starts_at is not None and self.ends_at is not None and self.ends_at <= self.starts_at:
+            raise ValueError("ends_at phải sau starts_at")
+        return self
 
 
 class PlatformSubscriptionOut(BaseModel):

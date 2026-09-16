@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, select
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
+from sqlalchemy import func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.platform import require_platform_admin
 from app.db.dependencies import get_db
+from app.database.platform_session import get_platform_db
 from app.models.audit_log import AuditLog
+from app.models.auth_session import AuthSession
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.channel import Channel, ChannelEvent
 from app.models.saas import SaaSUsage
+from app.models.platform_control import PlatformAudit, PlatformProviderIncident
 from app.schemas.platform import (
     PlatformAuditOut,
     PlatformShopListOut,
@@ -34,11 +37,15 @@ from app.schemas.platform import (
     PlatformProviderErrorOut,
     PlatformPrivacyRequest,
     PlatformPrivacyOut,
+    ProvisioningOut,
+    ProvisioningRequest,
 )
 from app.services.audit_service import record_audit
-from app.services.quota_service import PLAN_LIMIT_FIELDS, quota_period_start, quota_snapshot
-from app.services.privacy_service import anonymize_customer_data, complete_request, export_customer_data, get_or_create_request
+from app.services.quota_service import PLAN_LIMIT_FIELDS, quota_period_start
+from app.services.privacy_service import get_or_create_request
 from app.services.tenant_schema_service import ensure_registry, update_registry
+from app.models.platform_control import PlatformBusiness, TenantRegistry
+from app.tenancy.provisioning import provision_shop, retry_provision_shop, ProvisioningValidationError
 
 
 router = APIRouter(prefix="/platform")
@@ -121,9 +128,42 @@ def _usage_for(db: Session, business_id: int, period_start):
     return {row.resource: _number(row.used or 0) for row in rows}
 
 
+def _platform_quota_snapshot(db: Session, business_id: int, period_start, plan: ServicePlan | None) -> dict:
+    """Build metadata-only quota counters from platform usage aggregates.
+
+    This function deliberately never counts users, channels, documents or any
+    other tenant table.  Tenant services must write aggregate usage events to
+    ``saas_usage``; a missing row is reported as zero rather than sampled.
+    """
+
+    usage = _usage_for(db, business_id, period_start)
+    resources = {}
+    warning = 0.8
+    for resource, field in PLAN_LIMIT_FIELDS.items():
+        used = float(usage.get(resource, 0) or 0)
+        limit_value = getattr(plan, field, None) if plan is not None else None
+        limit = _number(limit_value) if limit_value is not None else None
+        percent = (used / float(limit) * 100) if limit not in (None, 0) else (100.0 if used > 0 else 0.0 if limit == 0 else None)
+        resources[resource] = {
+            "used": int(used) if used.is_integer() else used,
+            "limit": limit,
+            "percent": percent,
+            "near_limit": bool(limit is not None and used >= float(limit) * warning),
+            "exceeded": bool(limit is not None and used > float(limit)),
+        }
+    return {
+        "business_id": int(business_id),
+        "period_start": period_start,
+        "plan_code": plan.code if plan else None,
+        "plan_name": plan.name if plan else None,
+        "warning_percent": warning,
+        "resources": resources,
+    }
+
+
 def _shop_out(db: Session, business: Business, period_start) -> PlatformShopOut:
     plan = _plan_for(db, business.id)
-    quota = quota_snapshot(db, business.id, now=period_start)
+    quota = _platform_quota_snapshot(db, business.id, period_start, plan)
     return PlatformShopOut(
         id=business.id,
         name=business.name,
@@ -347,6 +387,8 @@ def record_shop_payment(
     )
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription không thuộc shop.")
+    if payload.status == "paid" and subscription.plan is not None and payload.amount != subscription.plan.price:
+        raise HTTPException(status_code=409, detail="Số tiền thanh toán không khớp giá gói dịch vụ.")
     transaction_id = payload.provider_transaction_id.strip()
     existing = db.scalar(
         select(Payment).where(Payment.provider_transaction_id == transaction_id)
@@ -425,6 +467,14 @@ def update_shop_status(
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     previous = business.status
     business.status = payload.status
+    if payload.status == "suspended":
+        # Suspending a shop immediately invalidates every bearer session. A
+        # later reactivation requires a fresh login and cannot reuse a token
+        # captured before the lifecycle transition.
+        db.query(AuthSession).filter(
+            AuthSession.user_id.in_(select(User.id).where(User.business_id == business_id)),
+            AuthSession.revoked_at.is_(None),
+        ).update({AuthSession.revoked_at: datetime.now(timezone.utc).replace(tzinfo=None)}, synchronize_session=False)
     record_audit(
         db,
         business_id=business.id,
@@ -453,7 +503,7 @@ def get_shop_usage(
         for resource, field in PLAN_LIMIT_FIELDS.items()
     }
     period_start = quota_period_start()
-    quota = quota_snapshot(db, business_id, now=period_start)
+    quota = _platform_quota_snapshot(db, business_id, period_start, plan)
     return PlatformUsageOut(
         business_id=business_id,
         period_start=period_start,
@@ -472,11 +522,42 @@ def get_shop_usage(
 @router.get("/provider-errors", response_model=list[PlatformProviderErrorOut])
 def list_provider_errors(
     business_id: int | None = Query(default=None, gt=0),
-    db: Session = Depends(get_db),
+    legacy_db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
     _actor: User = Depends(require_platform_admin),
     limit: int = Query(default=100, ge=1, le=500),
 ):
     """Return redacted provider delivery failures for platform operators."""
+    # The production control plane stores only a redacted incident aggregate.
+    # It can therefore be queried when tenant tables are unavailable.
+    if platform_db.bind is not None:
+        try:
+            table_names = set(inspect(platform_db.bind).get_table_names())
+        except Exception:  # pragma: no cover - defensive readiness path
+            table_names = set()
+        if "platform_provider_incidents" in table_names:
+            query = select(PlatformProviderIncident).where(
+                PlatformProviderIncident.status == "failed"
+            ).order_by(PlatformProviderIncident.received_at.desc(), PlatformProviderIncident.id.desc()).limit(limit)
+            if business_id is not None:
+                query = query.where(PlatformProviderIncident.business_id == business_id)
+            rows = platform_db.scalars(query).all()
+            return [
+                PlatformProviderErrorOut(
+                    id=row.id,
+                    business_id=row.business_id,
+                    channel_id=row.channel_id,
+                    channel_type=row.channel_type,
+                    event_type=row.event_type,
+                    status=row.status,
+                    error_type=row.error_type,
+                    received_at=row.received_at,
+                )
+                for row in rows
+            ]
+
+    # Legacy compatibility is retained only for isolated development
+    # databases that have no platform incident table yet.
     query = (
         select(ChannelEvent, Channel.channel_type)
         .join(Channel, Channel.id == ChannelEvent.channel_id)
@@ -486,7 +567,7 @@ def list_provider_errors(
     )
     if business_id is not None:
         query = query.where(Channel.business_id == business_id)
-    rows = db.execute(query).all()
+    rows = legacy_db.execute(query).all()
     return [
         PlatformProviderErrorOut(
             id=event.id,
@@ -528,9 +609,10 @@ def platform_export_data(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
-        _data, counts = export_customer_data(db, business_id)
-        complete_request(row, counts=counts)
-        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_export", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"counts": counts})
+        # Platform only records and dispatches the request.  Export execution
+        # happens in the tenant worker after it resolves the shop schema.
+        row.result_metadata = {"counts": {}, "dispatch": "tenant_worker"}
+        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_export_queued", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"dispatch": "tenant_worker"})
         db.commit()
     return PlatformPrivacyOut(id=row.id, business_id=business_id, kind=row.kind, status=row.status, counts=(row.result_metadata or {}).get("counts", {}))
 
@@ -548,9 +630,8 @@ def platform_anonymize_data(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
-        counts = anonymize_customer_data(db, business_id)
-        complete_request(row, counts=counts)
-        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_anonymize", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"counts": counts})
+        row.result_metadata = {"counts": {}, "dispatch": "tenant_worker"}
+        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_anonymize_queued", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"dispatch": "tenant_worker"})
         db.commit()
     return PlatformPrivacyOut(id=row.id, business_id=business_id, kind=row.kind, status=row.status, counts=(row.result_metadata or {}).get("counts", {}))
 
@@ -570,9 +651,8 @@ def platform_delete_data(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
-        counts = anonymize_customer_data(db, business_id, deleted=True)
-        complete_request(row, counts=counts)
-        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_delete", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"counts": counts, "mode": "anonymized_retained_orders"})
+        row.result_metadata = {"counts": {}, "dispatch": "tenant_worker", "mode": "anonymize_retained_orders"}
+        record_audit(db, business_id=business_id, user_id=actor.id, action="platform_privacy_delete_queued", resource_type="data_lifecycle_request", resource_id=row.id, metadata={"dispatch": "tenant_worker", "mode": "anonymize_retained_orders"})
         db.commit()
     return PlatformPrivacyOut(id=row.id, business_id=business_id, kind=row.kind, status=row.status, counts=(row.result_metadata or {}).get("counts", {}))
 
@@ -583,6 +663,36 @@ def list_platform_audit_logs(
     _actor: User = Depends(require_platform_admin),
     limit: int = Query(default=100, ge=1, le=500),
 ):
+    # Once the control-plane database has its own audit table, never fall back
+    # to tenant ``audit_logs``.  The fallback is kept only for old isolated
+    # development databases that predate the platform schema migration.
+    if db.bind is not None:
+        try:
+            table_names = set(inspect(db.bind).get_table_names())
+        except Exception:  # pragma: no cover - defensive readiness path
+            table_names = set()
+        if "platform_audit" in table_names:
+            rows = db.scalars(
+                select(PlatformAudit)
+                .where(PlatformAudit.action.like("platform_%"))
+                .order_by(PlatformAudit.created_at.desc(), PlatformAudit.id.desc())
+                .limit(limit)
+            ).all()
+            return [
+                PlatformAuditOut(
+                    id=row.id,
+                    event_id=f"platform-{row.id}",
+                    business_id=int(row.business_id or 0),
+                    user_id=row.actor_user_id,
+                    actor_type="platform",
+                    action=row.action,
+                    resource_type=row.resource_type or "platform",
+                    resource_id=row.resource_id,
+                    metadata=row.metadata_json or {},
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ]
     return db.scalars(
         select(AuditLog)
         .where(AuditLog.action.like("platform_%"))
@@ -598,6 +708,32 @@ def list_unified_events(
     limit: int = Query(default=100, ge=1, le=500),
 ):
     """Read the canonical event stream used by audit and Customer 360."""
+    if db.bind is not None:
+        try:
+            table_names = set(inspect(db.bind).get_table_names())
+        except Exception:  # pragma: no cover - defensive readiness path
+            table_names = set()
+        if "platform_audit" in table_names:
+            rows = db.scalars(
+                select(PlatformAudit)
+                .order_by(PlatformAudit.created_at.desc(), PlatformAudit.id.desc())
+                .limit(limit)
+            ).all()
+            return [
+                PlatformAuditOut(
+                    id=row.id,
+                    event_id=f"platform-{row.id}",
+                    business_id=int(row.business_id or 0),
+                    user_id=row.actor_user_id,
+                    actor_type="platform",
+                    action=row.action,
+                    resource_type=row.resource_type or "platform",
+                    resource_id=row.resource_id,
+                    metadata=row.metadata_json or {},
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ]
     return db.scalars(
         select(AuditLog)
         .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
@@ -671,4 +807,63 @@ def stage_tenant_schema(
     )
     db.commit()
     db.refresh(row)
+    return row
+
+
+def _sync_platform_business(platform_db: Session, legacy_db: Session, business_id: int) -> PlatformBusiness:
+    """Mirror only shop identity into the platform DB for rollout compatibility."""
+
+    platform_business = platform_db.get(PlatformBusiness, business_id)
+    if platform_business is not None:
+        return platform_business
+    legacy_business = legacy_db.get(Business, business_id)
+    if legacy_business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    platform_business = PlatformBusiness(id=business_id, name=legacy_business.name, slug=legacy_business.slug, status=legacy_business.status)
+    platform_db.add(platform_business)
+    platform_db.flush()
+    return platform_business
+
+
+@router.post("/shops/{business_id}/provision", response_model=ProvisioningOut)
+def provision_shop_schema(
+    business_id: int,
+    payload: ProvisioningRequest | None = Body(default=None),
+    idempotency_key: str | None = Query(default=None, min_length=8, max_length=180),
+    idempotency_header: str | None = Header(default=None, alias="Idempotency-Key"),
+    legacy_db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    _actor: User = Depends(require_platform_admin),
+):
+    _sync_platform_business(platform_db, legacy_db, business_id)
+    key = (payload.idempotency_key if payload else None) or idempotency_key or idempotency_header
+    if not key:
+        raise HTTPException(status_code=422, detail="Cần idempotency_key hoặc Idempotency-Key.")
+    try:
+        row = provision_shop(platform_db, business_id=business_id, idempotency_key=key)
+    except ProvisioningValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    platform_db.refresh(row)
+    return row
+
+
+@router.post("/shops/{business_id}/provision/retry", response_model=ProvisioningOut)
+def retry_shop_schema(
+    business_id: int,
+    payload: ProvisioningRequest | None = Body(default=None),
+    idempotency_key: str | None = Query(default=None, min_length=8, max_length=180),
+    idempotency_header: str | None = Header(default=None, alias="Idempotency-Key"),
+    legacy_db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    _actor: User = Depends(require_platform_admin),
+):
+    _sync_platform_business(platform_db, legacy_db, business_id)
+    key = (payload.idempotency_key if payload else None) or idempotency_key or idempotency_header
+    if not key:
+        raise HTTPException(status_code=422, detail="Cần idempotency_key hoặc Idempotency-Key.")
+    try:
+        row = retry_provision_shop(platform_db, business_id=business_id, idempotency_key=key)
+    except ProvisioningValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    platform_db.refresh(row)
     return row

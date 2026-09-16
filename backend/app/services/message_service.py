@@ -1372,12 +1372,14 @@ def process_and_save_message(
         customer = db.execute(
             text("""
                 INSERT INTO customers (
+                    business_id,
                     channel,
                     external_user_id,
                     name,
                     avatar_url
                 )
                 VALUES (
+                    :business_id,
                     :channel,
                     :external_user_id,
                     :name,
@@ -1389,6 +1391,7 @@ def process_and_save_message(
                     avatar_url
             """),
             {
+                "business_id": int(business_id),
                 "channel":
                     channel,
 

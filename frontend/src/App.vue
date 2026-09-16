@@ -16,18 +16,10 @@ import { getInboxChannels } from "./inbox-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
 import { notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
-import { createApiClient } from "./api-client.js";
-import { requireBusinessId } from "./auth-context.js";
+import { apiFetch } from "./api-client.js";
+import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const apiClient = createApiClient({
-  baseUrl: API_BASE,
-  getToken: () => window.localStorage.getItem("crm_access_token") || "",
-});
-
-function apiFetch(input, init = {}) {
-  return apiClient.fetch(input, init);
-}
 
 
 /* =========================================================
@@ -263,10 +255,10 @@ function salesStatusOptions(order) {
 }
 
 const authUser = ref(null);
-const authToken = ref(window.localStorage.getItem("crm_access_token") || "");
+const authToken = ref(readAuthToken());
 const authLoading = ref(false);
 const authError = ref("");
-const loginForm = ref({ email: "", password: "" });
+const loginForm = ref({ email: "", password: "", shop_slug: "" });
 const onboardingOpen = ref(false);
 const onboardingLoading = ref(false);
 const onboardingError = ref("");
@@ -630,6 +622,7 @@ async function disconnectBotChannel(connection) {
 
 function openSettings() {
   currentTab.value = "settings";
+  if (!authUser.value) return;
   void fetchMetaStatus();
   void fetchBotConnections();
   void fetchTeam();
@@ -3285,7 +3278,7 @@ async function loadAuthSession() {
       await fetchQuotaUsage();
     }
     else {
-      window.localStorage.removeItem("crm_access_token");
+      clearAuthToken();
       authToken.value = "";
     }
   } catch {
@@ -3341,7 +3334,7 @@ async function createOnboardingShop() {
     });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
-    window.localStorage.setItem("crm_access_token", detail.access_token);
+    storeAuthToken(detail.access_token);
     authToken.value = detail.access_token;
     authUser.value = { id: detail.owner_id, business_id: detail.business_id, full_name: onboardingForm.value.owner_name, email: detail.owner_email, role: "owner", is_active: true, mfa_status: "disabled" };
     onboardingForm.value = { shop_name: "", owner_name: "", owner_email: "", password: "", plan_code: "starter" };
@@ -3376,21 +3369,27 @@ async function login() {
   authLoading.value = true;
   authError.value = "";
   try {
+    const credentials = {
+      email: loginForm.value.email,
+      password: loginForm.value.password,
+      ...(loginForm.value.shop_slug.trim() ? { shop_slug: loginForm.value.shop_slug.trim() } : {}),
+    };
     const response = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(loginForm.value),
+      body: JSON.stringify(credentials),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || "Đăng nhập thất bại.");
     }
     const data = await response.json();
-    window.localStorage.setItem("crm_access_token", data.access_token);
+    storeAuthToken(data.access_token);
     authToken.value = data.access_token;
     authUser.value = { ...data.user, mfa_required: Boolean(data.mfa_required) };
     mfaVerifyPending.value = Boolean(data.mfa_required);
     loginForm.value.password = "";
+    loginForm.value.shop_slug = "";
     if (!mfaVerifyPending.value) {
       await fetchSecuritySettings();
       await fetchQuotaUsage();
@@ -3405,7 +3404,7 @@ async function login() {
 
 async function logout() {
   try { if (authToken.value) await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" }); } catch { /* session may already be expired */ }
-  window.localStorage.removeItem("crm_access_token");
+  clearAuthToken();
   authToken.value = "";
   authUser.value = null;
   authSessions.value = [];
@@ -5474,6 +5473,9 @@ onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
 
   await loadAuthSession();
+  // Tenant data is only loaded after the platform session identifies an
+  // active shop.  Anonymous mode intentionally exposes onboarding/login only.
+  if (!authUser.value) return;
 
   await loadConversations(
     true
@@ -8749,11 +8751,12 @@ onUnmounted(() => {
               <h2>Đăng nhập CRM</h2>
               <p>Phiên đăng nhập giúp áp dụng vai trò và ghi audit log cho thao tác.</p>
             </div>
-            <span class="connection-badge" :class="{ connected: authUser }">{{ authUser ? 'ĐÃ ĐĂNG NHẬP' : 'ĐANG DÙNG CHẾ ĐỘ DEV' }}</span>
+            <span class="connection-badge" :class="{ connected: authUser }">{{ authUser ? 'ĐÃ ĐĂNG NHẬP' : 'CẦN ĐĂNG NHẬP' }}</span>
           </div>
           <form v-if="!authUser" class="team-form" @submit.prevent="login">
             <input v-model="loginForm.email" required type="email" placeholder="Email công việc" />
             <input v-model="loginForm.password" required type="password" placeholder="Mật khẩu" />
+            <input v-model="loginForm.shop_slug" type="text" maxlength="120" placeholder="Mã shop (nếu email dùng nhiều shop)" />
             <button class="primary-btn" type="submit" :disabled="authLoading">{{ authLoading ? 'Đang đăng nhập...' : 'Đăng nhập' }}</button>
           </form>
           <div v-if="!authUser" class="onboarding-entry">
@@ -8779,7 +8782,7 @@ onUnmounted(() => {
           <div v-if="authError" class="settings-notice team-error">{{ authError }}</div>
         </div>
 
-        <div class="settings-card quota-card">
+        <div v-if="authUser" class="settings-card quota-card">
           <div class="settings-card-header">
             <div><h2>Quota & quyền lợi gói</h2><p>Usage ledger theo kỳ UTC; cảnh báo khi chạm {{ quotaSnapshot ? Math.round(Number(quotaSnapshot.warning_percent || 0) * 100) : 80 }}% giới hạn.</p></div>
             <button type="button" class="settings-refresh" :disabled="quotaLoading" @click="fetchQuotaUsage">{{ quotaLoading ? 'Đang tải...' : 'Làm mới' }}</button>
@@ -8841,7 +8844,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-card">
+        <div v-if="authUser" class="settings-card">
           <div class="settings-card-header">
             <div>
               <h2>Kết nối kênh bán hàng</h2>
@@ -8893,7 +8896,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-card channel-connect-card">
+        <div v-if="authUser" class="settings-card channel-connect-card">
           <div class="settings-card-header">
             <div>
               <h2>Kết nối Telegram/Zalo</h2>
@@ -8982,7 +8985,7 @@ onUnmounted(() => {
           <div v-else class="settings-empty">Chưa có Telegram/Zalo Bot nào được kết nối.</div>
         </div>
 
-        <div class="settings-card chatbot-runtime-card">
+        <div v-if="authUser" class="settings-card chatbot-runtime-card">
           <div class="settings-card-header">
             <div>
               <h2>🤖 Chatbot bán hàng</h2>
@@ -9019,7 +9022,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-card followup-card">
+        <div v-if="authUser" class="settings-card followup-card">
           <div class="settings-card-header">
             <div>
               <h2>🔔 Chăm sóc chủ động</h2>
@@ -9040,7 +9043,7 @@ onUnmounted(() => {
           </ul>
         </div>
 
-        <div class="settings-card csat-card">
+        <div v-if="authUser" class="settings-card csat-card">
           <div class="settings-card-header">
             <div>
               <h2>⭐ Đánh giá CSAT</h2>
@@ -9121,7 +9124,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-card team-card">
+        <div v-if="authUser" class="settings-card team-card">
           <div class="settings-card-header">
             <div>
               <h2>👥 Đội ngũ & phân quyền</h2>

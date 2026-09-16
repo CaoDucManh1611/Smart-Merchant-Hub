@@ -31,7 +31,7 @@ from app.models.chatbot import ChatbotConfig
 from app.models.canned_response import CannedResponse
 from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.customer_feedback import CustomerFeedback
-from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry
+from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry, SupportGrant
 
 logger = logging.getLogger(__name__)
 

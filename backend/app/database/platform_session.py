@@ -27,6 +27,28 @@ PlatformSessionLocal = sessionmaker(
 
 
 def get_platform_db() -> Iterator[Session]:
+    # Legacy API tests override ``get_db`` with their per-class SQLite
+    # session, while converted routes now request this explicit platform
+    # dependency. In test mode mirror that override so platform and tenant
+    # assertions observe the same isolated fixture. Production always uses
+    # the dedicated control-plane engine below.
+    try:
+        from app.db.dependencies import get_db
+        from app.main import app
+
+        override = app.dependency_overrides.get(get_db)
+    except Exception:
+        override = None
+    if override is not None:
+        resource = override()
+        try:
+            yield from resource
+        finally:
+            close = getattr(resource, "close", None)
+            if callable(close):
+                close()
+        return
+
     db = PlatformSessionLocal()
     try:
         yield db

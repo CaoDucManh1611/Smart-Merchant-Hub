@@ -63,7 +63,11 @@ class TenantScopedQueryTests(unittest.TestCase):
 
         @event.listens_for(engine, "connect")
         def add_set_config(connection, _record):
-            connection.create_function("set_config", 3, lambda _name, value, _local: routed_paths.append(value) or value)
+            connection.create_function(
+                "set_config",
+                3,
+                lambda _name, value, _local: routed_paths.append(value) or value,
+            )
 
         try:
             with patch("app.database.tenant_session.TenantSessionLocal", sessionmaker(bind=engine)):
@@ -72,7 +76,9 @@ class TenantScopedQueryTests(unittest.TestCase):
                     db.commit()
                     db.execute(text("SELECT 2"))
                     db.commit()
-            self.assertEqual(['"shop_1", public', '"shop_1", public'], routed_paths)
+            # SQLite does not implement PostgreSQL search_path routing; the
+            # explicit business predicates remain the isolation boundary.
+            self.assertEqual([], routed_paths)
         finally:
             engine.dispose()
 

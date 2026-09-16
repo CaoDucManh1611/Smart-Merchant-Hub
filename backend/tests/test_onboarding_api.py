@@ -280,10 +280,13 @@ class OnboardingApiTests(unittest.TestCase):
         )
         self.assertEqual(200, disconnected.status_code, disconnected.text)
         self.assertEqual(channel_id, disconnected.json()["channel_id"])
-        self.assertEqual([], self.client.get(
+        remaining = self.client.get(
             f"/api/onboarding/shops/{created['business_id']}/channels",
             headers=headers,
-        ).json())
+        )
+        self.assertEqual(200, remaining.status_code, remaining.text)
+        self.assertEqual(1, len(remaining.json()))
+        self.assertEqual("disconnected", remaining.json()[0]["status"])
         with Session(self.engine) as db:
             row = db.get(Channel, channel_id)
             self.assertEqual("disconnected", row.status)

@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_authenticated_session, get_current_user, issue_token, require_admin_access, token_hash
 from app.auth.passwords import verify_password
+from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
-from app.models.business import User
+from app.models.business import Business, User
+from app.models.saas import PlatformMembership
 from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut, MfaVerifyOut, MfaVerifyRequest
 from app.services.audit_service import record_audit
 from app.services.mfa_service import disable_mfa, enable_mfa, prepare_mfa, verify_mfa_code
@@ -31,16 +33,29 @@ def login(
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
     x_device_label: str | None = Header(default=None, alias="X-Device-Label"),
 ):
+    if x_business_id and settings.ENVIRONMENT.strip().lower() == "production":
+        raise HTTPException(status_code=400, detail="X-Business-Id không được dùng trong production.")
     query = db.query(User).filter(User.email.ilike(payload.email.strip()), User.is_active.is_(True))
     if x_business_id:
         try:
             query = query.filter(User.business_id == int(x_business_id))
         except ValueError:
             raise HTTPException(status_code=422, detail="X-Business-Id không hợp lệ.") from None
+    if payload.shop_slug:
+        query = query.join(Business, Business.id == User.business_id).filter(Business.slug == payload.shop_slug.strip().lower())
     users = query.all()
     if len(users) != 1 or not verify_password(payload.password, users[0].password_hash):
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")
     user = users[0]
+    business = db.get(Business, user.business_id)
+    is_platform_member = db.query(PlatformMembership.id).filter(
+        PlatformMembership.user_id == user.id,
+    ).first() is not None
+    if business is not None and business.status != "active" and not is_platform_member:
+        raise HTTPException(
+            status_code=423,
+            detail={"code": "business_suspended", "message": "Shop đang tạm khóa bởi quản trị nền tảng."},
+        )
     token, expires_at = issue_token(
         user.id,
         business_id=user.business_id,

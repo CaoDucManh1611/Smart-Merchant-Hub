@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models.auth_session import AuthSession
 from app.models.business import Business, User
+from app.models.saas import PlatformMembership
 from app.services.permission_service import permission_allowed
 
 
@@ -43,9 +44,14 @@ def issue_token(
     business_id: int | None = None,
     role: str | None = None,
     ttl_seconds: int = AUTH_TTL_SECONDS,
+    extra_claims: dict | None = None,
 ) -> tuple[str, datetime]:
-    expires_at = datetime.now(timezone.utc).replace(tzinfo=None).timestamp() + ttl_seconds
-    payload = {"sub": int(user_id), "exp": int(expires_at), "jti": secrets.token_urlsafe(16)}
+    # Keep the instant timezone-aware until it has been converted to Unix
+    # time. Calling ``timestamp()`` on a naive UTC datetime makes Python treat
+    # it as local time, shortening tokens by the host UTC offset (seven hours
+    # on the common Vietnam development environment).
+    expires_timestamp = datetime.now(timezone.utc).timestamp() + ttl_seconds
+    payload = {"sub": int(user_id), "exp": int(expires_timestamp), "jti": secrets.token_urlsafe(16)}
     # Tenant and role claims make the trust boundary explicit.  The values
     # are still re-checked against the database on every request so a token
     # cannot outlive a membership/role change.
@@ -53,10 +59,16 @@ def issue_token(
         payload["business_id"] = int(business_id)
     if role:
         payload["role"] = str(role).strip().lower()
+    if extra_claims:
+        # Callers can add narrowly scoped, non-sensitive claims (for example
+        # a support grant id).  Never allow them to override identity/expiry.
+        for key, value in extra_claims.items():
+            if key not in {"sub", "exp", "jti", "business_id", "role"}:
+                payload[str(key)] = value
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
     signature = hmac.new(_secret(), encoded.encode(), hashlib.sha256).digest()
     token = f"{encoded}.{base64.urlsafe_b64encode(signature).decode().rstrip('=')}"
-    return token, datetime.fromtimestamp(expires_at, timezone.utc).replace(tzinfo=None)
+    return token, datetime.fromtimestamp(expires_timestamp, timezone.utc).replace(tzinfo=None)
 
 
 def _decode_token(token: str) -> dict:
@@ -72,6 +84,12 @@ def _decode_token(token: str) -> dict:
         return payload
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
         raise HTTPException(status_code=401, detail="Bearer token không hợp lệ hoặc đã hết hạn.") from None
+
+
+def decode_token_payload(token: str) -> dict:
+    """Public wrapper used by scoped support access validation."""
+
+    return _decode_token(token)
 
 
 def _authenticate_request(request: Request, authorization: str | None, db: Session) -> tuple[AuthSession, User]:
@@ -90,6 +108,22 @@ def _authenticate_request(request: Request, authorization: str | None, db: Sessi
     user = db.query(User).filter(User.id == session.user_id, User.is_active.is_(True)).first()
     if user is None or user.business_id is None:
         raise HTTPException(status_code=401, detail="Tài khoản không còn hoạt động.")
+    if str(user.role or "").strip().lower() in {"support", "platform_support"}:
+        # Support identities are intentionally unusable against normal tenant
+        # APIs.  They must present a grant-bound token to /api/support only.
+        if not request.url.path.startswith("/api/support") and not request.url.path.startswith("/api/platform/support-sessions"):
+            raise HTTPException(status_code=403, detail="Support account chỉ được dùng trong phiên hỗ trợ có cấp quyền.")
+    business = db.get(Business, user.business_id)
+    if business is not None and business.status != "active":
+        is_platform_member = db.query(PlatformMembership.id).filter(
+            PlatformMembership.user_id == user.id,
+        ).first() is not None
+        platform_recovery_path = request.url.path.startswith("/api/platform") or request.url.path.startswith("/api/auth")
+        if not (is_platform_member and platform_recovery_path):
+            raise HTTPException(
+                status_code=423,
+                detail={"code": "business_suspended", "message": "Shop đang tạm khóa bởi quản trị nền tảng."},
+            )
     claimed_business_id = payload.get("business_id")
     if claimed_business_id is not None:
         try:

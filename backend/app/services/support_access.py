@@ -361,6 +361,22 @@ def validate_support_access(
     )
 
 
+def validate_support_token(db: Session, *, token: str, scope: str) -> SupportSession:
+    """Resolve the signed shop id and re-check the current platform grant."""
+
+    payload = _decode_support_token(token)
+    try:
+        business_id = int(payload["business_id"])
+    except (KeyError, TypeError, ValueError):
+        raise PermissionError("Phiên hỗ trợ không hợp lệ.") from None
+    return validate_support_access(
+        db,
+        token=token,
+        business_id=business_id,
+        scope=scope,
+    )
+
+
 __all__ = [
     "ALLOWED_SCOPES",
     "MAX_GRANT_MINUTES",
@@ -370,4 +386,5 @@ __all__ = [
     "normalize_scopes",
     "revoke_support_grant",
     "validate_support_access",
+    "validate_support_token",
 ]

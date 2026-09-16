@@ -19,7 +19,15 @@ _TEST_RUNTIME.mkdir(parents=True, exist_ok=True)
 # which may be either the repository root or ``backend``.
 (Path.cwd() / ".pytest_tmp").mkdir(parents=True, exist_ok=True)
 _GLOBAL_TEST_DATABASE = _TEST_RUNTIME / "global.db"
-os.environ["DATABASE_URL"] = "sqlite:///" + _GLOBAL_TEST_DATABASE.as_posix()
+_RUN_POSTGRES_TESTS = os.environ.get("RUN_POSTGRES_TESTS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+if not _RUN_POSTGRES_TESTS:
+    os.environ["DATABASE_URL"] = "sqlite:///" + _GLOBAL_TEST_DATABASE.as_posix()
+    os.environ["PLATFORM_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "platform.db").as_posix()
+    os.environ["TENANT_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "tenant.db").as_posix()
 os.environ["ENVIRONMENT"] = "test"
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["RATE_LIMIT_BACKEND"] = "memory"
@@ -34,6 +42,8 @@ os.environ["OTP_SMTP_PASSWORD"] = ""
 os.environ["OTP_TWILIO_ACCOUNT_SID"] = ""
 os.environ["OTP_TWILIO_AUTH_TOKEN"] = ""
 os.environ["OTP_TWILIO_FROM_NUMBER"] = ""
+os.environ["CHANNEL_ENCRYPTION_KEY"] = "pytest-channel-encryption-key"
+os.environ["CHANNEL_ROUTE_SECRET"] = "test-channel-route-secret-0123456789"
 os.environ["RAG_AUTO_REPLY_ENABLED"] = "false"
 os.environ["RAG_AUTO_SEED_ENABLED"] = "false"
 
@@ -75,8 +85,37 @@ def _isolated_global_application_database():
     global session must point to an isolated SQLite database rather than the
     restored PostgreSQL instance.
     """
+    if _RUN_POSTGRES_TESTS:
+        # PostgreSQL integration tests own their setup/cleanup and must not
+        # receive legacy Base tables as a side effect of the global fixture.
+        yield
+        return
+
     import app.models  # noqa: F401 - register every model on Base.metadata
+    from app.database.bases import LegacyBase, PlatformBase, TenantBase
     from app.database.session import Base, engine
+
+    # A large part of the legacy test suite still calls
+    # ``Business.metadata.create_all`` (the old single-database fixture). The
+    # production models now correctly live on two metadata boundaries, so
+    # keep those tests meaningful by making the legacy bootstrap create both
+    # sides when it is used in SQLite. This is test-only compatibility; the
+    # production migrations and engines remain separated.
+    if not getattr(LegacyBase.metadata, "_tenant_fixture_bootstrapped", False):
+        legacy_create_all = LegacyBase.metadata.create_all
+
+        def create_all_with_tenant_tables(bind, tables=None, checkfirst=True, **kwargs):
+            legacy_create_all(
+                bind,
+                tables=tables,
+                checkfirst=checkfirst,
+                **kwargs,
+            )
+            PlatformBase.metadata.create_all(bind, checkfirst=checkfirst, **kwargs)
+            TenantBase.metadata.create_all(bind, checkfirst=checkfirst, **kwargs)
+
+        LegacyBase.metadata.create_all = create_all_with_tenant_tables
+        LegacyBase.metadata._tenant_fixture_bootstrapped = True
 
     Base.metadata.create_all(engine)
     yield

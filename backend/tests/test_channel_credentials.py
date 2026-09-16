@@ -47,6 +47,7 @@ class ChannelCredentialTests(unittest.TestCase):
                 external_account_id="page-1",
                 name="Page",
                 access_token="token",
+                reserve_channel_slot=lambda: None,
             )
             with self.assertRaises(PermissionError):
                 upsert_channel_connection(

@@ -9,8 +9,8 @@ api_router.include_router(auth.router, tags=["Auth"])
 api_router.include_router(platform.router, tags=["Platform administration"])
 api_router.include_router(usage.router, tags=["Tenant usage"])
 api_router.include_router(onboarding.router, tags=["Self-service onboarding"])
+api_router.include_router(support.router, tags=["Temporary support access"])
 api_router.include_router(privacy.router, tags=["Privacy"])
-api_router.include_router(support.router, tags=["Support access"])
 
 api_router.include_router(
     meta_oauth.router,

@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, Channel, ChannelEvent, Conversation, Customer, Message
+from app.tenancy.registry import register_webhook_route
 
 
 class UnifiedInboxWebhookTests(unittest.TestCase):
@@ -50,6 +51,17 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
                     config={"webhook_secret": "zalo-unified-secret"},
                 ),
             ])
+            db.flush()
+            for channel in db.query(Channel).all():
+                config = channel.config if isinstance(channel.config, dict) else {}
+                register_webhook_route(
+                    db,
+                    provider=channel.channel_type,
+                    external_account_id=channel.external_account_id,
+                    webhook_secret=config.get("webhook_secret"),
+                    business_id=business.id,
+                    channel_id=channel.id,
+                )
             db.commit()
             cls.business_id = business.id
 
@@ -141,7 +153,11 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
 
         self.assertTrue(all(response.status_code == 200 for response in responses), [response.text for response in responses])
         with Session(self.engine) as db:
-            messages = db.scalars(select(Message).order_by(Message.id)).all()
+            messages = db.scalars(
+                select(Message)
+                .where(Message.direction == "inbound")
+                .order_by(Message.id)
+            ).all()
             self.assertEqual(["facebook", "instagram", "telegram", "zalo"], [message.channel for message in messages])
             self.assertEqual(["alo", "alo", "alo", "alo"], [message.content for message in messages])
             self.assertEqual(4, db.query(ChannelEvent).count())

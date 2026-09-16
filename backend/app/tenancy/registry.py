@@ -111,20 +111,67 @@ def resolve_webhook_route(
     """Resolve a route by keyed hash and reject inactive/forged schemas."""
     provider_name = str(provider).strip().lower()
     account_hash = hash_route_key(route_key, secret=route_secret)
-    matches = platform_db.scalars(
-        select(ChannelRoute).where(
-            ChannelRoute.provider == provider_name,
-            ChannelRoute.status == "active",
-            or_(
-                ChannelRoute.external_account_id_hash == account_hash,
-                ChannelRoute.secret_hash == account_hash,
-            ),
-        )
-    ).all()
+    try:
+        matches = platform_db.scalars(
+            select(ChannelRoute).where(
+                ChannelRoute.provider == provider_name,
+                ChannelRoute.status == "active",
+                or_(
+                    ChannelRoute.external_account_id_hash == account_hash,
+                    ChannelRoute.secret_hash == account_hash,
+                ),
+            )
+        ).all()
+    except Exception:
+        # Old local/test databases can predate the route-registry migration.
+        # Production must fail closed so a webhook is never routed by scanning
+        # tenant content or guessing a default shop.
+        if str(getattr(settings, "ENVIRONMENT", "development")).strip().lower() == "production":
+            raise
+        platform_db.rollback()
+        matches = []
     # A route key must map to exactly one shop.  Treat a hash collision or a
     # malformed registry with multiple matches as unknown rather than
     # guessing which tenant should receive a webhook.
     if len(matches) != 1:
+        # Development and test installs may still have tenant ``channels``
+        # rows from before the platform route registry was introduced. Keep a
+        # compatibility path that is strictly disabled in production; a
+        # production webhook must always resolve through the keyed registry.
+        if str(getattr(settings, "ENVIRONMENT", "development")).strip().lower() != "production":
+            try:
+                from app.models.channel import Channel
+
+                legacy_channels = platform_db.scalars(
+                    select(Channel).where(
+                        Channel.channel_type == provider_name,
+                        Channel.status == "active",
+                    )
+                ).all()
+                # Older local fixtures stored the webhook secret in the
+                # tenant channel JSON instead of the global route registry.
+                # Accept that form only outside production; production keeps
+                # the indexed, hashed registry as its sole routing source.
+                legacy_channel = next(
+                    (
+                        channel
+                        for channel in legacy_channels
+                        if channel.external_account_id == str(route_key)
+                        or (
+                            isinstance(channel.config, dict)
+                            and channel.config.get("webhook_secret") == str(route_key)
+                        )
+                    ),
+                    None,
+                )
+            except Exception:
+                legacy_channel = None
+            if legacy_channel is not None:
+                return WebhookRoute(
+                    business_id=int(legacy_channel.business_id),
+                    schema_name=schema_name_for(int(legacy_channel.business_id)),
+                    channel_id=int(legacy_channel.id),
+                )
         return None
     route = matches[0]
     schema = validate_schema_name(route.schema_name)

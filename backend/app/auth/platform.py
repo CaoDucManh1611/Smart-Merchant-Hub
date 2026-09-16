@@ -8,7 +8,6 @@ from app.auth.dependencies import get_current_user
 from app.db.dependencies import get_db
 from app.models.business import User
 from app.models.saas import PlatformMembership
-from app.tenancy.dependencies import set_platform_database_context
 
 
 def require_platform_admin(
@@ -26,5 +25,4 @@ def require_platform_admin(
             status_code=403,
             detail={"code": "platform_admin_required", "message": "Chỉ quản trị nền tảng mới được thao tác."},
         )
-    set_platform_database_context(db)
     return user

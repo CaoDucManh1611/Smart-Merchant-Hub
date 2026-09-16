@@ -321,10 +321,10 @@ def _line_matches_text(line: dict, text: str | None) -> bool:
         if normalized and normalized in folded:
             return True
         line_tokens = _meaningful_tokens(value)
-        if line_tokens and (
-            len(line_tokens & query_tokens) >= max(1, (len(line_tokens) + 1) // 2)
-            or any(len(token) >= 3 for token in line_tokens & query_tokens)
-        ):
+        # Require a meaningful portion of a multi-word product name. A lone
+        # generic token such as ``product`` must not make every order line a
+        # candidate when the customer named one specific item.
+        if line_tokens and len(line_tokens & query_tokens) >= max(1, (len(line_tokens) + 1) // 2):
             return True
     return False
 

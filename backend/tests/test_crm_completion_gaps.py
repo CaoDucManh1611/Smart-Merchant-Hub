@@ -550,20 +550,22 @@ def test_confirming_a_held_draft_does_not_double_reserve_inventory():
     engine = _engine()
     with Session(engine) as db:
         business = Business(name="Held Confirm Shop", slug="held-confirm-shop")
+        db.add(business)
+        db.flush()
         customer = Customer(
-            business=business,
+            business_id=business.id,
             channel="telegram",
             external_user_id="held-confirm-user",
         )
         product = Product(
-            business=business,
+            business_id=business.id,
             sku="HELD-01",
             name="Held Product",
             price=Decimal("50"),
             stock_quantity=5,
             status="active",
         )
-        db.add_all([business, customer, product])
+        db.add_all([customer, product])
         db.flush()
         order = Order(
             business_id=business.id,

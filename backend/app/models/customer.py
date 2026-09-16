@@ -11,6 +11,7 @@ class Customer(TenantBase):
 
     __table_args__ = (
         UniqueConstraint(
+            "business_id",
             "channel",
             "external_user_id",
             name="uq_customers_channel_user",

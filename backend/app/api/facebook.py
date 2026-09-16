@@ -109,7 +109,9 @@ async def _receive_meta_webhook(
                         "message": {k: v for k, v in saved.items() if k != "_created"},
                     })
     if events and not grouped:
-        return {"status": "duplicate_or_unknown_channel", "processed": 0}
+        # Unknown or already-processed deliveries are acknowledged so
+        # providers do not retry indefinitely. No tenant data is touched.
+        return {"status": "received", "processed": 0}
     return {"status": "received", "processed": processed}
 
 

@@ -21,6 +21,8 @@ def collect_operational_snapshot(db: Session) -> dict:
     tenant_bound = bool(getattr(db, "info", {}).get("tenant_schema"))
     snapshot = {
         "database": {"status": "ok"},
+        "platform_database": {"status": "unknown"},
+        "tenant_database": {"status": "unknown"},
         "queue": {"status": "unknown", "pending": None, "running": None, "failed": None},
         "provider": {"status": "ok", "circuits": provider_breaker_snapshot()},
         "rate_limit": {"backend": settings.RATE_LIMIT_BACKEND, "status": "disabled" if not settings.RATE_LIMIT_ENABLED else "ok"},
@@ -63,6 +65,22 @@ def collect_operational_snapshot(db: Session) -> dict:
         snapshot["queue"] = {"status": "error", "pending": None, "running": None, "failed": None}
         snapshot["ai"]["status"] = "error"
 
+    # Check the two explicit SaaS databases independently.  No tenant rows or
+    # payloads are read; this is reachability-only telemetry for probes.
+    for name, engine in (
+        ("platform_database", "platform_engine"),
+        ("tenant_database", "tenant_engine"),
+    ):
+        try:
+            from app.database import platform_session, tenant_session
+
+            target = getattr(platform_session if name == "platform_database" else tenant_session, engine)
+            with target.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            snapshot[name] = {"status": "ok"}
+        except Exception as error:  # noqa: BLE001 - redact details
+            snapshot[name] = {"status": "error", "error_type": type(error).__name__}
+
     circuits = snapshot["provider"]["circuits"]
     if any(item.get("state") == "open" for item in circuits.values()):
         snapshot["provider"]["status"] = "degraded"
@@ -91,6 +109,9 @@ def evaluate_alerts(snapshot: dict) -> list[dict]:
     ai = snapshot.get("ai", {})
     if database.get("status") != "ok":
         alerts.append({"name": "database_unavailable", "severity": "critical", "status": "firing"})
+    for database_name in ("platform_database", "tenant_database"):
+        if database_name in snapshot and snapshot.get(database_name, {}).get("status") not in {"ok", "unknown"}:
+            alerts.append({"name": f"{database_name}_unavailable", "severity": "critical", "status": "firing"})
     pending = queue.get("pending")
     if pending is not None and pending >= settings.ALERT_QUEUE_PENDING_THRESHOLD:
         alerts.append({"name": "queue_backlog", "severity": "warning", "status": "firing", "value": pending, "threshold": settings.ALERT_QUEUE_PENDING_THRESHOLD})

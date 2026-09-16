@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.database.platform_session import get_platform_db
+from app.database.tenant_session import tenant_session
 from app.models.business import User
+from app.models.channel import Channel
+from app.models.crm_job import CrmJob
 from app.models.platform_control import SupportGrant
 from app.schemas.support import (
     SupportGrantCreate,
@@ -19,7 +24,9 @@ from app.services.support_access import (
     create_support_grant,
     issue_support_token,
     revoke_support_grant,
+    validate_support_token,
 )
+from app.tenancy.schema import schema_name_for
 
 
 router = APIRouter()
@@ -113,3 +120,59 @@ def create_support_session(
         )
     except (PermissionError, LookupError, ValueError) as exc:
         raise _support_error(platform_db, exc) from exc
+
+
+def _support_scope(scope: str):
+    def dependency(
+        authorization: str | None = Header(default=None),
+        platform_db: Session = Depends(get_platform_db),
+    ):
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise HTTPException(status_code=401, detail="Yêu cầu support token.")
+        try:
+            session = validate_support_token(
+                platform_db,
+                token=authorization[7:].strip(),
+                scope=scope,
+            )
+            platform_db.commit()
+            return session
+        except (PermissionError, LookupError, ValueError) as exc:
+            raise _support_error(platform_db, exc) from exc
+
+    return dependency
+
+
+@router.get("/support/health")
+def support_health(session=Depends(_support_scope("settings:read"))):
+    return {"business_id": session.business_id, "status": "ok", "scope": "settings:read"}
+
+
+@router.post("/support/channels/{channel_id}/diagnose")
+def diagnose_channel(channel_id: int, session=Depends(_support_scope("channels:diagnose"))):
+    with tenant_session(schema_name_for(session.business_id)) as tenant_db:
+        channel = tenant_db.query(Channel).filter(Channel.id == channel_id).first()
+        if channel is None:
+            raise HTTPException(status_code=404, detail="Kênh không tồn tại.")
+        return {
+            "business_id": session.business_id,
+            "channel_id": channel.id,
+            "status": channel.status,
+            "channel_type": channel.channel_type,
+        }
+
+
+@router.post("/support/jobs/{job_id}/retry")
+def retry_job(job_id: int, session=Depends(_support_scope("jobs:retry"))):
+    with tenant_session(schema_name_for(session.business_id)) as tenant_db:
+        job = tenant_db.get(CrmJob, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job không tồn tại.")
+        if job.status == "succeeded":
+            raise HTTPException(status_code=409, detail="Job đã hoàn tất, không thể chạy lại.")
+        job.status = "pending"
+        job.run_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        job.locked_at = None
+        job.last_error = None
+        tenant_db.commit()
+        return {"business_id": session.business_id, "job_id": job.id, "queued": True}

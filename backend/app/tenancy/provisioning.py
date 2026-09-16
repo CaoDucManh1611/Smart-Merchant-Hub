@@ -1,38 +1,52 @@
-"""Retryable, non-destructive provisioning saga for one shop schema."""
+"""Retryable, idempotent tenant-schema provisioning saga.
+
+Provisioning is deliberately driven from the control-plane database.  The
+tenant schema is never dropped as a compensating action: an interrupted
+migration is recorded as ``provision_failed`` and can be retried safely.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database.tenant_session import tenant_engine, tenant_session
+from app.database.tenant_session import tenant_engine
 from app.models.platform_control import PlatformBusiness, ProvisioningOperation, TenantRegistry
 from app.tenancy.migration_runner import current_tenant_revision, upgrade_tenant_schema
-from app.tenancy.schema import schema_name_for, validate_schema_name
+from app.tenancy.schema import schema_name_for
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+class ProvisioningValidationError(ValueError):
+    """A caller supplied an invalid provisioning request."""
 
 
-def _error_code(exc: Exception) -> str:
-    """Return a bounded operational code; never persist exception text."""
-    return type(exc).__name__.lower().replace(" ", "_")[:80] or "provisioning_failed"
+def _error_code(error: Exception) -> str:
+    """Convert arbitrary migration failures to a stable, non-sensitive code."""
+
+    name = type(error).__name__.strip().lower()
+    if "timeout" in name or "timeout" in str(error).lower():
+        return "tenant_migration_timeout"
+    if "permission" in name or "permission" in str(error).lower():
+        return "tenant_migration_permission_denied"
+    if "connect" in name or "connect" in str(error).lower():
+        return "tenant_database_unavailable"
+    return "tenant_migration_failed"
 
 
-def _platform_business(platform_db: Session, business_id: int) -> PlatformBusiness | None:
-    try:
-        return platform_db.scalar(
-            select(PlatformBusiness).where(PlatformBusiness.id == int(business_id))
-        )
-    except Exception:
-        # A legacy rollout database may not have the new control-plane tables
-        # yet.  The caller gets a retryable failure rather than a silent
-        # fallback to a shared tenant schema.
-        return None
+def _existing_operation(db: Session, idempotency_key: str) -> ProvisioningOperation | None:
+    return db.scalar(
+        select(ProvisioningOperation).where(
+            ProvisioningOperation.idempotency_key == idempotency_key,
+        ).with_for_update()
+    )
+
+
+def _existing_registry(db: Session, business_id: int) -> TenantRegistry | None:
+    return db.scalar(
+        select(TenantRegistry).where(TenantRegistry.business_id == business_id).with_for_update()
+    )
 
 
 def provision_shop(
@@ -40,136 +54,110 @@ def provision_shop(
     *,
     business_id: int,
     idempotency_key: str,
-    migrate: Callable | None = None,
-    seed: Callable[[Session, int], None] | None = None,
-    revision_lookup: Callable[[str], str | None] | None = None,
+    tenant_connect: Callable[[], object] | None = None,
 ) -> TenantRegistry:
-    """Provision exactly one validated schema and mark it active on success.
+    """Provision ``shop_<business_id>`` and return its registry state.
 
-    The platform transaction records an operation before touching the tenant
-    database.  A failed migration leaves the schema and registry in a retryable
-    ``error`` state; no data-bearing schema is ever dropped automatically.
-    ``migrate`` and ``seed`` are injectable for tests and controlled pilots.
+    ``tenant_connect`` is injectable for deterministic tests; production uses
+    the configured tenant engine.  Replaying an idempotency key returns the
+    original operation result and never creates a second schema or operation.
     """
-    shop_id = int(business_id)
-    if shop_id <= 0:
-        raise ValueError("business_id must be positive")
+
+    try:
+        business_id = int(business_id)
+    except (TypeError, ValueError) as exc:
+        raise ProvisioningValidationError("business_id must be a positive integer") from exc
     key = str(idempotency_key or "").strip()
+    if business_id <= 0:
+        raise ProvisioningValidationError("business_id must be a positive integer")
     if not key or len(key) > 180:
-        raise ValueError("idempotency_key is required")
-    schema = schema_name_for(shop_id)
-    validate_schema_name(schema)
+        raise ProvisioningValidationError("idempotency_key is required and must be at most 180 characters")
 
-    business = _platform_business(platform_db, shop_id)
-    if business is None:
-        raise LookupError("Platform business not found")
-
-    operation = platform_db.scalar(
-        select(ProvisioningOperation).where(
-            ProvisioningOperation.idempotency_key == key,
-        ).with_for_update()
+    business = platform_db.scalar(
+        select(PlatformBusiness).where(PlatformBusiness.id == business_id).with_for_update()
     )
-    if operation is None:
+    if business is None:
+        raise LookupError("Shop không tồn tại trong platform database.")
+
+    operation = _existing_operation(platform_db, key)
+    registry = _existing_registry(platform_db, business_id)
+    if operation is not None:
+        # A key is immutable.  If the caller replays after a failure, keep the
+        # same operation and retry it; successful operations are terminal.
+        if operation.business_id != business_id:
+            raise ProvisioningValidationError("idempotency_key đã được dùng cho shop khác")
+        registry = registry or _existing_registry(platform_db, operation.business_id)
+        if operation.state == "succeeded" and registry is not None:
+            return registry
+    else:
         operation = ProvisioningOperation(
             idempotency_key=key,
-            business_id=shop_id,
+            business_id=business_id,
             state="queued",
             attempt_count=0,
         )
         platform_db.add(operation)
-        platform_db.flush()
-    elif int(operation.business_id) != shop_id:
-        raise PermissionError("Idempotency key belongs to another shop")
 
-    registry = platform_db.scalar(
-        select(TenantRegistry).where(TenantRegistry.business_id == shop_id).with_for_update()
-    )
     if registry is None:
         registry = TenantRegistry(
-            business_id=shop_id,
-            schema_name=schema,
+            business_id=business_id,
+            schema_name=schema_name_for(business_id),
             state="provisioning",
             feature_enabled=False,
         )
         platform_db.add(registry)
-        platform_db.flush()
-    elif validate_schema_name(str(registry.schema_name)) != schema:
-        raise RuntimeError("Tenant registry schema does not match business")
-
-    if operation.state == "succeeded" and registry.state == "active":
-        return registry
-    if registry.state == "active" and registry.feature_enabled:
+    elif registry.state == "active":
         operation.state = "succeeded"
-        platform_db.flush()
+        platform_db.commit()
         return registry
 
     operation.state = "running"
     operation.attempt_count = int(operation.attempt_count or 0) + 1
-    operation.last_error_code = None
     registry.state = "provisioning"
     registry.feature_enabled = False
     registry.migration_error = None
-    registry.updated_at = _now()
     platform_db.flush()
     platform_db.commit()
 
+    connect = tenant_connect or (lambda: tenant_engine.connect())
     try:
-        if migrate is not None:
-            revision = str(migrate(schema)).strip()
-        else:
-            with tenant_engine.begin() as connection:
-                revision = upgrade_tenant_schema(connection, schema)
-        if not revision:
-            raise RuntimeError("tenant_revision_missing")
-
-        if seed is not None:
-            with tenant_session(schema) as tenant_db:
-                seed(tenant_db, shop_id)
-
-        if revision_lookup is not None:
-            current = revision_lookup(schema)
-        else:
-            with tenant_engine.connect() as connection:
-                current = current_tenant_revision(connection, schema)
-        if not current or current != revision:
-            raise RuntimeError("tenant_revision_mismatch")
-
-        registry = platform_db.scalar(
-            select(TenantRegistry).where(TenantRegistry.business_id == shop_id).with_for_update()
-        )
-        operation = platform_db.scalar(
-            select(ProvisioningOperation).where(ProvisioningOperation.idempotency_key == key).with_for_update()
-        )
-        if registry is None or operation is None:
-            raise RuntimeError("provisioning_state_missing")
-        registry.schema_name = schema
-        registry.tenant_revision = current
-        registry.state = "active"
-        registry.feature_enabled = True
-        registry.migration_error = None
-        registry.updated_at = _now()
-        operation.state = "succeeded"
-        operation.last_error_code = None
+        # Production always uses the explicitly configured tenant engine.
+        connection_context = connect()
+        with connection_context as connection:
+            revision = upgrade_tenant_schema(connection, registry.schema_name)
+            if not revision or current_tenant_revision(connection, registry.schema_name) != revision:
+                raise RuntimeError("tenant_revision_not_recorded")
+    except Exception as exc:  # noqa: BLE001 - sanitize before persisting
+        registry.state = "provision_failed"
+        registry.feature_enabled = False
+        registry.migration_error = _error_code(exc)
+        operation.state = "failed"
+        operation.last_error_code = registry.migration_error
         platform_db.commit()
         return registry
-    except Exception as exc:
-        platform_db.rollback()
-        registry = platform_db.scalar(
-            select(TenantRegistry).where(TenantRegistry.business_id == shop_id).with_for_update()
-        )
-        operation = platform_db.scalar(
-            select(ProvisioningOperation).where(ProvisioningOperation.idempotency_key == key).with_for_update()
-        )
-        if registry is not None:
-            registry.state = "error"
-            registry.feature_enabled = False
-            registry.migration_error = _error_code(exc)
-            registry.updated_at = _now()
-        if operation is not None:
-            operation.state = "failed"
-            operation.last_error_code = _error_code(exc)
-        platform_db.commit()
-        raise
+
+    registry.tenant_revision = str(revision)
+    registry.state = "active"
+    registry.feature_enabled = True
+    registry.migration_error = None
+    operation.state = "succeeded"
+    operation.last_error_code = None
+    platform_db.commit()
+    return registry
 
 
-__all__ = ["provision_shop"]
+def retry_provision_shop(
+    platform_db: Session,
+    *,
+    business_id: int,
+    idempotency_key: str,
+    tenant_connect: Callable[[], object] | None = None,
+) -> TenantRegistry:
+    """Explicit retry entry point; it shares the same idempotent saga."""
+
+    return provision_shop(
+        platform_db,
+        business_id=business_id,
+        idempotency_key=idempotency_key,
+        tenant_connect=tenant_connect,
+    )

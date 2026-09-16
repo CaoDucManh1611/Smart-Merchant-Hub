@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -27,6 +28,33 @@ from app.services.quota_service import QuotaExceededError, release_quota, reserv
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Kept as a narrow compatibility seam for older integration tests and local
+# scripts that injected a single-database ``SessionLocal``.  Runtime requests
+# use ``tenant_session`` below, so this value is intentionally unset in normal
+# operation and cannot bypass tenant schema routing accidentally.
+SessionLocal = None
+
+
+@contextmanager
+def _tenant_db(business_id: int):
+    """Open the tenant session, honoring an explicit legacy test injection."""
+    if SessionLocal is None:
+        with tenant_session(schema_name_for(int(business_id))) as db:
+            yield db
+        return
+
+    resource = SessionLocal()
+    if hasattr(resource, "__enter__"):
+        with resource as db:
+            yield db
+        return
+    try:
+        yield resource
+    finally:
+        close = getattr(resource, "close", None)
+        if callable(close):
+            close()
 
 
 def _redirect_uri() -> str:
@@ -147,7 +175,7 @@ async def meta_oauth_status(
     # Credential state is tenant-owned in ``channels``.  app_settings only
     # retains non-secret display metadata during the transition from the old
     # single-shop integration.
-    with tenant_session(schema_name_for(tenant.business_id)) as db:
+    with _tenant_db(tenant.business_id) as db:
         facebook = db.query(Channel).filter(
             Channel.business_id == tenant.business_id,
             Channel.channel_type == "facebook",
@@ -193,7 +221,7 @@ async def start_meta_oauth(
     if not app_secret:
         raise HTTPException(status_code=500, detail="META_APP_SECRET is required for signed OAuth state")
     state = issue_oauth_state(tenant.business_id, app_secret)
-    with tenant_session(schema_name_for(tenant.business_id)) as db:
+    with _tenant_db(tenant.business_id) as db:
         register_oauth_state(db, state, app_secret)
     scope = (
         "pages_show_list,pages_read_engagement,pages_manage_metadata,"
@@ -233,7 +261,7 @@ async def meta_oauth_callback(
         # Verify the signed state before selecting a tenant schema.  The
         # business id is trusted only after the HMAC and expiry checks pass.
         state_payload = verify_oauth_state(state or "", settings.META_APP_SECRET)
-        with tenant_session(schema_name_for(int(state_payload["business_id"]))) as db:
+        with _tenant_db(int(state_payload["business_id"])) as db:
             state_payload = consume_oauth_state(db, state or "", settings.META_APP_SECRET)
     except (PermissionError, ValueError, KeyError):
         return _frontend_redirect("error", "OAuth state không hợp lệ hoặc đã hết hạn.")
@@ -304,7 +332,7 @@ async def meta_oauth_callback(
             business_id = int(state_payload["business_id"])
             schema_name = schema_name_for(business_id)
             with PlatformSessionLocal() as platform_db:
-                with tenant_session(schema_name) as db:
+                with _tenant_db(business_id) as db:
                     facebook_channel = upsert_channel_connection(
                         db,
                         business_id=business_id,
@@ -367,7 +395,7 @@ async def meta_oauth_callback(
                 access_token=str(page_token),
             )
 
-            with tenant_session(schema_name) as db:
+            with _tenant_db(business_id) as db:
                 facebook_channel = db.query(Channel).filter(
                     Channel.business_id == business_id,
                     Channel.channel_type == "facebook",
@@ -398,21 +426,30 @@ async def disconnect_meta(
     tenant: TenantContext = Depends(get_tenant_context),
 ) -> dict:
     """Revoke only this tenant's stored Meta channel credentials."""
-    with PlatformSessionLocal() as platform_db:
-        with tenant_session(schema_name_for(tenant.business_id)) as db:
-            channels = db.query(Channel).filter(
-                Channel.business_id == tenant.business_id,
-                Channel.channel_type.in_(("facebook", "instagram")),
-            ).all()
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            for channel in channels:
-                was_active = channel.status == "active"
-                channel.status = "inactive"
-                channel.access_token = None
-                channel.access_token_encrypted = None
-                channel.disconnected_at = now
-                if was_active:
-                    release_quota(platform_db, tenant.business_id, "connected_channels")
-                deactivate_route_for_channel(platform_db, channel.id)
-        platform_db.commit()
+    active_channel_ids: list[int] = []
+    with _tenant_db(tenant.business_id) as db:
+        channels = db.query(Channel).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.channel_type.in_(("facebook", "instagram")),
+        ).all()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for channel in channels:
+            if channel.status == "active":
+                active_channel_ids.append(int(channel.id))
+            channel.status = "inactive"
+            channel.access_token = None
+            channel.access_token_encrypted = None
+            channel.disconnected_at = now
+        # Credential revocation is the security-critical operation and must
+        # not be rolled back merely because control-plane accounting is down.
+        db.commit()
+
+    try:
+        with PlatformSessionLocal() as platform_db:
+            for channel_id in active_channel_ids:
+                release_quota(platform_db, tenant.business_id, "connected_channels")
+                deactivate_route_for_channel(platform_db, channel_id)
+            platform_db.commit()
+    except Exception as exc:  # noqa: BLE001 - credentials are already revoked
+        logger.warning("Meta disconnect platform reconciliation deferred (%s)", type(exc).__name__)
     return {"connected": False}

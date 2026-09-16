@@ -1,16 +1,100 @@
-"""FastAPI dependency for obtaining a trusted tenant context."""
+"""FastAPI dependencies for trusted tenant contexts and schema sessions."""
+
+from dataclasses import dataclass
 
 from fastapi import Depends, Header, HTTPException, Request
-from sqlalchemy import select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.auth.dependencies import get_current_user, get_optional_user
 from app.database.platform_session import get_platform_db
-from app.tenancy.context import TenantContext, resolve_tenant_context
-from app.auth.dependencies import get_optional_user
+from app.database.tenant_session import tenant_session
+from app.db.dependencies import get_db
 from app.models.business import User
 from app.models.platform_control import TenantRegistry
-from app.db.dependencies import get_db
+from app.tenancy.context import TenantContext, resolve_tenant_context
+
+
+@dataclass(frozen=True)
+class AuthenticatedTenant:
+    """Tenant identity resolved from the bearer session and platform registry."""
+
+    business_id: int
+    schema_name: str
+    user_id: int
+    role: str
+
+
+def get_authenticated_tenant(
+    user: User = Depends(get_current_user),
+    platform_db: Session = Depends(get_platform_db),
+) -> AuthenticatedTenant:
+    """Resolve a serviceable tenant without accepting a request tenant id."""
+
+    if user.business_id is None:
+        raise HTTPException(status_code=403, detail="Tài khoản chưa được gán vào shop.")
+    registry = platform_db.scalar(
+        select(TenantRegistry).where(
+            TenantRegistry.business_id == user.business_id,
+            TenantRegistry.state == "active",
+            TenantRegistry.feature_enabled.is_(True),
+        )
+    )
+    if registry is None:
+        raise HTTPException(
+            status_code=423,
+            detail={"code": "tenant_unprovisioned", "message": "Shop chưa sẵn sàng."},
+        )
+    return AuthenticatedTenant(
+        business_id=int(user.business_id),
+        schema_name=registry.schema_name,
+        user_id=int(user.id),
+        role=str(user.role or "").strip().lower(),
+    )
+
+
+def get_tenant_db(context: AuthenticatedTenant = Depends(get_authenticated_tenant)):
+    """Yield a transaction-local tenant session for the authenticated shop."""
+
+    with tenant_session(context.schema_name) as db:
+        yield db
+
+
+def _enforce_registry_if_available(db: Session, business_id: int) -> None:
+    """Fail closed once the platform registry has been migrated.
+
+    Legacy test/demo databases do not have a registry table and continue to
+    use the compatibility header path.  A deployed two-database runtime does
+    have that table, so an authenticated request must reference an active,
+    enabled schema before it can touch tenant APIs.
+    """
+
+    try:
+        from app.database.platform_session import platform_engine
+
+        if "tenant_registry" not in set(inspect(platform_engine).get_table_names()):
+            return
+        with platform_engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT state, feature_enabled FROM tenant_registry "
+                    "WHERE business_id = :business_id"
+                ),
+                {"business_id": int(business_id)},
+            ).mappings().first()
+        if row is None or row["state"] != "active" or not bool(row["feature_enabled"]):
+            raise HTTPException(
+                status_code=423,
+                detail={"code": "tenant_unprovisioned", "message": "Shop chưa sẵn sàng."},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Registry availability is a readiness concern, not a reason to leak
+        # database internals; production callers receive a controlled 503.
+        if settings.ENVIRONMENT.strip().lower() == "production":
+            raise HTTPException(status_code=503, detail="Tenant registry chưa sẵn sàng.") from None
 
 
 def _set_database_tenant(db: Session, business_id: int) -> None:
@@ -26,17 +110,6 @@ def _set_database_tenant(db: Session, business_id: int) -> None:
         text("SELECT set_config('app.business_id', :business_id, true)"),
         {"business_id": str(int(business_id))},
     )
-
-
-def set_platform_database_context(db: Session) -> None:
-    """Allow an authenticated platform admin to inspect all tenants.
-
-    The flag is transaction-local and is only set after the platform
-    membership dependency has passed.
-    """
-    if db.bind is None or db.bind.dialect.name != "postgresql":
-        return
-    db.execute(text("SELECT set_config('app.platform_admin', 'true', true)"))
 
 
 def get_tenant_context(
@@ -59,26 +132,8 @@ def get_tenant_context(
             environment=settings.ENVIRONMENT,
         )
         _set_database_tenant(db, tenant.business_id)
-        # Production never opens a shop schema merely because a user row or
-        # bearer claim exists.  The platform registry is the source of truth
-        # for provisioning/cutover state and prevents access to a partial or
-        # disabled schema.  Development keeps the legacy header workflow so
-        # local smoke tests can run before the pilot registry is populated.
-        if settings.ENVIRONMENT.strip().lower() == "production":
-            try:
-                registry = platform_db.scalar(
-                    select(TenantRegistry).where(
-                        TenantRegistry.business_id == tenant.business_id,
-                    )
-                )
-            except Exception as exc:
-                raise PermissionError("Tenant registry is unavailable") from exc
-            if (
-                registry is None
-                or registry.state != "active"
-                or not bool(registry.feature_enabled)
-            ):
-                raise PermissionError("Tenant is not active")
+        if authenticated_user is not None:
+            _enforce_registry_if_available(db, tenant.business_id)
         return tenant
     except PermissionError as exc:
         # Tenant resolution is an HTTP boundary.  A bad/missing context must

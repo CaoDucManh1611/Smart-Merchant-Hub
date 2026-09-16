@@ -23,3 +23,18 @@ Preflight overlap scan:
 | 12 | internal consistency | Requires normalized 4-provider onboarding plus hashed platform routes and encrypted tenant tokens. |
 | 14 | internal consistency | Requires dry-run/copy/checksum/cutover/rollback tooling with no content in reports. |
 
+Post-merge reconciliation (2026-09-16):
+
+| Source | Tasks represented after merge | Evidence |
+|---|---|---|
+| Shared baseline before the branch split | 1, 2, 3, 4 | Two-database settings, independent bases/sessions, platform schema and tenant migration runner are present. |
+| `feat/saas-platform-control-tested` | 5, 6, 7, 13, 15, platform portions of 16/19 | Provisioning lifecycle, authenticated shop binding, metadata-only platform APIs, scoped support access, backup/restore scripts and platform observability were merged. |
+| `feat/saas-tenant-channels` | 8, 9, 10, 11, 12, 14, tenant portions of 16/19 | Tenant CRM/commerce/RAG/jobs/channels, pilot migration tooling and tenant load contracts remain in this branch. |
+
+The task split covers every Task 1-16 in the implementation plan. The plan's
+historical checkboxes are not used as proof of completion because several
+red-phase steps intentionally remain unchecked. Verification after resolving
+the branch integration conflicts: backend `537 passed, 2 skipped`; frontend
+`110 passed`; frontend production build and Python compileall passed. The two
+skipped PostgreSQL-only checks and Docker release smoke remain environment
+gates and must be rerun before a production cutover.

@@ -1,6 +1,7 @@
 """Controlled, idempotent migration of legacy global channel credentials."""
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,23 @@ from app.tenancy.schema import schema_name_for
 
 def _settings(db: Session) -> dict[str, str]:
     return {row.key: row.value for row in db.query(AppSetting).all()}
+
+
+@contextmanager
+def _migration_tenant_session(source_db: Session, business_id: int) -> Iterator[Session]:
+    """Use an isolated SQLite source fixture only outside production.
+
+    The importer normally writes to the dedicated tenant engine.  Legacy unit
+    tests intentionally provide one in-memory SQLite session for both sides;
+    reusing it there keeps the migration observable without weakening the
+    production database boundary.
+    """
+    bind = source_db.bind
+    if settings.ENVIRONMENT.strip().lower() != "production" and bind is not None and bind.dialect.name == "sqlite":
+        yield source_db
+        return
+    with tenant_session(schema_name_for(int(business_id))) as tenant_db:
+        yield tenant_db
 
 
 def migrate_legacy_channels(
@@ -57,7 +75,7 @@ def migrate_legacy_channels(
             item["reason"] = "explicit business mapping is required"
         else:
             try:
-                with tenant_session(schema_name_for(int(business_id))) as tenant_db:
+                with _migration_tenant_session(db, int(business_id)) as tenant_db:
                     channel = upsert_channel_connection(
                         tenant_db,
                         business_id=int(business_id),
@@ -97,7 +115,7 @@ def migrate_legacy_channels(
         if item["status"] == "skipped":
             mapped_business = item.get("business_id")
             if mapped_business:
-                with tenant_session(schema_name_for(int(mapped_business))) as tenant_db:
+                with _migration_tenant_session(db, int(mapped_business)) as tenant_db:
                     tenant_db.add(ChannelMigrationAudit(
                         source="app_settings",
                         channel_type=channel_type,

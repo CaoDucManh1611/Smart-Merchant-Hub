@@ -169,7 +169,10 @@ class TenantRegistry(PlatformBase):
     __table_args__ = (
         UniqueConstraint("business_id", name="uq_tenant_registry_business"),
         UniqueConstraint("schema_name", name="uq_tenant_registry_schema"),
-        CheckConstraint("state IN ('provisioning','ready','active','migrating','error','disabled')", name="ck_tenant_registry_state"),
+        CheckConstraint(
+            "state IN ('provisioning','active','provision_failed','disabled','ready','migrating','error')",
+            name="ck_tenant_registry_state",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -224,3 +227,18 @@ class PlatformAudit(PlatformBase):
     resource_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PlatformProviderIncident(PlatformBase):
+    """Redacted provider-health event; payloads remain in tenant storage."""
+
+    __tablename__ = "platform_provider_incidents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(ForeignKey("platform_businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    channel_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    channel_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    error_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
