@@ -54,6 +54,41 @@ class OnboardingSubscriptionOut(BaseModel):
     status: str
 
 
+class OnboardingPlanPurchase(BaseModel):
+    """Plan activation requested by an authenticated shop owner.
+
+    The local/demo flow marks the selected plan active immediately so a shop
+    can exercise channel and staff test cases. Production still requires the
+    platform administrator/payment workflow.
+    """
+
+    plan_code: str = Field(..., min_length=2, max_length=50)
+    service_type: Literal["package", "chatbot"] = "package"
+
+
+class OnboardingBuyerOut(BaseModel):
+    """The real shop contact shown on the package page."""
+
+    name: str
+    email: str
+    phone: str | None = None
+    shop_name: str
+
+
+class OnboardingSubscriptionSummaryOut(BaseModel):
+    """Subscription and payment details scoped to one authenticated shop."""
+
+    business_id: int
+    buyer: OnboardingBuyerOut
+    subscription: OnboardingSubscriptionOut | None = None
+    amount: Decimal | None = None
+    currency: str = "VND"
+    payment_status: str | None = None
+    paid_at: datetime | None = None
+    connected_channels: int = 0
+    channel_limit: int | None = None
+
+
 class OnboardingShopOut(BaseModel):
     business_id: int
     shop_name: str

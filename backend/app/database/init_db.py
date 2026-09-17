@@ -1,11 +1,13 @@
 import logging
 import time
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.core.config import settings
 from app.database.bootstrap import ensure_default_business
 from app.database.session import Base, SessionLocal, engine
+from app.database.bases import PlatformBase
+from app.database.platform_session import PlatformSessionLocal, platform_engine
 from app.models.customer import Customer
 from app.models.customer_merge import CustomerMerge
 from app.models.audit_log import AuditLog
@@ -32,8 +34,92 @@ from app.models.canned_response import CannedResponse
 from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.customer_feedback import CustomerFeedback
 from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry, SupportGrant
+from app.models.platform_control import PlatformBusiness, TenantRegistry
+import app.models.channel_route  # noqa: F401 - register platform webhook routes
+from app.tenancy.provisioning import provision_shop
+from app.tenancy.schema import schema_name_for
 
 logger = logging.getLogger(__name__)
+
+
+def _bootstrap_development_saas() -> None:
+    """Keep local Docker/demo installs usable after the two-database cutover.
+
+    Older development databases were initialized only through ``init_db`` and
+    therefore have the legacy CRM tables but no platform registry or tenant
+    schema yet.  Authenticated tenant routes (including the inbox and channel
+    connection screen) quite correctly require that registry.  Provisioning
+    the existing shops here makes a restart self-healing while production
+    continues to use the explicit platform/tenant migration runbook.
+    """
+
+    if settings.ENVIRONMENT.strip().lower() == "production":
+        return
+
+    try:
+        # The platform database is deliberately separate from the legacy CRM
+        # database.  ``create_all`` is only a development compatibility path;
+        # production never mutates schema at application startup.
+        PlatformBase.metadata.create_all(bind=platform_engine)
+
+        with SessionLocal() as legacy_db:
+            businesses = [
+                (int(row.id), str(row.name), str(row.slug), str(row.status or "active"))
+                for row in legacy_db.query(Business).order_by(Business.id.asc()).all()
+                if str(row.status or "active").lower() == "active"
+            ]
+
+        if not businesses:
+            return
+
+        with PlatformSessionLocal() as platform_db:
+            # Mirror legacy shop identities into the control plane first so
+            # the idempotent provisioning saga can safely create each schema.
+            for business_id, name, slug, status in businesses:
+                row = platform_db.get(PlatformBusiness, business_id)
+                if row is None:
+                    platform_db.add(
+                        PlatformBusiness(
+                            id=business_id,
+                            name=name,
+                            slug=slug,
+                            status=status,
+                        )
+                    )
+                else:
+                    row.name = name
+                    row.status = status
+            platform_db.commit()
+
+            for business_id, _name, _slug, _status in businesses:
+                registry = platform_db.scalar(
+                    select(TenantRegistry).where(
+                        TenantRegistry.business_id == business_id,
+                    )
+                )
+                if registry is not None and registry.state == "active" and registry.feature_enabled:
+                    continue
+                try:
+                    provision_shop(
+                        platform_db,
+                        business_id=business_id,
+                        idempotency_key=f"dev-bootstrap-{business_id}",
+                    )
+                except Exception:
+                    # Isolate one malformed shop from the rest of the local
+                    # install; the next restart or explicit retry can recover
+                    # it without preventing the API from starting.
+                    logger.warning(
+                        "Development tenant provisioning deferred: business_id=%s schema=%s",
+                        business_id,
+                        schema_name_for(business_id),
+                        exc_info=True,
+                    )
+    except Exception:
+        # Keep the legacy demo available if a developer has not created the
+        # optional platform/tenant databases yet.  The tenant endpoint will
+        # return its normal readiness message instead of exposing internals.
+        logger.warning("Development SaaS bootstrap deferred", exc_info=True)
 
 
 def _wait_for_database(max_attempts: int = 15, delay_seconds: int = 2) -> None:
@@ -382,6 +468,11 @@ def init_db() -> None:
     # safe to upgrade without a manual data step.
     with SessionLocal() as db:
         ensure_default_business(db)
+
+    # Existing local installs may predate the platform/tenant databases. Make
+    # the first restart provision their shop schema so the inbox and channel
+    # settings do not fail with a generic "server not ready" message.
+    _bootstrap_development_saas()
 
     logger.info("Database schema and pgvector index are ready")
 

@@ -12,6 +12,7 @@ from app.models.customer import Customer
 from app.models.ticket import Ticket, TicketEvent
 from app.models.workflow import Workflow, WorkflowRun
 from app.services.job_service import enqueue_job
+from app.services.notification_service import create_notification, deliver_notification_email
 from app.rag.run_logger import safe_error_message
 from app.core.config import settings
 from app.tenancy.context import TenantContext
@@ -128,7 +129,8 @@ def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext,
         user_id = action.get("user_id")
         if not user_id:
             raise ValueError("Action assign_user cần user_id.")
-        _active_user(db, int(user_id), tenant, platform_db=platform_db)
+        assignee = _active_user(db, int(user_id), tenant, platform_db=platform_db)
+        ticket_id = None
         if payload.get("ticket_id"):
             ticket = db.query(Ticket).filter(
                 Ticket.id == int(payload["ticket_id"]),
@@ -138,6 +140,7 @@ def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext,
                 raise ValueError("Ticket không thuộc business của workflow.")
             previous_user_id = ticket.assigned_user_id
             ticket.assigned_user_id = int(user_id)
+            ticket_id = ticket.id
             if previous_user_id != ticket.assigned_user_id:
                 db.add(TicketEvent(
                     business_id=tenant.business_id,
@@ -164,6 +167,43 @@ def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext,
             conversation.assigned_user_id = int(user_id)
         else:
             raise ValueError("Action assign_user cần ticket_id hoặc conversation_id.")
+        notification = create_notification(
+            db,
+            business_id=tenant.business_id,
+            user_id=int(assignee.id),
+            kind="handoff",
+            title="Có cuộc trò chuyện cần bạn hỗ trợ",
+            body="Một cuộc trò chuyện đã được chuyển cho bạn từ quy trình tự động.",
+            metadata={
+                "ticket_id": ticket_id,
+                "conversation_id": payload.get("conversation_id"),
+                "delivery": "email",
+                "recipient_email": str(getattr(assignee, "email", "") or ""),
+            },
+        )
+        email_sent = deliver_notification_email(
+            recipient_email=getattr(assignee, "email", None),
+            title="Smart Merchant Hub: Có cuộc trò chuyện cần bạn hỗ trợ",
+            body="Một cuộc trò chuyện đã được chuyển cho bạn từ quy trình tự động. Mở Hộp thư CRM để tiếp tục.",
+        )
+        recipient_email = str(getattr(assignee, "email", "") or "").strip()
+        notification.metadata_ = {
+            **(notification.metadata_ or {}),
+            "email_status": "sent" if email_sent else "pending_smtp",
+        }
+        if not email_sent and recipient_email:
+            enqueue_job(
+                db,
+                business_id=tenant.business_id,
+                kind="notification.email",
+                payload={
+                    "notification_id": notification.id,
+                    "recipient_email": recipient_email,
+                    "title": "Smart Merchant Hub: Có cuộc trò chuyện cần bạn hỗ trợ",
+                    "body": "Một cuộc trò chuyện đã được chuyển cho bạn từ quy trình tự động. Mở Hộp thư CRM để tiếp tục.",
+                },
+                idempotency_key=f"notification:{notification.id}:email",
+            )
         return
 
     if action_type == "add_tag":

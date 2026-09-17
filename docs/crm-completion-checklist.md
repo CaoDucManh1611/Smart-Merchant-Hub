@@ -14,7 +14,10 @@ khách hàng, tạo đơn, vận hành và bảo mật tenant.
 
 ### `feat/crm-ai-commerce`
 
-- Transactional intent router cho tra cứu đơn/đơn nháp/hủy đơn.
+- Transactional intent router cho tra cứu đơn/đơn nháp/hủy đơn
+
+
+
 - RAG nhận diện sản phẩm, combo, số lượng, giá và tồn kho.
 - Customer collection: tên, số điện thoại, email, địa chỉ.
 - Validation dữ liệu ngay khi nhận.
@@ -150,6 +153,8 @@ npm run build
 - [ ] Migration chạy được trên database có dữ liệu cũ.
 - [ ] Backup tạo được và restore thử thành công.
 - [ ] Health check báo đúng trạng thái database, queue và provider.
+- [ ] Đăng nhập sai quá ngưỡng trả `429`/`Retry-After`; đăng nhập đúng reset
+      bộ đếm và UI khóa nút đúng thời gian.
 - [ ] Không có secret/OTP/token raw trong log, response hoặc bundle frontend.
 - [ ] Không có lỗi console nghiêm trọng ở các màn hình chính.
 

@@ -31,6 +31,7 @@ from PIL import Image
 from app.core.config import settings
 from app.tenancy.crm_session import get_tenant_db
 from app.database.platform_session import get_platform_db
+from app.db.dependencies import get_db
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.models.message_attachment import MessageAttachment
@@ -1572,6 +1573,7 @@ def reassign_conversation(
     payload: ConversationAssignmentRequest,
     db: Session = Depends(get_tenant_db),
     platform_db: Session = Depends(get_platform_db),
+    user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -1583,7 +1585,7 @@ def reassign_conversation(
         raise HTTPException(status_code=404, detail="Conversation không tồn tại.")
 
     if payload.assigned_user_id is not None:
-        assignee = platform_db.query(User).filter(
+        assignee = user_db.query(User).filter(
             User.id == payload.assigned_user_id,
             User.business_id == tenant.business_id,
             User.is_active.is_(True),

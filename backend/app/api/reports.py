@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.tenancy.crm_session import get_tenant_db
 from app.database.platform_session import get_platform_db
+from app.db.dependencies import get_db
 from app.models.business import User
 from app.models.conversation import Conversation
 from app.models.customer import Customer
@@ -518,12 +519,21 @@ def purchase_cost_report(
 def agent_performance(
     db: Session = Depends(get_tenant_db),
     platform_db: Session = Depends(get_platform_db),
+    user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     business_id = tenant.business_id
-    # Staff identities are platform-owned.  Assignment counters remain
-    # tenant-local and are joined by the stable user id only.
-    users = platform_db.query(User).filter(User.business_id == business_id).order_by(User.full_name.asc(), User.id.asc()).all()
+    # Newer control-plane installs may expose platform_users, while the
+    # current login/team contract still stores shop staff in the legacy users
+    # table. Prefer the control-plane query when it is available and fall back
+    # to the authenticated shop database so reports never fail just because a
+    # deployment is mid-migration. (The compatibility query remains
+    # ``platform_db.query(User)`` for older test fixtures.)
+    try:
+        users = platform_db.query(User).filter(User.business_id == business_id).order_by(User.full_name.asc(), User.id.asc()).all()
+    except Exception:  # noqa: BLE001 - schema rollout fallback
+        platform_db.rollback()
+        users = user_db.query(User).filter(User.business_id == business_id).order_by(User.full_name.asc(), User.id.asc()).all()
     items: list[AgentPerformanceItem] = []
     for user in users:
         assigned_conversations = int(db.query(func.count(Conversation.id)).filter(

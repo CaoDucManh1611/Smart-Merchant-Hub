@@ -8,6 +8,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.database.platform_session import get_platform_db
+from app.db.dependencies import get_db
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_360 import customer_segments as customer_segments_table
@@ -1072,6 +1073,7 @@ def customer_timeline(
     customer_id: int,
     db: Session = Depends(get_tenant_db),
     platform_db: Session = Depends(get_platform_db),
+    user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -1079,7 +1081,7 @@ def customer_timeline(
     _get_customer(db, customer_id, tenant)
     actor_names = {
         user.id: user.full_name or user.email
-        for user in platform_db.query(User).filter(User.business_id == tenant.business_id).all()
+        for user in user_db.query(User).filter(User.business_id == tenant.business_id).all()
     }
     identities = db.query(CustomerIdentity).filter(
         CustomerIdentity.business_id == tenant.business_id,

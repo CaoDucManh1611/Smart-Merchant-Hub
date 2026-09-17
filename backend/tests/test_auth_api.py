@@ -2,6 +2,7 @@ import base64
 import json
 import time
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -105,6 +106,28 @@ class AuthApiTests(unittest.TestCase):
         )
         self.assertEqual(401, invalid.status_code)
         self.assertEqual(401, self.client.get("/api/auth/me").status_code)
+
+    def test_login_rate_limit_returns_retry_after_after_repeated_failures(self):
+        headers = {"X-Business-Id": str(self.business_id)}
+        with patch("app.api.auth.settings.AUTH_LOGIN_RATE_LIMIT_REQUESTS", 2), \
+            patch("app.api.auth.settings.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS", 60), \
+            patch("app.api.auth.settings.AUTH_LOGIN_RATE_LIMIT_BACKEND", "memory"):
+            for _ in range(2):
+                failed = self.client.post(
+                    "/api/auth/login",
+                    headers=headers,
+                    json={"email": "unknown@auth.test", "password": "wrong"},
+                )
+                self.assertEqual(401, failed.status_code)
+            limited = self.client.post(
+                "/api/auth/login",
+                headers=headers,
+                json={"email": "unknown@auth.test", "password": "wrong"},
+            )
+
+        self.assertEqual(429, limited.status_code)
+        self.assertEqual("60", limited.headers["Retry-After"])
+        self.assertEqual("auth_rate_limited", limited.json()["detail"]["code"])
 
     def test_token_expiry_uses_a_real_utc_instant_on_non_utc_hosts(self):
         token, _expires_at = issue_token(123, ttl_seconds=900)

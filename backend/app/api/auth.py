@@ -15,6 +15,7 @@ from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
 from app.models.business import Business, User
 from app.models.saas import PlatformMembership
+from app.middleware.security import LoginRateLimiter, RateLimitBackendUnavailable
 from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut, MfaVerifyOut, MfaVerifyRequest
 from app.services.audit_service import record_audit
 from app.services.mfa_service import disable_mfa, enable_mfa, prepare_mfa, verify_mfa_code
@@ -25,6 +26,65 @@ from app.tenancy.dependencies import get_tenant_context
 router = APIRouter(prefix="/auth")
 
 
+_login_rate_limiter: LoginRateLimiter | None = None
+_login_rate_limiter_config: tuple[object, ...] | None = None
+
+
+def _get_login_rate_limiter() -> LoginRateLimiter:
+    """Build the login limiter lazily so app import never requires Redis."""
+    global _login_rate_limiter, _login_rate_limiter_config
+    config = (
+        settings.AUTH_LOGIN_RATE_LIMIT_ENABLED,
+        settings.AUTH_LOGIN_RATE_LIMIT_REQUESTS,
+        settings.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        settings.AUTH_LOGIN_RATE_LIMIT_BACKEND,
+        settings.REDIS_URL,
+    )
+    if _login_rate_limiter is None or _login_rate_limiter_config != config:
+        _login_rate_limiter = LoginRateLimiter(
+            enabled=settings.AUTH_LOGIN_RATE_LIMIT_ENABLED,
+            max_attempts=settings.AUTH_LOGIN_RATE_LIMIT_REQUESTS,
+            window_seconds=settings.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+            backend=settings.AUTH_LOGIN_RATE_LIMIT_BACKEND,
+            redis_url=settings.REDIS_URL,
+            prefix="crm:auth-login:",
+        )
+        _login_rate_limiter_config = config
+    return _login_rate_limiter
+
+
+def _login_client_key(request: Request, email: str) -> str:
+    client_ip = request.client.host if request.client else "unknown"
+    if settings.RATE_LIMIT_TRUSTED_PROXY:
+        forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+        if forwarded:
+            client_ip = forwarded
+    return LoginRateLimiter.key(email, client_ip)
+
+
+def _rate_limit_error(
+    retry_after: int,
+    *,
+    limit: int | None = None,
+    reset_at: int | None = None,
+) -> HTTPException:
+    headers = {"Retry-After": str(max(1, int(retry_after)))}
+    if limit is not None:
+        headers["X-RateLimit-Limit"] = str(max(1, int(limit)))
+        headers["X-RateLimit-Remaining"] = "0"
+    if reset_at is not None:
+        headers["X-RateLimit-Reset"] = str(max(0, int(reset_at)))
+    return HTTPException(
+        status_code=429,
+        detail={
+            "code": "auth_rate_limited",
+            "message": "Quá nhiều lần thử đăng nhập. Vui lòng thử lại sau.",
+            "retry_after": max(1, int(retry_after)),
+        },
+        headers=headers,
+    )
+
+
 @router.post("/login", response_model=LoginOut)
 def login(
     payload: LoginRequest,
@@ -33,6 +93,29 @@ def login(
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
     x_device_label: str | None = Header(default=None, alias="X-Device-Label"),
 ):
+    try:
+        limiter = _get_login_rate_limiter()
+    except (RateLimitBackendUnavailable, ValueError):
+        raise HTTPException(
+            status_code=503,
+            detail="Bộ giới hạn đăng nhập tạm thời không khả dụng.",
+            headers={"Retry-After": "5"},
+        ) from None
+    login_key = _login_client_key(request, payload.email)
+    try:
+        decision = limiter.check(login_key)
+    except RateLimitBackendUnavailable:
+        raise HTTPException(
+            status_code=503,
+            detail="Bộ giới hạn đăng nhập tạm thời không khả dụng.",
+            headers={"Retry-After": "5"},
+        ) from None
+    if not decision.allowed:
+        raise _rate_limit_error(
+            decision.retry_after,
+            limit=limiter.max_attempts,
+            reset_at=decision.reset_at,
+        )
     if x_business_id and not settings.ALLOW_LEGACY_TENANT_HEADER:
         raise HTTPException(status_code=400, detail="X-Business-Id không được dùng trong runtime này.")
     query = db.query(User).filter(User.email.ilike(payload.email.strip()), User.is_active.is_(True))
@@ -45,6 +128,20 @@ def login(
         query = query.join(Business, Business.id == User.business_id).filter(Business.slug == payload.shop_slug.strip().lower())
     users = query.all()
     if len(users) != 1 or not verify_password(payload.password, users[0].password_hash):
+        try:
+            failure = limiter.record_failure(login_key)
+        except RateLimitBackendUnavailable:
+            raise HTTPException(
+                status_code=503,
+                detail="Bộ giới hạn đăng nhập tạm thời không khả dụng.",
+                headers={"Retry-After": "5"},
+            ) from None
+        if not failure.allowed:
+            raise _rate_limit_error(
+                failure.retry_after,
+                limit=limiter.max_attempts,
+                reset_at=failure.reset_at,
+            )
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")
     user = users[0]
     business = db.get(Business, user.business_id)
@@ -79,6 +176,7 @@ def login(
         metadata={"email": user.email},
     )
     db.commit()
+    limiter.reset(login_key)
     return LoginOut(
         access_token=token,
         expires_at=expires_at,

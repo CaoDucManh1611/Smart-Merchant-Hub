@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.tenancy.crm_session import get_tenant_db
 from app.database.platform_session import get_platform_db
+from app.db.dependencies import get_db
 from app.models.business import User
 from app.models.conversation import Conversation
 from app.models.customer import Customer
@@ -65,10 +66,10 @@ def _get_conversation(db: Session, conversation_id: int, customer_id: int, tenan
     return conversation
 
 
-def _validate_assignee(platform_db: Session, user_id: int | None, tenant: TenantContext) -> None:
+def _validate_assignee(user_db: Session, user_id: int | None, tenant: TenantContext) -> None:
     if user_id is None:
         return
-    user = platform_db.query(User).filter(
+    user = user_db.query(User).filter(
         User.id == user_id,
         User.business_id == tenant.business_id,
         User.is_active.is_(True),
@@ -137,6 +138,7 @@ def create_lead(
     payload: LeadCreate,
     db: Session = Depends(get_tenant_db),
     platform_db: Session = Depends(get_platform_db),
+    user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _validate_stage(payload.stage)
@@ -144,7 +146,7 @@ def create_lead(
     conversation = None
     if payload.conversation_id is not None:
         conversation = _get_conversation(db, payload.conversation_id, customer.id, tenant)
-    _validate_assignee(platform_db, payload.assigned_user_id, tenant)
+    _validate_assignee(user_db, payload.assigned_user_id, tenant)
     lead = Lead(
         business_id=tenant.business_id,
         customer_id=customer.id,
@@ -184,6 +186,7 @@ def update_lead(
     payload: LeadUpdate,
     db: Session = Depends(get_tenant_db),
     platform_db: Session = Depends(get_platform_db),
+    user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     lead = _get_lead(db, lead_id, tenant)
@@ -200,7 +203,7 @@ def update_lead(
     if "conversation_id" in data and data["conversation_id"] is not None:
         conversation = _get_conversation(db, data["conversation_id"], customer_id, tenant)
         data["source_channel"] = data.get("source_channel") or conversation.channel
-    _validate_assignee(platform_db, data.get("assigned_user_id", lead.assigned_user_id), tenant)
+    _validate_assignee(user_db, data.get("assigned_user_id", lead.assigned_user_id), tenant)
     for field, value in data.items():
         field = "metadata_" if field == "metadata" else field
         if field in {"title", "notes", "source_channel"} and isinstance(value, str):

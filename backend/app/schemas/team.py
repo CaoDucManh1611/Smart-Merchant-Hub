@@ -9,6 +9,22 @@ from pydantic import BaseModel, ConfigDict, Field
 TEAM_ROLES = ("owner", "admin", "agent", "viewer", "business_agent")
 TeamRole = Literal["owner", "admin", "agent", "viewer", "business_agent"]
 
+# Older installs used ``business_agent`` (and the platform database used
+# ``shop_agent``) for the same human-facing role.  Keep accepting those
+# values at the API boundary, but persist the four canonical roles so every
+# shop sees the same permissions and labels.
+ROLE_ALIASES = {
+    "business_agent": "agent",
+    "shop_agent": "agent",
+    "business_admin": "admin",
+    "shop_admin": "admin",
+}
+
+
+def normalize_team_role(role: str | None) -> str:
+    value = str(role or "agent").strip().lower()
+    return ROLE_ALIASES.get(value, value if value in {"owner", "admin", "agent", "viewer"} else "agent")
+
 
 class TeamUserCreate(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=255)

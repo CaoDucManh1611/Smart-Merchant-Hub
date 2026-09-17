@@ -126,6 +126,11 @@ HSTS_ENABLED=true
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_REQUESTS=120
 RATE_LIMIT_WINDOW_SECONDS=60
+AUTH_LOGIN_RATE_LIMIT_ENABLED=true
+AUTH_LOGIN_RATE_LIMIT_REQUESTS=5
+AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS=180
+AUTH_LOGIN_RATE_LIMIT_BACKEND=redis
+REDIS_URL=redis://redis:6379/0
 ```
 
 Terminate TLS at the load balancer/reverse proxy and forward only HTTPS to the
@@ -134,6 +139,11 @@ application network. The application also redirects HTTP when
 a per-IP sliding-window limit to `/api` requests. The built-in limiter is
 per-process; multi-replica deployments must also enforce a shared proxy/Redis
 limit.
+
+The login guard counts failed password attempts separately from the general API
+limit. It returns `429` with `Retry-After`; the login screen disables retries
+until that value expires. Keep `AUTH_LOGIN_RATE_LIMIT_BACKEND=redis` when
+running more than one backend replica so all instances share the same bucket.
 
 For a multi-replica deployment, configure the load balancer/API gateway with
 the same window and burst policy, set `RATE_LIMIT_BACKEND=proxy` and

@@ -12,6 +12,7 @@ from app.auth.dependencies import require_admin_access, require_write_access
 from app.core.config import Settings
 from app.core.logging import RedactingFilter, redact_secrets
 from app.middleware.security import (
+    LoginRateLimiter,
     RateLimitBackendUnavailable,
     RateLimitMiddleware,
     RedisRateLimiter,
@@ -131,6 +132,20 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertEqual("2", limited.headers["X-RateLimit-Limit"])
         self.assertEqual("0", limited.headers["X-RateLimit-Remaining"])
         self.assertIn("Retry-After", limited.headers)
+
+    def test_login_rate_limiter_counts_failures_only_and_can_reset(self):
+        limiter = LoginRateLimiter(enabled=True, max_attempts=2, window_seconds=60)
+        key = limiter.key("Staff@Example.test", "203.0.113.10")
+
+        self.assertTrue(limiter.check(key).allowed)
+        self.assertEqual(1, limiter.record_failure(key).remaining)
+        self.assertEqual(0, limiter.record_failure(key).remaining)
+        blocked = limiter.check(key)
+        self.assertFalse(blocked.allowed)
+        self.assertGreaterEqual(blocked.retry_after, 1)
+
+        limiter.reset(key)
+        self.assertTrue(limiter.check(key).allowed)
 
     def test_redis_rate_limiter_uses_atomic_script_and_shared_key(self):
         class FakeRedis:

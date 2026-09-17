@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     INSTAGRAM_ACCESS_TOKEN: str = ""
     PUBLIC_BASE_URL: str = ""
     FRONTEND_BASE_URL: str = "http://localhost:5173"
+    # Optional shared secret used by the local Zalo personal-account bridge.
+    # Keep empty for development only; production must configure it before
+    # accepting bridge events.
+    ZALO_PERSONAL_BRIDGE_KEY: str = ""
+    ZALO_PERSONAL_BUSINESS_ID: int = 0
 
     # Runtime security controls.  Comma-separated values keep the settings
     # compatible with Docker Compose and Pydantic Settings on Windows/Linux.
@@ -50,6 +55,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_BACKEND: str = "memory"
     RATE_LIMIT_TRUSTED_PROXY: bool = False
     REDIS_URL: str = ""
+    # Password login has a stricter, failure-only guard than the general API
+    # limiter.  Redis is optional; enable it for a shared bucket across replicas.
+    AUTH_LOGIN_RATE_LIMIT_ENABLED: bool = True
+    AUTH_LOGIN_RATE_LIMIT_REQUESTS: int = 5
+    # Keep the failed-login lockout short enough for normal recovery while
+    # still slowing down brute-force attempts (three minutes by default).
+    AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 180
+    AUTH_LOGIN_RATE_LIMIT_BACKEND: str = "memory"
     ALERT_QUEUE_PENDING_THRESHOLD: int = 100
     ALERT_AI_COST_THRESHOLD: float = 50.0
     DATA_RETENTION_DAYS: int = 365
@@ -249,6 +262,18 @@ class Settings(BaseSettings):
             problems.append("REDIS_URL must be configured when RATE_LIMIT_BACKEND=redis")
         if rate_limit_backend == "proxy" and not self.RATE_LIMIT_TRUSTED_PROXY:
             problems.append("RATE_LIMIT_TRUSTED_PROXY must be true when RATE_LIMIT_BACKEND=proxy")
+        auth_rate_limit_backend = self.AUTH_LOGIN_RATE_LIMIT_BACKEND.strip().lower()
+        if auth_rate_limit_backend not in {"memory", "redis"}:
+            problems.append("AUTH_LOGIN_RATE_LIMIT_BACKEND must be memory or redis")
+        if self.AUTH_LOGIN_RATE_LIMIT_ENABLED and (
+            self.AUTH_LOGIN_RATE_LIMIT_REQUESTS <= 0
+            or self.AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS <= 0
+        ):
+            problems.append(
+                "AUTH_LOGIN_RATE_LIMIT_REQUESTS and AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS must be positive"
+            )
+        if self.AUTH_LOGIN_RATE_LIMIT_ENABLED and auth_rate_limit_backend == "redis" and not self.REDIS_URL.strip():
+            problems.append("REDIS_URL must be configured when AUTH_LOGIN_RATE_LIMIT_BACKEND=redis")
         secret_mode = self.SECRET_MANAGER_MODE.strip().lower()
         if secret_mode not in {"env", "environment", "injected", "file", "json", "mounted_file", "disabled", "none"}:
             problems.append("SECRET_MANAGER_MODE must be env or file")

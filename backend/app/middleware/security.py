@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import hashlib
 import logging
 from threading import Lock
-from time import monotonic
+from time import monotonic, time
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -119,6 +119,146 @@ return {1, maximum - count - 1, 0, now_ms + window_ms}
             return bool(self.client.ping())
         except Exception:
             return False
+
+
+class LoginRateLimiter:
+    """Failure-only sliding-window limiter for password authentication.
+
+    Login attempts are keyed by a hash of the normalized email and client IP,
+    so one noisy account cannot lock every shop while the raw identifier is
+    never written to the rate-limit store.  Successful logins do not consume a
+    slot; this keeps normal staff workflows unaffected.  Redis uses the same
+    atomic sorted-set approach as the API limiter so replicas share a bucket.
+    """
+
+    _REDIS_SCRIPT = """
+local now = redis.call('TIME')
+local now_ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+local window_ms = tonumber(ARGV[2]) * 1000
+local cutoff = now_ms - window_ms
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, cutoff)
+local count = redis.call('ZCARD', KEYS[1])
+local maximum = tonumber(ARGV[1])
+if count >= maximum then
+  local first = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+  local retry = window_ms
+  if first[2] then retry = math.max(1, tonumber(first[2]) + window_ms - now_ms) end
+  return {0, 0, retry, now_ms + window_ms}
+end
+if tonumber(ARGV[3]) == 1 then
+  local sequence = redis.call('INCR', KEYS[1] .. ':sequence')
+  local member = tostring(now_ms) .. ':' .. tostring(sequence)
+  redis.call('ZADD', KEYS[1], now_ms, member)
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]) + 2)
+  redis.call('EXPIRE', KEYS[1] .. ':sequence', tonumber(ARGV[2]) + 2)
+  count = count + 1
+end
+return {1, maximum - count, 0, now_ms + window_ms}
+"""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        max_attempts: int = 5,
+        window_seconds: int = 180,
+        backend: str = "memory",
+        redis_url: str = "",
+        redis_client=None,
+        prefix: str = "crm:auth-login:",
+    ):
+        self.enabled = bool(enabled)
+        self.max_attempts = max(1, int(max_attempts))
+        self.window_seconds = max(1, int(window_seconds))
+        self.backend = str(backend or "memory").strip().lower()
+        if self.backend not in {"memory", "redis"}:
+            self.backend = "memory"
+        self._redis = None
+        if self.enabled and self.backend == "redis":
+            self._redis = RedisRateLimiter(redis_url, client=redis_client, prefix=prefix)
+        self._prefix = str(prefix)
+        self._requests: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = Lock()
+
+    @staticmethod
+    def key(email: str, client_ip: str) -> str:
+        normalized_email = str(email or "").strip().casefold()
+        normalized_ip = str(client_ip or "unknown").strip()
+        return hashlib.sha256(f"{normalized_email}|{normalized_ip}".encode("utf-8")).hexdigest()
+
+    def _redis_decision(self, client_key: str, *, record: bool) -> RateLimitDecision:
+        key = self._prefix + RedisRateLimiter._key(client_key)
+        try:
+            result = self._redis.client.eval(
+                self._REDIS_SCRIPT,
+                1,
+                key,
+                self.max_attempts,
+                self.window_seconds,
+                1 if record else 0,
+            )
+        except Exception as exc:
+            raise RateLimitBackendUnavailable("Redis rate-limit backend is unavailable") from exc
+        try:
+            allowed, remaining, retry_ms, reset_at = [int(value) for value in result]
+        except (TypeError, ValueError) as exc:
+            raise RateLimitBackendUnavailable("Redis rate-limit response is invalid") from exc
+        return RateLimitDecision(
+            allowed=bool(allowed),
+            remaining=max(0, remaining),
+            retry_after=max(1, (retry_ms + 999) // 1000) if retry_ms else 0,
+            reset_at=max(0, reset_at // 1000),
+        )
+
+    def _memory_decision(self, client_key: str, *, record: bool) -> RateLimitDecision:
+        now = monotonic()
+        with self._lock:
+            bucket = self._requests[client_key]
+            cutoff = now - self.window_seconds
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            if len(bucket) >= self.max_attempts:
+                retry_after = max(1, int(bucket[0] + self.window_seconds - now) + 1)
+                return RateLimitDecision(
+                    allowed=False,
+                    remaining=0,
+                    retry_after=retry_after,
+                    reset_at=int(time() + max(1, bucket[0] + self.window_seconds - now)),
+                )
+            if record:
+                bucket.append(now)
+            return RateLimitDecision(
+                allowed=True,
+                remaining=max(0, self.max_attempts - len(bucket)),
+                retry_after=0,
+                reset_at=int(time() + self.window_seconds),
+            )
+
+    def check(self, client_key: str) -> RateLimitDecision:
+        if not self.enabled:
+            return RateLimitDecision(True, self.max_attempts, 0, int(time() + self.window_seconds))
+        if self.backend == "redis":
+            return self._redis_decision(client_key, record=False)
+        return self._memory_decision(client_key, record=False)
+
+    def record_failure(self, client_key: str) -> RateLimitDecision:
+        if not self.enabled:
+            return RateLimitDecision(True, self.max_attempts, 0, int(time() + self.window_seconds))
+        if self.backend == "redis":
+            return self._redis_decision(client_key, record=True)
+        return self._memory_decision(client_key, record=True)
+
+    def reset(self, client_key: str) -> None:
+        """Forget failures after a successful login when the store supports it."""
+        if self.backend == "redis" and self._redis is not None:
+            key = self._prefix + RedisRateLimiter._key(client_key)
+            try:
+                self._redis.client.delete(key, key + ":sequence")
+            except Exception:
+                logger.debug("Unable to reset Redis login bucket", exc_info=True)
+            return
+        with self._lock:
+            self._requests.pop(client_key, None)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

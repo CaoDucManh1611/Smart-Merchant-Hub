@@ -32,8 +32,18 @@ def _post_json(url: str, *, json: dict[str, Any] | None = None) -> dict[str, Any
             "provider_unreachable",
             "Không thể kết nối tới nhà cung cấp. Hãy thử lại sau.",
         ) from exc
-    if not isinstance(body, dict) or body.get("ok") is not True:
-        detail = body.get("description") if isinstance(body, dict) else None
+    if not isinstance(body, dict):
+        raise ProviderConnectionError(
+            "invalid_provider_response",
+            "Nhà cung cấp trả về dữ liệu không hợp lệ. Hãy thử lại.",
+        )
+    # Telegram Bot API uses ``ok: true`` while Zalo Bot/OA bridges may expose
+    # the same successful payload as ``error: 0`` with a ``data`` object. Keep
+    # both official response shapes compatible without relaxing validation for
+    # an empty or malformed response.
+    success = body.get("ok") is True or body.get("error") in (0, "0")
+    if not success:
+        detail = body.get("description") or body.get("message") if isinstance(body, dict) else None
         safe_detail = safe_error_message(detail, limit=300) if detail else ""
         raise ProviderConnectionError(
             "invalid_provider_response",
@@ -42,9 +52,19 @@ def _post_json(url: str, *, json: dict[str, Any] | None = None) -> dict[str, Any
     return body
 
 
+def _result(body: dict[str, Any]) -> dict[str, Any]:
+    """Read the provider payload from Telegram and Zalo response envelopes."""
+
+    value = body.get("result")
+    if isinstance(value, dict):
+        return value
+    value = body.get("data")
+    return value if isinstance(value, dict) else {}
+
+
 def _webhook_info(channel_type: str, access_token: str) -> dict[str, Any]:
     base = TELEGRAM_API_BASE if channel_type == "telegram" else ZALO_API_BASE
-    return _post_json(f"{base}{access_token}/getWebhookInfo").get("result") or {}
+    return _result(_post_json(f"{base}{access_token}/getWebhookInfo"))
 
 
 def verify_and_configure_bot(
@@ -71,7 +91,7 @@ def verify_and_configure_bot(
 
     base = TELEGRAM_API_BASE if channel_type == "telegram" else ZALO_API_BASE
     identity_body = _post_json(f"{base}{access_token}/getMe")
-    identity = identity_body.get("result")
+    identity = _result(identity_body)
     if not isinstance(identity, dict) or not identity.get("id"):
         raise ProviderConnectionError("invalid_bot_identity", "Token không trả về thông tin bot hợp lệ.")
     if channel_type == "telegram" and identity.get("is_bot") is False:
@@ -91,7 +111,7 @@ def verify_and_configure_bot(
         webhook_payload = {"url": webhook_url, "secret_token": webhook_secret}
 
     set_body = _post_json(f"{base}{access_token}/setWebhook", json=webhook_payload)
-    webhook_result = set_body.get("result") if isinstance(set_body.get("result"), dict) else {}
+    webhook_result = _result(set_body)
     info = _webhook_info(channel_type, access_token)
     configured_url = str(info.get("url") or webhook_result.get("url") or "").strip()
     if configured_url != webhook_url:

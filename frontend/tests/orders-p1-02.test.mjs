@@ -34,12 +34,13 @@ test("CRM order history action is an explicit control that reveals the panel", (
   assert.match(appSource, /data-testid="order-events-panel"/);
 });
 
-test("CRM order form auto-generates the order number and selects an optional conversation", () => {
-  assert.match(appSource, /Mã đơn \(tự sinh\)/);
-  assert.match(appSource, /orderConversationOptions/);
-  assert.match(appSource, /v-for="conversation in orderConversationOptions"/);
-  assert.match(appSource, /Không gắn hội thoại/);
-  assert.match(appSource, /<select v-model="orderForm\.conversation_id"/);
+test("CRM orders page is processing-only and receives orders from Inbox or AI", () => {
+  const ordersStart = appSource.indexOf('<section v-if="currentTab === \'orders\'"');
+  const ordersEnd = appSource.indexOf('<section v-if="currentTab === \'purchase-orders\'"', ordersStart);
+  const ordersView = appSource.slice(ordersStart, ordersEnd);
+  assert.match(ordersView, /data-testid="orders-processing-only"/);
+  assert.match(ordersView, /Đơn được tạo từ hộp thư hoặc luồng trợ lý/);
+  assert.doesNotMatch(ordersView, /<form class="product-form order-form"/);
 });
 
 test("CRM orders page remains vertically scrollable when content exceeds the viewport", () => {

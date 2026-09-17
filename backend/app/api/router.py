@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding, support
-from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo
+from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo, zalo_personal
 
 
 api_router = APIRouter(prefix="/api")
@@ -47,6 +47,9 @@ api_router.include_router(
     prefix="/webhooks/zalo",
     tags=["Zalo"],
 )
+
+# Zalo cá nhân dùng helper bridge (cookies/IMEI remain on the shop machine).
+api_router.include_router(zalo_personal.router)
 
 
 # Shopee

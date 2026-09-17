@@ -14,24 +14,25 @@ test("leader feedback removes redundant header-level new-item controls", () => {
   assert.doesNotMatch(appSource, /\+ Workflow mới/);
 });
 
-test("product quantity is labelled plainly rather than as an opening balance", () => {
-  assert.match(appSource, /<label>Số lượng\{\{ productForm\.id/);
+test("product workspace is processing-only rather than an intake form", () => {
+  assert.match(appSource, /data-testid="products-processing-only"/);
+  assert.match(appSource, /Chế độ xử lý sản phẩm/);
+  assert.doesNotMatch(appSource, /<form class="product-form"/);
   assert.doesNotMatch(appSource, /Tồn đầu kỳ/);
 });
 
-test("sales order form supports distinct multi-product lines and validates them before submit", () => {
-  assert.match(appSource, /items: \[createOrderItem\(\)\]/);
-  assert.match(appSource, /function addOrderItem\(\)/);
-  assert.match(appSource, /function removeOrderItem\(itemIndex\)/);
-  assert.match(appSource, /function orderItemProducts\(itemIndex\)/);
-  assert.match(appSource, /Mỗi sản phẩm chỉ được chọn một lần trong đơn bán/);
-  assert.match(appSource, /items,\s*\}\),/);
-  assert.match(appSource, /Chọn nhiều sản phẩm khác nhau/);
-  assert.match(styleSource, /\.order-items-editor/);
+test("sales order workspace keeps lifecycle processing without an intake form", () => {
+  const ordersStart = appSource.indexOf('<section v-if="currentTab === \'orders\'"');
+  const ordersEnd = appSource.indexOf('<section v-if="currentTab === \'purchase-orders\'"', ordersStart);
+  const ordersView = appSource.slice(ordersStart, ordersEnd);
+  assert.match(ordersView, /data-testid="orders-processing-only"/);
+  assert.match(ordersView, /Chế độ xử lý đơn bán/);
+  assert.doesNotMatch(ordersView, /<form class="product-form order-form"/);
+  assert.match(ordersView, /transitionSalesOrder/);
+  assert.match(ordersView, /recordSalesPayment/);
 });
 
 test("sales orders show the selected customer phone and an append-only process history", () => {
-  assert.match(appSource, /Số điện thoại khách hàng/);
   assert.match(appSource, /SĐT khách/);
   assert.match(appSource, /function orderCustomerPhone\(customerId\)/);
   assert.match(appSource, /Xem toàn bộ quy trình/);
@@ -41,7 +42,7 @@ test("sales orders show the selected customer phone and an append-only process h
 });
 
 test("ticket descriptions occupy a dedicated readable table column", () => {
-  assert.match(appSource, /<th>Ticket<\/th><th>Mô tả<\/th>/);
+  assert.match(appSource, /<th>Phiếu hỗ trợ<\/th><th>Mô tả<\/th>/);
   assert.match(appSource, /class="ticket-description-cell"/);
   assert.match(appSource, /<td colspan="8">/);
   assert.match(styleSource, /\.ticket-description-cell/);

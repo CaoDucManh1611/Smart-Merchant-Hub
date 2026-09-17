@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.models.ticket import Ticket
 from app.models.workflow import Workflow
+from app.models.notification import Notification
 from app.models.platform_control import TenantRegistry
 from app.services.job_service import dispatch_due_jobs
-from app.services.notification_service import create_sla_notification, create_sla_warning_notification
+from app.services.notification_service import create_sla_notification, create_sla_warning_notification, deliver_notification_email
 from app.services.workflow_engine import execute_workflow
 from app.services.chatbot_followup import dispatch_due_followups
 from app.services.order_service import release_expired_draft_reservations
@@ -137,6 +138,28 @@ def _dispatch_chatbot_followup_job(db: Session, business_id: int, payload: dict)
         raise RuntimeError("Chatbot follow-up delivery failed")
 
 
+def _dispatch_notification_email_job(db: Session, business_id: int, payload: dict) -> None:
+    """Retry a staff handoff email without exposing tenant data to the queue."""
+    notification_id = int(payload.get("notification_id") or 0)
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.business_id == business_id,
+    ).first()
+    if notification is None:
+        return
+    metadata = dict(notification.metadata_ or {})
+    if metadata.get("email_status") == "sent":
+        return
+    sent = deliver_notification_email(
+        recipient_email=payload.get("recipient_email"),
+        title=str(payload.get("title") or notification.title),
+        body=str(payload.get("body") or notification.body or ""),
+    )
+    if not sent:
+        raise RuntimeError("Chưa gửi được email thông báo; kiểm tra cấu hình SMTP.")
+    notification.metadata_ = {**metadata, "email_status": "sent"}
+
+
 def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 100, platform_db: Session | None = None) -> int:
     """Run only CRM ticket/workflow jobs for one tenant.
 
@@ -154,6 +177,7 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         "ticket.sla_check": lambda payload: _dispatch_ticket_sla_job(db, business_id, payload),
         "workflow.run": lambda payload: _dispatch_workflow_run_job(db, business_id, payload, platform_db=platform_db),
         "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),
+        "notification.email": lambda payload: _dispatch_notification_email_job(db, business_id, payload),
     }
     processed_jobs = dispatch_due_jobs(
         db,

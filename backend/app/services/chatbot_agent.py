@@ -15,6 +15,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.business import User
+from app.models.platform_control import PlatformUser
 from app.models.chatbot import ChatbotConfig
 from app.models.canned_response import CannedResponse
 from app.models.conversation import Conversation
@@ -32,6 +33,7 @@ from app.services.customer_order_service import (
     request_order_refund,
 )
 from app.services.order_service import SalesOrderOperationError, reserve_draft_order_inventory
+from app.services.job_service import enqueue_job
 
 
 AGENT_TOOLS = {
@@ -160,11 +162,20 @@ def _find_assignee(db: Session, business_id: int, *, platform_db: Session | None
     """Staff identity belongs to platform DB; tenant workers may omit it."""
     if platform_db is None:
         return None
-    return platform_db.query(User).filter(
-        User.business_id == business_id,
-        User.is_active.is_(True),
-        User.role.in_(("agent", "business_agent", "admin", "business_admin", "owner")),
-    ).order_by(User.id.asc()).first()
+    try:
+        return platform_db.query(PlatformUser).filter(
+            PlatformUser.business_id == business_id,
+            PlatformUser.is_active.is_(True),
+            PlatformUser.role.in_(("agent", "shop_agent", "admin", "shop_admin", "owner")),
+        ).order_by(PlatformUser.id.asc()).first()
+    except Exception:
+        # Legacy deployments may still keep staff identities in the shared
+        # users table while the control-plane migration is rolling out.
+        return platform_db.query(User).filter(
+            User.business_id == business_id,
+            User.is_active.is_(True),
+            User.role.in_(("agent", "business_agent", "admin", "business_admin", "owner")),
+        ).order_by(User.id.asc()).first()
 
 
 def route_escalation(
@@ -205,6 +216,49 @@ def route_escalation(
     db.add(ticket)
     db.flush()
     db.add(TicketEvent(business_id=business_id, ticket_id=ticket.id, event_type="created", to_value="high"))
+    # Keep an auditable notification in the shop inbox.  A configured email
+    # worker can deliver this same event externally without exposing customer
+    # data to the provider.
+    try:
+        from app.services.notification_service import create_notification, deliver_notification_email
+
+        notification = create_notification(
+            db,
+            business_id=business_id,
+            user_id=assignee.id if assignee else None,
+            kind="handoff",
+            title="Có cuộc trò chuyện cần người hỗ trợ",
+            body="Trợ lý đã chuyển một yêu cầu cho nhân viên kiểm tra.",
+            metadata={
+                "ticket_id": ticket.id,
+                "conversation_id": conversation_id,
+                "delivery": "email",
+                "recipient_email": str(getattr(assignee, "email", "") or ""),
+            },
+        )
+        sent = deliver_notification_email(
+            recipient_email=getattr(assignee, "email", None),
+            title="Smart Merchant Hub: Có cuộc trò chuyện cần người hỗ trợ",
+            body="Trợ lý đã chuyển một yêu cầu cho bạn kiểm tra. Mở Hộp thư CRM để tiếp tục.",
+        )
+        recipient_email = str(getattr(assignee, "email", "") or "").strip()
+        notification.metadata_ = {**(notification.metadata_ or {}), "email_status": "sent" if sent else "pending_smtp"}
+        if not sent and recipient_email:
+            enqueue_job(
+                db,
+                business_id=business_id,
+                kind="notification.email",
+                payload={
+                    "notification_id": notification.id,
+                    "recipient_email": recipient_email,
+                    "title": "Smart Merchant Hub: Có cuộc trò chuyện cần người hỗ trợ",
+                    "body": "Trợ lý đã chuyển một yêu cầu cho bạn kiểm tra. Mở Hộp thư CRM để tiếp tục.",
+                },
+                idempotency_key=f"notification:{notification.id}:email",
+            )
+    except Exception:
+        # Notification persistence must never block the customer response.
+        pass
     record_audit(db, business_id=business_id, action="chatbot_escalated", resource_type="ticket", resource_id=ticket.id, metadata={"conversation_id": conversation_id, "reason": text[:500]})
     return ticket
 

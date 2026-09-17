@@ -93,6 +93,13 @@ when the app is behind a trusted reverse proxy, set
 `RATE_LIMIT_TRUSTED_PROXY=true` so the limiter uses the proxy-supplied client
 address. Keep proxy rate limiting enabled as the shared multi-replica layer.
 
+The login endpoint has a separate failure-only guard (5 failed attempts in 15
+minutes by default), keyed by a hashed email/IP pair. It returns `429` with a
+`Retry-After` header and the first-screen login form shows the countdown. Set
+`AUTH_LOGIN_RATE_LIMIT_BACKEND=redis` when several backend replicas need one
+shared login bucket; it reuses `REDIS_URL` and resets the bucket after a
+successful login.
+
 `GET /health` remains the lightweight load-balancer probe. `GET
 /health/details` is the operator probe: it checks database connectivity,
 reports pending/running durable CRM jobs, and shows redacted provider circuit

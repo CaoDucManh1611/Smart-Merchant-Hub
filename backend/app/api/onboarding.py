@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,8 +19,8 @@ from app.database.tenant_session import tenant_session
 from app.db.dependencies import get_db
 from app.tenancy.crm_session import get_tenant_db
 from app.models.auth_session import AuthSession
-from app.models.business import Business, ServicePlan, Subscription, User
-from app.models.platform_control import PlatformBusiness
+from app.models.business import Business, Payment, ServicePlan, Subscription, User
+from app.models.platform_control import PlatformBusiness, PlatformServicePlan, PlatformSubscription
 from app.tenancy.provisioning import ProvisioningValidationError, provision_shop, retry_provision_shop
 from app.models.channel import Channel
 from app.models.inventory import StockMovement
@@ -33,6 +34,9 @@ from app.schemas.onboarding import (
     OnboardingPlanOut,
     OnboardingProductImport,
     OnboardingProductImportOut,
+    OnboardingPlanPurchase,
+    OnboardingSubscriptionSummaryOut,
+    OnboardingBuyerOut,
     OnboardingShopCreate,
     OnboardingShopOut,
     OnboardingSubscriptionOut,
@@ -73,8 +77,19 @@ def _unique_slug(db: Session, requested: str | None, name: str) -> str:
 
 
 def _active_plan(db: Session, code: str) -> ServicePlan:
+    # The UI calls the top tier "Gói Premium", while the billing catalogue
+    # keeps the stable internal code ``pro``. Accept older aliases at the API
+    # boundary so a stale client cannot lose a purchase.
+    aliases = {
+        "custom": "pro",
+        "bot-starter": "starter",
+        "bot-growth": "growth",
+        "bot-custom": "pro",
+    }
+    normalized_code = str(code or "").strip().lower()
+    normalized_code = aliases.get(normalized_code, normalized_code)
     plan = db.query(ServicePlan).filter(
-        ServicePlan.code == code.strip().lower(),
+        ServicePlan.code == normalized_code,
         ServicePlan.status == "active",
     ).first()
     if plan is None:
@@ -142,6 +157,86 @@ def _require_shop_admin(db: Session, business_id: int, actor: User | None) -> Us
     return actor
 
 
+def _require_shop_admin_for_purchase(db: Session, business_id: int, actor: User | None) -> User:
+    """Authorize a plan purchase without requiring an already-active plan."""
+
+    if actor is None or actor.business_id != business_id or actor.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    if business.status != "active":
+        raise HTTPException(status_code=423, detail={"code": "business_suspended", "message": "Shop đang tạm khóa bởi quản trị nền tảng."})
+    return actor
+
+
+def _sync_platform_subscription(platform_db: Session, business: Business, plan: ServicePlan) -> None:
+    """Mirror the active legacy plan into the control-plane quota tables."""
+
+    platform_business = platform_db.get(PlatformBusiness, business.id)
+    if platform_business is None:
+        platform_business = PlatformBusiness(
+            id=business.id,
+            name=business.name,
+            slug=business.slug,
+            status=business.status,
+        )
+        platform_db.add(platform_business)
+        platform_db.flush()
+
+    platform_plan = platform_db.scalar(
+        select(PlatformServicePlan).where(PlatformServicePlan.code == plan.code)
+    )
+    quotas = {
+        "staff_users": plan.max_users,
+        "connected_channels": plan.max_channels,
+        "documents": plan.max_documents,
+        "rag_chunks": plan.max_rag_chunks,
+        "ai_calls": plan.max_ai_calls,
+        "ai_cost": float(plan.max_ai_cost or 0),
+    }
+    if platform_plan is None:
+        platform_plan = PlatformServicePlan(
+            code=plan.code,
+            name=plan.name,
+            price=plan.price,
+            billing_cycle=plan.billing_cycle,
+            quotas=quotas,
+            features=plan.features,
+        )
+        platform_db.add(platform_plan)
+        platform_db.flush()
+    else:
+        platform_plan.name = plan.name
+        platform_plan.price = plan.price
+        platform_plan.billing_cycle = plan.billing_cycle
+        platform_plan.quotas = quotas
+        platform_plan.features = plan.features
+
+    current = platform_db.scalar(
+        select(PlatformSubscription)
+        .where(PlatformSubscription.business_id == business.id)
+        .order_by(PlatformSubscription.id.desc())
+    )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if current is not None and current.plan_id == platform_plan.id:
+        current.status = "active"
+        current.starts_at = current.starts_at or now
+    else:
+        if current is not None and current.status == "active":
+            current.status = "cancelled"
+        platform_db.add(
+            PlatformSubscription(
+                business_id=business.id,
+                plan_id=platform_plan.id,
+                status="active",
+                starts_at=now,
+                ends_at=None,
+            )
+        )
+    platform_db.commit()
+
+
 def _safe_channel_config(config: dict | None) -> dict:
     """Recursively remove credentials and encrypt supported webhook secrets."""
 
@@ -173,6 +268,143 @@ def list_onboarding_plans(db: Session = Depends(get_db)):
     plans = ensure_default_plans(db)
     db.commit()
     return [plan for plan in plans if plan.status == "active"]
+
+
+@router.post("/shops/{business_id}/subscription/purchase", response_model=OnboardingSubscriptionOut)
+def purchase_shop_plan(
+    business_id: int,
+    payload: OnboardingPlanPurchase,
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Activate a plan for local demos; production uses administrator billing."""
+
+    _require_shop_admin_for_purchase(db, business_id, actor)
+    business = db.get(Business, business_id)
+    assert business is not None
+    if settings.ENVIRONMENT.strip().lower() == "production":
+        raise HTTPException(status_code=409, detail="Thanh toán cần quản trị viên xác nhận trước khi kích hoạt gói.")
+
+    ensure_default_plans(db)
+    plan = _active_plan(db, payload.plan_code)
+    current = db.scalar(
+        select(Subscription)
+        .where(Subscription.business_id == business_id)
+        .order_by(Subscription.id.desc())
+    )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if current is not None and current.plan_id == plan.id and current.status == "active":
+        subscription = current
+    else:
+        if current is not None and current.status in {"active", "pending"}:
+            current.status = "cancelled"
+        subscription = Subscription(
+            business_id=business_id,
+            plan_id=plan.id,
+            status="active",
+            starts_at=now,
+            ends_at=None,
+            auto_renew=False,
+        )
+        db.add(subscription)
+        db.flush()
+        db.add(Payment(
+            business_id=business_id,
+            subscription_id=subscription.id,
+            amount=plan.price,
+            currency="VND",
+            provider="demo",
+            provider_transaction_id=f"demo:{business_id}:{plan.code}:{subscription.id}",
+            status="paid",
+            paid_at=now,
+        ))
+
+    record_audit(
+        db,
+        business_id=business_id,
+        user_id=actor.id if actor else None,
+        action="subscription_demo_activated",
+        resource_type="subscription",
+        resource_id=subscription.id,
+        metadata={"plan_code": plan.code, "service_type": payload.service_type, "provider": "demo"},
+    )
+    db.commit()
+    db.refresh(subscription)
+
+    # Quota reservations for channels use the control-plane ledger when it is
+    # available. Keep the legacy activation successful if a local database has
+    # not run the optional platform migration yet; the next restart repairs it.
+    try:
+        _sync_platform_subscription(platform_db, business, plan)
+    except Exception:  # noqa: BLE001 - subscription must remain usable in local demo
+        platform_db.rollback()
+        logger.warning("Platform plan mirror deferred for business_id=%s", business_id, exc_info=True)
+
+    return OnboardingSubscriptionOut(id=subscription.id, plan_code=plan.code, plan_name=plan.name, status=subscription.status)
+
+
+@router.get("/shops/{business_id}/subscription/summary", response_model=OnboardingSubscriptionSummaryOut)
+def get_shop_subscription_summary(
+    business_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    """Return buyer, package and payment details for the current shop only."""
+
+    if actor.business_id != business_id:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    business = db.get(Business, business_id)
+    if business is None or business.status != "active":
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    subscription = db.scalar(
+        select(Subscription)
+        .where(Subscription.business_id == business_id)
+        .order_by(Subscription.id.desc())
+    )
+    payment = None
+    plan = None
+    if subscription is not None:
+        plan = subscription.plan or db.get(ServicePlan, subscription.plan_id)
+        payment = db.scalar(
+            select(Payment)
+            .where(Payment.subscription_id == subscription.id)
+            .order_by(Payment.id.desc())
+        )
+
+    connected_channels = 0
+    try:
+        with tenant_session(schema_name_for(business_id)) as tenant_db:
+            connected_channels = int(
+                tenant_db.query(Channel.id)
+                .filter(Channel.business_id == business_id)
+                .filter(Channel.status.in_(["active", "connected", "verifying", "reconnect_required"]))
+                .count()
+            )
+    except Exception:  # noqa: BLE001 - summary remains useful while provisioning retries
+        connected_channels = 0
+
+    return OnboardingSubscriptionSummaryOut(
+        business_id=business_id,
+        buyer=OnboardingBuyerOut(
+            name=actor.full_name,
+            email=actor.email,
+            phone=business.phone,
+            shop_name=business.name,
+        ),
+        subscription=(OnboardingSubscriptionOut(
+            id=subscription.id,
+            plan_code=plan.code if plan else "",
+            plan_name=plan.name if plan else "Chưa chọn gói",
+            status=subscription.status,
+        ) if subscription is not None else None),
+        amount=payment.amount if payment is not None else (plan.price if plan is not None else None),
+        currency=payment.currency if payment is not None else "VND",
+        payment_status=payment.status if payment is not None else None,
+        paid_at=payment.paid_at if payment is not None else None,
+        connected_channels=connected_channels,
+        channel_limit=plan.max_channels if plan is not None else None,
+    )
 
 
 @router.post("/shops", response_model=OnboardingShopOut, status_code=201)
@@ -468,8 +700,9 @@ def verify_bot_channel(
     """Verify a Telegram/Zalo Bot token and configure its tenant webhook."""
 
     _require_shop_admin(db, business_id, actor)
+    personal_zalo = payload.channel_type == "zalo" and payload.access_token.strip().lower().startswith("personal:")
     public_base = str(settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
-    if not public_base.lower().startswith("https://"):
+    if not personal_zalo and not public_base.lower().startswith("https://"):
         raise HTTPException(
             status_code=503,
             detail={
@@ -477,19 +710,35 @@ def verify_bot_channel(
                 "message": "Cần cấu hình PUBLIC_BASE_URL bằng URL HTTPS công khai trước khi kết nối bot.",
             },
         )
-    webhook_url = f"{public_base}/api/webhooks/{payload.channel_type}"
+    webhook_url = (
+        "/api/channels/zalo/incoming"
+        if personal_zalo
+        else f"{public_base}/api/webhooks/{payload.channel_type}"
+    )
     # Hex is accepted by both Telegram and Zalo and avoids unsupported base64
     # padding characters in the provider secret header.
     import secrets
 
     webhook_secret = secrets.token_hex(32)
     try:
-        verification = verify_and_configure_bot(
-            channel_type=payload.channel_type,
-            access_token=payload.access_token,
-            webhook_url=webhook_url,
-            webhook_secret=webhook_secret,
-        )
+        if personal_zalo:
+            bridge_token = payload.access_token.strip().split(":", 1)[1].strip()
+            if len(bridge_token) < 8:
+                raise ProviderConnectionError("missing_bridge_key", "Mã phiên Zalo bridge chưa đủ dài.")
+            verification = {
+                "external_account_id": f"zalo-personal-{business_id}",
+                "name": "Zalo cá nhân",
+                "provider_account": {"id": f"zalo-personal-{business_id}", "name": "Zalo cá nhân", "mode": "personal_bridge"},
+                "webhook_status": "connected",
+                "webhook_url": webhook_url,
+            }
+        else:
+            verification = verify_and_configure_bot(
+                channel_type=payload.channel_type,
+                access_token=payload.access_token,
+                webhook_url=webhook_url,
+                webhook_secret=webhook_secret,
+            )
         with tenant_session(schema_name_for(business_id)) as tenant_db:
             channel = upsert_channel_connection(
                 tenant_db,
@@ -500,7 +749,7 @@ def verify_bot_channel(
                 access_token=payload.access_token.strip(),
                 config=_safe_channel_config(
                     {
-                        "provider": f"{payload.channel_type}_bot",
+                        "provider": f"{payload.channel_type}_{'personal' if personal_zalo else 'bot'}",
                         "webhook_url": verification["webhook_url"],
                         "webhook_secret": webhook_secret,
                         "provider_account": verification["provider_account"],
