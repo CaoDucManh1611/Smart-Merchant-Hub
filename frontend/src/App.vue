@@ -189,6 +189,8 @@ const productUploadNotice = ref("");
 const productFileInput = ref(null);
 const productAdjustmentDrafts = ref({});
 const productAdjustmentSaving = ref({});
+const productStatusSaving = ref({});
+const productStatusNotice = ref("");
 const inventoryAdjustmentOpen = ref(null);
 const productForm = ref({
   id: null,
@@ -3466,6 +3468,40 @@ async function saveProduct() {
     productError.value = friendlyErrorMessage(err, "Chưa thể lưu sản phẩm. Vui lòng thử lại sau.");
   } finally {
     productSaving.value = false;
+  }
+}
+
+function productStatusLabel(status) {
+  return status === "archived" ? "Lưu trữ" : "Đang bán";
+}
+
+async function changeProductStatus(product, status) {
+  const nextStatus = String(status || "").trim();
+  if (!product?.id || !["active", "archived"].includes(nextStatus) || product.status === nextStatus) return;
+
+  const previousStatus = product.status || "active";
+  productStatusSaving.value = { ...productStatusSaving.value, [product.id]: true };
+  productError.value = "";
+  productStatusNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/products/${product.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: nextStatus }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    product.status = detail.status || nextStatus;
+    productStatusNotice.value = `Đã cập nhật trạng thái “${product.name}” thành ${productStatusLabel(product.status)}.`;
+  } catch (err) {
+    // The select is one-way bound so assigning the old value here also resets
+    // the visible option when the API rejects the change.
+    product.status = previousStatus;
+    productError.value = friendlyErrorMessage(err, "Chưa thể cập nhật trạng thái sản phẩm. Vui lòng thử lại sau.");
+  } finally {
+    const nextSaving = { ...productStatusSaving.value };
+    delete nextSaving[product.id];
+    productStatusSaving.value = nextSaving;
   }
 }
 
@@ -8447,6 +8483,7 @@ function followupRecommendationLabel(item) {
 
         <div v-if="productUploadNotice" class="product-import-notice" role="status">{{ productUploadNotice }}</div>
         <div v-if="productError" class="product-error">{{ productError }}</div>
+        <div v-if="productStatusNotice" class="product-import-notice product-status-notice" role="status">{{ productStatusNotice }}</div>
 
         <div class="operation-mode-banner" data-testid="products-processing-only">
           <strong>Chế độ xử lý sản phẩm</strong>
@@ -8457,7 +8494,7 @@ function followupRecommendationLabel(item) {
         <div v-else-if="!products.length" class="products-empty">Chưa có sản phẩm nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table">
-            <thead><tr><th>Mã sản phẩm</th><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Điều chỉnh tồn</th><th>Trạng thái</th><th></th></tr></thead>
+            <thead><tr><th>Mã sản phẩm</th><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Điều chỉnh tồn</th><th>Trạng thái</th></tr></thead>
             <tbody>
               <template v-for="product in products" :key="product.id">
                 <tr>
@@ -8483,11 +8520,24 @@ function followupRecommendationLabel(item) {
                     </button>
                     <small>Ghi vào sổ điều chỉnh</small>
                   </td>
-                  <td><span class="product-status" :class="product.status">{{ product.status === 'active' ? 'Đang bán' : 'Lưu trữ' }}</span></td>
-                  <td class="product-actions"><button v-if="product.status === 'active'" type="button" @click="archiveProduct(product)">Lưu trữ</button></td>
+                  <td class="product-status-cell">
+                    <select
+                      class="product-status-select"
+                      :class="product.status"
+                      :value="product.status"
+                      :disabled="productStatusSaving[product.id]"
+                      :aria-label="`Trạng thái ${product.name}`"
+                      title="Chọn để đổi trạng thái sản phẩm"
+                      @change="changeProductStatus(product, $event.target.value)"
+                    >
+                      <option value="active">Đang bán</option>
+                      <option value="archived">Lưu trữ</option>
+                    </select>
+                    <small v-if="productStatusSaving[product.id]" class="product-status-saving">Đang lưu...</small>
+                  </td>
                 </tr>
                 <tr v-if="inventoryAdjustmentOpen === product.id" class="inventory-adjustment-row">
-                  <td colspan="7">
+                  <td colspan="6">
                     <div class="inventory-adjustment-panel">
                       <div class="inventory-adjustment-heading">
                         <div>

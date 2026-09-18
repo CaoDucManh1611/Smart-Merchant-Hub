@@ -12131,3 +12131,62 @@ body.crm-dark .business-logo-select { color: #d8ffff !important; background: #25
 body.crm-dark .business-logo-select:hover { background: #173f43 !important; border-color: #39a7ad !important; }
 body.crm-dark .business-logo-remove { color: #ffd0d5 !important; }
 body.crm-dark .business-logo-remove:hover { color: #ffabb8 !important; }
+
+/* Product status is an editable control, not a read-only badge.  Keep the
+   compact pill shape so it still reads like a status while making the
+   available action obvious in the catalog table. */
+.products-table .product-status-cell {
+  min-width: 132px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.product-status-select {
+  box-sizing: border-box;
+  min-width: 112px;
+  min-height: 36px;
+  padding: 7px 28px 7px 11px;
+  border: 1px solid #b9d8d1;
+  border-radius: 999px;
+  color: #24734c;
+  background: #e3f6e9;
+  font-size: .78rem;
+  font-weight: 750;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.product-status-select.archived {
+  color: #69757b;
+  border-color: #cfd8dc;
+  background: #eef1f2;
+}
+.product-status-select:disabled {
+  opacity: .7;
+  cursor: wait;
+}
+.product-status-select:focus-visible {
+  outline: 3px solid rgba(42, 168, 173, .28);
+  outline-offset: 2px;
+}
+.product-status-saving {
+  display: block;
+  margin-top: 4px;
+  color: #607a8f;
+  font-size: .7rem;
+  line-height: 1.2;
+}
+.product-status-notice { margin-top: 8px; }
+body.crm-dark .crm-app .product-status-select {
+  color: #b7ead8 !important;
+  border-color: #3d8974 !important;
+  background: #1e4038 !important;
+}
+body.crm-dark .crm-app .product-status-select.archived {
+  color: #ffd0d5 !important;
+  border-color: #7f414d !important;
+  background: #43242b !important;
+}
+body.crm-dark .crm-app .product-status-select option {
+  color: #f3f5f6;
+  background: #1a1e20;
+}
+body.crm-dark .crm-app .product-status-saving { color: #b6c0c5 !important; }
