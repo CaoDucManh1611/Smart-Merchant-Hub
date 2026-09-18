@@ -17,7 +17,13 @@ target_metadata = TenantBase.metadata
 
 
 def _tenant_schema() -> str:
+    # Direct Alembic invocations (for example, a one-off provisioning or
+    # migration run from PowerShell) cannot pass ``config.attributes`` like
+    # the in-process provisioning runner does.  Accept the explicit ``-x
+    # tenant_schema=shop_<id>`` argument as the equivalent safe input.
     value = config.attributes.get("tenant_schema")
+    if not value:
+        value = context.get_x_argument(as_dictionary=True).get("tenant_schema")
     if not value:
         raise RuntimeError("tenant_schema Alembic attribute is required")
     return validate_schema_name(str(value))

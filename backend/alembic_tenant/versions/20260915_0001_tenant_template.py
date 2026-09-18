@@ -18,7 +18,12 @@ depends_on = None
 
 
 def _schema() -> str:
-    return validate_schema_name(str(context.config.attributes["tenant_schema"]))
+    value = context.config.attributes.get("tenant_schema")
+    if not value:
+        value = context.get_x_argument(as_dictionary=True).get("tenant_schema")
+    if not value:
+        raise RuntimeError("tenant_schema Alembic attribute is required")
+    return validate_schema_name(str(value))
 
 
 def upgrade() -> None:
