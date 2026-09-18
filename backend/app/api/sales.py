@@ -1,9 +1,11 @@
 """Tenant-scoped product catalog and order APIs."""
 
+import csv
+import io
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -43,6 +45,73 @@ router = APIRouter()
 REVENUE_ORDER_STATUSES = ("confirmed", "processing", "shipped", "delivered", "completed", "paid")
 
 SALES_TRANSITIONS = ORDER_TRANSITIONS
+
+
+_PRODUCT_IMPORT_FIELDS = {
+    "sku": "sku",
+    "ma": "sku",
+    "mã": "sku",
+    "ma_san_pham": "sku",
+    "mã_sản_phẩm": "sku",
+    "code": "sku",
+    "name": "name",
+    "ten": "name",
+    "tên": "name",
+    "ten_san_pham": "name",
+    "tên_sản_phẩm": "name",
+    "description": "description",
+    "mo_ta": "description",
+    "mô_tả": "description",
+    "price": "price",
+    "gia": "price",
+    "giá": "price",
+    "stock": "stock_quantity",
+    "stock_quantity": "stock_quantity",
+    "ton": "stock_quantity",
+    "tồn": "stock_quantity",
+    "ton_kho": "stock_quantity",
+    "tồn_kho": "stock_quantity",
+    "status": "status",
+    "trang_thai": "status",
+    "trạng_thái": "status",
+}
+
+
+def _normalise_import_key(value: str) -> str:
+    return "_".join(str(value or "").strip().lower().split())
+
+
+def _parse_import_decimal(value: str, *, row_number: int) -> Decimal:
+    raw = str(value or "").strip().replace("₫", "").replace("đ", "").replace("Đ", "")
+    if not raw:
+        return Decimal("0")
+    raw = raw.replace(" ", "")
+    # Vietnamese exports commonly use dots as thousands separators and commas
+    # for decimals.  Keep a single dot as a decimal point when no comma exists.
+    if "," in raw:
+        raw = raw.replace(".", "").replace(",", ".")
+    elif raw.count(".") > 1:
+        raw = raw.replace(".", "")
+    try:
+        amount = Decimal(raw)
+    except Exception as exc:
+        raise ValueError(f"Dòng {row_number}: giá không hợp lệ.") from exc
+    if amount < 0:
+        raise ValueError(f"Dòng {row_number}: giá không được âm.")
+    return amount
+
+
+def _parse_import_stock(value: str, *, row_number: int) -> int:
+    raw = str(value or "").strip().replace(" ", "")
+    if not raw:
+        return 0
+    try:
+        quantity = int(float(raw.replace(",", ".")))
+    except Exception as exc:
+        raise ValueError(f"Dòng {row_number}: tồn kho không hợp lệ.") from exc
+    if quantity < 0:
+        raise ValueError(f"Dòng {row_number}: tồn kho không được âm.")
+    return quantity
 
 
 def _generated_order_number(db: Session, business_id: int) -> str:
@@ -134,6 +203,186 @@ def list_products(
     total = query.count()
     products = query.order_by(Product.name.asc(), Product.id.asc()).offset(offset).limit(limit).all()
     return ProductListOut(items=[ProductOut.model_validate(product) for product in products], total=total)
+
+
+@router.post(
+    "/products/import",
+    status_code=200,
+    dependencies=[Depends(require_write_access)],
+)
+async def import_products(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    """Nhập danh mục sản phẩm từ CSV/TXT theo từng shop.
+
+    The import intentionally accepts a small, human-friendly column set so a
+    shop can export a spreadsheet as CSV without learning an internal API. A
+    matching SKU updates the existing product; a new SKU creates one.
+    """
+    filename = (file.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="Tên tệp không hợp lệ.")
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if extension not in {"csv", "txt"}:
+        raise HTTPException(status_code=400, detail="Chỉ nhận tệp CSV hoặc TXT.")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Tệp đang rỗng.")
+    if len(file_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Tệp quá lớn. Giới hạn là 20MB.")
+    try:
+        content = file_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            content = file_bytes.decode("cp1258")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Không đọc được tệp. Hãy lưu tệp ở dạng UTF-8 rồi thử lại.") from exc
+
+    try:
+        sample = content[:4096]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.DictReader(io.StringIO(content), dialect=dialect)
+        if not reader.fieldnames:
+            raise HTTPException(status_code=400, detail="Tệp cần có hàng tiêu đề, ví dụ: Mã sản phẩm, Tên sản phẩm, Giá, Tồn kho.")
+        mapped_headers = {
+            header: _PRODUCT_IMPORT_FIELDS.get(_normalise_import_key(header))
+            for header in reader.fieldnames
+            if header
+        }
+        if "sku" not in mapped_headers.values() or "name" not in mapped_headers.values():
+            raise HTTPException(status_code=400, detail="Tệp cần có ít nhất hai cột Mã sản phẩm (SKU) và Tên sản phẩm.")
+    except HTTPException:
+        raise
+    except csv.Error as exc:
+        raise HTTPException(status_code=400, detail="Định dạng tệp không hợp lệ. Hãy dùng CSV có hàng tiêu đề.") from exc
+
+    imported = 0
+    updated = 0
+    skipped = 0
+    errors: list[str] = []
+    seen_skus: set[str] = set()
+    for row_number, row in enumerate(reader, start=2):
+        values: dict[str, str] = {}
+        for source_key, target_key in mapped_headers.items():
+            if target_key and target_key not in values:
+                values[target_key] = str(row.get(source_key) or "").strip()
+        sku = values.get("sku", "").strip()
+        name = values.get("name", "").strip()
+        if not sku and not name and not any(str(value or "").strip() for value in row.values()):
+            continue
+        if not sku or not name:
+            skipped += 1
+            errors.append(f"Dòng {row_number}: cần có mã sản phẩm và tên sản phẩm.")
+            continue
+        if len(sku) > 80 or len(name) > 255:
+            skipped += 1
+            errors.append(f"Dòng {row_number}: mã tối đa 80 ký tự, tên tối đa 255 ký tự.")
+            continue
+        if sku in seen_skus:
+            skipped += 1
+            errors.append(f"Dòng {row_number}: mã sản phẩm bị lặp trong tệp.")
+            continue
+        seen_skus.add(sku)
+        try:
+            price = _parse_import_decimal(values.get("price", ""), row_number=row_number)
+            stock = _parse_import_stock(values.get("stock_quantity", ""), row_number=row_number)
+        except ValueError as exc:
+            skipped += 1
+            errors.append(str(exc))
+            continue
+        status = values.get("status", "active").strip().lower() or "active"
+        status_aliases = {"đang bán": "active", "dang ban": "active", "hoạt động": "active", "active": "active", "lưu trữ": "archived", "luu tru": "archived", "archived": "archived", "inactive": "archived"}
+        status = status_aliases.get(status, status)
+        if status not in {"active", "archived"}:
+            skipped += 1
+            errors.append(f"Dòng {row_number}: trạng thái chỉ có Đang bán hoặc Lưu trữ.")
+            continue
+
+        product = db.query(Product).filter(
+            Product.business_id == tenant.business_id,
+            Product.sku == sku,
+        ).with_for_update().first()
+        if product is None:
+            product = Product(
+                business_id=tenant.business_id,
+                sku=sku,
+                name=name,
+                description=values.get("description") or None,
+                price=price,
+                stock_quantity=stock,
+                status=status,
+            )
+            db.add(product)
+            db.flush()
+            if stock > 0:
+                db.add(StockMovement(
+                    business_id=tenant.business_id,
+                    product_id=product.id,
+                    movement_type="opening_balance",
+                    quantity=stock,
+                    quantity_before=0,
+                    quantity_after=stock,
+                    source_type="product_import",
+                    source_id=product.id,
+                    actor_id=actor.id if actor else None,
+                    note=f"Nhập từ tệp {filename}",
+                ))
+            imported += 1
+        else:
+            before = int(product.stock_quantity or 0)
+            reserved = int(product.reserved_quantity or 0)
+            if stock < reserved:
+                skipped += 1
+                errors.append(f"Dòng {row_number}: tồn kho {stock} thấp hơn số đang giữ {reserved} của sản phẩm hiện có.")
+                continue
+            product.name = name
+            product.description = values.get("description") or None
+            product.price = price
+            product.status = status
+            product.stock_quantity = stock
+            if stock != before:
+                db.add(StockMovement(
+                    business_id=tenant.business_id,
+                    product_id=product.id,
+                    movement_type="inventory_import",
+                    quantity=stock - before,
+                    quantity_before=before,
+                    quantity_after=stock,
+                    source_type="product_import",
+                    source_id=product.id,
+                    actor_id=actor.id if actor else None,
+                    note=f"Cập nhật từ tệp {filename}",
+                ))
+            updated += 1
+
+    if imported == 0 and updated == 0:
+        db.rollback()
+        detail = "Không có sản phẩm hợp lệ để nhập."
+        if errors:
+            detail += " " + " ".join(errors[:3])
+        raise HTTPException(status_code=400, detail=detail)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Có mã sản phẩm trùng. Hãy kiểm tra lại tệp rồi nhập lại.") from exc
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="import",
+        resource_type="product_catalog",
+        metadata={"filename": filename, "imported": imported, "updated": updated, "skipped": skipped},
+    )
+    db.commit()
+    return {"filename": filename, "imported": imported, "updated": updated, "skipped": skipped, "errors": errors[:25]}
 
 
 @router.post("/products", response_model=ProductOut, status_code=201, dependencies=[Depends(require_write_access)])

@@ -184,6 +184,9 @@ const products = ref([]);
 const productsLoading = ref(false);
 const productSaving = ref(false);
 const productError = ref("");
+const productUploading = ref(false);
+const productUploadNotice = ref("");
+const productFileInput = ref(null);
 const productAdjustmentDrafts = ref({});
 const productAdjustmentSaving = ref({});
 const inventoryAdjustmentOpen = ref(null);
@@ -3301,6 +3304,51 @@ async function fetchProducts() {
     productError.value = "Chưa tải được danh sách sản phẩm. Vui lòng thử lại sau.";
   } finally {
     productsLoading.value = false;
+  }
+}
+
+function openProductFilePicker() {
+  productFileInput.value?.click();
+}
+
+function handleProductFileSelect(event) {
+  const file = event.target.files?.[0];
+  if (file) uploadProductFile(file);
+}
+
+function handleProductDrop(event) {
+  event.preventDefault();
+  const file = event.dataTransfer?.files?.[0];
+  if (file) uploadProductFile(file);
+}
+
+async function uploadProductFile(file) {
+  if (!file || productUploading.value) return;
+  productUploading.value = true;
+  productError.value = "";
+  productUploadNotice.value = "";
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiFetch(`${API_BASE}/products/import`, {
+      method: "POST",
+      body: formData,
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    const imported = Number(detail.imported || 0);
+    const updated = Number(detail.updated || 0);
+    const skipped = Number(detail.skipped || 0);
+    productUploadNotice.value = `Đã nhập ${imported} sản phẩm${updated ? `, cập nhật ${updated}` : ""}${skipped ? `, bỏ qua ${skipped} dòng` : ""}.`;
+    if (Array.isArray(detail.errors) && detail.errors.length) {
+      productUploadNotice.value += ` ${detail.errors.slice(0, 2).join(" ")}`;
+    }
+    await fetchProducts();
+  } catch (error) {
+    productError.value = friendlyErrorMessage(error, "Chưa thể nhập danh mục sản phẩm. Vui lòng kiểm tra tệp rồi thử lại.");
+  } finally {
+    productUploading.value = false;
+    if (productFileInput.value) productFileInput.value.value = "";
   }
 }
 
@@ -6465,10 +6513,10 @@ function followupRecommendationLabel(item) {
 
         <div class="menu-group menu-group-system">
           <span class="menu-group-label">Hệ thống</span>
-          <button class="menu-item" :class="{ active: currentTab === 'service' }" title="Chọn gói dịch vụ" @click="openServicePage">
+          <button class="menu-item menu-item-service" :class="{ active: currentTab === 'service' }" title="Chọn gói dịch vụ" @click="openServicePage">
             <svg class="nav-icon nav-icon-service" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 14.1 9l5.9.4-4.5 3.8 1.5 5.7-5-3.1-5 3.1 1.5-5.7L4 9.4l5.9-.4Z" /><path d="M12 14v6.5M8.5 20.5h7" /></svg><b>Chọn gói dịch vụ</b>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'settings' }" title="Cài đặt" @click="openSettings">
+          <button class="menu-item menu-item-settings" :class="{ active: currentTab === 'settings' }" title="Cài đặt" @click="openSettings">
             <svg class="nav-icon nav-icon-settings" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19 13.5v-3l-2.1-.7a5.3 5.3 0 0 0-.5-1.1l1-2-2.1-2.1-2 1a5.3 5.3 0 0 0-1.1-.5L11.5 3h-3l-.7 2.1a5.3 5.3 0 0 0-1.1.5l-2-1L2.6 6.7l1 2a5.3 5.3 0 0 0-.5 1.1l-2.1.7v3l2.1.7a5.3 5.3 0 0 0 .5 1.1l-1 2 2.1 2.1 2-1a5.3 5.3 0 0 0 1.1.5l.7 2.1h3l.7-2.1a5.3 5.3 0 0 0 1.1-.5l2 1 2.1-2.1-1-2a5.3 5.3 0 0 0 .5-1.1Z" /></svg><b>Cài đặt</b>
           </button>
         </div>
@@ -8336,6 +8384,32 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
+        <div
+          class="product-import-dropzone upload-dropzone"
+          @dragover.prevent
+          @drop.prevent="handleProductDrop"
+          @click="openProductFilePicker"
+        >
+          <input
+            ref="productFileInput"
+            type="file"
+            class="hidden-file-input"
+            accept=".csv,.txt,text/csv,text/plain"
+            @change="handleProductFileSelect"
+          />
+          <div v-if="!productUploading" class="dropzone-content">
+            <span class="upload-icon" aria-hidden="true">NHẬP DANH MỤC</span>
+            <strong>Nhập tệp sản phẩm để cập nhật nhanh danh mục</strong>
+            <small>CSV hoặc TXT · Tối đa 20MB · Cột cần có: Mã sản phẩm, Tên sản phẩm, Giá, Tồn kho</small>
+            <button type="button" class="secondary-btn import-choice" @click.stop="openProductFilePicker">Nhập tệp</button>
+          </div>
+          <div v-else class="dropzone-content" role="status" aria-live="polite">
+            <span class="spinner-icon" aria-hidden="true">...</span>
+            <strong>Đang nhập danh mục sản phẩm...</strong>
+          </div>
+        </div>
+
+        <div v-if="productUploadNotice" class="product-import-notice" role="status">{{ productUploadNotice }}</div>
         <div v-if="productError" class="product-error">{{ productError }}</div>
 
         <div class="operation-mode-banner" data-testid="products-processing-only">
@@ -11894,6 +11968,57 @@ function followupRecommendationLabel(item) {
 .crm-dark .empty-docs-state { color: #b6c0c5 !important; }
 .crm-dark .upload-dropzone { background: #252a2d !important; border-color: #3e8588 !important; }
 .crm-dark .stat-card { background: #252a2d !important; border-color: #394145 !important; }
+
+/* Keep the two system actions visually and semantically distinct even when a
+   cached legacy stylesheet is still present. */
+.menu-group-system .menu-item-service b,
+.menu-group-system .menu-item-settings b {
+  display: inline-block !important;
+  visibility: visible !important;
+  width: auto !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+  clip: auto !important;
+  font-size: inherit !important;
+  text-indent: 0 !important;
+  white-space: nowrap !important;
+}
+.menu-group-system .menu-item-service b::before,
+.menu-group-system .menu-item-service b::after,
+.menu-group-system .menu-item-settings b::before,
+.menu-group-system .menu-item-settings b::after {
+  content: none !important;
+  display: none !important;
+}
+
+.product-import-dropzone {
+  min-height: 148px;
+  margin: 0;
+  padding: 24px;
+}
+.product-import-dropzone .dropzone-content { gap: 7px; }
+.product-import-dropzone .upload-icon {
+  color: var(--salon-accent);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+.product-import-dropzone .dropzone-content strong { font-size: 1rem; }
+.product-import-dropzone .dropzone-content small { max-width: 720px; line-height: 1.5; text-align: center; }
+.product-import-notice {
+  margin: 0;
+  padding: 11px 14px;
+  border: 1px solid #b9e1dc;
+  border-radius: 10px;
+  color: #246d70;
+  background: #eefaf8;
+  font-size: .86rem;
+}
+.crm-dark .product-import-notice {
+  color: #c7f3ec;
+  background: #173f43;
+  border-color: #3e8588;
+}
 
 @media (max-width: 640px) {
   .channel-modal .bot-connect-guides { grid-template-columns: 1fr; }
