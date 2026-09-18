@@ -818,6 +818,38 @@ function saveBusinessProfile() {
   }
 }
 
+function handleBusinessLogoChange(event) {
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (!String(file.type || "").startsWith("image/")) {
+    businessProfileNotice.value = "Vui lòng chọn một tệp hình ảnh.";
+    if (input) input.value = "";
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    businessProfileNotice.value = "Ảnh logo tối đa 5 MB. Vui lòng chọn ảnh nhỏ hơn.";
+    if (input) input.value = "";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result || "");
+    if (!dataUrl) return;
+    businessProfile.value = { ...businessProfile.value, logo_url: dataUrl };
+    businessProfileNotice.value = "Đã chọn logo. Nhấn “Lưu thông tin shop” để áp dụng.";
+  };
+  reader.onerror = () => {
+    businessProfileNotice.value = "Chưa thể đọc ảnh logo. Vui lòng thử lại.";
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeBusinessLogo() {
+  businessProfile.value = { ...businessProfile.value, logo_url: "" };
+  businessProfileNotice.value = "Đã gỡ ảnh logo. Nhấn “Lưu thông tin shop” để áp dụng.";
+}
+
 function saveLearningPreferences() {
   try {
     localStorage.setItem(`crm-learning-preferences-${authUser.value?.business_id || "shop"}`, JSON.stringify({ messageLearningEnabled: messageLearningEnabled.value, reinforcementLearningEnabled: reinforcementLearningEnabled.value }));
@@ -9554,7 +9586,27 @@ function followupRecommendationLabel(item) {
 
         <div v-if="authUser" class="settings-card business-profile-card">
           <div class="settings-card-header"><div><span class="card-eyebrow">THÔNG TIN SHOP</span><h2>Tên, logo &amp; lời chào</h2><p>Những thông tin này được dùng khi trợ lý giới thiệu shop với khách.</p></div></div>
-          <div class="business-profile-grid"><label>Tên doanh nghiệp<input v-model="businessProfile.name" maxlength="160" placeholder="Tên shop" /></label><label>Đường dẫn logo<input v-model="businessProfile.logo_url" type="url" placeholder="https://..." /></label><label class="business-profile-wide">Mô tả shop<textarea v-model="businessProfile.description" rows="3" maxlength="1000" placeholder="Shop bán gì, điểm nổi bật..." /></label><label class="business-profile-wide">Tin nhắn chào mừng<textarea v-model="businessProfile.welcome_message" rows="3" maxlength="1000" placeholder="Xin chào, shop có thể giúp gì cho bạn?" /></label><label>Giọng văn<select v-model="businessProfile.tone"><option>Thân thiện</option><option>Ngắn gọn</option><option>Chuyên nghiệp</option></select></label><label>Ngôn ngữ<select v-model="businessProfile.language"><option>Tiếng Việt</option><option>Tiếng Anh</option><option>Song ngữ</option></select></label></div>
+          <div class="business-profile-grid">
+            <label>Tên doanh nghiệp<input v-model="businessProfile.name" maxlength="160" placeholder="Tên shop" /></label>
+            <div class="business-logo-field">
+              <span>Logo shop</span>
+              <div class="business-logo-picker">
+                <div v-if="businessProfile.logo_url" class="business-logo-preview">
+                  <img :src="businessProfile.logo_url" alt="Logo shop" />
+                  <button type="button" class="business-logo-remove" @click="removeBusinessLogo">Gỡ ảnh</button>
+                </div>
+                <label class="business-logo-select">
+                  <span>{{ businessProfile.logo_url ? 'Đổi ảnh' : 'Chọn ảnh từ thiết bị' }}</span>
+                  <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" @change="handleBusinessLogoChange" />
+                </label>
+              </div>
+              <small class="field-hint">PNG, JPG, WEBP hoặc GIF · tối đa 5 MB</small>
+            </div>
+            <label class="business-profile-wide">Mô tả shop<textarea v-model="businessProfile.description" rows="3" maxlength="1000" placeholder="Shop bán gì, điểm nổi bật..." /></label>
+            <label class="business-profile-wide">Tin nhắn chào mừng<textarea v-model="businessProfile.welcome_message" rows="3" maxlength="1000" placeholder="Xin chào, shop có thể giúp gì cho bạn?" /></label>
+            <label>Giọng văn<select v-model="businessProfile.tone"><option>Thân thiện</option><option>Ngắn gọn</option><option>Chuyên nghiệp</option></select></label>
+            <label>Ngôn ngữ<select v-model="businessProfile.language"><option>Tiếng Việt</option><option>Tiếng Anh</option><option>Song ngữ</option></select></label>
+          </div>
           <div class="voice-settings-row"><label class="checkbox-field"><input v-model="voiceSettings.enabled" type="checkbox" /> Đọc tin nhắn thành giọng nói</label><select v-model="voiceSettings.voice" :disabled="!voiceSettings.enabled"><option>Giọng nữ</option><option>Giọng nam</option></select><button type="button" class="secondary-btn" @click="previewWelcomeVoice">Nghe thử lời chào</button></div>
           <div v-if="businessProfileNotice" class="settings-notice" role="status">{{ businessProfileNotice }}</div><button type="button" class="primary-btn" @click="saveBusinessProfile">Lưu thông tin shop</button>
         </div>
