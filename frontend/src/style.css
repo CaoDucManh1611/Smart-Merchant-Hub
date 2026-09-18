@@ -12190,3 +12190,125 @@ body.crm-dark .crm-app .product-status-select option {
   background: #1a1e20;
 }
 body.crm-dark .crm-app .product-status-saving { color: #b6c0c5 !important; }
+
+/* Platform admin is a separate control-plane workspace.  It shares the CRM
+   typography but keeps tenant operations (orders, products and conversations)
+   out of the admin navigation. */
+.platform-admin-layout {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 1480px);
+  margin-inline: auto;
+  padding-bottom: 32px;
+}
+.platform-admin-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.platform-admin-hero .card-eyebrow,
+.platform-admin-panel .card-eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  color: #237f83;
+  font-size: .68rem;
+  font-weight: 850;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.platform-admin-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.platform-admin-metric,
+.platform-admin-panel {
+  border: 1px solid var(--owly-border);
+  border-radius: 14px;
+  background: var(--owly-surface);
+  box-shadow: 0 8px 24px rgba(32, 54, 74, .06);
+}
+.platform-admin-metric {
+  display: grid;
+  gap: 5px;
+  min-height: 98px;
+  padding: 16px 18px;
+}
+.platform-admin-metric span,
+.platform-admin-metric small { color: var(--owly-muted); }
+.platform-admin-metric strong { color: var(--owly-ink); font-size: 1.65rem; line-height: 1; }
+.platform-admin-metric-alert strong { color: #a54842; }
+.platform-admin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, .85fr);
+  gap: 18px;
+  align-items: start;
+}
+.platform-admin-panel { min-width: 0; padding: 18px 20px; }
+.platform-admin-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.platform-admin-panel-heading h3 { margin: 0 0 4px; color: var(--owly-ink); font-size: 1.08rem; }
+.platform-admin-panel-heading p { margin: 0; color: var(--owly-muted); font-size: .82rem; line-height: 1.5; }
+.platform-admin-count { flex: 0 0 auto; color: var(--owly-muted); font-size: .78rem; font-weight: 750; white-space: nowrap; }
+.platform-admin-panel .platform-table-wrap { margin: 0 -1px; }
+.platform-plan-list { display: grid; gap: 10px; }
+.platform-plan-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 10px;
+  padding: 12px;
+  border: 1px solid var(--owly-border);
+  border-radius: 11px;
+  background: var(--owly-surface-soft);
+}
+.platform-plan-item > div { display: grid; gap: 3px; min-width: 0; }
+.platform-plan-item strong { color: var(--owly-ink); }
+.platform-plan-item span,
+.platform-plan-item small { color: var(--owly-muted); font-size: .78rem; }
+.platform-plan-item small { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.platform-plan-chip { color: var(--workspace-primary-dark); font-weight: 750; }
+.platform-schema-list { margin: 0; }
+.platform-schema-list li { align-items: center; }
+.platform-schema-list li > div { display: grid; gap: 3px; }
+.platform-schema-list li span { color: var(--owly-muted); font-size: .78rem; }
+.platform-alert-list { margin: 0; }
+.platform-alert-list li { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+.platform-alert-list li small { margin-left: auto; color: var(--owly-muted); }
+.platform-admin-audit-panel { min-width: 0; }
+
+body.crm-dark .crm-app .platform-admin-metric,
+body.crm-dark .crm-app .platform-admin-panel { color: #f3f5f6 !important; background: #202427 !important; border-color: #394145 !important; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+body.crm-dark .crm-app .platform-admin-hero { background: #202427 !important; border-color: #394145 !important; }
+body.crm-dark .crm-app .platform-admin-hero h2,
+body.crm-dark .crm-app .platform-admin-panel-heading h3,
+body.crm-dark .crm-app .platform-plan-item strong,
+body.crm-dark .crm-app .platform-admin-metric strong { color: #f3f5f6 !important; }
+body.crm-dark .crm-app .platform-admin-hero p,
+body.crm-dark .crm-app .platform-admin-panel-heading p,
+body.crm-dark .crm-app .platform-admin-metric span,
+body.crm-dark .crm-app .platform-admin-metric small,
+body.crm-dark .crm-app .platform-admin-count,
+body.crm-dark .crm-app .platform-plan-item span,
+body.crm-dark .crm-app .platform-plan-item small,
+body.crm-dark .crm-app .platform-schema-list li span,
+body.crm-dark .crm-app .platform-alert-list li small { color: #b6c0c5 !important; }
+body.crm-dark .crm-app .platform-admin-metric-alert strong { color: #ffd0d5 !important; }
+body.crm-dark .crm-app .platform-plan-item { background: #252a2d !important; border-color: #394145 !important; }
+body.crm-dark .crm-app .platform-plan-chip { color: #d8ffff !important; }
+
+@media (max-width: 980px) {
+  .platform-admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .platform-admin-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .platform-admin-hero { flex-direction: column; }
+  .platform-admin-metrics { grid-template-columns: 1fr; }
+  .platform-admin-panel-heading { flex-direction: column; }
+  .platform-alert-list li small { width: 100%; margin-left: 0; }
+}

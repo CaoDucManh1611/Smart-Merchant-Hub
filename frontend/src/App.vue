@@ -164,7 +164,7 @@ let socket = null;
 let reconnectTimer = null;
 
 /* RAG & TAB STATE */
-const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 'tickets' | 'reports' | 'documents' | 'rag_chat' | 'experiments' | 'channels' | 'webhooks' | 'settings' | 'service'
+const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 'tickets' | 'reports' | 'documents' | 'rag_chat' | 'experiments' | 'channels' | 'webhooks' | 'settings' | 'platform_admin' | 'service'
 // The inbox is the primary working surface. Keep navigation compact by default;
 // users can still expand it with the persistent control at the bottom.
 // Keep the full navigation visible on desktop so the workspace feels like a
@@ -292,6 +292,7 @@ const auditLogs = ref([]);
 const auditLoading = ref(false);
 const platformAdmin = ref(false);
 const platformShops = ref([]);
+const platformPlans = ref([]);
 const platformSchemas = ref([]);
 const platformAuditLogs = ref([]);
 const platformProviderErrors = ref([]);
@@ -755,7 +756,6 @@ function openSettings() {
   void fetchTeam();
   void fetchAuditLogs();
   void fetchSecuritySettings();
-  void fetchPlatformAdmin();
   void fetchChatbotRuntime();
   void fetchFollowups();
   void fetchCsat();
@@ -4262,6 +4262,7 @@ async function fetchPlatformAdmin() {
     if (!authUser.value) {
       platformAdmin.value = false;
       platformShops.value = [];
+      platformPlans.value = [];
       platformSchemas.value = [];
       platformAuditLogs.value = [];
       platformProviderErrors.value = [];
@@ -4271,6 +4272,7 @@ async function fetchPlatformAdmin() {
     if (!shopsResponse.ok) {
       platformAdmin.value = false;
       platformShops.value = [];
+      platformPlans.value = [];
       platformSchemas.value = [];
       platformAuditLogs.value = [];
       platformProviderErrors.value = [];
@@ -4279,6 +4281,8 @@ async function fetchPlatformAdmin() {
     const shopsPayload = await shopsResponse.json();
     platformAdmin.value = true;
     platformShops.value = shopsPayload.items || [];
+    const plansResponse = await apiFetch(`${API_BASE}/platform/plans`);
+    platformPlans.value = plansResponse.ok ? await plansResponse.json() : [];
     const schemasResponse = await apiFetch(`${API_BASE}/platform/tenant-schemas`);
     if (schemasResponse.ok) {
       platformSchemas.value = (await schemasResponse.json()).items || [];
@@ -4293,6 +4297,7 @@ async function fetchPlatformAdmin() {
     platformProviderErrors.value = providerResponse.ok ? await providerResponse.json() : [];
   } catch (err) {
     platformAdmin.value = false;
+    platformPlans.value = [];
     platformAuditLogs.value = [];
     platformProviderErrors.value = [];
     platformError.value = friendlyErrorMessage(err, "Chưa tải được thông tin quản trị. Vui lòng thử lại sau.");
@@ -6146,6 +6151,7 @@ onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
 
   await loadAuthSession();
+  await fetchPlatformAdmin();
   // Tenant data is only loaded after the platform session identifies an
   // active shop. Anonymous mode exposes the login gate only.
   if (!authUser.value) {
@@ -6463,6 +6469,12 @@ async function fetchServiceAccountSummary() {
   }
 }
 
+async function openPlatformAdmin() {
+  currentTab.value = "platform_admin";
+  await fetchPlatformAdmin();
+  if (!platformAdmin.value) currentTab.value = "settings";
+}
+
 function saveSelectedConversationSample() {
   if (!selected.value || !messages.value.length) return;
   const key = `crm-learning-samples-${authUser.value?.business_id || "shop"}`;
@@ -6590,6 +6602,13 @@ function followupRecommendationLabel(item) {
           </button>
           <button class="menu-item menu-item-settings" :class="{ active: currentTab === 'settings' }" title="Cài đặt" @click="openSettings">
             <svg class="nav-icon nav-icon-settings" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19 13.5v-3l-2.1-.7a5.3 5.3 0 0 0-.5-1.1l1-2-2.1-2.1-2 1a5.3 5.3 0 0 0-1.1-.5L11.5 3h-3l-.7 2.1a5.3 5.3 0 0 0-1.1.5l-2-1L2.6 6.7l1 2a5.3 5.3 0 0 0-.5 1.1l-2.1.7v3l2.1.7a5.3 5.3 0 0 0 .5 1.1l-1 2 2.1 2.1 2-1a5.3 5.3 0 0 0 1.1.5l.7 2.1h3l.7-2.1a5.3 5.3 0 0 0 1.1-.5l2 1 2.1-2.1-1-2a5.3 5.3 0 0 0 .5-1.1Z" /></svg><b>Cài đặt</b>
+          </button>
+        </div>
+
+        <div v-if="platformAdmin" class="menu-group menu-group-platform-admin">
+          <span class="menu-group-label">Quản trị nền tảng</span>
+          <button class="menu-item" :class="{ active: currentTab === 'platform_admin' }" title="Quản trị nền tảng" @click="openPlatformAdmin">
+            <svg class="nav-icon nav-icon-platform-admin" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16v13H4z" /><path d="M8 6.5V4h8v2.5M8 11h8M8 15h5" /><circle cx="17" cy="16" r="2.5" /></svg><b>Quản trị nền tảng</b>
           </button>
         </div>
 
@@ -8446,6 +8465,94 @@ function followupRecommendationLabel(item) {
       </section>
 
       <!-- ===================================================
+           PLATFORM ADMINISTRATION (CONTROL PLANE)
+      ==================================================== -->
+      <section v-if="currentTab === 'platform_admin' && platformAdmin" class="platform-admin-layout">
+        <div class="products-header platform-admin-hero">
+          <div>
+            <span class="card-eyebrow">CONTROL PLANE</span>
+            <h2>Quản trị nền tảng</h2>
+            <p>Quản lý tenant, gói dịch vụ, module, kết nối và sức khỏe toàn bộ hệ thống.</p>
+          </div>
+          <button type="button" class="settings-refresh" :disabled="platformLoading" @click="fetchPlatformAdmin">{{ platformLoading ? 'Đang tải...' : 'Làm mới dữ liệu' }}</button>
+        </div>
+
+        <div v-if="platformError" class="settings-notice team-error" role="alert">{{ platformError }}</div>
+
+        <div class="platform-admin-metrics">
+          <article class="platform-admin-metric"><span>Tenant</span><strong>{{ platformShops.length }}</strong><small>Đang được quản lý</small></article>
+          <article class="platform-admin-metric"><span>Đang hoạt động</span><strong>{{ platformShops.filter((shop) => shop.status !== 'suspended').length }}</strong><small>Tenant có thể truy cập</small></article>
+          <article class="platform-admin-metric"><span>Đã tạm khóa</span><strong>{{ platformShops.filter((shop) => shop.status === 'suspended').length }}</strong><small>Cần kiểm tra trước khi mở lại</small></article>
+          <article class="platform-admin-metric platform-admin-metric-alert"><span>Cảnh báo kênh</span><strong>{{ platformProviderErrors.length }}</strong><small>Lỗi đã được ẩn thông tin nhạy cảm</small></article>
+        </div>
+
+        <div class="platform-admin-grid">
+          <section class="platform-admin-panel platform-admin-tenant-panel">
+            <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">TENANTS</span><h3>Danh sách tenant</h3><p>Quản lý trạng thái và hạn mức; dữ liệu vận hành vẫn nằm trong workspace riêng.</p></div><span class="platform-admin-count">{{ platformShops.length }} tenant</span></div>
+            <div v-if="!platformShops.length" class="settings-empty">Chưa có tenant trên nền tảng.</div>
+            <div v-else class="platform-table-wrap">
+              <table class="team-table platform-table">
+                <thead><tr><th>Tenant</th><th>Gói dịch vụ</th><th>Trạng thái</th><th>Hạn mức</th><th></th></tr></thead>
+                <tbody>
+                  <tr v-for="shop in platformShops" :key="shop.id">
+                    <td><strong>{{ shop.name }}</strong><small>{{ shop.slug }} · #{{ shop.id }}</small></td>
+                    <td><span class="platform-plan-chip">{{ shop.plan_name || 'Chưa cấp gói' }}</span></td>
+                    <td><span class="team-status" :class="{ inactive: shop.status === 'suspended' }">{{ shop.status === 'suspended' ? 'Đã khóa' : 'Đang hoạt động' }}</span></td>
+                    <td><small v-if="Object.keys(shop.usage || {}).length">{{ Object.entries(shop.usage).slice(0, 3).map(([key, value]) => `${key}: ${value}`).join(' · ') }}</small><small v-else>Chưa ghi nhận</small></td>
+                    <td><button type="button" class="team-toggle" @click="togglePlatformShop(shop)">{{ shop.status === 'suspended' ? 'Mở shop' : 'Khóa shop' }}</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="platform-admin-panel">
+            <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">SERVICE PLANS</span><h3>Gói dịch vụ</h3><p>Gói quyết định hạn mức và các module được cấp cho từng tenant.</p></div><span class="platform-admin-count">{{ platformPlans.length }} gói</span></div>
+            <div v-if="!platformPlans.length" class="settings-empty">Chưa có gói dịch vụ.</div>
+            <div v-else class="platform-plan-list">
+              <article v-for="plan in platformPlans" :key="plan.id" class="platform-plan-item">
+                <div><strong>{{ plan.name }}</strong><span>{{ Number(plan.price || 0).toLocaleString('vi-VN') }}đ · {{ plan.billing_cycle === 'yearly' ? 'Theo năm' : 'Theo tháng' }}</span></div>
+                <span class="team-status" :class="{ inactive: plan.status !== 'active' }">{{ plan.status === 'active' ? 'Đang bán' : 'Lưu trữ' }}</span>
+                <small v-if="plan.features && Object.keys(plan.features).length">{{ Object.keys(plan.features).slice(0, 3).join(' · ') }}</small>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <div class="platform-admin-grid">
+          <section class="platform-admin-panel">
+            <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">TENANT ISOLATION</span><h3>Tách kho dữ liệu theo shop</h3><p>Quản lý tách kho dữ liệu theo shop, điều khiển trạng thái thử nghiệm mà không mở dữ liệu CRM sang tenant khác.</p></div></div>
+            <div v-if="!platformSchemas.length" class="settings-empty">Chưa đăng ký tenant thử nghiệm.</div>
+            <ul v-else class="permission-list platform-schema-list">
+              <li v-for="schema in platformSchemas" :key="schema.id">
+                <div><strong>Tenant #{{ schema.business_id }} · {{ schema.schema_name }}</strong><span>{{ schema.feature_enabled ? 'Đang bật thử nghiệm' : `Trạng thái: ${schemaStateLabel(schema.state)}` }}</span></div>
+                <button type="button" class="history-btn" @click="stagePlatformSchema(schema)">{{ schema.state === 'ready' ? 'Tắt thử nghiệm' : 'Bật thử nghiệm' }}</button>
+              </li>
+            </ul>
+            <div v-if="platformShops.some((shop) => !platformSchemas.some((schema) => schema.business_id === shop.id))" class="platform-schema-actions">
+              <button v-for="shop in platformShops.filter((item) => !platformSchemas.some((schema) => schema.business_id === item.id))" :key="shop.id" type="button" class="settings-refresh" @click="registerPlatformSchema(shop.id)">Đăng ký tách dữ liệu cho {{ shop.name }}</button>
+            </div>
+          </section>
+
+          <section class="platform-admin-panel">
+            <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">CHANNEL HEALTH</span><h3>Kết nối &amp; cảnh báo</h3><p>Theo dõi lỗi Facebook, Instagram, Telegram, Zalo và các kênh sẽ bổ sung như TikTok, Shopee.</p></div></div>
+            <p v-if="!platformProviderErrors.length" class="settings-empty">Chưa có cảnh báo kết nối.</p>
+            <ul v-else class="audit-list platform-alert-list">
+              <li v-for="errorItem in platformProviderErrors.slice(0, 10)" :key="errorItem.id"><strong>{{ channelLabel(errorItem.channel_type) }}</strong><span> · {{ workflowEventLabel(errorItem.event_type) }} · {{ errorItem.error_type || 'Lỗi kết nối' }}</span><small>{{ errorItem.received_at ? new Date(errorItem.received_at).toLocaleString('vi-VN') : '' }}</small></li>
+            </ul>
+          </section>
+        </div>
+
+        <section class="platform-admin-panel platform-admin-audit-panel">
+          <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">AUDIT</span><h3>Nhật ký nền tảng</h3><p>Ghi lại thao tác quản trị tenant, gói dịch vụ, thanh toán và tách dữ liệu.</p></div><span class="platform-admin-count">{{ platformAuditLogs.length }} sự kiện</span></div>
+          <p v-if="!platformAuditLogs.length" class="settings-empty">Chưa có nhật ký nền tảng.</p>
+          <ul v-else class="audit-list platform-alert-list">
+            <li v-for="log in platformAuditLogs.slice(0, 12)" :key="log.id"><strong>{{ log.action }}</strong><span> · {{ resourceLabel(log.resource_type) }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span><small>{{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '' }}</small></li>
+          </ul>
+        </section>
+      </section>
+
+      <!-- ===================================================
            SẢN PHẨM (PRODUCT CATALOG)
       ==================================================== -->
       <section v-if="currentTab === 'products'" class="products-layout">
@@ -9799,63 +9906,6 @@ function followupRecommendationLabel(item) {
               <span>{{ item.comment || (item.status === 'sent' ? 'Đã gửi khảo sát, đang chờ khách trả lời.' : 'Đang chờ gửi khảo sát.') }}</span>
             </li>
           </ul>
-        </div>
-
-        <div v-if="platformAdmin" class="settings-card platform-admin-card">
-          <div class="settings-card-header">
-            <div>
-              <h2>Quản trị Smart Merchant Hub</h2>
-              <p>Tạo/kích hoạt gói dịch vụ, khóa/mở shop, xem hạn mức và tách kho dữ liệu riêng cho từng shop.</p>
-            </div>
-            <button type="button" class="settings-refresh" :disabled="platformLoading" @click="fetchPlatformAdmin">{{ platformLoading ? 'Đang tải...' : 'Làm mới' }}</button>
-          </div>
-          <div v-if="platformError" class="settings-notice team-error">{{ platformError }}</div>
-          <div v-if="!platformShops.length" class="settings-empty">Chưa có shop trên nền tảng.</div>
-          <div v-else class="platform-table-wrap">
-            <table class="team-table platform-table">
-              <thead><tr><th>Shop</th><th>Trạng thái</th><th>Hạn mức đã dùng</th><th></th></tr></thead>
-              <tbody>
-                <tr v-for="shop in platformShops" :key="shop.id">
-                  <td><strong>{{ shop.name }}</strong><small>{{ shop.slug }} · {{ shop.plan_name || 'Chưa có gói' }}</small></td>
-                  <td><span class="team-status" :class="{ inactive: shop.status === 'suspended' }">{{ shop.status === 'suspended' ? 'Đã khóa' : 'Đang hoạt động' }}</span></td>
-                  <td><small v-if="Object.keys(shop.usage || {}).length">{{ Object.entries(shop.usage).map(([key, value]) => `${key}: ${value}`).join(' · ') }}</small><small v-else>Chưa ghi nhận</small></td>
-                  <td><button type="button" class="team-toggle" @click="togglePlatformShop(shop)">{{ shop.status === 'suspended' ? 'Mở shop' : 'Khóa shop' }}</button></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="platform-schema-panel">
-            <div class="settings-card-header"><div><h3>Thử nghiệm tách kho dữ liệu theo shop</h3><p>Chỉ ghi danh sách theo dõi; chưa chuyển dữ liệu CRM hiện tại.</p></div></div>
-            <div v-if="!platformSchemas.length" class="settings-empty">Chưa đăng ký shop thử nghiệm.</div>
-            <ul v-else class="permission-list">
-              <li v-for="schema in platformSchemas" :key="schema.id">
-                <strong>Shop #{{ schema.business_id }} · {{ schema.schema_name }}</strong>
-                <span>{{ schema.feature_enabled ? 'Đang bật thử nghiệm' : `Trạng thái: ${schemaStateLabel(schema.state)}` }}</span>
-                <button type="button" class="history-btn" @click="stagePlatformSchema(schema)">{{ schema.state === 'ready' ? 'Tắt thử nghiệm' : 'Bật thử nghiệm' }}</button>
-              </li>
-            </ul>
-            <div v-if="platformShops.some((shop) => !platformSchemas.some((schema) => schema.business_id === shop.id))" class="platform-schema-actions">
-              <button v-for="shop in platformShops.filter((item) => !platformSchemas.some((schema) => schema.business_id === item.id))" :key="shop.id" type="button" class="settings-refresh" @click="registerPlatformSchema(shop.id)">Đăng ký tách dữ liệu cho {{ shop.name }}</button>
-            </div>
-          </div>
-          <div class="platform-audit-panel">
-            <div class="settings-card-header"><div><h3>Nhật ký nền tảng</h3><p>Thao tác khóa/mở shop, gói, thanh toán và tách kho dữ liệu.</p></div></div>
-            <p v-if="!platformAuditLogs.length" class="settings-empty">Chưa có audit nền tảng.</p>
-            <ul v-else class="audit-list">
-              <li v-for="log in platformAuditLogs.slice(0, 10)" :key="log.id">
-                <strong>{{ log.action }}</strong>
-                <span> · {{ resourceLabel(log.resource_type) }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span>
-                <small>{{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '' }}</small>
-              </li>
-            </ul>
-          </div>
-          <div class="platform-audit-panel provider-error-panel">
-            <div class="settings-card-header"><div><h3>Lỗi kênh gần đây</h3><p>Chỉ hiển thị loại lỗi và kênh; không hiển thị dữ liệu hay mã bảo vệ.</p></div></div>
-            <p v-if="!platformProviderErrors.length" class="settings-empty">Chưa có lỗi kênh.</p>
-            <ul v-else class="audit-list">
-              <li v-for="errorItem in platformProviderErrors.slice(0, 10)" :key="errorItem.id"><strong>{{ channelLabel(errorItem.channel_type) }}</strong><span> · {{ workflowEventLabel(errorItem.event_type) }} · {{ errorItem.error_type || 'Lỗi kết nối' }}</span><small>{{ errorItem.received_at ? new Date(errorItem.received_at).toLocaleString('vi-VN') : '' }}</small></li>
-            </ul>
-          </div>
         </div>
 
         <div v-if="authUser" class="settings-card team-card">
