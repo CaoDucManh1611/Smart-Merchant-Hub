@@ -11921,3 +11921,135 @@ body.crm-dark .conversation p,
 body.crm-dark .conversation-footer {
   color: #b6c0c5 !important;
 }
+
+/* Customer 360 details and composer: remove the last legacy coral fragments
+   so dense panels read as one consistent dark workspace. */
+body.crm-dark .customer-timeline-row p,
+body.crm-dark .customer-timeline-row .timeline-explainability,
+body.crm-dark .customer-timeline-row .customer-timeline-meta {
+  color: #b6c0c5 !important;
+}
+body.crm-dark .customer-timeline-row > div {
+  color: #e5eaec !important;
+}
+body.crm-dark .timeline-dot {
+  background: #37a6ad !important;
+  box-shadow: 0 0 0 3px rgba(55, 166, 173, .14);
+}
+body.crm-dark .timeline-dot.note {
+  background: #d1a85b !important;
+  box-shadow: 0 0 0 3px rgba(209, 168, 91, .14);
+}
+body.crm-dark .timeline-load-more {
+  color: #d8ffff !important;
+  background: #253b3d !important;
+  border-color: #3c777a !important;
+}
+
+body.crm-dark .customer-fact-copy p,
+body.crm-dark .facts-empty {
+  color: #b6c0c5 !important;
+}
+body.crm-dark .customer-fact-row small {
+  color: #d1a85b !important;
+}
+body.crm-dark .customer-fact-row small.verified {
+  color: #b7ead8 !important;
+}
+body.crm-dark .customer-fact-form-row button,
+body.crm-dark .customer-fact-actions button,
+body.crm-dark .customer-tag-form button,
+body.crm-dark .segment-form button,
+body.crm-dark .merge-history-row button,
+body.crm-dark .saved-segment-row button {
+  color: #d8ffff !important;
+  background: #253b3d !important;
+  border-color: #3c777a !important;
+}
+body.crm-dark .customer-fact-actions button:last-child,
+body.crm-dark .saved-segment-actions button:last-child {
+  color: #ffd0d5 !important;
+  background: #43242b !important;
+  border-color: #7f414d !important;
+}
+body.crm-dark .customer-tag-form input,
+body.crm-dark .customer-tag-form select,
+body.crm-dark .segment-form input,
+body.crm-dark .segment-form select,
+body.crm-dark .segment-form textarea {
+  color: #f3f5f6 !important;
+  background: #1a1e20 !important;
+  border-color: #4a555a !important;
+}
+body.crm-dark .segment-form label,
+body.crm-dark .customer-merge-section .field-hint,
+body.crm-dark .customer-segment-section .field-hint {
+  color: #b6c0c5 !important;
+}
+body.crm-dark .merge-preview-card {
+  color: #f4d58a !important;
+  background: #46391e !important;
+  border-color: #80652f !important;
+}
+body.crm-dark .merge-preview-card small,
+body.crm-dark .merge-history-row small,
+body.crm-dark .saved-segment-row small {
+  color: #b6c0c5 !important;
+}
+body.crm-dark .merge-history h5 {
+  color: #8bd8d7 !important;
+}
+body.crm-dark .stats div {
+  color: #e5eaec !important;
+  background: #252a2d !important;
+  border-color: #394145 !important;
+}
+body.crm-dark .stats span {
+  color: #b6c0c5 !important;
+}
+body.crm-dark .stats b {
+  color: #8bd8d7 !important;
+}
+
+body.crm-dark .chat-composer .left-actions button:not(.template),
+body.crm-dark .chat-composer .right-actions button:not(.send):not(.voucher) {
+  color: #8bd8d7 !important;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+body.crm-dark .chat-composer .left-actions button:hover,
+body.crm-dark .chat-composer .right-actions button:hover {
+  color: #d8ffff !important;
+  background: #173f43 !important;
+}
+body.crm-dark .chat-composer .left-actions button.active {
+  color: #fff !important;
+  background: #238b92 !important;
+}
+body.crm-dark .chat-composer .voice-record-button {
+  color: #d8ffff !important;
+  background: linear-gradient(135deg, #2aa8ad, #176d7a) !important;
+  border-color: transparent !important;
+  box-shadow: 0 5px 12px rgba(13, 101, 111, .28) !important;
+}
+body.crm-dark .chat-composer .voice-record-button.recording {
+  background: #8d3f4f !important;
+  box-shadow: 0 0 0 4px rgba(141, 63, 79, .24) !important;
+}
+body.crm-dark .chat-composer .voice-recording-status {
+  color: #f4d58a !important;
+}
+body.crm-dark .chat-composer .voice-recording-status::before {
+  background: #d1a85b !important;
+}
+body.crm-dark .chat-composer .template,
+body.crm-dark .chat-composer .voucher {
+  color: #d8ffff !important;
+  background: #253b3d !important;
+  border-color: #3c777a !important;
+}
+body.crm-dark .chat-composer .send {
+  color: #fff !important;
+  background: linear-gradient(135deg, #2aa8ad, #176d7a) !important;
+  border-color: transparent !important;
+}

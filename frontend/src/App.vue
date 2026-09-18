@@ -1745,9 +1745,13 @@ function usageResourceLabel(resource) {
     messages: "Tin nhắn",
     conversations: "Hội thoại",
     orders: "Đơn hàng",
+    staff_users: "Nhân viên",
+    connected_channels: "Kênh kết nối",
     ai_calls: "Lượt trợ lý",
     ai_tokens: "Lượt xử lý trợ lý",
+    ai_cost: "Chi phí trợ lý",
     rag_runs: "Lần tra cứu thông tin",
+    rag_chunks: "Đoạn kiến thức",
     documents: "Tài liệu",
     storage_bytes: "Dung lượng lưu trữ",
   };
