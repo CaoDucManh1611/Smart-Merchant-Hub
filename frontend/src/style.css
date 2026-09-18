@@ -11854,3 +11854,70 @@ body.crm-dark .conversation-channel-pill,
 body.crm-dark .status-draft { color: #c4d0d6 !important; background: #29343a !important; }
 body.crm-dark .inbox-title-count { color: #d8ffff !important; background: #173f43 !important; border-color: #3c777a !important; }
 body.crm-dark .brand-mini { color: #d8ffff !important; background: #173f43 !important; border-color: #3c777a !important; }
+
+/* Final dark-mode alignment for the two dense surfaces visible in the
+   workspace: inventory adjustment rows and the inbox conversation list. */
+body.crm-dark .inventory-adjustment-row > td {
+  background: #202427 !important;
+  border-color: #394145 !important;
+}
+body.crm-dark .inventory-adjustment-panel {
+  color: #e5eaec !important;
+  background: #252a2d !important;
+  border-color: #394145 !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .24) !important;
+}
+body.crm-dark .inventory-adjustment-current > span,
+body.crm-dark .adjustment-direction {
+  color: #e5eaec !important;
+  background: #1a1e20 !important;
+  border-color: #394145 !important;
+}
+body.crm-dark .inventory-adjustment-current > span:nth-child(2) {
+  background: #173f43 !important;
+  border-color: #3c777a !important;
+}
+body.crm-dark .inventory-adjustment-current small,
+body.crm-dark .adjustment-preview span,
+body.crm-dark .adjustment-actions small {
+  color: #b6c0c5 !important;
+}
+body.crm-dark .inventory-adjustment-current b,
+body.crm-dark .adjustment-preview strong {
+  color: #f3f5f6 !important;
+}
+body.crm-dark .inventory-adjustment-current > span:nth-child(2) b {
+  color: #b7ead8 !important;
+}
+body.crm-dark .inventory-adjustment-heading {
+  color: #f3f5f6 !important;
+}
+body.crm-dark .adjustment-preview {
+  color: #d8ffff !important;
+  background: #173f43 !important;
+  border-color: #3c777a !important;
+}
+
+body.crm-dark .conv-head strong {
+  color: #f3f5f6 !important;
+}
+body.crm-dark .conversation-status time {
+  color: #9eabb0 !important;
+}
+body.crm-dark .conversation .channel {
+  color: #b6c0c5 !important;
+}
+body.crm-dark .conversation-channel-pill {
+  color: #d8ffff !important;
+  background: #253b3d !important;
+  border-color: #3c777a !important;
+}
+body.crm-dark .conversation .avatar {
+  color: #d8ffff !important;
+  background: #173f43 !important;
+  border-color: #3c777a !important;
+}
+body.crm-dark .conversation p,
+body.crm-dark .conversation-footer {
+  color: #b6c0c5 !important;
+}
