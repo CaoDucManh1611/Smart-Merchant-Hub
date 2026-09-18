@@ -25,6 +25,7 @@ from app.auth.passwords import hash_password
 from app.database.bootstrap import ensure_default_business
 from app.database.session import SessionLocal
 from app.models.business import Business, User
+from app.models.saas import PlatformMembership
 
 
 def main() -> int:
@@ -32,6 +33,11 @@ def main() -> int:
     parser.add_argument("--business-id", type=int, default=None)
     parser.add_argument("--email", required=True)
     parser.add_argument("--name", required=True)
+    parser.add_argument(
+        "--platform-admin",
+        action="store_true",
+        help="Grant this account access to the platform-admin control plane.",
+    )
     args = parser.parse_args()
 
     password = getpass.getpass("Owner password (hidden, min 8 chars): ")
@@ -68,6 +74,9 @@ def main() -> int:
         db.add(user)
         db.commit()
         db.refresh(user)
+        if args.platform_admin:
+            db.add(PlatformMembership(user_id=user.id, is_active=True))
+            db.commit()
         business_id = business.id
         user_id = user.id
         user_email = user.email

@@ -35,7 +35,10 @@ DEFAULT_PLANS = (
         "code": "starter",
         "name": "Gói Thường",
         "description": "Gói gọn nhẹ cho shop mới bắt đầu chăm khách và quản lý hội thoại.",
-        "price": Decimal("100000"),
+        # Keep the starter tier free for local/demo onboarding.  Paid tiers
+        # still require an explicit purchase, while a new shop can connect a
+        # channel and exercise the full CRM flow immediately.
+        "price": Decimal("0"),
         "max_users": 3,
         "max_channels": 1,
         "max_documents": 10,

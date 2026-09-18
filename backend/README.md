@@ -81,6 +81,16 @@ container. The password is prompted privately:
 docker compose exec backend python scripts/create_admin.py --business-id 1 --email owner@example.com --name "Shop Owner"
 ```
 
+For the separate platform-admin workspace, grant that account explicit
+control-plane access when creating it:
+
+```powershell
+docker compose exec backend python scripts/create_admin.py --business-id 1 --email platform@example.com --name "Platform Admin" --platform-admin
+```
+
+The flag creates an active `platform_memberships` row; it does not elevate
+existing shop owners automatically.
+
 Then sign in under **Cài đặt**. Existing development installations can still
 use the `X-Business-Id` header until an owner session is created; once a bearer
 session is present, its tenant and role take precedence.

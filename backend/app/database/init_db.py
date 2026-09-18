@@ -4,7 +4,7 @@ import time
 from sqlalchemy import select, text
 
 from app.core.config import settings
-from app.database.bootstrap import ensure_default_business
+from app.database.bootstrap import ensure_default_business, ensure_default_plans
 from app.database.session import Base, SessionLocal, engine
 from app.database.bases import PlatformBase
 from app.database.platform_session import PlatformSessionLocal, platform_engine
@@ -468,6 +468,12 @@ def init_db() -> None:
     # safe to upgrade without a manual data step.
     with SessionLocal() as db:
         ensure_default_business(db)
+        # Keep the service catalogue available immediately after a fresh
+        # startup.  The API also calls this helper defensively, but seeding at
+        # bootstrap makes the platform-admin dashboard and onboarding page
+        # useful before either endpoint has been opened once.
+        ensure_default_plans(db)
+        db.commit()
 
     # Existing local installs may predate the platform/tenant databases. Make
     # the first restart provision their shop schema so the inbox and channel

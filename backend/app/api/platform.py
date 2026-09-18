@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.platform import require_platform_admin
+from app.database.bootstrap import ensure_default_plans
 from app.db.dependencies import get_db
 from app.database.platform_session import get_platform_db
 from app.models.audit_log import AuditLog
@@ -212,6 +213,11 @@ def list_plans(
     db: Session = Depends(get_db),
     _actor: User = Depends(require_platform_admin),
 ):
+    # Older development databases may have the service_plans table but no
+    # catalogue rows yet.  Repair that state idempotently so Admin is usable
+    # immediately after migration instead of showing an empty catalogue.
+    ensure_default_plans(db)
+    db.commit()
     return db.scalars(select(ServicePlan).order_by(ServicePlan.status.asc(), ServicePlan.id.asc())).all()
 
 

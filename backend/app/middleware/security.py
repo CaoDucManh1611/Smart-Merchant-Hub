@@ -218,7 +218,10 @@ return {1, maximum - count, 0, now_ms + window_ms}
             while bucket and bucket[0] <= cutoff:
                 bucket.popleft()
             if len(bucket) >= self.max_attempts:
-                retry_after = max(1, int(bucket[0] + self.window_seconds - now) + 1)
+                retry_after = min(
+                    self.window_seconds,
+                    max(1, int(bucket[0] + self.window_seconds - now) + 1),
+                )
                 return RateLimitDecision(
                     allowed=False,
                     remaining=0,
@@ -352,7 +355,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             while bucket and bucket[0] <= cutoff:
                 bucket.popleft()
             if len(bucket) >= self.max_requests:
-                retry_after = max(1, int(bucket[0] + self.window_seconds - now) + 1)
+                retry_after = min(
+                    self.window_seconds,
+                    max(1, int(bucket[0] + self.window_seconds - now) + 1),
+                )
                 response = JSONResponse(
                     {"detail": "Quá nhiều yêu cầu, vui lòng thử lại sau."},
                     status_code=429,

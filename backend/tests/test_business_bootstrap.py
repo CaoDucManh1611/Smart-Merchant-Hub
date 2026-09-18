@@ -4,7 +4,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.models.business import Business
-from app.database.bootstrap import ensure_default_business
+from app.database.bootstrap import ensure_default_business, ensure_default_plans
+from app.models.business import ServicePlan
 
 
 class DefaultBusinessBootstrapTests(unittest.TestCase):
@@ -22,6 +23,22 @@ class DefaultBusinessBootstrapTests(unittest.TestCase):
         self.assertEqual(1, len(businesses))
         self.assertEqual("default-business", first.slug)
         self.assertEqual("Default Business", first.name)
+
+    def test_default_plans_are_seeded_idempotently(self):
+        engine = create_engine("sqlite://")
+        ServicePlan.__table__.create(engine)
+
+        with Session(engine) as session:
+            first = ensure_default_plans(session)
+            session.commit()
+            second = ensure_default_plans(session)
+            session.commit()
+            plans = session.scalars(select(ServicePlan).order_by(ServicePlan.code)).all()
+
+        self.assertEqual(["starter", "growth", "pro"], [plan.code for plan in first])
+        self.assertEqual([plan.id for plan in first], [plan.id for plan in second])
+        self.assertEqual(3, len(plans))
+        self.assertTrue(all(plan.status == "active" for plan in plans))
 
 
 if __name__ == "__main__":
