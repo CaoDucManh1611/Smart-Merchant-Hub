@@ -10606,17 +10606,6 @@ body,
   box-shadow: 0 9px 20px rgba(43, 155, 153, .12);
 }
 
-/* Keep the legacy markup accessible while presenting a Vietnamese label. */
-.menu-group-system .menu-item b {
-  font-size: 0;
-}
-
-.menu-group-system .menu-item b::after {
-  content: "Cài đặt";
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .products-table th,
 .products-table td {
   color: #4d6f81;
