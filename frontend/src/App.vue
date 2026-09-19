@@ -19,7 +19,10 @@ import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privac
 import { apiFetch } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
+// Keep browser requests same-origin by default. Vite proxies /api to the
+// backend container in development, and an Ngrok frontend address therefore
+// works without hard-coding a user's localhost API origin.
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 
 // Convert technical/network failures into a short message that is useful to
 // a shop owner.  The original error is still available through `cause` and
@@ -501,7 +504,7 @@ const servicePurchaseLoading = ref(false);
 const servicePurchaseNotice = ref("");
 const servicePurchaseError = ref("");
 const SERVICE_CHANNELS = Object.freeze(["Facebook", "Instagram", "Telegram", "Zalo"]);
-const SERVICE_CHANNEL_LIMITS = Object.freeze({ starter: 1, growth: 2, custom: 4, pro: 4, "bot-starter": 1, "bot-growth": 2, "bot-custom": 4 });
+const SERVICE_CHANNEL_LIMITS = Object.freeze({ demo: 0, starter: 1, growth: 2, custom: 4, pro: 4, "bot-starter": 1, "bot-growth": 2, "bot-custom": 4 });
 const servicePlans = Object.freeze([
   { code: "starter", name: "Gói Thường", price: "100.000đ / tháng", description: "Gói gọn nhẹ cho shop mới bắt đầu chăm khách.", features: ["Tối đa 3 nhân viên", "1 kênh kết nối", "10 tài liệu hướng dẫn"] },
   { code: "growth", name: "Gói VIP", price: "400.000đ / tháng", description: "Gói cân bằng cho shop cần nhiều kênh và đội ngũ chăm khách.", features: ["Tối đa 10 nhân viên", "2 kênh kết nối", "5.000 lượt trả lời tự động"] },
@@ -552,6 +555,8 @@ const botTokenVisible = ref(false);
 const botConnectionForm = ref({ channel_type: "telegram", access_token: "" });
 const notificationError = ref("");
 const activeBotConnections = computed(() => botConnections.value.filter((item) => ["connected", "active"].includes(String(item.status || "").toLowerCase())));
+const demoChannelsLocked = computed(() => String(quotaSnapshot.value?.plan_code || "").toLowerCase() === "demo"
+  || Number(quotaSnapshot.value?.resources?.connected_channels?.limit) === 0);
 
 
 /* META OAUTH */
@@ -570,6 +575,10 @@ async function fetchMetaStatus() {
 }
 
 async function connectMeta() {
+  if (demoChannelsLocked.value) {
+    metaNotice.value = "Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Hãy chọn và kích hoạt một gói dịch vụ trước.";
+    return;
+  }
   metaLoading.value = true;
   metaNotice.value = "";
   try {
@@ -666,6 +675,10 @@ async function fetchBotConnections() {
 }
 
 async function connectBotChannel() {
+  if (demoChannelsLocked.value) {
+    botConnectionError.value = "Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Hãy chọn và kích hoạt một gói dịch vụ trước.";
+    return;
+  }
   const token = String(botConnectionForm.value.access_token || "").trim();
   if (!token) {
     botConnectionError.value = "Bạn cần dán mã bot trước khi kết nối.";
@@ -696,7 +709,9 @@ async function connectBotChannel() {
     // contain the actionable reason (for example an invalid token or webhook
     // URL). Do not hide that message behind the generic network fallback.
     const providerMessage = botConnectionErrorMessage(err?.payload, "");
-    botConnectionError.value = providerMessage
+    botConnectionError.value = err?.status === 429 && err?.payload?.detail?.code === "quota_exceeded"
+      ? "Gói hiện tại đã hết số lượng kênh được phép. Hãy nâng cấp gói dịch vụ để kết nối thêm."
+      : providerMessage
       || friendlyErrorMessage(err, "Chưa thể kiểm tra và kết nối bot. Hãy kiểm tra lại mã bot rồi thử lại.");
   } finally {
     botConnectionSaving.value = false;
@@ -747,6 +762,7 @@ function openChannelModal(tab = "meta") {
     botConnectionError.value = "";
   }
   channelModalOpen.value = true;
+  if (authUser.value) void fetchQuotaUsage();
 }
 
 function closeChannelModal() {
@@ -2508,17 +2524,9 @@ function connectRealtime() {
     return;
   }
 
-  const wsUrl =
-    API_BASE
-      .replace(
-        /^http/,
-        "ws"
-      )
-      .replace(
-        /\/api$/,
-        ""
-      )
-    + "/ws/conversations";
+  const apiUrl = new URL(API_BASE, window.location.origin);
+  const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${wsProtocol}//${apiUrl.host}/ws/conversations`;
 
   socket = new WebSocket(
     wsUrl
@@ -9773,9 +9781,10 @@ function followupRecommendationLabel(item) {
             <span class="visually-hidden">Kết nối Telegram/Zalo · Quét QR để tạo bot · BotFather · Zalo Bot Manager</span>
             <template v-if="['meta', 'facebook', 'instagram'].includes(channelModalTab)">
               <div v-if="metaNotice" class="settings-notice team-error">{{ metaNotice }}</div>
+              <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked">Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Chọn và kích hoạt gói dịch vụ để tiếp tục.</div>
               <div class="meta-channel-grid">
-                <article class="meta-channel-card" :class="{ active: channelModalTab === 'facebook' }"><div><span class="channel-card-icon">f</span><h3>Facebook</h3><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected }">{{ metaStatus.connected ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Trang:</strong> {{ metaStatus.facebook_page_name || 'Đã kết nối' }}</div><div><strong>Mã trang:</strong> {{ metaStatus.facebook_page_id || '—' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading" @click="connectMeta">{{ metaLoading ? 'Đang kết nối...' : 'Kết nối Facebook' }}</button></article>
-                <article class="meta-channel-card" :class="{ active: channelModalTab === 'instagram' }"><div><span class="channel-card-icon">◎</span><h3>Instagram</h3><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Tài khoản:</strong> {{ metaStatus.instagram_account_id || 'Chưa liên kết' }}</div><div><strong>Nhận tin:</strong> {{ metaStatus.subscription_status || 'Chưa kiểm tra' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading" @click="connectMeta">{{ metaLoading ? 'Đang kết nối...' : 'Kết nối Instagram' }}</button></article>
+                <article class="meta-channel-card" :class="{ active: channelModalTab === 'facebook' }"><div><span class="channel-card-icon">f</span><h3>Facebook</h3><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected }">{{ metaStatus.connected ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Trang:</strong> {{ metaStatus.facebook_page_name || 'Đã kết nối' }}</div><div><strong>Mã trang:</strong> {{ metaStatus.facebook_page_id || '—' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading || demoChannelsLocked" @click="connectMeta">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : metaLoading ? 'Đang kết nối...' : 'Kết nối Facebook' }}</button></article>
+                <article class="meta-channel-card" :class="{ active: channelModalTab === 'instagram' }"><div><span class="channel-card-icon">◎</span><h3>Instagram</h3><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Tài khoản:</strong> {{ metaStatus.instagram_account_id || 'Chưa liên kết' }}</div><div><strong>Nhận tin:</strong> {{ metaStatus.subscription_status || 'Chưa kiểm tra' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading || demoChannelsLocked" @click="connectMeta">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : metaLoading ? 'Đang kết nối...' : 'Kết nối Instagram' }}</button></article>
               </div>
               <p class="settings-muted meta-oauth-note">Facebook và Instagram dùng chung một lần cấp quyền; CRM vẫn tách riêng dữ liệu và trạng thái hiển thị cho từng kênh.</p>
               <div v-if="metaStatus.connected" class="settings-actions"><button class="btn-meta-disconnect" type="button" :disabled="metaLoading" @click="disconnectMeta">Ngắt kết nối Facebook/Instagram</button></div>
@@ -9785,7 +9794,8 @@ function followupRecommendationLabel(item) {
               <div v-if="botConnectionError" class="settings-notice team-error bot-connection-alert"><span>{{ botConnectionError }}</span><button type="button" class="settings-refresh" :disabled="botConnectionLoading" @click="fetchBotConnections">{{ botConnectionLoading ? 'Đang tải...' : 'Thử lại' }}</button></div><div v-if="botConnectionNotice" class="settings-notice">{{ botConnectionNotice }}</div>
               <div class="bot-provider-heading"><span class="channel-card-icon">{{ channelModalTab === 'zalo' ? 'Z' : '✈' }}</span><div><h3>{{ channelModalTab === 'zalo' ? 'Zalo cá nhân' : 'Telegram BotFather' }}</h3><p>{{ channelModalTab === 'zalo' ? 'Kết nối phiên đăng nhập Zalo cá nhân của shop.' : 'Kết nối kênh Telegram chính thức của shop.' }}</p></div><span class="connection-badge" :class="{ connected: activeBotConnections.some((item) => item.channel_type === channelModalTab) }">{{ activeBotConnections.some((item) => item.channel_type === channelModalTab) ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
               <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap"><img :src="botQrUrl(channelModalTab)" :alt="`Mã QR mở ${channelModalTab === 'zalo' ? 'Zalo cá nhân' : 'Telegram BotFather'}`" loading="lazy" /></div><div><ol v-if="channelModalTab === 'telegram'"><li>Mở BotFather.</li><li>Gõ <code>/newbot</code> và tạo bot.</li><li>Sao chép mã bot gửi cho bạn.</li></ol><ol v-else><li>Đăng nhập Zalo cá nhân trên máy chạy bridge.</li><li>Chọn phiên Zalo cần dùng cho shop.</li><li>Sao chép mã phiên bridge và dán vào đây.</li></ol><a class="bot-guide-link" :href="botGuideUrl(channelModalTab)" target="_blank" rel="noreferrer">{{ channelModalTab === 'zalo' ? 'Mở Zalo Web' : 'Mở Telegram BotFather' }}</a></div></div>
-              <form class="bot-connect-form" @submit.prevent="connectBotChannel"><input type="hidden" v-model="botConnectionForm.channel_type" /><label class="bot-token-field">{{ channelModalTab === 'zalo' ? 'Mã phiên Zalo bridge' : 'Mã bot' }}<div class="bot-token-input-wrap"><input v-model="botConnectionForm.access_token" :type="botTokenVisible ? 'text' : 'password'" autocomplete="off" required :placeholder="channelModalTab === 'zalo' ? 'Dán mã phiên bridge tại đây' : 'Dán mã bot tại đây'" /><button type="button" class="token-visibility-btn" @click="botTokenVisible = !botTokenVisible">{{ botTokenVisible ? 'Ẩn' : 'Hiện' }}</button></div></label><button class="primary-btn bot-connect-submit" type="submit" :disabled="botConnectionSaving">{{ botConnectionSaving ? 'Đang kiểm tra...' : 'Kiểm tra và kết nối' }}</button></form>
+              <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked">Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Chọn và kích hoạt gói dịch vụ để tiếp tục.</div>
+              <form class="bot-connect-form" @submit.prevent="connectBotChannel"><input type="hidden" v-model="botConnectionForm.channel_type" /><label class="bot-token-field">{{ channelModalTab === 'zalo' ? 'Mã phiên Zalo bridge' : 'Mã bot' }}<div class="bot-token-input-wrap"><input v-model="botConnectionForm.access_token" :type="botTokenVisible ? 'text' : 'password'" autocomplete="off" required :disabled="demoChannelsLocked" :placeholder="demoChannelsLocked ? 'Chọn gói dịch vụ để mở kết nối' : channelModalTab === 'zalo' ? 'Dán mã phiên bridge tại đây' : 'Dán mã bot tại đây'" /><button type="button" class="token-visibility-btn" :disabled="demoChannelsLocked" @click="botTokenVisible = !botTokenVisible">{{ botTokenVisible ? 'Ẩn' : 'Hiện' }}</button></div></label><button class="primary-btn bot-connect-submit" type="submit" :disabled="botConnectionSaving || demoChannelsLocked">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : botConnectionSaving ? 'Đang kiểm tra...' : 'Kiểm tra và kết nối' }}</button></form>
               <p class="bot-connect-note">{{ channelModalTab === 'zalo' ? 'Phiên Zalo được giữ trên máy bridge của shop; CRM chỉ nhận mã phiên đã mã hóa.' : 'Mã kết nối chỉ dùng cho shop này và được lưu an toàn.' }}</p><div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === channelModalTab).length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === channelModalTab)" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ channelModalTab === 'zalo' ? 'Zalo cá nhân' : 'Telegram' }} · {{ botConnectionStateLabel(connection.status) }} · Nhận tin {{ connection.webhook_status === 'connected' ? 'hoạt động' : connection.webhook_status === 'disconnected' ? 'đã ngắt' : 'cần kiểm tra' }}</small></div><button v-if="['connected', 'active', 'verifying', 'reconnect_required', 'error'].includes(String(connection.status || '').toLowerCase())" type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có kết nối {{ channelModalTab === 'zalo' ? 'Zalo cá nhân' : 'Telegram' }} nào.</div>
             </template>
           </section>
@@ -10312,7 +10322,7 @@ function followupRecommendationLabel(item) {
           </form>
           <div v-if="signupError" class="login-alert" role="alert">{{ signupError }}</div>
           <div v-if="signupNotice" class="login-notice" role="status">{{ signupNotice }}</div>
-          <small class="login-footer-note">Sau khi tạo, shop bắt đầu với Gói Thường và có thể chọn gói dịch vụ nâng cao.</small>
+          <small class="login-footer-note">Sau khi tạo, shop bắt đầu với Gói Demo 0 đồng. Gói Demo chưa mở kết nối mạng xã hội.</small>
           <button type="button" class="login-service-link" @click="openLogin">← Quay lại đăng nhập</button>
         </div>
       </div>

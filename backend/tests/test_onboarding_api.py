@@ -101,7 +101,7 @@ class OnboardingApiTests(unittest.TestCase):
                 json={"email": request_payload["email"], "otp": "123456"},
             )
         self.assertEqual(201, verified.status_code, verified.text)
-        self.assertEqual("starter", verified.json()["subscription"]["plan_code"])
+        self.assertEqual("demo", verified.json()["subscription"]["plan_code"])
         self.assertNotIn("password", verified.json())
         with Session(self.engine) as db:
             self.assertEqual(1, db.query(Business).filter(Business.name == request_payload["shop_name"]).count())

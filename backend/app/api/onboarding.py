@@ -309,6 +309,16 @@ def _sync_platform_subscription(platform_db: Session, business: Business, plan: 
     platform_db.commit()
 
 
+def _mirror_initial_subscription(business: Business, plan: ServicePlan) -> None:
+    """Mirror a newly-created demo subscription into platform quota tables."""
+
+    try:
+        with PlatformSessionLocal() as platform_db:
+            _sync_platform_subscription(platform_db, business, plan)
+    except Exception:  # noqa: BLE001 - the provisioning retry can repair this
+        logger.warning("Initial platform subscription mirror deferred for business_id=%s", business.id, exc_info=True)
+
+
 def _safe_channel_config(config: dict | None) -> dict:
     """Recursively remove credentials and encrypt supported webhook secrets."""
 
@@ -568,7 +578,7 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
             owner_name=challenge.owner_name,
             owner_email=email,
             password_hash=challenge.password_hash,
-            plan_code="starter",
+            plan_code="demo",
         )
         db.commit()
     except IntegrityError as exc:
@@ -576,6 +586,7 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Không thể tạo shop với thông tin đã nhập.") from exc
 
     provisioning_state = _start_platform_provisioning(business)
+    _mirror_initial_subscription(business, plan)
     return OnboardingShopOut(
         business_id=business.id,
         shop_name=business.name,

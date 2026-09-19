@@ -11824,9 +11824,11 @@ body.crm-dark .service-request-error { color: #ffe3e6 !important; background: #3
 body.crm-dark .service-request-success p strong { color: #8bd8d7 !important; }
 body.crm-dark .signup-otp-note,
 body.crm-dark .login-notice { color: #d8ffff !important; background: #173f43 !important; border-color: #3c777a !important; }
-body.crm-dark .signup-card .login-card-heading h2 { color: #f3f5f6 !important; }
+body.crm-dark .signup-card .login-card-heading h2 { color: #1f2d43 !important; }
 body.crm-dark .signup-card .login-card-heading p,
-body.crm-dark .signup-card .login-form label { color: #b6c0c5 !important; }
+body.crm-dark .signup-card .login-form label { color: #43566f !important; }
+body.crm-dark .signup-card .login-card-heading p { color: #71849b !important; }
+body.crm-dark .channel-plan-locked { color: #ffe3b0 !important; background: #3b3020 !important; border-color: #80632e !important; }
 
 @media (max-width: 880px) {
   .service-page-grid { grid-template-columns: 1fr; }

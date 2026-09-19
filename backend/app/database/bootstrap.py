@@ -32,6 +32,19 @@ def ensure_default_business(db: Session) -> Business:
 
 DEFAULT_PLANS = (
     {
+        "code": "demo",
+        "name": "Gói Demo",
+        "description": "Gói dùng thử 0 đồng để xem giao diện và quy trình CRM. Chưa mở kết nối mạng xã hội.",
+        "price": Decimal("0"),
+        "max_users": 1,
+        "max_channels": 0,
+        "max_documents": 0,
+        "max_rag_chunks": 0,
+        "max_ai_calls": 50,
+        "max_ai_cost": Decimal("0"),
+        "features": {"onboarding": True, "support": "email", "display_name": "Gói Demo", "demo_only": True},
+    },
+    {
         "code": "starter",
         "name": "Gói Thường",
         "description": "Gói gọn nhẹ cho shop mới bắt đầu chăm khách và quản lý hội thoại.",

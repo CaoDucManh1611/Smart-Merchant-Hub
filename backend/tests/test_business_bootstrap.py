@@ -35,11 +35,11 @@ class DefaultBusinessBootstrapTests(unittest.TestCase):
             session.commit()
             plans = session.scalars(select(ServicePlan).order_by(ServicePlan.code)).all()
 
-        self.assertEqual(["starter", "growth", "pro"], [plan.code for plan in first])
+        self.assertEqual(["demo", "starter", "growth", "pro"], [plan.code for plan in first])
         self.assertEqual([plan.id for plan in first], [plan.id for plan in second])
-        self.assertEqual(3, len(plans))
+        self.assertEqual(4, len(plans))
         self.assertTrue(all(plan.status == "active" for plan in plans))
-        self.assertEqual({"starter": 1, "growth": 2, "pro": 4}, {plan.code: plan.max_channels for plan in plans})
+        self.assertEqual({"demo": 0, "starter": 1, "growth": 2, "pro": 4}, {plan.code: plan.max_channels for plan in plans})
 
 
 if __name__ == "__main__":
