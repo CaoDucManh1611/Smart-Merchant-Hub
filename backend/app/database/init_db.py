@@ -65,16 +65,25 @@ def _bootstrap_development_saas() -> None:
         PlatformBase.metadata.create_all(bind=platform_engine)
 
         with SessionLocal() as legacy_db:
-            businesses = [
+            legacy_businesses = [
                 (int(row.id), str(row.name), str(row.slug), str(row.status or "active"))
                 for row in legacy_db.query(Business).order_by(Business.id.asc()).all()
                 if str(row.status or "active").lower() == "active"
             ]
 
-        if not businesses:
-            return
-
         with PlatformSessionLocal() as platform_db:
+            # Include shops created directly by self-service onboarding. They
+            # may not exist in the legacy CRM database yet, but their active
+            # platform registry still requires a usable tenant schema.
+            businesses_by_id = {
+                int(row.id): (int(row.id), str(row.name), str(row.slug), str(row.status or "active"))
+                for row in platform_db.query(PlatformBusiness).filter(PlatformBusiness.status == "active").all()
+            }
+            businesses_by_id.update({item[0]: item for item in legacy_businesses})
+            businesses = sorted(businesses_by_id.values(), key=lambda item: item[0])
+            if not businesses:
+                return
+
             # Mirror legacy shop identities into the control plane first so
             # the idempotent provisioning saga can safely create each schema.
             for business_id, name, slug, status in businesses:
