@@ -51,6 +51,7 @@ from app.models.permission import PermissionOverride
 from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry
 from app.models.platform_control import TenantRegistry, SupportGrant, ProvisioningOperation, TenantMigrationOperation, PlatformAudit, PlatformProviderIncident
 from app.models.channel_route import ChannelRoute
+from app.models.signup import SignupEmailChallenge
 
 __all__ = [
     "Customer",
@@ -137,4 +138,5 @@ __all__ = [
     "PlatformAudit",
     "PlatformProviderIncident",
     "ChannelRoute",
+    "SignupEmailChallenge",
 ]

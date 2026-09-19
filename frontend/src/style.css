@@ -11750,6 +11750,9 @@ body.crm-dark .crm-app .login-feature-icon { color: #8bd8d7 !important; }
 .service-channel-options label { display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid #d4e3e9; border-radius: 999px; color: #577283; background: #fbfdff; cursor: pointer; font-size: 12px; font-weight: 650; }
 .service-channel-options label.selected { border-color: #2b9b99; color: #1f6f73; background: #edf9f8; }
 .service-channel-options input { accent-color: #2b9b99; }
+.service-channel-options label:has(input:disabled):not(.selected) { cursor: not-allowed; opacity: .48; }
+.service-channel-hint { margin: 8px 0 0; color: #718898; font-size: 11px; }
+.service-channel-picker legend small { margin-left: 6px; color: #247f83; font-weight: 850; }
 .service-request-notes { margin-top: 18px; }
 .service-request-notes textarea { resize: vertical; }
 .service-submit { display: inline-flex; align-items: center; justify-content: center; gap: 9px; width: 100%; margin-top: 18px; }
@@ -11762,6 +11765,10 @@ body.crm-dark .crm-app .login-feature-icon { color: #8bd8d7 !important; }
 .service-request-success p strong { color: #1e7175; }
 
 .login-service-link { display: block; margin: 16px auto 0; padding: 7px 8px; font-size: 12px; }
+.signup-otp-note { padding: 10px 12px; border: 1px solid #c8e0e4; border-radius: 10px; color: #4c697b; background: #f0fbfa; font-size: 12px; line-height: 1.5; }
+.signup-otp-input { letter-spacing: .32em; text-align: center; font-size: 18px !important; font-weight: 800 !important; }
+.login-notice { margin-top: 12px; padding: 10px 12px; border: 1px solid #b7deda; border-radius: 10px; color: #246e70; background: #f0fbfa; font-size: 12px; line-height: 1.45; }
+.login-service-link:disabled { cursor: not-allowed; opacity: .6; }
 
 body.crm-dark .public-service-main { background: #151719 !important; }
 body.crm-dark .service-page-hero h1,
@@ -11815,6 +11822,11 @@ body.crm-dark .service-plan-option.selected,
 body.crm-dark .service-channel-options label.selected { color: #d8ffff !important; background: #173f43 !important; border-color: #3c777a !important; }
 body.crm-dark .service-request-error { color: #ffe3e6 !important; background: #3a2025 !important; border-color: #7f414d !important; }
 body.crm-dark .service-request-success p strong { color: #8bd8d7 !important; }
+body.crm-dark .signup-otp-note,
+body.crm-dark .login-notice { color: #d8ffff !important; background: #173f43 !important; border-color: #3c777a !important; }
+body.crm-dark .signup-card .login-card-heading h2 { color: #f3f5f6 !important; }
+body.crm-dark .signup-card .login-card-heading p,
+body.crm-dark .signup-card .login-form label { color: #b6c0c5 !important; }
 
 @media (max-width: 880px) {
   .service-page-grid { grid-template-columns: 1fr; }

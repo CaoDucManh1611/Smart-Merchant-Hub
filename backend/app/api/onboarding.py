@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import hmac
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from sqlalchemy import select
@@ -20,6 +21,7 @@ from app.db.dependencies import get_db
 from app.tenancy.crm_session import get_tenant_db
 from app.models.auth_session import AuthSession
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
+from app.models.signup import SignupEmailChallenge
 from app.models.platform_control import PlatformBusiness, PlatformServicePlan, PlatformSubscription
 from app.tenancy.provisioning import ProvisioningValidationError, provision_shop, retry_provision_shop
 from app.models.channel import Channel
@@ -40,6 +42,9 @@ from app.schemas.onboarding import (
     OnboardingShopCreate,
     OnboardingShopOut,
     OnboardingSubscriptionOut,
+    SignupOtpOut,
+    SignupOtpRequest,
+    SignupOtpVerify,
 )
 from app.schemas.platform import ProvisioningOut, ProvisioningRequest
 from app.services.audit_service import record_audit
@@ -48,6 +53,8 @@ from app.services.channel_service import normalized_connection_state, upsert_cha
 from app.services.channel_health import check_channel_health
 from app.services.quota_service import QuotaExceededError, release_quota
 from app.services.provider_connection import ProviderConnectionError, verify_and_configure_bot
+from app.services.customer_collection import generate_verification_code, hash_verification_code
+from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, deliver_otp
 from app.core.config import settings
 from app.tenancy.context import TenantContext
 from app.tenancy.schema import schema_name_for
@@ -126,6 +133,71 @@ def _start_platform_provisioning(business: Business) -> str:
     except Exception as exc:  # noqa: BLE001 - signup must remain available
         logger.warning("Shop provisioning deferred (%s)", type(exc).__name__)
         return "provision_failed"
+
+
+def _create_shop_records(
+    db: Session,
+    *,
+    shop_name: str,
+    requested_slug: str | None,
+    owner_name: str,
+    owner_email: str,
+    password_hash: str,
+    plan_code: str,
+):
+    """Build the legacy shop records without committing them.
+
+    Keeping the transaction open lets verified signup persist its challenge,
+    owner, subscription and session atomically after the OTP is accepted.
+    """
+
+    ensure_default_plans(db)
+    plan = _active_plan(db, plan_code)
+    business = Business(
+        name=shop_name.strip(),
+        slug=_unique_slug(db, requested_slug, shop_name),
+        status="active",
+    )
+    db.add(business)
+    db.flush()
+    owner = User(
+        business_id=business.id,
+        full_name=owner_name.strip(),
+        email=owner_email,
+        password_hash=password_hash,
+        role="owner",
+        is_active=True,
+    )
+    db.add(owner)
+    db.flush()
+    subscription = Subscription(
+        business_id=business.id,
+        plan_id=plan.id,
+        status="active" if plan.price == 0 else "pending",
+        starts_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(subscription)
+    db.flush()
+    token, expires_at = issue_token(owner.id, business_id=business.id, role=owner.role)
+    db.add(AuthSession(
+        user_id=owner.id,
+        token_hash=token_hash(token),
+        expires_at=expires_at,
+        device_label="onboarding",
+        user_agent_hash=None,
+        ip_hash=None,
+        mfa_verified=True,
+    ))
+    record_audit(
+        db,
+        business_id=business.id,
+        user_id=owner.id,
+        action="onboarding_shop_created",
+        resource_type="business",
+        resource_id=business.id,
+        metadata={"plan_code": plan.code, "subscription_status": subscription.status},
+    )
+    return business, owner, subscription, plan, token, expires_at
 
 
 def _require_shop_admin(db: Session, business_id: int, actor: User | None) -> User:
@@ -407,49 +479,135 @@ def get_shop_subscription_summary(
     )
 
 
+@router.post("/signup/request", response_model=SignupOtpOut, status_code=202)
+def request_signup_otp(payload: SignupOtpRequest, db: Session = Depends(get_db)):
+    """Send a one-time email code before any shop records are created."""
+
+    email = payload.email.strip().lower()
+    if db.query(User.id).filter(User.email.ilike(email)).first() is not None:
+        raise HTTPException(status_code=409, detail="Email đã được sử dụng. Hãy đăng nhập hoặc dùng email khác.")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    latest = db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == email,
+        SignupEmailChallenge.status == "pending",
+    ).order_by(SignupEmailChallenge.id.desc()).first()
+    if latest is not None:
+        if latest.expires_at <= now:
+            latest.status = "expired"
+        elif latest.created_at is not None and (now - latest.created_at).total_seconds() < 60:
+            raise HTTPException(status_code=429, detail="Bạn vừa yêu cầu mã OTP. Hãy đợi một phút rồi thử lại.")
+
+    code = generate_verification_code()
+    challenge = SignupEmailChallenge(
+        email=email,
+        owner_name=payload.owner_name.strip(),
+        shop_name=payload.shop_name.strip(),
+        password_hash=hash_password(payload.password),
+        code_hash=hash_verification_code(code),
+        status="pending",
+        expires_at=now + timedelta(minutes=10),
+    )
+    db.add(challenge)
+    db.flush()
+    try:
+        delivery = deliver_otp(channel="email", destination=email, code=code)
+        if not delivery.delivered:
+            db.rollback()
+            raise HTTPException(status_code=503, detail="Chưa thể gửi mã xác minh email. Vui lòng thử lại sau.")
+    except HTTPException:
+        raise
+    except (OtpDeliveryNotConfigured, OtpDeliveryError, ValueError, OSError) as error:
+        db.rollback()
+        logger.warning("Signup OTP delivery failed: error_type=%s", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Chưa thể gửi mã xác minh email. Vui lòng thử lại sau.") from error
+    db.commit()
+    return SignupOtpOut(status="otp_sent", email=email, expires_in=600)
+
+
+@router.post("/signup/verify", response_model=OnboardingShopOut, status_code=201)
+def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
+    """Verify the email code, then create the tenant and owner account."""
+
+    email = payload.email.strip().lower()
+    challenge = db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == email,
+        SignupEmailChallenge.status == "pending",
+    ).order_by(SignupEmailChallenge.id.desc()).first()
+    if challenge is None:
+        raise HTTPException(status_code=422, detail="Mã OTP không còn hiệu lực. Hãy yêu cầu mã mới.")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if challenge.expires_at <= now:
+        challenge.status = "expired"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã OTP đã hết hạn. Hãy yêu cầu mã mới.")
+    if challenge.attempts >= challenge.max_attempts:
+        challenge.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã OTP đã bị khóa. Hãy yêu cầu mã mới.")
+
+    challenge.attempts += 1
+    if not hmac.compare_digest(hash_verification_code(payload.otp), challenge.code_hash):
+        if challenge.attempts >= challenge.max_attempts:
+            challenge.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã OTP không đúng.")
+
+    if db.query(User.id).filter(User.email.ilike(email)).first() is not None:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Email đã được sử dụng. Hãy đăng nhập hoặc dùng email khác.")
+
+    challenge.status = "verified"
+    challenge.verified_at = now
+    try:
+        business, owner, subscription, plan, token, expires_at = _create_shop_records(
+            db,
+            shop_name=challenge.shop_name,
+            requested_slug=None,
+            owner_name=challenge.owner_name,
+            owner_email=email,
+            password_hash=challenge.password_hash,
+            plan_code="starter",
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Không thể tạo shop với thông tin đã nhập.") from exc
+
+    provisioning_state = _start_platform_provisioning(business)
+    return OnboardingShopOut(
+        business_id=business.id,
+        shop_name=business.name,
+        slug=business.slug,
+        owner_id=owner.id,
+        owner_email=owner.email,
+        access_token=token,
+        expires_at=expires_at,
+        subscription=OnboardingSubscriptionOut(
+            id=subscription.id,
+            plan_code=plan.code,
+            plan_name=plan.name,
+            status=subscription.status,
+        ),
+        provisioning_state=provisioning_state,
+    )
+
+
 @router.post("/shops", response_model=OnboardingShopOut, status_code=201)
 def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
     owner_email = payload.owner_email.strip().lower()
     if db.query(User.id).filter(User.email.ilike(owner_email)).first() is not None:
         raise HTTPException(status_code=409, detail="Email đã được sử dụng. Hãy đăng nhập hoặc dùng email khác.")
-    plans = ensure_default_plans(db)
-    plan = _active_plan(db, payload.plan_code)
-    business = Business(
-        name=payload.shop_name.strip(),
-        slug=_unique_slug(db, payload.slug, payload.shop_name),
-        status="active",
-    )
-    db.add(business)
-    db.flush()
-    owner = User(
-        business_id=business.id,
-        full_name=payload.owner_name.strip(),
-        email=owner_email,
+    business, owner, subscription, plan, token, expires_at = _create_shop_records(
+        db,
+        shop_name=payload.shop_name,
+        requested_slug=payload.slug,
+        owner_name=payload.owner_name,
+        owner_email=owner_email,
         password_hash=hash_password(payload.password),
-        role="owner",
-        is_active=True,
+        plan_code=payload.plan_code,
     )
-    db.add(owner)
-    db.flush()
-    subscription = Subscription(
-        business_id=business.id,
-        plan_id=plan.id,
-        status="active" if plan.price == 0 else "pending",
-        starts_at=datetime.now(timezone.utc).replace(tzinfo=None),
-    )
-    db.add(subscription)
-    db.flush()
-    token, expires_at = issue_token(owner.id, business_id=business.id, role=owner.role)
-    db.add(AuthSession(
-        user_id=owner.id,
-        token_hash=token_hash(token),
-        expires_at=expires_at,
-        device_label="onboarding",
-        user_agent_hash=None,
-        ip_hash=None,
-        mfa_verified=True,
-    ))
-    record_audit(db, business_id=business.id, user_id=owner.id, action="onboarding_shop_created", resource_type="business", resource_id=business.id, metadata={"plan_code": plan.code, "subscription_status": subscription.status})
     try:
         db.commit()
     except IntegrityError as exc:

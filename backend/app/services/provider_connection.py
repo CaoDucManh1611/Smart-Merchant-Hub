@@ -25,17 +25,41 @@ class ProviderConnectionError(ValueError):
 def _post_json(url: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         response = httpx.post(url, json=json or {}, timeout=15)
-        response.raise_for_status()
-        body = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
+    except httpx.HTTPError as exc:
         raise ProviderConnectionError(
             "provider_unreachable",
             "Không thể kết nối tới nhà cung cấp. Hãy thử lại sau.",
+        ) from exc
+
+    # Provider APIs return the useful diagnostic in their JSON body even for
+    # HTTP 4xx/5xx responses. Read that body before treating the response as a
+    # network failure so a valid token is not reported as an unexplained error.
+    try:
+        body = response.json()
+    except ValueError as exc:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError as status_error:
+            raise ProviderConnectionError(
+                "provider_unreachable",
+                "Nhà cung cấp không phản hồi đúng. Hãy thử lại sau.",
+            ) from status_error
+        raise ProviderConnectionError(
+            "invalid_provider_response",
+            "Nhà cung cấp trả về dữ liệu không hợp lệ. Hãy thử lại.",
         ) from exc
     if not isinstance(body, dict):
         raise ProviderConnectionError(
             "invalid_provider_response",
             "Nhà cung cấp trả về dữ liệu không hợp lệ. Hãy thử lại.",
+        )
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int) and status_code >= 400:
+        detail = body.get("description") or body.get("message")
+        safe_detail = safe_error_message(detail, limit=300) if detail else ""
+        raise ProviderConnectionError(
+            "provider_rejected",
+            safe_detail or "Nhà cung cấp từ chối yêu cầu. Hãy kiểm tra lại cấu hình kết nối.",
         )
     # Telegram Bot API uses ``ok: true`` while Zalo Bot/OA bridges may expose
     # the same successful payload as ``error: 0`` with a ``data`` object. Keep
@@ -82,6 +106,10 @@ def verify_and_configure_bot(
 
     channel_type = str(channel_type or "").strip().lower()
     access_token = str(access_token or "").strip()
+    # BotFather displays the token without the URL prefix. Accepting a pasted
+    # ``bot...`` prefix as well avoids constructing ``botbot...`` API URLs.
+    if channel_type == "telegram" and access_token.lower().startswith("bot"):
+        access_token = access_token[3:].strip()
     if channel_type not in {"telegram", "zalo"}:
         raise ProviderConnectionError("unsupported_channel", "Kênh này chưa hỗ trợ kết nối tự động.")
     if not access_token:

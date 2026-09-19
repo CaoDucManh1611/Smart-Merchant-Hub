@@ -242,10 +242,12 @@ test("platform administration exposes shop status, usage, and schema pilot contr
   assert.match(appSource, /tách kho dữ liệu theo shop/);
 });
 
-test("shop self-service signup is not exposed in the CRM login", () => {
+test("shop self-service signup verifies email before creating a shop", () => {
   assert.doesNotMatch(appSource, /Chưa có workspace/);
-  assert.doesNotMatch(appSource, /Tạo shop mới/);
-  assert.doesNotMatch(appSource, /createOnboardingShop/);
+  assert.match(appSource, /Đăng ký shop mới/);
+  assert.match(appSource, /onboarding\/signup\/request/);
+  assert.match(appSource, /onboarding\/signup\/verify/);
+  assert.match(appSource, /Mã OTP/);
   assert.match(appSource, /onboarding\/shops\/\$\{requireBusinessId\(authUser\.value\)\}\/channels/);
   assert.match(appSource, /usage/);
   assert.match(appSource, /quotaSnapshot/);

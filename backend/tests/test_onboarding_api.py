@@ -11,12 +11,14 @@ from app.api.router import api_router
 from app.db.dependencies import get_db
 from app.main import app
 from app.models.business import Business, ServicePlan
+from app.models.signup import SignupEmailChallenge
 from app.models.channel import Channel
 from app.models.sales import Product
 from app.models.inventory import StockMovement
 from app.models.audit_log import AuditLog
 from app.services.channel_credentials import decrypt_token
 from app.core.config import settings
+from app.services.otp_delivery import OtpDeliveryResult
 
 
 class OnboardingApiTests(unittest.TestCase):
@@ -69,6 +71,41 @@ class OnboardingApiTests(unittest.TestCase):
             json={"shop_name": "Duplicate B", "owner_name": "B Owner", "owner_email": "same@onboarding.test", "password": "strong-pass-1"},
         )
         self.assertEqual(409, duplicate.status_code, duplicate.text)
+
+    def test_email_otp_signup_creates_shop_only_after_verification(self):
+        request_payload = {
+            "owner_name": "OTP Owner",
+            "email": "otp-signup@onboarding.test",
+            "shop_name": "OTP Signup Shop",
+            "password": "strong-pass-1",
+        }
+        with patch("app.api.onboarding.generate_verification_code", return_value="123456"), patch(
+            "app.api.onboarding.deliver_otp",
+            return_value=OtpDeliveryResult(provider="smtp", delivered=True),
+        ):
+            requested = self.client.post("/api/onboarding/signup/request", json=request_payload)
+        self.assertEqual(202, requested.status_code, requested.text)
+        with Session(self.engine) as db:
+            challenge = db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == request_payload["email"]).one()
+            self.assertNotEqual("123456", challenge.code_hash)
+            self.assertEqual(0, db.query(Business).filter(Business.name == request_payload["shop_name"]).count())
+
+        wrong = self.client.post(
+            "/api/onboarding/signup/verify",
+            json={"email": request_payload["email"], "otp": "000000"},
+        )
+        self.assertEqual(422, wrong.status_code, wrong.text)
+        with patch("app.api.onboarding._start_platform_provisioning", return_value="ready"):
+            verified = self.client.post(
+                "/api/onboarding/signup/verify",
+                json={"email": request_payload["email"], "otp": "123456"},
+            )
+        self.assertEqual(201, verified.status_code, verified.text)
+        self.assertEqual("starter", verified.json()["subscription"]["plan_code"])
+        self.assertNotIn("password", verified.json())
+        with Session(self.engine) as db:
+            self.assertEqual(1, db.query(Business).filter(Business.name == request_payload["shop_name"]).count())
+            self.assertEqual("verified", db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == request_payload["email"]).one().status)
 
     def test_invalid_email_and_inactive_paid_subscription_are_rejected(self):
         invalid = self.client.post(

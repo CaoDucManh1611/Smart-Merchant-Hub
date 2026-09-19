@@ -39,6 +39,7 @@ class DefaultBusinessBootstrapTests(unittest.TestCase):
         self.assertEqual([plan.id for plan in first], [plan.id for plan in second])
         self.assertEqual(3, len(plans))
         self.assertTrue(all(plan.status == "active" for plan in plans))
+        self.assertEqual({"starter": 1, "growth": 2, "pro": 4}, {plan.code: plan.max_channels for plan in plans})
 
 
 if __name__ == "__main__":

@@ -282,6 +282,12 @@ const authError = ref("");
 const authRateLimitSeconds = ref(0);
 let authRateLimitTimer = null;
 const loginForm = ref({ email: "", password: "", shop_slug: "" });
+const authView = ref("login");
+const signupStep = ref("details");
+const signupLoading = ref(false);
+const signupError = ref("");
+const signupNotice = ref("");
+const signupForm = ref({ owner_name: "", email: "", shop_name: "", password: "", otp: "" });
 const quotaSnapshot = ref(null);
 const quotaLoading = ref(false);
 const quotaError = ref("");
@@ -484,7 +490,7 @@ const serviceRequestForm = ref({
   phone: "",
   shop_name: "",
   plan_code: "growth",
-  channels: ["Facebook", "Instagram", "Telegram", "Zalo"],
+  channels: ["Facebook", "Instagram"],
   notes: "",
 });
 const serviceRequestSubmitted = ref(false);
@@ -494,6 +500,8 @@ const serviceMode = ref("package");
 const servicePurchaseLoading = ref(false);
 const servicePurchaseNotice = ref("");
 const servicePurchaseError = ref("");
+const SERVICE_CHANNELS = Object.freeze(["Facebook", "Instagram", "Telegram", "Zalo"]);
+const SERVICE_CHANNEL_LIMITS = Object.freeze({ starter: 1, growth: 2, custom: 4, pro: 4, "bot-starter": 1, "bot-growth": 2, "bot-custom": 4 });
 const servicePlans = Object.freeze([
   { code: "starter", name: "Gói Thường", price: "100.000đ / tháng", description: "Gói gọn nhẹ cho shop mới bắt đầu chăm khách.", features: ["Tối đa 3 nhân viên", "1 kênh kết nối", "10 tài liệu hướng dẫn"] },
   { code: "growth", name: "Gói VIP", price: "400.000đ / tháng", description: "Gói cân bằng cho shop cần nhiều kênh và đội ngũ chăm khách.", features: ["Tối đa 10 nhân viên", "2 kênh kết nối", "5.000 lượt trả lời tự động"] },
@@ -501,10 +509,11 @@ const servicePlans = Object.freeze([
 ]);
 const chatbotPlans = Object.freeze([
   { code: "bot-starter", name: "Gói Thường · Trợ lý", price: "100.000đ / tháng", description: "Trợ lý trả lời câu hỏi thường gặp và giới thiệu sản phẩm.", features: ["Tối đa 3 nhân viên", "1 kênh kết nối", "500 lượt trả lời tự động"] },
-  { code: "bot-growth", name: "Gói VIP · Trợ lý", price: "400.000đ / tháng", description: "Trợ lý theo sát khách và chuyển người thật khi cần.", features: ["Học từ tài liệu shop", "Quy trình chuyển nhân viên", "5.000 lượt trả lời tự động"] },
+  { code: "bot-growth", name: "Gói VIP · Trợ lý", price: "400.000đ / tháng", description: "Trợ lý theo sát khách và chuyển người thật khi cần.", features: ["Học từ tài liệu shop", "Quy trình chuyển nhân viên", "2 kênh kết nối"] },
   { code: "bot-custom", name: "Gói Premium · Trợ lý", price: "1.000.000đ / tháng", description: "Trợ lý theo cách nói riêng và nhu cầu đa kênh của shop.", features: ["Kịch bản riêng", "Tinh chỉnh theo hội thoại", "4 kênh kết nối"] },
 ]);
 const activeServicePlans = computed(() => serviceMode.value === "chatbot" ? chatbotPlans : servicePlans);
+const serviceChannelLimit = computed(() => SERVICE_CHANNEL_LIMITS[serviceRequestForm.value.plan_code] || 1);
 const messageLearningEnabled = ref(true);
 const reinforcementLearningEnabled = ref(true);
 const learningNotice = ref("");
@@ -683,7 +692,12 @@ async function connectBotChannel() {
     botConnectionNotice.value = `${botChannelLabel(botConnectionForm.value.channel_type)} đã kết nối và nhận tin đang hoạt động.`;
     await fetchBotConnections();
   } catch (err) {
-    botConnectionError.value = friendlyErrorMessage(err, "Chưa thể kiểm tra và kết nối bot. Hãy kiểm tra lại mã bot rồi thử lại.");
+    // ProviderConnectionError responses are already sanitized by the API and
+    // contain the actionable reason (for example an invalid token or webhook
+    // URL). Do not hide that message behind the generic network fallback.
+    const providerMessage = botConnectionErrorMessage(err?.payload, "");
+    botConnectionError.value = providerMessage
+      || friendlyErrorMessage(err, "Chưa thể kiểm tra và kết nối bot. Hãy kiểm tra lại mã bot rồi thử lại.");
   } finally {
     botConnectionSaving.value = false;
   }
@@ -900,13 +914,14 @@ function saveSlaRules() {
 }
 
 function resetServiceRequestForm() {
+  const planCode = serviceMode.value === "chatbot" ? "bot-growth" : "growth";
   serviceRequestForm.value = {
     contact_name: authUser.value?.full_name || "",
     email: authUser.value?.email || "",
     phone: "",
     shop_name: authUser.value?.business?.name || authUser.value?.business_name || "",
-    plan_code: serviceMode.value === "chatbot" ? "bot-growth" : "growth",
-    channels: ["Facebook", "Instagram", "Telegram", "Zalo"],
+    plan_code: planCode,
+    channels: SERVICE_CHANNELS.slice(0, SERVICE_CHANNEL_LIMITS[planCode]),
     notes: "",
   };
   serviceRequestSubmitted.value = false;
@@ -917,9 +932,29 @@ function resetServiceRequestForm() {
   servicePurchaseError.value = "";
 }
 
+function normalizeServiceChannels(fillToLimit = false) {
+  const limit = serviceChannelLimit.value;
+  const selected = new Set(serviceRequestForm.value.channels || []);
+  const normalized = SERVICE_CHANNELS.filter((channel) => selected.has(channel)).slice(0, limit);
+  if (fillToLimit) {
+    SERVICE_CHANNELS.forEach((channel) => {
+      if (normalized.length < limit && !normalized.includes(channel)) normalized.push(channel);
+    });
+  }
+  serviceRequestForm.value.channels = normalized;
+}
+
+function selectServicePlan(planCode) {
+  serviceRequestForm.value.plan_code = planCode;
+  normalizeServiceChannels(true);
+  serviceRequestSubmitted.value = false;
+  serviceRequestError.value = "";
+}
+
 function selectServiceMode(mode) {
   serviceMode.value = mode === "chatbot" ? "chatbot" : "package";
   serviceRequestForm.value.plan_code = serviceMode.value === "chatbot" ? "bot-growth" : "growth";
+  normalizeServiceChannels(true);
   serviceRequestSubmitted.value = false;
   serviceRequestReference.value = "";
   serviceRequestError.value = "";
@@ -952,8 +987,8 @@ function closePublicServicePage() {
 function toggleServiceChannel(channel) {
   const selectedChannels = new Set(serviceRequestForm.value.channels || []);
   if (selectedChannels.has(channel)) selectedChannels.delete(channel);
-  else selectedChannels.add(channel);
-  serviceRequestForm.value.channels = Array.from(selectedChannels);
+  else if (selectedChannels.size < serviceChannelLimit.value) selectedChannels.add(channel);
+  serviceRequestForm.value.channels = SERVICE_CHANNELS.filter((item) => selectedChannels.has(item));
 }
 
 function submitServiceRequest() {
@@ -969,8 +1004,8 @@ function submitServiceRequest() {
     serviceRequestError.value = "Email chưa đúng định dạng. Hãy kiểm tra lại.";
     return;
   }
-  if (!(form.channels || []).length) {
-    serviceRequestError.value = "Chọn ít nhất một kênh shop muốn kết nối.";
+  if ((form.channels || []).length !== serviceChannelLimit.value) {
+    serviceRequestError.value = `Gói đã chọn yêu cầu chọn đúng ${serviceChannelLimit.value} kênh kết nối.`;
     return;
   }
   const reference = `SMH-${Date.now().toString(36).toUpperCase()}`;
@@ -4011,6 +4046,86 @@ async function fetchQuotaUsage() {
     quotaError.value = friendlyErrorMessage(err, "Chưa tải được hạn mức sử dụng. Vui lòng thử lại sau.");
   } finally {
     quotaLoading.value = false;
+  }
+}
+
+function openSignup() {
+  authView.value = "signup";
+  signupStep.value = "details";
+  signupLoading.value = false;
+  signupError.value = "";
+  signupNotice.value = "";
+  signupForm.value = { owner_name: "", email: "", shop_name: "", password: "", otp: "" };
+}
+
+function openLogin() {
+  authView.value = "login";
+  signupLoading.value = false;
+  signupError.value = "";
+  signupNotice.value = "";
+}
+
+async function requestSignupOtp() {
+  signupLoading.value = true;
+  signupError.value = "";
+  signupNotice.value = "";
+  try {
+    const payload = {
+      owner_name: signupForm.value.owner_name.trim(),
+      email: signupForm.value.email.trim().toLowerCase(),
+      shop_name: signupForm.value.shop_name.trim(),
+      password: signupForm.value.password,
+    };
+    const response = await fetch(`${API_BASE}/onboarding/signup/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof detail.detail === "string" ? detail.detail : detail.detail?.message || `HTTP ${response.status}`);
+    signupForm.value.email = payload.email;
+    signupStep.value = "otp";
+    signupNotice.value = "Mã OTP đã được gửi tới email công việc. Mã có hiệu lực trong 10 phút.";
+  } catch (err) {
+    signupError.value = friendlyErrorMessage(err, "Chưa thể gửi mã xác minh. Vui lòng thử lại sau.");
+  } finally {
+    signupLoading.value = false;
+  }
+}
+
+async function verifySignupOtp() {
+  signupLoading.value = true;
+  signupError.value = "";
+  signupNotice.value = "";
+  try {
+    const response = await fetch(`${API_BASE}/onboarding/signup/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: signupForm.value.email.trim().toLowerCase(), otp: signupForm.value.otp.trim() }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof detail.detail === "string" ? detail.detail : detail.detail?.message || `HTTP ${response.status}`);
+    storeAuthToken(detail.access_token);
+    authToken.value = detail.access_token;
+    authUser.value = { business_id: detail.business_id, full_name: signupForm.value.owner_name, email: detail.owner_email, role: "owner", business: { name: detail.shop_name }, business_name: detail.shop_name };
+    loginForm.value.email = detail.owner_email;
+    loginForm.value.password = "";
+    signupForm.value.password = "";
+    signupForm.value.otp = "";
+    signupNotice.value = "Đã tạo không gian shop. Bạn có thể chọn gói dịch vụ và kết nối kênh ngay bây giờ.";
+    authView.value = "login";
+    serviceLandingOpen.value = false;
+    currentTab.value = "service";
+    resetServiceRequestForm();
+    loadBusinessProfile();
+    loadThemePreference();
+    await fetchSecuritySettings();
+    await fetchQuotaUsage();
+    await fetchPlatformAdmin();
+  } catch (err) {
+    signupError.value = friendlyErrorMessage(err, "Mã OTP chưa đúng hoặc đã hết hạn. Vui lòng thử lại.");
+  } finally {
+    signupLoading.value = false;
   }
 }
 
@@ -10085,7 +10200,7 @@ function followupRecommendationLabel(item) {
             </div>
             <form v-else class="service-request-form" @submit.prevent="submitServiceRequest">
               <div class="service-request-heading"><div><span class="service-page-kicker">CHỌN GÓI</span><h2>{{ serviceMode === 'chatbot' ? 'Thuê riêng trợ lý chatbot' : 'Mua gói dịch vụ cho shop' }}</h2></div><span class="service-request-badge">Kích hoạt demo</span></div>
-              <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ để đội ngũ cài nội dung, kết nối kênh và bàn giao trợ lý cho shop.' : 'Chọn gói phù hợp với số kênh và số nhân viên. Shop có thể kích hoạt ngay trong môi trường demo.' }}</p>
+              <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ để đội ngũ cài nội dung, kết nối kênh và bàn giao trợ lý cho shop.' : `Gói đã chọn cho phép kết nối tối đa ${serviceChannelLimit} kênh. Chọn đúng số kênh để tiếp tục đăng ký.` }}</p>
               <div v-if="serviceRequestError" class="service-request-error" role="alert">{{ serviceRequestError }}</div>
               <div class="service-request-fields">
                 <label>Người liên hệ<input v-model="serviceRequestForm.contact_name" required maxlength="120" placeholder="Nguyễn Văn A" /></label>
@@ -10093,9 +10208,9 @@ function followupRecommendationLabel(item) {
                 <label>Số điện thoại <span>(không bắt buộc)</span><input v-model="serviceRequestForm.phone" type="tel" maxlength="30" placeholder="0901 234 567" /></label>
                 <label>Tên shop<input v-model="serviceRequestForm.shop_name" required maxlength="160" placeholder="Shop của bạn" /></label>
               </div>
-              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input v-model="serviceRequestForm.plan_code" type="radio" name="service-plan" :value="plan.code" /><span><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><em>{{ plan.price }}</em></span></label></div></fieldset>
+              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><em>{{ plan.price }}</em></span></label></div></fieldset>
               <div v-if="authUser" class="service-purchase-box">
-                <div><strong>Muốn dùng ngay cho shop?</strong><small>Ở môi trường demo, bạn có thể kích hoạt gói đã chọn ngay để mở kết nối kênh và hạn mức nhân viên.</small></div>
+                <div><strong>Muốn dùng ngay cho shop?</strong><small>Ở môi trường demo, bạn có thể kích hoạt gói đã chọn ngay để mở tối đa {{ serviceChannelLimit }} kênh và hạn mức nhân viên.</small></div>
                 <button type="button" class="secondary-btn" :disabled="servicePurchaseLoading" @click="purchaseServicePlan">{{ servicePurchaseLoading ? 'Đang kích hoạt...' : 'Kích hoạt gói cho demo' }}</button>
               </div>
               <div v-if="servicePurchaseError" class="service-request-error" role="alert">{{ servicePurchaseError }}</div>
@@ -10106,7 +10221,7 @@ function followupRecommendationLabel(item) {
                   <button type="button" class="history-btn" @click="openSettings">Quản lý nhân viên</button>
                 </div>
               </div>
-              <fieldset class="service-channel-picker"><legend>Shop muốn kết nối kênh nào?</legend><div class="service-channel-options"><label v-for="channel in ['Facebook', 'Instagram', 'Telegram', 'Zalo']" :key="channel" :class="{ selected: serviceRequestForm.channels.includes(channel) }"><input type="checkbox" :checked="serviceRequestForm.channels.includes(channel)" @change="toggleServiceChannel(channel)" /><span>{{ channel }}</span></label></div></fieldset>
+              <fieldset class="service-channel-picker"><legend>Shop muốn kết nối kênh nào? <small>{{ serviceRequestForm.channels.length }}/{{ serviceChannelLimit }} kênh</small></legend><div class="service-channel-options"><label v-for="channel in SERVICE_CHANNELS" :key="channel" :class="{ selected: serviceRequestForm.channels.includes(channel) }"><input type="checkbox" :checked="serviceRequestForm.channels.includes(channel)" :disabled="!serviceRequestForm.channels.includes(channel) && serviceRequestForm.channels.length >= serviceChannelLimit" @change="toggleServiceChannel(channel)" /><span>{{ channel }}</span></label></div><p v-if="serviceRequestForm.channels.length >= serviceChannelLimit" class="service-channel-hint">Gói này đã đủ số lượng kênh. Đổi gói nếu shop cần thêm kênh.</p></fieldset>
               <label class="service-request-notes">Ghi chú thêm <span>(không bắt buộc)</span><textarea v-model="serviceRequestForm.notes" rows="3" maxlength="1000" placeholder="Ví dụ: shop cần bot trả lời ngoài giờ hoặc hỗ trợ nhiều nhân viên..."></textarea></label>
               <button type="submit" class="primary-btn service-submit">{{ serviceMode === 'chatbot' ? 'Đăng ký thuê trợ lý' : 'Đăng ký thuê gói' }} <span aria-hidden="true">→</span></button>
               <small class="service-form-footnote">Bằng việc gửi yêu cầu, bạn đồng ý để đội ngũ liên hệ theo thông tin đã nhập.</small>
@@ -10145,7 +10260,7 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
-        <div class="login-card">
+        <div v-if="authView === 'login'" class="login-card">
           <div class="login-card-topline">
             <span class="login-card-kicker">CHÀO MỪNG TRỞ LẠI</span>
             <span class="login-security-pill"><i></i> Kết nối bảo mật</span>
@@ -10170,6 +10285,35 @@ function followupRecommendationLabel(item) {
           </div>
           <small class="login-footer-note">Phiên làm việc được ghi lại đầy đủ và áp dụng đúng quyền của bạn.</small>
           <button type="button" class="login-service-link" @click="openPublicServicePage">Xem gói dịch vụ và thuê chatbot →</button>
+          <button type="button" class="login-service-link" @click="openSignup">Đăng ký shop mới →</button>
+        </div>
+
+        <div v-else class="login-card signup-card">
+          <div class="login-card-topline">
+            <span class="login-card-kicker">BẮT ĐẦU VỚI SHOP CỦA BẠN</span>
+            <span class="login-security-pill"><i></i> Xác minh email</span>
+          </div>
+          <div class="login-card-heading">
+            <h2>Tạo không gian shop</h2>
+            <p>Nhập email công việc để nhận mã OTP. Shop chỉ được tạo sau khi xác minh thành công.</p>
+          </div>
+          <form v-if="signupStep === 'details'" class="login-form" @submit.prevent="requestSignupOtp">
+            <label>Người đại diện<input v-model="signupForm.owner_name" required minlength="2" maxlength="255" autocomplete="name" placeholder="Nguyễn Văn A" /></label>
+            <label>Email công việc<input v-model="signupForm.email" required type="email" maxlength="255" autocomplete="email" placeholder="banhang@shop.vn" /></label>
+            <label>Tên shop<input v-model="signupForm.shop_name" required minlength="2" maxlength="255" autocomplete="organization" placeholder="Shop của bạn" /></label>
+            <label>Mật khẩu<input v-model="signupForm.password" required minlength="8" type="password" autocomplete="new-password" placeholder="Tối thiểu 8 ký tự" /></label>
+            <button class="login-submit" type="submit" :disabled="signupLoading"><span>{{ signupLoading ? 'Đang gửi mã...' : 'Gửi mã OTP' }}</span><span class="login-submit-arrow" aria-hidden="true">→</span></button>
+          </form>
+          <form v-else class="login-form" @submit.prevent="verifySignupOtp">
+            <div class="signup-otp-note">Mã xác minh đã gửi tới <strong>{{ signupForm.email }}</strong>. Kiểm tra cả mục Spam nếu chưa thấy email.</div>
+            <label>Mã OTP<input v-model="signupForm.otp" class="signup-otp-input" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" /></label>
+            <button class="login-submit" type="submit" :disabled="signupLoading"><span>{{ signupLoading ? 'Đang tạo shop...' : 'Xác minh và tạo shop' }}</span><span class="login-submit-arrow" aria-hidden="true">→</span></button>
+            <button type="button" class="login-service-link" :disabled="signupLoading" @click="requestSignupOtp">Gửi lại mã OTP</button>
+          </form>
+          <div v-if="signupError" class="login-alert" role="alert">{{ signupError }}</div>
+          <div v-if="signupNotice" class="login-notice" role="status">{{ signupNotice }}</div>
+          <small class="login-footer-note">Sau khi tạo, shop bắt đầu với Gói Thường và có thể chọn gói dịch vụ nâng cao.</small>
+          <button type="button" class="login-service-link" @click="openLogin">← Quay lại đăng nhập</button>
         </div>
       </div>
     </section>

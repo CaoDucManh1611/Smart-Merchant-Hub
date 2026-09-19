@@ -47,6 +47,50 @@ class OnboardingShopCreate(BaseModel):
         return normalized
 
 
+class SignupOtpRequest(BaseModel):
+    """Details collected before an email address is verified."""
+
+    owner_name: str = Field(..., min_length=2, max_length=255)
+    email: str = Field(..., min_length=3, max_length=255)
+    shop_name: str = Field(..., min_length=2, max_length=255)
+    password: str = Field(..., min_length=8, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _EMAIL_RE.fullmatch(normalized):
+            raise ValueError("Email công việc không hợp lệ.")
+        return normalized
+
+
+class SignupOtpVerify(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    otp: str = Field(..., min_length=6, max_length=6)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _EMAIL_RE.fullmatch(normalized):
+            raise ValueError("Email công việc không hợp lệ.")
+        return normalized
+
+    @field_validator("otp")
+    @classmethod
+    def validate_otp(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.isdigit():
+            raise ValueError("Mã OTP phải gồm 6 chữ số.")
+        return normalized
+
+
+class SignupOtpOut(BaseModel):
+    status: str
+    email: str
+    expires_in: int
+
+
 class OnboardingSubscriptionOut(BaseModel):
     id: int
     plan_code: str

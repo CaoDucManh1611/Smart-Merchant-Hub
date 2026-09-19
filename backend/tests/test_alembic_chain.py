@@ -10,7 +10,10 @@ class AlembicChainTests(unittest.TestCase):
         config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
         scripts = ScriptDirectory.from_config(config)
 
-        self.assertEqual(["20260913_0042"], scripts.get_heads())
+        self.assertEqual(["20260919_0045"], scripts.get_heads())
+        self.assertEqual("20260919_0044", scripts.get_revision("20260919_0045").down_revision)
+        self.assertEqual("20260919_0043", scripts.get_revision("20260919_0044").down_revision)
+        self.assertEqual("20260913_0042", scripts.get_revision("20260919_0043").down_revision)
         self.assertEqual("20260911_0036", scripts.get_revision("20260911_0037").down_revision)
         self.assertEqual("20260911_0037", scripts.get_revision("20260911_0038").down_revision)
         self.assertEqual("20260911_0038", scripts.get_revision("20260912_0039").down_revision)
