@@ -163,6 +163,8 @@ let voiceRecordingTimer = null;
 let voiceRecordingDiscarded = false;
 
 let pollingTimer = null;
+let platformRequestPollingTimer = null;
+let platformRequestRefreshInFlight = false;
 let socket = null;
 let reconnectTimer = null;
 
@@ -281,7 +283,7 @@ function salesStatusOptions(order) {
 const authUser = ref(null);
 const authToken = ref(readAuthToken());
 const sessionBootstrapLoading = ref(true);
-const tenantProvisioning = ref({ state: "unknown", feature_enabled: false });
+const tenantProvisioning = ref({ state: "unknown", feature_enabled: false, subscription_active: false, subscription_status: null });
 const tenantProvisioningLoading = ref(false);
 const tenantProvisioningError = ref("");
 const tenantWorkspaceInitialized = ref(false);
@@ -289,6 +291,7 @@ const tenantWorkspaceActive = ref(false);
 const tenantReady = computed(() => (
   tenantProvisioning.value?.state === "active"
   && Boolean(tenantProvisioning.value?.feature_enabled)
+  && Boolean(tenantProvisioning.value?.subscription_active)
 ));
 const authLoading = ref(false);
 const authError = ref("");
@@ -337,6 +340,9 @@ const platformPlanForm = ref({
 const platformSchemas = ref([]);
 const platformAuditLogs = ref([]);
 const platformProviderErrors = ref([]);
+const platformPendingRequests = ref([]);
+const platformApprovalLoadingId = ref(null);
+const platformApprovalNotice = ref("");
 const platformLoading = ref(false);
 const platformError = ref("");
 const authSessions = ref([]);
@@ -535,6 +541,7 @@ const serviceMode = ref("package");
 const servicePurchaseLoading = ref(false);
 const servicePurchaseNotice = ref("");
 const servicePurchaseError = ref("");
+const servicePurchaseStatus = ref("");
 const SERVICE_CHANNELS = Object.freeze(["Facebook", "Instagram", "Telegram", "Zalo"]);
 const SERVICE_CHANNEL_LIMITS = Object.freeze({ demo: 0, starter: 1, growth: 2, custom: 4, pro: 4, "bot-starter": 1, "bot-growth": 2, "bot-custom": 4 });
 const FALLBACK_SERVICE_PLANS = Object.freeze([
@@ -1054,6 +1061,7 @@ function resetServiceRequestForm() {
   serviceRequestNotice.value = "";
   servicePurchaseNotice.value = "";
   servicePurchaseError.value = "";
+  servicePurchaseStatus.value = "";
 }
 
 function normalizeServiceChannels(fillToLimit = false) {
@@ -1073,6 +1081,9 @@ function selectServicePlan(planCode) {
   normalizeServiceChannels(true);
   serviceRequestSubmitted.value = false;
   serviceRequestError.value = "";
+  servicePurchaseNotice.value = "";
+  servicePurchaseError.value = "";
+  servicePurchaseStatus.value = "";
 }
 
 function selectServiceMode(mode) {
@@ -1085,6 +1096,7 @@ function selectServiceMode(mode) {
   serviceRequestNotice.value = "";
   servicePurchaseNotice.value = "";
   servicePurchaseError.value = "";
+  servicePurchaseStatus.value = "";
 }
 
 function openServicePage() {
@@ -1117,7 +1129,7 @@ function toggleServiceChannel(channel) {
   serviceRequestForm.value.channels = SERVICE_CHANNELS.filter((item) => selectedChannels.has(item));
 }
 
-function submitServiceRequest() {
+async function submitServiceRequest() {
   const form = serviceRequestForm.value;
   const contactName = String(form.contact_name || "").trim();
   const email = String(form.email || "").trim().toLowerCase();
@@ -1134,30 +1146,20 @@ function submitServiceRequest() {
     serviceRequestError.value = `Gói đã chọn yêu cầu chọn đúng ${serviceChannelLimit.value} kênh kết nối.`;
     return;
   }
-  const reference = `SMH-${Date.now().toString(36).toUpperCase()}`;
-  const payload = {
-    ...form,
-    service_type: serviceMode.value,
-    service_name: serviceMode.value === "chatbot" ? "Thuê trợ lý chatbot" : "Thuê gói dịch vụ",
-    contact_name: contactName,
-    email,
-    shop_name: shopName,
-    reference,
-    status: "pending",
-    created_at: new Date().toISOString(),
-  };
-  try {
-    const storageKey = `crm-service-request-${authUser.value?.business_id || "public"}-${serviceMode.value}`;
-    localStorage.setItem(storageKey, JSON.stringify(payload));
-  } catch {
-    // The request remains visible in the current page even when storage is blocked.
+  if (!authUser.value?.business_id) {
+    serviceRequestError.value = "Hãy đăng nhập vào tài khoản shop để gửi yêu cầu cho quản trị viên duyệt.";
+    return;
   }
-  serviceRequestReference.value = reference;
-  serviceRequestSubmitted.value = true;
+
   serviceRequestError.value = "";
-  serviceRequestNotice.value = serviceMode.value === "chatbot"
-    ? "Đã ghi nhận yêu cầu thuê trợ lý trả lời tự động."
-    : "Đã ghi nhận yêu cầu thuê gói dịch vụ.";
+  const detail = await purchaseServicePlan();
+  if (!detail) return;
+
+  serviceRequestReference.value = `SMH-${detail.id}`;
+  serviceRequestSubmitted.value = true;
+  serviceRequestNotice.value = detail.status === "pending"
+    ? "Yêu cầu đã được chuyển tới quản trị viên nền tảng để duyệt."
+    : "Gói Demo đã được kích hoạt cho shop.";
 }
 
 function servicePlanCodeForPurchase(code) {
@@ -1170,27 +1172,56 @@ function servicePlanCodeForPurchase(code) {
   return aliases[code] || code;
 }
 
+function subscriptionStatusLabel(status) {
+  if (status === "active") return "Đang hoạt động";
+  if (status === "pending") return "Đang chờ quản trị viên duyệt";
+  if (status === "cancelled") return "Yêu cầu đã bị từ chối hoặc hủy";
+  if (status === "expired") return "Đã hết hiệu lực";
+  return "Chưa kích hoạt";
+}
+
 async function purchaseServicePlan() {
   if (!authUser.value?.business_id) {
-    servicePurchaseError.value = "Hãy đăng nhập vào shop trước khi kích hoạt gói.";
-    return;
+    servicePurchaseError.value = "Hãy đăng nhập vào shop trước khi gửi yêu cầu gói.";
+    return null;
   }
+  if (servicePurchaseLoading.value) return null;
   const planCode = servicePlanCodeForPurchase(serviceRequestForm.value.plan_code);
   servicePurchaseLoading.value = true;
   servicePurchaseError.value = "";
   servicePurchaseNotice.value = "";
+  servicePurchaseStatus.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/subscription/purchase`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan_code: planCode, service_type: serviceMode.value }),
+      body: JSON.stringify({
+        plan_code: planCode,
+        service_type: serviceMode.value,
+        contact_name: String(serviceRequestForm.value.contact_name || "").trim(),
+        contact_email: String(serviceRequestForm.value.email || "").trim().toLowerCase(),
+        contact_phone: String(serviceRequestForm.value.phone || "").trim() || null,
+        shop_name: String(serviceRequestForm.value.shop_name || "").trim(),
+        channels: [...serviceRequestForm.value.channels],
+        notes: String(serviceRequestForm.value.notes || "").trim() || null,
+      }),
     });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
-    servicePurchaseNotice.value = `Đã kích hoạt gói ${detail.plan_name || planCode}. Shop có thể kết nối Telegram, Zalo và thêm nhân viên theo hạn mức.`;
-    await fetchQuotaUsage();
+    servicePurchaseStatus.value = String(detail.status || "");
+    if (detail.status === "pending") {
+      servicePurchaseNotice.value = serviceMode.value === "chatbot"
+        ? `Đã gửi yêu cầu thuê trợ lý ${detail.plan_name || planCode}. Shop sẽ mở CRM sau khi quản trị viên duyệt và không gian dữ liệu được chuẩn bị.`
+        : `Đã gửi yêu cầu thuê gói ${detail.plan_name || planCode}. Yêu cầu đang chờ quản trị viên duyệt và CRM sẽ mở sau khi dữ liệu riêng được chuẩn bị.`;
+      await Promise.all([fetchServiceAccountSummary(), fetchTenantProvisioning()]);
+    } else {
+      servicePurchaseNotice.value = `Đã kích hoạt gói ${detail.plan_name || planCode}. Shop có thể kết nối kênh và thêm nhân viên theo hạn mức.`;
+      await Promise.all([fetchQuotaUsage(), fetchServiceAccountSummary(), fetchTenantProvisioning()]);
+    }
+    return detail;
   } catch (err) {
-    servicePurchaseError.value = friendlyErrorMessage(err, "Chưa thể kích hoạt gói lúc này. Vui lòng thử lại sau.");
+    servicePurchaseError.value = friendlyErrorMessage(err, "Chưa thể gửi yêu cầu gói lúc này. Vui lòng thử lại sau.");
+    return null;
   } finally {
     servicePurchaseLoading.value = false;
   }
@@ -4369,7 +4400,7 @@ async function logout() {
   clearAuthToken();
   authToken.value = "";
   authUser.value = null;
-  tenantProvisioning.value = { state: "unknown", feature_enabled: false };
+  tenantProvisioning.value = { state: "unknown", feature_enabled: false, subscription_active: false, subscription_status: null };
   tenantProvisioningError.value = "";
   serviceAccountSummary.value = null;
   serviceAccountError.value = "";
@@ -4570,6 +4601,7 @@ async function fetchPlatformAdmin() {
       platformSchemas.value = [];
       platformAuditLogs.value = [];
       platformProviderErrors.value = [];
+      platformPendingRequests.value = [];
       return;
     }
     const shopsResponse = await apiFetch(`${API_BASE}/platform/shops`);
@@ -4580,6 +4612,7 @@ async function fetchPlatformAdmin() {
       platformSchemas.value = [];
       platformAuditLogs.value = [];
       platformProviderErrors.value = [];
+      platformPendingRequests.value = [];
       return;
     }
     const shopsPayload = await shopsResponse.json();
@@ -4599,14 +4632,105 @@ async function fetchPlatformAdmin() {
     }
     const providerResponse = await apiFetch(`${API_BASE}/platform/provider-errors?limit=30`);
     platformProviderErrors.value = providerResponse.ok ? await providerResponse.json() : [];
+    const pendingRequestsResponse = await apiFetch(`${API_BASE}/platform/subscription-requests`);
+    if (pendingRequestsResponse.ok) {
+      const pendingPayload = await pendingRequestsResponse.json();
+      platformPendingRequests.value = pendingPayload.items || [];
+    } else {
+      platformPendingRequests.value = [];
+    }
   } catch (err) {
     platformAdmin.value = false;
     platformPlans.value = [];
+    platformPendingRequests.value = [];
     platformAuditLogs.value = [];
     platformProviderErrors.value = [];
     platformError.value = friendlyErrorMessage(err, "Chưa tải được thông tin quản trị. Vui lòng thử lại sau.");
   } finally {
     platformLoading.value = false;
+  }
+}
+
+async function refreshPlatformSubscriptionRequests() {
+  if (!authUser.value || !platformAdmin.value || platformLoading.value || platformRequestRefreshInFlight) return;
+  platformRequestRefreshInFlight = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/platform/subscription-requests`);
+    if (!response.ok) return;
+    const payload = await response.json();
+    platformPendingRequests.value = Array.isArray(payload.items) ? payload.items : [];
+  } catch (err) {
+    console.warn("Could not refresh pending platform approvals.", err);
+  } finally {
+    platformRequestRefreshInFlight = false;
+  }
+}
+
+function platformServiceLabel(serviceType) {
+  return serviceType === "chatbot" ? "Thuê trợ lý chatbot" : "Gói quản lý shop";
+}
+
+function formatPlatformRequestDate(value) {
+  if (!value) return "Vừa gửi";
+  const timestamp = typeof value === "string" && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)
+    ? `${value}Z`
+    : value;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? "Vừa gửi" : date.toLocaleString("vi-VN");
+}
+
+async function approvePlatformSubscriptionRequest(request) {
+  if (!request?.subscription_id || platformApprovalLoadingId.value) return;
+  platformApprovalLoadingId.value = request.subscription_id;
+  platformError.value = "";
+  platformApprovalNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/platform/subscription-requests/${request.subscription_id}/approve`, {
+      method: "POST",
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = detail.detail?.message || detail.detail || `HTTP ${response.status}`;
+      throw new Error(typeof message === "string" ? message : "Chưa thể duyệt yêu cầu gói.");
+    }
+    const ready = detail.provisioning?.state === "active" && detail.provisioning?.feature_enabled;
+    platformApprovalNotice.value = ready
+      ? `Đã duyệt ${request.shop_name}. Không gian dữ liệu của shop đã sẵn sàng.`
+      : `Đã duyệt ${request.shop_name}. Hệ thống đang chuẩn bị không gian dữ liệu cho shop.`;
+    await fetchPlatformAdmin();
+  } catch (err) {
+    platformError.value = friendlyErrorMessage(err, "Chưa thể duyệt yêu cầu gói. Vui lòng thử lại sau.");
+  } finally {
+    platformApprovalLoadingId.value = null;
+  }
+}
+
+async function rejectPlatformSubscriptionRequest(request) {
+  if (!request?.subscription_id || platformApprovalLoadingId.value) return;
+  const confirmed = await requestConfirmation(
+    `Từ chối yêu cầu ${request.plan_name} của ${request.shop_name}? Shop sẽ chưa được mở quyền sử dụng CRM.`,
+    { title: "Từ chối yêu cầu thuê gói", confirmLabel: "Từ chối yêu cầu", tone: "danger" },
+  );
+  if (!confirmed) return;
+
+  platformApprovalLoadingId.value = request.subscription_id;
+  platformError.value = "";
+  platformApprovalNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/platform/subscription-requests/${request.subscription_id}/reject`, {
+      method: "POST",
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = detail.detail?.message || detail.detail || `HTTP ${response.status}`;
+      throw new Error(typeof message === "string" ? message : "Chưa thể từ chối yêu cầu gói.");
+    }
+    platformApprovalNotice.value = `Đã từ chối yêu cầu của ${request.shop_name}.`;
+    await fetchPlatformAdmin();
+  } catch (err) {
+    platformError.value = friendlyErrorMessage(err, "Chưa thể từ chối yêu cầu gói. Vui lòng thử lại sau.");
+  } finally {
+    platformApprovalLoadingId.value = null;
   }
 }
 
@@ -6557,7 +6681,7 @@ function stopTenantWorkspace() {
 
 async function fetchTenantProvisioning({ retry = false } = {}) {
   if (!authUser.value?.business_id) {
-    tenantProvisioning.value = { state: "unknown", feature_enabled: false };
+    tenantProvisioning.value = { state: "unknown", feature_enabled: false, subscription_active: false, subscription_status: null };
     return null;
   }
   tenantProvisioningLoading.value = true;
@@ -6577,12 +6701,14 @@ async function fetchTenantProvisioning({ retry = false } = {}) {
     tenantProvisioning.value = {
       state: detail.state || "provisioning",
       feature_enabled: Boolean(detail.feature_enabled),
+      subscription_active: Boolean(detail.subscription_active),
+      subscription_status: detail.subscription_status || null,
       tenant_revision: detail.tenant_revision || null,
     };
     if (!tenantReady.value) stopTenantWorkspace();
     return tenantProvisioning.value;
   } catch (err) {
-    tenantProvisioning.value = { state: "provision_failed", feature_enabled: false };
+    tenantProvisioning.value = { state: "provision_failed", feature_enabled: false, subscription_active: false, subscription_status: null };
     tenantProvisioningError.value = friendlyErrorMessage(err, "Chưa thể chuẩn bị không gian dữ liệu của shop. Vui lòng thử lại.");
     stopTenantWorkspace();
     return null;
@@ -6657,6 +6783,13 @@ async function initializeTenantWorkspace() {
 onMounted(async () => {
 
   window.addEventListener("keydown", handleGlobalKeydown);
+  if (!platformRequestPollingTimer) {
+    platformRequestPollingTimer = window.setInterval(() => {
+      if (currentTab.value === "platform_admin" && !document.hidden) {
+        void refreshPlatformSubscriptionRequests();
+      }
+    }, 10000);
+  }
 
   void fetchPublicServicePlans();
   try {
@@ -6882,6 +7015,11 @@ onUnmounted(() => {
 
   window.removeEventListener("keydown", handleGlobalKeydown);
   stopTenantWorkspace();
+
+  if (platformRequestPollingTimer) {
+    clearInterval(platformRequestPollingTimer);
+    platformRequestPollingTimer = null;
+  }
 
   if (authRateLimitTimer) {
     clearInterval(authRateLimitTimer);
@@ -7115,8 +7253,14 @@ function followupRecommendationLabel(item) {
     <main v-if="(authUser && !sessionBootstrapLoading) || serviceLandingOpen" class="main" :class="{ 'public-service-main': serviceLandingOpen, 'platform-admin-main': inPlatformAdminWorkspace }">
 
       <section v-if="authUser && !tenantReady && !inPlatformAdminWorkspace" class="tenant-provisioning-banner" role="status" aria-live="polite">
-        <div><strong>Không gian dữ liệu của shop đang được chuẩn bị</strong><span>{{ tenantProvisioning.state === 'provision_failed' ? 'Việc tạo database riêng chưa hoàn tất. Dữ liệu CRM tạm dừng để tránh cảnh báo sai.' : 'Khi database riêng sẵn sàng, chọn Kiểm tra lại để mở CRM.' }}</span><small v-if="tenantProvisioningError">{{ tenantProvisioningError }}</small></div>
-        <button type="button" class="settings-refresh" :disabled="tenantProvisioningLoading" @click="refreshTenantProvisioning">{{ tenantProvisioningLoading ? 'Đang kiểm tra...' : tenantProvisioning.state === 'provision_failed' ? 'Thử chuẩn bị lại' : 'Kiểm tra lại' }}</button>
+        <div>
+          <strong>{{ tenantProvisioning.state === 'awaiting_approval' ? 'Yêu cầu gói đang chờ quản trị viên duyệt' : tenantProvisioning.state === 'subscription_inactive' ? 'Gói dịch vụ chưa được kích hoạt' : 'Không gian dữ liệu của shop đang được chuẩn bị' }}</strong>
+          <span v-if="tenantProvisioning.state === 'awaiting_approval'">Yêu cầu đã được ghi nhận. CRM sẽ mở sau khi quản trị viên nền tảng duyệt gói và hệ thống chuẩn bị xong không gian dữ liệu riêng.</span>
+          <span v-else-if="tenantProvisioning.state === 'subscription_inactive'">Yêu cầu trước đó chưa được chấp thuận hoặc gói đã hết hiệu lực. Hãy chọn lại gói dịch vụ nếu cần.</span>
+          <span v-else>{{ tenantProvisioning.state === 'provision_failed' ? 'Việc tạo database riêng chưa hoàn tất. Dữ liệu CRM tạm dừng để tránh cảnh báo sai.' : 'Khi database riêng sẵn sàng, chọn Kiểm tra lại để mở CRM.' }}</span>
+          <small v-if="tenantProvisioningError">{{ tenantProvisioningError }}</small>
+        </div>
+        <button type="button" class="settings-refresh" :disabled="tenantProvisioningLoading" @click="refreshTenantProvisioning">{{ tenantProvisioningLoading ? 'Đang kiểm tra...' : tenantProvisioning.state === 'provision_failed' ? 'Thử chuẩn bị lại' : tenantProvisioning.state === 'awaiting_approval' ? 'Làm mới trạng thái' : 'Kiểm tra lại' }}</button>
       </section>
 
       <!-- TOP -->
@@ -7235,6 +7379,17 @@ function followupRecommendationLabel(item) {
 
             </div>
 
+          </button>
+
+          <button
+            type="button"
+            class="top-logout"
+            aria-label="Đăng xuất"
+            title="Đăng xuất"
+            @click="logout"
+          >
+            <svg class="top-logout-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5M15 12H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></svg>
+            <span>Đăng xuất</span>
           </button>
 
         </div>
@@ -8967,13 +9122,39 @@ function followupRecommendationLabel(item) {
         </div>
 
         <div v-if="platformError" class="settings-notice team-error" role="alert">{{ platformError }}</div>
+        <div v-if="platformApprovalNotice" class="settings-notice platform-approval-notice" role="status">{{ platformApprovalNotice }}</div>
 
         <div class="platform-admin-metrics">
           <article class="platform-admin-metric"><span>Tenant</span><strong>{{ platformShops.length }}</strong><small>Đang được quản lý</small></article>
           <article class="platform-admin-metric"><span>Đang hoạt động</span><strong>{{ platformShops.filter((shop) => shop.status !== 'suspended').length }}</strong><small>Tenant có thể truy cập</small></article>
-          <article class="platform-admin-metric"><span>Đã tạm khóa</span><strong>{{ platformShops.filter((shop) => shop.status === 'suspended').length }}</strong><small>Cần kiểm tra trước khi mở lại</small></article>
+          <article class="platform-admin-metric platform-admin-metric-alert"><span>Yêu cầu chờ duyệt</span><strong>{{ platformPendingRequests.length }}</strong><small>Chưa mở quyền CRM</small></article>
           <article class="platform-admin-metric platform-admin-metric-alert"><span>Cảnh báo kênh</span><strong>{{ platformProviderErrors.length }}</strong><small>Lỗi đã được ẩn thông tin nhạy cảm</small></article>
         </div>
+
+        <section class="platform-admin-panel platform-approval-panel">
+          <div class="platform-admin-panel-heading">
+            <div><span class="card-eyebrow">SERVICE APPROVALS</span><h3>Yêu cầu chờ duyệt</h3><p>Duyệt gói để kích hoạt quyền sử dụng và bắt đầu chuẩn bị không gian dữ liệu riêng của shop.</p><small class="platform-admin-refresh-hint">Danh sách tự cập nhật mỗi 10 giây khi trang này đang mở.</small></div>
+            <span class="platform-admin-count">{{ platformPendingRequests.length }} yêu cầu</span>
+          </div>
+          <p v-if="!platformPendingRequests.length" class="settings-empty">Không có yêu cầu gói nào đang chờ duyệt.</p>
+          <div v-else class="platform-approval-list">
+            <article v-for="request in platformPendingRequests" :key="request.subscription_id" class="platform-approval-item">
+              <div class="platform-approval-shop"><strong>{{ request.shop_name }}</strong><small>{{ request.shop_slug }} · #{{ request.business_id }}</small></div>
+              <div class="platform-approval-detail"><span>Liên hệ đăng ký</span><strong>{{ request.contact_name || request.requester_name || request.owner_name || 'Chưa cập nhật' }}</strong><small>{{ request.contact_email || request.requester_email || request.owner_email || 'Chưa có email' }}</small><small v-if="request.contact_phone">{{ request.contact_phone }}</small><small v-if="request.contact_name && request.requester_name && request.contact_name !== request.requester_name">Tài khoản gửi: {{ request.requester_name }}</small></div>
+              <div class="platform-approval-detail"><span>Dịch vụ yêu cầu</span><strong>{{ request.plan_name }}</strong><small>{{ platformServiceLabel(request.service_type) }}</small></div>
+              <div class="platform-approval-detail"><span>Thời điểm gửi</span><strong>{{ formatPlatformRequestDate(request.requested_at || request.created_at) }}</strong><small>Chờ xác nhận của quản trị viên</small></div>
+              <div class="platform-approval-actions">
+                <button type="button" class="primary-btn" :disabled="Boolean(platformApprovalLoadingId)" @click="approvePlatformSubscriptionRequest(request)">{{ platformApprovalLoadingId === request.subscription_id ? 'Đang duyệt...' : 'Duyệt & mở CRM' }}</button>
+                <button type="button" class="history-btn platform-approval-reject" :disabled="Boolean(platformApprovalLoadingId)" @click="rejectPlatformSubscriptionRequest(request)">Từ chối</button>
+              </div>
+              <div v-if="request.requested_shop_name || request.requested_channels.length || request.request_notes" class="platform-approval-request-details">
+                <div v-if="request.requested_shop_name"><span>Tên shop liên hệ</span><strong>{{ request.requested_shop_name }}</strong></div>
+                <div v-if="request.requested_channels.length"><span>Kênh mong muốn</span><strong>{{ request.requested_channels.join(' · ') }}</strong></div>
+                <p v-if="request.request_notes"><strong>Ghi chú:</strong> {{ request.request_notes }}</p>
+              </div>
+            </article>
+          </div>
+        </section>
 
         <div class="platform-admin-grid">
           <section class="platform-admin-panel platform-admin-tenant-panel">
@@ -10559,7 +10740,7 @@ function followupRecommendationLabel(item) {
           <div v-else-if="serviceAccountSummary" class="service-account-grid">
             <div><span>Người mua</span><strong>{{ serviceAccountSummary.buyer?.name || '—' }}</strong><small>{{ serviceAccountSummary.buyer?.email || '—' }}</small></div>
             <div><span>Tên shop</span><strong>{{ serviceAccountSummary.buyer?.shop_name || '—' }}</strong><small>{{ serviceAccountSummary.buyer?.phone || 'Chưa cập nhật số điện thoại' }}</small></div>
-            <div><span>Gói đang dùng</span><strong>{{ serviceAccountSummary.subscription?.plan_name || 'Chưa chọn gói' }}</strong><small>{{ serviceAccountSummary.subscription?.status === 'active' ? 'Đang hoạt động' : 'Chưa kích hoạt' }}</small></div>
+            <div><span>Gói đang dùng</span><strong>{{ serviceAccountSummary.subscription?.plan_name || 'Chưa chọn gói' }}</strong><small>{{ subscriptionStatusLabel(serviceAccountSummary.subscription?.status) }}</small></div>
             <div><span>Thanh toán gần nhất</span><strong>{{ serviceAccountSummary.amount == null ? 'Chưa có' : `${Number(serviceAccountSummary.amount).toLocaleString('vi-VN')}đ` }}</strong><small>{{ serviceAccountSummary.payment_status === 'paid' ? 'Đã thanh toán' : 'Chưa ghi nhận thanh toán' }}</small></div>
             <div><span>Kênh đang dùng</span><strong>{{ serviceAccountSummary.connected_channels }} / {{ serviceAccountSummary.channel_limit ?? '—' }}</strong><small>Facebook, Instagram, Telegram, Zalo</small></div>
           </div>
@@ -10582,12 +10763,17 @@ function followupRecommendationLabel(item) {
             <div v-if="serviceRequestSubmitted" class="service-request-success" role="status">
               <div class="service-success-icon">✓</div>
               <span class="service-page-kicker">ĐÃ GỬI YÊU CẦU</span>
-              <h2>{{ serviceMode === 'chatbot' ? 'Chúng tôi sẽ tư vấn gói trợ lý' : 'Chúng tôi sẽ tư vấn gói phù hợp' }}</h2>
-              <p>Mã yêu cầu <strong>{{ serviceRequestReference }}</strong>. Bạn có thể dùng mã này khi trao đổi với đội ngũ triển khai.</p>
-              <button type="button" class="secondary-btn" @click="resetServiceRequestForm">Gửi yêu cầu khác</button>
+              <h2>{{ servicePurchaseStatus === 'pending' ? 'Yêu cầu đang chờ quản trị viên duyệt' : 'Gói Demo đã được kích hoạt' }}</h2>
+              <p v-if="servicePurchaseStatus === 'pending'">Mã yêu cầu <strong>{{ serviceRequestReference }}</strong>. Khi admin duyệt, hệ thống tự chuẩn bị không gian dữ liệu và mở các màn hình CRM cho shop.</p>
+              <p v-else>Mã yêu cầu <strong>{{ serviceRequestReference }}</strong>. Hệ thống đang kiểm tra không gian dữ liệu để mở CRM cho shop.</p>
+              <div class="service-success-actions">
+                <button v-if="servicePurchaseStatus === 'active'" type="button" class="secondary-btn" @click="refreshTenantProvisioning">Kiểm tra &amp; mở CRM</button>
+                <button v-else type="button" class="secondary-btn" @click="fetchServiceAccountSummary">Làm mới trạng thái</button>
+                <button type="button" class="history-btn" @click="resetServiceRequestForm">Chọn gói khác</button>
+              </div>
             </div>
             <form v-else class="service-request-form" @submit.prevent="submitServiceRequest">
-              <div class="service-request-heading"><div><span class="service-page-kicker">CHỌN GÓI</span><h2>{{ serviceMode === 'chatbot' ? 'Thuê riêng trợ lý chatbot' : 'Mua gói dịch vụ cho shop' }}</h2></div><span class="service-request-badge">Kích hoạt demo</span></div>
+              <div class="service-request-heading"><div><span class="service-page-kicker">CHỌN GÓI</span><h2>{{ serviceMode === 'chatbot' ? 'Thuê riêng trợ lý chatbot' : 'Mua gói dịch vụ cho shop' }}</h2></div><span class="service-request-badge">{{ servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? 'Dùng thử ngay' : 'Admin duyệt' }}</span></div>
               <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ để đội ngũ cài nội dung, kết nối kênh và bàn giao trợ lý cho shop.' : `Gói đã chọn cho phép kết nối tối đa ${serviceChannelLimit} kênh. Chọn đúng số kênh để tiếp tục đăng ký.` }}</p>
               <div v-if="serviceRequestError" class="service-request-error" role="alert">{{ serviceRequestError }}</div>
               <div class="service-request-fields">
@@ -10598,21 +10784,21 @@ function followupRecommendationLabel(item) {
               </div>
               <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><em>{{ plan.price }}</em></span></label></div></fieldset>
               <div v-if="authUser" class="service-purchase-box">
-                <div><strong>Muốn dùng ngay cho shop?</strong><small>Ở môi trường demo, bạn có thể kích hoạt gói đã chọn ngay để mở tối đa {{ serviceChannelLimit }} kênh và hạn mức nhân viên.</small></div>
-                <button type="button" class="secondary-btn" :disabled="servicePurchaseLoading" @click="purchaseServicePlan">{{ servicePurchaseLoading ? 'Đang kích hoạt...' : 'Kích hoạt gói cho demo' }}</button>
+                <div v-if="servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo'"><strong>Gói Demo được mở ngay</strong><small>Sau khi gửi đăng ký, shop có thể dùng thử ngay khi không gian dữ liệu sẵn sàng.</small></div>
+                <div v-else><strong>Gói trả phí cần admin xác nhận</strong><small>Yêu cầu được chuyển vào hàng chờ duyệt. CRM chỉ mở sau khi admin duyệt và hệ thống chuẩn bị xong dữ liệu riêng.</small></div>
               </div>
               <div v-if="servicePurchaseError" class="service-request-error" role="alert">{{ servicePurchaseError }}</div>
               <div v-if="servicePurchaseNotice" class="service-purchase-notice" role="status">
                 <span>{{ servicePurchaseNotice }}</span>
-                <div class="service-purchase-actions">
+                <div v-if="servicePurchaseStatus === 'active'" class="service-purchase-actions">
                   <button type="button" class="secondary-btn" @click="openChannels">Mở kết nối kênh</button>
                   <button type="button" class="history-btn" @click="openSettings">Quản lý nhân viên</button>
                 </div>
               </div>
               <fieldset class="service-channel-picker"><legend>Shop muốn kết nối kênh nào? <small>{{ serviceRequestForm.channels.length }}/{{ serviceChannelLimit }} kênh</small></legend><div class="service-channel-options"><label v-for="channel in SERVICE_CHANNELS" :key="channel" :class="{ selected: serviceRequestForm.channels.includes(channel) }"><input type="checkbox" :checked="serviceRequestForm.channels.includes(channel)" :disabled="!serviceRequestForm.channels.includes(channel) && serviceRequestForm.channels.length >= serviceChannelLimit" @change="toggleServiceChannel(channel)" /><span>{{ channel }}</span></label></div><p v-if="serviceRequestForm.channels.length >= serviceChannelLimit" class="service-channel-hint">Gói này đã đủ số lượng kênh. Đổi gói nếu shop cần thêm kênh.</p></fieldset>
               <label class="service-request-notes">Ghi chú thêm <span>(không bắt buộc)</span><textarea v-model="serviceRequestForm.notes" rows="3" maxlength="1000" placeholder="Ví dụ: shop cần bot trả lời ngoài giờ hoặc hỗ trợ nhiều nhân viên..."></textarea></label>
-              <button type="submit" class="primary-btn service-submit">{{ serviceMode === 'chatbot' ? 'Đăng ký thuê trợ lý' : 'Đăng ký thuê gói' }} <span aria-hidden="true">→</span></button>
-              <small class="service-form-footnote">Bằng việc gửi yêu cầu, bạn đồng ý để đội ngũ liên hệ theo thông tin đã nhập.</small>
+              <button type="submit" class="primary-btn service-submit" :disabled="servicePurchaseLoading">{{ servicePurchaseLoading ? 'Đang gửi yêu cầu...' : servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? 'Kích hoạt gói Demo' : serviceMode === 'chatbot' ? 'Gửi yêu cầu thuê trợ lý' : 'Gửi yêu cầu thuê gói' }} <span aria-hidden="true">→</span></button>
+              <small class="service-form-footnote">Gói trả phí chỉ được mở sau khi quản trị viên nền tảng xác nhận yêu cầu.</small>
             </form>
           </article>
         </div>

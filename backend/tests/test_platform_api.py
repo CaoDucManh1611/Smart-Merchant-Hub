@@ -1,5 +1,8 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -7,6 +10,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.auth.passwords import hash_password
+from app.core.config import settings
+from app.database.bases import PlatformBase, TenantBase
 from app.database.platform_session import get_platform_db
 from app.db.dependencies import get_db
 from app.main import app
@@ -19,12 +24,16 @@ from app.models.saas import PlatformMembership
 class PlatformApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._allow_legacy_tenant_header = settings.ALLOW_LEGACY_TENANT_HEADER
+        settings.ALLOW_LEGACY_TENANT_HEADER = True
         cls.engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
         Business.metadata.create_all(cls.engine)
+        PlatformBase.metadata.create_all(cls.engine)
+        TenantBase.metadata.create_all(cls.engine)
         with Session(cls.engine) as db:
             shop = Business(name="Platform Shop", slug="platform-shop")
             other = Business(name="Other Shop", slug="other-platform-shop")
@@ -62,6 +71,7 @@ class PlatformApiTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         app.dependency_overrides.clear()
+        settings.ALLOW_LEGACY_TENANT_HEADER = cls._allow_legacy_tenant_header
 
     def login(self, email, password):
         response = self.client.post(
@@ -104,11 +114,14 @@ class PlatformApiTests(unittest.TestCase):
 
     def test_shop_agent_cannot_access_platform_endpoints(self):
         token = self.login("platform-agent@test", "agent-password")
+        headers = {"Authorization": f"Bearer {token}", "X-Business-Id": str(self.business_id)}
         response = self.client.get(
             "/api/platform/shops",
-            headers={"Authorization": f"Bearer {token}", "X-Business-Id": str(self.business_id)},
+            headers=headers,
         )
         self.assertEqual(403, response.status_code)
+        pending_requests = self.client.get("/api/platform/subscription-requests", headers=headers)
+        self.assertEqual(403, pending_requests.status_code)
 
     def test_platform_admin_can_register_and_stage_tenant_schema(self):
         token = self.login("platform-admin@test", "platform-password")
@@ -197,6 +210,147 @@ class PlatformApiTests(unittest.TestCase):
         )
         self.assertEqual(200, replay.status_code, replay.text)
         self.assertEqual(payment.json()["id"], replay.json()["id"])
+
+    def test_platform_admin_can_approve_or_reject_pending_subscription_requests(self):
+        requested_at = datetime.now().replace(microsecond=0)
+        with Session(self.engine) as db:
+            plan = ServicePlan(code="approval-plan", name="Approval Plan", price=Decimal("199000"))
+            db.add(plan)
+            db.flush()
+            previous_submitter = User(
+                business_id=self.other_business_id,
+                full_name="Previous Submitter",
+                email="previous-submit@test",
+                role="agent",
+            )
+            latest_submitter = User(
+                business_id=self.other_business_id,
+                full_name="Latest Submitter",
+                email="latest-submit@test",
+                role="agent",
+            )
+            db.add_all([previous_submitter, latest_submitter])
+            db.flush()
+            pending = Subscription(
+                business_id=self.other_business_id,
+                plan_id=plan.id,
+                status="pending",
+                created_at=requested_at - timedelta(days=3),
+            )
+            db.add(pending)
+            db.flush()
+            older_pending = Subscription(
+                business_id=self.business_id,
+                plan_id=plan.id,
+                status="pending",
+                created_at=requested_at - timedelta(hours=4),
+            )
+            db.add(older_pending)
+            db.flush()
+            older_requester_id = db.scalar(
+                select(User.id).where(User.email == "platform-agent@test")
+            )
+            db.add_all([
+                AuditLog(
+                    business_id=self.other_business_id,
+                    user_id=previous_submitter.id,
+                    action="subscription_request_submitted",
+                    resource_type="subscription",
+                    resource_id=str(pending.id),
+                    created_at=requested_at - timedelta(days=2),
+                ),
+                AuditLog(
+                    business_id=self.other_business_id,
+                    user_id=latest_submitter.id,
+                    action="subscription_request_submitted",
+                    resource_type="subscription",
+                    resource_id=str(pending.id),
+                    metadata_={
+                        "request_details": {
+                            "contact_name": "Latest Contact",
+                            "contact_email": "contact@latest.test",
+                            "contact_phone": "0900000000",
+                            "shop_name": "Latest Shop Name",
+                            "channels": ["Facebook", "Zalo"],
+                            "notes": "Latest request note.",
+                        },
+                    },
+                    created_at=requested_at,
+                ),
+                AuditLog(
+                    business_id=self.business_id,
+                    user_id=older_requester_id,
+                    action="subscription_request_submitted",
+                    resource_type="subscription",
+                    resource_id=str(older_pending.id),
+                    created_at=requested_at - timedelta(hours=3),
+                ),
+            ])
+            db.commit()
+            pending_id = pending.id
+            older_pending_id = older_pending.id
+
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        listed = self.client.get("/api/platform/subscription-requests", headers=headers)
+        self.assertEqual(200, listed.status_code, listed.text)
+        request_item = next(item for item in listed.json()["items"] if item["subscription_id"] == pending_id)
+        request_ids = [item["subscription_id"] for item in listed.json()["items"]]
+        self.assertLess(request_ids.index(pending_id), request_ids.index(older_pending_id))
+        self.assertEqual(self.other_business_id, request_item["business_id"])
+        self.assertEqual("approval-plan", request_item["plan_code"])
+        self.assertEqual("pending", request_item["status"])
+        self.assertEqual("Latest Submitter", request_item["requester_name"])
+        self.assertEqual("latest-submit@test", request_item["requester_email"])
+        self.assertEqual(
+            requested_at.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
+            request_item["requested_at"],
+        )
+        self.assertEqual("Latest Contact", request_item["contact_name"])
+        self.assertEqual("contact@latest.test", request_item["contact_email"])
+        self.assertEqual("0900000000", request_item["contact_phone"])
+        self.assertEqual("Latest Shop Name", request_item["requested_shop_name"])
+        self.assertEqual(["Facebook", "Zalo"], request_item["requested_channels"])
+        self.assertEqual("Latest request note.", request_item["request_notes"])
+
+        provisioned = SimpleNamespace(
+            business_id=self.other_business_id,
+            schema_name=f"tenant_{self.other_business_id}",
+            state="active",
+            feature_enabled=True,
+            tenant_revision="test-revision",
+            migration_error=None,
+        )
+        with patch("app.api.platform.provision_shop", return_value=provisioned):
+            approved = self.client.post(
+                f"/api/platform/subscription-requests/{pending_id}/approve",
+                headers=headers,
+            )
+        self.assertEqual(200, approved.status_code, approved.text)
+        self.assertEqual("active", approved.json()["subscription"]["status"])
+        self.assertEqual("active", approved.json()["provisioning"]["state"])
+        with Session(self.engine) as db:
+            self.assertEqual("active", db.get(Subscription, pending_id).status)
+            audit = db.scalar(select(AuditLog).where(
+                AuditLog.business_id == self.other_business_id,
+                AuditLog.action == "platform_subscription_approved",
+            ))
+            self.assertIsNotNone(audit)
+
+        with Session(self.engine) as db:
+            rejected = Subscription(
+                business_id=self.business_id,
+                plan_id=db.scalar(select(ServicePlan.id).where(ServicePlan.code == "approval-plan")),
+                status="pending",
+            )
+            db.add(rejected)
+            db.commit()
+            rejected_id = rejected.id
+        declined = self.client.post(
+            f"/api/platform/subscription-requests/{rejected_id}/reject",
+            headers=headers,
+        )
+        self.assertEqual(200, declined.status_code, declined.text)
+        self.assertEqual("cancelled", declined.json()["status"])
 
     def test_platform_admin_can_set_a_separate_chatbot_rental_price(self):
         token = self.login("platform-admin@test", "platform-password")

@@ -118,13 +118,42 @@ def _chatbot_rental_price(plan: ServicePlan) -> Decimal:
     return price
 
 
-def _start_platform_provisioning(business: Business) -> str:
+def _subscription_is_active(subscription: Subscription | None, *, now: datetime | None = None) -> bool:
+    if subscription is None or subscription.status != "active":
+        return False
+    moment = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    return (
+        (subscription.starts_at is None or subscription.starts_at <= moment)
+        and (subscription.ends_at is None or subscription.ends_at > moment)
+    )
+
+
+def _active_subscription_for(db: Session, business_id: int) -> Subscription | None:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return db.scalar(
+        select(Subscription)
+        .where(
+            Subscription.business_id == business_id,
+            Subscription.status == "active",
+            (Subscription.starts_at.is_(None) | (Subscription.starts_at <= now)),
+            (Subscription.ends_at.is_(None) | (Subscription.ends_at > now)),
+        )
+        .order_by(Subscription.id.desc())
+    )
+
+
+def _start_platform_provisioning(business: Business, subscription: Subscription) -> str:
     """Mirror identity and start the schema saga without blocking signup.
 
     Signup is committed in the legacy compatibility store first.  A temporary
     platform/tenant outage therefore leaves a retryable ``provision_failed``
     operation rather than losing the newly created shop.
     """
+
+    # A paid sign-up is deliberately not provisioned before it is approved.
+    # This leaves no tenant workspace to open while the request is pending.
+    if not _subscription_is_active(subscription):
+        return "awaiting_approval"
 
     try:
         with PlatformSessionLocal() as platform_db:
@@ -187,6 +216,7 @@ def _create_shop_records(
     subscription = Subscription(
         business_id=business.id,
         plan_id=plan.id,
+        service_type="package",
         status="active" if plan.price == 0 else "pending",
         starts_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
@@ -222,17 +252,11 @@ def _require_shop_admin(db: Session, business_id: int, actor: User | None) -> Us
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     if business.status != "active":
         raise HTTPException(status_code=423, detail={"code": "business_suspended", "message": "Shop đang tạm khóa bởi quản trị nền tảng."})
-    subscription = db.query(Subscription).filter(
+    latest_subscription = db.query(Subscription).filter(
         Subscription.business_id == business_id,
     ).order_by(Subscription.id.desc()).first()
-    if subscription is not None:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        active = (
-            subscription.status == "active"
-            and (subscription.starts_at is None or subscription.starts_at <= now)
-            and (subscription.ends_at is None or subscription.ends_at > now)
-        )
-        if not active:
+    if latest_subscription is not None:
+        if _active_subscription_for(db, business_id) is None:
             raise HTTPException(
                 status_code=402,
                 detail={
@@ -243,10 +267,14 @@ def _require_shop_admin(db: Session, business_id: int, actor: User | None) -> Us
     return actor
 
 
-def _require_shop_admin_for_purchase(db: Session, business_id: int, actor: User | None) -> User:
-    """Authorize a plan purchase without requiring an already-active plan."""
+def _require_shop_member_for_purchase(db: Session, business_id: int, actor: User) -> User:
+    """Authorize a same-shop operator to submit a request for platform review."""
 
-    if actor is None or actor.business_id != business_id or actor.role not in {"owner", "admin"}:
+    role = (actor.role or "").strip().lower()
+    if (
+        actor.business_id != business_id
+        or role not in {"owner", "admin", "agent", "business_agent", "business_admin", "shop_admin", "shop_agent"}
+    ):
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     business = db.get(Business, business_id)
     if business is None:
@@ -372,32 +400,98 @@ def purchase_shop_plan(
     payload: OnboardingPlanPurchase,
     db: Session = Depends(get_db),
     platform_db: Session = Depends(get_platform_db),
-    actor: User | None = Depends(require_admin_access),
+    actor: User = Depends(get_current_user),
 ):
-    """Activate a plan for local demos; production uses administrator billing."""
+    """Let shop operators request paid plans; keep immediate Demo activation privileged."""
 
-    _require_shop_admin_for_purchase(db, business_id, actor)
+    _require_shop_member_for_purchase(db, business_id, actor)
     business = db.get(Business, business_id)
     assert business is not None
-    if settings.ENVIRONMENT.strip().lower() == "production":
-        raise HTTPException(status_code=409, detail="Thanh toán cần quản trị viên xác nhận trước khi kích hoạt gói.")
-
     ensure_default_plans(db)
     plan = _active_plan(db, payload.plan_code)
-    current = db.scalar(
-        select(Subscription)
-        .where(Subscription.business_id == business_id)
-        .order_by(Subscription.id.desc())
-    )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    if current is not None and current.plan_id == plan.id and current.status == "active":
-        subscription = current
+    service_type = payload.service_type
+
+    role = (actor.role or "").strip().lower()
+    if plan.code == "demo" and role not in {"owner", "admin", "business_admin", "shop_admin"}:
+        raise HTTPException(status_code=403, detail="Chỉ chủ shop hoặc quản trị viên shop mới được kích hoạt gói Demo.")
+
+    # Only the free Demo package is immediate. Every rental or paid plan
+    # becomes a visible request in the control plane for an administrator.
+    if plan.code != "demo":
+        current_pending = db.scalar(
+            select(Subscription)
+            .where(
+                Subscription.business_id == business_id,
+                Subscription.status == "pending",
+            )
+            .order_by(Subscription.id.desc())
+        )
+        if current_pending is not None and (
+            current_pending.plan_id != plan.id
+            or current_pending.service_type != service_type
+        ):
+            current_pending.status = "cancelled"
+            current_pending = None
+        if current_pending is None:
+            current_pending = Subscription(
+                business_id=business_id,
+                plan_id=plan.id,
+                service_type=service_type,
+                status="pending",
+                starts_at=None,
+                ends_at=None,
+                auto_renew=False,
+            )
+            db.add(current_pending)
+            db.flush()
+        record_audit(
+            db,
+            business_id=business_id,
+            user_id=actor.id,
+            action="subscription_request_submitted",
+            resource_type="subscription",
+            resource_id=current_pending.id,
+            metadata={
+                "plan_code": plan.code,
+                "service_type": service_type,
+                "request_details": payload.model_dump(
+                    include={"contact_name", "contact_email", "contact_phone", "shop_name", "channels", "notes"},
+                    exclude_none=True,
+                ),
+            },
+        )
+        db.commit()
+        db.refresh(current_pending)
+        return OnboardingSubscriptionOut(
+            id=current_pending.id,
+            plan_code=plan.code,
+            plan_name=plan.name,
+            service_type=service_type,
+            status=current_pending.status,
+        )
+
+    current_active = _active_subscription_for(db, business_id)
+    if (
+        current_active is not None
+        and current_active.plan_id == plan.id
+        and current_active.service_type == service_type
+    ):
+        subscription = current_active
     else:
-        if current is not None and current.status in {"active", "pending"}:
-            current.status = "cancelled"
+        if current_active is not None:
+            current_active.status = "cancelled"
+        for pending in db.scalars(
+            select(Subscription).where(
+                Subscription.business_id == business_id,
+                Subscription.status == "pending",
+            )
+        ):
+            pending.status = "cancelled"
         subscription = Subscription(
             business_id=business_id,
             plan_id=plan.id,
+            service_type=service_type,
             status="active",
             starts_at=now,
             ends_at=None,
@@ -418,7 +512,7 @@ def purchase_shop_plan(
             provider_transaction_id=payment_reference,
             status="paid",
             paid_at=now,
-            raw_response={"service_type": payload.service_type, "plan_code": plan.code},
+            raw_response={"service_type": service_type, "plan_code": plan.code},
         ))
 
     record_audit(
@@ -428,7 +522,7 @@ def purchase_shop_plan(
         action="subscription_demo_activated",
         resource_type="subscription",
         resource_id=subscription.id,
-        metadata={"plan_code": plan.code, "service_type": payload.service_type, "amount": str(amount), "provider": "demo"},
+        metadata={"plan_code": plan.code, "service_type": service_type, "amount": str(amount), "provider": "demo"},
     )
     db.commit()
     db.refresh(subscription)
@@ -442,7 +536,13 @@ def purchase_shop_plan(
         platform_db.rollback()
         logger.warning("Platform plan mirror deferred for business_id=%s", business_id, exc_info=True)
 
-    return OnboardingSubscriptionOut(id=subscription.id, plan_code=plan.code, plan_name=plan.name, status=subscription.status)
+    return OnboardingSubscriptionOut(
+        id=subscription.id,
+        plan_code=plan.code,
+        plan_name=plan.name,
+        service_type=service_type,
+        status=subscription.status,
+    )
 
 
 @router.get("/shops/{business_id}/subscription/summary", response_model=OnboardingSubscriptionSummaryOut)
@@ -497,6 +597,7 @@ def get_shop_subscription_summary(
             id=subscription.id,
             plan_code=plan.code if plan else "",
             plan_name=plan.name if plan else "Chưa chọn gói",
+            service_type=subscription.service_type,
             status=subscription.status,
         ) if subscription is not None else None),
         amount=payment.amount if payment is not None else (plan.price if plan is not None else None),
@@ -604,7 +705,7 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=409, detail="Không thể tạo shop với thông tin đã nhập.") from exc
 
-    provisioning_state = _start_platform_provisioning(business)
+    provisioning_state = _start_platform_provisioning(business, subscription)
     _mirror_initial_subscription(business, plan)
     return OnboardingShopOut(
         business_id=business.id,
@@ -618,6 +719,7 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
             id=subscription.id,
             plan_code=plan.code,
             plan_name=plan.name,
+            service_type=subscription.service_type,
             status=subscription.status,
         ),
         provisioning_state=provisioning_state,
@@ -648,7 +750,7 @@ def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Không thể tạo shop với thông tin đã nhập.") from exc
-    provisioning_state = _start_platform_provisioning(business)
+    provisioning_state = _start_platform_provisioning(business, subscription)
     return OnboardingShopOut(
         business_id=business.id,
         shop_name=business.name,
@@ -657,7 +759,7 @@ def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
         owner_email=owner.email,
         access_token=token,
         expires_at=expires_at,
-        subscription=OnboardingSubscriptionOut(id=subscription.id, plan_code=plan.code, plan_name=plan.name, status=subscription.status),
+        subscription=OnboardingSubscriptionOut(id=subscription.id, plan_code=plan.code, plan_name=plan.name, service_type=subscription.service_type, status=subscription.status),
         provisioning_state=provisioning_state,
     )
 
@@ -677,6 +779,47 @@ def _ensure_platform_identity(platform_db: Session, legacy_db: Session, business
     platform_db.commit()
 
 
+def _provisioning_out_for_subscription(
+    *,
+    business_id: int,
+    registry,
+    active_subscription: Subscription | None,
+    latest_subscription: Subscription | None,
+) -> ProvisioningOut:
+    """Return readiness without exposing a tenant before plan approval."""
+
+    subscription = active_subscription or latest_subscription
+    subscription_status = subscription.status if subscription is not None else None
+    if active_subscription is None and latest_subscription is not None:
+        return ProvisioningOut(
+            business_id=business_id,
+            schema_name=schema_name_for(business_id),
+            state="awaiting_approval" if latest_subscription.status == "pending" else "subscription_inactive",
+            feature_enabled=False,
+            subscription_active=False,
+            subscription_status=subscription_status,
+        )
+    if registry is None:
+        return ProvisioningOut(
+            business_id=business_id,
+            schema_name=schema_name_for(business_id),
+            state="provisioning",
+            feature_enabled=False,
+            subscription_active=active_subscription is not None,
+            subscription_status=subscription_status,
+        )
+    return ProvisioningOut(
+        business_id=registry.business_id,
+        schema_name=registry.schema_name,
+        state=registry.state,
+        feature_enabled=registry.feature_enabled,
+        subscription_active=active_subscription is not None,
+        subscription_status=subscription_status,
+        tenant_revision=registry.tenant_revision,
+        migration_error=registry.migration_error,
+    )
+
+
 @router.get("/shops/{business_id}/provision", response_model=ProvisioningOut)
 def get_onboarding_provisioning_status(
     business_id: int,
@@ -688,17 +831,21 @@ def get_onboarding_provisioning_status(
 
     _authorize_provisioning(actor, business_id)
     _ensure_platform_identity(platform_db, legacy_db, business_id)
+    latest_subscription = legacy_db.scalar(
+        select(Subscription)
+        .where(Subscription.business_id == business_id)
+        .order_by(Subscription.id.desc())
+    )
+    active_subscription = _active_subscription_for(legacy_db, business_id)
     registry = platform_db.scalar(
         select(TenantRegistry).where(TenantRegistry.business_id == business_id)
     )
-    if registry is None:
-        return ProvisioningOut(
-            business_id=business_id,
-            schema_name=schema_name_for(business_id),
-            state="provisioning",
-            feature_enabled=False,
-        )
-    return registry
+    return _provisioning_out_for_subscription(
+        business_id=business_id,
+        registry=registry,
+        active_subscription=active_subscription,
+        latest_subscription=latest_subscription,
+    )
 
 
 @router.post("/shops/{business_id}/provision", response_model=ProvisioningOut)
@@ -711,14 +858,24 @@ def provision_onboarding_shop(
     platform_db: Session = Depends(get_platform_db),
 ):
     _authorize_provisioning(actor, business_id)
+    _require_shop_admin(legacy_db, business_id, actor)
     _ensure_platform_identity(platform_db, legacy_db, business_id)
     key = (payload.idempotency_key if payload else None) or idempotency_key
     if not key:
         raise HTTPException(status_code=422, detail="Cần idempotency_key hoặc Idempotency-Key.")
     try:
-        return provision_shop(platform_db, business_id=business_id, idempotency_key=key)
+        registry = provision_shop(platform_db, business_id=business_id, idempotency_key=key)
     except ProvisioningValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    latest_subscription = legacy_db.scalar(
+        select(Subscription).where(Subscription.business_id == business_id).order_by(Subscription.id.desc())
+    )
+    return _provisioning_out_for_subscription(
+        business_id=business_id,
+        registry=registry,
+        active_subscription=_active_subscription_for(legacy_db, business_id),
+        latest_subscription=latest_subscription,
+    )
 
 
 @router.post("/shops/{business_id}/provision/retry", response_model=ProvisioningOut)
@@ -731,14 +888,24 @@ def retry_onboarding_shop(
     platform_db: Session = Depends(get_platform_db),
 ):
     _authorize_provisioning(actor, business_id)
+    _require_shop_admin(legacy_db, business_id, actor)
     _ensure_platform_identity(platform_db, legacy_db, business_id)
     key = (payload.idempotency_key if payload else None) or idempotency_key
     if not key:
         raise HTTPException(status_code=422, detail="Cần idempotency_key hoặc Idempotency-Key.")
     try:
-        return retry_provision_shop(platform_db, business_id=business_id, idempotency_key=key)
+        registry = retry_provision_shop(platform_db, business_id=business_id, idempotency_key=key)
     except ProvisioningValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    latest_subscription = legacy_db.scalar(
+        select(Subscription).where(Subscription.business_id == business_id).order_by(Subscription.id.desc())
+    )
+    return _provisioning_out_for_subscription(
+        business_id=business_id,
+        registry=registry,
+        active_subscription=_active_subscription_for(legacy_db, business_id),
+        latest_subscription=latest_subscription,
+    )
 
 
 @router.post("/shops/{business_id}/channels", response_model=OnboardingChannelOut)

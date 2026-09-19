@@ -87,6 +87,8 @@ class ProvisioningOut(BaseModel):
     schema_name: str
     state: str
     feature_enabled: bool
+    subscription_active: bool = False
+    subscription_status: str | None = None
     tenant_revision: str | None = None
     migration_error: str | None = None
 
@@ -160,6 +162,7 @@ class PlatformSubscriptionOut(BaseModel):
     plan_id: int
     plan_code: str
     plan_name: str
+    service_type: Literal["package", "chatbot"] = "package"
     status: str
     starts_at: datetime | None = None
     ends_at: datetime | None = None
@@ -184,6 +187,42 @@ class PlatformPaymentOut(PlatformPaymentCreate):
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PlatformSubscriptionRequestOut(BaseModel):
+    """Minimal, platform-admin-only view of a pending package request."""
+
+    subscription_id: int
+    business_id: int
+    shop_name: str
+    shop_slug: str
+    requester_name: str | None = None
+    requester_email: str | None = None
+    requested_at: datetime | None = None
+    contact_name: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    requested_shop_name: str | None = None
+    requested_channels: list[str] = Field(default_factory=list)
+    request_notes: str | None = None
+    owner_name: str | None = None
+    owner_email: str | None = None
+    plan_id: int
+    plan_code: str
+    plan_name: str
+    service_type: Literal["package", "chatbot"] = "package"
+    status: Literal["pending"] = "pending"
+    created_at: datetime | None = None
+
+
+class PlatformSubscriptionRequestListOut(BaseModel):
+    items: list[PlatformSubscriptionRequestOut] = Field(default_factory=list)
+    total: int = 0
+
+
+class PlatformSubscriptionApprovalOut(BaseModel):
+    subscription: PlatformSubscriptionOut
+    provisioning: ProvisioningOut
 
 
 class PlatformProviderErrorOut(BaseModel):
