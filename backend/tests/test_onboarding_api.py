@@ -214,7 +214,7 @@ class OnboardingApiTests(unittest.TestCase):
             if url.endswith("/setWebhook"):
                 return FakeResponse({"ok": True, "result": {"url": kwargs["json"]["url"]}})
             if url.endswith("/getWebhookInfo"):
-                return FakeResponse({"ok": True, "result": {"url": "https://crm.example.test/api/webhooks/telegram"}})
+                return FakeResponse({"ok": True, "result": {"url": "https://crm.example.test/api/webhooks/telegram-verify"}})
             raise AssertionError(f"unexpected provider call: {url}")
 
         with patch("httpx.post", side_effect=fake_post):
@@ -231,7 +231,7 @@ class OnboardingApiTests(unittest.TestCase):
         self.assertEqual("connected", body["webhook_status"])
         self.assertEqual(3, len(calls))
         self.assertTrue(calls[1][0].endswith("/setWebhook"))
-        self.assertEqual("https://crm.example.test/api/webhooks/telegram", calls[1][1]["json"]["url"])
+        self.assertEqual("https://crm.example.test/api/webhooks/telegram-verify", calls[1][1]["json"]["url"])
         self.assertTrue(calls[1][1]["json"]["secret_token"])
         with Session(self.engine) as db:
             row = db.query(Channel).filter(Channel.business_id == created["business_id"]).one()
@@ -264,7 +264,7 @@ class OnboardingApiTests(unittest.TestCase):
             if url.endswith("/setWebhook"):
                 return FakeResponse({"ok": True, "result": {"url": kwargs["json"]["url"]}})
             if url.endswith("/getWebhookInfo"):
-                return FakeResponse({"ok": True, "result": {"url": "https://crm.example.test/api/webhooks/zalo"}})
+                return FakeResponse({"ok": True, "result": {"url": "https://crm.example.test/api/webhooks/zalo-verify"}})
             raise AssertionError(f"unexpected provider call: {url}")
 
         with patch("httpx.post", side_effect=fake_post):

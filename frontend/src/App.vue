@@ -604,7 +604,7 @@ async function connectMeta() {
 
 const botGuideUrls = Object.freeze({
   telegram: "https://t.me/BotFather",
-  zalo: "https://chat.zalo.me/",
+  zalo: "https://docs.zaloplatforms.com/docs/BOT/create_bot",
 });
 
 function botGuideUrl(channelType) {
@@ -617,7 +617,7 @@ function botQrUrl(channelType) {
 }
 
 function botChannelLabel(channelType) {
-  return channelType === "zalo" ? "Zalo cá nhân" : "Telegram BotFather";
+  return channelType === "zalo" ? "Zalo Bot" : "Telegram BotFather";
 }
 
 function botConnectionStateLabel(state) {
@@ -693,9 +693,9 @@ async function connectBotChannel() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         channel_type: botConnectionForm.value.channel_type,
-        access_token: botConnectionForm.value.channel_type === "zalo" && !token.toLowerCase().startsWith("personal:")
-          ? `personal:${token}`
-          : token,
+        // Zalo tokens are sent to the official Bot API as entered.  The
+        // explicit `personal:` prefix remains available for the local bridge.
+        access_token: token,
       }),
     });
     const detail = await response.json().catch(() => ({}));
@@ -9768,8 +9768,8 @@ function followupRecommendationLabel(item) {
             <div class="channel-summary-actions"><button type="button" class="primary-btn" @click="openChannelModal('telegram')">{{ activeBotConnections.some((item) => item.channel_type === 'telegram') ? 'Quản lý Telegram' : 'Kết nối Telegram' }}</button></div>
           </article>
           <article class="settings-card channel-summary-card">
-            <div class="settings-card-header"><div><h2>Zalo cá nhân</h2><p>Kết nối tài khoản Zalo cá nhân của shop.</p></div><span class="connection-badge" :class="{ connected: activeBotConnections.some((item) => item.channel_type === 'zalo') }">{{ activeBotConnections.some((item) => item.channel_type === 'zalo') ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
-            <p class="settings-muted">Dùng phiên đăng nhập Zalo bridge của shop, không dùng Zalo OA.</p>
+            <div class="settings-card-header"><div><h2>Zalo Bot</h2><p>Kết nối Zalo Bot Creator chính thức của shop.</p></div><span class="connection-badge" :class="{ connected: activeBotConnections.some((item) => item.channel_type === 'zalo') }">{{ activeBotConnections.some((item) => item.channel_type === 'zalo') ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
+            <p class="settings-muted">Dùng Bot Token để nhận tin qua webhook riêng của shop. Nếu cần bridge cá nhân, nhập mã bắt đầu bằng <code>personal:</code>.</p>
             <div class="channel-summary-actions"><button type="button" class="secondary-btn" @click="openChannelModal('zalo')">{{ activeBotConnections.some((item) => item.channel_type === 'zalo') ? 'Quản lý Zalo' : 'Kết nối Zalo' }}</button></div>
           </article>
         </div>
@@ -9792,11 +9792,11 @@ function followupRecommendationLabel(item) {
             <template v-else>
               <span class="visually-hidden">Sao chép token · Zalo Bot Manager</span>
               <div v-if="botConnectionError" class="settings-notice team-error bot-connection-alert"><span>{{ botConnectionError }}</span><button type="button" class="settings-refresh" :disabled="botConnectionLoading" @click="fetchBotConnections">{{ botConnectionLoading ? 'Đang tải...' : 'Thử lại' }}</button></div><div v-if="botConnectionNotice" class="settings-notice">{{ botConnectionNotice }}</div>
-              <div class="bot-provider-heading"><span class="channel-card-icon">{{ channelModalTab === 'zalo' ? 'Z' : '✈' }}</span><div><h3>{{ channelModalTab === 'zalo' ? 'Zalo cá nhân' : 'Telegram BotFather' }}</h3><p>{{ channelModalTab === 'zalo' ? 'Kết nối phiên đăng nhập Zalo cá nhân của shop.' : 'Kết nối kênh Telegram chính thức của shop.' }}</p></div><span class="connection-badge" :class="{ connected: activeBotConnections.some((item) => item.channel_type === channelModalTab) }">{{ activeBotConnections.some((item) => item.channel_type === channelModalTab) ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
-              <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap"><img :src="botQrUrl(channelModalTab)" :alt="`Mã QR mở ${channelModalTab === 'zalo' ? 'Zalo cá nhân' : 'Telegram BotFather'}`" loading="lazy" /></div><div><ol v-if="channelModalTab === 'telegram'"><li>Mở BotFather.</li><li>Gõ <code>/newbot</code> và tạo bot.</li><li>Sao chép mã bot gửi cho bạn.</li></ol><ol v-else><li>Đăng nhập Zalo cá nhân trên máy chạy bridge.</li><li>Chọn phiên Zalo cần dùng cho shop.</li><li>Sao chép mã phiên bridge và dán vào đây.</li></ol><a class="bot-guide-link" :href="botGuideUrl(channelModalTab)" target="_blank" rel="noreferrer">{{ channelModalTab === 'zalo' ? 'Mở Zalo Web' : 'Mở Telegram BotFather' }}</a></div></div>
+              <div class="bot-provider-heading"><span class="channel-card-icon">{{ channelModalTab === 'zalo' ? 'Z' : '✈' }}</span><div><h3>{{ channelModalTab === 'zalo' ? 'Zalo Bot Creator' : 'Telegram BotFather' }}</h3><p>{{ channelModalTab === 'zalo' ? 'Kết nối Zalo Bot chính thức của shop.' : 'Kết nối kênh Telegram chính thức của shop.' }}</p></div><span class="connection-badge" :class="{ connected: activeBotConnections.some((item) => item.channel_type === channelModalTab) }">{{ activeBotConnections.some((item) => item.channel_type === channelModalTab) ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
+              <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap"><img :src="botQrUrl(channelModalTab)" :alt="`Mã QR mở ${channelModalTab === 'zalo' ? 'Zalo Bot Creator' : 'Telegram BotFather'}`" loading="lazy" /></div><div><ol v-if="channelModalTab === 'telegram'"><li>Mở BotFather.</li><li>Gõ <code>/newbot</code> và tạo bot.</li><li>Sao chép mã bot gửi cho bạn.</li></ol><ol v-else><li>Mở Zalo Bot Manager và chọn Tạo bot.</li><li>Sao chép Bot Token được cấp sau khi tạo.</li><li>Dán Bot Token vào đây để CRM đăng ký webhook.</li></ol><a class="bot-guide-link" :href="botGuideUrl(channelModalTab)" target="_blank" rel="noreferrer">{{ channelModalTab === 'zalo' ? 'Mở hướng dẫn Zalo Bot' : 'Mở Telegram BotFather' }}</a></div></div>
               <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked">Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Chọn và kích hoạt gói dịch vụ để tiếp tục.</div>
-              <form class="bot-connect-form" @submit.prevent="connectBotChannel"><input type="hidden" v-model="botConnectionForm.channel_type" /><label class="bot-token-field">{{ channelModalTab === 'zalo' ? 'Mã phiên Zalo bridge' : 'Mã bot' }}<div class="bot-token-input-wrap"><input v-model="botConnectionForm.access_token" :type="botTokenVisible ? 'text' : 'password'" autocomplete="off" required :disabled="demoChannelsLocked" :placeholder="demoChannelsLocked ? 'Chọn gói dịch vụ để mở kết nối' : channelModalTab === 'zalo' ? 'Dán mã phiên bridge tại đây' : 'Dán mã bot tại đây'" /><button type="button" class="token-visibility-btn" :disabled="demoChannelsLocked" @click="botTokenVisible = !botTokenVisible">{{ botTokenVisible ? 'Ẩn' : 'Hiện' }}</button></div></label><button class="primary-btn bot-connect-submit" type="submit" :disabled="botConnectionSaving || demoChannelsLocked">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : botConnectionSaving ? 'Đang kiểm tra...' : 'Kiểm tra và kết nối' }}</button></form>
-              <p class="bot-connect-note">{{ channelModalTab === 'zalo' ? 'Phiên Zalo được giữ trên máy bridge của shop; CRM chỉ nhận mã phiên đã mã hóa.' : 'Mã kết nối chỉ dùng cho shop này và được lưu an toàn.' }}</p><div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === channelModalTab).length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === channelModalTab)" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ channelModalTab === 'zalo' ? 'Zalo cá nhân' : 'Telegram' }} · {{ botConnectionStateLabel(connection.status) }} · Nhận tin {{ connection.webhook_status === 'connected' ? 'hoạt động' : connection.webhook_status === 'disconnected' ? 'đã ngắt' : 'cần kiểm tra' }}</small></div><button v-if="['connected', 'active', 'verifying', 'reconnect_required', 'error'].includes(String(connection.status || '').toLowerCase())" type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có kết nối {{ channelModalTab === 'zalo' ? 'Zalo cá nhân' : 'Telegram' }} nào.</div>
+              <form class="bot-connect-form" @submit.prevent="connectBotChannel"><input type="hidden" v-model="botConnectionForm.channel_type" /><label class="bot-token-field">{{ channelModalTab === 'zalo' ? 'Bot Token Zalo' : 'Mã bot' }}<div class="bot-token-input-wrap"><input v-model="botConnectionForm.access_token" :type="botTokenVisible ? 'text' : 'password'" autocomplete="off" required :disabled="demoChannelsLocked" :placeholder="demoChannelsLocked ? 'Chọn gói dịch vụ để mở kết nối' : channelModalTab === 'zalo' ? 'Dán Bot Token Zalo tại đây' : 'Dán mã bot tại đây'" /><button type="button" class="token-visibility-btn" :disabled="demoChannelsLocked" @click="botTokenVisible = !botTokenVisible">{{ botTokenVisible ? 'Ẩn' : 'Hiện' }}</button></div></label><button class="primary-btn bot-connect-submit" type="submit" :disabled="botConnectionSaving || demoChannelsLocked">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : botConnectionSaving ? 'Đang kiểm tra...' : 'Kiểm tra và kết nối' }}</button></form>
+              <p class="bot-connect-note">{{ channelModalTab === 'zalo' ? 'Bot Token được mã hóa khi lưu. Chỉ dùng tiền tố personal: nếu shop thực sự dùng bridge cá nhân.' : 'Mã kết nối chỉ dùng cho shop này và được lưu an toàn.' }}</p><div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === channelModalTab).length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === channelModalTab)" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ channelModalTab === 'zalo' ? 'Zalo Bot' : 'Telegram' }} · {{ botConnectionStateLabel(connection.status) }} · Nhận tin {{ connection.webhook_status === 'connected' ? 'hoạt động' : connection.webhook_status === 'disconnected' ? 'đã ngắt' : 'cần kiểm tra' }}</small></div><button v-if="['connected', 'active', 'verifying', 'reconnect_required', 'error'].includes(String(connection.status || '').toLowerCase())" type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có kết nối {{ channelModalTab === 'zalo' ? 'Zalo Bot' : 'Telegram' }} nào.</div>
             </template>
           </section>
         </div>
@@ -10312,7 +10312,7 @@ function followupRecommendationLabel(item) {
             <label>Email công việc<input v-model="signupForm.email" required type="email" maxlength="255" autocomplete="email" placeholder="banhang@shop.vn" /></label>
             <label>Tên shop<input v-model="signupForm.shop_name" required minlength="2" maxlength="255" autocomplete="organization" placeholder="Shop của bạn" /></label>
             <label>Mật khẩu<input v-model="signupForm.password" required minlength="8" type="password" autocomplete="new-password" placeholder="Tối thiểu 8 ký tự" /></label>
-            <button class="login-submit" type="submit" :disabled="signupLoading"><span>{{ signupLoading ? 'Đang gửi mã...' : 'Gửi mã OTP' }}</span><span class="login-submit-arrow" aria-hidden="true">→</span></button>
+            <button class="login-submit" type="submit" :disabled="signupLoading"><span>{{ signupLoading ? 'Đang gửi mã...' : 'Đăng ký' }}</span><span class="login-submit-arrow" aria-hidden="true">→</span></button>
           </form>
           <form v-else class="login-form" @submit.prevent="verifySignupOtp">
             <div class="signup-otp-note">Mã xác minh đã gửi tới <strong>{{ signupForm.email }}</strong>. Kiểm tra cả mục Spam nếu chưa thấy email.</div>

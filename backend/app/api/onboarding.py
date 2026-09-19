@@ -869,6 +869,9 @@ def verify_bot_channel(
     """Verify a Telegram/Zalo Bot token and configure its tenant webhook."""
 
     _require_shop_admin(db, business_id, actor)
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     personal_zalo = payload.channel_type == "zalo" and payload.access_token.strip().lower().startswith("personal:")
     public_base = str(settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
     if not personal_zalo and not public_base.lower().startswith("https://"):
@@ -882,7 +885,7 @@ def verify_bot_channel(
     webhook_url = (
         "/api/channels/zalo/incoming"
         if personal_zalo
-        else f"{public_base}/api/webhooks/{payload.channel_type}"
+        else f"{public_base}/api/webhooks/{business.slug}"
     )
     # Hex is accepted by both Telegram and Zalo and avoids unsupported base64
     # padding characters in the provider secret header.

@@ -245,6 +245,7 @@ test("platform administration exposes shop status, usage, and schema pilot contr
 test("shop self-service signup verifies email before creating a shop", () => {
   assert.doesNotMatch(appSource, /Chưa có workspace/);
   assert.match(appSource, /Đăng ký shop mới/);
+  assert.match(appSource, /signupLoading \? 'Đang gửi mã\.\.\.' : 'Đăng ký'/);
   assert.match(appSource, /onboarding\/signup\/request/);
   assert.match(appSource, /onboarding\/signup\/verify/);
   assert.match(appSource, /Mã OTP/);
@@ -264,6 +265,8 @@ test("channel onboarding exposes guided Telegram and Zalo Bot Creator token veri
   assert.match(appSource, /channels\/verify/);
   assert.match(appSource, /BotFather/);
   assert.match(appSource, /Zalo Bot Manager/);
+  assert.match(appSource, /access_token: token/);
+  assert.doesNotMatch(appSource, /`personal:\$\{token\}`/);
     assert.match(styleSource, /\.channel-connect-card/);
   });
 

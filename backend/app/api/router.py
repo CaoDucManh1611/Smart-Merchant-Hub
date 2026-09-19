@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding, support
-from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo, zalo_personal
+from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo, zalo_personal, webhooks
 
 
 api_router = APIRouter(prefix="/api")
@@ -66,6 +66,10 @@ api_router.include_router(
     prefix="/webhooks/tiktok",
     tags=["TikTok"],
 )
+
+# New shop-scoped webhook URL. Register it after every provider-specific route
+# so a slug such as "tiktok" cannot shadow the existing TikTok endpoint.
+api_router.include_router(webhooks.router, tags=["Shop webhooks"])
 
 api_router.include_router(
     conversations.router,

@@ -36,6 +36,7 @@ def test_p0_to_p2_critical_routes_keep_their_http_contracts():
         "/api/webhooks/instagram": {"GET", "POST"},
         "/api/webhooks/telegram": {"POST"},
         "/api/webhooks/zalo": {"POST"},
+        "/api/webhooks/{shop_slug}": {"POST"},
         "/api/webhooks/shopee": {"POST"},
         "/api/onboarding/shops": {"POST"},
         "/api/usage": {"GET"},
