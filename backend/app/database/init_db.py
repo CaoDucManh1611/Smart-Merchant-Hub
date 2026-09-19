@@ -8,6 +8,7 @@ from app.database.bootstrap import ensure_default_business, ensure_default_plans
 from app.database.session import Base, SessionLocal, engine
 from app.database.bases import PlatformBase
 from app.database.platform_session import PlatformSessionLocal, platform_engine
+from app.database.tenant_session import tenant_engine
 from app.models.customer import Customer
 from app.models.customer_merge import CustomerMerge
 from app.models.audit_log import AuditLog
@@ -37,6 +38,7 @@ from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, Dat
 from app.models.platform_control import PlatformBusiness, TenantRegistry
 import app.models.channel_route  # noqa: F401 - register platform webhook routes
 from app.tenancy.provisioning import provision_shop
+from app.tenancy.migration_runner import current_tenant_revision
 from app.tenancy.schema import schema_name_for
 
 logger = logging.getLogger(__name__)
@@ -97,13 +99,32 @@ def _bootstrap_development_saas() -> None:
                         TenantRegistry.business_id == business_id,
                     )
                 )
+                repair_key = None
                 if registry is not None and registry.state == "active" and registry.feature_enabled:
-                    continue
+                    # A previous development run could mark provisioning as
+                    # successful before the tenant database was recreated.
+                    # Do not trust the platform flag alone: verify the
+                    # schema migration marker and repair a missing schema.
+                    try:
+                        with tenant_engine.connect() as tenant_connection:
+                            tenant_revision = current_tenant_revision(
+                                tenant_connection,
+                                schema_name_for(business_id),
+                            )
+                    except Exception:
+                        tenant_revision = None
+                    if tenant_revision:
+                        continue
+                    registry.state = "provisioning"
+                    registry.feature_enabled = False
+                    registry.migration_error = None
+                    platform_db.commit()
+                    repair_key = f"dev-bootstrap-repair-{business_id}"
                 try:
                     provision_shop(
                         platform_db,
                         business_id=business_id,
-                        idempotency_key=f"dev-bootstrap-{business_id}",
+                        idempotency_key=repair_key or f"dev-bootstrap-{business_id}",
                     )
                 except Exception:
                     # Isolate one malformed shop from the rest of the local
