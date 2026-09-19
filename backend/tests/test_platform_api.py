@@ -198,6 +198,38 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(200, replay.status_code, replay.text)
         self.assertEqual(payment.json()["id"], replay.json()["id"])
 
+    def test_platform_admin_can_set_a_separate_chatbot_rental_price(self):
+        token = self.login("platform-admin@test", "platform-password")
+        headers = {"Authorization": f"Bearer {token}"}
+        payload = {
+            "code": "chatbot-priced-plan",
+            "name": "Chatbot Priced Plan",
+            "price": "390000",
+            "max_users": 10,
+            "max_channels": 2,
+            "max_documents": 50,
+            "max_rag_chunks": 1000,
+            "max_ai_calls": 5000,
+            "max_ai_cost": "500",
+            "features": {"chatbot_rental_price": 590000},
+        }
+        created = self.client.post("/api/platform/plans", headers=headers, json=payload)
+        self.assertEqual(201, created.status_code, created.text)
+
+        payload["features"] = {"chatbot_rental_price": 650000}
+        updated = self.client.patch(
+            f"/api/platform/plans/{created.json()['id']}",
+            headers=headers,
+            json=payload,
+        )
+        self.assertEqual(200, updated.status_code, updated.text)
+        self.assertEqual(650000, int(updated.json()["features"]["chatbot_rental_price"]))
+
+        listed = self.client.get("/api/platform/plans", headers=headers)
+        self.assertEqual(200, listed.status_code, listed.text)
+        persisted = next(item for item in listed.json() if item["id"] == created.json()["id"])
+        self.assertEqual(650000, int(persisted["features"]["chatbot_rental_price"]))
+
     def test_subscription_rejects_an_impossible_billing_period(self):
         token = self.login("platform-admin@test", "platform-password")
         headers = {"Authorization": f"Bearer {token}"}

@@ -40,6 +40,26 @@ class DefaultBusinessBootstrapTests(unittest.TestCase):
         self.assertEqual(4, len(plans))
         self.assertTrue(all(plan.status == "active" for plan in plans))
         self.assertEqual({"demo": 0, "starter": 1, "growth": 2, "pro": 4}, {plan.code: plan.max_channels for plan in plans})
+        self.assertEqual(
+            {"demo": 0, "starter": 100000, "growth": 400000, "pro": 1000000},
+            {plan.code: int(plan.features["chatbot_rental_price"]) for plan in plans},
+        )
+
+    def test_default_plan_seed_does_not_overwrite_an_admin_chatbot_price(self):
+        engine = create_engine("sqlite://")
+        ServicePlan.__table__.create(engine)
+
+        with Session(engine) as session:
+            ensure_default_plans(session)
+            starter = session.scalar(select(ServicePlan).where(ServicePlan.code == "starter"))
+            starter.features = {**starter.features, "chatbot_rental_price": 245000}
+            session.commit()
+
+            ensure_default_plans(session)
+            session.commit()
+            saved = session.scalar(select(ServicePlan).where(ServicePlan.code == "starter"))
+
+        self.assertEqual(245000, int(saved.features["chatbot_rental_price"]))
 
 
 if __name__ == "__main__":

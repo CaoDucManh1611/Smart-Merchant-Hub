@@ -8,6 +8,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.auth.passwords import validate_signup_password
+
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -46,6 +48,11 @@ class OnboardingShopCreate(BaseModel):
             raise ValueError("Email chủ shop không hợp lệ.")
         return normalized
 
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, value: str) -> str:
+        return validate_signup_password(value)
+
 
 class SignupOtpRequest(BaseModel):
     """Details collected before an email address is verified."""
@@ -62,6 +69,11 @@ class SignupOtpRequest(BaseModel):
         if not _EMAIL_RE.fullmatch(normalized):
             raise ValueError("Email công việc không hợp lệ.")
         return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, value: str) -> str:
+        return validate_signup_password(value)
 
 
 class SignupOtpVerify(BaseModel):

@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PlatformShopOut(BaseModel):
@@ -111,6 +111,26 @@ class PlatformPlanCreate(BaseModel):
     max_ai_cost: Decimal = Field(default=Decimal("100"), ge=0)
     features: dict | None = None
     status: Literal["active", "archived"] = "active"
+
+    @field_validator("features")
+    @classmethod
+    def validate_chatbot_rental_price(cls, value: dict | None) -> dict | None:
+        """Keep the separately managed chatbot rental price JSON-safe."""
+
+        if value is None:
+            return None
+        normalized = dict(value)
+        raw_price = normalized.get("chatbot_rental_price")
+        if raw_price is None:
+            return normalized
+        try:
+            chatbot_price = Decimal(str(raw_price))
+        except Exception as exc:  # Pydantic turns this into a useful 422 response.
+            raise ValueError("Giá thuê trợ lý chatbot phải là một số không âm.") from exc
+        if not chatbot_price.is_finite() or chatbot_price < 0:
+            raise ValueError("Giá thuê trợ lý chatbot phải là một số không âm.")
+        normalized["chatbot_rental_price"] = float(chatbot_price)
+        return normalized
 
 
 class PlatformPlanOut(PlatformPlanCreate):

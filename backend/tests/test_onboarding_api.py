@@ -72,6 +72,21 @@ class OnboardingApiTests(unittest.TestCase):
         )
         self.assertEqual(409, duplicate.status_code, duplicate.text)
 
+    def test_direct_shop_endpoint_requires_verified_signup_outside_test_mode(self):
+        with patch.object(settings, "ENVIRONMENT", "development"):
+            response = self.client.post(
+                "/api/onboarding/shops",
+                json={
+                    "shop_name": "OTP Required Shop",
+                    "owner_name": "OTP Required Owner",
+                    "owner_email": "otp-required@onboarding.test",
+                    "password": "Strong-pass-2026",
+                },
+            )
+
+        self.assertEqual(410, response.status_code, response.text)
+        self.assertIn("OTP", response.json()["detail"])
+
     def test_email_otp_signup_creates_shop_only_after_verification(self):
         request_payload = {
             "owner_name": "OTP Owner",

@@ -6,6 +6,7 @@ import logging
 import hmac
 import re
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from sqlalchemy import select
@@ -22,7 +23,7 @@ from app.tenancy.crm_session import get_tenant_db
 from app.models.auth_session import AuthSession
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.signup import SignupEmailChallenge
-from app.models.platform_control import PlatformBusiness, PlatformServicePlan, PlatformSubscription
+from app.models.platform_control import PlatformBusiness, PlatformServicePlan, PlatformSubscription, TenantRegistry
 from app.tenancy.provisioning import ProvisioningValidationError, provision_shop, retry_provision_shop
 from app.models.channel import Channel
 from app.models.inventory import StockMovement
@@ -102,6 +103,19 @@ def _active_plan(db: Session, code: str) -> ServicePlan:
     if plan is None:
         raise HTTPException(status_code=422, detail="Gói dịch vụ không tồn tại hoặc đã lưu trữ.")
     return plan
+
+
+def _chatbot_rental_price(plan: ServicePlan) -> Decimal:
+    """Resolve the chatbot price independently from the CRM package price."""
+
+    raw_price = (plan.features or {}).get("chatbot_rental_price", plan.price)
+    try:
+        price = Decimal(str(raw_price))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(plan.price or 0)
+    if not price.is_finite() or price < 0:
+        return Decimal(plan.price or 0)
+    return price
 
 
 def _start_platform_provisioning(business: Business) -> str:
@@ -391,15 +405,20 @@ def purchase_shop_plan(
         )
         db.add(subscription)
         db.flush()
+    amount = _chatbot_rental_price(plan) if payload.service_type == "chatbot" else plan.price
+    payment_reference = f"demo:{business_id}:{plan.code}:{payload.service_type}:{subscription.id}"
+    payment = db.scalar(select(Payment).where(Payment.provider_transaction_id == payment_reference))
+    if payment is None:
         db.add(Payment(
             business_id=business_id,
             subscription_id=subscription.id,
-            amount=plan.price,
+            amount=amount,
             currency="VND",
             provider="demo",
-            provider_transaction_id=f"demo:{business_id}:{plan.code}:{subscription.id}",
+            provider_transaction_id=payment_reference,
             status="paid",
             paid_at=now,
+            raw_response={"service_type": payload.service_type, "plan_code": plan.code},
         ))
 
     record_audit(
@@ -409,7 +428,7 @@ def purchase_shop_plan(
         action="subscription_demo_activated",
         resource_type="subscription",
         resource_id=subscription.id,
-        metadata={"plan_code": plan.code, "service_type": payload.service_type, "provider": "demo"},
+        metadata={"plan_code": plan.code, "service_type": payload.service_type, "amount": str(amount), "provider": "demo"},
     )
     db.commit()
     db.refresh(subscription)
@@ -607,6 +626,11 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
 
 @router.post("/shops", response_model=OnboardingShopOut, status_code=201)
 def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
+    # The browser registration flow must prove control of the email address.
+    # Keep this endpoint for isolated test fixtures only; production and local
+    # clients use /signup/request followed by /signup/verify.
+    if settings.ENVIRONMENT.strip().lower() != "test":
+        raise HTTPException(status_code=410, detail="Hãy dùng luồng đăng ký xác minh email OTP để tạo shop.")
     owner_email = payload.owner_email.strip().lower()
     if db.query(User.id).filter(User.email.ilike(owner_email)).first() is not None:
         raise HTTPException(status_code=409, detail="Email đã được sử dụng. Hãy đăng nhập hoặc dùng email khác.")
@@ -651,6 +675,30 @@ def _ensure_platform_identity(platform_db: Session, legacy_db: Session, business
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     platform_db.add(PlatformBusiness(id=business.id, name=business.name, slug=business.slug, status=business.status))
     platform_db.commit()
+
+
+@router.get("/shops/{business_id}/provision", response_model=ProvisioningOut)
+def get_onboarding_provisioning_status(
+    business_id: int,
+    actor: User = Depends(get_current_user),
+    legacy_db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+):
+    """Expose only the readiness state needed to safely open a new workspace."""
+
+    _authorize_provisioning(actor, business_id)
+    _ensure_platform_identity(platform_db, legacy_db, business_id)
+    registry = platform_db.scalar(
+        select(TenantRegistry).where(TenantRegistry.business_id == business_id)
+    )
+    if registry is None:
+        return ProvisioningOut(
+            business_id=business_id,
+            schema_name=schema_name_for(business_id),
+            state="provisioning",
+            feature_enabled=False,
+        )
+    return registry
 
 
 @router.post("/shops/{business_id}/provision", response_model=ProvisioningOut)

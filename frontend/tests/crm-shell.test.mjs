@@ -82,8 +82,8 @@ test("anonymous visitors land on a branded Owly/Salon login gate", () => {
     assert.match(appSource, /class="login-form"/);
     assert.match(appSource, /class="login-brand-mark"/);
     assert.match(appSource, /CỔNG VẬN HÀNH SHOP|Cổng nhân viên|CỔNG NHÂN VIÊN/);
-    assert.match(appSource, /<aside v-if="authUser" class="side"/);
-    assert.match(appSource, /<main v-if="authUser" class="main">/);
+    assert.match(appSource, /<aside v-if="authUser && !inPlatformAdminWorkspace && !sessionBootstrapLoading" class="side"/);
+    assert.match(appSource, /<main v-if="\(authUser && !sessionBootstrapLoading\) \|\| serviceLandingOpen" class="main"/);
   assert.match(styleSource, /\.login-page/);
   assert.match(styleSource, /\.login-card/);
 });
@@ -96,6 +96,41 @@ test("login form surfaces a retry countdown when the auth endpoint rate-limits",
   assert.match(appSource, /formatRateLimitDuration/);
   assert.match(appSource, /Thử lại sau/);
   assert.match(appSource, /class="login-rate-limit"/);
+});
+
+test("login shows the configured admin email in valid email fields", () => {
+  assert.match(appSource, /Email đăng nhập/);
+  assert.equal((appSource.match(/v-model="loginForm\.email" required type="email" maxlength="255" autocomplete="username" placeholder="admin@gmail\.com"/g) || []).length, 2);
+});
+
+test("platform admins land in the shop control plane instead of the CRM inbox", () => {
+  const loginSource = appSource.slice(appSource.indexOf("async function login()"), appSource.indexOf("async function logout()"));
+  const mountedSource = appSource.slice(appSource.indexOf("onMounted(async () =>"), appSource.indexOf("/* =========================================================\n   STOP POLLING"));
+
+  assert.match(loginSource, /await fetchPlatformAdmin\(\);\s+if \(platformAdmin\.value && !mfaVerifyPending\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/);
+  assert.match(mountedSource, /loadThemePreference\(\);\s+if \(platformAdmin\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/);
+});
+
+test("platform admins use a dedicated shop-administration shell, not CRM chrome", () => {
+  assert.match(appSource, /const inPlatformAdminWorkspace = computed\(\(\) => \([\s\S]*?currentTab\.value === "platform_admin"/);
+  assert.match(templateSource, /'platform-admin-workspace': inPlatformAdminWorkspace/);
+  assert.match(templateSource, /<aside v-if="authUser && !inPlatformAdminWorkspace && !sessionBootstrapLoading" class="side"/);
+  assert.match(templateSource, /<header v-if="authUser && !inPlatformAdminWorkspace" class="top">/);
+  assert.match(templateSource, /v-if="authUser && !tenantReady && !inPlatformAdminWorkspace" class="tenant-provisioning-banner"/);
+  assert.match(templateSource, /class="platform-workspace-header"/);
+  assert.match(templateSource, />Đăng xuất<\/button>/);
+  assert.match(styleSource, /\.crm-app\.platform-admin-workspace\s*\{/);
+});
+
+test("a restored admin session waits for the role check before rendering any CRM chrome", () => {
+  const mountedSource = appSource.slice(appSource.indexOf("onMounted(async () =>"), appSource.indexOf("/* =========================================================\n   STOP POLLING"));
+
+  assert.match(appSource, /const sessionBootstrapLoading = ref\(true\)/);
+  assert.match(mountedSource, /await fetchPlatformAdmin\(\);[\s\S]*?finally \{[\s\S]*?sessionBootstrapLoading\.value = false;/);
+  assert.match(templateSource, /'session-bootstrap-active': sessionBootstrapLoading/);
+  assert.match(templateSource, /<section v-else-if="sessionBootstrapLoading" class="session-bootstrap"/);
+  assert.match(templateSource, /<main v-if="\(authUser && !sessionBootstrapLoading\) \|\| serviceLandingOpen" class="main"/);
+  assert.match(styleSource, /\.session-bootstrap\s*\{/);
 });
 
 test("operations navigation keeps only customer-facing processing modules", () => {
