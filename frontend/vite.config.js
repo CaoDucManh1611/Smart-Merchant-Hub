@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     host: "0.0.0.0",
+    allowedHosts: ["vocalist-dreamy-corned.ngrok-free.dev"],
     proxy: {
       "/api": {
         target: "http://backend:8000",
