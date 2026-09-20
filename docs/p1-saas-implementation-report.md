@@ -34,7 +34,7 @@ visibility, platform operations and deployment wiring
 
 ## Database and deployment
 
-- Migration `20260913_0042_p1_saas_platform` is the current Alembic head.
+- Migration `20260919_0043_signup_email_verification` is the current Alembic head.
 - The migration enables repeatable tenant RLS policies on all applicable
   `business_id` tables. It is a no-op for SQLite test databases.
 - Compose bind-mounts `backend/alembic` so a restart applies additive
@@ -50,7 +50,7 @@ visibility, platform operations and deployment wiring
 | Python compile check | **PASS** |
 | SQLite Alembic upgrade | **PASS** |
 | Docker services | **5 healthy** |
-| Runtime Alembic head | `20260913_0042` |
+| Runtime Alembic head | `20260919_0043` |
 | PostgreSQL RLS policies | **59** |
 | Restored data retained | **8 conversations / 713 messages** |
 | `/health`, `/health/details`, onboarding plans, frontend | **HTTP 200** |

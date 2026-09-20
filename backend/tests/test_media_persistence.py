@@ -162,6 +162,77 @@ class MediaPersistenceTests(unittest.TestCase):
         self.assertIn("business_id=1", media_url)
         self.assertIn("signature=", media_url)
 
+    def test_inbound_notification_targets_active_assignee_or_falls_back_to_shared_inbox(self):
+        """Messages stay visible to all; the bell follows active responsibility."""
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Business.metadata.create_all(engine)
+        with Session(engine) as db:
+            business = Business(name="Shared Inbox Shop", slug="shared-inbox-shop")
+            db.add(business)
+            db.flush()
+            channel = Channel(
+                business_id=business.id,
+                channel_type="telegram",
+                name="Telegram",
+                external_account_id="shared-inbox-bot",
+            )
+            db.add(channel)
+            db.flush()
+            process_and_save_message(
+                db,
+                {
+                    "channel": "telegram",
+                    "business_id": business.id,
+                    "channel_id": channel.id,
+                    "external_account_id": channel.external_account_id,
+                    "external_user_id": "shared-customer",
+                    "external_message_id": "telegram:shared:seed",
+                    "content": None,
+                },
+            )
+            conversation = db.scalar(select(Conversation))
+            conversation.assigned_user_id = 999
+            db.commit()
+
+            with patch("app.services.message_service.create_notification") as notify, patch(
+                "app.services.message_service.manager.is_user_connected",
+                side_effect=[False, True],
+            ):
+                process_and_save_message(
+                    db,
+                    {
+                        "channel": "telegram",
+                        "business_id": business.id,
+                        "channel_id": channel.id,
+                        "external_account_id": channel.external_account_id,
+                        "external_user_id": "shared-customer",
+                        "external_message_id": "telegram:shared:offline",
+                        "content": None,
+                    },
+                )
+                process_and_save_message(
+                    db,
+                    {
+                        "channel": "telegram",
+                        "business_id": business.id,
+                        "channel_id": channel.id,
+                        "external_account_id": channel.external_account_id,
+                        "external_user_id": "shared-customer",
+                        "external_message_id": "telegram:shared:active",
+                        "content": None,
+                    },
+                )
+
+            self.assertEqual(2, notify.call_count)
+            self.assertIsNone(notify.call_args_list[0].kwargs["user_id"])
+            self.assertEqual(999, notify.call_args_list[1].kwargs["user_id"])
+            self.assertEqual("new_message", notify.call_args_list[1].kwargs["kind"])
+            self.assertEqual("auto", db.get(Conversation, conversation.id).bot_mode)
+
     def test_telegram_profile_photo_stores_signed_proxy_without_bot_token(self):
         engine = create_engine(
             "sqlite://",

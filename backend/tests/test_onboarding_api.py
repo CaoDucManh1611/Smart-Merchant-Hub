@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -15,7 +16,9 @@ from app.models.channel import Channel
 from app.models.sales import Product
 from app.models.inventory import StockMovement
 from app.models.audit_log import AuditLog
+from app.models.signup_verification import SignupVerificationChallenge
 from app.services.channel_credentials import decrypt_token
+from app.services.otp_delivery import OtpDeliveryResult
 from app.core.config import settings
 
 
@@ -90,6 +93,86 @@ class OnboardingApiTests(unittest.TestCase):
         )
         self.assertEqual(402, blocked.status_code, blocked.text)
         self.assertEqual("subscription_inactive", blocked.json()["detail"]["code"])
+
+    def test_public_signup_requires_email_otp_before_issuing_owner_session(self):
+        captured = {}
+
+        def fake_delivery(*, channel, destination, code):
+            captured.update(channel=channel, destination=destination, code=code)
+            return OtpDeliveryResult(provider="smtp", delivered=True)
+
+        with patch("app.api.onboarding.deliver_otp", side_effect=fake_delivery):
+            requested = self.client.post(
+                "/api/onboarding/signup/otp/request",
+                json={
+                    "shop_name": "OTP Signup Shop",
+                    "owner_name": "OTP Owner",
+                    "owner_email": "otp-signup@onboarding.test",
+                    "password": "strong-pass-1",
+                    "plan_code": "starter",
+                },
+            )
+        self.assertEqual(202, requested.status_code, requested.text)
+        self.assertEqual("email", captured["channel"])
+        self.assertEqual("otp-signup@onboarding.test", captured["destination"])
+        self.assertNotIn("code", requested.text)
+
+        verified = self.client.post(
+            "/api/onboarding/signup/otp/verify",
+            json={"challenge_id": requested.json()["challenge_id"], "code": captured["code"]},
+        )
+        self.assertEqual(201, verified.status_code, verified.text)
+        self.assertIn("access_token", verified.json())
+        self.assertEqual(
+            200,
+            self.client.get(
+                "/api/auth/me",
+                headers={"Authorization": f"Bearer {verified.json()['access_token']}"},
+            ).status_code,
+        )
+
+    def test_signup_rejects_weak_password_before_sending_otp(self):
+        response = self.client.post(
+            "/api/onboarding/signup/otp/request",
+            json={
+                "shop_name": "Weak Password Shop",
+                "owner_name": "Weak Owner",
+                "owner_email": "weak-password@onboarding.test",
+                "password": "password123",
+            },
+        )
+        self.assertEqual(422, response.status_code, response.text)
+
+    def test_signup_can_resend_after_an_expired_challenge(self):
+        codes = []
+
+        def fake_delivery(*, channel, destination, code):
+            codes.append(code)
+            return OtpDeliveryResult(provider="smtp", delivered=True)
+
+        payload = {
+            "shop_name": "Expired OTP Shop",
+            "owner_name": "Expired OTP Owner",
+            "owner_email": "expired-otp@onboarding.test",
+            "password": "strong-pass-1",
+        }
+        with patch("app.api.onboarding.deliver_otp", side_effect=fake_delivery):
+            first = self.client.post("/api/onboarding/signup/otp/request", json=payload)
+            self.assertEqual(202, first.status_code, first.text)
+            with Session(self.engine) as db:
+                challenge = db.get(SignupVerificationChallenge, first.json()["challenge_id"])
+                challenge.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+                db.commit()
+            second = self.client.post("/api/onboarding/signup/otp/request", json=payload)
+
+        self.assertEqual(202, second.status_code, second.text)
+        self.assertEqual(first.json()["challenge_id"], second.json()["challenge_id"])
+        self.assertEqual(2, len(codes))
+        verified = self.client.post(
+            "/api/onboarding/signup/otp/verify",
+            json={"challenge_id": second.json()["challenge_id"], "code": codes[-1]},
+        )
+        self.assertEqual(201, verified.status_code, verified.text)
 
     def test_owner_can_connect_encrypted_channel_and_import_products(self):
         settings.CHANNEL_ENCRYPTION_KEY = "test-onboarding-channel-key"

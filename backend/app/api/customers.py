@@ -1,12 +1,14 @@
 """Customer 360 and unified timeline endpoints."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app.database.platform_session import get_platform_db
 from app.db.dependencies import get_db
 from app.models.conversation import Conversation
 from app.models.customer import Customer
@@ -37,6 +39,8 @@ from app.schemas.customer import (
     CustomerIdentityOut,
     CustomerListItem,
     CustomerListOut,
+    CustomerMessageSearchItem,
+    CustomerMessageSearchOut,
     CustomerNoteCreate,
     CustomerNoteOut,
     CustomerProfileOut,
@@ -45,6 +49,7 @@ from app.schemas.customer import (
     CustomerTagOut,
     CustomerTimelineItem,
     CustomerTimelineOut,
+    CustomerTimelineSummary,
 )
 from app.schemas.customer_collection import CustomerAddressOut, CustomerContactOut
 from app.schemas.customer_merge import (
@@ -57,6 +62,7 @@ from app.schemas.customer_merge import (
     CustomerSegmentUpdate,
 )
 from app.tenancy.context import TenantContext
+from app.tenancy.crm_session import get_tenant_db
 from app.tenancy.dependencies import get_tenant_context
 from app.services.customer_fact_extractor import (
     FACT_EXTRACTION_SETTING_KEY,
@@ -78,6 +84,51 @@ from app.services.audit_service import record_audit
 
 
 router = APIRouter()
+
+
+# The CRM is operated in Vietnam. Keeping the date comparison here (instead of
+# using the database/server timezone) makes a day selected in the UI mean the
+# same day that staff see in Customer 360.
+BUSINESS_TIME_ZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+TIMELINE_OPERATIONAL_EVENT_TYPES = {
+    "sales_order",
+    "order_payment",
+    "purchase_order",
+    "ticket",
+    "ticket_event",
+    "ticket_comment",
+    "assignment",
+}
+
+
+def _timeline_local_date(value: datetime | None) -> date | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        # Legacy tenant records are stored as local wall-clock times.
+        return value.replace(tzinfo=BUSINESS_TIME_ZONE).date()
+    return value.astimezone(BUSINESS_TIME_ZONE).date()
+
+
+def _timeline_sort_key(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=BUSINESS_TIME_ZONE).astimezone(timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _timeline_summary(items: list[CustomerTimelineItem]) -> CustomerTimelineSummary:
+    message_events = [item for item in items if item.event_type == "message"]
+    return CustomerTimelineSummary(
+        total_events=len(items),
+        conversation_count=len({item.conversation_id for item in items if item.conversation_id is not None}),
+        message_events=len(message_events),
+        customer_messages=sum(item.actor_type == "customer" for item in message_events),
+        staff_actions=sum(item.actor_type == "staff" for item in items),
+        automated_actions=sum(item.actor_type in {"bot", "system"} for item in items),
+        operational_events=sum(item.event_type in TIMELINE_OPERATIONAL_EVENT_TYPES for item in items),
+    )
 
 
 def _profile_contact_value(customer: Customer, contacts: list[CustomerContact], kind: str) -> str | None:
@@ -282,7 +333,7 @@ def _customer_list_out(db: Session, query, *, offset: int = 0, limit: int = 200)
 
 @router.get("/duplicates", response_model=dict)
 def list_duplicate_suggestions(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     customer_id: int | None = Query(default=None, ge=1),
     threshold: float = Query(default=0.55, ge=0.0, le=1.0),
@@ -300,7 +351,7 @@ def list_duplicate_suggestions(
 
 @router.get("/segments", response_model=dict)
 def list_customer_segments(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     rows = db.execute(select(customer_segments_table).where(
@@ -313,7 +364,7 @@ def list_customer_segments(
 @router.post("/segments", response_model=CustomerSegmentOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_customer_segment(
     payload: CustomerSegmentCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -354,7 +405,7 @@ def create_customer_segment(
 def update_customer_segment(
     segment_id: int,
     payload: CustomerSegmentUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -398,7 +449,7 @@ def update_customer_segment(
 @router.delete("/segments/{segment_id}", status_code=204, dependencies=[Depends(require_write_access)])
 def delete_customer_segment(
     segment_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -423,7 +474,7 @@ def delete_customer_segment(
 @router.get("/segments/{segment_id}/customers", response_model=CustomerListOut)
 def list_segment_customers(
     segment_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -439,7 +490,7 @@ def list_segment_customers(
 
 @router.get("", response_model=CustomerListOut)
 def list_customers(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -504,7 +555,7 @@ def list_customers(
 def customer_merge_preview(
     customer_id: int,
     payload: CustomerMergeRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Preview how many tenant-owned records would move to the survivor."""
@@ -529,7 +580,7 @@ def customer_merge_preview(
 def customer_merge(
     customer_id: int,
     payload: CustomerMergeRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -587,7 +638,7 @@ def customer_merge(
 @router.get("/{customer_id}/merge-history", response_model=dict)
 def customer_merge_history(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _get_customer(db, customer_id, tenant)
@@ -600,7 +651,7 @@ def undo_customer_merge_endpoint(
     customer_id: int,
     merge_id: int,
     payload: CustomerMergeUndoRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -636,7 +687,7 @@ def undo_customer_merge_endpoint(
 
 @router.get("/fact-extraction-status", response_model=CustomerFactExtractionStatusOut)
 def get_fact_extraction_status(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     return CustomerFactExtractionStatusOut(
@@ -647,7 +698,7 @@ def get_fact_extraction_status(
 @router.post("/fact-extraction-status", response_model=CustomerFactExtractionStatusOut, dependencies=[Depends(require_write_access)])
 def set_fact_extraction_status(
     payload: CustomerFactExtractionStatusRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -680,7 +731,7 @@ def set_fact_extraction_status(
 
 @router.get("/tags/catalog")
 def list_customer_tag_catalog(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     """List tags used by this tenant for segmentation controls."""
@@ -714,7 +765,7 @@ def list_customer_tag_catalog(
 @router.get("/{customer_id}", response_model=CustomerProfileOut)
 def get_customer(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     customer = _get_customer(db, customer_id, tenant)
@@ -785,7 +836,7 @@ def get_customer(
 @router.get("/{customer_id}/facts", response_model=CustomerFactListOut)
 def list_customer_facts(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     fact_type: str | None = Query(default=None, min_length=1, max_length=50),
     verified: bool | None = Query(default=None),
@@ -815,7 +866,7 @@ def list_customer_facts(
 def create_customer_fact(
     customer_id: int,
     payload: CustomerFactCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -894,7 +945,7 @@ def update_customer_fact(
     customer_id: int,
     fact_id: int,
     payload: CustomerFactUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -933,7 +984,7 @@ def update_customer_fact(
 def delete_customer_fact(
     customer_id: int,
     fact_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -955,7 +1006,7 @@ def delete_customer_fact(
 @router.get("/{customer_id}/tags", response_model=CustomerTagListOut)
 def list_customer_tags(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     customer = _get_customer(db, customer_id, tenant)
@@ -976,7 +1027,7 @@ def list_customer_tags(
 def add_customer_tag(
     customer_id: int,
     payload: CustomerTagCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -1025,7 +1076,7 @@ def add_customer_tag(
 def remove_customer_tag(
     customer_id: int,
     tag_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -1055,7 +1106,7 @@ def remove_customer_tag(
 @router.get("/{customer_id}/identities", response_model=list[CustomerIdentityOut])
 def list_customer_identities(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     _get_customer(db, customer_id, tenant)
@@ -1066,18 +1117,79 @@ def list_customer_identities(
     return [CustomerIdentityOut.model_validate(identity) for identity in identities]
 
 
+@router.get("/{customer_id}/message-search", response_model=CustomerMessageSearchOut)
+def search_customer_messages(
+    customer_id: int,
+    q: str = Query(min_length=2, max_length=200, description="Đoạn văn bản cần tìm trong lịch sử tin nhắn."),
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    limit: int = Query(default=10, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+):
+    """Find message snippets for one customer without exposing another shop's data."""
+    _get_customer(db, customer_id, tenant)
+    query_text = q.strip()
+    if len(query_text) < 2:
+        raise HTTPException(status_code=422, detail="Nhập ít nhất 2 ký tự để tìm tin nhắn.")
+
+    # Escape SQL LIKE control characters so a customer-entered '%' or '_'
+    # remains a literal search term instead of broadening the result set.
+    escaped_query = query_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    base_query = db.query(Message).join(
+        Conversation, Conversation.id == Message.conversation_id,
+    ).filter(
+        Conversation.business_id == tenant.business_id,
+        Conversation.customer_id == customer_id,
+        Message.content.is_not(None),
+        Message.content.ilike(f"%{escaped_query}%", escape="\\"),
+    )
+    total = base_query.count()
+    rows = base_query.order_by(
+        Message.received_at.desc(),
+        Message.id.desc(),
+    ).offset(offset).limit(limit).all()
+    has_more = offset + len(rows) < total
+    return CustomerMessageSearchOut(
+        items=[
+            CustomerMessageSearchItem(
+                message_id=message.id,
+                conversation_id=message.conversation_id,
+                channel=message.channel,
+                direction=message.direction,
+                content=message.content,
+                occurred_at=message.sent_at or message.received_at,
+                sender_type=message.sender_type,
+                sender_user_id=message.sender_user_id,
+            )
+            for message in rows
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        next_offset=offset + len(rows) if has_more else None,
+    )
+
+
 @router.get("/{customer_id}/timeline", response_model=CustomerTimelineOut)
 def customer_timeline(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
+    platform_db: Session = Depends(get_platform_db),
+    user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    start_date: date | None = Query(default=None, description="Chỉ lấy sự kiện từ ngày này (bao gồm cả ngày)."),
+    end_date: date | None = Query(default=None, description="Chỉ lấy sự kiện đến ngày này (bao gồm cả ngày)."),
+    staff_id: int | None = Query(default=None, ge=1, description="Chỉ lấy sự kiện do nhân viên này tạo/xử lý."),
 ):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="Ngày bắt đầu không được sau ngày kết thúc.")
     _get_customer(db, customer_id, tenant)
     actor_names = {
         user.id: user.full_name or user.email
-        for user in db.query(User).filter(User.business_id == tenant.business_id).all()
+        for user in user_db.query(User).filter(User.business_id == tenant.business_id).all()
     }
     identities = db.query(CustomerIdentity).filter(
         CustomerIdentity.business_id == tenant.business_id,
@@ -1393,13 +1505,37 @@ def customer_timeline(
         else:
             item.actor_type = "system"
             item.actor_name = "Hệ thống"
-    items.sort(key=lambda item: item.occurred_at or datetime.min, reverse=True)
+    items.sort(key=lambda item: _timeline_sort_key(item.occurred_at), reverse=True)
+    if start_date or end_date or staff_id is not None:
+        def matches_date(item: CustomerTimelineItem) -> bool:
+            occurred_date = _timeline_local_date(item.occurred_at)
+            if occurred_date is None:
+                return False
+            return (
+                (not start_date or occurred_date >= start_date)
+                and (not end_date or occurred_date <= end_date)
+            )
+
+        has_date_filter = bool(start_date or end_date)
+        def matches_selected_filter(item: CustomerTimelineItem) -> bool:
+            if has_date_filter and staff_id is not None:
+                return matches_date(item) and item.created_by == staff_id
+            if has_date_filter:
+                return matches_date(item)
+            return item.created_by == staff_id
+
+        items = [
+            item for item in items
+            if matches_selected_filter(item)
+        ]
     total = len(items)
+    summary = _timeline_summary(items)
     page = items[offset : offset + limit]
     has_more = offset + len(page) < total
     return CustomerTimelineOut(
         items=page,
         total=total,
+        summary=summary,
         offset=offset,
         limit=limit,
         has_more=has_more,
@@ -1411,7 +1547,7 @@ def customer_timeline(
 def create_customer_note(
     customer_id: int,
     payload: CustomerNoteCreate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):

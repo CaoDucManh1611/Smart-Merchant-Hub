@@ -10,9 +10,12 @@ from app.integrations.telegram import TelegramAdapter
 from app.services.customer_identity import get_existing_name_priority, resolve_customer
 from app.services.audit_service import record_audit
 from app.services.customer_profile import merge_profile, profile_change_metadata
-from app.services.channel_service import get_single_active_channel
+from app.services.channel_service import get_active_channel
+from app.models.channel import Channel
 from app.services.channel_credentials import decrypt_token
 from app.services.workflow_engine import emit_workflow_event
+from app.services.notification_service import create_notification
+from app.services.realtime import manager
 from sqlalchemy.orm import Session
 
 from app.db.message_repository import save_message
@@ -331,7 +334,9 @@ def fetch_facebook_customer_profile(
     access_token: str | None = None,
 ) -> dict[str, Any]:
 
-    access_token = str(access_token or get_meta_config()["facebook_page_access_token"] or "").strip()
+    # Profile enrichment is tenant-owned.  A missing tenant session must not
+    # fall back to a process-wide Page token, even in development.
+    access_token = str(access_token or "").strip()
 
     if not access_token:
 
@@ -418,7 +423,9 @@ def fetch_instagram_customer_profile(
     access_token: str | None = None,
 ) -> dict[str, Any]:
 
-    access_token = str(access_token or get_meta_config()["facebook_page_access_token"] or "").strip()
+    # Profile enrichment is tenant-owned.  A missing tenant session must not
+    # fall back to a process-wide Page token, even in development.
+    access_token = str(access_token or "").strip()
 
     if not access_token:
 
@@ -1193,20 +1200,38 @@ def process_and_save_message(
     # 2. TÌM CUSTOMER
     # =====================================================
 
-    # Prefer the tenant-scoped identity resolver whenever a business is
-    # available.  The development-only fallback preserves the old local demo;
-    # production must never assign an unbound event to a default business.
+    # The caller has already resolved the shop and bound this session to its
+    # schema. Never query the platform database through a tenant session.
     business_id = message.get("business_id")
-    if business_id is None and settings.ENVIRONMENT.strip().lower() != "production":
-        business_id = db.execute(
-            text("SELECT id FROM businesses WHERE slug = 'default-business' LIMIT 1")
-        ).scalar()
 
     # A message without a resolved tenant must never create a legacy/global
     # conversation.  In production this is a rejected webhook; keeping the
     # guard here also protects direct callers of this service.
     if business_id is None:
         logger.warning("Inbound message ignored: tenant could not be resolved")
+        return False
+    if db.info.get("business_id") is not None and int(db.info["business_id"]) != int(business_id):
+        logger.warning("Inbound message ignored: resolved business differs from routed session")
+        return False
+
+    channel_row = None
+    if message.get("channel_id") is not None:
+        channel_row = db.get(Channel, int(message["channel_id"]))
+        if (
+            channel_row is None or channel_row.business_id != int(business_id)
+            or channel_row.channel_type != channel or channel_row.status != "active"
+            or (message.get("external_account_id") is not None
+                and channel_row.external_account_id != message["external_account_id"])
+        ):
+            logger.warning("Inbound message ignored: channel does not match routed shop")
+            return False
+    elif message.get("external_account_id"):
+        channel_row = get_active_channel(db, int(business_id), channel, message["external_account_id"])
+        if channel_row is None:
+            return False
+        message["channel_id"] = channel_row.id
+    elif settings.ENVIRONMENT.strip().lower() == "production":
+        logger.warning("Inbound message ignored: resolved channel is required")
         return False
 
     if business_id is not None:
@@ -1234,22 +1259,16 @@ def process_and_save_message(
         ).first()
 
     profile_access_token = None
-    if business_id is not None and channel in {"facebook", "instagram", "telegram"}:
+    if channel_row is not None and channel in {"facebook", "instagram", "telegram"}:
         try:
-            channel_row = get_single_active_channel(
-                db,
-                int(business_id),
-                "facebook" if channel == "instagram" else channel,
-            )
             if channel_row.access_token_encrypted:
                 profile_access_token = decrypt_token(
                     channel_row.access_token_encrypted,
                     settings.CHANNEL_ENCRYPTION_KEY,
                 )
         except (LookupError, ValueError):
-            # Development can still use its explicitly configured fallback;
-            # production simply skips profile enrichment until the encrypted
-            # tenant channel is connected.
+            # A missing/invalid credential skips enrichment. Never select a
+            # different account's token just because the provider is the same.
             profile_access_token = None
 
 
@@ -1355,12 +1374,14 @@ def process_and_save_message(
         customer = db.execute(
             text("""
                 INSERT INTO customers (
+                    business_id,
                     channel,
                     external_user_id,
                     name,
                     avatar_url
                 )
                 VALUES (
+                    :business_id,
                     :channel,
                     :external_user_id,
                     :name,
@@ -1372,6 +1393,7 @@ def process_and_save_message(
                     avatar_url
             """),
             {
+                "business_id": int(business_id),
                 "channel":
                     channel,
 
@@ -1484,14 +1506,16 @@ def process_and_save_message(
                     business_id,
                     channel_id,
                     channel,
-                    status
+                    status,
+                    bot_mode
                 )
                 VALUES (
                     :customer_id,
                     :business_id,
                     :channel_id,
                     :channel,
-                    'open'
+                    'open',
+                    'auto'
                 )
                 RETURNING id
             """),
@@ -1608,6 +1632,56 @@ def process_and_save_message(
         {"customer_id": customer_id},
     )
     db.commit()
+
+    # Every new inbound message is visible in the shared shop inbox. When a
+    # responsible staff member is actively working in CRM, only that person
+    # receives the bell notification. If they leave the CRM session (or the
+    # conversation is unassigned), notify the shop so the customer is not
+    # left waiting.
+    # The notification is intentionally persisted after the message commit so
+    # a legacy notification table can never make the provider retry the chat.
+    if saved_message and saved_message.get("message_id"):
+        try:
+            assignment = db.execute(
+                text(
+                    """
+                    SELECT assigned_user_id
+                    FROM conversations
+                    WHERE id = :conversation_id AND business_id = :business_id
+                    """
+                ),
+                {"conversation_id": int(conversation_id), "business_id": int(business_id)},
+            ).first()
+            assigned_user_id = getattr(assignment, "assigned_user_id", None) if assignment else None
+            notification_user_id = (
+                int(assigned_user_id)
+                if assigned_user_id is not None
+                and manager.is_user_connected(
+                    business_id=int(business_id),
+                    user_id=int(assigned_user_id),
+                )
+                else None
+            )
+            preview = " ".join(str(message.get("content") or "").split())[:280]
+            customer_name = str(getattr(customer, "name", "") or "Khách hàng").strip()
+            create_notification(
+                db,
+                business_id=int(business_id),
+                user_id=notification_user_id,
+                kind="new_message",
+                title=f"Tin nhắn mới từ {customer_name[:120] or 'khách hàng'}",
+                body=preview or "Khách vừa gửi một tệp hoặc nội dung mới.",
+                metadata={
+                    "conversation_id": int(conversation_id),
+                    "customer_id": int(customer_id),
+                    "message_id": int(saved_message["message_id"]),
+                    "channel": str(channel),
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning("Inbound notification could not be recorded")
 
     # Keep the inbound side of the unified event chain auditable without
     # copying message content or provider payloads into the audit stream.

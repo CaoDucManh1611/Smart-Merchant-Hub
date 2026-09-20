@@ -13,6 +13,7 @@ from app.models.customer_collection import (
 from app.models.customer_360 import customer_merge_operations, customer_segments
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
+from app.models.signup_verification import SignupVerificationChallenge
 from app.models.notification import Notification
 from app.models.experimentation import (
     RuleSuggestion, FeatureSnapshot, Experiment, ExperimentAssignment,
@@ -66,6 +67,7 @@ __all__ = [
     "customer_segments",
     "AuditLog",
     "AuthSession",
+    "SignupVerificationChallenge",
     "Notification",
     "RuleSuggestion",
     "FeatureSnapshot",

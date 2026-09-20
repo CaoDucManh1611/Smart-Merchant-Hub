@@ -87,7 +87,7 @@ alembic upgrade head
 alembic check
 ```
 
-The current head is `20260913_0042_p1_saas_platform`. On PostgreSQL it enables
+The current head is `20260919_0043_signup_email_verification`. On PostgreSQL it enables
 tenant RLS policies for applicable `business_id` tables. Application requests
 set a transaction-local `app.business_id`; platform-admin operations must use
 the explicit platform context. Do not run the application with a database role

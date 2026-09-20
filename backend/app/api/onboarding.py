@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import hmac
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,8 @@ from app.db.dependencies import get_db, get_platform_db
 from app.models.auth_session import AuthSession
 from app.models.business import Business, ServicePlan, Subscription, User
 from app.models.platform_control import PlatformBusiness
+from app.models.platform_control import TenantRegistry
+from app.models.signup_verification import SignupVerificationChallenge
 from app.tenancy.provisioning import provision_shop, retry_provision_shop, ProvisioningValidationError
 from app.models.channel import Channel
 from app.models.inventory import StockMovement
@@ -34,6 +38,8 @@ from app.schemas.onboarding import (
     OnboardingShopCreate,
     OnboardingShopOut,
     OnboardingSubscriptionOut,
+    SignupOtpRequestOut,
+    SignupOtpVerify,
 )
 from app.schemas.platform import ProvisioningOut, ProvisioningRequest
 from app.services.audit_service import record_audit
@@ -41,14 +47,20 @@ from app.services.channel_credentials import encrypt_token
 from app.services.channel_service import upsert_channel_connection
 from app.services.quota_service import QuotaExceededError, release_quota
 from app.services.provider_connection import ProviderConnectionError, verify_and_configure_bot
+from app.services.customer_collection import generate_verification_code, hash_verification_code
+from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, deliver_otp
 from app.core.config import settings
 from app.tenancy.context import TenantContext
+from app.tenancy.schema import schema_name_for
 
 
 router = APIRouter(prefix="/onboarding")
 logger = logging.getLogger(__name__)
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _SECRET_KEY_RE = re.compile(r"(?i)(token|secret|password|authorization|api[_-]?key)")
+_SIGNUP_OTP_TTL = timedelta(minutes=10)
+_SIGNUP_OTP_RETRY_AFTER = 60
+_SIGNUP_OTP_MAX_ATTEMPTS = 5
 
 
 def _slugify(value: str) -> str:
@@ -172,10 +184,34 @@ def list_onboarding_plans(db: Session = Depends(get_db)):
 
 @router.post("/shops", response_model=OnboardingShopOut, status_code=201)
 def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
+    """Create a shop for backwards-compatible internal/demo callers.
+
+    The public UI uses the email-OTP flow below.  Keeping this endpoint
+    available for the isolated test environment preserves existing fixtures;
+    every real deployment must go through ``/signup/otp/request`` and
+    ``/verify``.
+    """
+    if settings.ENVIRONMENT.strip().lower() != "test":
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "email_otp_required",
+                "message": "Đăng ký shop phải xác minh email bằng mã OTP.",
+            },
+        )
+    return _create_shop(db, payload)
+
+
+def _create_shop(
+    db: Session,
+    payload: OnboardingShopCreate,
+    *,
+    password_hash: str | None = None,
+) -> OnboardingShopOut:
     owner_email = payload.owner_email.strip().lower()
     if db.query(User.id).filter(User.email.ilike(owner_email)).first() is not None:
         raise HTTPException(status_code=409, detail="Email đã được sử dụng. Hãy đăng nhập hoặc dùng email khác.")
-    plans = ensure_default_plans(db)
+    ensure_default_plans(db)
     plan = _active_plan(db, payload.plan_code)
     business = Business(
         name=payload.shop_name.strip(),
@@ -188,7 +224,7 @@ def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
         business_id=business.id,
         full_name=payload.owner_name.strip(),
         email=owner_email,
-        password_hash=hash_password(payload.password),
+        password_hash=password_hash or hash_password(payload.password),
         role="owner",
         is_active=True,
     )
@@ -232,6 +268,154 @@ def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
     )
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _signup_payload(challenge: SignupVerificationChallenge) -> OnboardingShopCreate:
+    data = dict(challenge.signup_data or {})
+    data["owner_email"] = challenge.owner_email
+    # The raw password is intentionally never persisted in signup_data.  This
+    # value is only used for Pydantic shape validation before the stored hash
+    # is passed to _create_shop.
+    data["password"] = "placeholder-password-1!"
+    return OnboardingShopCreate(**data)
+
+
+@router.post("/signup/otp/request", response_model=SignupOtpRequestOut, status_code=202)
+def request_signup_otp(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
+    """Send a short-lived email OTP before creating the owner account."""
+
+    owner_email = payload.owner_email.strip().lower()
+    if db.query(User.id).filter(User.email.ilike(owner_email)).first() is not None:
+        raise HTTPException(status_code=409, detail="Email đã được sử dụng. Hãy đăng nhập hoặc dùng email khác.")
+    ensure_default_plans(db)
+    _active_plan(db, payload.plan_code)
+
+    now = _now()
+    pending = db.scalar(
+        select(SignupVerificationChallenge)
+        .where(
+            SignupVerificationChallenge.owner_email == owner_email,
+            SignupVerificationChallenge.status == "pending",
+        )
+        .order_by(SignupVerificationChallenge.id.desc())
+    )
+    if pending is not None and pending.expires_at > now:
+        elapsed = int((now - pending.last_sent_at).total_seconds())
+        if elapsed < _SIGNUP_OTP_RETRY_AFTER:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "otp_rate_limited",
+                    "message": "Mã OTP vừa được gửi. Hãy thử lại sau ít giây.",
+                    "retry_after_seconds": _SIGNUP_OTP_RETRY_AFTER - elapsed,
+                },
+            )
+    elif pending is not None:
+        pending.status = "expired"
+
+    code = generate_verification_code()
+    signup_data = {
+        "shop_name": payload.shop_name.strip(),
+        "slug": payload.slug.strip() if payload.slug else None,
+        "owner_name": payload.owner_name.strip(),
+        "plan_code": payload.plan_code.strip().lower(),
+    }
+    if pending is None:
+        pending = SignupVerificationChallenge(
+            owner_email=owner_email,
+            code_hash=hash_verification_code(code),
+            password_hash=hash_password(payload.password),
+            signup_data=signup_data,
+            status="pending",
+            attempts=0,
+            max_attempts=_SIGNUP_OTP_MAX_ATTEMPTS,
+            expires_at=now + _SIGNUP_OTP_TTL,
+            last_sent_at=now,
+            delivery_provider="smtp",
+        )
+        db.add(pending)
+    else:
+        pending.code_hash = hash_verification_code(code)
+        pending.password_hash = hash_password(payload.password)
+        pending.signup_data = signup_data
+        pending.status = "pending"
+        pending.attempts = 0
+        pending.expires_at = now + _SIGNUP_OTP_TTL
+        pending.last_sent_at = now
+        pending.delivery_provider = "smtp"
+
+    try:
+        delivery = deliver_otp(channel="email", destination=owner_email, code=code)
+    except (OtpDeliveryNotConfigured, OtpDeliveryError, ValueError, OSError) as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "otp_delivery_unavailable",
+                "message": "Chưa thể gửi mã OTP. Vui lòng cấu hình dịch vụ email rồi thử lại.",
+            },
+        ) from exc
+    if not delivery.delivered:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "otp_delivery_unavailable",
+                "message": "Chưa thể gửi mã OTP. Vui lòng cấu hình dịch vụ email rồi thử lại.",
+            },
+        )
+    pending.delivery_provider = delivery.provider
+    db.commit()
+    db.refresh(pending)
+    return SignupOtpRequestOut(
+        challenge_id=pending.id,
+        email=owner_email,
+        expires_at=pending.expires_at,
+        retry_after_seconds=_SIGNUP_OTP_RETRY_AFTER,
+        delivery_provider=delivery.provider,
+    )
+
+
+@router.post("/signup/otp/verify", response_model=OnboardingShopOut, status_code=201)
+def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
+    """Verify the signup email and atomically create the owner session."""
+
+    challenge = db.get(SignupVerificationChallenge, payload.challenge_id)
+    if challenge is None:
+        raise HTTPException(status_code=404, detail="Mã xác minh không tồn tại hoặc đã hết hạn.")
+    now = _now()
+    if challenge.status != "pending" or challenge.expires_at <= now:
+        if challenge.status == "pending" and challenge.expires_at <= now:
+            challenge.status = "expired"
+            db.commit()
+        raise HTTPException(status_code=400, detail="Mã xác minh không tồn tại hoặc đã hết hạn.")
+    if challenge.attempts >= challenge.max_attempts:
+        challenge.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Mã OTP đã bị khóa do nhập sai quá số lần.")
+
+    challenge.attempts += 1
+    if not hmac.compare_digest(hash_verification_code(payload.code), challenge.code_hash):
+        if challenge.attempts >= challenge.max_attempts:
+            challenge.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Mã OTP không đúng hoặc đã hết hạn.")
+
+    signup = _signup_payload(challenge)
+    try:
+        result = _create_shop(db, signup, password_hash=challenge.password_hash)
+    except Exception:
+        db.rollback()
+        raise
+    challenge.status = "consumed"
+    challenge.verified_at = now
+    challenge.business_id = result.business_id
+    db.commit()
+    return result
+
+
 def _authorize_provisioning(actor: User, business_id: int) -> None:
     if actor.business_id != business_id or actor.role not in {"owner", "admin"}:
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
@@ -245,6 +429,28 @@ def _ensure_platform_identity(platform_db: Session, legacy_db: Session, business
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     platform_db.add(PlatformBusiness(id=business.id, name=business.name, slug=business.slug, status=business.status))
     platform_db.commit()
+
+
+@router.get("/shops/{business_id}/provision", response_model=ProvisioningOut)
+def get_onboarding_provisioning_status(
+    business_id: int,
+    actor: User = Depends(get_current_user),
+    platform_db: Session = Depends(get_platform_db),
+):
+    """Read provisioning readiness without touching the tenant database."""
+
+    _authorize_provisioning(actor, business_id)
+    registry = platform_db.scalar(
+        select(TenantRegistry).where(TenantRegistry.business_id == business_id)
+    )
+    if registry is None:
+        return ProvisioningOut(
+            business_id=business_id,
+            schema_name=schema_name_for(business_id),
+            state="provisioning",
+            feature_enabled=False,
+        )
+    return registry
 
 
 @router.post("/shops/{business_id}/provision", response_model=ProvisioningOut)

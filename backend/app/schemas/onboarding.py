@@ -8,6 +8,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.auth.passwords import validate_password_strength
+
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -35,7 +37,7 @@ class OnboardingShopCreate(BaseModel):
     slug: str | None = Field(default=None, min_length=2, max_length=120)
     owner_name: str = Field(..., min_length=2, max_length=255)
     owner_email: str = Field(..., min_length=3, max_length=255)
-    password: str = Field(..., min_length=8, max_length=256)
+    password: str = Field(..., min_length=12, max_length=256)
     plan_code: str = Field(default="starter", min_length=2, max_length=50)
 
     @field_validator("owner_email")
@@ -45,6 +47,24 @@ class OnboardingShopCreate(BaseModel):
         if not _EMAIL_RE.fullmatch(normalized):
             raise ValueError("Email chủ shop không hợp lệ.")
         return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_owner_password(cls, value: str) -> str:
+        return validate_password_strength(value)
+
+
+class SignupOtpRequestOut(BaseModel):
+    challenge_id: int
+    email: str
+    expires_at: datetime
+    retry_after_seconds: int = 60
+    delivery_provider: str
+
+
+class SignupOtpVerify(BaseModel):
+    challenge_id: int = Field(..., gt=0)
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
 class OnboardingSubscriptionOut(BaseModel):

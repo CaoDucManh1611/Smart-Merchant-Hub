@@ -1,7 +1,8 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from threading import Thread
+
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +14,14 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.database.init_db import init_db
+from app.database.release_readiness import assert_release_database_ready
+from app.database.platform_session import PlatformSessionLocal
+from app.database.session import SessionLocal
+from app.auth.dependencies import decode_token_payload, token_hash
+from app.models.auth_session import AuthSession
+from app.models.business import User
 from app.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
 from app.services.realtime import manager
-from app.services.knowledge_seed_service import seed_knowledge_base
 from app.services.observability import (
     collect_operational_snapshot,
     evaluate_alerts,
@@ -30,15 +36,13 @@ ZALO_VERIFICATION_DIR = Path(__file__).resolve().parent / "zalo_verification"
 
 
 def initialize_database() -> None:
-    """Ensure pgvector, tables and indexes exist before serving requests."""
+    """Validate production migrations; mutate schemas only in local legacy mode."""
     try:
         settings.validate_runtime()
-        init_db()
-        Thread(
-            target=seed_knowledge_base,
-            name="knowledge-base-seed",
-            daemon=True,
-        ).start()
+        if settings.ENVIRONMENT.strip().lower() == "production":
+            assert_release_database_ready()
+        else:
+            init_db()
     except Exception:
         logger.exception("Database initialization failed")
         raise
@@ -98,17 +102,57 @@ app.include_router(api_router)
 async def conversations_websocket(
     websocket: WebSocket,
 ):
-    await manager.connect(
-        websocket
-    )
+    """Open a realtime channel bound to one authenticated shop member.
+
+    Browser WebSockets cannot attach the normal Authorization header, so the
+    existing bearer session is supplied as a query parameter over the same
+    protected origin.  The token is verified against the durable session row
+    before the socket is accepted; events can then be scoped by business.
+    """
+    token = (websocket.query_params.get("access_token") or "").strip()
+    try:
+        claims = decode_token_payload(token)
+        # Login sessions and CRM users still live in the operational CRM
+        # database. The platform control plane intentionally has a separate
+        # schema, so validating this socket there rejects otherwise valid
+        # shop sessions and makes staff presence unavailable.
+        with SessionLocal() as db:
+            session = db.query(AuthSession).filter(
+                AuthSession.token_hash == token_hash(token),
+                AuthSession.revoked_at.is_(None),
+            ).first()
+            user = db.query(User).filter(
+                User.id == (session.user_id if session else None),
+                User.is_active.is_(True),
+            ).first()
+            valid_claims = (
+                session is not None
+                and user is not None
+                and user.business_id is not None
+                and session.expires_at > datetime.now(timezone.utc).replace(tzinfo=None)
+                and int(claims.get("sub", 0)) == session.user_id
+                and int(claims.get("business_id", 0)) == user.business_id
+                and not (user.mfa_status == "enabled" and not session.mfa_verified)
+            )
+            if not valid_claims:
+                raise ValueError("invalid realtime session")
+            business_id, user_id = int(user.business_id), int(user.id)
+    except (HTTPException, TypeError, ValueError):
+        await websocket.close(code=4401)
+        return
+
+    await manager.connect(websocket, business_id=business_id, user_id=user_id)
 
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        manager.disconnect(
-            websocket
-        )
+        pass
+    finally:
+        # Presence must be released for every terminal socket path, not only
+        # the normal browser-close exception. Otherwise an absent assignee
+        # could keep receiving private-only notifications until a restart.
+        manager.disconnect(websocket)
 
 
 # =========================================================
@@ -142,8 +186,7 @@ def health_details():
     balancers.  This diagnostic endpoint checks the database-backed queue and
     reports provider circuit state without exposing exception text or secrets.
     """
-    from app.db.database import SessionLocal
-    with SessionLocal() as db:
+    with PlatformSessionLocal() as db:
         checks = collect_operational_snapshot(db)
     alerts = evaluate_alerts(checks)
     overall = "ok" if all(item["status"] in {"ok", "disabled"} for item in checks.values()) else "degraded"
@@ -153,9 +196,7 @@ def health_details():
 @app.get("/health/alerts")
 def health_alerts():
     """Return threshold alerts for Prometheus/Alertmanager polling."""
-    from app.db.database import SessionLocal
-
-    with SessionLocal() as db:
+    with PlatformSessionLocal() as db:
         snapshot = collect_operational_snapshot(db)
     return {"alerts": evaluate_alerts(snapshot), "observed_at": observed_at()}
 
@@ -163,9 +204,7 @@ def health_alerts():
 @app.get("/metrics", response_class=PlainTextResponse)
 def metrics():
     """Prometheus-safe counters and gauges for database/queue/AI cost."""
-    from app.db.database import SessionLocal
-
-    with SessionLocal() as db:
+    with PlatformSessionLocal() as db:
         snapshot = collect_operational_snapshot(db)
     return PlainTextResponse(prometheus_text(snapshot), media_type="text/plain; version=0.0.4")
 

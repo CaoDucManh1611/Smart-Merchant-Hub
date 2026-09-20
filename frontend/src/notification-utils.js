@@ -4,6 +4,13 @@ export function unreadNotificationCount(items = []) {
 
 export function notificationDestination(notification = {}) {
   const metadata = notification.metadata || {};
+  if (notification.kind === "new_message" && metadata.conversation_id) {
+    return {
+      tab: "inbox",
+      orderId: null,
+      conversationId: Number(metadata.conversation_id),
+    };
+  }
   if (notification.kind === "chatbot_order_draft" && metadata.order_id) {
     return {
       tab: "orders",

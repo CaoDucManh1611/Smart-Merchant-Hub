@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import ANY, patch
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -9,9 +10,24 @@ from sqlalchemy.pool import StaticPool
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, Channel, Conversation, Customer, Message
+from app.models.business import User
+from app.api.conversations import require_responsible_staff
 
 
 class UnifiedInboxActionTests(unittest.TestCase):
+    def test_assigned_conversation_is_readable_but_only_assignee_can_reply(self):
+        conversation = {"assigned_user_id": 41}
+        responsible = User(id=41, business_id=1, full_name="Responsible", email="responsible@test")
+        colleague = User(id=42, business_id=1, full_name="Colleague", email="colleague@test")
+
+        self.assertIsNone(require_responsible_staff(conversation, responsible))
+        with self.assertRaises(HTTPException) as forbidden:
+            require_responsible_staff(conversation, colleague)
+        self.assertEqual(403, forbidden.exception.status_code)
+        self.assertIn("vẫn có thể xem", forbidden.exception.detail)
+
+        self.assertIsNone(require_responsible_staff({"assigned_user_id": None}, colleague))
+
     @classmethod
     def setUpClass(cls):
         cls.engine = create_engine(
@@ -106,6 +122,48 @@ class UnifiedInboxActionTests(unittest.TestCase):
 
     def headers(self, business_id=None):
         return {"X-Business-Id": str(business_id or self.business_id)}
+
+    def test_conversation_list_supports_tenant_scoped_paging(self):
+        with Session(self.engine) as db:
+            db.add(Conversation(
+                business_id=self.business_id,
+                customer_id=db.get(Conversation, self.conversation_id).customer_id,
+                channel="zalo",
+            ))
+            db.commit()
+
+        first_page = self.client.get("/api/conversations?limit=1&offset=0", headers=self.headers())
+        self.assertEqual(200, first_page.status_code, first_page.text)
+        first_payload = first_page.json()
+        self.assertEqual(1, len(first_payload["items"]))
+        self.assertGreaterEqual(first_payload["total"], 2)
+        self.assertTrue(first_payload["has_more"])
+        self.assertEqual(1, first_payload["next_offset"])
+
+        second_page = self.client.get("/api/conversations?limit=1&offset=1", headers=self.headers())
+        self.assertEqual(200, second_page.status_code, second_page.text)
+        self.assertEqual(1, len(second_page.json()["items"]))
+
+    def test_conversation_list_can_be_limited_to_one_customers_linked_accounts(self):
+        with Session(self.engine) as db:
+            customer_id = db.get(Conversation, self.conversation_id).customer_id
+            db.add(Conversation(
+                business_id=self.business_id,
+                customer_id=customer_id,
+                channel="telegram",
+            ))
+            db.commit()
+
+        listing = self.client.get(
+            f"/api/conversations?customer_id={customer_id}",
+            headers=self.headers(),
+        )
+        self.assertEqual(200, listing.status_code, listing.text)
+        self.assertTrue(listing.json()["items"])
+        self.assertTrue(all(
+            item["customer_id"] == customer_id
+            for item in listing.json()["items"]
+        ))
 
     def test_mark_read_is_idempotent_and_never_crosses_tenants(self):
         listing = self.client.get("/api/conversations", headers=self.headers())

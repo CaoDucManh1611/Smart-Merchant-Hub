@@ -90,6 +90,19 @@ class ChatbotRuntimeApiTests(unittest.TestCase):
         self.assertEqual(200, hidden.status_code)
         self.assertEqual([], hidden.json()["items"])
 
+    def test_new_shop_and_conversation_start_with_bot_enabled(self):
+        """A fresh shop should not need a manual step before its bot can reply."""
+        config = self.client.get(
+            "/api/chatbot/config",
+            headers=self.headers(self.other_business_id),
+        )
+        self.assertEqual(200, config.status_code)
+        self.assertTrue(config.json()["enabled"])
+
+        with Session(self.engine) as db:
+            conversation = db.get(Conversation, self.conversation_id)
+            self.assertEqual("auto", conversation.bot_mode)
+
     def test_pause_and_resume_bot_is_tenant_scoped(self):
         paused = self.client.post(
             f"/api/chatbot/conversations/{self.conversation_id}/pause",

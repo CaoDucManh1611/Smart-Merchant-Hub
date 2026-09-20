@@ -48,6 +48,16 @@ test("CRM shell uses neutral product branding instead of legacy food branding", 
   assert.doesNotMatch(indexSource, /Lunari/);
 });
 
+test("inbox starts compact and loads further conversation pages on scroll", () => {
+  assert.match(appSource, /const INBOX_PAGE_SIZE = 10/);
+  assert.match(appSource, /inboxHasMore/);
+  assert.match(appSource, /function handleInboxConversationScroll\(event\)/);
+  assert.match(appSource, /@scroll\.passive="handleInboxConversationScroll"/);
+  assert.match(appSource, /Cuộn xuống để tải thêm/);
+  assert.match(appSource, /Đã tải \{\{ conversations\.length \}\}\/\{\{ inboxConversationTotal/);
+  assert.match(styleSource, /overscroll-behavior: contain/);
+});
+
 test("tenant identity comes from the authenticated session, never a hardcoded browser selector", () => {
   assert.doesNotMatch(appSource, /BUSINESS_ID\s*=|X-Business-Id/);
   assert.match(appSource, /from "\.\/api-client\.js"/);
@@ -69,19 +79,113 @@ test("customer avatars use the local API proxy and fall back when providers reje
 });
 
 test("CRM shell exposes the product's operational navigation", () => {
-  assert.match(appSource, />Inbox &amp; Customer 360</);
+  assert.match(appSource, />Hộp thư &amp; Khách hàng 360</);
   assert.match(appSource, />Đơn bán</);
-  assert.match(appSource, />Đơn nhập</);
+  assert.doesNotMatch(appSource, />Đơn nhập</);
   assert.match(appSource, />Báo cáo</);
   assert.match(appSource, /data-testid="crm-brand-mark"/);
+});
+
+test("anonymous visitors land on a branded Owly/Salon login gate", () => {
+  assert.match(appSource, /<section v-else class="login-page"/);
+  assert.match(appSource, /data-testid="login-page"/);
+    assert.match(appSource, /class="login-form"/);
+    assert.match(appSource, /class="login-brand-mark"/);
+    assert.match(appSource, /CỔNG VẬN HÀNH SHOP|Cổng nhân viên|CỔNG NHÂN VIÊN/);
+    assert.match(appSource, /<aside v-if="authUser && !inPlatformAdminWorkspace && !sessionBootstrapLoading" class="side"/);
+    assert.match(appSource, /<main v-if="\(authUser && !sessionBootstrapLoading\) \|\| serviceLandingOpen" class="main"/);
+  assert.match(styleSource, /\.login-page/);
+  assert.match(styleSource, /\.login-card/);
+});
+
+test("login form surfaces a retry countdown when the auth endpoint rate-limits", () => {
+    assert.match(appSource, /authRateLimitSeconds/);
+    assert.match(appSource, /Retry-After/);
+    assert.match(appSource, /detail\.detail\?\.retry_after/);
+  assert.match(appSource, /startAuthRateLimit/);
+  assert.match(appSource, /formatRateLimitDuration/);
+  assert.match(appSource, /Thử lại sau/);
+  assert.match(appSource, /class="login-rate-limit"/);
+});
+
+test("login shows the configured admin email in valid email fields", () => {
+  assert.match(appSource, /Email đăng nhập/);
+  assert.equal((appSource.match(/v-model="loginForm\.email" required type="email" maxlength="255" autocomplete="username" placeholder="admin@gmail\.com"/g) || []).length, 2);
+});
+
+test("platform admins land in the shop control plane instead of the CRM inbox", () => {
+  const loginSource = appSource.slice(appSource.indexOf("async function login()"), appSource.indexOf("async function logout()"));
+  const mountedSource = appSource.slice(appSource.indexOf("onMounted(async () =>"), appSource.indexOf("/* =========================================================\n   STOP POLLING"));
+
+  assert.match(loginSource, /await fetchPlatformAdmin\(\);\s+if \(platformAdmin\.value && !mfaVerifyPending\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/);
+  assert.match(mountedSource, /loadThemePreference\(\);\s+if \(platformAdmin\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/);
+});
+
+test("platform admins use a dedicated shop-administration shell, not CRM chrome", () => {
+  assert.match(appSource, /const inPlatformAdminWorkspace = computed\(\(\) => \([\s\S]*?currentTab\.value === "platform_admin"/);
+  assert.match(templateSource, /'platform-admin-workspace': inPlatformAdminWorkspace/);
+  assert.match(templateSource, /<aside v-if="authUser && !inPlatformAdminWorkspace && !sessionBootstrapLoading" class="side"/);
+  assert.match(templateSource, /<header v-if="authUser && !inPlatformAdminWorkspace" class="top">/);
+  assert.match(templateSource, /v-if="authUser && !tenantReady && !inPlatformAdminWorkspace" class="tenant-provisioning-banner"/);
+  assert.match(templateSource, /class="platform-workspace-header"/);
+  assert.match(templateSource, />Đăng xuất<\/button>/);
+  assert.match(styleSource, /\.crm-app\.platform-admin-workspace\s*\{/);
+});
+
+test("a restored admin session waits for the role check before rendering any CRM chrome", () => {
+  const mountedSource = appSource.slice(appSource.indexOf("onMounted(async () =>"), appSource.indexOf("/* =========================================================\n   STOP POLLING"));
+
+  assert.match(appSource, /const sessionBootstrapLoading = ref\(true\)/);
+  assert.match(mountedSource, /await fetchPlatformAdmin\(\);[\s\S]*?finally \{[\s\S]*?sessionBootstrapLoading\.value = false;/);
+  assert.match(templateSource, /'session-bootstrap-active': sessionBootstrapLoading/);
+  assert.match(templateSource, /<section v-else-if="sessionBootstrapLoading" class="session-bootstrap"/);
+  assert.match(templateSource, /<main v-if="\(authUser && !sessionBootstrapLoading\) \|\| serviceLandingOpen" class="main"/);
+  assert.match(styleSource, /\.session-bootstrap\s*\{/);
+});
+
+test("operations navigation keeps only customer-facing processing modules", () => {
+  const operationsStart = appSource.indexOf('class="menu-group menu-group-operations"');
+  const operationsEnd = appSource.indexOf('class="menu-group menu-group-ai"', operationsStart);
+  const operationsNav = appSource.slice(operationsStart, operationsEnd);
+  assert.match(operationsNav, />Sản phẩm</);
+  assert.match(operationsNav, />Đơn bán</);
+  assert.doesNotMatch(operationsNav, /Đơn nhập|purchase-orders/);
+  assert.doesNotMatch(operationsNav, /Tạo sản phẩm|Tạo đơn bán/);
+});
+
+test("AI navigation keeps knowledge and workflow without assistant or rule lab shortcuts", () => {
+  const aiStart = appSource.indexOf('class="menu-group menu-group-ai"');
+  const aiEnd = appSource.indexOf('class="menu-group menu-group-insights"', aiStart);
+  const aiNav = appSource.slice(aiStart, aiEnd);
+  assert.match(aiNav, />Kho kiến thức</);
+  assert.match(aiNav, />Quy trình</);
+  assert.doesNotMatch(aiNav, />AI Assistant</);
+  assert.doesNotMatch(aiNav, />AI Rule Lab</);
+});
+
+test("product and sales screens expose processing controls without intake forms", () => {
+  const productsStart = appSource.indexOf('currentTab === \'products\'');
+  const productsEnd = appSource.indexOf('currentTab === \'leads\'', productsStart);
+  const productsView = appSource.slice(productsStart, productsEnd);
+  assert.doesNotMatch(productsView, /<form class="product-form"/);
+  assert.match(productsView, /Điều chỉnh tồn/);
+
+  const ordersStart = appSource.indexOf('currentTab === \'orders\'');
+  const ordersEnd = appSource.indexOf('currentTab === \'purchase-orders\'', ordersStart);
+  const ordersView = appSource.slice(ordersStart, ordersEnd);
+  assert.doesNotMatch(ordersView, /<form class="product-form order-form"/);
+  assert.match(ordersView, /Xác nhận đơn|Quy trình|Lưu vận chuyển/);
 });
 
 test("sidebar groups customer, operations, AI, and system navigation", () => {
   assert.match(appSource, /class="menu-group menu-group-customer"/);
   assert.match(appSource, /class="menu-group menu-group-operations"/);
   assert.match(appSource, /class="menu-group menu-group-ai"/);
+  assert.match(appSource, /class="menu-group menu-group-insights"/);
   assert.match(appSource, /class="menu-group menu-group-system"/);
   assert.match(appSource, /class="menu-group-label"/);
+  assert.match(appSource, />Kiến thức &amp; tự động hóa</);
+  assert.match(appSource, />Phân tích</);
   assert.doesNotMatch(appSource, /<b>Customer 360<\/b>/);
 });
 
@@ -89,7 +193,7 @@ test("AI Rule Lab supports creating and filtering explainable rule suggestions",
   assert.match(appSource, /aiRuleForm/);
   assert.match(appSource, /createRuleSuggestion/);
   assert.match(appSource, /ruleSuggestionFilter/);
-  assert.match(appSource, /Lưu đề xuất rule/);
+  assert.match(appSource, /Lưu đề xuất/);
   assert.match(appSource, /Chờ duyệt/);
   assert.match(appSource, /Đã duyệt/);
   assert.match(appSource, /Từ chối/);
@@ -100,7 +204,7 @@ test("AI Rule Lab supports creating and filtering explainable rule suggestions",
 test("AI experiments can be created from the AI Lab", () => {
   assert.match(appSource, /experimentForm/);
   assert.match(appSource, /createExperiment/);
-  assert.match(appSource, /Tạo experiment/);
+  assert.match(appSource, /Tạo thử nghiệm/);
   assert.match(appSource, /experiment.variants/);
   assert.match(appSource, /experiment.status/);
 });
@@ -118,10 +222,10 @@ test("AI Lab operates model versions, experiment reports, and bandit policies", 
 test("Knowledge Base exposes durable RAG run status and retry action", () => {
   assert.match(appSource, /documentRuns/);
   assert.match(appSource, /\/documents\/\$\{doc\.id\}\/runs/);
-  assert.match(appSource, /RAG run/);
+  assert.match(appSource, /Lần xử lý/);
   assert.match(appSource, /retryDocumentRun/);
   assert.match(appSource, /\/documents\/runs\/\$\{run\.id\}\/retry/);
-  assert.match(appSource, /Thử lại indexing/);
+  assert.match(appSource, /Thử lại xử lý/);
 });
 
 test("CRM operations expose attribution, lead conversion, and lead activity actions", () => {
@@ -138,28 +242,28 @@ test("report workspace applies shared date, channel, owner, status, and source f
   assert.match(appSource, /reportFilters = ref\(\{ start_at: "", end_at: "", channel: "", source: "", status: "", assigned_user_id: "" \}\)/);
   assert.match(appSource, /\/reports\/pipeline\$\{suffix\}/);
   assert.match(appSource, /\/reports\/tickets\$\{suffix\}/);
-  assert.match(appSource, /Nguồn attribution/);
+  assert.match(appSource, /Nguồn ghi nhận/);
 });
 
 test("report workspace exposes tenant platform quality signals", () => {
   assert.match(appSource, /\/reports\/quality\?days=30/);
   assert.match(appSource, /qualityDashboard/);
   assert.match(appSource, /Vận hành nền tảng/);
-  assert.match(appSource, /Provider lỗi/);
-  assert.match(appSource, /AI cost/);
-  assert.match(appSource, /Ticket quá SLA/);
+  assert.match(appSource, /Kênh lỗi/);
+  assert.match(appSource, /Chi phí trợ lý/);
+  assert.match(appSource, /Phiếu quá hạn/);
 });
 
 test("report workspace exposes provider circuit state", () => {
   assert.match(appSource, /qualityDashboard\.provider\?\.circuits/);
-  assert.match(appSource, /Circuit provider/);
+  assert.match(appSource, /Bộ ngắt kênh/);
   assert.match(appSource, /Đang tạm dừng|Đang hoạt động/);
 });
 
 test("AI quality dashboard exposes handoff and duplicate reply signals", () => {
-  assert.match(appSource, /Handoff rate/);
-  assert.match(appSource, /Trùng outbound/);
-  assert.match(appSource, /Chốt đơn chatbot/);
+  assert.match(appSource, /Tỷ lệ chuyển nhân viên/);
+  assert.match(appSource, /Phản hồi trùng/);
+  assert.match(appSource, /Đơn chốt tự động/);
 });
 
 test("Team settings expose tenant-scoped permission overrides", () => {
@@ -179,19 +283,42 @@ test("platform administration exposes shop status, usage, and schema pilot contr
   assert.match(appSource, /platform\/tenant-schemas/);
   assert.match(appSource, /platform\/audit-logs/);
   assert.match(appSource, /Khóa shop|Mở shop/);
-  assert.match(appSource, /Quota|Giới hạn/);
-  assert.match(appSource, /schema-per-tenant/);
+  assert.match(appSource, /Hạn mức|Giới hạn/);
+  assert.match(appSource, /tách kho dữ liệu theo shop/);
 });
 
-test("P1 onboarding and quota surfaces are wired to tenant APIs", () => {
-  assert.match(appSource, /onboarding\/plans/);
-  assert.match(appSource, /onboarding\/shops/);
-  assert.match(appSource, /createOnboardingShop/);
+test("platform administration surfaces pending package approvals before tenant operations", () => {
+  assert.match(appSource, /const platformPendingRequests = ref\(\[\]\)/);
+  assert.match(appSource, /platform\/subscription-requests/);
+  assert.match(appSource, /async function approvePlatformSubscriptionRequest/);
+  assert.match(appSource, /async function rejectPlatformSubscriptionRequest/);
+  assert.match(appSource, /async function refreshPlatformSubscriptionRequests/);
+  assert.match(appSource, /platformRequestPollingTimer = window\.setInterval/);
+  assert.match(appSource, /contact_name: String\(serviceRequestForm\.value\.contact_name/);
+  assert.match(appSource, /channels: \[\.\.\.serviceRequestForm\.value\.channels\]/);
+  assert.match(templateSource, /Yêu cầu chờ duyệt/);
+  assert.match(templateSource, /request\.contact_name \|\| request\.requester_name/);
+  assert.match(templateSource, /request\.contact_email \|\| request\.requester_email/);
+  assert.match(templateSource, /request\.requested_at \|\| request\.created_at/);
+  assert.match(templateSource, /request\.requested_channels/);
+  assert.match(templateSource, /@click="approvePlatformSubscriptionRequest\(request\)"/);
+  assert.match(templateSource, /@click="rejectPlatformSubscriptionRequest\(request\)"/);
+  assert.match(appSource, /Đã gửi yêu cầu thuê gói.*chờ quản trị viên duyệt/);
+  assert.match(styleSource, /\.platform-approval-panel/);
+});
+
+test("shop self-service signup verifies email before creating a shop", () => {
+  assert.doesNotMatch(appSource, /Chưa có workspace/);
+  assert.match(appSource, /Đăng ký shop mới/);
+  assert.match(appSource, /signupLoading \? 'Đang gửi mã\.\.\.' : 'Đăng ký'/);
+  assert.match(appSource, /onboarding\/signup\/request/);
+  assert.match(appSource, /onboarding\/signup\/verify/);
+  assert.match(appSource, /Mã OTP/);
+  assert.match(appSource, /onboarding\/shops\/\$\{requireBusinessId\(authUser\.value\)\}\/channels/);
   assert.match(appSource, /usage/);
   assert.match(appSource, /quotaSnapshot/);
   assert.match(appSource, /near_limit/);
   assert.match(appSource, /provider-errors/);
-  assert.match(appSource, /Tạo shop & đăng nhập/);
 });
 
 test("channel onboarding exposes guided Telegram and Zalo Bot Creator token verification", () => {
@@ -203,14 +330,26 @@ test("channel onboarding exposes guided Telegram and Zalo Bot Creator token veri
   assert.match(appSource, /channels\/verify/);
   assert.match(appSource, /BotFather/);
   assert.match(appSource, /Zalo Bot Manager/);
-  assert.match(styleSource, /\.channel-connect-card/);
-});
+  assert.match(appSource, /access_token: token/);
+  assert.doesNotMatch(appSource, /`personal:\$\{token\}`/);
+    assert.match(styleSource, /\.channel-connect-card/);
+  });
+
+  test("linked channels are split into social connections and webhook operations", () => {
+    assert.match(appSource, /Kênh liên kết/);
+    assert.match(appSource, /currentTab === 'channels'/);
+    assert.match(appSource, /currentTab === 'webhooks'/);
+    assert.match(appSource, /Kết nối mạng xã hội/);
+    assert.match(appSource, /<h2>Nhận sự kiện<\/h2>/);
+    assert.match(appSource, /webhook-card/);
+    assert.match(appSource, /refreshWebhookStatus/);
+  });
 
 test("P1 explainable AI evidence is visible in the unified timeline", () => {
   assert.match(appSource, /function timelineExplainability\(event\)/);
-  assert.match(appSource, /AI dùng dữ liệu\/tool/);
-  assert.match(appSource, /AI chuyển nhân viên/);
-  assert.match(appSource, /Tài liệu RAG:/);
+  assert.match(appSource, /Trợ lý dùng dữ liệu/);
+  assert.match(appSource, /Trợ lý chuyển nhân viên/);
+  assert.match(appSource, /Tài liệu tham khảo:/);
   assert.match(appSource, /class="timeline-explainability"/);
   assert.match(styleSource, /\.timeline-explainability/);
 });
@@ -219,7 +358,7 @@ test("P1 conversation revenue metrics are visible in the AI dashboard", () => {
   assert.match(appSource, /Doanh thu cứu lại/);
   assert.match(appSource, /recovered_revenue/);
   assert.match(appSource, /recovered_orders/);
-  assert.match(appSource, /Bot tự xử lý/);
+  assert.match(appSource, /Trợ lý tự xử lý/);
   assert.match(appSource, /bot_resolution_rate/);
 });
 
@@ -228,8 +367,8 @@ test("P2 workflow builder exposes durable trigger, action and run controls", () 
   assert.match(appSource, /fetchWorkflows/);
   assert.match(appSource, /workflows\/\$\{workflow\.id\}\/runs/);
   assert.match(appSource, /toggleWorkflow/);
-  assert.match(appSource, /Retry/);
-  assert.match(appSource, /Tạo workflow/);
+  assert.match(appSource, /Chạy lại/);
+  assert.match(appSource, /Tạo quy trình/);
 });
 
 test("P2 logistics and payment history remain actionable in sales orders", () => {
@@ -252,27 +391,72 @@ test("settings expose session, MFA, and privacy controls", () => {
 
 test("CRM exposes a three-step quick action palette", () => {
   assert.match(appSource, /quickActionOpen/);
-  assert.match(appSource, /Ctrl\+K|Cmd\+K/);
-  assert.match(appSource, /Tạo ticket nhanh/);
+  assert.match(appSource, /Ctrl\+K|Ctrl K/);
+  assert.doesNotMatch(appSource, /Cmd\+K|Ctrl\/Cmd\+K|⌘K/);
+  assert.match(appSource, /Tạo phiếu hỗ trợ nhanh/);
   assert.match(appSource, /Tạo đơn nháp nhanh/);
   assert.match(appSource, /Nhân viên tiếp quản/);
   assert.match(appSource, /quick-action-dialog/);
 });
 
-test("AI navigation keeps the Rule Lab and Assistant under one group", () => {
-  assert.match(appSource, /class="ai-submenu"/);
-  assert.match(appSource, />AI Rule Lab</);
-  assert.match(appSource, />AI Assistant</);
+test("sidebar navigation stays compact without repeated record-count badges", () => {
+  const navStart = templateSource.indexOf('<nav class="menu">');
+  const navEnd = templateSource.indexOf("</nav>", navStart);
+  assert.notEqual(navStart, -1, "sidebar navigation must be present");
+  assert.notEqual(navEnd, -1, "sidebar navigation must be closed");
+  const navSource = templateSource.slice(navStart, navEnd);
+  assert.doesNotMatch(navSource, /<em>\{\{/);
+});
+
+test("AI navigation keeps knowledge and workflow under one group", () => {
+  const navStart = appSource.indexOf('<nav class="menu">');
+  const navEnd = appSource.indexOf("</nav>", navStart);
+  const navSource = appSource.slice(navStart, navEnd);
+  assert.match(navSource, /class="ai-submenu"/);
+  assert.match(navSource, />Kho kiến thức</);
+  assert.match(navSource, />Quy trình</);
+  assert.doesNotMatch(navSource, />AI Rule Lab</);
+  assert.doesNotMatch(navSource, />AI Assistant</);
   assert.match(styleSource, /\.menu-group-ai/);
   assert.match(styleSource, /\.ai-submenu/);
 });
 
 test("Customer 360 labels the complete profile timeline", () => {
   assert.match(appSource, /identity:\s*"Danh tính đa kênh"/);
-  assert.match(appSource, /fact:\s*"Customer Fact"/);
-  assert.match(appSource, /ticket_event:\s*"Lịch sử ticket"/);
+  assert.match(appSource, /fact:\s*"Thông tin khách hàng"/);
+  assert.match(appSource, /ticket_event:\s*"Lịch sử phiếu hỗ trợ"/);
   assert.match(appSource, /event\.occurred_at/);
   assert.match(appSource, /event\.created_by/);
+});
+
+test("assigned conversations remain visible but make other staff read-only", () => {
+  assert.match(appSource, /const canReplyToSelectedConversation = computed/);
+  assert.match(appSource, /Hội thoại này đang có nhân viên phụ trách; bạn chỉ có thể xem nội dung\./);
+  assert.match(templateSource, /:disabled="composerMode === 'reply' && !canReplyToSelectedConversation"/);
+  assert.match(appSource, /Bạn đang ở chế độ chỉ xem/);
+  assert.match(styleSource, /\.composer-access-notice\.is-read-only/);
+});
+
+test("Customer 360 keeps activity history compact and scopes a selected staff member", () => {
+  assert.match(appSource, /Chỉ hiển thị hoạt động do nhân viên đã chọn thực hiện/);
+  assert.match(appSource, /Để xem toàn bộ hoạt động trong ngày, giữ “Tất cả nhân viên”/);
+  assert.match(appSource, /customerTimelineSummaryCards/);
+  assert.match(appSource, /customerTimelineDetailsOpen/);
+  assert.match(appSource, /function customerTimelineContent\(event\)/);
+  assert.match(appSource, /Xem chi tiết/);
+  assert.match(styleSource, /\.customer-timeline-summary-card/);
+  assert.match(styleSource, /\.customer-timeline-detail-toggle/);
+});
+
+test("Customer 360 searches chat messages in pages and jumps to the matching bubble", () => {
+  assert.match(appSource, /message-search\?\$\{params\.toString\(\)\}/);
+  assert.match(appSource, /limit: "10"/);
+  assert.match(appSource, /function handleCustomerMessageSearchScroll/);
+  assert.match(appSource, /function jumpToCustomerSearchMessage/);
+  assert.match(appSource, /data-message-id/);
+  assert.match(appSource, /customer-message-search-trigger/);
+  assert.match(styleSource, /\.customer-message-search-results/);
+  assert.match(styleSource, /\.search-jump-highlight/);
 });
 
 test("Customer 360 contact cards stay readable in the narrow details panel", () => {
@@ -322,7 +506,7 @@ test("Customer Ops masks customer PII consistently across order and CRM selector
 test("Customer Ops exposes a recoverable Customer 360 error state", () => {
   assert.match(appSource, /const customer360Error = ref\(""\)/);
   assert.match(appSource, /class="customer-360-error" role="alert"/);
-  assert.match(appSource, /Không tải được Customer 360\. Hãy thử lại\./);
+  assert.match(appSource, /Không tải được hồ sơ khách hàng\. Hãy thử lại\./);
   assert.match(appSource, /@click="loadCustomer360\(selected\?\.customer_id\)"/);
   assert.match(styleSource, /\.customer-360-error\s*\{/);
 });
@@ -343,7 +527,7 @@ test("Internal notes save without referencing an unrelated media variable", () =
 test("chatbot settings expose CSAT results for resolved conversations", () => {
   assert.match(appSource, /csatSummary/);
   assert.match(appSource, /\/chatbot\/csat/);
-  assert.match(appSource, /Điểm CSAT/);
+  assert.match(appSource, /Điểm hài lòng/);
   assert.match(appSource, /Tỷ lệ hài lòng/);
 });
 
@@ -358,7 +542,7 @@ test("Customer Ops has explicit tablet and mobile layout fallbacks", () => {
   assert.match(appSource, /'mobile-inbox-open': mobileInboxOpen/);
   assert.match(appSource, /'mobile-customer-open': mobileCustomerOpen/);
   assert.match(appSource, /aria-label="Quay lại danh sách hội thoại"[\s\S]*?@click="openMobileInbox"/);
-  assert.match(appSource, /aria-label="Mở Customer 360"[\s\S]*?@click="openMobileCustomer"/);
+  assert.match(appSource, /aria-label="Mở hồ sơ khách hàng 360"[\s\S]*?@click="openMobileCustomer"/);
   assert.match(styleSource, /\.layout\.mobile-customer-open \.customer\s*\{[\s\S]*?display:\s*flex/);
   assert.match(styleSource, /\.layout:not\(\.has-selected-conversation\) \.inbox,[\s\S]*?\.layout\.mobile-inbox-open \.inbox\s*\{[\s\S]*?display:\s*flex/);
   assert.match(styleSource, /\.layout\.has-selected-conversation:not\(\.mobile-inbox-open\) \.chat\s*\{[\s\S]*?display:\s*flex/);
@@ -398,8 +582,33 @@ test("sidebar collapse control toggles a real collapsed state", () => {
   assert.match(appSource, /aria-expanded/);
 });
 
+test("collapsed sidebar hides navigation text instead of clipping it", () => {
+  assert.match(styleSource, /\.crm-app\.sidebar-collapsed \.side \.menu-item\s*>\s*:\s*not\(\.nav-icon\)[\s\S]*?display:\s*none\s*!important/);
+  assert.match(styleSource, /\.crm-app\.sidebar-collapsed \.side \.menu-group-label[\s\S]*?display:\s*none\s*!important/);
+  assert.match(styleSource, /\.crm-app\.sidebar-collapsed \.side \.collapse\s*>\s*span:not\(\.collapse-icon\)[\s\S]*?display:\s*none\s*!important/);
+  assert.match(styleSource, /@media \(max-width: 1100px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.side \.menu-item\s*>\s*:\s*not\(\.nav-icon\)[\s\S]*?display:\s*none\s*!important/);
+});
+
+test("CRM workspace header exposes logout independently of tenant readiness", () => {
+  const headerStart = templateSource.indexOf('<header v-if="authUser && !inPlatformAdminWorkspace" class="top">');
+  const headerEnd = templateSource.indexOf("</header>", headerStart);
+  assert.notEqual(headerStart, -1);
+  assert.notEqual(headerEnd, -1);
+  const crmHeader = templateSource.slice(headerStart, headerEnd);
+  assert.match(crmHeader, /class="top-logout"/);
+  assert.match(crmHeader, /aria-label="Đăng xuất"/);
+  assert.match(crmHeader, /@click="logout"/);
+});
+
+test("compact CRM header keeps logout visible without squeezing the greeting", () => {
+  assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.top > \.welcome[\s\S]*?min-width:\s*160px/);
+  assert.match(styleSource, /@media \(max-width: 1180px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top-search[\s\S]*?width:\s*clamp\(190px,\s*25vw,\s*300px\)/);
+  assert.match(styleSource, /@media \(max-width: 1180px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top-logout > span[\s\S]*?display:\s*none/);
+  assert.match(styleSource, /@media \(max-width: 860px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top-search[\s\S]*?display:\s*none/);
+});
+
 test("compact inbox workspace keeps every new UI control actionable", () => {
-  assert.match(appSource, /const sidebarCollapsed = ref\(true\)/);
+  assert.match(appSource, /const sidebarCollapsed = ref\(false\)/);
   assert.match(appSource, /class="inbox-filter-disclosure"/);
   assert.match(appSource, /const customerPanelCollapsed = ref\(false\)/);
   assert.match(appSource, /function toggleCustomerPanel\(\)/);
@@ -568,6 +777,15 @@ test("chat controls are actionable and the composer keeps a standard input hint"
   assert.doesNotMatch(appSource, /MÃ\s*\n?\s*Tạo mã giảm giá/);
   assert.doesNotMatch(appSource, /Ctrl\+V để dán ảnh/);
   assert.match(styleSource, /\.conversation-actions-popover/);
+});
+
+test("conversation header can limit the inbox to accounts linked to its customer", () => {
+  assert.match(appSource, /const linkedCustomerOnly = ref\(false\)/);
+  assert.match(appSource, /@click="toggleLinkedCustomerInbox"/);
+  assert.match(appSource, /class="linked-customer-toggle"/);
+  assert.match(appSource, /Number\(item\.customer_id\) === Number\(selected\.value\?\.customer_id\)/);
+  assert.match(appSource, /params\.set\("customer_id", String\(customerId\)\)/);
+  assert.match(styleSource, /\.linked-customer-toggle svg/);
 });
 
 test("chat bot toggle stays on one line in the compact header", () => {

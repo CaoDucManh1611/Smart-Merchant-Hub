@@ -11,10 +11,12 @@ test("CRM keeps the current neutral Smart Merchant Hub branding", () => {
   assert.doesNotMatch(appSource, /Lunari|Food|food|món ăn|đồ ăn/i);
 });
 
-test("CRM uses the red-pink visual system with slightly larger type", () => {
-  assert.match(styleSource, /--crm-accent:\s*#d72431/i);
-  assert.match(styleSource, /\.menu-item\s*\{[^}]*font-size:\s*14px/i);
-  assert.match(styleSource, /\.welcome strong\s*\{[^}]*font-size:\s*22px/i);
+test("CRM uses the Owly-inspired dark rail with a polished salon accent", () => {
+  assert.match(styleSource, /--owly-sidebar:\s*#1d2a3d/i);
+  assert.match(styleSource, /--owly-sidebar-active:\s*#4f87aa/i);
+  assert.match(styleSource, /--salon-accent:\s*#e56a74/i);
+  assert.match(styleSource, /\.side\s*\{[\s\S]*?background:[\s\S]*?var\(--owly-sidebar\)/);
+  assert.match(styleSource, /\.menu-item\.active\s*\{[\s\S]*?background:\s*var\(--owly-sidebar-active\)/);
   assert.match(styleSource, /\.products-table th,\s*\.products-table td\s*\{[^}]*font-size:\s*0\.92rem/i);
 });
 

@@ -318,6 +318,124 @@ class Customer360ApiTests(unittest.TestCase):
         event_types = {item["event_type"] for item in second_page.json()["items"]}
         self.assertIn("customer_merge_undo", event_types)
 
+    def test_timeline_date_and_staff_filters_keep_selected_staff_scope(self):
+        """A selected staff member must never pull in other actors' events."""
+        with Session(self.engine) as db:
+            conversation = db.query(Conversation).filter(
+                Conversation.customer_id == self.customer_id,
+                Conversation.business_id == 1,
+            ).first()
+            staff = User(
+                business_id=1,
+                full_name="Timeline Filter Staff",
+                email="timeline-filter-staff@example.com",
+            )
+            db.add(staff)
+            db.flush()
+            staff_id = staff.id
+            db.add_all([
+                Message(
+                    conversation_id=conversation.id,
+                    channel="telegram",
+                    sender_type="staff",
+                    sender_user_id=staff.id,
+                    content="all-match-2030",
+                    direction="outbound",
+                    received_at=datetime(2030, 1, 10, 10, 0),
+                ),
+                Message(
+                    conversation_id=conversation.id,
+                    channel="telegram",
+                    sender_type="staff",
+                    sender_user_id=staff.id,
+                    content="staff-outside-date-2030",
+                    direction="outbound",
+                    received_at=datetime(2030, 1, 11, 10, 0),
+                ),
+                Message(
+                    conversation_id=conversation.id,
+                    channel="telegram",
+                    sender_type="customer",
+                    content="date-other-actor-2030",
+                    direction="inbound",
+                    received_at=datetime(2030, 1, 10, 11, 0),
+                ),
+            ])
+            db.commit()
+
+        common_query = (
+            f"/api/customers/{self.customer_id}/timeline?start_date=2030-01-10"
+            f"&end_date=2030-01-10&staff_id={staff_id}"
+        )
+        combined_response = self.client.get(
+            common_query,
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, combined_response.status_code)
+        combined_contents = {item["content"] for item in combined_response.json()["items"]}
+        self.assertIn("all-match-2030", combined_contents)
+        self.assertNotIn("staff-outside-date-2030", combined_contents)
+        self.assertNotIn("date-other-actor-2030", combined_contents)
+
+        staff_only_response = self.client.get(
+            f"/api/customers/{self.customer_id}/timeline?staff_id={staff_id}",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, staff_only_response.status_code)
+        staff_only_contents = {item["content"] for item in staff_only_response.json()["items"]}
+        self.assertTrue({"all-match-2030", "staff-outside-date-2030"}.issubset(staff_only_contents))
+        self.assertNotIn("date-other-actor-2030", staff_only_contents)
+
+        date_only_response = self.client.get(
+            f"/api/customers/{self.customer_id}/timeline?start_date=2030-01-10&end_date=2030-01-10",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, date_only_response.status_code)
+        date_only_contents = {item["content"] for item in date_only_response.json()["items"]}
+        self.assertTrue({"all-match-2030", "date-other-actor-2030"}.issubset(date_only_contents))
+        self.assertNotIn("staff-outside-date-2030", date_only_contents)
+
+    def test_message_search_returns_ten_customer_scoped_results_per_page(self):
+        with Session(self.engine) as db:
+            conversation = db.query(Conversation).filter(
+                Conversation.customer_id == self.customer_id,
+                Conversation.business_id == 1,
+            ).first()
+            conversation_id = conversation.id
+            db.add_all([
+                Message(
+                    conversation_id=conversation_id,
+                    channel="telegram",
+                    sender_type="customer",
+                    direction="inbound",
+                    content=f"customer-search-needle-{index}",
+                    received_at=datetime(2031, 2, 1, 9, index),
+                )
+                for index in range(12)
+            ])
+            db.commit()
+
+        first_page = self.client.get(
+            f"/api/customers/{self.customer_id}/message-search?q=customer-search-needle&limit=10",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, first_page.status_code)
+        first_body = first_page.json()
+        self.assertEqual(12, first_body["total"])
+        self.assertEqual(10, len(first_body["items"]))
+        self.assertTrue(first_body["has_more"])
+        self.assertEqual(10, first_body["next_offset"])
+        self.assertTrue(all(item["conversation_id"] == conversation_id for item in first_body["items"]))
+
+        second_page = self.client.get(
+            f"/api/customers/{self.customer_id}/message-search?q=customer-search-needle&limit=10&offset=10",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, second_page.status_code)
+        second_body = second_page.json()
+        self.assertEqual(2, len(second_body["items"]))
+        self.assertFalse(second_body["has_more"])
+
     def test_timeline_includes_identity_fact_and_ticket_history_events(self):
         with Session(self.engine) as db:
             conversation = db.query(Conversation).filter(

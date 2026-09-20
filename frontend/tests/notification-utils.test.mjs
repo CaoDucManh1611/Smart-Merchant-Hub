@@ -32,3 +32,14 @@ test("notificationDestination sends a CSAT response to its conversation", () => 
     conversationId: 9,
   });
 });
+
+test("notificationDestination sends a new customer message to its conversation", () => {
+  assert.deepEqual(notificationDestination({
+    kind: "new_message",
+    metadata: { conversation_id: 19 },
+  }), {
+    tab: "inbox",
+    orderId: null,
+    conversationId: 19,
+  });
+});

@@ -10,6 +10,7 @@ from app.models.customer import Customer
 from app.models.customer_merge import CustomerMerge
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
+from app.models.signup_verification import SignupVerificationChallenge
 from app.models.notification import Notification
 from app.models.experimentation import RuleSuggestion, FeatureSnapshot, Experiment, ExperimentAssignment, ExperimentOutcome, BanditDecision
 from app.models.customer_fact import CustomerFact
