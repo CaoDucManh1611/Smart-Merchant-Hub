@@ -8,6 +8,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.auth.passwords import validate_signup_password
+
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -46,6 +48,11 @@ class OnboardingShopCreate(BaseModel):
             raise ValueError("Email chủ shop không hợp lệ.")
         return normalized
 
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, value: str) -> str:
+        return validate_signup_password(value)
+
 
 class SignupOtpRequest(BaseModel):
     """Details collected before an email address is verified."""
@@ -62,6 +69,11 @@ class SignupOtpRequest(BaseModel):
         if not _EMAIL_RE.fullmatch(normalized):
             raise ValueError("Email công việc không hợp lệ.")
         return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, value: str) -> str:
+        return validate_signup_password(value)
 
 
 class SignupOtpVerify(BaseModel):
@@ -96,18 +108,49 @@ class OnboardingSubscriptionOut(BaseModel):
     plan_code: str
     plan_name: str
     status: str
+    service_type: Literal["package", "chatbot"] = "package"
 
 
 class OnboardingPlanPurchase(BaseModel):
-    """Plan activation requested by an authenticated shop owner.
+    """Package request submitted by an authenticated shop operator.
 
-    The local/demo flow marks the selected plan active immediately so a shop
-    can exercise channel and staff test cases. Production still requires the
-    platform administrator/payment workflow.
+    Paid plans are queued for a platform administrator; the free Demo plan
+    remains immediately usable in local demonstrations by shop admins only.
     """
 
     plan_code: str = Field(..., min_length=2, max_length=50)
     service_type: Literal["package", "chatbot"] = "package"
+    contact_name: str | None = Field(default=None, max_length=120)
+    contact_email: str | None = Field(default=None, max_length=255)
+    contact_phone: str | None = Field(default=None, max_length=30)
+    shop_name: str | None = Field(default=None, max_length=160)
+    channels: list[Literal["Facebook", "Instagram", "Telegram", "Zalo"]] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("contact_name", "contact_email", "contact_phone", "shop_name", "notes", mode="before")
+    @classmethod
+    def strip_optional_request_text(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("contact_email")
+    @classmethod
+    def validate_contact_email(cls, value: str | None) -> str | None:
+        if value is not None and not _EMAIL_RE.fullmatch(value):
+            raise ValueError("Email liên hệ không hợp lệ.")
+        return value.lower() if value is not None else None
+
+    @field_validator("channels")
+    @classmethod
+    def reject_duplicate_channels(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("Kênh kết nối không được chọn lặp lại.")
+        return value
 
 
 class OnboardingBuyerOut(BaseModel):

@@ -11763,6 +11763,8 @@ body.crm-dark .crm-app .login-feature-icon { color: #8bd8d7 !important; }
 .service-request-success h2 { margin: 8px 0; color: #183149; font-size: 25px; }
 .service-request-success p { max-width: 430px; margin: 0 0 20px; color: #6a8290; line-height: 1.55; }
 .service-request-success p strong { color: #1e7175; }
+.service-success-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.service-success-actions button { margin: 0; }
 
 .login-service-link { display: block; margin: 16px auto 0; padding: 7px 8px; font-size: 12px; }
 .signup-otp-note { padding: 10px 12px; border: 1px solid #c8e0e4; border-radius: 10px; color: #4c697b; background: #f0fbfa; font-size: 12px; line-height: 1.5; }
@@ -11843,6 +11845,8 @@ body.crm-dark .channel-plan-locked { color: #ffe3b0 !important; background: #3b3
   .service-mode-switch { grid-template-columns: 1fr; }
   .service-purchase-box { align-items: stretch; flex-direction: column; }
   .service-purchase-box .secondary-btn { width: 100%; }
+  .service-success-actions { width: 100%; }
+  .service-success-actions button { flex: 1 1 180px; }
   .service-request-fields,
   .service-plan-options { grid-template-columns: 1fr; }
   .service-account-heading { flex-direction: column; }
@@ -12325,4 +12329,636 @@ body.crm-dark .crm-app .platform-plan-chip { color: #d8ffff !important; }
   .platform-admin-metrics { grid-template-columns: 1fr; }
   .platform-admin-panel-heading { flex-direction: column; }
   .platform-alert-list li small { width: 100%; margin-left: 0; }
+}
+
+/* Leader review: the navigation rail must be a first-class light/dark surface,
+   not a permanently red panel. These variables intentionally sit at the end
+   of the stylesheet to override older visual experiments. */
+.crm-app {
+  --leader-sidebar-surface: #fbfcfe;
+  --leader-sidebar-border: #e1e7ee;
+  --leader-sidebar-ink: #263746;
+  --leader-sidebar-muted: #718190;
+  --leader-sidebar-hover: #eef6f7;
+  --leader-sidebar-active: #dff2f1;
+  --leader-sidebar-accent: #137d82;
+  --leader-sidebar-icon: #5e7281;
+  --leader-sidebar-card: #f1f7f8;
+}
+
+.crm-app.crm-dark {
+  --leader-sidebar-surface: #111315;
+  --leader-sidebar-border: #273136;
+  --leader-sidebar-ink: #eef5f6;
+  --leader-sidebar-muted: #98a9af;
+  --leader-sidebar-hover: #17363a;
+  --leader-sidebar-active: #1d5159;
+  --leader-sidebar-accent: #8bd8d7;
+  --leader-sidebar-icon: #b7c7cb;
+  --leader-sidebar-card: #182327;
+}
+
+.crm-app .side {
+  color: var(--leader-sidebar-ink) !important;
+  background: var(--leader-sidebar-surface) !important;
+  border-right: 1px solid var(--leader-sidebar-border) !important;
+  border-radius: 0 !important;
+  box-shadow: 10px 0 28px rgba(16, 31, 43, .07) !important;
+}
+
+.crm-app .side::before,
+.crm-app .side::after { display: none !important; }
+.crm-app .side .brand-copy strong { color: var(--leader-sidebar-ink) !important; }
+.crm-app .side .brand-copy small,
+.crm-app .side .menu-group-label { color: var(--leader-sidebar-muted) !important; }
+.crm-app .side .crm-brand-mark { color: var(--leader-sidebar-accent) !important; }
+
+.crm-app .side .menu-item {
+  color: var(--leader-sidebar-ink) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.crm-app .side .menu-item .nav-icon { color: var(--leader-sidebar-icon) !important; background: transparent !important; }
+.crm-app .side .menu-item:hover { color: var(--leader-sidebar-accent) !important; background: var(--leader-sidebar-hover) !important; }
+.crm-app .side .menu-item.active {
+  color: var(--leader-sidebar-accent) !important;
+  background: var(--leader-sidebar-active) !important;
+  border-color: transparent !important;
+  box-shadow: inset 3px 0 0 var(--leader-sidebar-accent) !important;
+}
+.crm-app .side .menu-item.active .nav-icon { color: var(--leader-sidebar-accent) !important; background: transparent !important; }
+.crm-app .side .menu-item em { color: var(--leader-sidebar-accent) !important; background: color-mix(in srgb, var(--leader-sidebar-accent) 13%, transparent) !important; }
+.crm-app .side .side-card { color: var(--leader-sidebar-ink) !important; background: var(--leader-sidebar-card) !important; border-color: var(--leader-sidebar-border) !important; box-shadow: none !important; }
+.crm-app .side .side-card small { color: var(--leader-sidebar-muted) !important; }
+.crm-app .side .collapse { color: var(--leader-sidebar-ink) !important; background: var(--leader-sidebar-card) !important; border-color: var(--leader-sidebar-border) !important; }
+.crm-app .side .collapse:hover { color: var(--leader-sidebar-accent) !important; background: var(--leader-sidebar-hover) !important; }
+.crm-app .side.tenant-pending .menu-item:disabled {
+  cursor: not-allowed;
+  opacity: .52;
+}
+
+.tenant-provisioning-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 14px;
+  padding: 13px 16px;
+  border: 1px solid #a7d9d8;
+  border-radius: 13px;
+  color: #195861;
+  background: #ecf9f8;
+}
+.tenant-provisioning-banner > div { display: grid; gap: 3px; }
+.tenant-provisioning-banner strong { color: #124a52; }
+.tenant-provisioning-banner span,
+.tenant-provisioning-banner small { color: #397079; font-size: .83rem; line-height: 1.45; }
+.crm-app.crm-dark .tenant-provisioning-banner { border-color: #3f7779; color: #d8ffff; background: #173f43; }
+.crm-app.crm-dark .tenant-provisioning-banner strong { color: #d8ffff; }
+.crm-app.crm-dark .tenant-provisioning-banner span,
+.crm-app.crm-dark .tenant-provisioning-banner small { color: #add0d0; }
+
+.meta-channel-card.meta-facebook { border-color: #c7d8ff; background: linear-gradient(145deg, #f9fbff, #eff4ff); }
+.meta-channel-card.meta-facebook .channel-card-icon { color: #fff; background: #1877f2; }
+.meta-channel-card.meta-facebook .btn-meta-connect { color: #fff; background: #1877f2; border-color: #1877f2; }
+.meta-channel-card.meta-instagram { border-color: #f3c8df; background: linear-gradient(145deg, #fff9fc, #fff0f7); }
+.meta-channel-card.meta-instagram .channel-card-icon { color: #fff; background: linear-gradient(135deg, #833ab4, #fd1d1d 52%, #fcb045); }
+.meta-channel-card.meta-instagram .btn-meta-connect { color: #fff; background: linear-gradient(135deg, #833ab4, #e1306c); border-color: #c13584; }
+.crm-app.crm-dark .meta-channel-card.meta-facebook { border-color: #315a93 !important; background: linear-gradient(145deg, #182536, #172232) !important; }
+.crm-app.crm-dark .meta-channel-card.meta-instagram { border-color: #71425f !important; background: linear-gradient(145deg, #2a1b2d, #251d2b) !important; }
+
+.platform-plan-heading-actions { display: flex; align-items: center; gap: 10px; }
+.platform-plan-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 16px; padding: 14px; border: 1px solid var(--owly-border); border-radius: 12px; background: var(--owly-surface-soft); }
+.platform-plan-form label { display: grid; gap: 5px; color: var(--owly-muted); font-size: .76rem; font-weight: 750; }
+.platform-plan-form input,
+.platform-plan-form select,
+.platform-plan-form textarea { width: 100%; min-height: 38px; padding: 8px 10px; color: var(--owly-ink); background: var(--owly-surface); border: 1px solid var(--owly-border); border-radius: 8px; font: inherit; }
+.platform-plan-form textarea { min-height: 62px; resize: vertical; }
+.platform-plan-description,
+.platform-plan-form-actions { grid-column: 1 / -1; }
+.platform-plan-form-actions { display: flex; gap: 8px; align-items: center; }
+.platform-plan-edit { justify-self: end; align-self: start; }
+.platform-plan-notice { margin: 0 0 10px; }
+.crm-app.crm-dark .platform-plan-form { border-color: #394145; background: #252a2d; }
+.crm-app.crm-dark .platform-plan-form label { color: #b6c0c5; }
+.crm-app.crm-dark .platform-plan-form input,
+.crm-app.crm-dark .platform-plan-form select,
+.crm-app.crm-dark .platform-plan-form textarea { color: #f3f5f6; background: #1a1e20; border-color: #4a555a; }
+.crm-app.crm-dark .platform-plan-form select option { color: #f3f5f6; background: #1a1e20; }
+
+.signup-password-hint { margin-top: -2px; color: #718190; font-size: .73rem; font-weight: 500; line-height: 1.35; }
+.crm-app.crm-dark .signup-password-hint { color: #aab8bc; }
+
+@media (max-width: 720px) {
+  .tenant-provisioning-banner { align-items: flex-start; flex-direction: column; }
+  .platform-plan-form { grid-template-columns: 1fr; }
+  .platform-plan-description,
+  .platform-plan-form-actions { grid-column: auto; }
+}
+
+/* Platform administrators are intentionally kept outside the tenant CRM
+   shell: they manage shops and plans, while CRM staff manage end customers. */
+.crm-app.platform-admin-workspace {
+  display: block;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  background: color-mix(in srgb, var(--leader-sidebar-surface) 92%, var(--workspace-primary) 8%);
+}
+
+.crm-app.platform-admin-workspace .main.platform-admin-main {
+  width: 100%;
+  min-height: 100vh;
+  height: auto;
+  overflow: visible;
+  padding: 22px clamp(18px, 4vw, 52px) 40px;
+  background: transparent;
+}
+
+.crm-app.platform-admin-workspace .platform-admin-layout {
+  width: min(100%, 1480px);
+  margin-inline: auto;
+}
+
+.platform-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+  padding: 12px 0 18px;
+  color: var(--leader-sidebar-ink);
+  border-bottom: 1px solid var(--leader-sidebar-border);
+}
+
+.platform-workspace-identity,
+.platform-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.platform-workspace-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  color: var(--leader-sidebar-accent);
+  background: color-mix(in srgb, var(--leader-sidebar-accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--leader-sidebar-accent) 32%, var(--leader-sidebar-border));
+  border-radius: 11px;
+}
+
+.platform-workspace-mark svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.platform-workspace-identity > div:last-child { display: grid; gap: 2px; }
+.platform-workspace-identity strong { font-size: .94rem; }
+.platform-workspace-identity span,
+.platform-workspace-role { color: var(--leader-sidebar-muted); font-size: .78rem; }
+.platform-workspace-role { font-weight: 750; }
+
+.platform-workspace-actions .dark-mode-toggle { flex: 0 0 auto; }
+
+.platform-logout {
+  min-height: 36px;
+  padding: 0 13px;
+  color: var(--leader-sidebar-accent);
+  background: var(--leader-sidebar-active);
+  border: 1px solid color-mix(in srgb, var(--leader-sidebar-accent) 28%, var(--leader-sidebar-border));
+  border-radius: 9px;
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.platform-logout:hover { background: var(--leader-sidebar-hover); }
+
+.crm-app.session-bootstrap-active { display: block; }
+
+.session-bootstrap {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--leader-sidebar-surface) 92%, var(--workspace-primary) 8%);
+}
+
+.session-bootstrap-card {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  max-width: 320px;
+  padding: 28px 32px;
+  color: var(--leader-sidebar-ink);
+  text-align: center;
+  background: var(--leader-sidebar-surface);
+  border: 1px solid var(--leader-sidebar-border);
+  border-radius: 16px;
+  box-shadow: 0 18px 42px color-mix(in srgb, var(--leader-sidebar-ink) 10%, transparent);
+}
+
+.session-bootstrap-card strong { font-size: 1rem; }
+.session-bootstrap-card span { color: var(--leader-sidebar-muted); font-size: .84rem; }
+
+@media (max-width: 640px) {
+  .crm-app.platform-admin-workspace .main.platform-admin-main { padding: 14px 12px 28px; }
+  .platform-workspace-header { align-items: flex-start; flex-direction: column; }
+  .platform-workspace-actions { width: 100%; justify-content: space-between; }
+}
+
+/* Platform admin refresh: clearer hierarchy, compact controls, and no
+   tall-card void beside the tenant table. */
+.crm-app.platform-admin-workspace {
+  --admin-canvas: #f4f7f8; --admin-surface: #fff; --admin-subtle: #f6f9fa;
+  --admin-ink: #182b38; --admin-muted: #687b87; --admin-border: #dce6e9;
+  --admin-accent: #117c80; --admin-danger: #b24f49; --admin-danger-surface: #fff1ef;
+  --admin-shadow: 0 8px 26px rgba(28,53,65,.055);
+  background: var(--admin-canvas); color: var(--admin-ink);
+}
+.crm-app.crm-dark.platform-admin-workspace,
+body.crm-dark .crm-app.platform-admin-workspace {
+  --admin-canvas: #14191c; --admin-surface: #1c2327; --admin-subtle: #222b30;
+  --admin-ink: #edf4f5; --admin-muted: #a6b5ba; --admin-border: #354248;
+  --admin-accent: #67c9c4; --admin-danger: #ffaaa4; --admin-danger-surface: #3a2425;
+  --admin-shadow: 0 10px 28px rgba(0,0,0,.16);
+  color: var(--admin-ink);
+}
+.crm-app.platform-admin-workspace .main.platform-admin-main { background: transparent; }
+.crm-app.platform-admin-workspace .platform-admin-layout { gap: 16px; color: var(--admin-ink); }
+.crm-app.platform-admin-workspace .platform-workspace-header { margin-bottom: 8px; }
+.crm-app.platform-admin-workspace .platform-admin-hero {
+  align-items: center; min-height: 96px; margin: 0; padding: 6px 0 12px;
+  background: transparent !important; border: 0; box-shadow: none;
+}
+.crm-app.platform-admin-workspace .platform-admin-hero h2 {
+  margin: 2px 0 5px; color: var(--admin-ink);
+  font-size: clamp(1.45rem, 2.2vw, 1.85rem); letter-spacing: -.035em;
+}
+.crm-app.platform-admin-workspace .platform-admin-hero p,
+.crm-app.platform-admin-workspace .platform-admin-panel-heading p { color: var(--admin-muted); }
+.crm-app.platform-admin-workspace .platform-admin-hero .card-eyebrow,
+.crm-app.platform-admin-workspace .platform-admin-panel .card-eyebrow { color: var(--admin-accent); }
+.crm-app.platform-admin-workspace .platform-admin-metrics { gap: 12px; }
+.crm-app.platform-admin-workspace .platform-admin-metric,
+.crm-app.platform-admin-workspace .platform-admin-panel {
+  color: var(--admin-ink); background: var(--admin-surface);
+  border: 1px solid var(--admin-border); border-radius: 13px; box-shadow: var(--admin-shadow);
+}
+.crm-app.platform-admin-workspace .platform-admin-metric {
+  position: relative; min-height: 92px; gap: 4px; overflow: hidden; padding: 14px 16px 13px;
+}
+.crm-app.platform-admin-workspace .platform-admin-metric::before {
+  position: absolute; inset: 0 auto 0 0; width: 3px;
+  background: color-mix(in srgb, var(--admin-accent) 58%, transparent); content: "";
+}
+.crm-app.platform-admin-workspace .platform-admin-metric span,
+.crm-app.platform-admin-workspace .platform-admin-metric small,
+.crm-app.platform-admin-workspace .platform-admin-count { color: var(--admin-muted); }
+.crm-app.platform-admin-workspace .platform-admin-metric strong {
+  color: var(--admin-ink); font-size: 1.55rem; font-variant-numeric: tabular-nums;
+}
+.crm-app.platform-admin-workspace .platform-admin-metric-alert::before { background: var(--admin-danger); }
+.crm-app.platform-admin-workspace .platform-admin-metric-alert strong { color: var(--admin-danger); }
+.crm-app.crm-dark.platform-admin-workspace .platform-admin-metric-alert strong,
+body.crm-dark .crm-app.platform-admin-workspace .platform-admin-metric-alert strong { color: var(--admin-danger) !important; }
+body.crm-dark .crm-app.platform-admin-workspace .platform-admin-hero {
+  background: transparent !important; border: 0 !important; box-shadow: none !important;
+}
+/* Keep the tenant table out of the same row as the taller plan editor. */
+.crm-app.platform-admin-workspace .platform-admin-metrics + .platform-admin-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.crm-app.platform-admin-workspace .platform-admin-grid + .platform-admin-grid {
+  grid-template-columns: minmax(0, 1fr); gap: 16px;
+}
+.crm-app.platform-admin-workspace .platform-admin-panel { min-width: 0; padding: 18px; }
+.crm-app.platform-admin-workspace .platform-admin-panel-heading { align-items: center; margin-bottom: 13px; }
+.crm-app.platform-admin-workspace .platform-admin-panel-heading h3 { color: var(--admin-ink); font-size: 1rem; }
+.crm-app.platform-admin-workspace .platform-table-wrap {
+  overflow-x: auto; border: 1px solid var(--admin-border); border-radius: 10px;
+}
+.crm-app.platform-admin-workspace .platform-table {
+  min-width: 720px; border-collapse: separate; border-spacing: 0; background: var(--admin-surface);
+}
+.crm-app.platform-admin-workspace .platform-table thead th {
+  padding: 11px 13px; color: var(--admin-muted); background: var(--admin-subtle);
+  border-bottom: 1px solid var(--admin-border); font-size: .7rem; letter-spacing: .055em;
+}
+.crm-app.platform-admin-workspace .platform-table tbody td {
+  padding: 12px 13px; border-bottom: 1px solid var(--admin-border); vertical-align: middle;
+}
+.crm-app.platform-admin-workspace .platform-table tbody tr:last-child td { border-bottom: 0; }
+.crm-app.platform-admin-workspace .platform-table tbody tr:hover { background: var(--admin-subtle); }
+.crm-app.platform-admin-workspace .platform-table td strong { color: var(--admin-ink); }
+.crm-app.platform-admin-workspace .platform-table td small {
+  display: block; max-width: 280px; margin-top: 3px; overflow-wrap: anywhere;
+  color: var(--admin-muted); line-height: 1.4;
+}
+.crm-app.platform-admin-workspace .platform-plan-chip { color: var(--admin-accent); }
+.crm-app.platform-admin-workspace .platform-plan-form {
+  grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0 0 16px;
+  background: transparent; border: 0; border-bottom: 1px solid var(--admin-border);
+  border-radius: 0; box-shadow: none;
+}
+.crm-app.platform-admin-workspace .platform-plan-form label { min-width: 0; color: var(--admin-muted); font-size: .75rem; }
+.crm-app.platform-admin-workspace .platform-plan-form input,
+.crm-app.platform-admin-workspace .platform-plan-form select,
+.crm-app.platform-admin-workspace .platform-plan-form textarea {
+  min-width: 0; color: var(--admin-ink); background: var(--admin-surface);
+  border: 1px solid var(--admin-border); border-radius: 8px;
+}
+.crm-app.platform-admin-workspace .platform-plan-description,
+.crm-app.platform-admin-workspace .platform-plan-form-actions { grid-column: 1 / -1; }
+.crm-app.platform-admin-workspace .platform-plan-form textarea { min-height: 58px; resize: vertical; }
+.crm-app.platform-admin-workspace .platform-plan-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 10px; padding-top: 14px;
+}
+.crm-app.platform-admin-workspace .platform-plan-item {
+  min-width: 0; padding: 12px 13px; background: var(--admin-subtle);
+  border: 1px solid var(--admin-border); border-radius: 10px;
+}
+.crm-app.platform-admin-workspace .platform-plan-item small { white-space: normal; }
+.crm-app.platform-admin-workspace .platform-plan-item .team-status {
+  display: inline-flex; align-self: start; justify-self: end;
+  width: max-content; max-width: 100%; height: max-content; min-width: 0; min-height: 0;
+  align-items: center; padding: 4px 8px; border-radius: 999px;
+  box-sizing: border-box; color: #087c5a; background: #e7f7f0;
+  box-shadow: none; line-height: 1.25; white-space: nowrap;
+}
+.crm-app.platform-admin-workspace .platform-plan-item .team-status::before,
+.crm-app.platform-admin-workspace .platform-plan-item .team-status::after {
+  display: none !important; content: none !important;
+}
+.crm-app.platform-admin-workspace .platform-schema-list li { gap: 12px; padding-block: 11px; }
+.crm-app.platform-admin-workspace .platform-schema-actions {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 8px; margin-top: 12px;
+}
+.crm-app.platform-admin-workspace .platform-schema-actions button {
+  width: 100%; max-width: 100%; white-space: normal; line-height: 1.3; text-align: left;
+}
+.crm-app.platform-admin-workspace .platform-schema-list li strong,
+.crm-app.platform-admin-workspace .platform-alert-list li strong { color: var(--admin-ink); overflow-wrap: anywhere; }
+.crm-app.platform-admin-workspace .platform-alert-list li {
+  gap: 5px; padding: 10px 0; border-bottom: 1px solid var(--admin-border); line-height: 1.45;
+}
+.crm-app.platform-admin-workspace .platform-alert-list li:last-child { border-bottom: 0; }
+.crm-app.platform-admin-workspace .platform-alert-list li span,
+.crm-app.platform-admin-workspace .platform-alert-list li small,
+.crm-app.platform-admin-workspace .platform-schema-list li span { color: var(--admin-muted); }
+.crm-app.platform-admin-workspace .platform-approval-notice {
+  margin: -2px 0 0; color: var(--admin-accent); background: color-mix(in srgb, var(--admin-accent) 9%, var(--admin-surface));
+  border-color: color-mix(in srgb, var(--admin-accent) 34%, var(--admin-border));
+}
+.crm-app.platform-admin-workspace .platform-approval-panel { padding-block: 17px; }
+.crm-app.platform-admin-workspace .platform-admin-refresh-hint { display: block; margin-top: 4px; color: var(--admin-muted); font-size: .72rem; }
+.crm-app.platform-admin-workspace .platform-approval-list { display: grid; gap: 9px; }
+.crm-app.platform-admin-workspace .platform-approval-item {
+  display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(155px, 1fr) minmax(145px, .95fr) minmax(160px, 1fr) auto;
+  align-items: center; gap: 12px; min-width: 0; padding: 13px 14px;
+  background: var(--admin-subtle); border: 1px solid var(--admin-border); border-radius: 10px;
+}
+.crm-app.platform-admin-workspace .platform-approval-shop,
+.crm-app.platform-admin-workspace .platform-approval-detail { display: grid; min-width: 0; gap: 2px; }
+.crm-app.platform-admin-workspace .platform-approval-shop strong,
+.crm-app.platform-admin-workspace .platform-approval-detail strong { overflow-wrap: anywhere; color: var(--admin-ink); font-size: .88rem; }
+.crm-app.platform-admin-workspace .platform-approval-shop small,
+.crm-app.platform-admin-workspace .platform-approval-detail small { overflow-wrap: anywhere; color: var(--admin-muted); font-size: .75rem; line-height: 1.35; }
+.crm-app.platform-admin-workspace .platform-approval-detail > span { color: var(--admin-muted); font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.crm-app.platform-admin-workspace .platform-approval-request-details {
+  grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 24px;
+  padding-top: 10px; border-top: 1px solid var(--admin-border);
+}
+.crm-app.platform-admin-workspace .platform-approval-request-details > div { display: grid; min-width: min(100%, 170px); gap: 3px; }
+.crm-app.platform-admin-workspace .platform-approval-request-details span { color: var(--admin-muted); font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.crm-app.platform-admin-workspace .platform-approval-request-details strong,
+.crm-app.platform-admin-workspace .platform-approval-request-details p { overflow-wrap: anywhere; color: var(--admin-ink); font-size: .8rem; }
+.crm-app.platform-admin-workspace .platform-approval-request-details p { flex: 1 1 100%; margin: 0; }
+.crm-app.platform-admin-workspace .platform-approval-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.crm-app.platform-admin-workspace .platform-approval-actions button { min-width: max-content; margin: 0; white-space: nowrap; }
+.crm-app.platform-admin-workspace .platform-approval-reject {
+  color: var(--admin-danger); background: var(--admin-danger-surface);
+  border-color: color-mix(in srgb, var(--admin-danger) 45%, var(--admin-border));
+}
+.crm-app.platform-admin-workspace .platform-approval-reject:hover:not(:disabled) {
+  color: var(--admin-danger); background: color-mix(in srgb, var(--admin-danger) 17%, var(--admin-surface));
+}
+.crm-app.platform-admin-workspace .platform-approval-actions button:disabled { cursor: wait; opacity: .68; }
+.crm-app.platform-admin-workspace :is(button, input, select, textarea):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--admin-accent) 34%, transparent); outline-offset: 2px;
+}
+.crm-app.platform-admin-workspace button {
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+@media (max-width: 1080px) {
+  .crm-app.platform-admin-workspace .platform-plan-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .crm-app.platform-admin-workspace .platform-approval-item { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .crm-app.platform-admin-workspace .platform-approval-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}
+@media (max-width: 820px) {
+  .crm-app.platform-admin-workspace .platform-admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 540px) {
+  .crm-app.platform-admin-workspace .platform-admin-metrics,
+  .crm-app.platform-admin-workspace .platform-plan-form { grid-template-columns: minmax(0, 1fr); }
+  .crm-app.platform-admin-workspace .platform-admin-panel { padding: 14px; }
+  .crm-app.platform-admin-workspace .platform-plan-description,
+  .crm-app.platform-admin-workspace .platform-plan-form-actions { grid-column: auto; }
+  .crm-app.platform-admin-workspace .platform-admin-hero { align-items: flex-start; }
+  .crm-app.platform-admin-workspace .platform-approval-item { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .crm-app.platform-admin-workspace .platform-approval-actions { grid-column: auto; width: 100%; }
+  .crm-app.platform-admin-workspace .platform-approval-actions button { flex: 1 1 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crm-app.platform-admin-workspace button { transition: none; }
+}
+
+/* The CRM header is an operational toolbar: keep the account exit visible
+   without compressing the greeting into unreadable narrow columns. */
+.crm-app:not(.platform-admin-workspace) .top {
+  gap: 14px;
+}
+
+.crm-app:not(.platform-admin-workspace) .top > .welcome {
+  flex: 1 1 160px;
+  min-width: 160px;
+}
+
+.crm-app:not(.platform-admin-workspace) .top-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.crm-app:not(.platform-admin-workspace) .top-search {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .crm-app:not(.platform-admin-workspace) .top {
+    gap: 10px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-actions {
+    gap: 7px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-search {
+    width: clamp(190px, 25vw, 300px);
+    min-width: 190px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .team {
+    width: 42px;
+    min-width: 42px;
+    justify-content: center;
+    gap: 0;
+    padding: 4px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .team > div:not(.team-avatar),
+  .crm-app:not(.platform-admin-workspace) .top-logout > span {
+    display: none;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-logout {
+    min-width: 42px;
+    padding-inline: 11px;
+  }
+}
+
+@media (max-width: 860px) {
+  .crm-app:not(.platform-admin-workspace) .top > .welcome {
+    min-width: 112px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top > .welcome span,
+  .crm-app:not(.platform-admin-workspace) .top-search,
+  .crm-app:not(.platform-admin-workspace) .quick-action-trigger > span {
+    display: none;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .quick-action-trigger {
+    min-width: 42px;
+    justify-content: center;
+    padding-inline: 8px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .quick-action-trigger kbd {
+    margin: 0;
+  }
+}
+
+/* Keep the compact rail icon-only even when later responsive rules redefine labels. */
+.crm-app.sidebar-collapsed .side .brand-copy,
+.crm-app.sidebar-collapsed .side .menu-group-label,
+.crm-app.sidebar-collapsed .side .menu-item > :not(.nav-icon),
+.crm-app.sidebar-collapsed .side .side-card,
+.crm-app.sidebar-collapsed .side .collapse > span:not(.collapse-icon) {
+  display: none !important;
+}
+
+.crm-app.sidebar-collapsed .side .menu-item {
+  grid-template-columns: minmax(0, 1fr) !important;
+  justify-items: center;
+  padding-inline: 0;
+  overflow: hidden;
+}
+
+.crm-app.sidebar-collapsed .side .menu-item > .nav-icon {
+  margin-inline: auto;
+}
+
+/* At laptop widths the layout also becomes a compact rail before the user
+   explicitly toggles it. Treat that rail exactly like a collapsed sidebar so
+   no label can be cropped below an icon. */
+@media (max-width: 1100px) {
+  .crm-app:not(.platform-admin-workspace) .side .brand-copy,
+  .crm-app:not(.platform-admin-workspace) .side .menu-group-label,
+  .crm-app:not(.platform-admin-workspace) .side .menu-item > :not(.nav-icon),
+  .crm-app:not(.platform-admin-workspace) .side .side-card,
+  .crm-app:not(.platform-admin-workspace) .side .collapse > span:not(.collapse-icon) {
+    display: none !important;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .side .menu-item {
+    grid-template-columns: minmax(0, 1fr) !important;
+    justify-items: center;
+    padding-inline: 0;
+    overflow: hidden;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .side .menu-item > .nav-icon {
+    margin-inline: auto;
+  }
+}
+
+.crm-app .top-logout {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 13px;
+  color: var(--owly-ink);
+  background: var(--owly-surface);
+  border: 1px solid var(--owly-border);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .16s ease, background-color .16s ease, border-color .16s ease;
+}
+
+.crm-app .top-logout:hover {
+  color: var(--salon-accent);
+  background: var(--salon-accent-soft);
+  border-color: color-mix(in srgb, var(--salon-accent) 40%, var(--owly-border));
+}
+
+.crm-app .top-logout:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--salon-accent) 38%, transparent);
+  outline-offset: 2px;
+}
+
+.crm-app .top-logout-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (max-width: 640px) {
+  .crm-app:not(.platform-admin-workspace) .top-logout {
+    min-width: 42px;
+    padding-inline: 11px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-logout > span {
+    display: none;
+  }
 }

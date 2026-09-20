@@ -9,6 +9,29 @@ import secrets
 
 
 ITERATIONS = 310_000
+SIGNUP_PASSWORD_MIN_LENGTH = 12
+
+
+def validate_signup_password(password: str) -> str:
+    """Validate the stronger policy used when a shop owner signs up.
+
+    Hashing remains compatible with existing accounts and fixtures: this
+    policy is deliberately applied at account-creation boundaries rather than
+    inside :func:`hash_password`.
+    """
+
+    if not isinstance(password, str) or len(password) < SIGNUP_PASSWORD_MIN_LENGTH:
+        raise ValueError(f"Mật khẩu phải có ít nhất {SIGNUP_PASSWORD_MIN_LENGTH} ký tự.")
+
+    character_classes = (
+        any(character.islower() for character in password),
+        any(character.isupper() for character in password),
+        any(character.isdigit() for character in password),
+        any(not character.isalnum() and not character.isspace() for character in password),
+    )
+    if sum(character_classes) < 3:
+        raise ValueError("Mật khẩu cần có ít nhất 3 trong 4 nhóm: chữ thường, chữ hoa, số và ký tự đặc biệt.")
+    return password
 
 
 def hash_password(password: str) -> str:

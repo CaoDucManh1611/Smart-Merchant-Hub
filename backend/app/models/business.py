@@ -108,6 +108,10 @@ class Subscription(Base):
         ForeignKey("service_plans.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    # ``pending`` subscriptions are also the durable approval requests made
+    # by a shop.  Keep the requested service explicit so a platform admin can
+    # distinguish a CRM package from a managed chatbot rental before approval.
+    service_type: Mapped[str] = mapped_column(String(20), nullable=False, default="package", server_default="package")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
     starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

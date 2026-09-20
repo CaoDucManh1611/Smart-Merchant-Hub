@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
-from sqlalchemy import func, inspect, select
+from sqlalchemy import String, cast, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,7 +32,10 @@ from app.schemas.platform import (
     TenantSchemaUpdate,
     PlatformPlanCreate,
     PlatformPlanOut,
+    PlatformSubscriptionApprovalOut,
     PlatformSubscriptionOut,
+    PlatformSubscriptionRequestListOut,
+    PlatformSubscriptionRequestOut,
     PlatformSubscriptionUpdate,
     PlatformPaymentCreate,
     PlatformPaymentOut,
@@ -50,6 +54,7 @@ from app.tenancy.provisioning import provision_shop, retry_provision_shop, Provi
 
 
 router = APIRouter(prefix="/platform")
+logger = logging.getLogger(__name__)
 
 
 def _provider_error_type(message: str | None) -> str | None:
@@ -185,10 +190,80 @@ def _subscription_out(row: Subscription) -> PlatformSubscriptionOut:
         plan_id=row.plan_id,
         plan_code=row.plan.code,
         plan_name=row.plan.name,
+        service_type=row.service_type or "package",
         status=row.status,
         starts_at=row.starts_at,
         ends_at=row.ends_at,
         auto_renew=row.auto_renew,
+        created_at=row.created_at,
+    )
+
+
+def _subscription_request_out(db: Session, row: Subscription) -> PlatformSubscriptionRequestOut:
+    """Return only the shop contact and requested package to platform admins."""
+
+    business = db.get(Business, row.business_id)
+    if business is None:  # Defensive: the FK normally prevents this.
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    owner = db.scalar(
+        select(User)
+        .where(User.business_id == business.id, User.role == "owner")
+        .order_by(User.id.asc())
+    )
+    if owner is None:
+        owner = db.scalar(
+            select(User)
+            .where(User.business_id == business.id, User.role == "admin")
+            .order_by(User.id.asc())
+        )
+    latest_request = db.scalar(
+        select(AuditLog)
+        .where(
+            AuditLog.business_id == business.id,
+            AuditLog.action == "subscription_request_submitted",
+            AuditLog.resource_type == "subscription",
+            AuditLog.resource_id == str(row.id),
+        )
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(1)
+    )
+    requester = (
+        db.get(User, latest_request.user_id)
+        if latest_request is not None and latest_request.user_id is not None
+        else None
+    )
+    metadata = latest_request.metadata_ if latest_request is not None else {}
+    request_details = metadata.get("request_details", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(request_details, dict):
+        request_details = {}
+    requested_channels = request_details.get("channels", [])
+    if not isinstance(requested_channels, list):
+        requested_channels = []
+    requested_at = latest_request.created_at if latest_request is not None else row.created_at
+    if requested_at is not None and requested_at.tzinfo is None:
+        # All legacy subscription/audit timestamps are stored as naive UTC.
+        requested_at = requested_at.replace(tzinfo=timezone.utc)
+    return PlatformSubscriptionRequestOut(
+        subscription_id=row.id,
+        business_id=business.id,
+        shop_name=business.name,
+        shop_slug=business.slug,
+        requester_name=requester.full_name if requester is not None else (owner.full_name if owner is not None else None),
+        requester_email=requester.email if requester is not None else (owner.email if owner is not None else business.email),
+        requested_at=requested_at,
+        contact_name=request_details.get("contact_name"),
+        contact_email=request_details.get("contact_email"),
+        contact_phone=request_details.get("contact_phone"),
+        requested_shop_name=request_details.get("shop_name"),
+        requested_channels=[channel for channel in requested_channels if isinstance(channel, str)],
+        request_notes=request_details.get("notes"),
+        owner_name=owner.full_name if owner is not None else None,
+        owner_email=owner.email if owner is not None else business.email,
+        plan_id=row.plan_id,
+        plan_code=row.plan.code,
+        plan_name=row.plan.name,
+        service_type=row.service_type or "package",
+        status="pending",
         created_at=row.created_at,
     )
 
@@ -294,6 +369,155 @@ def list_shops(
         items=[_shop_out(db, shop, period_start) for shop in shops],
         total=int(total_count),
     )
+
+
+@router.get("/subscription-requests", response_model=PlatformSubscriptionRequestListOut)
+def list_subscription_requests(
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_platform_admin),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """List only outstanding package requests; never expose tenant CRM data."""
+
+    base_query = select(Subscription).where(Subscription.status == "pending")
+    total = int(db.scalar(select(func.count(Subscription.id)).where(Subscription.status == "pending")) or 0)
+    latest_request_at = (
+        select(func.max(AuditLog.created_at))
+        .where(
+            AuditLog.business_id == Subscription.business_id,
+            AuditLog.action == "subscription_request_submitted",
+            AuditLog.resource_type == "subscription",
+            AuditLog.resource_id == cast(Subscription.id, String),
+        )
+        .correlate(Subscription)
+        .scalar_subquery()
+    )
+    rows = db.scalars(
+        base_query
+        .order_by(func.coalesce(latest_request_at, Subscription.created_at).desc(), Subscription.id.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    return PlatformSubscriptionRequestListOut(
+        items=[_subscription_request_out(db, row) for row in rows],
+        total=total,
+    )
+
+
+@router.post(
+    "/subscription-requests/{subscription_id}/approve",
+    response_model=PlatformSubscriptionApprovalOut,
+)
+def approve_subscription_request(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    actor: User = Depends(require_platform_admin),
+):
+    """Activate one approved request, then start the idempotent tenant saga."""
+
+    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Yêu cầu gói dịch vụ không tồn tại.")
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail="Yêu cầu này không còn ở trạng thái chờ duyệt.")
+    plan = db.get(ServicePlan, row.plan_id)
+    if plan is None or plan.status != "active":
+        raise HTTPException(status_code=409, detail="Gói dịch vụ đã ngừng bán và không thể duyệt.")
+    business = db.get(Business, row.business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+
+    # Keep at most one active package. Existing active access remains usable
+    # until this point, so requesting an upgrade never locks a shop early.
+    for active_row in db.scalars(
+        select(Subscription).where(
+            Subscription.business_id == business.id,
+            Subscription.status == "active",
+            Subscription.id != row.id,
+        )
+    ):
+        active_row.status = "cancelled"
+    row.status = "active"
+    row.starts_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    row.ends_at = None
+    db.flush()
+    record_audit(
+        db,
+        business_id=business.id,
+        user_id=actor.id,
+        action="platform_subscription_approved",
+        resource_type="subscription",
+        resource_id=row.id,
+        metadata={"plan_code": plan.code, "service_type": row.service_type or "package"},
+    )
+    db.commit()
+    db.refresh(row)
+
+    try:
+        _sync_platform_business(platform_db, db, business.id)
+        registry = provision_shop(
+            platform_db,
+            business_id=business.id,
+            idempotency_key=f"platform-subscription-approval-{row.id}",
+        )
+    except ProvisioningValidationError:
+        platform_db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail="Gói đã được duyệt nhưng không gian dữ liệu chưa thể chuẩn bị. Hãy kiểm tra cấu hình tenant và thử lại.",
+        ) from None
+    except Exception:  # noqa: BLE001 - never return infrastructure details to the admin UI
+        platform_db.rollback()
+        logger.warning("Tenant provisioning deferred after subscription approval id=%s", row.id, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Gói đã được duyệt nhưng hệ thống chưa thể chuẩn bị không gian dữ liệu. Hãy thử lại sau.",
+        ) from None
+
+    return PlatformSubscriptionApprovalOut(
+        subscription=_subscription_out(row),
+        provisioning=ProvisioningOut(
+            business_id=registry.business_id,
+            schema_name=registry.schema_name,
+            state=registry.state,
+            feature_enabled=registry.feature_enabled,
+            subscription_active=True,
+            subscription_status="active",
+            tenant_revision=registry.tenant_revision,
+            migration_error=registry.migration_error,
+        ),
+    )
+
+
+@router.post("/subscription-requests/{subscription_id}/reject", response_model=PlatformSubscriptionOut)
+def reject_subscription_request(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_platform_admin),
+):
+    """Close an unapproved request without altering an existing active plan."""
+
+    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Yêu cầu gói dịch vụ không tồn tại.")
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail="Yêu cầu này không còn ở trạng thái chờ duyệt.")
+    row.status = "cancelled"
+    db.flush()
+    record_audit(
+        db,
+        business_id=row.business_id,
+        user_id=actor.id,
+        action="platform_subscription_rejected",
+        resource_type="subscription",
+        resource_id=row.id,
+        metadata={"plan_code": row.plan.code, "service_type": row.service_type or "package"},
+    )
+    db.commit()
+    db.refresh(row)
+    return _subscription_out(row)
 
 
 @router.get("/shops/{business_id}/subscription", response_model=PlatformSubscriptionOut)

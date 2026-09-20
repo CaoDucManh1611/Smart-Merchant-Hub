@@ -42,7 +42,7 @@ DEFAULT_PLANS = (
         "max_rag_chunks": 0,
         "max_ai_calls": 50,
         "max_ai_cost": Decimal("0"),
-        "features": {"onboarding": True, "support": "email", "display_name": "Gói Demo", "demo_only": True},
+        "features": {"onboarding": True, "support": "email", "display_name": "Gói Demo", "demo_only": True, "chatbot_rental_price": 0},
     },
     {
         "code": "starter",
@@ -58,7 +58,7 @@ DEFAULT_PLANS = (
         "max_rag_chunks": 250,
         "max_ai_calls": 500,
         "max_ai_cost": Decimal("25"),
-        "features": {"onboarding": True, "support": "email", "display_name": "Gói Thường"},
+        "features": {"onboarding": True, "support": "email", "display_name": "Gói Thường", "chatbot_rental_price": 100000},
     },
     {
         "code": "growth",
@@ -71,7 +71,7 @@ DEFAULT_PLANS = (
         "max_rag_chunks": 2000,
         "max_ai_calls": 5000,
         "max_ai_cost": Decimal("250"),
-        "features": {"onboarding": True, "support": "priority", "display_name": "Gói VIP"},
+        "features": {"onboarding": True, "support": "priority", "display_name": "Gói VIP", "chatbot_rental_price": 400000},
     },
     {
         "code": "pro",
@@ -84,18 +84,18 @@ DEFAULT_PLANS = (
         "max_rag_chunks": 10000,
         "max_ai_calls": 25000,
         "max_ai_cost": Decimal("1000"),
-        "features": {"onboarding": True, "support": "dedicated", "display_name": "Gói Premium"},
+        "features": {"onboarding": True, "support": "dedicated", "display_name": "Gói Premium", "chatbot_rental_price": 1000000},
     },
 )
 
 
 def ensure_default_plans(db: Session) -> list[ServicePlan]:
-    """Seed and synchronize the three customer-facing plans.
+    """Seed the customer-facing catalogue without undoing administrator edits.
 
     Stable internal codes keep existing subscriptions and foreign keys valid,
-    while names, prices and channel limits follow the shop-facing catalogue.
-    Synchronizing here also repairs older demo databases on the next request
-    without deleting subscriptions or connected channels.
+    while missing default feature keys are repaired on older databases.  Plan
+    prices and quotas are administrator-owned after creation, so querying the
+    catalogue must never reset a deliberate edit.
     """
     existing_by_code = {
         plan.code: plan
@@ -108,8 +108,14 @@ def ensure_default_plans(db: Session) -> list[ServicePlan]:
             plan = ServicePlan(**payload)
             db.add(plan)
         else:
-            for key, value in payload.items():
-                setattr(plan, key, value)
+            existing_features = dict(plan.features or {})
+            missing_features = {
+                key: value
+                for key, value in dict(payload["features"]).items()
+                if key not in existing_features
+            }
+            if missing_features:
+                plan.features = {**existing_features, **missing_features}
         plans.append(plan)
     db.flush()
     return plans

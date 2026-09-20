@@ -8,9 +8,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.api.router import api_router
+from app.auth.dependencies import issue_token, token_hash
+from app.database.platform_session import get_platform_db
+from app.database.bases import PlatformBase, TenantBase
 from app.db.dependencies import get_db
 from app.main import app
-from app.models.business import Business, ServicePlan
+from app.models.auth_session import AuthSession
+from app.models.business import Business, ServicePlan, Subscription, User
 from app.models.signup import SignupEmailChallenge
 from app.models.channel import Channel
 from app.models.sales import Product
@@ -24,19 +28,25 @@ from app.services.otp_delivery import OtpDeliveryResult
 class OnboardingApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._environment = settings.ENVIRONMENT
+        settings.ENVIRONMENT = "test"
         cls.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Business.metadata.create_all(cls.engine)
+        PlatformBase.metadata.create_all(cls.engine)
+        TenantBase.metadata.create_all(cls.engine)
 
         def override_get_db():
             with Session(cls.engine) as db:
                 yield db
 
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_platform_db] = override_get_db
         cls.client = TestClient(app)
 
     @classmethod
     def tearDownClass(cls):
         app.dependency_overrides.clear()
+        settings.ENVIRONMENT = cls._environment
 
     def test_public_onboarding_creates_shop_owner_and_subscription(self):
         plans = self.client.get("/api/onboarding/plans")
@@ -71,6 +81,21 @@ class OnboardingApiTests(unittest.TestCase):
             json={"shop_name": "Duplicate B", "owner_name": "B Owner", "owner_email": "same@onboarding.test", "password": "strong-pass-1"},
         )
         self.assertEqual(409, duplicate.status_code, duplicate.text)
+
+    def test_direct_shop_endpoint_requires_verified_signup_outside_test_mode(self):
+        with patch.object(settings, "ENVIRONMENT", "development"):
+            response = self.client.post(
+                "/api/onboarding/shops",
+                json={
+                    "shop_name": "OTP Required Shop",
+                    "owner_name": "OTP Required Owner",
+                    "owner_email": "otp-required@onboarding.test",
+                    "password": "Strong-pass-2026",
+                },
+            )
+
+        self.assertEqual(410, response.status_code, response.text)
+        self.assertIn("OTP", response.json()["detail"])
 
     def test_email_otp_signup_creates_shop_only_after_verification(self):
         request_payload = {
@@ -127,6 +152,122 @@ class OnboardingApiTests(unittest.TestCase):
         )
         self.assertEqual(402, blocked.status_code, blocked.text)
         self.assertEqual("subscription_inactive", blocked.json()["detail"]["code"])
+
+    def test_paid_plan_request_waits_for_platform_admin_approval(self):
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={
+                "shop_name": "Approval Queue Shop",
+                "owner_name": "Approval Owner",
+                "owner_email": "approval-queue@onboarding.test",
+                "password": "strong-pass-1",
+            },
+        ).json()
+        request = self.client.post(
+            f"/api/onboarding/shops/{created['business_id']}/subscription/purchase",
+            headers={"Authorization": f"Bearer {created['access_token']}"},
+            json={
+                "plan_code": "growth",
+                "service_type": "chatbot",
+                "contact_name": "Shop Contact",
+                "contact_email": "contact@shop.test",
+                "contact_phone": "0901234567",
+                "shop_name": "Shop Display Name",
+                "channels": ["Facebook", "Instagram"],
+                "notes": "Please contact after 5pm.",
+            },
+        )
+        self.assertEqual(200, request.status_code, request.text)
+        self.assertEqual("pending", request.json()["status"])
+        repeated = self.client.post(
+            f"/api/onboarding/shops/{created['business_id']}/subscription/purchase",
+            headers={"Authorization": f"Bearer {created['access_token']}"},
+            json={
+                "plan_code": "growth",
+                "service_type": "chatbot",
+                "contact_name": "Updated Contact",
+                "contact_email": "updated@shop.test",
+                "contact_phone": "0907654321",
+                "shop_name": "Updated Shop Name",
+                "channels": ["Telegram", "Zalo"],
+                "notes": "Latest request details.",
+            },
+        )
+        self.assertEqual(200, repeated.status_code, repeated.text)
+        self.assertEqual(request.json()["id"], repeated.json()["id"])
+        with Session(self.engine) as db:
+            subscription = db.query(Subscription).filter(
+                Subscription.business_id == created["business_id"],
+            ).order_by(Subscription.id.desc()).first()
+            self.assertIsNotNone(subscription)
+            self.assertEqual("pending", subscription.status)
+            self.assertEqual("chatbot", subscription.service_type)
+            audit_events = db.query(AuditLog).filter(
+                AuditLog.business_id == created["business_id"],
+                AuditLog.action == "subscription_request_submitted",
+                AuditLog.resource_id == str(subscription.id),
+            ).order_by(AuditLog.id.asc()).all()
+            self.assertEqual(2, len(audit_events))
+            self.assertEqual(
+                {
+                    "contact_name": "Updated Contact",
+                    "contact_email": "updated@shop.test",
+                    "contact_phone": "0907654321",
+                    "shop_name": "Updated Shop Name",
+                    "channels": ["Telegram", "Zalo"],
+                    "notes": "Latest request details.",
+                },
+                audit_events[-1].metadata_["request_details"],
+            )
+
+    def test_shop_agent_can_request_paid_plan_but_cannot_activate_demo(self):
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={
+                "shop_name": "Agent Approval Shop",
+                "owner_name": "Agent Approval Owner",
+                "owner_email": "agent-approval@onboarding.test",
+                "password": "strong-pass-1",
+            },
+        ).json()
+        with Session(self.engine) as db:
+            agent = User(
+                business_id=created["business_id"],
+                full_name="Shop Agent",
+                email="agent@agent-approval.test",
+                role="business_agent",
+                is_active=True,
+            )
+            db.add(agent)
+            db.flush()
+            token, expires_at = issue_token(
+                agent.id,
+                business_id=agent.business_id,
+                role=agent.role,
+            )
+            db.add(AuthSession(
+                user_id=agent.id,
+                token_hash=token_hash(token),
+                expires_at=expires_at,
+                mfa_verified=True,
+            ))
+            db.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        request = self.client.post(
+            f"/api/onboarding/shops/{created['business_id']}/subscription/purchase",
+            headers=headers,
+            json={"plan_code": "growth", "service_type": "chatbot"},
+        )
+        self.assertEqual(200, request.status_code, request.text)
+        self.assertEqual("pending", request.json()["status"])
+
+        demo = self.client.post(
+            f"/api/onboarding/shops/{created['business_id']}/subscription/purchase",
+            headers=headers,
+            json={"plan_code": "demo"},
+        )
+        self.assertEqual(403, demo.status_code, demo.text)
 
     def test_owner_can_connect_encrypted_channel_and_import_products(self):
         settings.CHANNEL_ENCRYPTION_KEY = "test-onboarding-channel-key"
