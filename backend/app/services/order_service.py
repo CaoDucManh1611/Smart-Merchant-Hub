@@ -16,7 +16,10 @@ from app.services.audit_service import record_audit
 
 
 SALES_TRANSITIONS = {
-    "draft": {"confirmed", "cancelled"},
+    # A chatbot-created draft first waits for the customer's explicit invoice
+    # approval, then for the responsible staff member to verify the order.
+    "draft": {"pending_confirmation", "confirmed", "cancelled"},
+    "pending_confirmation": {"confirmed", "cancelled"},
     "confirmed": {"processing", "cancelled"},
     "processing": {"shipped", "cancelled"},
     "shipped": {"delivered"},
@@ -155,7 +158,7 @@ def release_draft_order_reservation(
         Order.id == order_id,
         Order.business_id == business_id,
     ).with_for_update().first()
-    if order is None or order.status != "draft" or int(order.reserved_quantity or 0) <= 0:
+    if order is None or order.status not in {"draft", "pending_confirmation"} or int(order.reserved_quantity or 0) <= 0:
         return order
 
     quantities = _quantities_by_product(_sales_order_items(db, order.id))
@@ -218,7 +221,7 @@ def release_expired_draft_reservations(
         current = current.astimezone(timezone.utc).replace(tzinfo=None)
     order_ids = [row[0] for row in db.query(Order.id).filter(
         Order.business_id == business_id,
-        Order.status == "draft",
+        Order.status.in_(("draft", "pending_confirmation")),
         Order.reserved_quantity > 0,
         Order.reservation_expires_at.is_not(None),
         Order.reservation_expires_at <= current,
@@ -621,7 +624,7 @@ def transition_sales_order(
             ))
         order.reserved_quantity = 0
 
-    elif target == "cancelled" and previous in {"draft", "confirmed", "processing"} and int(order.reserved_quantity or 0) > 0:
+    elif target == "cancelled" and previous in {"draft", "pending_confirmation", "confirmed", "processing"} and int(order.reserved_quantity or 0) > 0:
         for product_id, quantity in quantities_by_product.items():
             product = product_map[product_id]
             reserved = int(product.reserved_quantity or 0)

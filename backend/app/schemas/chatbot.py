@@ -1,6 +1,6 @@
 """API contracts for chatbot runtime controls."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -23,8 +23,27 @@ class ChatbotConfigUpdate(BaseModel):
             return value
         if "timezone" in value and not isinstance(value["timezone"], str):
             raise ValueError("timezone phải là chuỗi")
+        special_dates = value.get("special_dates", {})
+        if not isinstance(special_dates, dict) or len(special_dates) > 366:
+            raise ValueError("Ngày giờ đặc biệt phải là một danh sách tối đa 366 ngày")
+        for special_day, rule in special_dates.items():
+            try:
+                date.fromisoformat(str(special_day))
+            except ValueError as exc:
+                raise ValueError("Ngày đặc biệt phải có dạng YYYY-MM-DD") from exc
+            if not isinstance(rule, dict) or not isinstance(rule.get("closed", False), bool):
+                raise ValueError("Thiết lập ngày đặc biệt không hợp lệ")
+            windows = rule.get("windows", [])
+            if not isinstance(windows, list) or len(windows) > 4:
+                raise ValueError("Ngày đặc biệt tối đa 4 khung giờ")
+            for window in windows:
+                if not isinstance(window, (list, tuple)) or len(window) != 2:
+                    raise ValueError("Khung giờ phải có giờ bắt đầu và kết thúc")
+                for item in window:
+                    if not isinstance(item, str) or len(item) != 5 or item[2] != ":":
+                        raise ValueError("Giờ phải có dạng HH:MM")
         for day, windows in value.items():
-            if day == "timezone":
+            if day in {"timezone", "special_dates"}:
                 continue
             if day not in {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}:
                 raise ValueError(f"Ngày không hợp lệ: {day}")

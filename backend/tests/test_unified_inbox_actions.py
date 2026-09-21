@@ -53,6 +53,8 @@ class UnifiedInboxActionTests(unittest.TestCase):
                 channel="zalo",
                 external_user_id="zalo-customer-1",
                 name="Zalo Buyer",
+                email="buyer@gmail.com",
+                phone="0901234567",
             )
             other_customer = Customer(
                 business_id=other.id,
@@ -171,6 +173,8 @@ class UnifiedInboxActionTests(unittest.TestCase):
         row = next(item for item in listing.json()["items"] if item["conversation_id"] == self.conversation_id)
         self.assertEqual(2, row["unread_count"])
         self.assertEqual("auto", row["bot_mode"])
+        self.assertEqual("buyer@gmail.com", row["customer_email"])
+        self.assertEqual("0901234567", row["customer_phone"])
 
         marked = self.client.post(
             f"/api/conversations/{self.conversation_id}/mark-read",

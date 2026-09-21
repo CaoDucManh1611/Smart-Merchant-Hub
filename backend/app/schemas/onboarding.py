@@ -74,6 +74,25 @@ class OnboardingSubscriptionOut(BaseModel):
     status: str
 
 
+class OnboardingSubscriptionPurchase(BaseModel):
+    plan_code: str = Field(..., min_length=2, max_length=50)
+    service_type: Literal["package", "chatbot"] = "package"
+    contact_name: str = Field(..., min_length=2, max_length=120)
+    contact_email: str = Field(..., min_length=3, max_length=255)
+    contact_phone: str | None = Field(default=None, max_length=40)
+    shop_name: str = Field(..., min_length=2, max_length=160)
+    channels: list[str] = Field(default_factory=list, max_length=10)
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("contact_email")
+    @classmethod
+    def validate_contact_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _EMAIL_RE.fullmatch(normalized):
+            raise ValueError("Email liên hệ không hợp lệ.")
+        return normalized
+
+
 class OnboardingShopOut(BaseModel):
     business_id: int
     shop_name: str

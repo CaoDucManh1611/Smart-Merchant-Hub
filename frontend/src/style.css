@@ -2655,6 +2655,16 @@ button:hover {
   min-width: 0;
 }
 
+.customer-order-items {
+  max-width: 18rem;
+  overflow: hidden;
+  color: #8c655e;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .customer-order-card strong {
   color: #6e2828;
   font-size: 0.78rem;
@@ -6235,6 +6245,47 @@ body,
   color: #a77c75;
   font-size: .65rem;
   font-weight: 500;
+}
+
+.personal-filter-grid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 5px;
+}
+
+.personal-filter-grid label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: #77423e;
+  font-size: .66rem;
+  font-weight: 700;
+}
+
+.personal-filter-grid input {
+  min-width: 0;
+  min-height: 33px;
+  padding: 0 9px;
+  color: #6e3d39;
+  border: 1px solid #efc8c0;
+  border-radius: 9px;
+  outline: 0;
+  background: #fffaf8;
+  font: inherit;
+  font-weight: 500;
+}
+
+.personal-filter-grid input:focus {
+  border-color: #df7770;
+  box-shadow: 0 0 0 3px rgba(223, 119, 112, .12);
+}
+
+.personal-filter-note {
+  margin: 0 0 10px;
+  color: #a77c75;
+  font-size: .64rem;
+  line-height: 1.35;
 }
 
 .tag-chip-list {
@@ -9824,6 +9875,128 @@ body,
   }
 }
 
+/* Customer order approval and special-hours controls stay compact in the
+   narrow Customer 360 panel while remaining readable on touch devices. */
+.customer-order-approval {
+  display: grid;
+  gap: .45rem;
+  margin: .55rem 0;
+  padding: .6rem;
+  border: 1px solid #f0c48b;
+  border-radius: .7rem;
+  background: #fff7ea;
+}
+
+.customer-order-approval-head,
+.customer-order-approval-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .55rem;
+}
+
+.customer-order-approval-head {
+  color: #8c5413;
+  font-size: .72rem;
+}
+
+.customer-order-approval-card > div {
+  display: grid;
+  min-width: 0;
+  gap: .16rem;
+}
+
+.customer-order-approval-card small {
+  overflow: hidden;
+  color: #805f43;
+  font-size: .68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-order-approve-btn {
+  flex: 0 0 auto;
+  color: #fff;
+  border-color: #16836f;
+  background: #16836f;
+}
+
+.customer-order-approval-notice,
+.service-upgrade-note {
+  margin: .45rem 0;
+  color: #27645c;
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
+.special-business-dates {
+  display: grid;
+  gap: .55rem;
+  margin: .75rem 0;
+  padding: .8rem;
+  border: 1px solid var(--owly-border);
+  border-radius: .8rem;
+}
+
+.special-business-dates > p {
+  margin: 0;
+  color: var(--owly-muted);
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+.special-business-date-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+
+.special-business-date-row input[type="date"],
+.special-business-date-row input[type="time"] {
+  min-height: 34px;
+}
+
+.special-business-date-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: var(--owly-ink);
+  font-size: .78rem;
+}
+
+.service-channel-summary {
+  display: grid;
+  gap: .25rem;
+  padding: .8rem;
+  border: 1px solid #b8dfdc;
+  border-radius: .75rem;
+  color: #326872;
+  background: #f1fbfa;
+  font-size: .8rem;
+  line-height: 1.4;
+}
+
+.service-plan-option small + small {
+  color: var(--salon-accent);
+  font-weight: 700;
+}
+
+body.crm-dark .customer-order-approval,
+body.crm-dark .special-business-dates,
+body.crm-dark .service-channel-summary {
+  border-color: #40565b;
+  background: #222d30;
+}
+
+body.crm-dark .customer-order-approval-head,
+body.crm-dark .customer-order-approval-card small,
+body.crm-dark .special-business-dates > p,
+body.crm-dark .service-channel-summary,
+body.crm-dark .service-upgrade-note {
+  color: #c5d4d5;
+}
+
 /* First screen: a focused Owly/Salon-inspired sign-in experience. */
 .crm-app.auth-locked {
   display: block;
@@ -10740,6 +10913,11 @@ body,
   background: var(--salon-accent);
 }
 
+.conversation-unread.urgent {
+  background: #dc3545;
+  box-shadow: 0 0 0 2px rgba(220, 53, 69, .13);
+}
+
 .conversation-channel-pill {
   color: #4f7485;
   background: #eef8f8;
@@ -11018,12 +11196,15 @@ body.crm-dark .inbox-channel-all.active,
 body.crm-dark .inbox-channel-button.active { color: #fff !important; background: #238b92 !important; border-color: #39a7ad !important; }
 body.crm-dark .inbox-search-box { box-shadow: none !important; }
 body.crm-dark .inbox-search-box input,
+body.crm-dark .personal-filter-grid input,
 body.crm-dark .inbox-filter-panel select,
 body.crm-dark .segment-control select { color: #f3f5f6 !important; background: #1a1e20 !important; border-color: #4a555a !important; }
 body.crm-dark .inbox-search-box > span,
 body.crm-dark .filter-panel-heading,
 body.crm-dark .filter-panel-heading button,
 body.crm-dark .filter-panel-heading small,
+body.crm-dark .personal-filter-grid label,
+body.crm-dark .personal-filter-note,
 body.crm-dark .filter-empty,
 body.crm-dark .tag-mode-toggle label { color: #b6c0c5 !important; }
 body.crm-dark .tag-chip { color: #d8ffff !important; background: #253b3d !important; border-color: #3c777a !important; }

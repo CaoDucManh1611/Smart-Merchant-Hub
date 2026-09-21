@@ -71,3 +71,19 @@ class ChatbotAgentToolTests(unittest.TestCase):
             self.assertIsNotNone(ticket)
             db.commit()
             self.assertEqual("human", db.get(Conversation, self.conversation_id).bot_mode)
+
+    def test_special_business_dates_override_the_weekly_schedule(self):
+        with Session(self.engine) as db:
+            config = db.query(ChatbotConfig).filter(ChatbotConfig.business_id == self.business_id).one()
+            config.business_hours = {
+                "timezone": "Asia/Ho_Chi_Minh",
+                "mon": [["08:00", "17:00"]],
+                "special_dates": {
+                    "2026-09-07": {"closed": True, "windows": []},
+                    "2026-09-08": {"closed": False, "windows": [["12:00", "14:00"]]},
+                },
+            }
+            db.commit()
+            self.assertFalse(is_business_open(db, self.business_id, now=datetime(2026, 9, 7, 10, 0)))
+            self.assertFalse(is_business_open(db, self.business_id, now=datetime(2026, 9, 8, 10, 0)))
+            self.assertTrue(is_business_open(db, self.business_id, now=datetime(2026, 9, 8, 12, 30)))

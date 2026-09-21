@@ -118,6 +118,33 @@ def _plan_for(db: Session, business_id: int) -> ServicePlan | None:
     )
 
 
+def _pending_subscription_item(db: Session, subscription: Subscription) -> dict:
+    business = db.get(Business, subscription.business_id)
+    owner = db.query(User).filter(
+        User.business_id == subscription.business_id,
+        User.role.in_(("owner", "admin")),
+    ).order_by(User.id.asc()).first()
+    return {
+        "subscription_id": subscription.id,
+        "business_id": subscription.business_id,
+        "shop_name": business.name if business else f"Shop #{subscription.business_id}",
+        "shop_slug": business.slug if business else "",
+        "plan_name": subscription.plan.name if subscription.plan else "Gói dịch vụ",
+        "service_type": "package",
+        "requested_at": subscription.created_at,
+        "contact_name": owner.full_name if owner else None,
+        "contact_email": (business.email if business else None) or (owner.email if owner else None),
+        "contact_phone": business.phone if business else None,
+        "requester_name": owner.full_name if owner else None,
+        "requester_email": owner.email if owner else None,
+        "owner_name": owner.full_name if owner else None,
+        "owner_email": owner.email if owner else None,
+        "requested_shop_name": business.name if business else None,
+        "requested_channels": [],
+        "request_notes": None,
+    }
+
+
 def _usage_for(db: Session, business_id: int, period_start):
     rows = db.scalars(
         select(SaaSUsage).where(
@@ -288,6 +315,54 @@ def list_shops(
         items=[_shop_out(db, shop, period_start) for shop in shops],
         total=int(total_count),
     )
+
+
+@router.get("/subscription-requests")
+def list_subscription_requests(
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_platform_admin),
+):
+    rows = db.query(Subscription).filter(Subscription.status == "pending").order_by(Subscription.created_at.asc(), Subscription.id.asc()).all()
+    return {"items": [_pending_subscription_item(db, row) for row in rows]}
+
+
+@router.post("/subscription-requests/{subscription_id}/approve")
+def approve_subscription_request(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_platform_admin),
+):
+    row = db.get(Subscription, subscription_id)
+    if row is None or row.status != "pending":
+        raise HTTPException(status_code=404, detail="Yêu cầu gói không còn chờ duyệt.")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for current in db.query(Subscription).filter(
+        Subscription.business_id == row.business_id,
+        Subscription.status == "active",
+        Subscription.id != row.id,
+    ).all():
+        current.status = "cancelled"
+        current.ends_at = now
+    row.status = "active"
+    row.starts_at = now
+    record_audit(db, business_id=row.business_id, user_id=actor.id, action="subscription_change_approved", resource_type="subscription", resource_id=row.id, metadata={"plan_code": row.plan.code if row.plan else None})
+    db.commit()
+    return {"id": row.id, "status": row.status}
+
+
+@router.post("/subscription-requests/{subscription_id}/reject")
+def reject_subscription_request(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_platform_admin),
+):
+    row = db.get(Subscription, subscription_id)
+    if row is None or row.status != "pending":
+        raise HTTPException(status_code=404, detail="Yêu cầu gói không còn chờ duyệt.")
+    row.status = "cancelled"
+    record_audit(db, business_id=row.business_id, user_id=actor.id, action="subscription_change_rejected", resource_type="subscription", resource_id=row.id, metadata={"plan_code": row.plan.code if row.plan else None})
+    db.commit()
+    return {"id": row.id, "status": row.status}
 
 
 @router.get("/shops/{business_id}/subscription", response_model=PlatformSubscriptionOut)

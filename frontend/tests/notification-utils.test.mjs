@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { notificationDestination, unreadNotificationCount } from "../src/notification-utils.js";
+import { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "../src/notification-utils.js";
 
 test("unreadNotificationCount ignores notifications the staff member has already read", () => {
   assert.equal(unreadNotificationCount([
@@ -18,6 +18,37 @@ test("notificationDestination sends a chatbot draft notification to Sales Orders
   }), {
     tab: "orders",
     orderId: 42,
+    conversationId: 9,
+  });
+});
+
+test("notificationDestination sends a customer-confirmed invoice to Sales Orders", () => {
+  assert.deepEqual(notificationDestination({
+    kind: "customer_order_confirmation",
+    metadata: { order_id: 42, conversation_id: 9 },
+  }), {
+    tab: "orders",
+    orderId: 42,
+    conversationId: 9,
+  });
+});
+
+test("critical conversation badges include only unread order approvals and AI handoffs", () => {
+  assert.deepEqual(criticalConversationNotificationCounts([
+    { kind: "new_message", is_read: false, metadata: { conversation_id: 3 } },
+    { kind: "customer_order_confirmation", is_read: false, metadata: { conversation_id: 3 } },
+    { kind: "rag_handoff_required", is_read: false, metadata: { conversation_id: 3 } },
+    { kind: "rag_handoff_required", is_read: true, metadata: { conversation_id: 4 } },
+  ]), { 3: 2 });
+});
+
+test("notificationDestination opens the inbox for an AI handoff", () => {
+  assert.deepEqual(notificationDestination({
+    kind: "rag_handoff_required",
+    metadata: { conversation_id: 9 },
+  }), {
+    tab: "inbox",
+    orderId: null,
     conversationId: 9,
   });
 });

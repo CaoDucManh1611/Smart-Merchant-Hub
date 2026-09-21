@@ -1402,6 +1402,8 @@ def get_conversations(
 
             c.external_user_id,
             c.name AS customer_name,
+            c.email AS customer_email,
+            c.phone AS customer_phone,
             c.avatar_url,
 
             cv.channel,
@@ -1497,7 +1499,15 @@ def get_conversations(
                 WHERE m.conversation_id = cv.id
                   AND m.direction = 'inbound'
                   AND COALESCE(m.status, 'received') != 'read'
-            ) AS unread_count
+            ) AS unread_count,
+
+            (
+                SELECT COUNT(*)
+                FROM orders o
+                WHERE o.conversation_id = cv.id
+                  AND o.business_id = :business_id
+                  AND o.status = 'pending_confirmation'
+            ) AS pending_order_confirmation_count
 
         FROM conversations cv
 

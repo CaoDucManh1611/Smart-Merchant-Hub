@@ -18,6 +18,7 @@ from app.models.customer import Customer
 from app.models.customer_collection import CustomerCollectionSession, CustomerVerificationChallenge
 from app.models.audit_log import AuditLog
 from app.models.message import Message
+from app.models.notification import Notification
 from app.models.saas import SaaSUsage
 from app.models.sales import Order, OrderItem, Product
 from app.services.auto_reply_service import estimate_ai_cost, send_text_reply
@@ -67,7 +68,20 @@ def test_checkout_creates_draft_then_requires_hashed_otp_before_confirmation():
         db.add(customer)
         db.flush()
         db.add(Product(business_id=business.id, sku="SERUM-OTP", name="Serum", price=Decimal("200000"), stock_quantity=5, status="active"))
-        conversation = Conversation(business_id=business.id, customer_id=customer.id, channel="telegram")
+        assignee = User(
+            business_id=business.id,
+            full_name="Responsible Staff",
+            email="responsible@example.test",
+            role="business_agent",
+        )
+        db.add(assignee)
+        db.flush()
+        conversation = Conversation(
+            business_id=business.id,
+            customer_id=customer.id,
+            channel="telegram",
+            assigned_user_id=assignee.id,
+        )
         db.add(conversation)
         db.flush()
 
@@ -107,10 +121,16 @@ def test_checkout_creates_draft_then_requires_hashed_otp_before_confirmation():
             db, business_id=business.id, customer_id=customer.id,
             conversation_id=conversation.id, source_channel="telegram", text="Xác nhận",
         )
-        assert "xác nhận đơn nháp" in confirmed.prompt.lower()
+        assert "xác nhận hóa đơn" in confirmed.prompt.lower()
         db.refresh(order)
-        assert order.status == "draft"
+        assert order.status == "pending_confirmation"
         assert order.metadata_["customer_confirmed"] is True
+        notification = db.query(Notification).filter_by(
+            business_id=business.id,
+            kind="customer_order_confirmation",
+            user_id=assignee.id,
+        ).one()
+        assert notification.metadata_["order_id"] == order.id
 
 
 def test_smtp_checkout_sends_only_email_otp_and_reports_the_channel():

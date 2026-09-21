@@ -620,16 +620,13 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 business_id=self.business_id,
                 kind="chatbot_order_draft",
             ).all()
-            self.assertEqual(1, len(notifications))
-            self.assertEqual("Đơn nháp chatbot cần xác nhận", notifications[0].title)
-            self.assertEqual(order.id, notifications[0].metadata_["order_id"])
-            self.assertEqual(89, notifications[0].metadata_["conversation_id"])
+            self.assertEqual([], notifications)
 
             # Repeated provider delivery after the completed session must not
             # create a duplicate draft order.
             advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=89, source_channel="telegram", text="COD")
             self.assertEqual(1, db.query(Order).filter_by(conversation_id=89).count())
-            self.assertEqual(1, db.query(Notification).filter_by(
+            self.assertEqual(0, db.query(Notification).filter_by(
                 business_id=self.business_id,
                 kind="chatbot_order_draft",
             ).count())

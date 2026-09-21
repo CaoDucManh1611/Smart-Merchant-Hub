@@ -137,6 +137,30 @@ def test_product_question_falls_back_to_tenant_catalog_when_rag_has_no_chunks():
     )
 
 
+def test_rag_without_context_creates_an_urgent_handoff_notification():
+    conversation = Mock(id=4, customer_id=8, assigned_user_id=None, bot_mode="auto")
+    db = Mock()
+    db.query().filter().first.side_effect = [None, conversation]
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+        patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
+        patch("app.services.auto_reply_service.retrieve", return_value=[]), \
+        patch("app.services.auto_reply_service.create_notification") as create_notification:
+        result = process_rag_auto_reply(
+            db=db,
+            conversation_id=4,
+            channel="telegram",
+            query_text="Câu hỏi ngoài dữ liệu",
+            business_id=1,
+        )
+
+    assert result is False
+    create_notification.assert_called_once()
+    assert create_notification.call_args.kwargs["kind"] == "rag_handoff_required"
+    assert create_notification.call_args.kwargs["metadata"]["conversation_id"] == 4
+
+
 def test_order_status_reply_bypasses_rag_and_uses_customer_scoped_flow():
     db = Mock()
     with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \

@@ -18,7 +18,7 @@ from app.database.bootstrap import ensure_default_plans
 from app.database.platform_session import PlatformSessionLocal
 from app.db.dependencies import get_db, get_platform_db
 from app.models.auth_session import AuthSession
-from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.platform_control import PlatformBusiness
 from app.models.platform_control import TenantRegistry
 from app.models.signup_verification import SignupVerificationChallenge
@@ -37,6 +37,7 @@ from app.schemas.onboarding import (
     OnboardingProductImportOut,
     OnboardingShopCreate,
     OnboardingShopOut,
+    OnboardingSubscriptionPurchase,
     OnboardingSubscriptionOut,
     SignupOtpRequestOut,
     SignupOtpVerify,
@@ -180,6 +181,112 @@ def list_onboarding_plans(db: Session = Depends(get_db)):
     plans = ensure_default_plans(db)
     db.commit()
     return [plan for plan in plans if plan.status == "active"]
+
+
+@router.post("/shops/{business_id}/subscription/purchase")
+def purchase_subscription(
+    business_id: int,
+    payload: OnboardingSubscriptionPurchase,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    """Request a plan change without interrupting an active shop plan.
+
+    A paid upgrade is queued for platform approval; the current active
+    subscription remains effective until that approval replaces it.
+    """
+    if actor.business_id != business_id or actor.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    ensure_default_plans(db)
+    plan = _active_plan(db, payload.plan_code)
+    active = db.query(Subscription).filter(
+        Subscription.business_id == business_id,
+        Subscription.status == "active",
+    ).order_by(Subscription.id.desc()).first()
+    pending = db.query(Subscription).filter(
+        Subscription.business_id == business_id,
+        Subscription.status == "pending",
+        Subscription.plan_id == plan.id,
+    ).order_by(Subscription.id.desc()).first()
+    if active is not None and active.plan_id == plan.id:
+        return {"id": active.id, "status": "active", "plan_name": plan.name, "plan_code": plan.code}
+    if pending is not None:
+        return {"id": pending.id, "status": "pending", "plan_name": plan.name, "plan_code": plan.code}
+
+    # Free plans can activate immediately only when the shop has no active
+    # plan. Switching an existing shop always remains an approval workflow.
+    status = "active" if plan.price == 0 and active is None else "pending"
+    subscription = Subscription(
+        business_id=business_id,
+        plan_id=plan.id,
+        status=status,
+        starts_at=_now() if status == "active" else None,
+    )
+    db.add(subscription)
+    business.email = payload.contact_email
+    business.phone = payload.contact_phone or business.phone
+    db.flush()
+    record_audit(
+        db,
+        business_id=business_id,
+        user_id=actor.id,
+        action="subscription_change_requested",
+        resource_type="subscription",
+        resource_id=subscription.id,
+        metadata={"plan_code": plan.code, "service_type": payload.service_type, "channels": []},
+    )
+    db.commit()
+    return {"id": subscription.id, "status": subscription.status, "plan_name": plan.name, "plan_code": plan.code}
+
+
+@router.get("/shops/{business_id}/subscription/summary")
+def subscription_summary(
+    business_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    """Return the account card data used by the service-plan screen."""
+    if actor.business_id != business_id:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+
+    subscription = db.query(Subscription).filter(
+        Subscription.business_id == business_id,
+    ).order_by(Subscription.id.desc()).first()
+    plan = subscription.plan if subscription is not None else None
+    payment = None
+    if subscription is not None:
+        payment = db.query(Payment).filter(
+            Payment.subscription_id == subscription.id,
+        ).order_by(Payment.id.desc()).first()
+    connected_channels = db.query(Channel.id).filter(
+        Channel.business_id == business_id,
+        Channel.status == "active",
+    ).count()
+
+    return {
+        "buyer": {
+            "name": actor.full_name,
+            "email": actor.email,
+            "phone": business.phone,
+            "shop_name": business.name,
+        },
+        "subscription": {
+            "id": subscription.id if subscription else None,
+            "status": subscription.status if subscription else "inactive",
+            "plan_name": plan.name if plan else None,
+            "plan_code": plan.code if plan else None,
+        },
+        "amount": float(payment.amount) if payment else float(plan.price) if plan else 0,
+        "payment_status": payment.status if payment else "pending" if subscription and subscription.status == "pending" else None,
+        "connected_channels": connected_channels,
+        "channel_limit": plan.max_channels if plan else 0,
+    }
 
 
 @router.post("/shops", response_model=OnboardingShopOut, status_code=201)

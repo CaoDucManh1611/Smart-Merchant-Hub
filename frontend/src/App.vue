@@ -14,7 +14,7 @@ import { filterConversationsForCustomer } from "./ticket-utils.js";
 import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
 import { getInboxChannels } from "./inbox-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
-import { notificationDestination, unreadNotificationCount } from "./notification-utils.js";
+import { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
 import { apiFetch } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
@@ -106,6 +106,7 @@ const inboxQuickFilter = ref("all");
 // selected customer's other channels without clearing existing filters.
 const linkedCustomerOnly = ref(false);
 const inboxCustomerFilterId = ref(null);
+const inboxPersonalFilters = ref({ phone: "", email: "" });
 const tagCatalog = ref([]);
 const tagFilters = ref([]);
 const tagFilterMode = ref("all");
@@ -276,7 +277,8 @@ const purchaseOrderForm = ref({
 });
 const purchaseStatuses = ["draft", "submitted", "partially_received", "received", "closed", "cancelled"];
 const salesStatusTransitions = Object.freeze({
-  draft: ["confirmed", "cancelled"],
+  draft: ["pending_confirmation", "confirmed", "cancelled"],
+  pending_confirmation: ["confirmed", "cancelled"],
   confirmed: ["processing", "cancelled"],
   processing: ["shipped", "cancelled"],
   shipped: ["delivered"],
@@ -413,6 +415,13 @@ const customerTimelineSummaryCards = computed(() => {
 const customerVisibleOrderHistory = computed(() => (
   customerOrderHistoryExpanded.value ? customerOrderHistory.value : customerOrderHistory.value.slice(0, 5)
 ));
+const customerConfirmedOrderCount = computed(() => customerOrderHistory.value.filter((order) => (
+  ["confirmed", "processing", "shipped", "delivered", "completed"].includes(String(order?.status || ""))
+)).length);
+const customerPendingApprovalOrders = computed(() => customerOrderHistory.value.filter((order) => (
+  String(order?.status || "") === "pending_confirmation"
+)));
+const customerOrderApprovalNotice = ref("");
 const leads = ref([]);
 const leadsLoading = ref(false);
 const leadSaving = ref(false);
@@ -560,6 +569,7 @@ const chatbotConfigError = ref("");
 const businessHoursJson = ref("");
 const businessHoursForm = ref({ timezone: "Asia/Ho_Chi_Minh", start: "08:00", end: "17:30", enabled: true });
 const businessHoursDays = ref({ mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false });
+const specialBusinessDates = ref([]);
 const businessHourDayLabels = Object.freeze([
   ["mon", "Thứ 2"], ["tue", "Thứ 3"], ["wed", "Thứ 4"], ["thu", "Thứ 5"],
   ["fri", "Thứ 6"], ["sat", "Thứ 7"], ["sun", "Chủ nhật"],
@@ -583,7 +593,7 @@ const serviceRequestForm = ref({
   phone: "",
   shop_name: "",
   plan_code: "growth",
-  channels: ["Facebook", "Instagram"],
+  channels: [],
   notes: "",
 });
 const serviceRequestSubmitted = ref(false);
@@ -599,13 +609,22 @@ const SERVICE_CHANNEL_LIMITS = Object.freeze({ demo: 0, starter: 1, growth: 2, c
 const FALLBACK_SERVICE_PLANS = Object.freeze([
   { code: "starter", name: "Gói Thường", price: 100000, chatbot_rental_price: 100000, description: "Gói gọn nhẹ cho shop mới bắt đầu chăm khách.", max_channels: 1 },
   { code: "growth", name: "Gói VIP", price: 400000, chatbot_rental_price: 400000, description: "Gói cân bằng cho shop cần nhiều kênh và đội ngũ chăm khách.", max_channels: 2 },
+  { code: "scale", name: "Gói Scale", price: 899000, chatbot_rental_price: 899000, description: "Gói cho shop vận hành đồng thời trên 3 nền tảng.", max_channels: 3 },
   { code: "pro", name: "Gói Premium", price: 1000000, chatbot_rental_price: 1000000, description: "Gói đầy đủ cho shop vận hành đa kênh.", max_channels: 4 },
 ]);
 const publicServicePlans = ref([]);
 const activeServicePlans = computed(() => {
-  const catalogue = publicServicePlans.value.length ? publicServicePlans.value : FALLBACK_SERVICE_PLANS;
+  const returnedPlans = publicServicePlans.value;
+  const returnedCodes = new Set(returnedPlans.map((plan) => plan.code));
+  // A running API can still have an older seeded catalogue. Keep the
+  // required public tiers visible until that service is restarted and seeds
+  // the missing plan, without replacing any server-managed price or limit.
+  const catalogue = returnedPlans.length
+    ? [...returnedPlans, ...FALLBACK_SERVICE_PLANS.filter((plan) => !returnedCodes.has(plan.code))]
+    : FALLBACK_SERVICE_PLANS;
   return catalogue
     .filter((plan) => !plan.status || plan.status === "active")
+    .sort((left, right) => Number(left.max_channels || 0) - Number(right.max_channels || 0))
     .map((plan) => {
       const isChatbot = serviceMode.value === "chatbot";
       return {
@@ -1037,11 +1056,34 @@ function saveBusinessHours() {
     return;
   }
   const range = businessHoursForm.value.enabled ? [[start, end]] : [];
-  const hours = { timezone: businessHoursForm.value.timezone || "Asia/Ho_Chi_Minh" };
+  const specialDates = {};
+  for (const item of specialBusinessDates.value) {
+    const date = String(item?.date || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      businessHoursNotice.value = "Mỗi ngày đặc biệt cần có ngày hợp lệ.";
+      return;
+    }
+    if (!item.closed && (!item.start || !item.end || item.start >= item.end)) {
+      businessHoursNotice.value = "Khung giờ đặc biệt phải có giờ mở cửa sớm hơn giờ đóng cửa.";
+      return;
+    }
+    specialDates[date] = item.closed
+      ? { closed: true, windows: [] }
+      : { closed: false, windows: [[item.start, item.end]] };
+  }
+  const hours = { timezone: businessHoursForm.value.timezone || "Asia/Ho_Chi_Minh", special_dates: specialDates };
   businessHourDayLabels.forEach(([key]) => { hours[key] = businessHoursDays.value[key] ? range : []; });
   businessHoursJson.value = JSON.stringify(hours);
-  businessHoursNotice.value = "Đã cập nhật giờ làm việc theo ngày đã chọn.";
+  businessHoursNotice.value = "Đã cập nhật giờ làm việc và các ngày đặc biệt. Trợ lý sẽ áp dụng khi khách gửi tin nhắn.";
   void saveChatbotRuntime();
+}
+
+function addSpecialBusinessDate() {
+  specialBusinessDates.value = [...specialBusinessDates.value, { date: "", closed: true, start: "08:00", end: "17:30" }];
+}
+
+function removeSpecialBusinessDate(index) {
+  specialBusinessDates.value = specialBusinessDates.value.filter((_, itemIndex) => itemIndex !== index);
 }
 
 function saveSlaRules() {
@@ -1075,7 +1117,7 @@ function preferredServicePlanCode() {
 function ensureServicePlanSelection() {
   if (!activeServicePlans.value.some((plan) => plan.code === serviceRequestForm.value.plan_code)) {
     serviceRequestForm.value.plan_code = preferredServicePlanCode();
-    normalizeServiceChannels(true);
+    normalizeServiceChannels(false);
   }
 }
 
@@ -1094,17 +1136,13 @@ async function fetchPublicServicePlans() {
 
 function resetServiceRequestForm() {
   const planCode = preferredServicePlanCode();
-  const plan = activeServicePlans.value.find((item) => item.code === planCode);
-  const channelLimit = Number.isFinite(Number(plan?.max_channels))
-    ? Math.max(0, Number(plan.max_channels))
-    : Math.max(0, Number(SERVICE_CHANNEL_LIMITS[planCode] || 0));
   serviceRequestForm.value = {
     contact_name: authUser.value?.full_name || "",
     email: authUser.value?.email || "",
     phone: "",
     shop_name: authUser.value?.business?.name || authUser.value?.business_name || "",
     plan_code: planCode,
-    channels: SERVICE_CHANNELS.slice(0, channelLimit),
+    channels: [],
     notes: "",
   };
   serviceRequestSubmitted.value = false;
@@ -1130,7 +1168,7 @@ function normalizeServiceChannels(fillToLimit = false) {
 
 function selectServicePlan(planCode) {
   serviceRequestForm.value.plan_code = planCode;
-  normalizeServiceChannels(true);
+  normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
   serviceRequestError.value = "";
   servicePurchaseNotice.value = "";
@@ -1141,7 +1179,7 @@ function selectServicePlan(planCode) {
 function selectServiceMode(mode) {
   serviceMode.value = mode === "chatbot" ? "chatbot" : "package";
   serviceRequestForm.value.plan_code = preferredServicePlanCode();
-  normalizeServiceChannels(true);
+  normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
   serviceRequestReference.value = "";
   serviceRequestError.value = "";
@@ -1192,10 +1230,6 @@ async function submitServiceRequest() {
   }
   if (!/^\S+@\S+\.\S+$/.test(email)) {
     serviceRequestError.value = "Email chưa đúng định dạng. Hãy kiểm tra lại.";
-    return;
-  }
-  if ((form.channels || []).length !== serviceChannelLimit.value) {
-    serviceRequestError.value = `Gói đã chọn yêu cầu chọn đúng ${serviceChannelLimit.value} kênh kết nối.`;
     return;
   }
   if (!authUser.value?.business_id) {
@@ -1825,6 +1859,19 @@ const unreadOperationalNotificationCount = computed(() => (
   unreadNotificationCount(operationalNotifications.value)
 ));
 
+const criticalConversationNotificationCount = computed(() => (
+  criticalConversationNotificationCounts(operationalNotifications.value)
+));
+
+function conversationUrgentCount(item) {
+  // A pending order stays red until its real lifecycle state changes, even if
+  // the staff member has already opened the notification bell.
+  return Math.max(
+    Number(item?.pending_order_confirmation_count || 0),
+    Number(criticalConversationNotificationCount.value[item?.conversation_id] || 0),
+  );
+}
+
 const conversationPriorityActive = computed(() => (
   selectedId.value !== null
   && conversationPriorityIds.value.has(selectedId.value)
@@ -1913,6 +1960,7 @@ function salesOrderProgressIndex(order) {
 function salesOrderStatusLabel(status) {
   const labels = {
     draft: "Mới tạo",
+    pending_confirmation: "Chờ nhân viên xác nhận",
     confirmed: "Đã xác nhận",
     processing: "Đang đóng gói",
     shipped: "Đang giao",
@@ -2214,6 +2262,8 @@ const filtered = computed(() => {
   const keyword = search.value
     .trim()
     .toLowerCase();
+  const phoneQuery = String(inboxPersonalFilters.value.phone || "").replace(/\D/g, "");
+  const emailQuery = String(inboxPersonalFilters.value.email || "").trim().toLowerCase();
 
   return conversations.value.filter(
     (item) => {
@@ -2238,6 +2288,11 @@ const filtered = computed(() => {
       const linkedCustomerOk = !linkedCustomerOnly.value
         || Number(item.customer_id) === Number(selected.value?.customer_id);
 
+      const phoneOk = !phoneQuery
+        || String(item.customer_phone || "").replace(/\D/g, "").includes(phoneQuery);
+      const emailOk = !emailQuery
+        || String(item.customer_email || "").trim().toLowerCase().includes(emailQuery);
+
       const text = [
         item.customer_name,
         item.external_user_id,
@@ -2254,6 +2309,8 @@ const filtered = computed(() => {
         && tagOk
         && segmentOk
         && linkedCustomerOk
+        && phoneOk
+        && emailOk
         &&
         (
           !keyword
@@ -3233,6 +3290,10 @@ function clearInboxSearch() {
   search.value = "";
 }
 
+function clearInboxPersonalFilters() {
+  inboxPersonalFilters.value = { phone: "", email: "" };
+}
+
 function editSavedSegment(segment) {
   if (!segment) return;
   segmentEditingId.value = String(segment.id);
@@ -3978,14 +4039,29 @@ async function transitionSalesOrder(order, toStatus) {
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
     await Promise.all([fetchOrders(), fetchProducts()]);
+    return true;
   } catch (err) {
     orderError.value = friendlyErrorMessage(err, "Chưa thể cập nhật đơn bán. Vui lòng thử lại sau.");
     await fetchOrders();
+    return false;
   } finally {
     const nextSaving = { ...orderTransitionSaving.value };
     delete nextSaving[orderId];
     orderTransitionSaving.value = nextSaving;
   }
+}
+
+async function confirmCustomerOrder(order) {
+  if (!order || String(order.status) !== "pending_confirmation") return;
+  const approved = await requestConfirmation(
+    `Xác nhận đơn ${order.order_number || `#${order.id}`} cho khách? Đơn sẽ chuyển sang trạng thái “Đã xác nhận”.`,
+    { title: "Xác nhận đơn hàng", confirmLabel: "Đồng ý đơn", tone: "primary" },
+  );
+  if (!approved) return;
+  customerOrderApprovalNotice.value = "";
+  const confirmed = await transitionSalesOrder(order, "confirmed");
+  await Promise.all([loadCustomerOrderHistory(order.customer_id), loadConversations(false), fetchOperationalNotifications()]);
+  if (confirmed) customerOrderApprovalNotice.value = `Đã xác nhận ${order.order_number || `đơn #${order.id}`}.`;
 }
 
 function availableProductQuantity(productId) {
@@ -7294,6 +7370,13 @@ async function fetchChatbotRuntime() {
         businessHourDayLabels.map(([key]) => [key, Array.isArray(configuredHours[key]) && configuredHours[key].length > 0]),
       );
       businessHoursForm.value.enabled = Object.values(businessHoursDays.value).some(Boolean);
+      const configuredSpecialDates = configuredHours.special_dates || {};
+      specialBusinessDates.value = Object.entries(configuredSpecialDates).map(([date, rule]) => ({
+        date,
+        closed: Boolean(rule?.closed),
+        start: rule?.windows?.[0]?.[0] || "08:00",
+        end: rule?.windows?.[0]?.[1] || "17:30",
+      })).sort((left, right) => left.date.localeCompare(right.date));
     }
     if (cannedResponse.ok) cannedResponses.value = (await cannedResponse.json()).items || [];
   } catch (err) {
@@ -7940,6 +8023,39 @@ function followupRecommendationLabel(item) {
           <details class="inbox-filter-disclosure">
             <summary>Bộ lọc &amp; nhóm khách hàng</summary>
             <div class="inbox-filter-panel">
+              <div class="filter-panel-heading">
+                <span>Thông tin cá nhân</span>
+                <button
+                  v-if="inboxPersonalFilters.phone || inboxPersonalFilters.email"
+                  type="button"
+                  @click="clearInboxPersonalFilters"
+                >Xóa lọc</button>
+              </div>
+              <div class="personal-filter-grid">
+                <label>
+                  <span>Số điện thoại</span>
+                  <input
+                    v-model="inboxPersonalFilters.phone"
+                    inputmode="tel"
+                    autocomplete="off"
+                    aria-label="Lọc khách hàng theo số điện thoại"
+                    placeholder="Nhập số điện thoại"
+                  />
+                </label>
+                <label>
+                  <span>Gmail / email</span>
+                  <input
+                    v-model="inboxPersonalFilters.email"
+                    type="search"
+                    autocomplete="off"
+                    aria-label="Lọc khách hàng theo Gmail hoặc email"
+                    placeholder="Nhập Gmail hoặc email"
+                    @keydown.escape="clearInboxPersonalFilters"
+                  />
+                </label>
+              </div>
+              <p class="personal-filter-note">Lọc theo thông tin đã được khách hàng cung cấp.</p>
+
               <div class="filter-panel-heading"><span>Nhãn khách hàng</span><button v-if="tagFilters.length" type="button" @click="tagFilters = []">Bỏ chọn</button></div>
               <div v-if="tagCatalog.length" class="tag-chip-list">
                 <button v-for="tag in tagCatalog" :key="tag.id" type="button" class="tag-chip" :class="{ active: tagFilters.includes(tag.name) }" @click="toggleTagFilter(tag.name)">
@@ -8028,7 +8144,12 @@ function followupRecommendationLabel(item) {
                     {{ nameOf(item) }}
                   </strong>
                   <div class="conversation-status">
-                    <span v-if="item.unread_count" class="conversation-unread">{{ item.unread_count }}</span>
+                    <span
+                      v-if="conversationUrgentCount(item)"
+                      class="conversation-unread urgent"
+                      title="Cần xử lý: khách xác nhận đơn hoặc AI cần nhân viên hỗ trợ"
+                    >{{ conversationUrgentCount(item) }}</span>
+                    <span v-else-if="item.unread_count" class="conversation-unread">{{ item.unread_count }}</span>
                     <time>{{ formatTime(item.last_message_at) }}</time>
                   </div>
                 </div>
@@ -9514,10 +9635,18 @@ function followupRecommendationLabel(item) {
 
               <div class="section customer-orders-section">
                 <div class="section-head">
-                  <h4>Đơn hàng đã đặt</h4>
+                  <h4>Đơn hàng &amp; sản phẩm đã mua</h4>
                   <span>{{ customerOrderHistory.length }}</span>
                 </div>
-                <p class="customer-section-hint">Các hóa đơn/đơn bán trước đây của khách hàng này.</p>
+                <p class="customer-section-hint">Hóa đơn trước đây và các sản phẩm khách đã mua.</p>
+                <div v-if="customerPendingApprovalOrders.length" class="customer-order-approval" role="status">
+                  <div class="customer-order-approval-head"><strong>{{ customerPendingApprovalOrders.length }} đơn chờ xác nhận</strong><span>Khách đã duyệt hóa đơn</span></div>
+                  <article v-for="order in customerPendingApprovalOrders" :key="`customer-order-approval-${order.id}`" class="customer-order-approval-card">
+                    <div><strong>{{ order.order_number || `Đơn #${order.id}` }}</strong><small>{{ order.items?.map((item) => `${item.product_name || item.name || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') || 'Chưa có sản phẩm' }}</small><small>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ · {{ order.shipping_phone || 'Chưa có SĐT giao hàng' }}</small></div>
+                    <button type="button" class="table-action-btn customer-order-approve-btn" :disabled="orderTransitionSaving[order.id]" @click="confirmCustomerOrder(order)">{{ orderTransitionSaving[order.id] ? 'Đang xác nhận...' : 'Đồng ý đơn' }}</button>
+                  </article>
+                </div>
+                <p v-if="customerOrderApprovalNotice" class="customer-order-approval-notice" role="status">{{ customerOrderApprovalNotice }}</p>
                 <div v-if="customerOrderHistoryLoading" class="customer-timeline-placeholder">Đang tải lịch sử đơn hàng...</div>
                 <div v-else-if="!customerOrderHistory.length" class="customer-timeline-placeholder">Khách hàng chưa có đơn hàng.</div>
                 <div v-else class="customer-order-history">
@@ -9525,6 +9654,9 @@ function followupRecommendationLabel(item) {
                     <div>
                       <strong>{{ order.order_number || `Đơn #${order.id}` }}</strong>
                       <small>{{ order.created_at ? new Date(order.created_at).toLocaleDateString('vi-VN') : 'Chưa rõ ngày đặt' }}</small>
+                      <small v-if="order.items?.length" class="customer-order-items">
+                        {{ order.items.map((item) => `${item.name || item.sku || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') }}
+                      </small>
                     </div>
                     <div class="customer-order-card-meta">
                       <span>{{ salesOrderStatusLabel(order.status) }}</span>
@@ -9707,6 +9839,19 @@ function followupRecommendationLabel(item) {
 
                   <b>
                     {{ outboundCount }}
+                  </b>
+
+                </div>
+
+
+                <div>
+
+                  <span>
+                    Đơn đã chốt
+                  </span>
+
+                  <b>
+                    {{ customerConfirmedOrderCount }}
                   </b>
 
                 </div>
@@ -10554,7 +10699,7 @@ function followupRecommendationLabel(item) {
       <section v-if="currentTab === 'documents'" class="rag-docs-layout">
         <div class="rag-header-panel">
           <div>
-            <h2>Kho thông tin</h2>
+            <h2>Kho kiến thức</h2>
             <p>Nạp tài liệu sản phẩm, câu hỏi thường gặp, chính sách... để trợ lý tự động học và trả lời khách hàng qua Facebook, Instagram và Telegram.</p>
           </div>
           <div class="rag-stats">
@@ -10626,7 +10771,7 @@ function followupRecommendationLabel(item) {
           </div>
 
           <div v-else-if="!documents.length" class="empty-docs-state">
-            📭 Chưa có tài liệu nào trong Kho thông tin. Hãy nhập tệp hoặc dán văn bản ở trên!
+            📭 Chưa có tài liệu nào trong Kho kiến thức. Hãy nhập tệp hoặc dán văn bản ở trên!
           </div>
 
           <table v-else class="docs-table">
@@ -10714,7 +10859,7 @@ function followupRecommendationLabel(item) {
 
           <div class="setting-card">
             <h3>Cách trợ lý trả lời</h3>
-            <p class="setting-desc">Trợ lý tự chọn thông tin phù hợp trong Kho thông tin của shop. Các thiết lập kỹ thuật được hệ thống tối ưu sẵn.</p>
+            <p class="setting-desc">Trợ lý tự chọn thông tin phù hợp trong Kho kiến thức của shop. Các thiết lập kỹ thuật được hệ thống tối ưu sẵn.</p>
             <div class="config-item"><span class="config-val">✓ Luôn ưu tiên nội dung mới nhất</span></div>
             <div class="config-item"><span class="config-val">✓ Chỉ dùng dữ liệu của shop này</span></div>
           </div>
@@ -10921,6 +11066,7 @@ function followupRecommendationLabel(item) {
           <div class="settings-card-header"><div><span class="card-eyebrow">VẬN HÀNH SHOP</span><h2>Giờ làm việc</h2><p>Trợ lý sẽ báo đúng thời gian phục vụ và chuyển người hỗ trợ khi shop ngoài giờ.</p></div><span class="connection-badge connected">ĐANG DÙNG</span></div>
           <div class="business-hours-grid"><label>Múi giờ<select v-model="businessHoursForm.timezone"><option value="Asia/Ho_Chi_Minh">Việt Nam (UTC+7)</option><option value="Asia/Bangkok">Bangkok (UTC+7)</option></select></label><label>Giờ mở cửa<input v-model="businessHoursForm.start" type="time" /></label><label>Giờ đóng cửa<input v-model="businessHoursForm.end" type="time" /></label><label class="checkbox-field business-hours-enabled"><input v-model="businessHoursForm.enabled" type="checkbox" /> Shop đang mở cửa</label></div>
           <fieldset class="business-days-fieldset"><legend>Ngày phục vụ</legend><div class="business-day-options"><label v-for="([key, label]) in businessHourDayLabels" :key="key" class="business-day-option" :class="{ selected: businessHoursDays[key] }"><input v-model="businessHoursDays[key]" type="checkbox" :disabled="!businessHoursForm.enabled" /><span>{{ label }}</span></label></div><small class="field-hint">Bỏ chọn ngày nghỉ; cùng một khung giờ sẽ áp dụng cho các ngày đã chọn.</small></fieldset>
+          <fieldset class="special-business-dates"><legend>Giờ đặc biệt</legend><p>Ngày đặc biệt sẽ ghi đè lịch hằng tuần. Khi khách nhắn vào ngày/giờ đóng cửa, trợ lý gửi phản hồi ngoài giờ; hệ thống không tự nhắn hàng loạt chỉ vì bạn đổi lịch.</p><div v-if="!specialBusinessDates.length" class="settings-empty">Chưa có ngày đặc biệt.</div><div v-for="(item, index) in specialBusinessDates" :key="`${item.date}-${index}`" class="special-business-date-row"><input v-model="item.date" type="date" aria-label="Ngày đặc biệt" /><label><input v-model="item.closed" type="checkbox" /> Nghỉ cả ngày</label><template v-if="!item.closed"><input v-model="item.start" type="time" aria-label="Giờ mở đặc biệt" /><span>đến</span><input v-model="item.end" type="time" aria-label="Giờ đóng đặc biệt" /></template><button type="button" class="history-btn" @click="removeSpecialBusinessDate(index)">Xóa</button></div><button type="button" class="table-action-btn secondary" @click="addSpecialBusinessDate">+ Thêm ngày đặc biệt</button></fieldset>
           <div v-if="businessHoursNotice" class="settings-notice" role="status">{{ businessHoursNotice }}</div><button type="button" class="primary-btn" @click="saveBusinessHours">Lưu giờ làm việc</button>
         </div>
       </section>
@@ -11383,7 +11529,7 @@ function followupRecommendationLabel(item) {
             <div><span>Tên shop</span><strong>{{ serviceAccountSummary.buyer?.shop_name || '—' }}</strong><small>{{ serviceAccountSummary.buyer?.phone || 'Chưa cập nhật số điện thoại' }}</small></div>
             <div><span>Gói đang dùng</span><strong>{{ serviceAccountSummary.subscription?.plan_name || 'Chưa chọn gói' }}</strong><small>{{ subscriptionStatusLabel(serviceAccountSummary.subscription?.status) }}</small></div>
             <div><span>Thanh toán gần nhất</span><strong>{{ serviceAccountSummary.amount == null ? 'Chưa có' : `${Number(serviceAccountSummary.amount).toLocaleString('vi-VN')}đ` }}</strong><small>{{ serviceAccountSummary.payment_status === 'paid' ? 'Đã thanh toán' : 'Chưa ghi nhận thanh toán' }}</small></div>
-            <div><span>Kênh đang dùng</span><strong>{{ serviceAccountSummary.connected_channels }} / {{ serviceAccountSummary.channel_limit ?? '—' }}</strong><small>Facebook, Instagram, Telegram, Zalo</small></div>
+            <div><span>Kênh đang dùng</span><strong>{{ serviceAccountSummary.connected_channels }} / {{ serviceAccountSummary.channel_limit ?? '—' }}</strong><small>Kết nối thực tế được quản lý tại mục Kết nối mạng xã hội</small></div>
           </div>
           <div v-else class="settings-empty">Chưa có thông tin gói. Hãy chọn một gói bên dưới.</div>
         </article>
@@ -11415,7 +11561,7 @@ function followupRecommendationLabel(item) {
             </div>
             <form v-else class="service-request-form" @submit.prevent="submitServiceRequest">
               <div class="service-request-heading"><div><span class="service-page-kicker">CHỌN GÓI</span><h2>{{ serviceMode === 'chatbot' ? 'Thuê riêng trợ lý chatbot' : 'Mua gói dịch vụ cho shop' }}</h2></div><span class="service-request-badge">{{ servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? 'Dùng thử ngay' : 'Admin duyệt' }}</span></div>
-              <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ để đội ngũ cài nội dung, kết nối kênh và bàn giao trợ lý cho shop.' : `Gói đã chọn cho phép kết nối tối đa ${serviceChannelLimit} kênh. Chọn đúng số kênh để tiếp tục đăng ký.` }}</p>
+              <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ để đội ngũ cài nội dung, kết nối kênh và bàn giao trợ lý cho shop.' : `Gói đã chọn cho phép kết nối tối đa ${serviceChannelLimit} nền tảng. Việc kết nối thực tế được thực hiện duy nhất tại mục Kết nối mạng xã hội.` }}</p>
               <div v-if="serviceRequestError" class="service-request-error" role="alert">{{ serviceRequestError }}</div>
               <div class="service-request-fields">
                 <label>Người liên hệ<input v-model="serviceRequestForm.contact_name" required maxlength="120" placeholder="Nguyễn Văn A" /></label>
@@ -11423,7 +11569,7 @@ function followupRecommendationLabel(item) {
                 <label>Số điện thoại <span>(không bắt buộc)</span><input v-model="serviceRequestForm.phone" type="tel" maxlength="30" placeholder="0901 234 567" /></label>
                 <label>Tên shop<input v-model="serviceRequestForm.shop_name" required maxlength="160" placeholder="Shop của bạn" /></label>
               </div>
-              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><em>{{ plan.price }}</em></span></label></div></fieldset>
+              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><small>{{ plan.max_channels }} nền tảng kết nối</small><em>{{ plan.price }}</em></span></label></div></fieldset>
               <div v-if="authUser" class="service-purchase-box">
                 <div v-if="servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo'"><strong>Gói Demo được mở ngay</strong><small>Sau khi gửi đăng ký, shop có thể dùng thử ngay khi không gian dữ liệu sẵn sàng.</small></div>
                 <div v-else><strong>Gói trả phí cần admin xác nhận</strong><small>Yêu cầu được chuyển vào hàng chờ duyệt. CRM chỉ mở sau khi admin duyệt và hệ thống chuẩn bị xong dữ liệu riêng.</small></div>
@@ -11436,7 +11582,8 @@ function followupRecommendationLabel(item) {
                   <button type="button" class="history-btn" @click="openSettings">Quản lý nhân viên</button>
                 </div>
               </div>
-              <fieldset class="service-channel-picker"><legend>Shop muốn kết nối kênh nào? <small>{{ serviceRequestForm.channels.length }}/{{ serviceChannelLimit }} kênh</small></legend><div class="service-channel-options"><label v-for="channel in SERVICE_CHANNELS" :key="channel" :class="{ selected: serviceRequestForm.channels.includes(channel) }"><input type="checkbox" :checked="serviceRequestForm.channels.includes(channel)" :disabled="!serviceRequestForm.channels.includes(channel) && serviceRequestForm.channels.length >= serviceChannelLimit" @change="toggleServiceChannel(channel)" /><span>{{ channel }}</span></label></div><p v-if="serviceRequestForm.channels.length >= serviceChannelLimit" class="service-channel-hint">Gói này đã đủ số lượng kênh. Đổi gói nếu shop cần thêm kênh.</p></fieldset>
+              <div class="service-channel-summary"><strong>Hạn mức nền tảng: {{ serviceChannelLimit }}</strong><span>Không chọn nền tảng tại đây để tránh lệch dữ liệu. Sau khi gói được duyệt, vào <b>Kết nối mạng xã hội</b> để kết nối đúng các nền tảng shop đang dùng.</span></div>
+              <p v-if="authUser" class="service-upgrade-note">Nâng cấp không cần hủy gói hiện tại: gói cũ vẫn hoạt động trong khi yêu cầu chờ duyệt; khi duyệt, hệ thống thay thế bằng gói mới.</p>
               <label class="service-request-notes">Ghi chú thêm <span>(không bắt buộc)</span><textarea v-model="serviceRequestForm.notes" rows="3" maxlength="1000" placeholder="Ví dụ: shop cần bot trả lời ngoài giờ hoặc hỗ trợ nhiều nhân viên..."></textarea></label>
               <button type="submit" class="primary-btn service-submit" :disabled="servicePurchaseLoading">{{ servicePurchaseLoading ? 'Đang gửi yêu cầu...' : servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? 'Kích hoạt gói Demo' : serviceMode === 'chatbot' ? 'Gửi yêu cầu thuê trợ lý' : 'Gửi yêu cầu thuê gói' }} <span aria-hidden="true">→</span></button>
               <small class="service-form-footnote">Gói trả phí chỉ được mở sau khi quản trị viên nền tảng xác nhận yêu cầu.</small>

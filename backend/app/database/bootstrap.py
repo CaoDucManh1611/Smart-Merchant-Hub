@@ -58,6 +58,19 @@ DEFAULT_PLANS = (
         "features": {"onboarding": True, "support": "priority"},
     },
     {
+        "code": "scale",
+        "name": "Scale",
+        "description": "Cho shop cần vận hành trên 3 nền tảng bán hàng.",
+        "price": Decimal("899000"),
+        "max_users": 20,
+        "max_channels": 3,
+        "max_documents": 100,
+        "max_rag_chunks": 5000,
+        "max_ai_calls": 12000,
+        "max_ai_cost": Decimal("500"),
+        "features": {"onboarding": True, "support": "priority"},
+    },
+    {
         "code": "pro",
         "name": "Pro",
         "description": "Cho đội ngũ lớn và nhu cầu AI cao.",
@@ -76,9 +89,9 @@ DEFAULT_PLANS = (
 def ensure_default_plans(db: Session) -> list[ServicePlan]:
     """Seed safe, free-to-read plans for a fresh self-service deployment."""
     existing = db.query(ServicePlan).order_by(ServicePlan.id.asc()).all()
-    if existing:
-        return existing
-    plans = [ServicePlan(**payload) for payload in DEFAULT_PLANS]
-    db.add_all(plans)
+    existing_codes = {plan.code for plan in existing}
+    plans = [ServicePlan(**payload) for payload in DEFAULT_PLANS if payload["code"] not in existing_codes]
+    if plans:
+        db.add_all(plans)
     db.flush()
-    return plans
+    return db.query(ServicePlan).order_by(ServicePlan.id.asc()).all()

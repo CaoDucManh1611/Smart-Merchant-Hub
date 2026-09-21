@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.customer import Customer
+from app.models.conversation import Conversation
 from app.models.customer_collection import (
     CustomerAddress,
     CustomerCollectionSession,
@@ -46,6 +47,7 @@ from app.services.product_resolver import (
     resolve_product_mentions,
 )
 from app.services.notification_service import create_notification
+from app.services.realtime import manager
 from app.db.database import SessionLocal
 
 
@@ -254,6 +256,22 @@ def _format_vnd(value: object) -> str:
     except (InvalidOperation, TypeError, ValueError):
         amount = Decimal("0")
     return f"{amount:,.0f}".replace(",", ".")
+
+
+def _invoice_confirmation_prompt(order: Order, *, payment_method: str | None = None) -> str:
+    """Show a clear invoice before the customer can hand work to staff."""
+    items = ", ".join(
+        f"{item.product_name_snapshot or item.sku_snapshot or 'Sản phẩm'} × {item.quantity}"
+        for item in (order.items or [])
+    ) or "Sản phẩm đang chờ cập nhật"
+    payment = "COD" if payment_method == "cod" else "chuyển khoản"
+    return (
+        f"🧾 Hóa đơn tạm tính {order.order_number}\n"
+        f"• Sản phẩm: {items}\n"
+        f"• Tổng tiền: {_format_vnd(order.total_amount)} đồng\n"
+        f"• Thanh toán: {payment}\n"
+        f"Bạn kiểm tra và nhắn “Xác nhận” để chuyển đơn cho nhân viên phụ trách duyệt nhé."
+    )
 
 
 def _extract_quantity(text: str) -> int:
@@ -1004,7 +1022,7 @@ def _advance_checkout_verification(
             session_id=session.id,
             status=session.status,
             current_field=None,
-            prompt="Thông tin liên hệ đã xác thực. Bạn xác nhận chốt đơn này chứ?",
+            prompt=_invoice_confirmation_prompt(order, payment_method=collected.get("payment_method")),
         )
 
     code = _extract_otp(text)
@@ -1093,7 +1111,7 @@ def _advance_checkout_verification(
         session_id=session.id,
         status=session.status,
         current_field=None,
-        prompt=f"Thông tin liên hệ đã xác thực cho đơn nháp {order.order_number}. Bạn xác nhận chốt đơn này chứ?",
+        prompt=_invoice_confirmation_prompt(order, payment_method=collected.get("payment_method")),
     )
 
 
@@ -1284,6 +1302,7 @@ def _create_draft_order_for_session(
             "source": "chatbot_collection",
             "collection_session_id": session.id,
             "payment_method": collected.get("payment_method"),
+            "invoice_confirmation_status": "awaiting_customer",
             "items": [
                 {
                     "product_id": product.id,
@@ -1320,25 +1339,9 @@ def _create_draft_order_for_session(
         db.delete(order)
         db.flush()
         return None, exc.detail
-    item_summary = ", ".join(
-        f"{product.name} × {quantity}"
-        for product, quantity, _unit_price in validated_items
-    )
-    create_notification(
-        db,
-        business_id=session.business_id,
-        kind="chatbot_order_draft",
-        title="Đơn nháp chatbot cần xác nhận",
-        body=(
-            f"{order.order_number}: {item_summary} đã có đủ thông tin giao hàng. "
-            "Mở Đơn bán để kiểm tra và xác nhận đơn."
-        ),
-        metadata={
-            "order_id": order.id,
-            "conversation_id": session.conversation_id,
-            "customer_id": session.customer_id,
-        },
-    )
+    # Do not notify staff when the draft is created. The customer must review
+    # the invoice first; staff receive a targeted notification only after the
+    # explicit customer approval below.
     collected["draft_order_id"] = order.id
     session.collected_fields = collected
     return order, None
@@ -1558,9 +1561,26 @@ def advance_customer_collection(
                 prompt=f"Bạn xác nhận chốt đơn nháp {order.order_number} chứ?",
                 draft_order_id=order.id,
             )
+        try:
+            transition_sales_order(
+                db,
+                order_id=order.id,
+                to_status="pending_confirmation",
+                actor_id=None,
+                business_id=business_id,
+            )
+        except SalesOrderOperationError:
+            return CollectionFlowResult(
+                session_id=session.id,
+                status=session.status,
+                current_field=None,
+                prompt="Đơn này vừa được cập nhật. Nhân viên sẽ kiểm tra và phản hồi cho bạn nhé.",
+                draft_order_id=order.id,
+            )
         metadata = dict(order.metadata_ or {})
         metadata["customer_confirmed"] = True
         metadata["customer_confirmed_at"] = _now().isoformat()
+        metadata["invoice_confirmation_status"] = "customer_confirmed"
         order.metadata_ = metadata
         session.collected_fields = {**collected_state, "awaiting_customer_confirmation": False, "confirmation_status": "customer_confirmed"}
         session.last_activity_at = _now()
@@ -1574,12 +1594,27 @@ def advance_customer_collection(
             correlation_id=f"checkout:{session.id}",
             metadata={"conversation_id": conversation_id, "customer_id": customer_id},
         )
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id,
+            Conversation.business_id == business_id,
+        ).first() if conversation_id is not None else None
+        # An offline assignee cannot receive a user-targeted websocket alert. In
+        # that case leave it unassigned so every available staff member can see
+        # the urgent order confirmation instead.
+        notification_user_id = (
+            conversation.assigned_user_id
+            if conversation is not None
+            and conversation.assigned_user_id is not None
+            and manager.is_user_connected(int(conversation.assigned_user_id))
+            else None
+        )
         create_notification(
             db,
             business_id=business_id,
-            kind="chatbot_order_customer_confirmed",
-            title="Khách đã xác nhận đơn nháp",
-            body=f"{order.order_number}: khách đã xác thực liên hệ và xác nhận. Nhân viên kiểm tra để tạo đơn chính thức.",
+            user_id=notification_user_id,
+            kind="customer_order_confirmation",
+            title="Khách đã xác nhận hóa đơn",
+            body=f"{order.order_number}: khách đã xác nhận hóa đơn. Vui lòng kiểm tra và xác nhận đơn bán.",
             metadata={"order_id": order.id, "conversation_id": conversation_id, "customer_id": customer_id},
         )
         db.commit()
@@ -1587,7 +1622,7 @@ def advance_customer_collection(
             session_id=session.id,
             status=session.status,
             current_field=None,
-            prompt=f"Mình đã ghi nhận bạn xác nhận đơn nháp {order.order_number}. Nhân viên sẽ tạo đơn chính thức và báo lại cho bạn nhé.",
+            prompt=f"Mình đã ghi nhận xác nhận hóa đơn {order.order_number}. Đơn đang chờ nhân viên phụ trách xác nhận và sẽ báo lại cho bạn nhé.",
             completed=True,
             draft_order_id=order.id,
         )
@@ -1832,10 +1867,9 @@ def advance_customer_collection(
                 demo_codes=list(getattr(session, "_otp_demo_codes", []) or []),
             )
         else:
-            prompt = (
-                f"Mình đã tạo đơn nháp {draft_order.order_number} cho {collected['name']}. "
-                f"Phương thức thanh toán: {'COD' if collected['payment_method'] == 'cod' else 'chuyển khoản'}. "
-                f"Thông tin liên hệ đã xác thực. Bạn xác nhận chốt đơn {draft_order.order_number} chứ?"
+            prompt = _invoice_confirmation_prompt(
+                draft_order,
+                payment_method=collected.get("payment_method"),
             )
     else:
         prompt = (
