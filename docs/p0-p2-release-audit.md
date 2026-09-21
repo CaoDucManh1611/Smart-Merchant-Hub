@@ -33,7 +33,7 @@ bulk actions tổng quát, agency white-label và schema-per-tenant vật lý v�
 | Docker runtime | **5/5 running và healthy** |
 | Backend `/health` | **HTTP 200 / `ok`** |
 | OpenAPI | **190 paths / 241 operations / 241 operation IDs duy nhất** |
-| Alembic | **`20260913_0042`** |
+| Alembic | **`20260919_0043`** |
 | PostgreSQL tenant RLS | **59 policies / 59 tables** |
 | RLS probe với tenant không tồn tại | **0 customer rows visible** |
 | Dữ liệu runtime | **8 conversations / 713 messages** trong `crm16_restore` |

@@ -2490,6 +2490,198 @@ button:hover {
   line-height: 1.35;
 }
 
+.customer-section-hint {
+  margin: -0.15rem 0 0.65rem;
+  color: #8c655e;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.customer-timeline-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0.65rem;
+  border: 1px solid #f2d8d1;
+  border-radius: 0.7rem;
+  background: #fffaf8;
+}
+
+.customer-timeline-filters label {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  color: #8c655e;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.customer-timeline-filters input,
+.customer-timeline-filters select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid #efc8c0;
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.45rem;
+  color: #6e2828;
+  background: #fff;
+  font: inherit;
+  font-size: 0.72rem;
+}
+
+.customer-timeline-filters label:nth-child(3),
+.customer-timeline-filter-actions {
+  grid-column: 1 / -1;
+}
+
+.customer-timeline-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.customer-timeline-filter-actions .table-action-btn {
+  margin-top: 0;
+}
+
+.customer-timeline-filter-actions .table-action-btn.secondary {
+  color: #8c655e;
+  background: transparent;
+  border-color: #efc8c0;
+}
+
+.customer-filter-note {
+  margin: 0.45rem 0 0;
+  color: #9a7771;
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.customer-timeline-placeholder {
+  margin-top: 0.55rem;
+  padding: 0.7rem;
+  border: 1px dashed #efc8c0;
+  border-radius: 0.65rem;
+  color: #8c655e;
+  background: #fffaf8;
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.customer-timeline-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+}
+
+.customer-timeline-summary-card {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid #f2d8d1;
+  border-radius: 0.6rem;
+  background: #fffaf8;
+}
+
+.customer-timeline-summary-card strong {
+  color: #6e2828;
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.customer-timeline-summary-card span {
+  color: #7e4b45;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.customer-timeline-summary-card small {
+  overflow: hidden;
+  color: #9a7771;
+  font-size: 0.62rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-timeline-detail-toggle {
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.55rem;
+}
+
+.customer-timeline-detail-toggle .table-action-btn {
+  justify-self: start;
+  margin-top: 0;
+}
+
+.customer-timeline-detail-toggle > span {
+  color: #9a7771;
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
+
+.customer-timeline-row p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.customer-order-history {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.customer-order-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.65rem;
+  border: 1px solid #f2d8d1;
+  border-radius: 0.65rem;
+  background: #fffaf8;
+}
+
+.customer-order-card > div,
+.customer-order-card-meta {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.customer-order-items {
+  max-width: 18rem;
+  overflow: hidden;
+  color: #8c655e;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-order-card strong {
+  color: #6e2828;
+  font-size: 0.78rem;
+}
+
+.customer-order-card small,
+.customer-order-card-meta span {
+  color: #8c655e;
+  font-size: 0.68rem;
+}
+
+.customer-order-card-meta {
+  flex: 0 0 auto;
+  justify-items: end;
+  text-align: right;
+}
+
 .timeline-load-more {
   width: 100%;
   margin-top: 8px;
@@ -6055,6 +6247,47 @@ body,
   font-weight: 500;
 }
 
+.personal-filter-grid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 5px;
+}
+
+.personal-filter-grid label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: #77423e;
+  font-size: .66rem;
+  font-weight: 700;
+}
+
+.personal-filter-grid input {
+  min-width: 0;
+  min-height: 33px;
+  padding: 0 9px;
+  color: #6e3d39;
+  border: 1px solid #efc8c0;
+  border-radius: 9px;
+  outline: 0;
+  background: #fffaf8;
+  font: inherit;
+  font-weight: 500;
+}
+
+.personal-filter-grid input:focus {
+  border-color: #df7770;
+  box-shadow: 0 0 0 3px rgba(223, 119, 112, .12);
+}
+
+.personal-filter-note {
+  margin: 0 0 10px;
+  color: #a77c75;
+  font-size: .64rem;
+  line-height: 1.35;
+}
+
 .tag-chip-list {
   display: flex;
   flex-wrap: wrap;
@@ -6162,6 +6395,28 @@ body,
 .conversation-scroll {
   padding: 5px 9px 7px;
   border-top: 1px solid #f5e1dc;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.conversation-load-state {
+  display: grid;
+  place-items: center;
+  min-height: 44px;
+  margin: 6px 2px 2px;
+  color: #a47771;
+  font-size: .68rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.conversation-load-hint {
+  color: #8a625d;
+}
+
+.conversation-load-end {
+  color: #b08b85;
+  font-weight: 600;
 }
 
 .conversation {
@@ -6395,6 +6650,21 @@ body,
   border-color: #d72431;
 }
 
+.chat-shell .chat-tools > .linked-customer-toggle {
+  display: inline-grid;
+  place-items: center;
+}
+
+.chat-shell .linked-customer-toggle svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .conversation-actions-popover {
   position: absolute;
   z-index: 10;
@@ -6536,6 +6806,34 @@ body,
 .chat-composer .composer-tabs button.active {
   color: #d72431;
   border-bottom-color: #d72431;
+}
+
+.chat-composer .composer-access-notice {
+  order: 1;
+  margin: 9px 0 0;
+  color: #5f7a73;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.chat-composer .composer-access-notice.is-read-only {
+  padding: 7px 9px;
+  border: 1px solid #efd2cb;
+  border-radius: 8px;
+  color: #9a5148;
+  background: #fff4f1;
+}
+
+.chat-composer textarea:disabled {
+  cursor: not-allowed;
+  color: #a38480;
+  background: #fff8f6;
+}
+
+.chat-composer button:disabled,
+.chat-composer select:disabled {
+  cursor: not-allowed;
+  opacity: .48;
 }
 
 .chat-composer textarea {
@@ -9577,6 +9875,128 @@ body,
   }
 }
 
+/* Customer order approval and special-hours controls stay compact in the
+   narrow Customer 360 panel while remaining readable on touch devices. */
+.customer-order-approval {
+  display: grid;
+  gap: .45rem;
+  margin: .55rem 0;
+  padding: .6rem;
+  border: 1px solid #f0c48b;
+  border-radius: .7rem;
+  background: #fff7ea;
+}
+
+.customer-order-approval-head,
+.customer-order-approval-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .55rem;
+}
+
+.customer-order-approval-head {
+  color: #8c5413;
+  font-size: .72rem;
+}
+
+.customer-order-approval-card > div {
+  display: grid;
+  min-width: 0;
+  gap: .16rem;
+}
+
+.customer-order-approval-card small {
+  overflow: hidden;
+  color: #805f43;
+  font-size: .68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-order-approve-btn {
+  flex: 0 0 auto;
+  color: #fff;
+  border-color: #16836f;
+  background: #16836f;
+}
+
+.customer-order-approval-notice,
+.service-upgrade-note {
+  margin: .45rem 0;
+  color: #27645c;
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
+.special-business-dates {
+  display: grid;
+  gap: .55rem;
+  margin: .75rem 0;
+  padding: .8rem;
+  border: 1px solid var(--owly-border);
+  border-radius: .8rem;
+}
+
+.special-business-dates > p {
+  margin: 0;
+  color: var(--owly-muted);
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+.special-business-date-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+
+.special-business-date-row input[type="date"],
+.special-business-date-row input[type="time"] {
+  min-height: 34px;
+}
+
+.special-business-date-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: var(--owly-ink);
+  font-size: .78rem;
+}
+
+.service-channel-summary {
+  display: grid;
+  gap: .25rem;
+  padding: .8rem;
+  border: 1px solid #b8dfdc;
+  border-radius: .75rem;
+  color: #326872;
+  background: #f1fbfa;
+  font-size: .8rem;
+  line-height: 1.4;
+}
+
+.service-plan-option small + small {
+  color: var(--salon-accent);
+  font-weight: 700;
+}
+
+body.crm-dark .customer-order-approval,
+body.crm-dark .special-business-dates,
+body.crm-dark .service-channel-summary {
+  border-color: #40565b;
+  background: #222d30;
+}
+
+body.crm-dark .customer-order-approval-head,
+body.crm-dark .customer-order-approval-card small,
+body.crm-dark .special-business-dates > p,
+body.crm-dark .service-channel-summary,
+body.crm-dark .service-upgrade-note {
+  color: #c5d4d5;
+}
+
 /* First screen: a focused Owly/Salon-inspired sign-in experience. */
 .crm-app.auth-locked {
   display: block;
@@ -10493,6 +10913,11 @@ body,
   background: var(--salon-accent);
 }
 
+.conversation-unread.urgent {
+  background: #dc3545;
+  box-shadow: 0 0 0 2px rgba(220, 53, 69, .13);
+}
+
 .conversation-channel-pill {
   color: #4f7485;
   background: #eef8f8;
@@ -10771,12 +11196,15 @@ body.crm-dark .inbox-channel-all.active,
 body.crm-dark .inbox-channel-button.active { color: #fff !important; background: #238b92 !important; border-color: #39a7ad !important; }
 body.crm-dark .inbox-search-box { box-shadow: none !important; }
 body.crm-dark .inbox-search-box input,
+body.crm-dark .personal-filter-grid input,
 body.crm-dark .inbox-filter-panel select,
 body.crm-dark .segment-control select { color: #f3f5f6 !important; background: #1a1e20 !important; border-color: #4a555a !important; }
 body.crm-dark .inbox-search-box > span,
 body.crm-dark .filter-panel-heading,
 body.crm-dark .filter-panel-heading button,
 body.crm-dark .filter-panel-heading small,
+body.crm-dark .personal-filter-grid label,
+body.crm-dark .personal-filter-note,
 body.crm-dark .filter-empty,
 body.crm-dark .tag-mode-toggle label { color: #b6c0c5 !important; }
 body.crm-dark .tag-chip { color: #d8ffff !important; background: #253b3d !important; border-color: #3c777a !important; }
@@ -11949,6 +12377,285 @@ body.crm-dark .customer-timeline-row .customer-timeline-meta {
 }
 body.crm-dark .customer-timeline-row > div {
   color: #e5eaec !important;
+}
+
+/* Customer 360 conversation search: a compact, progressive-disclosure
+   surface that keeps the profile readable while searching long chat history. */
+.customer-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.customer-message-search-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0 !important;
+  color: var(--workspace-primary-dark, #176f76) !important;
+  background: var(--salon-accent-soft, #e6f7f6) !important;
+  border: 1px solid var(--salon-accent, #2a9da3) !important;
+  border-radius: 0.55rem !important;
+}
+
+.customer-message-search-trigger svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.customer-message-search {
+  position: sticky;
+  top: 0.45rem;
+  z-index: 8;
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+  padding: 0.65rem;
+  color: var(--crm-ink, #18305a);
+  background: var(--crm-surface, #fff);
+  border: 1px solid var(--crm-border, #dbe5ee);
+  border-radius: 0.8rem;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.15);
+}
+
+.customer-message-search-head,
+.customer-message-search-input-wrap,
+.customer-message-search-result-head {
+  display: flex;
+  align-items: center;
+}
+
+.customer-message-search-head {
+  gap: 0.45rem;
+}
+
+.customer-message-search-input-wrap {
+  flex: 1;
+  min-width: 0;
+  gap: 0.45rem;
+  padding: 0.1rem 0.5rem;
+  color: var(--crm-muted, #64748b);
+  background: var(--crm-page, #f7f9fc);
+  border: 1px solid var(--crm-border, #dbe5ee);
+  border-radius: 999px;
+}
+
+.customer-message-search-input-wrap svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  flex: 0 0 auto;
+}
+
+.customer-message-search-input-wrap input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.38rem 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font: inherit;
+  font-size: 0.76rem;
+}
+
+.customer-message-search-input-wrap button,
+.customer-message-search-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 !important;
+  color: var(--crm-muted, #64748b) !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 50% !important;
+  font-size: 1.15rem !important;
+  line-height: 1;
+}
+
+.customer-message-search-close {
+  width: 1.8rem;
+  height: 1.8rem;
+  background: var(--crm-page, #f7f9fc) !important;
+  border: 1px solid var(--crm-border, #dbe5ee) !important;
+}
+
+.customer-message-search-note,
+.customer-message-search-footer,
+.customer-message-search-empty,
+.customer-message-search-loading,
+.customer-message-search-error {
+  margin: 0;
+  color: var(--crm-muted, #64748b);
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.customer-message-search-results {
+  display: grid;
+  gap: 0.3rem;
+  max-height: 19rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.customer-message-search-result {
+  display: grid;
+  gap: 0.22rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem !important;
+  text-align: left;
+  color: var(--crm-ink, #18305a) !important;
+  background: var(--crm-page, #f7f9fc) !important;
+  border: 1px solid transparent !important;
+  border-radius: 0.55rem !important;
+  font: inherit;
+  cursor: pointer;
+}
+
+.customer-message-search-result:hover,
+.customer-message-search-result:focus-visible {
+  background: var(--salon-accent-soft, #e6f7f6) !important;
+  border-color: var(--salon-accent, #2a9da3) !important;
+  outline: 0;
+}
+
+.customer-message-search-result:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.customer-message-search-result-head {
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.customer-message-search-result-head strong {
+  min-width: 0;
+  color: inherit;
+  font-size: 0.71rem;
+}
+
+.customer-message-search-result-head time,
+.customer-message-search-result > span:last-child {
+  color: var(--crm-muted, #64748b);
+  font-size: 0.64rem;
+}
+
+.customer-message-search-result-head time {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.customer-message-search-result > span:last-child {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.35;
+}
+
+.customer-message-search-footer {
+  position: sticky;
+  bottom: 0;
+  padding-top: 0.35rem;
+  text-align: center;
+  background: var(--crm-surface, #fff);
+}
+
+.customer-message-search-error {
+  color: #b84d5a;
+}
+
+.chat-timeline .msg-line.search-jump-highlight .bubble {
+  animation: customer-message-search-pulse 2.2s ease-out;
+  box-shadow: 0 0 0 3px rgba(42, 157, 163, 0.38), 0 8px 22px rgba(42, 157, 163, 0.22);
+}
+
+@keyframes customer-message-search-pulse {
+  0%, 55% { background: #d8f1ef; }
+  100% { background: inherit; }
+}
+
+body.crm-dark .customer-message-search {
+  color: #e5eaec;
+  background: #202427;
+  border-color: #4a555a;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.38);
+}
+
+body.crm-dark .customer-message-search-input-wrap,
+body.crm-dark .customer-message-search-close,
+body.crm-dark .customer-message-search-result {
+  color: #e5eaec !important;
+  background: #1a1e20 !important;
+  border-color: #394145 !important;
+}
+
+body.crm-dark .customer-message-search-result:hover,
+body.crm-dark .customer-message-search-result:focus-visible {
+  background: #253b3d !important;
+  border-color: #3c777a !important;
+}
+
+body.crm-dark .customer-message-search-note,
+body.crm-dark .customer-message-search-footer,
+body.crm-dark .customer-message-search-empty,
+body.crm-dark .customer-message-search-loading,
+body.crm-dark .customer-message-search-result-head time,
+body.crm-dark .customer-message-search-result > span:last-child {
+  color: #b6c0c5 !important;
+}
+
+body.crm-dark .customer-message-search-footer {
+  background: #202427;
+}
+
+@media (max-width: 640px) {
+  .customer-message-search-results {
+    max-height: min(20rem, 48vh);
+  }
+}
+body.crm-dark .customer-section-hint,
+body.crm-dark .customer-filter-note,
+body.crm-dark .customer-timeline-placeholder,
+body.crm-dark .customer-timeline-filters label,
+body.crm-dark .customer-timeline-summary-card span,
+body.crm-dark .customer-timeline-summary-card small,
+body.crm-dark .customer-timeline-detail-toggle > span,
+body.crm-dark .customer-order-card small,
+body.crm-dark .customer-order-card-meta span {
+  color: #b6c0c5 !important;
+}
+body.crm-dark .customer-timeline-filters,
+body.crm-dark .customer-timeline-placeholder,
+body.crm-dark .customer-timeline-summary-card,
+body.crm-dark .customer-order-card {
+  color: #e5eaec !important;
+  background: #252a2d !important;
+  border-color: #394145 !important;
+}
+body.crm-dark .customer-timeline-filters input,
+body.crm-dark .customer-timeline-filters select {
+  color: #f3f5f6 !important;
+  background: #1a1e20 !important;
+  border-color: #4a555a !important;
+}
+body.crm-dark .customer-timeline-filter-actions .table-action-btn.secondary {
+  color: #b6c0c5 !important;
+  background: transparent !important;
+  border-color: #4a555a !important;
+}
+body.crm-dark .customer-order-card strong {
+  color: #f3f5f6 !important;
+}
+body.crm-dark .customer-timeline-summary-card strong {
+  color: #f3f5f6 !important;
 }
 body.crm-dark .timeline-dot {
   background: #37a6ad !important;

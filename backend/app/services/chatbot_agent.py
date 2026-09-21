@@ -138,8 +138,15 @@ def is_business_open(db: Session, business_id: int, now: datetime | None = None)
     if current.tzinfo is None:
         current = current.replace(tzinfo=tz)
     current = current.astimezone(tz)
-    day = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[current.weekday()]
-    windows = hours.get(day, [])
+    special_dates = hours.get("special_dates", {})
+    special_rule = special_dates.get(current.date().isoformat()) if isinstance(special_dates, dict) else None
+    if isinstance(special_rule, dict):
+        if special_rule.get("closed", False):
+            return False
+        windows = special_rule.get("windows", [])
+    else:
+        day = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[current.weekday()]
+        windows = hours.get(day, [])
     if not windows:
         return False
     current_minutes = current.hour * 60 + current.minute

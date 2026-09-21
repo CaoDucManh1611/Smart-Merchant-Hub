@@ -27,6 +27,7 @@ from app.services.order_service import SalesOrderOperationError, transition_sale
 
 ORDER_STATUS_LABELS = {
     "draft": "Đơn nháp",
+    "pending_confirmation": "Chờ nhân viên xác nhận",
     "confirmed": "Đã xác nhận",
     "processing": "Đang xử lý",
     "shipped": "Đang giao",

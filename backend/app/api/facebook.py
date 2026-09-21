@@ -107,7 +107,7 @@ async def _receive_meta_webhook(
                         "type": "message_created",
                         "conversation_id": saved.get("conversation_id"),
                         "message": {k: v for k, v in saved.items() if k != "_created"},
-                    })
+                    }, business_id=int(saved.get("business_id") or event.business_id))
     if events and not grouped:
         # Unknown or already-processed deliveries are acknowledged so
         # providers do not retry indefinitely. No tenant data is touched.

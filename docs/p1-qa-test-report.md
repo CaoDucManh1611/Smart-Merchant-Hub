@@ -30,7 +30,7 @@ manager destinations. These cannot be certified by fixture credentials.
 | Docker runtime | **5/5 healthy** |
 | Backend health endpoints | **HTTP 200** |
 | Frontend and public plan catalog | **HTTP 200** |
-| Alembic head | `20260913_0042` |
+| Alembic head | `20260919_0043` |
 | PostgreSQL tenant RLS policies | **59** |
 | Non-owner RLS probe with an unknown tenant | **0 rows visible** |
 | Restored data after deployment | **8 conversations / 713 messages** |

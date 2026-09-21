@@ -14,6 +14,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
 )
 
@@ -857,6 +858,7 @@ def get_conversation_target(
                 cv.channel,
                 cv.channel_id,
                 cv.customer_id,
+                cv.assigned_user_id,
                 c.external_user_id
 
             FROM conversations cv
@@ -902,6 +904,29 @@ def get_conversation_target(
 
 
     return conversation
+
+
+def require_responsible_staff(
+    conversation: dict,
+    actor: User | None,
+) -> None:
+    """Allow customer replies only from the employee responsible for a chat.
+
+    Every staff account in a shop may still read the unified inbox. Once a
+    conversation has an assignee, however, another employee cannot send a
+    customer message under that person's responsibility. The check is at the
+    API boundary, so it cannot be bypassed through the browser.
+    """
+    assigned_user_id = conversation.get("assigned_user_id")
+    if assigned_user_id is None:
+        return
+    if actor is None:
+        raise HTTPException(status_code=401, detail="Cần đăng nhập để trả lời hội thoại đã phân công.")
+    if int(actor.id) != int(assigned_user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Hội thoại này đang do nhân viên phụ trách trả lời. Bạn vẫn có thể xem toàn bộ nội dung.",
+        )
 
 
 def send_telegram_text(
@@ -1151,8 +1176,10 @@ def save_outbound_message(
 
 async def broadcast_message_created(
     message: dict | None,
+    *,
+    business_id: int | None,
 ):
-    if not message:
+    if not message or business_id is None:
         return
 
     await manager.broadcast(
@@ -1165,7 +1192,8 @@ async def broadcast_message_created(
                 ),
             "message":
                 message,
-        }
+        },
+        business_id=int(business_id),
     )
 
 
@@ -1336,7 +1364,8 @@ async def send_and_save_outbound(
     )
 
     await broadcast_message_created(
-        saved_message
+        saved_message,
+        business_id=business_id,
     )
 
     return {
@@ -1357,19 +1386,24 @@ async def send_and_save_outbound(
 
 @router.get("")
 def get_conversations(
+    limit: int | None = Query(default=None, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    customer_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(
         get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
 
-    query = text("""
+    query_sql = """
         SELECT
             cv.id AS conversation_id,
             cv.customer_id,
 
             c.external_user_id,
             c.name AS customer_name,
+            c.email AS customer_email,
+            c.phone AS customer_phone,
             c.avatar_url,
 
             cv.channel,
@@ -1465,7 +1499,15 @@ def get_conversations(
                 WHERE m.conversation_id = cv.id
                   AND m.direction = 'inbound'
                   AND COALESCE(m.status, 'received') != 'read'
-            ) AS unread_count
+            ) AS unread_count,
+
+            (
+                SELECT COUNT(*)
+                FROM orders o
+                WHERE o.conversation_id = cv.id
+                  AND o.business_id = :business_id
+                  AND o.status = 'pending_confirmation'
+            ) AS pending_order_confirmation_count
 
         FROM conversations cv
 
@@ -1474,17 +1516,27 @@ def get_conversations(
            AND c.business_id = :business_id
 
         WHERE cv.business_id = :business_id
+          AND (:customer_id IS NULL OR cv.customer_id = :customer_id)
 
         ORDER BY
             last_message_at DESC
             NULLS LAST
-    """)
+    """
 
+    params = {"business_id": tenant.business_id, "customer_id": customer_id}
+    if limit is not None:
+        query_sql += "\n LIMIT :limit OFFSET :offset"
+        params.update({"limit": limit, "offset": offset})
 
-    result = db.execute(
-        query,
-        {"business_id": tenant.business_id},
-    ).mappings().all()
+    result = db.execute(text(query_sql), params).mappings().all()
+    total = int(db.execute(
+        text("""
+            SELECT COUNT(*) FROM conversations
+            WHERE business_id = :business_id
+              AND (:customer_id IS NULL OR customer_id = :customer_id)
+        """),
+        {"business_id": tenant.business_id, "customer_id": customer_id},
+    ).scalar_one())
 
     customer_ids = {int(row["customer_id"]) for row in result if row.get("customer_id") is not None}
     tag_map: dict[int, list[str]] = {customer_id: [] for customer_id in customer_ids}
@@ -1499,8 +1551,7 @@ def get_conversations(
         for customer_id, tag_name in tag_rows:
             tag_map.setdefault(int(customer_id), []).append(tag_name)
 
-    return {
-        "items": [
+    items = [
             {
                 **dict(row),
                 "avatar_url": refresh_customer_avatar_url(
@@ -1513,6 +1564,12 @@ def get_conversations(
             }
             for row in result
         ]
+
+    return {
+        "items": items,
+        "total": total,
+        "has_more": limit is not None and offset + len(items) < total,
+        "next_offset": offset + len(items),
     }
 
 
@@ -1816,6 +1873,7 @@ def send_message(
         get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
 
     message_text = str(
@@ -1844,6 +1902,7 @@ def send_message(
             business_id=tenant.business_id,
         )
     )
+    require_responsible_staff(conversation, actor)
 
 
     channel = conversation[
@@ -2249,6 +2308,7 @@ async def unified_send(
         conversation_id=conversation_id,
         business_id=tenant.business_id,
     )
+    require_responsible_staff(conversation, actor)
 
     channel = conversation[
         "channel"
@@ -2364,6 +2424,7 @@ async def send_media_message(
     body: SendMediaRequest,
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     """Send one canonical media attachment through the linked channel."""
     media_type = str(body.media_type or "").strip().lower()
@@ -2382,6 +2443,7 @@ async def send_media_message(
         conversation_id=conversation_id,
         business_id=tenant.business_id,
     )
+    require_responsible_staff(conversation, actor)
     channel = str(conversation["channel"] or "").strip().lower()
     recipient_id = str(conversation["external_user_id"])
 
@@ -2454,6 +2516,8 @@ async def send_media_message(
         media_type=media_type,
         media_url=media_url,
         meta_response=result,
+        sender_type="staff",
+        sender_user_id=actor.id if actor else None,
     )
     if saved and conversation.get("channel_id"):
         try:
@@ -2477,7 +2541,7 @@ async def send_media_message(
             db.commit()
         except Exception:
             db.rollback()
-    await broadcast_message_created(saved)
+    await broadcast_message_created(saved, business_id=tenant.business_id)
     return {
         "success": True,
         "status": "sent",
@@ -2501,6 +2565,7 @@ def send_media(
         get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
 
     media_type = str(
@@ -2571,6 +2636,7 @@ def send_media(
             business_id=tenant.business_id,
         )
     )
+    require_responsible_staff(conversation, actor)
 
 
     channel = conversation[
@@ -2945,6 +3011,7 @@ async def upload_and_send_image(
         get_tenant_db
     ),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     """
     Flow:
@@ -2959,6 +3026,13 @@ async def upload_and_send_image(
         ↓
     Facebook / Instagram nhận ảnh
     """
+
+    conversation = get_conversation_target(
+        db=db,
+        conversation_id=conversation_id,
+        business_id=tenant.business_id,
+    )
+    require_responsible_staff(conversation, actor)
 
     print(
         "[UI MEDIA ROUTE START] "
@@ -3520,6 +3594,7 @@ async def upload_and_send_generic_media(
     caption: str | None = Form(None),
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     """Upload and send audio/video/sticker/file (and non-normalized images).
 
@@ -3528,6 +3603,13 @@ async def upload_and_send_generic_media(
     metadata (audio codec, sticker format, video container) matters, then
     delegates delivery and persistence to the canonical ``send-media`` route.
     """
+    conversation = get_conversation_target(
+        db=db,
+        conversation_id=conversation_id,
+        business_id=tenant.business_id,
+    )
+    require_responsible_staff(conversation, actor)
+
     normalized_type = str(media_type or "").strip().lower()
     try:
         MediaType(normalized_type)
@@ -3564,11 +3646,6 @@ async def upload_and_send_generic_media(
         upload_path = file_path
         upload_content_type = content_type
         if normalized_type == "audio":
-            conversation = get_conversation_target(
-                db=db,
-                conversation_id=conversation_id,
-                business_id=tenant.business_id,
-            )
             channel = str(conversation["channel"] or "").strip().lower()
             if channel == "zalo":
                 upload_path, upload_content_type = normalize_zalo_audio_upload(
@@ -3581,6 +3658,7 @@ async def upload_and_send_generic_media(
             SendMediaRequest(media_type=normalized_type, media_url=media_url, caption=caption),
             db,
             tenant,
+            actor,
         )
         result["upload"] = {
             "filename": file.filename,

@@ -14,7 +14,7 @@ import { filterConversationsForCustomer } from "./ticket-utils.js";
 import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
 import { getInboxChannels } from "./inbox-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
-import { notificationDestination, unreadNotificationCount } from "./notification-utils.js";
+import { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
 import { apiFetch } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
@@ -44,6 +44,13 @@ function friendlyErrorMessage(error, fallback = "Chưa thể hoàn tất yêu c�
 ========================================================= */
 
 const conversations = ref([]);
+const INBOX_PAGE_SIZE = 10;
+const inboxConversationTotal = ref(0);
+const inboxHasMore = ref(false);
+const inboxLoadingMore = ref(false);
+const inboxConversationScroll = ref(null);
+const inboxLegacyPageCache = ref([]);
+const inboxUsesLocalPaging = ref(false);
 const messages = ref([]);
 const customer360 = ref(null);
 const customer360Loading = ref(false);
@@ -95,6 +102,11 @@ const composerMode = ref("reply");
 
 const activeFilter = ref("all");
 const inboxQuickFilter = ref("all");
+// The link control in the conversation header narrows the inbox to the
+// selected customer's other channels without clearing existing filters.
+const linkedCustomerOnly = ref(false);
+const inboxCustomerFilterId = ref(null);
+const inboxPersonalFilters = ref({ phone: "", email: "" });
 const tagCatalog = ref([]);
 const tagFilters = ref([]);
 const tagFilterMode = ref("all");
@@ -164,6 +176,7 @@ let voiceRecordingDiscarded = false;
 
 let pollingTimer = null;
 let platformRequestPollingTimer = null;
+let tenantProvisioningPollingTimer = null;
 let platformRequestRefreshInFlight = false;
 let socket = null;
 let reconnectTimer = null;
@@ -264,7 +277,8 @@ const purchaseOrderForm = ref({
 });
 const purchaseStatuses = ["draft", "submitted", "partially_received", "received", "closed", "cancelled"];
 const salesStatusTransitions = Object.freeze({
-  draft: ["confirmed", "cancelled"],
+  draft: ["pending_confirmation", "confirmed", "cancelled"],
+  pending_confirmation: ["confirmed", "cancelled"],
   confirmed: ["processing", "cancelled"],
   processing: ["shipped", "cancelled"],
   shipped: ["delivered"],
@@ -361,6 +375,53 @@ const customerMergeHistory = ref([]);
 const duplicateSuggestions = ref([]);
 const customerTimelineLoading = ref(false);
 const customerTimelineError = ref("");
+const customerTimelineFilterLoading = ref(false);
+const customerTimelineFilterApplied = ref(false);
+const customerTimelineFilterCustomerId = ref(null);
+const customerTimelineDetailsOpen = ref(false);
+const customerMessageSearchOpen = ref(false);
+const customerMessageSearchCustomerId = ref(null);
+const customerMessageSearchQuery = ref("");
+const customerMessageSearchItems = ref([]);
+const customerMessageSearchTotal = ref(0);
+const customerMessageSearchOffset = ref(0);
+const customerMessageSearchHasMore = ref(false);
+const customerMessageSearchLoading = ref(false);
+const customerMessageSearchError = ref("");
+const customerMessageSearchJumpingId = ref(null);
+let customerMessageSearchTimer = null;
+const customerTimelineFilters = ref({
+  start_date: "",
+  end_date: "",
+  staff_id: "",
+});
+const customerOrderHistory = ref([]);
+const customerOrderHistoryLoading = ref(false);
+const customerOrderHistoryExpanded = ref(false);
+const customerTimelineHasFilters = computed(() => {
+  const filters = customerTimelineFilters.value;
+  return Boolean(filters.start_date || filters.end_date || filters.staff_id);
+});
+const customerTimelineSummaryCards = computed(() => {
+  const summary = customer360.value?.timelineSummary;
+  if (!summary) return [];
+  return [
+    { key: "events", value: summary.total_events || 0, label: "Hoạt động", note: `${summary.conversation_count || 0} hội thoại` },
+    { key: "messages", value: summary.message_events || 0, label: "Tin nhắn", note: `${summary.customer_messages || 0} từ khách hàng` },
+    { key: "staff", value: summary.staff_actions || 0, label: "Nhân viên", note: `${summary.automated_actions || 0} tự động / hệ thống` },
+    { key: "operations", value: summary.operational_events || 0, label: "Nghiệp vụ", note: "Đơn hàng, hỗ trợ, phân công" },
+  ];
+});
+const customerVisibleOrderHistory = computed(() => (
+  customerOrderHistoryExpanded.value ? customerOrderHistory.value : customerOrderHistory.value.slice(0, 5)
+));
+const customerConfirmedOrderCount = computed(() => customerOrderHistory.value.filter((order) => (
+  ["confirmed", "processing", "shipped", "delivered", "completed"].includes(String(order?.status || ""))
+)).length);
+const customerPendingApprovalOrders = computed(() => customerOrderHistory.value.filter((order) => (
+  String(order?.status || "") === "pending_confirmation"
+)));
+const customerOrderApprovalNotice = ref("");
 const leads = ref([]);
 const leadsLoading = ref(false);
 const leadSaving = ref(false);
@@ -508,6 +569,7 @@ const chatbotConfigError = ref("");
 const businessHoursJson = ref("");
 const businessHoursForm = ref({ timezone: "Asia/Ho_Chi_Minh", start: "08:00", end: "17:30", enabled: true });
 const businessHoursDays = ref({ mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false });
+const specialBusinessDates = ref([]);
 const businessHourDayLabels = Object.freeze([
   ["mon", "Thứ 2"], ["tue", "Thứ 3"], ["wed", "Thứ 4"], ["thu", "Thứ 5"],
   ["fri", "Thứ 6"], ["sat", "Thứ 7"], ["sun", "Chủ nhật"],
@@ -531,7 +593,7 @@ const serviceRequestForm = ref({
   phone: "",
   shop_name: "",
   plan_code: "growth",
-  channels: ["Facebook", "Instagram"],
+  channels: [],
   notes: "",
 });
 const serviceRequestSubmitted = ref(false);
@@ -547,13 +609,22 @@ const SERVICE_CHANNEL_LIMITS = Object.freeze({ demo: 0, starter: 1, growth: 2, c
 const FALLBACK_SERVICE_PLANS = Object.freeze([
   { code: "starter", name: "Gói Thường", price: 100000, chatbot_rental_price: 100000, description: "Gói gọn nhẹ cho shop mới bắt đầu chăm khách.", max_channels: 1 },
   { code: "growth", name: "Gói VIP", price: 400000, chatbot_rental_price: 400000, description: "Gói cân bằng cho shop cần nhiều kênh và đội ngũ chăm khách.", max_channels: 2 },
+  { code: "scale", name: "Gói Scale", price: 899000, chatbot_rental_price: 899000, description: "Gói cho shop vận hành đồng thời trên 3 nền tảng.", max_channels: 3 },
   { code: "pro", name: "Gói Premium", price: 1000000, chatbot_rental_price: 1000000, description: "Gói đầy đủ cho shop vận hành đa kênh.", max_channels: 4 },
 ]);
 const publicServicePlans = ref([]);
 const activeServicePlans = computed(() => {
-  const catalogue = publicServicePlans.value.length ? publicServicePlans.value : FALLBACK_SERVICE_PLANS;
+  const returnedPlans = publicServicePlans.value;
+  const returnedCodes = new Set(returnedPlans.map((plan) => plan.code));
+  // A running API can still have an older seeded catalogue. Keep the
+  // required public tiers visible until that service is restarted and seeds
+  // the missing plan, without replacing any server-managed price or limit.
+  const catalogue = returnedPlans.length
+    ? [...returnedPlans, ...FALLBACK_SERVICE_PLANS.filter((plan) => !returnedCodes.has(plan.code))]
+    : FALLBACK_SERVICE_PLANS;
   return catalogue
     .filter((plan) => !plan.status || plan.status === "active")
+    .sort((left, right) => Number(left.max_channels || 0) - Number(right.max_channels || 0))
     .map((plan) => {
       const isChatbot = serviceMode.value === "chatbot";
       return {
@@ -985,11 +1056,34 @@ function saveBusinessHours() {
     return;
   }
   const range = businessHoursForm.value.enabled ? [[start, end]] : [];
-  const hours = { timezone: businessHoursForm.value.timezone || "Asia/Ho_Chi_Minh" };
+  const specialDates = {};
+  for (const item of specialBusinessDates.value) {
+    const date = String(item?.date || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      businessHoursNotice.value = "Mỗi ngày đặc biệt cần có ngày hợp lệ.";
+      return;
+    }
+    if (!item.closed && (!item.start || !item.end || item.start >= item.end)) {
+      businessHoursNotice.value = "Khung giờ đặc biệt phải có giờ mở cửa sớm hơn giờ đóng cửa.";
+      return;
+    }
+    specialDates[date] = item.closed
+      ? { closed: true, windows: [] }
+      : { closed: false, windows: [[item.start, item.end]] };
+  }
+  const hours = { timezone: businessHoursForm.value.timezone || "Asia/Ho_Chi_Minh", special_dates: specialDates };
   businessHourDayLabels.forEach(([key]) => { hours[key] = businessHoursDays.value[key] ? range : []; });
   businessHoursJson.value = JSON.stringify(hours);
-  businessHoursNotice.value = "Đã cập nhật giờ làm việc theo ngày đã chọn.";
+  businessHoursNotice.value = "Đã cập nhật giờ làm việc và các ngày đặc biệt. Trợ lý sẽ áp dụng khi khách gửi tin nhắn.";
   void saveChatbotRuntime();
+}
+
+function addSpecialBusinessDate() {
+  specialBusinessDates.value = [...specialBusinessDates.value, { date: "", closed: true, start: "08:00", end: "17:30" }];
+}
+
+function removeSpecialBusinessDate(index) {
+  specialBusinessDates.value = specialBusinessDates.value.filter((_, itemIndex) => itemIndex !== index);
 }
 
 function saveSlaRules() {
@@ -1023,7 +1117,7 @@ function preferredServicePlanCode() {
 function ensureServicePlanSelection() {
   if (!activeServicePlans.value.some((plan) => plan.code === serviceRequestForm.value.plan_code)) {
     serviceRequestForm.value.plan_code = preferredServicePlanCode();
-    normalizeServiceChannels(true);
+    normalizeServiceChannels(false);
   }
 }
 
@@ -1042,17 +1136,13 @@ async function fetchPublicServicePlans() {
 
 function resetServiceRequestForm() {
   const planCode = preferredServicePlanCode();
-  const plan = activeServicePlans.value.find((item) => item.code === planCode);
-  const channelLimit = Number.isFinite(Number(plan?.max_channels))
-    ? Math.max(0, Number(plan.max_channels))
-    : Math.max(0, Number(SERVICE_CHANNEL_LIMITS[planCode] || 0));
   serviceRequestForm.value = {
     contact_name: authUser.value?.full_name || "",
     email: authUser.value?.email || "",
     phone: "",
     shop_name: authUser.value?.business?.name || authUser.value?.business_name || "",
     plan_code: planCode,
-    channels: SERVICE_CHANNELS.slice(0, channelLimit),
+    channels: [],
     notes: "",
   };
   serviceRequestSubmitted.value = false;
@@ -1078,7 +1168,7 @@ function normalizeServiceChannels(fillToLimit = false) {
 
 function selectServicePlan(planCode) {
   serviceRequestForm.value.plan_code = planCode;
-  normalizeServiceChannels(true);
+  normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
   serviceRequestError.value = "";
   servicePurchaseNotice.value = "";
@@ -1089,7 +1179,7 @@ function selectServicePlan(planCode) {
 function selectServiceMode(mode) {
   serviceMode.value = mode === "chatbot" ? "chatbot" : "package";
   serviceRequestForm.value.plan_code = preferredServicePlanCode();
-  normalizeServiceChannels(true);
+  normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
   serviceRequestReference.value = "";
   serviceRequestError.value = "";
@@ -1140,10 +1230,6 @@ async function submitServiceRequest() {
   }
   if (!/^\S+@\S+\.\S+$/.test(email)) {
     serviceRequestError.value = "Email chưa đúng định dạng. Hãy kiểm tra lại.";
-    return;
-  }
-  if ((form.channels || []).length !== serviceChannelLimit.value) {
-    serviceRequestError.value = `Gói đã chọn yêu cầu chọn đúng ${serviceChannelLimit.value} kênh kết nối.`;
     return;
   }
   if (!authUser.value?.business_id) {
@@ -1728,6 +1814,34 @@ const selectedBotMode = computed(() => (
     : "auto"
 ));
 
+// The inbox stays visible to every employee in the shop. Assignment is about
+// accountability for customer-facing replies: once a conversation has an
+// owner, other staff can read it but cannot send on that person's behalf.
+const selectedAssignedUserId = computed(() => {
+  const value = selected.value?.assigned_user_id;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+});
+
+const canReplyToSelectedConversation = computed(() => {
+  if (!selected.value) return false;
+  return selectedAssignedUserId.value === null
+    || Number(authUser.value?.id) === selectedAssignedUserId.value;
+});
+
+const selectedAssigneeName = computed(() => {
+  if (selectedAssignedUserId.value === null) return "";
+  return teamUsers.value.find((member) => Number(member.id) === selectedAssignedUserId.value)?.full_name || "nhân viên phụ trách";
+});
+
+const replyAccessNotice = computed(() => (
+  selectedAssignedUserId.value === null
+    ? "Chưa phân công: mọi nhân viên có thể phản hồi khách hàng."
+    : canReplyToSelectedConversation.value
+      ? "Bạn đang phụ trách hội thoại này."
+      : `Bạn đang ở chế độ chỉ xem. ${selectedAssigneeName.value} là người phụ trách phản hồi.`
+));
+
 const quickActionItems = computed(() => {
   const items = [
     { id: "focus-search", label: "Tìm kiếm khách hàng, tin nhắn, đơn hàng", hint: "Ctrl+K" },
@@ -1744,6 +1858,19 @@ const quickActionItems = computed(() => {
 const unreadOperationalNotificationCount = computed(() => (
   unreadNotificationCount(operationalNotifications.value)
 ));
+
+const criticalConversationNotificationCount = computed(() => (
+  criticalConversationNotificationCounts(operationalNotifications.value)
+));
+
+function conversationUrgentCount(item) {
+  // A pending order stays red until its real lifecycle state changes, even if
+  // the staff member has already opened the notification bell.
+  return Math.max(
+    Number(item?.pending_order_confirmation_count || 0),
+    Number(criticalConversationNotificationCount.value[item?.conversation_id] || 0),
+  );
+}
 
 const conversationPriorityActive = computed(() => (
   selectedId.value !== null
@@ -1833,6 +1960,7 @@ function salesOrderProgressIndex(order) {
 function salesOrderStatusLabel(status) {
   const labels = {
     draft: "Mới tạo",
+    pending_confirmation: "Chờ nhân viên xác nhận",
     confirmed: "Đã xác nhận",
     processing: "Đang đóng gói",
     shipped: "Đang giao",
@@ -2134,6 +2262,8 @@ const filtered = computed(() => {
   const keyword = search.value
     .trim()
     .toLowerCase();
+  const phoneQuery = String(inboxPersonalFilters.value.phone || "").replace(/\D/g, "");
+  const emailQuery = String(inboxPersonalFilters.value.email || "").trim().toLowerCase();
 
   return conversations.value.filter(
     (item) => {
@@ -2155,6 +2285,14 @@ const filtered = computed(() => {
       const segmentOk = !selectedSegmentId.value
         || segmentCustomerIds.value.has(Number(item.customer_id));
 
+      const linkedCustomerOk = !linkedCustomerOnly.value
+        || Number(item.customer_id) === Number(selected.value?.customer_id);
+
+      const phoneOk = !phoneQuery
+        || String(item.customer_phone || "").replace(/\D/g, "").includes(phoneQuery);
+      const emailOk = !emailQuery
+        || String(item.customer_email || "").trim().toLowerCase().includes(emailQuery);
+
       const text = [
         item.customer_name,
         item.external_user_id,
@@ -2170,6 +2308,9 @@ const filtered = computed(() => {
         && quickFilterOk
         && tagOk
         && segmentOk
+        && linkedCustomerOk
+        && phoneOk
+        && emailOk
         &&
         (
           !keyword
@@ -2667,6 +2808,7 @@ function handleRealtimeEvent(event) {
   loadConversations(
     false
   );
+  void fetchOperationalNotifications();
 
 }
 
@@ -2691,7 +2833,9 @@ function connectRealtime() {
 
   const apiUrl = new URL(API_BASE, window.location.origin);
   const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${wsProtocol}//${apiUrl.host}/ws/conversations`;
+  const accessToken = String(authToken.value || "").trim();
+  if (!accessToken) return;
+  const wsUrl = `${wsProtocol}//${apiUrl.host}/ws/conversations?access_token=${encodeURIComponent(accessToken)}`;
 
   socket = new WebSocket(
     wsUrl
@@ -2732,10 +2876,12 @@ function connectRealtime() {
 
 function openImagePicker() {
 
-  if (!selectedId.value) {
+  if (!selectedId.value || !canReplyToSelectedConversation.value) {
 
     error.value =
-      "Hãy chọn một cuộc hội thoại trước.";
+      selectedId.value
+        ? "Hội thoại này đang có nhân viên phụ trách; bạn chỉ có thể xem nội dung."
+        : "Hãy chọn một cuộc hội thoại trước.";
 
     return;
   }
@@ -2808,7 +2954,7 @@ function removePendingMedia(mediaId) {
 }
 
 function setImageFile(file) {
-  if (!file) return;
+  if (!file || !canReplyToSelectedConversation.value) return;
 
   const contentType = String(file.type || "").toLowerCase();
   if (!allowedMediaTypes.has(contentType)) {
@@ -2930,7 +3076,7 @@ function stopVoiceRecording() {
 }
 
 async function startVoiceRecording() {
-  if (!selectedId.value || sending.value || composerMode.value === "internal") return;
+  if (!selectedId.value || sending.value || composerMode.value === "internal" || !canReplyToSelectedConversation.value) return;
   if (voiceRecording.value) return;
 
   if (
@@ -2997,7 +3143,7 @@ function toggleVoiceRecording() {
 ========================================================= */
 
 function handlePaste(event) {
-  if (composerMode.value === "internal") return;
+  if (composerMode.value === "internal" || !canReplyToSelectedConversation.value) return;
 
   const clipboardItems =
     event.clipboardData?.items
@@ -3144,6 +3290,10 @@ function clearInboxSearch() {
   search.value = "";
 }
 
+function clearInboxPersonalFilters() {
+  inboxPersonalFilters.value = { phone: "", email: "" };
+}
+
 function editSavedSegment(segment) {
   if (!segment) return;
   segmentEditingId.value = String(segment.id);
@@ -3258,20 +3408,31 @@ function chronologicalOrderEvents(events) {
   });
 }
 
-async function loadConversations(
-  showLoading = true
-) {
+async function loadConversations(showLoading = true, {
+  append = false,
+  customerId = inboxCustomerFilterId.value,
+} = {}) {
 
-  if (showLoading) {
+  if (showLoading && !append) {
     loading.value = true;
   }
+  if (append) inboxLoadingMore.value = true;
 
   try {
 
     error.value = "";
 
+    const offset = append ? conversations.value.length : 0;
+    // Refreshes retain the number of rows that the operator has already
+    // loaded, while a first visit deliberately starts with a short list.
+    const limit = append
+      ? INBOX_PAGE_SIZE
+      : Math.min(50, Math.max(INBOX_PAGE_SIZE, conversations.value.length || 0));
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (customerId) params.set("customer_id", String(customerId));
+
     const response = await apiFetch(
-      `${API_BASE}/conversations`
+      `${API_BASE}/conversations?${params}`
     );
 
 
@@ -3284,11 +3445,34 @@ async function loadConversations(
       );
     }
 
+    const page = Array.isArray(data) ? data : data.items || [];
+    const supportsServerPaging = !Array.isArray(data)
+      && Object.prototype.hasOwnProperty.call(data, "has_more");
+    if (!supportsServerPaging) {
+      inboxUsesLocalPaging.value = true;
+      if (!append) {
+        // Older deployments may not understand customer_id yet. Keep this
+        // client-side guard so the linked-account view is still exact.
+        inboxLegacyPageCache.value = customerId
+          ? page.filter((item) => Number(item.customer_id) === Number(customerId))
+          : page;
+      }
+      const cache = inboxLegacyPageCache.value;
+      conversations.value = cache.slice(0, offset + (append ? INBOX_PAGE_SIZE : limit));
+      inboxConversationTotal.value = cache.length;
+      inboxHasMore.value = conversations.value.length < cache.length;
+      return;
+    }
 
-    conversations.value =
-      Array.isArray(data)
-        ? data
-        : data.items || [];
+    inboxUsesLocalPaging.value = false;
+    if (append) {
+      const knownIds = new Set(conversations.value.map((item) => Number(item.conversation_id)));
+      conversations.value = [...conversations.value, ...page.filter((item) => !knownIds.has(Number(item.conversation_id)))];
+    } else {
+      conversations.value = page;
+    }
+    inboxConversationTotal.value = Number(data?.total ?? conversations.value.length);
+    inboxHasMore.value = Boolean(data?.has_more);
 
 
   } catch (err) {
@@ -3315,12 +3499,29 @@ async function loadConversations(
 
   } finally {
 
-    if (showLoading) {
+    if (showLoading && !append) {
       loading.value = false;
     }
+    if (append) inboxLoadingMore.value = false;
 
   }
 
+}
+
+function loadMoreConversations() {
+  if (!inboxHasMore.value || inboxLoadingMore.value || loading.value) return;
+  if (inboxUsesLocalPaging.value) {
+    conversations.value = inboxLegacyPageCache.value.slice(0, conversations.value.length + INBOX_PAGE_SIZE);
+    inboxHasMore.value = conversations.value.length < inboxLegacyPageCache.value.length;
+    return;
+  }
+  return loadConversations(false, { append: true });
+}
+
+function handleInboxConversationScroll(event) {
+  const target = event?.currentTarget;
+  if (!target || target.scrollTop + target.clientHeight < target.scrollHeight - 96) return;
+  void loadMoreConversations();
 }
 
 
@@ -3838,14 +4039,29 @@ async function transitionSalesOrder(order, toStatus) {
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
     await Promise.all([fetchOrders(), fetchProducts()]);
+    return true;
   } catch (err) {
     orderError.value = friendlyErrorMessage(err, "Chưa thể cập nhật đơn bán. Vui lòng thử lại sau.");
     await fetchOrders();
+    return false;
   } finally {
     const nextSaving = { ...orderTransitionSaving.value };
     delete nextSaving[orderId];
     orderTransitionSaving.value = nextSaving;
   }
+}
+
+async function confirmCustomerOrder(order) {
+  if (!order || String(order.status) !== "pending_confirmation") return;
+  const approved = await requestConfirmation(
+    `Xác nhận đơn ${order.order_number || `#${order.id}`} cho khách? Đơn sẽ chuyển sang trạng thái “Đã xác nhận”.`,
+    { title: "Xác nhận đơn hàng", confirmLabel: "Đồng ý đơn", tone: "primary" },
+  );
+  if (!approved) return;
+  customerOrderApprovalNotice.value = "";
+  const confirmed = await transitionSalesOrder(order, "confirmed");
+  await Promise.all([loadCustomerOrderHistory(order.customer_id), loadConversations(false), fetchOperationalNotifications()]);
+  if (confirmed) customerOrderApprovalNotice.value = `Đã xác nhận ${order.order_number || `đơn #${order.id}`}.`;
 }
 
 function availableProductQuantity(productId) {
@@ -4396,6 +4612,7 @@ async function login() {
 
 async function logout() {
   try { if (authToken.value) await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" }); } catch { /* session may already be expired */ }
+  stopTenantProvisioningPolling();
   stopTenantWorkspace();
   clearAuthToken();
   authToken.value = "";
@@ -5695,29 +5912,207 @@ async function changeTicketStatus(ticket, status) {
    API - CUSTOMER 360
 ========================================================= */
 
+function customerTimelineRequestUrl(customerId, offset = 0) {
+  const params = new URLSearchParams({
+    limit: "20",
+    offset: String(offset),
+  });
+  const filters = customerTimelineFilters.value;
+  if (filters.start_date) params.set("start_date", filters.start_date);
+  if (filters.end_date) params.set("end_date", filters.end_date);
+  if (filters.staff_id) params.set("staff_id", String(filters.staff_id));
+  return `${API_BASE}/customers/${customerId}/timeline?${params.toString()}`;
+}
+
+function resetCustomerMessageSearch() {
+  if (customerMessageSearchTimer) {
+    clearTimeout(customerMessageSearchTimer);
+    customerMessageSearchTimer = null;
+  }
+  customerMessageSearchQuery.value = "";
+  customerMessageSearchItems.value = [];
+  customerMessageSearchTotal.value = 0;
+  customerMessageSearchOffset.value = 0;
+  customerMessageSearchHasMore.value = false;
+  customerMessageSearchLoading.value = false;
+  customerMessageSearchError.value = "";
+  customerMessageSearchJumpingId.value = null;
+}
+
+async function openCustomerMessageSearch() {
+  if (!customer360.value?.id) return;
+  customerMessageSearchOpen.value = true;
+  await nextTick();
+  document.querySelector("[data-customer-message-search-input]")?.focus();
+}
+
+function closeCustomerMessageSearch() {
+  customerMessageSearchOpen.value = false;
+  resetCustomerMessageSearch();
+}
+
+function queueCustomerMessageSearch() {
+  if (customerMessageSearchTimer) clearTimeout(customerMessageSearchTimer);
+  const query = customerMessageSearchQuery.value.trim();
+  if (query.length < 2) {
+    customerMessageSearchItems.value = [];
+    customerMessageSearchTotal.value = 0;
+    customerMessageSearchOffset.value = 0;
+    customerMessageSearchHasMore.value = false;
+    customerMessageSearchError.value = "";
+    return;
+  }
+  customerMessageSearchTimer = setTimeout(() => {
+    customerMessageSearchTimer = null;
+    void searchCustomerMessages();
+  }, 260);
+}
+
+async function searchCustomerMessages(append = false) {
+  const customerId = customer360.value?.id;
+  const query = customerMessageSearchQuery.value.trim();
+  if (!customerId || query.length < 2 || customerMessageSearchLoading.value) return;
+
+  const offset = append ? customerMessageSearchOffset.value : 0;
+  customerMessageSearchLoading.value = true;
+  customerMessageSearchError.value = "";
+  try {
+    const params = new URLSearchParams({ q: query, limit: "10", offset: String(offset) });
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/message-search?${params.toString()}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const page = await response.json();
+    // Ignore a late response for text the user has already replaced.
+    if (query !== customerMessageSearchQuery.value.trim()) return;
+    const incoming = page.items || [];
+    const knownIds = new Set(append ? customerMessageSearchItems.value.map((item) => item.message_id) : []);
+    const uniqueIncoming = incoming.filter((item) => !knownIds.has(item.message_id));
+    customerMessageSearchItems.value = append
+      ? [...customerMessageSearchItems.value, ...uniqueIncoming]
+      : uniqueIncoming;
+    customerMessageSearchTotal.value = page.total || 0;
+    customerMessageSearchOffset.value = page.next_offset ?? (offset + incoming.length);
+    customerMessageSearchHasMore.value = Boolean(page.has_more);
+  } catch (err) {
+    customerMessageSearchError.value = "Không thể tìm trong hội thoại. Vui lòng thử lại.";
+  } finally {
+    customerMessageSearchLoading.value = false;
+  }
+}
+
+function handleCustomerMessageSearchScroll(event) {
+  const element = event.currentTarget;
+  if (
+    customerMessageSearchHasMore.value
+    && !customerMessageSearchLoading.value
+    && element.scrollHeight - element.scrollTop - element.clientHeight < 64
+  ) {
+    void searchCustomerMessages(true);
+  }
+}
+
+function customerMessageSearchActor(item) {
+  if (item.direction === "inbound") return "Khách hàng";
+  if (item.sender_type === "staff") return "Nhân viên";
+  if (item.sender_type === "bot") return "Chatbot";
+  return "Phản hồi";
+}
+
+function customerMessageSearchPreview(item) {
+  const text = String(item?.content || "").replace(/\s+/g, " ").trim();
+  return text.length > 110 ? `${text.slice(0, 107).trimEnd()}...` : text || "Tin nhắn không có nội dung văn bản";
+}
+
+async function jumpToCustomerSearchMessage(item) {
+  if (!item?.conversation_id || !item?.message_id) return;
+  customerMessageSearchJumpingId.value = item.message_id;
+  customerMessageSearchError.value = "";
+  try {
+    if (!conversations.value.some((conversation) => Number(conversation.conversation_id) === Number(item.conversation_id))) {
+      await loadConversations(false);
+    }
+    if (!conversations.value.some((conversation) => Number(conversation.conversation_id) === Number(item.conversation_id))) {
+      throw new Error("Conversation unavailable");
+    }
+    await selectConversation(Number(item.conversation_id));
+    closeCustomerMessageSearch();
+    await nextTick();
+    const messageElement = document.querySelector(`[data-message-id="${item.message_id}"]`);
+    if (!messageElement) throw new Error("Message unavailable");
+    messageElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    messageElement.classList.add("search-jump-highlight");
+    window.setTimeout(() => messageElement.classList.remove("search-jump-highlight"), 2200);
+  } catch (err) {
+    customerMessageSearchError.value = "Không thể mở đúng tin nhắn này. Vui lòng thử lại.";
+  } finally {
+    customerMessageSearchJumpingId.value = null;
+  }
+}
+
+function customerTimelineContent(event) {
+  const content = String(event?.content || "").replace(/\s+/g, " ").trim();
+  if (!content) return "Sự kiện không có nội dung.";
+  // The full chat transcript belongs in the conversation pane. Customer 360
+  // only keeps a small audit preview so a long message cannot dominate a profile.
+  return content.length > 160 ? `${content.slice(0, 157).trimEnd()}...` : content;
+}
+
+async function loadCustomerOrderHistory(customerId) {
+  if (!customerId) {
+    customerOrderHistory.value = [];
+    customerOrderHistoryExpanded.value = false;
+    return;
+  }
+  customerOrderHistoryLoading.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/orders?customer_id=${encodeURIComponent(customerId)}&limit=50&offset=0`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    customerOrderHistory.value = data.items || [];
+  } catch (err) {
+    console.error("Customer order history loading error:", err);
+    customerOrderHistory.value = [];
+  } finally {
+    customerOrderHistoryLoading.value = false;
+  }
+}
+
 async function loadCustomer360(customerId) {
   if (!customerId) {
     customer360.value = null;
     customer360Error.value = "";
+    customerMessageSearchOpen.value = false;
+    resetCustomerMessageSearch();
     return;
   }
 
+  const numericCustomerId = Number(customerId);
+  if (customerTimelineFilterCustomerId.value !== numericCustomerId) {
+    customerTimelineFilterCustomerId.value = numericCustomerId;
+    customerTimelineFilters.value = { start_date: "", end_date: "", staff_id: "" };
+    customerTimelineFilterApplied.value = false;
+    customerTimelineDetailsOpen.value = false;
+    customerOrderHistoryExpanded.value = false;
+    customerTimelineError.value = "";
+  }
+  if (customerMessageSearchCustomerId.value !== numericCustomerId) {
+    customerMessageSearchCustomerId.value = numericCustomerId;
+    customerMessageSearchOpen.value = false;
+    resetCustomerMessageSearch();
+  }
   customer360Loading.value = true;
   customer360Error.value = "";
   try {
-    const [profileResponse, timelineResponse, historyResponse, duplicateResponse] = await Promise.all([
+    const [profileResponse, historyResponse, duplicateResponse] = await Promise.all([
       apiFetch(`${API_BASE}/customers/${customerId}`),
-      apiFetch(`${API_BASE}/customers/${customerId}/timeline?limit=20&offset=0`),
       apiFetch(`${API_BASE}/customers/${customerId}/merge-history`),
       apiFetch(`${API_BASE}/customers/duplicates?customer_id=${customerId}`),
     ]);
-    if (!profileResponse.ok || !timelineResponse.ok || !historyResponse.ok || !duplicateResponse.ok) {
+    if (!profileResponse.ok || !historyResponse.ok || !duplicateResponse.ok) {
       throw new Error(
-        `Customer 360 HTTP ${profileResponse.status}/${timelineResponse.status}/${historyResponse.status}/${duplicateResponse.status}`
+        `Customer 360 HTTP ${profileResponse.status}/${historyResponse.status}/${duplicateResponse.status}`
       );
     }
     const profile = await profileResponse.json();
-    const timeline = await timelineResponse.json();
     const history = await historyResponse.json();
     const duplicates = await duplicateResponse.json();
     if (!orderCustomers.value.length) {
@@ -5726,16 +6121,18 @@ async function loadCustomer360(customerId) {
     }
     customer360.value = {
       ...profile,
-      timeline: timeline.items || [],
-      timelineTotal: timeline.total ?? (timeline.items || []).length,
-      timelineOffset: timeline.next_offset ?? (timeline.items || []).length,
-      timelineHasMore: Boolean(timeline.has_more),
+      timeline: [],
+      timelineSummary: null,
+      timelineTotal: 0,
+      timelineOffset: 0,
+      timelineHasMore: false,
     };
     customer360OverflowOpen.value = false;
     customer360Error.value = "";
     customerTimelineError.value = "";
     customerMergeHistory.value = history.items || [];
     duplicateSuggestions.value = duplicates.items || [];
+    void loadCustomerOrderHistory(customerId);
     if (!duplicateSuggestions.value.some((item) => Number(item.source_customer_id) === Number(customerMergeSourceId.value))) {
       customerMergePreview.value = null;
     }
@@ -5748,6 +6145,58 @@ async function loadCustomer360(customerId) {
   }
 }
 
+async function applyCustomerTimelineFilters() {
+  const customerId = customer360.value?.id;
+  const { start_date: startDate, end_date: endDate } = customerTimelineFilters.value;
+  if (!customerId) return;
+  if (!customerTimelineHasFilters.value) {
+    customerTimelineError.value = "Chọn ít nhất một khoảng ngày hoặc một nhân viên để tra cứu lịch sử.";
+    return;
+  }
+  if (startDate && endDate && startDate > endDate) {
+    customerTimelineError.value = "Ngày bắt đầu không được sau ngày kết thúc.";
+    return;
+  }
+  customerTimelineFilterLoading.value = true;
+  customerTimelineError.value = "";
+  try {
+    const response = await apiFetch(customerTimelineRequestUrl(customerId, 0));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const page = await response.json();
+    customer360.value = {
+      ...customer360.value,
+      timeline: page.items || [],
+      timelineSummary: page.summary || null,
+      timelineTotal: page.total ?? (page.items || []).length,
+      timelineOffset: page.next_offset ?? (page.items || []).length,
+      timelineHasMore: Boolean(page.has_more),
+    };
+    customerTimelineFilterApplied.value = true;
+    customerTimelineDetailsOpen.value = false;
+  } catch (err) {
+    customerTimelineError.value = "Không thể lọc lịch sử tương tác. Vui lòng thử lại.";
+  } finally {
+    customerTimelineFilterLoading.value = false;
+  }
+}
+
+function clearCustomerTimelineFilters() {
+  customerTimelineFilters.value = { start_date: "", end_date: "", staff_id: "" };
+  customerTimelineFilterApplied.value = false;
+  customerTimelineDetailsOpen.value = false;
+  customerTimelineError.value = "";
+  if (customer360.value) {
+    customer360.value = {
+      ...customer360.value,
+      timeline: [],
+      timelineSummary: null,
+      timelineTotal: 0,
+      timelineOffset: 0,
+      timelineHasMore: false,
+    };
+  }
+}
+
 async function loadMoreCustomerTimeline() {
   const customerId = customer360.value?.id;
   if (!customerId || !customer360.value?.timelineHasMore || customerTimelineLoading.value) return;
@@ -5755,7 +6204,7 @@ async function loadMoreCustomerTimeline() {
   customerTimelineError.value = "";
   try {
     const offset = Number(customer360.value.timelineOffset || customer360.value.timeline.length || 0);
-    const response = await apiFetch(`${API_BASE}/customers/${customerId}/timeline?limit=20&offset=${offset}`);
+    const response = await apiFetch(customerTimelineRequestUrl(customerId, offset));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const page = await response.json();
     const existing = customer360.value.timeline || [];
@@ -5769,6 +6218,7 @@ async function loadMoreCustomerTimeline() {
     customer360.value = {
       ...customer360.value,
       timeline: [...existing, ...appended],
+      timelineSummary: page.summary || customer360.value.timelineSummary || null,
       timelineTotal: page.total ?? customer360.value.timelineTotal,
       timelineOffset: page.next_offset ?? offset + appended.length,
       timelineHasMore: Boolean(page.has_more),
@@ -6445,6 +6895,15 @@ function toggleConversationActions() {
   conversationActionsOpen.value = !conversationActionsOpen.value;
 }
 
+async function toggleLinkedCustomerInbox() {
+  const customerId = Number(selected.value?.customer_id);
+  if (!Number.isFinite(customerId) || customerId <= 0) return;
+
+  linkedCustomerOnly.value = !linkedCustomerOnly.value;
+  inboxCustomerFilterId.value = linkedCustomerOnly.value ? customerId : null;
+  await loadConversations(false, { customerId: inboxCustomerFilterId.value });
+}
+
 function toggleConversationPriority() {
   if (selectedId.value === null) return;
   const next = new Set(conversationPriorityIds.value);
@@ -6486,11 +6945,13 @@ function focusComposer() {
 }
 
 function insertComposerEmoji() {
+  if (!canReplyToSelectedConversation.value) return;
   draft.value = `${draft.value}${draft.value ? " " : ""}🙂`;
   focusComposer();
 }
 
 function insertReplyTemplate() {
+  if (!canReplyToSelectedConversation.value) return;
   if (!draft.value.trim()) {
     draft.value = "Xin chào, mình có thể hỗ trợ gì cho bạn?";
   } else {
@@ -6501,6 +6962,10 @@ function insertReplyTemplate() {
 
 async function sendComposerContent() {
   if (composerMode.value !== "internal") {
+    if (!canReplyToSelectedConversation.value) {
+      error.value = "Hội thoại này đang có nhân viên phụ trách; bạn chỉ có thể xem nội dung.";
+      return;
+    }
     await sendUnifiedReply();
     return;
   }
@@ -6679,11 +7144,53 @@ function stopTenantWorkspace() {
   }
 }
 
+function shouldPollTenantProvisioning() {
+  const state = tenantProvisioning.value?.state;
+  return Boolean(
+    authUser.value
+    && !platformAdmin.value
+    && !tenantReady.value
+    && (state === "awaiting_approval" || state === "provisioning"),
+  );
+}
+
+function stopTenantProvisioningPolling() {
+  if (tenantProvisioningPollingTimer) {
+    clearInterval(tenantProvisioningPollingTimer);
+    tenantProvisioningPollingTimer = null;
+  }
+}
+
+async function pollTenantProvisioning() {
+  if (!shouldPollTenantProvisioning()) {
+    stopTenantProvisioningPolling();
+    return;
+  }
+  await fetchTenantProvisioning();
+  if (!tenantReady.value) return;
+
+  stopTenantProvisioningPolling();
+  currentTab.value = "inbox";
+  await initializeTenantWorkspace();
+}
+
+function startTenantProvisioningPolling() {
+  if (!shouldPollTenantProvisioning() || tenantProvisioningPollingTimer) return;
+  tenantProvisioningPollingTimer = window.setInterval(() => {
+    if (!document.hidden) void pollTenantProvisioning();
+  }, 5000);
+}
+
+function handleTenantProvisioningVisibilityChange() {
+  if (!document.hidden) void pollTenantProvisioning();
+}
+
 async function fetchTenantProvisioning({ retry = false } = {}) {
   if (!authUser.value?.business_id) {
     tenantProvisioning.value = { state: "unknown", feature_enabled: false, subscription_active: false, subscription_status: null };
     return null;
   }
+  if (tenantProvisioningLoading.value) return tenantProvisioning.value;
   tenantProvisioningLoading.value = true;
   tenantProvisioningError.value = "";
   try {
@@ -6705,11 +7212,17 @@ async function fetchTenantProvisioning({ retry = false } = {}) {
       subscription_status: detail.subscription_status || null,
       tenant_revision: detail.tenant_revision || null,
     };
-    if (!tenantReady.value) stopTenantWorkspace();
+    if (tenantReady.value) {
+      stopTenantProvisioningPolling();
+    } else {
+      stopTenantWorkspace();
+      startTenantProvisioningPolling();
+    }
     return tenantProvisioning.value;
   } catch (err) {
     tenantProvisioning.value = { state: "provision_failed", feature_enabled: false, subscription_active: false, subscription_status: null };
     tenantProvisioningError.value = friendlyErrorMessage(err, "Chưa thể chuẩn bị không gian dữ liệu của shop. Vui lòng thử lại.");
+    stopTenantProvisioningPolling();
     stopTenantWorkspace();
     return null;
   } finally {
@@ -6783,6 +7296,7 @@ async function initializeTenantWorkspace() {
 onMounted(async () => {
 
   window.addEventListener("keydown", handleGlobalKeydown);
+  window.addEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);
   if (!platformRequestPollingTimer) {
     platformRequestPollingTimer = window.setInterval(() => {
       if (currentTab.value === "platform_admin" && !document.hidden) {
@@ -6856,6 +7370,13 @@ async function fetchChatbotRuntime() {
         businessHourDayLabels.map(([key]) => [key, Array.isArray(configuredHours[key]) && configuredHours[key].length > 0]),
       );
       businessHoursForm.value.enabled = Object.values(businessHoursDays.value).some(Boolean);
+      const configuredSpecialDates = configuredHours.special_dates || {};
+      specialBusinessDates.value = Object.entries(configuredSpecialDates).map(([date, rule]) => ({
+        date,
+        closed: Boolean(rule?.closed),
+        start: rule?.windows?.[0]?.[0] || "08:00",
+        end: rule?.windows?.[0]?.[1] || "17:30",
+      })).sort((left, right) => left.date.localeCompare(right.date));
     }
     if (cannedResponse.ok) cannedResponses.value = (await cannedResponse.json()).items || [];
   } catch (err) {
@@ -7014,6 +7535,8 @@ async function fetchCsat() {
 onUnmounted(() => {
 
   window.removeEventListener("keydown", handleGlobalKeydown);
+  window.removeEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);
+  stopTenantProvisioningPolling();
   stopTenantWorkspace();
 
   if (platformRequestPollingTimer) {
@@ -7257,7 +7780,7 @@ function followupRecommendationLabel(item) {
           <strong>{{ tenantProvisioning.state === 'awaiting_approval' ? 'Yêu cầu gói đang chờ quản trị viên duyệt' : tenantProvisioning.state === 'subscription_inactive' ? 'Gói dịch vụ chưa được kích hoạt' : 'Không gian dữ liệu của shop đang được chuẩn bị' }}</strong>
           <span v-if="tenantProvisioning.state === 'awaiting_approval'">Yêu cầu đã được ghi nhận. CRM sẽ mở sau khi quản trị viên nền tảng duyệt gói và hệ thống chuẩn bị xong không gian dữ liệu riêng.</span>
           <span v-else-if="tenantProvisioning.state === 'subscription_inactive'">Yêu cầu trước đó chưa được chấp thuận hoặc gói đã hết hiệu lực. Hãy chọn lại gói dịch vụ nếu cần.</span>
-          <span v-else>{{ tenantProvisioning.state === 'provision_failed' ? 'Việc tạo database riêng chưa hoàn tất. Dữ liệu CRM tạm dừng để tránh cảnh báo sai.' : 'Khi database riêng sẵn sàng, chọn Kiểm tra lại để mở CRM.' }}</span>
+          <span v-else>{{ tenantProvisioning.state === 'provision_failed' ? 'Việc tạo database riêng chưa hoàn tất. Dữ liệu CRM tạm dừng để tránh cảnh báo sai.' : 'Khi database riêng sẵn sàng, CRM sẽ tự mở. Bạn cũng có thể kiểm tra lại ngay.' }}</span>
           <small v-if="tenantProvisioningError">{{ tenantProvisioningError }}</small>
         </div>
         <button type="button" class="settings-refresh" :disabled="tenantProvisioningLoading" @click="refreshTenantProvisioning">{{ tenantProvisioningLoading ? 'Đang kiểm tra...' : tenantProvisioning.state === 'provision_failed' ? 'Thử chuẩn bị lại' : tenantProvisioning.state === 'awaiting_approval' ? 'Làm mới trạng thái' : 'Kiểm tra lại' }}</button>
@@ -7500,6 +8023,39 @@ function followupRecommendationLabel(item) {
           <details class="inbox-filter-disclosure">
             <summary>Bộ lọc &amp; nhóm khách hàng</summary>
             <div class="inbox-filter-panel">
+              <div class="filter-panel-heading">
+                <span>Thông tin cá nhân</span>
+                <button
+                  v-if="inboxPersonalFilters.phone || inboxPersonalFilters.email"
+                  type="button"
+                  @click="clearInboxPersonalFilters"
+                >Xóa lọc</button>
+              </div>
+              <div class="personal-filter-grid">
+                <label>
+                  <span>Số điện thoại</span>
+                  <input
+                    v-model="inboxPersonalFilters.phone"
+                    inputmode="tel"
+                    autocomplete="off"
+                    aria-label="Lọc khách hàng theo số điện thoại"
+                    placeholder="Nhập số điện thoại"
+                  />
+                </label>
+                <label>
+                  <span>Gmail / email</span>
+                  <input
+                    v-model="inboxPersonalFilters.email"
+                    type="search"
+                    autocomplete="off"
+                    aria-label="Lọc khách hàng theo Gmail hoặc email"
+                    placeholder="Nhập Gmail hoặc email"
+                    @keydown.escape="clearInboxPersonalFilters"
+                  />
+                </label>
+              </div>
+              <p class="personal-filter-note">Lọc theo thông tin đã được khách hàng cung cấp.</p>
+
               <div class="filter-panel-heading"><span>Nhãn khách hàng</span><button v-if="tagFilters.length" type="button" @click="tagFilters = []">Bỏ chọn</button></div>
               <div v-if="tagCatalog.length" class="tag-chip-list">
                 <button v-for="tag in tagCatalog" :key="tag.id" type="button" class="tag-chip" :class="{ active: tagFilters.includes(tag.name) }" @click="toggleTagFilter(tag.name)">
@@ -7524,7 +8080,12 @@ function followupRecommendationLabel(item) {
           </div>
 
 
-          <div class="conversation-scroll">
+          <div
+            ref="inboxConversationScroll"
+            class="conversation-scroll"
+            aria-label="Danh sách hội thoại, cuộn để tải thêm"
+            @scroll.passive="handleInboxConversationScroll"
+          >
 
             <div v-if="!filtered.length" class="inbox-empty-state">
               <span class="inbox-empty-state-icon" aria-hidden="true">✦</span>
@@ -7583,7 +8144,12 @@ function followupRecommendationLabel(item) {
                     {{ nameOf(item) }}
                   </strong>
                   <div class="conversation-status">
-                    <span v-if="item.unread_count" class="conversation-unread">{{ item.unread_count }}</span>
+                    <span
+                      v-if="conversationUrgentCount(item)"
+                      class="conversation-unread urgent"
+                      title="Cần xử lý: khách xác nhận đơn hoặc AI cần nhân viên hỗ trợ"
+                    >{{ conversationUrgentCount(item) }}</span>
+                    <span v-else-if="item.unread_count" class="conversation-unread">{{ item.unread_count }}</span>
                     <time>{{ formatTime(item.last_message_at) }}</time>
                   </div>
                 </div>
@@ -7671,14 +8237,23 @@ function followupRecommendationLabel(item) {
 
             </button>
 
+            <div v-if="inboxLoadingMore" class="conversation-load-state" role="status">
+              Đang tải thêm hội thoại...
+            </div>
+            <div v-else-if="inboxHasMore" class="conversation-load-state conversation-load-hint">
+              Cuộn xuống để tải thêm
+            </div>
+            <div v-else-if="conversations.length" class="conversation-load-state conversation-load-end">
+              Đã tải hết hội thoại
+            </div>
+
           </div>
 
 
           <div class="conversation-footer">
 
-            Hiển thị
-            {{ filtered.length }}
-            cuộc trò chuyện
+            Đã tải {{ conversations.length }}/{{ inboxConversationTotal || conversations.length }} hội thoại
+            <span v-if="inboxHasMore"> · cuộn để xem thêm</span>
 
           </div>
 
@@ -7843,6 +8418,22 @@ function followupRecommendationLabel(item) {
               <div class="chat-tools">
 
                 <button
+                  type="button"
+                  class="linked-customer-toggle"
+                  :class="{ active: linkedCustomerOnly }"
+                  :aria-pressed="linkedCustomerOnly"
+                  :title="linkedCustomerOnly ? 'Hiện toàn bộ hộp thư' : 'Chỉ hiện các tài khoản liên kết của khách hàng này'"
+                  :aria-label="linkedCustomerOnly ? 'Hiện toàn bộ hộp thư' : 'Chỉ hiện các tài khoản liên kết của khách hàng này'"
+                  @click="toggleLinkedCustomerInbox"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M10.6 13.4a4.2 4.2 0 0 0 5.9.1l2-2a4.2 4.2 0 0 0-5.9-5.9l-1.1 1.1" />
+                    <path d="M13.4 10.6a4.2 4.2 0 0 0-5.9-.1l-2 2a4.2 4.2 0 1 0 5.9 5.9l1.1-1.1" />
+                    <path d="m9 15 6-6" />
+                  </svg>
+                </button>
+
+                <button
                   ref="mobileCustomerTrigger"
                   type="button"
                   class="mobile-customer-trigger"
@@ -7937,10 +8528,12 @@ function followupRecommendationLabel(item) {
                   message.message_id
                 "
 
+                :data-message-id="message.message_id"
+
                 class="msg-line"
 
                 :class="
-                  message.direction
+                  [message.direction, { 'search-jump-highlight': Number(message.message_id) === Number(customerMessageSearchJumpingId) }]
                 "
               >
 
@@ -8254,6 +8847,7 @@ function followupRecommendationLabel(item) {
                 <button
                   type="button"
                   :class="{ active: composerMode === 'reply' }"
+                  :disabled="!canReplyToSelectedConversation"
                   @click="setComposerMode('reply')"
                 >
                   Trả lời
@@ -8272,10 +8866,20 @@ function followupRecommendationLabel(item) {
 
               <!-- TEXTAREA -->
 
+              <p
+                v-if="composerMode === 'reply'"
+                class="composer-access-notice"
+                :class="{ 'is-read-only': !canReplyToSelectedConversation }"
+                role="status"
+              >
+                {{ replyAccessNotice }}
+              </p>
+
               <textarea
                 v-model="draft"
 
-                :placeholder="composerMode === 'internal' ? 'Ghi chú nội bộ...' : 'Nhập tin nhắn...'"
+                :disabled="composerMode === 'reply' && !canReplyToSelectedConversation"
+                :placeholder="composerMode === 'internal' ? 'Ghi chú nội bộ...' : (canReplyToSelectedConversation ? 'Nhập tin nhắn...' : 'Chỉ xem hội thoại do nhân viên khác phụ trách')"
 
                 @paste="
                   handlePaste
@@ -8384,6 +8988,7 @@ function followupRecommendationLabel(item) {
                     type="button"
                     title="Thêm emoji"
                     aria-label="Thêm emoji"
+                    :disabled="composerMode === 'reply' && !canReplyToSelectedConversation"
                     @click="insertComposerEmoji"
                   >
                     ☺
@@ -8396,6 +9001,7 @@ function followupRecommendationLabel(item) {
                     type="button"
 
                     title="Chọn ảnh, audio, video hoặc file"
+                    :disabled="composerMode === 'reply' && !canReplyToSelectedConversation"
 
                     @click="
                       openImagePicker
@@ -8411,7 +9017,7 @@ function followupRecommendationLabel(item) {
                     type="button"
                     class="voice-record-button"
                     :class="{ recording: voiceRecording }"
-                    :disabled="composerMode === 'internal' || sending"
+                    :disabled="composerMode === 'internal' || sending || !canReplyToSelectedConversation"
                     :title="voiceRecording ? 'Dừng ghi âm' : 'Ghi âm'"
                     :aria-label="voiceRecording ? 'Dừng ghi âm' : 'Ghi âm'"
                     :aria-pressed="voiceRecording"
@@ -8448,6 +9054,7 @@ function followupRecommendationLabel(item) {
                       template
                     "
                     title="Chèn mẫu trả lời"
+                    :disabled="composerMode === 'reply' && !canReplyToSelectedConversation"
                     @click="insertReplyTemplate"
                   >
                     Mẫu trả lời
@@ -8457,6 +9064,7 @@ function followupRecommendationLabel(item) {
                     v-if="cannedResponses.length"
                     v-model="selectedCannedId"
                     class="canned-response-select"
+                    :disabled="composerMode === 'reply' && !canReplyToSelectedConversation"
                     title="Chọn mẫu trả lời đã lưu"
                     @change="applyCannedResponse"
                   >
@@ -8488,6 +9096,8 @@ function followupRecommendationLabel(item) {
                       sending
                       ||
                       sendingImage
+                      ||
+                      (composerMode === 'reply' && !canReplyToSelectedConversation)
                     "
 
                     @click="
@@ -8564,25 +9174,84 @@ function followupRecommendationLabel(item) {
               Hồ sơ khách hàng 360
             </h3>
 
-            <button
-              ref="mobileCustomerClose"
-              type="button"
-              class="mobile-panel-close"
-              aria-label="Đóng hồ sơ khách hàng 360"
-              @click="closeMobileCustomer"
-            >×</button>
+            <div class="customer-title-actions">
+              <button
+                ref="mobileCustomerClose"
+                type="button"
+                class="mobile-panel-close"
+                aria-label="Đóng hồ sơ khách hàng 360"
+                @click="closeMobileCustomer"
+              >×</button>
 
-            <button
-              type="button"
-              :aria-expanded="String(!customerPanelCollapsed)"
-              :aria-label="customerPanelCollapsed ? 'Mở rộng thông tin khách hàng' : 'Thu gọn thông tin khách hàng'"
-              :title="customerPanelCollapsed ? 'Mở rộng thông tin khách hàng' : 'Thu gọn thông tin khách hàng'"
-              @click="toggleCustomerPanel"
-            >
-              {{ customerPanelCollapsed ? '⌄' : '⌃' }}
-            </button>
+              <button
+                v-if="selected"
+                type="button"
+                class="customer-message-search-trigger"
+                :aria-expanded="customerMessageSearchOpen"
+                aria-label="Tìm trong hội thoại của khách hàng"
+                title="Tìm trong hội thoại"
+                @click="customerMessageSearchOpen ? closeCustomerMessageSearch() : openCustomerMessageSearch()"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m15.2 15.2 4 4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2"/></svg>
+              </button>
+
+              <button
+                type="button"
+                :aria-expanded="String(!customerPanelCollapsed)"
+                :aria-label="customerPanelCollapsed ? 'Mở rộng thông tin khách hàng' : 'Thu gọn thông tin khách hàng'"
+                :title="customerPanelCollapsed ? 'Mở rộng thông tin khách hàng' : 'Thu gọn thông tin khách hàng'"
+                @click="toggleCustomerPanel"
+              >
+                {{ customerPanelCollapsed ? '⌄' : '⌃' }}
+              </button>
+            </div>
 
           </div>
+
+          <section v-if="customerMessageSearchOpen" class="customer-message-search" role="dialog" aria-label="Tìm kiếm hội thoại khách hàng">
+            <div class="customer-message-search-head">
+              <div class="customer-message-search-input-wrap">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m15.2 15.2 4 4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2"/></svg>
+                <input
+                  data-customer-message-search-input
+                  v-model="customerMessageSearchQuery"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="Tìm trong hội thoại..."
+                  aria-label="Nhập nội dung cần tìm trong hội thoại"
+                  @input="queueCustomerMessageSearch"
+                  @keydown.esc="closeCustomerMessageSearch"
+                />
+                <button v-if="customerMessageSearchQuery" type="button" aria-label="Xóa từ khóa tìm kiếm" @click="customerMessageSearchQuery = ''; queueCustomerMessageSearch()">×</button>
+              </div>
+              <button type="button" class="customer-message-search-close" aria-label="Đóng tìm kiếm hội thoại" @click="closeCustomerMessageSearch">×</button>
+            </div>
+            <p class="customer-message-search-note">
+              <template v-if="customerMessageSearchQuery.trim().length < 2">Nhập ít nhất 2 ký tự để tìm tin nhắn của khách hàng này.</template>
+              <template v-else-if="customerMessageSearchLoading && !customerMessageSearchItems.length">Đang tìm tin nhắn liên quan...</template>
+              <template v-else>{{ customerMessageSearchTotal }} kết quả · bấm một kết quả để mở đúng tin nhắn.</template>
+            </p>
+            <div class="customer-message-search-results" @scroll.passive="handleCustomerMessageSearchScroll">
+              <button
+                v-for="item in customerMessageSearchItems"
+                :key="`customer-message-search-${item.message_id}`"
+                type="button"
+                class="customer-message-search-result"
+                :disabled="customerMessageSearchJumpingId === item.message_id"
+                @click="jumpToCustomerSearchMessage(item)"
+              >
+                <span class="customer-message-search-result-head">
+                  <strong>{{ customerMessageSearchActor(item) }}</strong>
+                  <time>{{ item.occurred_at ? new Date(item.occurred_at).toLocaleString('vi-VN') : 'Không rõ thời gian' }}</time>
+                </span>
+                <span>{{ customerMessageSearchPreview(item) }}</span>
+              </button>
+              <p v-if="customerMessageSearchQuery.trim().length >= 2 && !customerMessageSearchLoading && !customerMessageSearchItems.length && !customerMessageSearchError" class="customer-message-search-empty">Không tìm thấy tin nhắn phù hợp.</p>
+              <p v-if="customerMessageSearchLoading && customerMessageSearchItems.length" class="customer-message-search-loading">Đang tải thêm kết quả...</p>
+              <p v-if="customerMessageSearchError" class="customer-message-search-error">{{ customerMessageSearchError }}</p>
+            </div>
+            <div v-if="customerMessageSearchHasMore" class="customer-message-search-footer">Cuộn xuống để tải thêm kết quả</div>
+          </section>
 
           <template v-if="selected">
 
@@ -8862,33 +9531,99 @@ function followupRecommendationLabel(item) {
               <div class="section customer-timeline-section">
                 <div class="section-head">
                   <h4>Lịch sử tương tác</h4>
-                  <span>{{ customer360.timeline.length }} / {{ customer360.timelineTotal }}</span>
+                  <span v-if="customerTimelineFilterApplied">{{ customer360.timeline.length }} / {{ customer360.timelineTotal }}</span>
                 </div>
-                <div class="customer-timeline">
-                  <div
-                    v-for="event in customer360.timeline"
-                    :key="`${event.event_type}-${event.event_id}`"
-                    class="customer-timeline-row"
-                  >
-                    <span class="timeline-dot" :class="event.event_type"></span>
-                    <div>
-                      <small>{{ timelineLabel(event) }}<span v-if="event.channel"> · {{ channelLabel(event.channel) }}</span></small>
-                      <p>{{ event.content || 'Sự kiện không có nội dung' }}</p>
-                      <small v-if="timelineExplainability(event)" class="timeline-explainability">{{ timelineExplainability(event) }}</small>
-                      <small class="customer-timeline-meta">
-                        {{ event.occurred_at ? new Date(event.occurred_at).toLocaleString('vi-VN') : 'Không rõ thời gian' }}
-                        <span
-                          class="timeline-actor"
-                          :class="`timeline-actor-${timelineActor(event).kind}`"
-                          :title="event.created_by ? `ID nhân viên: ${event.created_by}` : timelineActor(event).label"
-                        >{{ timelineActor(event).label }}</span>
-                      </small>
-                    </div>
+                <p class="customer-section-hint">
+                  Chỉ tra cứu hoạt động khi cần; toàn bộ nội dung tin nhắn vẫn được xem trong khung hội thoại chính.
+                </p>
+                <div class="customer-timeline-filters" role="group" aria-label="Bộ lọc lịch sử tương tác">
+                  <label>
+                    Từ ngày
+                    <input v-model="customerTimelineFilters.start_date" type="date" aria-label="Lịch sử từ ngày" />
+                  </label>
+                  <label>
+                    Đến ngày
+                    <input v-model="customerTimelineFilters.end_date" type="date" aria-label="Lịch sử đến ngày" />
+                  </label>
+                  <label>
+                    Nhân viên
+                    <select v-model="customerTimelineFilters.staff_id" aria-label="Lọc lịch sử theo nhân viên">
+                      <option value="">Tất cả nhân viên</option>
+                      <option v-for="member in teamUsers" :key="`timeline-staff-${member.id}`" :value="String(member.id)">
+                        {{ member.full_name || member.email }}
+                      </option>
+                    </select>
+                  </label>
+                  <div class="customer-timeline-filter-actions">
+                    <button
+                      type="button"
+                      class="table-action-btn"
+                      :disabled="customerTimelineFilterLoading || !customerTimelineHasFilters"
+                      @click="applyCustomerTimelineFilters"
+                    >
+                      {{ customerTimelineFilterLoading ? 'Đang lọc...' : 'Áp dụng bộ lọc' }}
+                    </button>
+                    <button
+                      v-if="customerTimelineHasFilters || customerTimelineFilterApplied"
+                      type="button"
+                      class="table-action-btn secondary"
+                      @click="clearCustomerTimelineFilters"
+                    >Xóa lọc</button>
                   </div>
                 </div>
+                <p class="customer-filter-note">
+                  {{ customerTimelineFilters.staff_id && (customerTimelineFilters.start_date || customerTimelineFilters.end_date)
+                    ? 'Chỉ giữ hoạt động do nhân viên đã chọn thực hiện trong khoảng ngày đã chọn.'
+                    : (customerTimelineFilters.staff_id
+                      ? 'Chỉ hiển thị hoạt động do nhân viên đã chọn thực hiện.'
+                      : 'Ngày được tính theo giờ Việt Nam. Để xem toàn bộ hoạt động trong ngày, giữ “Tất cả nhân viên”.') }}
+                </p>
+                <div v-if="!customerTimelineFilterApplied" class="customer-timeline-placeholder">
+                  Chọn ngày hoặc nhân viên rồi bấm “Áp dụng bộ lọc”. Hồ sơ chỉ hiển thị phần tổng hợp để không lặp lại đoạn chat dài.
+                </div>
+                <div v-else-if="!customer360.timeline.length" class="customer-timeline-placeholder">
+                  Không có hoạt động nào khớp với bộ lọc hiện tại.
+                </div>
+                <template v-else>
+                  <div class="customer-timeline-summary" aria-label="Tổng hợp lịch sử đã lọc">
+                    <article v-for="card in customerTimelineSummaryCards" :key="card.key" class="customer-timeline-summary-card">
+                      <strong>{{ card.value }}</strong>
+                      <span>{{ card.label }}</span>
+                      <small>{{ card.note }}</small>
+                    </article>
+                  </div>
+                  <div class="customer-timeline-detail-toggle">
+                    <button type="button" class="table-action-btn secondary" @click="customerTimelineDetailsOpen = !customerTimelineDetailsOpen">
+                      {{ customerTimelineDetailsOpen ? 'Ẩn chi tiết' : `Xem chi tiết (${customer360.timeline.length} hoạt động gần nhất)` }}
+                    </button>
+                    <span>Chi tiết chỉ là bản xem trước; nội dung chat đầy đủ ở giữa màn hình.</span>
+                  </div>
+                  <div v-if="customerTimelineDetailsOpen" class="customer-timeline">
+                    <div
+                      v-for="event in customer360.timeline"
+                      :key="`${event.event_type}-${event.event_id}`"
+                      class="customer-timeline-row"
+                    >
+                      <span class="timeline-dot" :class="event.event_type"></span>
+                      <div>
+                        <small>{{ timelineLabel(event) }}<span v-if="event.channel"> · {{ channelLabel(event.channel) }}</span></small>
+                        <p>{{ customerTimelineContent(event) }}</p>
+                        <small v-if="timelineExplainability(event)" class="timeline-explainability">{{ timelineExplainability(event) }}</small>
+                        <small class="customer-timeline-meta">
+                          {{ event.occurred_at ? new Date(event.occurred_at).toLocaleString('vi-VN') : 'Không rõ thời gian' }}
+                          <span
+                            class="timeline-actor"
+                            :class="`timeline-actor-${timelineActor(event).kind}`"
+                            :title="event.created_by ? `ID nhân viên: ${event.created_by}` : timelineActor(event).label"
+                          >{{ timelineActor(event).label }}</span>
+                        </small>
+                      </div>
+                    </div>
+                  </div>
+                </template>
                 <div v-if="customerTimelineError" class="facts-error">{{ customerTimelineError }}</div>
                 <button
-                  v-if="customer360.timelineHasMore"
+                  v-if="customerTimelineFilterApplied && customerTimelineDetailsOpen && customer360.timelineHasMore"
                   type="button"
                   class="timeline-load-more"
                   :disabled="customerTimelineLoading"
@@ -8896,6 +9631,44 @@ function followupRecommendationLabel(item) {
                 >
                   {{ customerTimelineLoading ? 'Đang tải...' : 'Tải thêm lịch sử' }}
                 </button>
+              </div>
+
+              <div class="section customer-orders-section">
+                <div class="section-head">
+                  <h4>Đơn hàng &amp; sản phẩm đã mua</h4>
+                  <span>{{ customerOrderHistory.length }}</span>
+                </div>
+                <p class="customer-section-hint">Hóa đơn trước đây và các sản phẩm khách đã mua.</p>
+                <div v-if="customerPendingApprovalOrders.length" class="customer-order-approval" role="status">
+                  <div class="customer-order-approval-head"><strong>{{ customerPendingApprovalOrders.length }} đơn chờ xác nhận</strong><span>Khách đã duyệt hóa đơn</span></div>
+                  <article v-for="order in customerPendingApprovalOrders" :key="`customer-order-approval-${order.id}`" class="customer-order-approval-card">
+                    <div><strong>{{ order.order_number || `Đơn #${order.id}` }}</strong><small>{{ order.items?.map((item) => `${item.product_name || item.name || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') || 'Chưa có sản phẩm' }}</small><small>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ · {{ order.shipping_phone || 'Chưa có SĐT giao hàng' }}</small></div>
+                    <button type="button" class="table-action-btn customer-order-approve-btn" :disabled="orderTransitionSaving[order.id]" @click="confirmCustomerOrder(order)">{{ orderTransitionSaving[order.id] ? 'Đang xác nhận...' : 'Đồng ý đơn' }}</button>
+                  </article>
+                </div>
+                <p v-if="customerOrderApprovalNotice" class="customer-order-approval-notice" role="status">{{ customerOrderApprovalNotice }}</p>
+                <div v-if="customerOrderHistoryLoading" class="customer-timeline-placeholder">Đang tải lịch sử đơn hàng...</div>
+                <div v-else-if="!customerOrderHistory.length" class="customer-timeline-placeholder">Khách hàng chưa có đơn hàng.</div>
+                <div v-else class="customer-order-history">
+                  <article v-for="order in customerVisibleOrderHistory" :key="`customer-order-${order.id}`" class="customer-order-card">
+                    <div>
+                      <strong>{{ order.order_number || `Đơn #${order.id}` }}</strong>
+                      <small>{{ order.created_at ? new Date(order.created_at).toLocaleDateString('vi-VN') : 'Chưa rõ ngày đặt' }}</small>
+                      <small v-if="order.items?.length" class="customer-order-items">
+                        {{ order.items.map((item) => `${item.name || item.sku || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') }}
+                      </small>
+                    </div>
+                    <div class="customer-order-card-meta">
+                      <span>{{ salesOrderStatusLabel(order.status) }}</span>
+                      <strong>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</strong>
+                    </div>
+                  </article>
+                </div>
+                <div v-if="customerOrderHistory.length > 5" class="customer-timeline-detail-toggle">
+                  <button type="button" class="table-action-btn secondary" @click="customerOrderHistoryExpanded = !customerOrderHistoryExpanded">
+                    {{ customerOrderHistoryExpanded ? 'Thu gọn đơn hàng' : `Xem thêm ${customerOrderHistory.length - 5} đơn hàng` }}
+                  </button>
+                </div>
               </div>
 
               <div class="section customer-facts-section">
@@ -9066,6 +9839,19 @@ function followupRecommendationLabel(item) {
 
                   <b>
                     {{ outboundCount }}
+                  </b>
+
+                </div>
+
+
+                <div>
+
+                  <span>
+                    Đơn đã chốt
+                  </span>
+
+                  <b>
+                    {{ customerConfirmedOrderCount }}
                   </b>
 
                 </div>
@@ -9913,7 +10699,7 @@ function followupRecommendationLabel(item) {
       <section v-if="currentTab === 'documents'" class="rag-docs-layout">
         <div class="rag-header-panel">
           <div>
-            <h2>Kho thông tin</h2>
+            <h2>Kho kiến thức</h2>
             <p>Nạp tài liệu sản phẩm, câu hỏi thường gặp, chính sách... để trợ lý tự động học và trả lời khách hàng qua Facebook, Instagram và Telegram.</p>
           </div>
           <div class="rag-stats">
@@ -9985,7 +10771,7 @@ function followupRecommendationLabel(item) {
           </div>
 
           <div v-else-if="!documents.length" class="empty-docs-state">
-            📭 Chưa có tài liệu nào trong Kho thông tin. Hãy nhập tệp hoặc dán văn bản ở trên!
+            📭 Chưa có tài liệu nào trong Kho kiến thức. Hãy nhập tệp hoặc dán văn bản ở trên!
           </div>
 
           <table v-else class="docs-table">
@@ -10073,7 +10859,7 @@ function followupRecommendationLabel(item) {
 
           <div class="setting-card">
             <h3>Cách trợ lý trả lời</h3>
-            <p class="setting-desc">Trợ lý tự chọn thông tin phù hợp trong Kho thông tin của shop. Các thiết lập kỹ thuật được hệ thống tối ưu sẵn.</p>
+            <p class="setting-desc">Trợ lý tự chọn thông tin phù hợp trong Kho kiến thức của shop. Các thiết lập kỹ thuật được hệ thống tối ưu sẵn.</p>
             <div class="config-item"><span class="config-val">✓ Luôn ưu tiên nội dung mới nhất</span></div>
             <div class="config-item"><span class="config-val">✓ Chỉ dùng dữ liệu của shop này</span></div>
           </div>
@@ -10280,6 +11066,7 @@ function followupRecommendationLabel(item) {
           <div class="settings-card-header"><div><span class="card-eyebrow">VẬN HÀNH SHOP</span><h2>Giờ làm việc</h2><p>Trợ lý sẽ báo đúng thời gian phục vụ và chuyển người hỗ trợ khi shop ngoài giờ.</p></div><span class="connection-badge connected">ĐANG DÙNG</span></div>
           <div class="business-hours-grid"><label>Múi giờ<select v-model="businessHoursForm.timezone"><option value="Asia/Ho_Chi_Minh">Việt Nam (UTC+7)</option><option value="Asia/Bangkok">Bangkok (UTC+7)</option></select></label><label>Giờ mở cửa<input v-model="businessHoursForm.start" type="time" /></label><label>Giờ đóng cửa<input v-model="businessHoursForm.end" type="time" /></label><label class="checkbox-field business-hours-enabled"><input v-model="businessHoursForm.enabled" type="checkbox" /> Shop đang mở cửa</label></div>
           <fieldset class="business-days-fieldset"><legend>Ngày phục vụ</legend><div class="business-day-options"><label v-for="([key, label]) in businessHourDayLabels" :key="key" class="business-day-option" :class="{ selected: businessHoursDays[key] }"><input v-model="businessHoursDays[key]" type="checkbox" :disabled="!businessHoursForm.enabled" /><span>{{ label }}</span></label></div><small class="field-hint">Bỏ chọn ngày nghỉ; cùng một khung giờ sẽ áp dụng cho các ngày đã chọn.</small></fieldset>
+          <fieldset class="special-business-dates"><legend>Giờ đặc biệt</legend><p>Ngày đặc biệt sẽ ghi đè lịch hằng tuần. Khi khách nhắn vào ngày/giờ đóng cửa, trợ lý gửi phản hồi ngoài giờ; hệ thống không tự nhắn hàng loạt chỉ vì bạn đổi lịch.</p><div v-if="!specialBusinessDates.length" class="settings-empty">Chưa có ngày đặc biệt.</div><div v-for="(item, index) in specialBusinessDates" :key="`${item.date}-${index}`" class="special-business-date-row"><input v-model="item.date" type="date" aria-label="Ngày đặc biệt" /><label><input v-model="item.closed" type="checkbox" /> Nghỉ cả ngày</label><template v-if="!item.closed"><input v-model="item.start" type="time" aria-label="Giờ mở đặc biệt" /><span>đến</span><input v-model="item.end" type="time" aria-label="Giờ đóng đặc biệt" /></template><button type="button" class="history-btn" @click="removeSpecialBusinessDate(index)">Xóa</button></div><button type="button" class="table-action-btn secondary" @click="addSpecialBusinessDate">+ Thêm ngày đặc biệt</button></fieldset>
           <div v-if="businessHoursNotice" class="settings-notice" role="status">{{ businessHoursNotice }}</div><button type="button" class="primary-btn" @click="saveBusinessHours">Lưu giờ làm việc</button>
         </div>
       </section>
@@ -10742,7 +11529,7 @@ function followupRecommendationLabel(item) {
             <div><span>Tên shop</span><strong>{{ serviceAccountSummary.buyer?.shop_name || '—' }}</strong><small>{{ serviceAccountSummary.buyer?.phone || 'Chưa cập nhật số điện thoại' }}</small></div>
             <div><span>Gói đang dùng</span><strong>{{ serviceAccountSummary.subscription?.plan_name || 'Chưa chọn gói' }}</strong><small>{{ subscriptionStatusLabel(serviceAccountSummary.subscription?.status) }}</small></div>
             <div><span>Thanh toán gần nhất</span><strong>{{ serviceAccountSummary.amount == null ? 'Chưa có' : `${Number(serviceAccountSummary.amount).toLocaleString('vi-VN')}đ` }}</strong><small>{{ serviceAccountSummary.payment_status === 'paid' ? 'Đã thanh toán' : 'Chưa ghi nhận thanh toán' }}</small></div>
-            <div><span>Kênh đang dùng</span><strong>{{ serviceAccountSummary.connected_channels }} / {{ serviceAccountSummary.channel_limit ?? '—' }}</strong><small>Facebook, Instagram, Telegram, Zalo</small></div>
+            <div><span>Kênh đang dùng</span><strong>{{ serviceAccountSummary.connected_channels }} / {{ serviceAccountSummary.channel_limit ?? '—' }}</strong><small>Kết nối thực tế được quản lý tại mục Kết nối mạng xã hội</small></div>
           </div>
           <div v-else class="settings-empty">Chưa có thông tin gói. Hãy chọn một gói bên dưới.</div>
         </article>
@@ -10774,7 +11561,7 @@ function followupRecommendationLabel(item) {
             </div>
             <form v-else class="service-request-form" @submit.prevent="submitServiceRequest">
               <div class="service-request-heading"><div><span class="service-page-kicker">CHỌN GÓI</span><h2>{{ serviceMode === 'chatbot' ? 'Thuê riêng trợ lý chatbot' : 'Mua gói dịch vụ cho shop' }}</h2></div><span class="service-request-badge">{{ servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? 'Dùng thử ngay' : 'Admin duyệt' }}</span></div>
-              <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ để đội ngũ cài nội dung, kết nối kênh và bàn giao trợ lý cho shop.' : `Gói đã chọn cho phép kết nối tối đa ${serviceChannelLimit} kênh. Chọn đúng số kênh để tiếp tục đăng ký.` }}</p>
+              <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ để đội ngũ cài nội dung, kết nối kênh và bàn giao trợ lý cho shop.' : `Gói đã chọn cho phép kết nối tối đa ${serviceChannelLimit} nền tảng. Việc kết nối thực tế được thực hiện duy nhất tại mục Kết nối mạng xã hội.` }}</p>
               <div v-if="serviceRequestError" class="service-request-error" role="alert">{{ serviceRequestError }}</div>
               <div class="service-request-fields">
                 <label>Người liên hệ<input v-model="serviceRequestForm.contact_name" required maxlength="120" placeholder="Nguyễn Văn A" /></label>
@@ -10782,7 +11569,7 @@ function followupRecommendationLabel(item) {
                 <label>Số điện thoại <span>(không bắt buộc)</span><input v-model="serviceRequestForm.phone" type="tel" maxlength="30" placeholder="0901 234 567" /></label>
                 <label>Tên shop<input v-model="serviceRequestForm.shop_name" required maxlength="160" placeholder="Shop của bạn" /></label>
               </div>
-              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><em>{{ plan.price }}</em></span></label></div></fieldset>
+              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><small>{{ plan.max_channels }} nền tảng kết nối</small><em>{{ plan.price }}</em></span></label></div></fieldset>
               <div v-if="authUser" class="service-purchase-box">
                 <div v-if="servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo'"><strong>Gói Demo được mở ngay</strong><small>Sau khi gửi đăng ký, shop có thể dùng thử ngay khi không gian dữ liệu sẵn sàng.</small></div>
                 <div v-else><strong>Gói trả phí cần admin xác nhận</strong><small>Yêu cầu được chuyển vào hàng chờ duyệt. CRM chỉ mở sau khi admin duyệt và hệ thống chuẩn bị xong dữ liệu riêng.</small></div>
@@ -10795,7 +11582,8 @@ function followupRecommendationLabel(item) {
                   <button type="button" class="history-btn" @click="openSettings">Quản lý nhân viên</button>
                 </div>
               </div>
-              <fieldset class="service-channel-picker"><legend>Shop muốn kết nối kênh nào? <small>{{ serviceRequestForm.channels.length }}/{{ serviceChannelLimit }} kênh</small></legend><div class="service-channel-options"><label v-for="channel in SERVICE_CHANNELS" :key="channel" :class="{ selected: serviceRequestForm.channels.includes(channel) }"><input type="checkbox" :checked="serviceRequestForm.channels.includes(channel)" :disabled="!serviceRequestForm.channels.includes(channel) && serviceRequestForm.channels.length >= serviceChannelLimit" @change="toggleServiceChannel(channel)" /><span>{{ channel }}</span></label></div><p v-if="serviceRequestForm.channels.length >= serviceChannelLimit" class="service-channel-hint">Gói này đã đủ số lượng kênh. Đổi gói nếu shop cần thêm kênh.</p></fieldset>
+              <div class="service-channel-summary"><strong>Hạn mức nền tảng: {{ serviceChannelLimit }}</strong><span>Không chọn nền tảng tại đây để tránh lệch dữ liệu. Sau khi gói được duyệt, vào <b>Kết nối mạng xã hội</b> để kết nối đúng các nền tảng shop đang dùng.</span></div>
+              <p v-if="authUser" class="service-upgrade-note">Nâng cấp không cần hủy gói hiện tại: gói cũ vẫn hoạt động trong khi yêu cầu chờ duyệt; khi duyệt, hệ thống thay thế bằng gói mới.</p>
               <label class="service-request-notes">Ghi chú thêm <span>(không bắt buộc)</span><textarea v-model="serviceRequestForm.notes" rows="3" maxlength="1000" placeholder="Ví dụ: shop cần bot trả lời ngoài giờ hoặc hỗ trợ nhiều nhân viên..."></textarea></label>
               <button type="submit" class="primary-btn service-submit" :disabled="servicePurchaseLoading">{{ servicePurchaseLoading ? 'Đang gửi yêu cầu...' : servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? 'Kích hoạt gói Demo' : serviceMode === 'chatbot' ? 'Gửi yêu cầu thuê trợ lý' : 'Gửi yêu cầu thuê gói' }} <span aria-hidden="true">→</span></button>
               <small class="service-form-footnote">Gói trả phí chỉ được mở sau khi quản trị viên nền tảng xác nhận yêu cầu.</small>

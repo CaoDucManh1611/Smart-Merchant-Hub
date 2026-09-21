@@ -14,6 +14,8 @@ from app.services.channel_service import get_active_channel
 from app.models.channel import Channel
 from app.services.channel_credentials import decrypt_token
 from app.services.workflow_engine import emit_workflow_event
+from app.services.notification_service import create_notification
+from app.services.realtime import manager
 from sqlalchemy.orm import Session
 
 from app.db.message_repository import save_message
@@ -1504,14 +1506,16 @@ def process_and_save_message(
                     business_id,
                     channel_id,
                     channel,
-                    status
+                    status,
+                    bot_mode
                 )
                 VALUES (
                     :customer_id,
                     :business_id,
                     :channel_id,
                     :channel,
-                    'open'
+                    'open',
+                    'auto'
                 )
                 RETURNING id
             """),
@@ -1628,6 +1632,56 @@ def process_and_save_message(
         {"customer_id": customer_id},
     )
     db.commit()
+
+    # Every new inbound message is visible in the shared shop inbox. When a
+    # responsible staff member is actively working in CRM, only that person
+    # receives the bell notification. If they leave the CRM session (or the
+    # conversation is unassigned), notify the shop so the customer is not
+    # left waiting.
+    # The notification is intentionally persisted after the message commit so
+    # a legacy notification table can never make the provider retry the chat.
+    if saved_message and saved_message.get("message_id"):
+        try:
+            assignment = db.execute(
+                text(
+                    """
+                    SELECT assigned_user_id
+                    FROM conversations
+                    WHERE id = :conversation_id AND business_id = :business_id
+                    """
+                ),
+                {"conversation_id": int(conversation_id), "business_id": int(business_id)},
+            ).first()
+            assigned_user_id = getattr(assignment, "assigned_user_id", None) if assignment else None
+            notification_user_id = (
+                int(assigned_user_id)
+                if assigned_user_id is not None
+                and manager.is_user_connected(
+                    business_id=int(business_id),
+                    user_id=int(assigned_user_id),
+                )
+                else None
+            )
+            preview = " ".join(str(message.get("content") or "").split())[:280]
+            customer_name = str(getattr(customer, "name", "") or "Khách hàng").strip()
+            create_notification(
+                db,
+                business_id=int(business_id),
+                user_id=notification_user_id,
+                kind="new_message",
+                title=f"Tin nhắn mới từ {customer_name[:120] or 'khách hàng'}",
+                body=preview or "Khách vừa gửi một tệp hoặc nội dung mới.",
+                metadata={
+                    "conversation_id": int(conversation_id),
+                    "customer_id": int(customer_id),
+                    "message_id": int(saved_message["message_id"]),
+                    "channel": str(channel),
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning("Inbound notification could not be recorded")
 
     # Keep the inbound side of the unified event chain auditable without
     # copying message content or provider payloads into the audit stream.

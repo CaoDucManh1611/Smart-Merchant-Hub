@@ -132,5 +132,5 @@ async def receive_zalo_webhook(
                     "type": "message_created",
                     "conversation_id": saved.get("conversation_id"),
                     "message": {key: value for key, value in saved.items() if key != "_created"},
-                })
+                }, business_id=int(saved.get("business_id") or event.business_id))
         return {"status": "received", "processed": processed}

@@ -174,9 +174,42 @@ class CustomerTimelineItem(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CustomerMessageSearchItem(BaseModel):
+    message_id: int
+    conversation_id: int
+    channel: str
+    direction: str
+    content: str | None = None
+    occurred_at: datetime | None = None
+    sender_type: str | None = None
+    sender_user_id: int | None = None
+
+
+class CustomerMessageSearchOut(BaseModel):
+    items: list[CustomerMessageSearchItem]
+    total: int
+    offset: int = 0
+    limit: int = 10
+    has_more: bool = False
+    next_offset: int | None = None
+
+
+class CustomerTimelineSummary(BaseModel):
+    """Compact, filter-aware counts for the Customer 360 activity audit."""
+
+    total_events: int = 0
+    conversation_count: int = 0
+    message_events: int = 0
+    customer_messages: int = 0
+    staff_actions: int = 0
+    automated_actions: int = 0
+    operational_events: int = 0
+
+
 class CustomerTimelineOut(BaseModel):
     items: list[CustomerTimelineItem]
     total: int
+    summary: CustomerTimelineSummary = Field(default_factory=CustomerTimelineSummary)
     offset: int = 0
     limit: int = 100
     has_more: bool = False

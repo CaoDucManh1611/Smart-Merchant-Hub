@@ -70,6 +70,52 @@ class TeamApiTests(unittest.TestCase):
         self.assertEqual("viewer", updated.json()["role"])
         self.assertFalse(updated.json()["is_active"])
 
+    def test_multiple_staff_accounts_can_log_in_to_the_same_shop_at_once(self):
+        headers = {"X-Business-Id": str(self.business_one)}
+        first = self.client.post(
+            "/api/team",
+            headers=headers,
+            json={
+                "full_name": "Concurrent One",
+                "email": "concurrent-one@example.test",
+                "role": "agent",
+                "password": "concurrent-pass-1",
+            },
+        )
+        second = self.client.post(
+            "/api/team",
+            headers=headers,
+            json={
+                "full_name": "Concurrent Two",
+                "email": "concurrent-two@example.test",
+                "role": "agent",
+                "password": "concurrent-pass-2",
+            },
+        )
+        self.assertEqual(201, first.status_code, first.text)
+        self.assertEqual(201, second.status_code, second.text)
+        self.assertEqual(self.business_one, first.json()["business_id"])
+        self.assertEqual(self.business_one, second.json()["business_id"])
+
+        first_login = self.client.post(
+            "/api/auth/login",
+            json={"email": "concurrent-one@example.test", "password": "concurrent-pass-1", "shop_slug": "team-one"},
+        )
+        second_login = self.client.post(
+            "/api/auth/login",
+            json={"email": "concurrent-two@example.test", "password": "concurrent-pass-2", "shop_slug": "team-one"},
+        )
+        self.assertEqual(200, first_login.status_code, first_login.text)
+        self.assertEqual(200, second_login.status_code, second_login.text)
+        self.assertNotEqual(first_login.json()["access_token"], second_login.json()["access_token"])
+
+        first_me = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {first_login.json()['access_token']}"})
+        second_me = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {second_login.json()['access_token']}"})
+        self.assertEqual(200, first_me.status_code, first_me.text)
+        self.assertEqual(200, second_me.status_code, second_me.text)
+        self.assertEqual(self.business_one, first_me.json()["business_id"])
+        self.assertEqual(self.business_one, second_me.json()["business_id"])
+
     def test_duplicate_email_and_cross_tenant_resource_are_rejected(self):
         duplicate = self.client.post(
             "/api/team",

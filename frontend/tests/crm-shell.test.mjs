@@ -48,6 +48,53 @@ test("CRM shell uses neutral product branding instead of legacy food branding", 
   assert.doesNotMatch(indexSource, /Lunari/);
 });
 
+test("inbox starts compact and loads further conversation pages on scroll", () => {
+  assert.match(appSource, /const INBOX_PAGE_SIZE = 10/);
+  assert.match(appSource, /inboxHasMore/);
+  assert.match(appSource, /function handleInboxConversationScroll\(event\)/);
+  assert.match(appSource, /@scroll\.passive="handleInboxConversationScroll"/);
+  assert.match(appSource, /Cuộn xuống để tải thêm/);
+  assert.match(appSource, /Đã tải \{\{ conversations\.length \}\}\/\{\{ inboxConversationTotal/);
+  assert.match(styleSource, /overscroll-behavior: contain/);
+  assert.match(templateSource, /<details class="inbox-filter-disclosure">/);
+  assert.doesNotMatch(templateSource, /<details class="inbox-filter-disclosure" open>/);
+});
+
+test("inbox shows blue unread badges and red badges for urgent customer work", () => {
+  assert.match(appSource, /criticalConversationNotificationCount/);
+  assert.match(appSource, /pending_order_confirmation_count/);
+  assert.match(appSource, /function conversationUrgentCount/);
+  assert.match(templateSource, /class="conversation-unread urgent"/);
+  assert.match(styleSource, /\.conversation-unread\.urgent/);
+  assert.match(styleSource, /background: var\(--salon-accent\)/);
+});
+
+test("customer 360 shows bought products and staff can process a customer-confirmed invoice", () => {
+  assert.match(appSource, /pending_confirmation: \["confirmed", "cancelled"\]/);
+  assert.match(appSource, /pending_confirmation: "Chờ nhân viên xác nhận"/);
+  assert.match(appSource, /customerConfirmedOrderCount/);
+  assert.match(appSource, /confirmCustomerOrder/);
+  assert.match(templateSource, /Đồng ý đơn/);
+  assert.match(templateSource, /class="customer-order-items"/);
+  assert.match(templateSource, /order\.items\.map/);
+});
+
+test("service plans declare channel limits without preselecting channels and include the 3-platform tier", () => {
+  assert.match(appSource, /code: "scale"/);
+  assert.match(appSource, /FALLBACK_SERVICE_PLANS\.filter\(\(plan\) => !returnedCodes\.has\(plan\.code\)\)/);
+  assert.match(templateSource, /plan\.max_channels \}\} nền tảng kết nối/);
+  assert.match(templateSource, /Không chọn nền tảng tại đây để tránh lệch dữ liệu/);
+  assert.match(templateSource, /Nâng cấp không cần hủy gói hiện tại/);
+  assert.doesNotMatch(templateSource, /class="service-channel-picker"/);
+});
+
+test("business hours support dated exceptions and use the knowledge-base label consistently", () => {
+  assert.match(appSource, /specialBusinessDates/);
+  assert.match(templateSource, /Giờ đặc biệt/);
+  assert.match(templateSource, /hệ thống không tự nhắn hàng loạt/);
+  assert.doesNotMatch(templateSource, /Kho thông tin/);
+});
+
 test("tenant identity comes from the authenticated session, never a hardcoded browser selector", () => {
   assert.doesNotMatch(appSource, /BUSINESS_ID\s*=|X-Business-Id/);
   assert.match(appSource, /from "\.\/api-client\.js"/);
@@ -419,6 +466,36 @@ test("Customer 360 labels the complete profile timeline", () => {
   assert.match(appSource, /event\.created_by/);
 });
 
+test("assigned conversations remain visible but make other staff read-only", () => {
+  assert.match(appSource, /const canReplyToSelectedConversation = computed/);
+  assert.match(appSource, /Hội thoại này đang có nhân viên phụ trách; bạn chỉ có thể xem nội dung\./);
+  assert.match(templateSource, /:disabled="composerMode === 'reply' && !canReplyToSelectedConversation"/);
+  assert.match(appSource, /Bạn đang ở chế độ chỉ xem/);
+  assert.match(styleSource, /\.composer-access-notice\.is-read-only/);
+});
+
+test("Customer 360 keeps activity history compact and scopes a selected staff member", () => {
+  assert.match(appSource, /Chỉ hiển thị hoạt động do nhân viên đã chọn thực hiện/);
+  assert.match(appSource, /Để xem toàn bộ hoạt động trong ngày, giữ “Tất cả nhân viên”/);
+  assert.match(appSource, /customerTimelineSummaryCards/);
+  assert.match(appSource, /customerTimelineDetailsOpen/);
+  assert.match(appSource, /function customerTimelineContent\(event\)/);
+  assert.match(appSource, /Xem chi tiết/);
+  assert.match(styleSource, /\.customer-timeline-summary-card/);
+  assert.match(styleSource, /\.customer-timeline-detail-toggle/);
+});
+
+test("Customer 360 searches chat messages in pages and jumps to the matching bubble", () => {
+  assert.match(appSource, /message-search\?\$\{params\.toString\(\)\}/);
+  assert.match(appSource, /limit: "10"/);
+  assert.match(appSource, /function handleCustomerMessageSearchScroll/);
+  assert.match(appSource, /function jumpToCustomerSearchMessage/);
+  assert.match(appSource, /data-message-id/);
+  assert.match(appSource, /customer-message-search-trigger/);
+  assert.match(styleSource, /\.customer-message-search-results/);
+  assert.match(styleSource, /\.search-jump-highlight/);
+});
+
 test("Customer 360 contact cards stay readable in the narrow details panel", () => {
   assert.match(appSource, /class="customer-contact-grid"/);
   assert.match(styleSource, /\.customer-contact-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(210px,\s*1fr\)\)/);
@@ -737,6 +814,24 @@ test("chat controls are actionable and the composer keeps a standard input hint"
   assert.doesNotMatch(appSource, /MÃ\s*\n?\s*Tạo mã giảm giá/);
   assert.doesNotMatch(appSource, /Ctrl\+V để dán ảnh/);
   assert.match(styleSource, /\.conversation-actions-popover/);
+});
+
+test("inbox personal filters narrow conversations by customer phone and email", () => {
+  assert.match(appSource, /const inboxPersonalFilters = ref\(\{ phone: "", email: "" \}\)/);
+  assert.match(appSource, /aria-label="Lọc khách hàng theo số điện thoại"/);
+  assert.match(appSource, /aria-label="Lọc khách hàng theo Gmail hoặc email"/);
+  assert.match(appSource, /String\(item\.customer_phone \|\| ""\)\.replace\(\/\\D\/g, ""\)\.includes\(phoneQuery\)/);
+  assert.match(appSource, /String\(item\.customer_email \|\| ""\)\.trim\(\)\.toLowerCase\(\)\.includes\(emailQuery\)/);
+  assert.match(styleSource, /\.personal-filter-grid/);
+});
+
+test("conversation header can limit the inbox to accounts linked to its customer", () => {
+  assert.match(appSource, /const linkedCustomerOnly = ref\(false\)/);
+  assert.match(appSource, /@click="toggleLinkedCustomerInbox"/);
+  assert.match(appSource, /class="linked-customer-toggle"/);
+  assert.match(appSource, /Number\(item\.customer_id\) === Number\(selected\.value\?\.customer_id\)/);
+  assert.match(appSource, /params\.set\("customer_id", String\(customerId\)\)/);
+  assert.match(styleSource, /\.linked-customer-toggle svg/);
 });
 
 test("chat bot toggle stays on one line in the compact header", () => {

@@ -35,7 +35,9 @@ from app.services.customer_collection_flow import is_browsing_request
 from app.services.chatbot_agent import build_agent_memory, is_business_open
 from app.services.customer_order_service import customer_order_reply
 from app.services.audit_service import record_audit
+from app.services.notification_service import create_notification
 from app.services.quota_service import QuotaExceededError, estimate_ai_cost, record_quota_usage
+from app.services.realtime import manager
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,42 @@ OUT_OF_HOURS_REPLY = (
 )
 
 _reply_locks: dict[str, Lock] = defaultdict(Lock)
+
+
+def _notify_rag_handoff_required(
+    db: Session,
+    *,
+    conversation: Conversation,
+    business_id: int,
+    query_text: str,
+) -> None:
+    """Persist an urgent, owner-scoped alert when AI has no safe answer.
+
+    An available responsible employee gets the alert alone. If nobody owns
+    the conversation or that person is offline, the broadcast row makes the
+    request visible to the team instead of silently losing it.
+    """
+    assigned_user_id = getattr(conversation, "assigned_user_id", None)
+    user_id = (
+        int(assigned_user_id)
+        if assigned_user_id is not None
+        and manager.is_user_connected(business_id=business_id, user_id=int(assigned_user_id))
+        else None
+    )
+    create_notification(
+        db,
+        business_id=business_id,
+        user_id=user_id,
+        kind="rag_handoff_required",
+        title="AI cần nhân viên hỗ trợ hội thoại",
+        body=("AI chưa có đủ dữ liệu để trả lời: " + " ".join(str(query_text or "").split())[:280]),
+        metadata={
+            "conversation_id": int(conversation.id),
+            "customer_id": int(conversation.customer_id),
+            "reason": "no_rag_context",
+        },
+    )
+    db.commit()
 
 
 def _reply_metadata(source_document_ids: list[int] | None, auto_reply_key: str | None) -> dict:
@@ -666,6 +704,12 @@ def process_rag_auto_reply(
                 "Auto-reply skipped: no relevant RAG chunks for conversation %d, query=%r",
                 conversation_id,
                 query_text[:100],
+            )
+            _notify_rag_handoff_required(
+                db,
+                conversation=conversation,
+                business_id=business_id,
+                query_text=query_text,
             )
             run.finish("no_context", phase="complete", chunks_found=0)
             return False

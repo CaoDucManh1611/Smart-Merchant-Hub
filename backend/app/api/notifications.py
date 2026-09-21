@@ -35,11 +35,15 @@ def mark_notification_read(
     notification_id: int,
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    user: User | None = Depends(get_optional_user),
 ):
-    row = db.query(Notification).filter(
+    query = db.query(Notification).filter(
         Notification.id == notification_id,
         Notification.business_id == tenant.business_id,
-    ).first()
+    )
+    if user is not None:
+        query = query.filter((Notification.user_id == user.id) | Notification.user_id.is_(None))
+    row = query.first()
     if row is None:
         raise HTTPException(status_code=404, detail="Notification không tồn tại.")
     row.is_read = True

@@ -1,6 +1,7 @@
 """Customer 360 and unified timeline endpoints."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -38,6 +39,8 @@ from app.schemas.customer import (
     CustomerIdentityOut,
     CustomerListItem,
     CustomerListOut,
+    CustomerMessageSearchItem,
+    CustomerMessageSearchOut,
     CustomerNoteCreate,
     CustomerNoteOut,
     CustomerProfileOut,
@@ -46,6 +49,7 @@ from app.schemas.customer import (
     CustomerTagOut,
     CustomerTimelineItem,
     CustomerTimelineOut,
+    CustomerTimelineSummary,
 )
 from app.schemas.customer_collection import CustomerAddressOut, CustomerContactOut
 from app.schemas.customer_merge import (
@@ -80,6 +84,51 @@ from app.services.audit_service import record_audit
 
 
 router = APIRouter()
+
+
+# The CRM is operated in Vietnam. Keeping the date comparison here (instead of
+# using the database/server timezone) makes a day selected in the UI mean the
+# same day that staff see in Customer 360.
+BUSINESS_TIME_ZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+TIMELINE_OPERATIONAL_EVENT_TYPES = {
+    "sales_order",
+    "order_payment",
+    "purchase_order",
+    "ticket",
+    "ticket_event",
+    "ticket_comment",
+    "assignment",
+}
+
+
+def _timeline_local_date(value: datetime | None) -> date | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        # Legacy tenant records are stored as local wall-clock times.
+        return value.replace(tzinfo=BUSINESS_TIME_ZONE).date()
+    return value.astimezone(BUSINESS_TIME_ZONE).date()
+
+
+def _timeline_sort_key(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=BUSINESS_TIME_ZONE).astimezone(timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _timeline_summary(items: list[CustomerTimelineItem]) -> CustomerTimelineSummary:
+    message_events = [item for item in items if item.event_type == "message"]
+    return CustomerTimelineSummary(
+        total_events=len(items),
+        conversation_count=len({item.conversation_id for item in items if item.conversation_id is not None}),
+        message_events=len(message_events),
+        customer_messages=sum(item.actor_type == "customer" for item in message_events),
+        staff_actions=sum(item.actor_type == "staff" for item in items),
+        automated_actions=sum(item.actor_type in {"bot", "system"} for item in items),
+        operational_events=sum(item.event_type in TIMELINE_OPERATIONAL_EVENT_TYPES for item in items),
+    )
 
 
 def _profile_contact_value(customer: Customer, contacts: list[CustomerContact], kind: str) -> str | None:
@@ -1068,6 +1117,60 @@ def list_customer_identities(
     return [CustomerIdentityOut.model_validate(identity) for identity in identities]
 
 
+@router.get("/{customer_id}/message-search", response_model=CustomerMessageSearchOut)
+def search_customer_messages(
+    customer_id: int,
+    q: str = Query(min_length=2, max_length=200, description="Đoạn văn bản cần tìm trong lịch sử tin nhắn."),
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    limit: int = Query(default=10, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+):
+    """Find message snippets for one customer without exposing another shop's data."""
+    _get_customer(db, customer_id, tenant)
+    query_text = q.strip()
+    if len(query_text) < 2:
+        raise HTTPException(status_code=422, detail="Nhập ít nhất 2 ký tự để tìm tin nhắn.")
+
+    # Escape SQL LIKE control characters so a customer-entered '%' or '_'
+    # remains a literal search term instead of broadening the result set.
+    escaped_query = query_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    base_query = db.query(Message).join(
+        Conversation, Conversation.id == Message.conversation_id,
+    ).filter(
+        Conversation.business_id == tenant.business_id,
+        Conversation.customer_id == customer_id,
+        Message.content.is_not(None),
+        Message.content.ilike(f"%{escaped_query}%", escape="\\"),
+    )
+    total = base_query.count()
+    rows = base_query.order_by(
+        Message.received_at.desc(),
+        Message.id.desc(),
+    ).offset(offset).limit(limit).all()
+    has_more = offset + len(rows) < total
+    return CustomerMessageSearchOut(
+        items=[
+            CustomerMessageSearchItem(
+                message_id=message.id,
+                conversation_id=message.conversation_id,
+                channel=message.channel,
+                direction=message.direction,
+                content=message.content,
+                occurred_at=message.sent_at or message.received_at,
+                sender_type=message.sender_type,
+                sender_user_id=message.sender_user_id,
+            )
+            for message in rows
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+        next_offset=offset + len(rows) if has_more else None,
+    )
+
+
 @router.get("/{customer_id}/timeline", response_model=CustomerTimelineOut)
 def customer_timeline(
     customer_id: int,
@@ -1077,7 +1180,12 @@ def customer_timeline(
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    start_date: date | None = Query(default=None, description="Chỉ lấy sự kiện từ ngày này (bao gồm cả ngày)."),
+    end_date: date | None = Query(default=None, description="Chỉ lấy sự kiện đến ngày này (bao gồm cả ngày)."),
+    staff_id: int | None = Query(default=None, ge=1, description="Chỉ lấy sự kiện do nhân viên này tạo/xử lý."),
 ):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="Ngày bắt đầu không được sau ngày kết thúc.")
     _get_customer(db, customer_id, tenant)
     actor_names = {
         user.id: user.full_name or user.email
@@ -1397,13 +1505,37 @@ def customer_timeline(
         else:
             item.actor_type = "system"
             item.actor_name = "Hệ thống"
-    items.sort(key=lambda item: item.occurred_at or datetime.min, reverse=True)
+    items.sort(key=lambda item: _timeline_sort_key(item.occurred_at), reverse=True)
+    if start_date or end_date or staff_id is not None:
+        def matches_date(item: CustomerTimelineItem) -> bool:
+            occurred_date = _timeline_local_date(item.occurred_at)
+            if occurred_date is None:
+                return False
+            return (
+                (not start_date or occurred_date >= start_date)
+                and (not end_date or occurred_date <= end_date)
+            )
+
+        has_date_filter = bool(start_date or end_date)
+        def matches_selected_filter(item: CustomerTimelineItem) -> bool:
+            if has_date_filter and staff_id is not None:
+                return matches_date(item) and item.created_by == staff_id
+            if has_date_filter:
+                return matches_date(item)
+            return item.created_by == staff_id
+
+        items = [
+            item for item in items
+            if matches_selected_filter(item)
+        ]
     total = len(items)
+    summary = _timeline_summary(items)
     page = items[offset : offset + limit]
     has_more = offset + len(page) < total
     return CustomerTimelineOut(
         items=page,
         total=total,
+        summary=summary,
         offset=offset,
         limit=limit,
         has_more=has_more,
