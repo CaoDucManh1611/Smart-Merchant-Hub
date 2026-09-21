@@ -7936,7 +7936,6 @@ function followupRecommendationLabel(item) {
                 @click="activateNotification(notification)"
               >
                 <strong>{{ notification.title }}</strong>
-                <span>{{ notification.body || 'Mở để xem chi tiết.' }}</span>
               </button>
             </div>
           </div>
