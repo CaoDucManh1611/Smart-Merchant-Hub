@@ -105,6 +105,34 @@ def _active_plan(db: Session, code: str) -> ServicePlan:
     return plan
 
 
+def _validate_requested_channels(plan: ServicePlan, channels: list[str] | None) -> None:
+    """Reject a package request that asks for more channels than its plan.
+
+    The connection quota is still enforced when a channel is actually linked;
+    this early validation keeps the onboarding request and the entitlement
+    contract consistent (especially for the zero-channel Demo package).
+    """
+
+    requested = {
+        str(channel).strip().lower()
+        for channel in (channels or [])
+        if str(channel).strip()
+    }
+    limit = max(0, int(plan.max_channels or 0))
+    if len(requested) <= limit:
+        return
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": "plan_channel_limit",
+            "message": f"Gói {plan.name} chỉ cho phép tối đa {limit} kênh.",
+            "plan_code": plan.code,
+            "max_channels": limit,
+            "requested_channels": len(requested),
+        },
+    )
+
+
 def _chatbot_rental_price(plan: ServicePlan) -> Decimal:
     """Resolve the chatbot price independently from the CRM package price."""
 
@@ -409,6 +437,7 @@ def purchase_shop_plan(
     assert business is not None
     ensure_default_plans(db)
     plan = _active_plan(db, payload.plan_code)
+    _validate_requested_channels(plan, payload.channels)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     service_type = payload.service_type
 
@@ -922,6 +951,19 @@ def connect_channel(
     # persisted tenant config is scrubbed/encrypted below and the secret is
     # never returned in the response or written to platform audit metadata.
     webhook_secret = str(raw_config.get("webhook_secret") or "").strip() or None
+    # Telegram and Zalo deliver the webhook secret in the provider request
+    # headers.  Without a secret there is no safe way to resolve the request
+    # to this shop (and the generic shop-slug endpoint would otherwise reject
+    # every inbound event).  The verified bot flow generates this value for
+    # callers, while the legacy/manual endpoint must require it explicitly.
+    if payload.channel_type in {"telegram", "zalo"} and not webhook_secret:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "webhook_secret_required",
+                "message": "Telegram/Zalo cần webhook_secret để xác thực webhook riêng cho shop.",
+            },
+        )
     schema_name = schema_name_for(business_id)
     try:
         with tenant_session(schema_name) as tenant_db:

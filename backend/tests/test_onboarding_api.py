@@ -70,6 +70,32 @@ class OnboardingApiTests(unittest.TestCase):
         self.assertEqual(200, me.status_code, me.text)
         self.assertEqual(body["business_id"], me.json()["business_id"])
 
+    def test_plan_purchase_rejects_channels_above_package_limit(self):
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={
+                "shop_name": "Starter Channel Limit",
+                "owner_name": "Starter Owner",
+                "owner_email": "starter-channel-limit@onboarding.test",
+                "password": "strong-pass-1",
+                "plan_code": "starter",
+            },
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        token = created.json()["access_token"]
+        response = self.client.post(
+            f"/api/onboarding/shops/{created.json()['business_id']}/subscription/purchase",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "plan_code": "starter",
+                "channels": ["Telegram", "Zalo"],
+            },
+        )
+        self.assertEqual(422, response.status_code, response.text)
+        detail = response.json()["detail"]
+        self.assertEqual("plan_channel_limit", detail["code"])
+        self.assertEqual(1, detail["max_channels"])
+
     def test_duplicate_email_is_rejected_and_slug_is_unique(self):
         first = self.client.post(
             "/api/onboarding/shops",
@@ -327,6 +353,25 @@ class OnboardingApiTests(unittest.TestCase):
             movements = db.query(StockMovement).filter(StockMovement.product_id == product.id).order_by(StockMovement.id).all()
             self.assertEqual([4, 3], [movement.quantity for movement in movements])
             self.assertEqual("onboarding_reconcile", movements[-1].movement_type)
+
+    def test_manual_bot_connection_requires_webhook_secret(self):
+        settings.CHANNEL_ENCRYPTION_KEY = "test-onboarding-channel-key"
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={"shop_name": "Secret Required", "owner_name": "Owner", "owner_email": "secret-required@onboarding.test", "password": "strong-pass-1"},
+        ).json()
+        response = self.client.post(
+            f"/api/onboarding/shops/{created['business_id']}/channels",
+            headers={"Authorization": f"Bearer {created['access_token']}"},
+            json={
+                "channel_type": "telegram",
+                "external_account_id": "bot-without-secret",
+                "name": "Telegram Bot",
+                "access_token": "telegram-secret",
+            },
+        )
+        self.assertEqual(422, response.status_code, response.text)
+        self.assertEqual("webhook_secret_required", response.json()["detail"]["code"])
 
     def test_verified_telegram_connection_discovers_bot_and_registers_webhook(self):
         settings.CHANNEL_ENCRYPTION_KEY = "test-onboarding-channel-key"
