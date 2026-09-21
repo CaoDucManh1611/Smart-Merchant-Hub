@@ -1,4 +1,4 @@
-"""Durable dispatcher for the CRM jobs owned by tickets and workflows."""
+"""Durable dispatcher for CRM and knowledge-base background jobs."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from app.services.notification_service import create_sla_notification, create_sl
 from app.services.workflow_engine import execute_workflow
 from app.services.chatbot_followup import dispatch_due_followups
 from app.services.order_service import release_expired_draft_reservations
+from app.services.rag_job_service import dispatch_rag_job
 from app.tenancy.context import TenantContext
 from app.tenancy.schema import schema_name_for, validate_schema_name
 
@@ -161,10 +162,10 @@ def _dispatch_notification_email_job(db: Session, business_id: int, payload: dic
 
 
 def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 100, platform_db: Session | None = None) -> int:
-    """Run only CRM ticket/workflow jobs for one tenant.
+    """Run CRM and knowledge-base jobs for one tenant.
 
-    Filtering the claim query prevents this worker from accidentally retrying
-    a RAG or future subsystem's job just because it shares the same table.
+    Filtering the claim query keeps the worker explicit about the job kinds it
+    owns while allowing large RAG imports to run outside the API process.
     """
     # Draft reservations are intentionally cleaned on every polling cycle so
     # a missed follow-up job cannot leave stock blocked indefinitely.
@@ -173,6 +174,7 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         db.commit()
 
     handlers = {
+        "rag.ingest": lambda payload: dispatch_rag_job(db, payload, business_id),
         "ticket.sla_warning": lambda payload: _dispatch_ticket_sla_warning_job(db, business_id, payload),
         "ticket.sla_check": lambda payload: _dispatch_ticket_sla_job(db, business_id, payload),
         "workflow.run": lambda payload: _dispatch_workflow_run_job(db, business_id, payload, platform_db=platform_db),

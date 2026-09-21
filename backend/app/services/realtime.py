@@ -19,6 +19,11 @@ class RealtimeConnection:
 class ConnectionManager:
     def __init__(self) -> None:
         self.active_connections: dict[WebSocket, RealtimeConnection] = {}
+        # Auto-replies are deliberately run in short-lived worker threads so
+        # provider calls do not block the webhook request.  Keep the server's
+        # event loop so those threads can safely hand a realtime event back to
+        # the WebSocket connections.
+        self._event_loop: asyncio.AbstractEventLoop | None = None
 
     async def connect(
         self,
@@ -28,6 +33,7 @@ class ConnectionManager:
         user_id: int,
     ) -> None:
         await websocket.accept()
+        self._event_loop = asyncio.get_running_loop()
         self.active_connections[websocket] = RealtimeConnection(
             business_id=int(business_id),
             user_id=int(user_id),
@@ -102,15 +108,35 @@ def schedule_broadcast(
     business_id: int,
     user_ids: set[int] | None = None,
 ) -> None:
+    """Queue an event from either async request code or a worker thread.
+
+    The chatbot auto-reply path uses a background ``Thread``.  Calling
+    ``get_running_loop`` from that thread returns nothing, which used to make
+    the reply visible on the provider but invisible in the CRM until the
+    frontend's slow polling pass.  ``run_coroutine_threadsafe`` bridges that
+    thread back to the loop that owns the WebSocket connections.
+    """
     try:
-        loop = asyncio.get_running_loop()
+        current_loop = asyncio.get_running_loop()
     except RuntimeError:
+        current_loop = None
+
+    loop = current_loop or manager._event_loop
+
+    if loop is None or not loop.is_running():
         return
 
-    loop.create_task(
-        manager.broadcast(
-            event,
-            business_id=business_id,
-            user_ids=user_ids,
+    if current_loop is not None:
+        loop.create_task(
+            manager.broadcast(
+                event,
+                business_id=business_id,
+                user_ids=user_ids,
+            )
         )
+        return
+
+    asyncio.run_coroutine_threadsafe(
+        manager.broadcast(event, business_id=business_id, user_ids=user_ids),
+        loop,
     )

@@ -20,6 +20,7 @@ class CatalogProductRecord:
     description: str
     aliases: tuple[str, ...]
     components: tuple[str, ...] = ()
+    attributes: dict[str, list[str]] | None = None
 
 
 def extract_catalog_products(text: str) -> list[CatalogProductRecord]:
@@ -54,6 +55,7 @@ def extract_catalog_products(text: str) -> list[CatalogProductRecord]:
         stock_quantity = _parse_integer(stock_match.group(1))
         aliases = _build_aliases(name)
         components = _extract_combo_components(body)
+        attributes = _extract_attributes(body)
         records.append(CatalogProductRecord(
             sku=sku,
             name=name,
@@ -62,6 +64,7 @@ def extract_catalog_products(text: str) -> list[CatalogProductRecord]:
             description=body,
             aliases=tuple(aliases),
             components=tuple(components),
+            attributes=attributes,
         ))
     return records
 
@@ -104,6 +107,26 @@ def _extract_combo_components(body: str) -> list[str]:
     return list(dict.fromkeys(components))
 
 
+def _extract_attributes(body: str) -> dict[str, list[str]]:
+    """Extract explicitly provided product facets without guessing values."""
+    patterns = {
+        "suitable_for": r"(?:phù hợp|dành cho|đối tượng)\s*[:\-]?\s*([^.;]+)",
+        "colors": r"(?:màu|màu sắc)\s*[:\-]\s*([^.;]+)",
+        "sizes": r"(?:kích thước|size)\s*[:\-]\s*([^.;]+)",
+        "keywords": r"(?:từ khóa|keywords?)\s*[:\-]\s*([^.;]+)",
+    }
+    attributes: dict[str, list[str]] = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, body or "", flags=re.IGNORECASE)
+        if match is None:
+            continue
+        values = re.split(r",|\s+và\s+|\s*\|\s*", match.group(1), flags=re.IGNORECASE)
+        cleaned = [" ".join(value.strip().split()) for value in values if value.strip()]
+        if cleaned:
+            attributes[key] = list(dict.fromkeys(cleaned))
+    return attributes
+
+
 def sync_catalog_products(
     db: Session,
     *,
@@ -131,6 +154,7 @@ def sync_catalog_products(
                     "catalog_source_document_id": source_document_id,
                     "catalog_source": "knowledge_document",
                     **({"components": list(record.components)} if record.components else {}),
+                    **({"attributes": record.attributes} if record.attributes else {}),
                 },
             )
             db.add(product)
@@ -151,6 +175,8 @@ def sync_catalog_products(
             })
             if record.components:
                 metadata["components"] = list(record.components)
+            if record.attributes:
+                metadata["attributes"] = record.attributes
             product.metadata_ = metadata
             synced.append(product)
         elif source_id is None:

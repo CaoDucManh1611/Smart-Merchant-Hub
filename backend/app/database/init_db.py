@@ -40,6 +40,7 @@ import app.models.channel_route  # noqa: F401 - register platform webhook routes
 from app.tenancy.provisioning import provision_shop
 from app.tenancy.migration_runner import current_tenant_revision
 from app.tenancy.schema import schema_name_for
+from app.database.release_readiness import TENANT_HEAD
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ def _bootstrap_development_saas() -> None:
                             )
                     except Exception:
                         tenant_revision = None
-                    if tenant_revision:
+                    if tenant_revision == TENANT_HEAD:
                         continue
                     registry.state = "provisioning"
                     registry.feature_enabled = False

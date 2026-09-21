@@ -58,6 +58,27 @@ ESCALATION_TERMS = (
 )
 
 
+def _is_neutral_policy_question(text: str | None) -> bool:
+    """Do not hand off a neutral policy lookup as a customer complaint."""
+    import re
+    import unicodedata
+
+    folded = unicodedata.normalize("NFKD", str(text or "").casefold())
+    folded = folded.replace("đ", "d")
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    folded = " ".join(re.sub(r"[^a-z0-9]+", " ", folded).split())
+    if "chinh sach" not in folded:
+        return False
+    if not any(term in folded for term in ("doi tra", "hoan tien", "bao hanh", "giao hang", "van chuyen")):
+        return False
+    # A policy question can still contain a concrete complaint.  Keep those
+    # on the human-support route.
+    return not any(term in folded for term in (
+        "hang loi", "bi hong", "khieu nai", "khong nhan", "mat hang",
+        "muon hoan", "yeu cau hoan", "can doi",
+    ))
+
+
 def _conversation(db: Session, business_id: int, conversation_id: int) -> Conversation:
     row = db.query(Conversation).filter(
         Conversation.id == conversation_id,
@@ -193,6 +214,8 @@ def route_escalation(
     *,
     platform_db: Session | None = None,
 ) -> Ticket | None:
+    if _is_neutral_policy_question(text):
+        return None
     if not any(term in (text or "").casefold() for term in ESCALATION_TERMS):
         return None
     conversation = _conversation(db, business_id, conversation_id)

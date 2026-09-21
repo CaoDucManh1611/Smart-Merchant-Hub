@@ -14,7 +14,7 @@ from app.services.product_catalog_service import (
 
 
 CATALOG_TEXT = """
-- Serum Vitamin C Lunari (SKU SERUM-01): giá 420.000 đồng/chai 30 ml. Tồn kho thử nghiệm: 10 sản phẩm.
+- Serum Vitamin C Lunari (SKU SERUM-01): giá 420.000 đồng/chai 30 ml. Tồn kho thử nghiệm: 10 sản phẩm. Phù hợp: da nhạy cảm, da dầu. Màu: trắng. Kích thước: 30 ml. Từ khóa: serum, vitamin C.
 - Combo chăm sóc da cơ bản (SKU COMBO-01): gồm sữa rửa mặt và serum. Giá niêm yết 888.000 đồng; giá combo 799.000 đồng. Tồn kho combo thử nghiệm: 6 bộ.
 """
 
@@ -27,6 +27,7 @@ class ProductCatalogServiceTests(unittest.TestCase):
         self.assertEqual("Serum Vitamin C Lunari", records[0].name)
         self.assertEqual(Decimal("420000"), records[0].price)
         self.assertEqual(10, records[0].stock_quantity)
+        self.assertEqual(["da nhạy cảm", "da dầu"], records[0].attributes["suitable_for"])
         self.assertEqual(Decimal("799000"), records[1].price)
         self.assertEqual(6, records[1].stock_quantity)
         self.assertIn("combo cơ bản", records[1].aliases)
@@ -58,6 +59,10 @@ class ProductCatalogServiceTests(unittest.TestCase):
             self.assertEqual(6, combo.stock_quantity)
             self.assertEqual(17, combo.metadata_["catalog_source_document_id"])
             self.assertIn("bộ chăm sóc da cơ bản", combo.metadata_["aliases"])
+            self.assertEqual(
+                ["da nhạy cảm", "da dầu"],
+                db.query(Product).filter_by(sku="SERUM-01").one().metadata_["attributes"]["suitable_for"],
+            )
             self.assertEqual(
                 ["sữa rửa mặt", "serum"],
                 combo.metadata_["components"],

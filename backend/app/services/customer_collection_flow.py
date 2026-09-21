@@ -237,7 +237,7 @@ def is_order_intent(text: str | None) -> bool:
 def is_price_quote_request(text: str | None) -> bool:
     """Detect a quantity/price question, not a confirmed purchase."""
     folded = _fold(str(text or ""))
-    return bool(QUANTITY_PATTERN.search(folded)) and any(
+    return _has_explicit_quantity(folded) and any(
         phrase in folded for phrase in PRICE_QUERY_PHRASES
     )
 
@@ -245,9 +245,38 @@ def is_price_quote_request(text: str | None) -> bool:
 def is_stock_query_request(text: str | None) -> bool:
     """Detect a quantity/availability question, not a confirmed purchase."""
     folded = _fold(str(text or ""))
-    return bool(QUANTITY_PATTERN.search(folded)) and any(
+    return _has_explicit_quantity(folded) and any(
         phrase in folded for phrase in STOCK_QUERY_PHRASES
     )
+
+
+def _has_explicit_quantity(text: str) -> bool:
+    """Return whether text contains a quantity, excluding model/SKU numbers.
+
+    Product names often end in a number (``mẫu 01``, ``model 2024``).  The
+    old detector treated that number as a requested quantity and started
+    checkout for a simple price/stock question.
+    """
+    for match in QUANTITY_PATTERN.finditer(text):
+        prefix = text[max(0, match.start() - 16):match.start()]
+        if re.search(r"(?:\b(?:mau|model|sku|ma)\s*)$", prefix):
+            continue
+        return True
+    return False
+
+
+def _is_checkout_information_question(text: str) -> bool:
+    """Keep general questions from being consumed by a pending quote.
+
+    A customer may ask about shipping, return rules, or another product while
+    a draft quote is waiting for confirmation.  Those messages are not an
+    approval/rejection of the draft and must go back to the normal chatbot.
+    """
+    folded = _fold(str(text or ""))
+    return any(term in folded for term in (
+        "giao hang", "van chuyen", "phi ship", "ship", "doi tra", "tra hang",
+        "hoan tien", "bao hanh", "chinh sach",
+    ))
 
 
 def _format_vnd(value: object) -> str:
@@ -1382,14 +1411,27 @@ def advance_customer_collection(
                 prompt=combo_reply,
             )
         if is_price_quote_request(text) or is_stock_query_request(text):
-            return _start_product_quote(
+            # A numeric suffix in a product name (for example ``mẫu 01``) is
+            # not a purchase quantity.  Only start checkout when a real
+            # product mention resolves; otherwise leave the message for the
+            # informational bot router to clarify it.
+            quoted_products = _find_requested_products(
                 db,
                 business_id=business_id,
-                customer_id=customer_id,
-                conversation_id=conversation_id,
-                source_channel=source_channel,
                 text=text,
+                conversation_id=None,
+                allow_history=False,
             )
+            if quoted_products:
+                return _start_product_quote(
+                    db,
+                    business_id=business_id,
+                    customer_id=customer_id,
+                    conversation_id=conversation_id,
+                    source_channel=source_channel,
+                    text=text,
+                )
+            return None
         # Resolve an explicitly named product before the generic browsing
         # detector. Otherwise ``muốn mua 3 Kem chống nắng ...`` is mistaken
         # for a catalogue request and the bot repeats every product.
@@ -1538,6 +1580,38 @@ def advance_customer_collection(
                 completed=True,
                 draft_order_id=order.id,
             )
+
+        # Do not interpret a shipping/policy question as a rejection of the
+        # pending quote.  The previous behavior cancelled the order when the
+        # message contained the word "không" (for example, "giao hàng không?")
+        # and then blocked all following chatbot replies.
+        additional_products = _find_requested_products(
+            db,
+            business_id=business_id,
+            text=text,
+            conversation_id=conversation_id,
+            allow_history=False,
+        )
+        informational_price_or_stock = (
+            ("gia" in _fold(text) or "ton kho" in _fold(text) or "con hang" in _fold(text))
+            and not _has_specific_purchase_signal(text)
+        )
+        if _is_checkout_information_question(text) or is_browsing_request(text) or (
+            informational_price_or_stock and not additional_products
+        ):
+            session.status = "abandoned"
+            session.current_field = None
+            session.collected_fields = {**collected_state, "awaiting_customer_confirmation": False}
+            session.last_activity_at = _now()
+            _cancel_checkout_reminder(
+                db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                session_id=session.id,
+            )
+            db.commit()
+            return None
+
         if _is_order_rejection(text):
             metadata = dict(order.metadata_ or {})
             metadata["customer_confirmed"] = False

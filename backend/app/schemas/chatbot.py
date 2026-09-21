@@ -1,7 +1,7 @@
 """API contracts for chatbot runtime controls."""
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -185,3 +185,60 @@ class CustomerFeedbackListOut(BaseModel):
     items: list[CustomerFeedbackOut]
     total: int
     summary: CsatSummaryOut
+
+
+class ChatbotResponseFeedbackRequest(BaseModel):
+    """A lightweight, explicit signal used to improve bot responses.
+
+    The signal is intentionally binary.  It is enough to safely measure a
+    response policy without pretending that one click is a training label for
+    an entire language model.
+    """
+
+    rating: Literal[-1, 1]
+    comment: str | None = Field(default=None, max_length=1000)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class ChatbotResponseFeedbackOut(BaseModel):
+    message_id: int
+    rating: Literal[-1, 1]
+    recorded: bool = True
+
+
+class LearningTopicOut(BaseModel):
+    key: str
+    label: str
+    message_count: int
+    conversation_count: int
+    examples: list[str] = Field(default_factory=list)
+
+
+class LearningSummaryOut(BaseModel):
+    period_days: int
+    inbound_messages: int
+    conversations_sampled: int
+    topics: list[LearningTopicOut] = Field(default_factory=list)
+    response_feedback: dict[str, int | float] = Field(default_factory=dict)
+    method: str
+
+
+class TopicSuggestionOut(BaseModel):
+    suggestion_id: str
+    label: str
+    message_count: int
+    conversation_count: int
+    examples: list[str] = Field(default_factory=list)
+    top_terms: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0, le=1)
+    review_status: Literal["pending_review"] = "pending_review"
+    source: Literal["stored_embeddings", "deterministic_local_embedding"]
+
+
+class TopicDiscoveryOut(BaseModel):
+    period_days: int
+    messages_analyzed: int
+    conversations_sampled: int
+    suggestions: list[TopicSuggestionOut] = Field(default_factory=list)
+    method: str
+    knowledge_base_updated: Literal[False] = False

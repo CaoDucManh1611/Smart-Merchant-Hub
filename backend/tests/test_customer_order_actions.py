@@ -12,7 +12,7 @@ from app.models.customer import Customer
 from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
 from app.services.chatbot_agent import execute_chatbot_tool
-from app.services.customer_order_service import customer_order_reply
+from app.services.customer_order_service import customer_order_reply, detect_customer_order_intent
 
 
 class CustomerOrderActionTests(unittest.TestCase):
@@ -131,6 +131,17 @@ class CustomerOrderActionTests(unittest.TestCase):
             draft.cancel_reason = None
             db.commit()
 
+    def test_status_phrase_with_order_number_is_detected(self):
+        self.assertEqual(
+            "status",
+            detect_customer_order_intent("Đơn CHAT-25 đang ở trạng thái nào"),
+        )
+
+    def test_policy_question_is_not_treated_as_refund_request(self):
+        self.assertIsNone(
+            detect_customer_order_intent("Chính sách đổi trả của shop thế nào?")
+        )
+
     def test_status_lookup_rejects_order_owned_by_another_customer(self):
         with Session(self.engine) as db:
             result = execute_chatbot_tool(
@@ -222,6 +233,18 @@ class CustomerOrderActionTests(unittest.TestCase):
 
         self.assertIn("ORD-DRAFT-1", reply)
         self.assertIn("Đơn nháp", reply)
+
+    def test_customer_status_reply_names_missing_order_when_code_was_supplied(self):
+        with Session(self.engine) as db:
+            reply = customer_order_reply(
+                db,
+                self.business_id,
+                self.conversation_id,
+                "Đơn CHAT-25 đang ở trạng thái nào",
+            )
+
+        self.assertIn("CHAT-25", reply)
+        self.assertNotIn("gửi giúp mình mã đơn", reply)
 
     def test_customer_status_reply_understands_natural_order_list_phrase(self):
         with Session(self.engine) as db:

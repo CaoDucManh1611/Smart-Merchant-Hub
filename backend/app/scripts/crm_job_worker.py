@@ -1,4 +1,4 @@
-"""Run the persistent CRM job dispatcher as a small Docker worker."""
+"""Run the persistent CRM/RAG job dispatcher as a small Docker worker."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def run_once() -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Dispatch due CRM ticket and workflow jobs.")
+    parser = argparse.ArgumentParser(description="Dispatch due CRM and knowledge-base jobs.")
     parser.add_argument("--once", action="store_true", help="Run one polling cycle then exit.")
     parser.add_argument("--poll-seconds", type=float, default=5.0, help="Delay between polling cycles.")
     args = parser.parse_args()
@@ -57,7 +57,7 @@ def main() -> None:
         try:
             processed = run_once()
             if processed:
-                logger.info("CRM job worker processed %s job(s)", processed)
+                logger.info("Background worker processed %s job(s)", processed)
         except Exception:  # noqa: BLE001 - keep the worker alive for the next retry cycle
             logger.exception("CRM job worker polling cycle failed")
         if args.once:

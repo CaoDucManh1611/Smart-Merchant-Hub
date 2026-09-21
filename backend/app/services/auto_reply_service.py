@@ -4,9 +4,12 @@ Auto Reply Service – Tự động trả lời tin nhắn từ RAG knowledge ba
 
 import json
 import logging
+import re
+import unicodedata
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
+from time import perf_counter
 from threading import Lock, Thread
 
 from sqlalchemy import text
@@ -27,6 +30,7 @@ from app.rag.retriever import retrieve
 from app.rag.prompt_builder import build_prompt
 from app.rag.llm_caller import call_llm
 from app.rag.run_logger import RagRunLog, query_metadata
+from app.rag.topics import infer_query_topic
 from app.services.facebook_service import send_facebook_message
 from app.services.instagram_service import send_instagram_message
 from app.services.telegram_service import send_telegram_message
@@ -34,10 +38,17 @@ from app.services.zalo_service import send_zalo_message
 from app.services.customer_collection_flow import is_browsing_request
 from app.services.chatbot_agent import build_agent_memory, is_business_open
 from app.services.customer_order_service import customer_order_reply
+from app.services.product_resolver import normalize_product_text, product_aliases, resolve_product
 from app.services.audit_service import record_audit
 from app.services.notification_service import create_notification
 from app.services.quota_service import QuotaExceededError, estimate_ai_cost, record_quota_usage
+from app.services.realtime import schedule_broadcast
 from app.services.realtime import manager
+from app.services.chatbot_bandit_service import (
+    ChatbotBanditChoice,
+    response_style_instruction,
+    select_chatbot_reply_choice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +61,67 @@ OUT_OF_HOURS_REPLY = (
     "Shop hiện đang ngoài giờ hỗ trợ. Mình đã ghi nhận tin nhắn và nhân viên sẽ phản hồi "
     "vào khung giờ làm việc gần nhất nhé."
 )
+
+# These replies are deliberately deterministic.  A product catalogue chunk is
+# often the largest document in a shop, so semantic retrieval used to make the
+# bot answer unrelated questions with the whole catalogue (for example,
+# returning product names for a delivery-policy question).  The router below
+# handles factual product and policy questions before RAG can mix contexts.
+PRODUCT_NOT_FOUND_REPLY = (
+    "Mình chưa tìm thấy sản phẩm hoặc mã sản phẩm này trong danh sách của shop. "
+    "Bạn kiểm tra lại tên hoặc mã sản phẩm giúp mình nhé."
+)
+PRODUCT_NOT_FOUND_WITH_HINT = (
+    "Mình chưa tìm thấy \"{hint}\" trong danh sách sản phẩm của shop. "
+    "Bạn kiểm tra lại tên hoặc mã sản phẩm giúp mình nhé."
+)
+AMBIGUOUS_PRICE_REPLY = (
+    "Bạn muốn hỏi giá sản phẩm nào? Bạn gửi mình tên hoặc mã sản phẩm, "
+    "mình sẽ kiểm tra giá và tồn kho chính xác nhé."
+)
+AMBIGUOUS_STOCK_REPLY = (
+    "Bạn muốn kiểm tra tồn kho sản phẩm nào? Bạn gửi mình tên hoặc mã sản phẩm nhé."
+)
+NO_DELIVERY_POLICY_REPLY = (
+    "Mình chưa có thông tin giao hàng cụ thể của shop trong hệ thống. "
+    "Bạn cho mình xin khu vực nhận hàng, nhân viên sẽ kiểm tra phí và thời gian giao giúp bạn nhé."
+)
+NO_RETURN_POLICY_REPLY = (
+    "Mình chưa có thông tin chính sách đổi trả của shop trong hệ thống. "
+    "Mình đã ghi nhận câu hỏi, nhân viên sẽ tư vấn chính xác cho bạn nhé."
+)
+NO_RECOMMENDATION_REPLY = (
+    "Mình chưa tìm thấy thông tin sản phẩm phù hợp với nhu cầu này trong danh sách của shop. "
+    "Bạn cho mình biết thêm nhu cầu, nhân viên sẽ tư vấn ngay nhé."
+)
+
+_STOCK_TERMS = (
+    "ton kho", "ton", "con hang", "con khong", "co san khong", "du khong",
+    "het hang", "so luong", "bao nhieu cai", "bao nhieu san pham",
+)
+_PRICE_TERMS = (
+    "gia", "bao nhieu tien", "thanh tien", "tong tien", "tong bao nhieu", "tinh tien",
+    "het bao nhieu", "don gia",
+)
+_DELIVERY_TERMS = (
+    "giao hang", "van chuyen", "phi ship", "cuoc ship", "ship", "nhan hang",
+    "thoi gian giao", "khu vuc giao", "giao den",
+)
+_RETURN_TERMS = (
+    "doi tra", "doi hang", "tra hang", "hoan tien", "bao hanh", "chinh sach doi",
+)
+_RECOMMENDATION_TERMS = (
+    "da nhay cam", "phu hop", "goi y", "tu van", "nen dung", "danh cho",
+)
+_PRODUCT_HINT_STOP_WORDS = {
+    "shop", "co", "con", "khong", "cho", "minh", "toi", "ban", "san", "pham",
+    "hang", "mau", "nao", "gi", "nhe", "voi", "la", "cua", "gia", "bao",
+    "nhieu", "tien", "tong", "thanh", "het", "ton", "kho", "so", "luong", "cai", "hien", "tai",
+    "luc", "nay", "hoi", "muon", "xem", "tim", "mua", "duoc", "khong",
+}
+_NON_PRODUCT_HINT_WORDS = set(_DELIVERY_TERMS + _RETURN_TERMS + (
+    "chinh sach", "nhan vien", "ho tro", "don hang", "thanh toan", "dat hang",
+))
 
 _reply_locks: dict[str, Lock] = defaultdict(Lock)
 
@@ -90,7 +162,57 @@ def _notify_rag_handoff_required(
     db.commit()
 
 
-def _reply_metadata(source_document_ids: list[int] | None, auto_reply_key: str | None) -> dict:
+def _schedule_saved_message_event(db: Session, message_id: int | None) -> None:
+    """Publish a just-persisted bot message to the CRM WebSocket.
+
+    Keep the event shape aligned with ``GET /conversations/{id}/messages`` so
+    the frontend can upsert it without a second request.  This is best effort:
+    a disconnected browser must never make a successful provider delivery
+    fail.
+    """
+    if not message_id:
+        return
+    try:
+        row = db.query(Message).filter(Message.id == int(message_id)).first()
+        if row is None:
+            return
+        business_id = getattr(row.conversation, "business_id", None)
+        if business_id is None:
+            return
+        schedule_broadcast(
+            {
+                "type": "message_created",
+                "conversation_id": row.conversation_id,
+                "message": {
+                    "message_id": row.id,
+                    "conversation_id": row.conversation_id,
+                    "channel": row.channel,
+                    "external_user_id": row.external_user_id,
+                    "external_message_id": row.external_message_id,
+                    "direction": row.direction,
+                    "content": row.content,
+                    "media_type": row.media_type,
+                    "media_url": row.media_url,
+                    "raw_payload": row.raw_payload,
+                    "received_at": row.received_at,
+                    "sender_type": row.sender_type,
+                    "status": row.status,
+                    "attachments": [],
+                },
+            },
+            business_id=int(business_id),
+        )
+    except Exception:
+        # Realtime is an enhancement to the durable message write.  Logging
+        # keeps failures diagnosable without taking down the bot reply.
+        logger.warning("Could not publish auto-reply realtime event", exc_info=True)
+
+
+def _reply_metadata(
+    source_document_ids: list[int] | None,
+    auto_reply_key: str | None,
+    extra_metadata: dict | None = None,
+) -> dict:
     metadata = {"rag_source_document_ids": source_document_ids or []}
     if auto_reply_key:
         metadata["auto_reply_key"] = auto_reply_key
@@ -100,6 +222,12 @@ def _reply_metadata(source_document_ids: list[int] | None, auto_reply_key: str |
             metadata["inbound_message_id"] = parts[3]
             if len(parts) >= 5:
                 metadata["route"] = parts[4]
+    if extra_metadata:
+        # Callers provide server-generated trace metadata only. Core
+        # correlation fields above remain authoritative.
+        for key, value in extra_metadata.items():
+            if key not in metadata:
+                metadata[key] = value
     return metadata
 
 
@@ -236,6 +364,7 @@ def _save_auto_reply_outbound(
     meta_response: dict,
     source_document_ids: list[int] | None = None,
     auto_reply_key: str | None = None,
+    extra_metadata: dict | None = None,
 ) -> None:
     """Persist the external reply so it appears in the CRM inbox."""
     conversation_business_id = db.query(Conversation.business_id).filter(
@@ -249,7 +378,9 @@ def _save_auto_reply_outbound(
             updated.external_message_id = external_message_id
             updated.content = content
             updated.raw_payload = meta_response
-            updated.metadata_ = _reply_metadata(source_document_ids, auto_reply_key)
+            updated.metadata_ = _reply_metadata(
+                source_document_ids, auto_reply_key, extra_metadata
+            )
             updated.status = "sent"
             updated.sent_at = datetime.now(timezone.utc).replace(tzinfo=None)
             if conversation_business_id is not None:
@@ -262,6 +393,7 @@ def _save_auto_reply_outbound(
                     auto_reply_key=auto_reply_key,
                 )
             db.commit()
+            _schedule_saved_message_event(db, updated.id)
             return
     db.execute(
         text(
@@ -301,7 +433,10 @@ def _save_auto_reply_outbound(
             "auto_reply_key": auto_reply_key,
             "content": content,
             "raw_payload": json.dumps(meta_response, ensure_ascii=False, default=str),
-            "metadata": json.dumps(_reply_metadata(source_document_ids, auto_reply_key), ensure_ascii=False),
+            "metadata": json.dumps(
+                _reply_metadata(source_document_ids, auto_reply_key, extra_metadata),
+                ensure_ascii=False,
+            ),
         },
     )
     db.commit()
@@ -318,6 +453,19 @@ def _save_auto_reply_outbound(
                     auto_reply_key=auto_reply_key,
                 )
                 db.commit()
+            _schedule_saved_message_event(db, sent.id)
+            return
+
+    # ``auto_reply_key`` is present for normal inbound-triggered replies.  The
+    # fallback also covers deterministic replies created by older integrations
+    # that only have the provider message id.
+    sent = db.query(Message).filter(
+        Message.conversation_id == conversation_id,
+        Message.external_message_id == external_message_id,
+        Message.sender_type == "bot",
+        Message.direction == "outbound",
+    ).order_by(Message.id.desc()).first()
+    _schedule_saved_message_event(db, sent.id if sent is not None else None)
 
 
 def _claim_auto_reply(
@@ -422,6 +570,282 @@ def build_product_catalog_reply(db: Session, business_id: int, limit: int = 10) 
     return format_product_catalog_reply(products)
 
 
+def _fold_text(value: object) -> str:
+    """Normalize Vietnamese customer text for small deterministic routers."""
+    normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
+    normalized = normalized.replace("đ", "d")
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", normalized).split())
+
+
+def _has_any_term(text: str, terms: tuple[str, ...] | set[str]) -> bool:
+    return any(term in text for term in terms)
+
+
+def _product_hint(text: str) -> str:
+    """Extract a human-readable product hint without guessing a product."""
+    original = " ".join(str(text or "").strip().split())
+    folded = _fold_text(original)
+    if not folded:
+        return ""
+    tokens = [
+        token for token in folded.split()
+        if token not in _PRODUCT_HINT_STOP_WORDS
+        and token not in _NON_PRODUCT_HINT_WORDS
+        and not token.isdigit()
+        and len(token) >= 2
+    ]
+    return " ".join(tokens[:5])
+
+
+def _is_product_fact_question(text: str, *, conversation_id: int | None = None) -> bool:
+    folded = _fold_text(text)
+    if not folded:
+        return False
+    if _has_any_term(folded, _STOCK_TERMS):
+        # ``is_browsing_request`` also recognises the phrase "còn hàng".  A
+        # stock question must still reach the exact-product/follow-up router,
+        # otherwise a bare "còn hàng không?" falls through to RAG.
+        return True
+    if _has_any_term(folded, _PRICE_TERMS):
+        # Broad catalogue questions are handled by the catalogue route below;
+        # only named/follow-up questions need exact product lookup.
+        return not is_browsing_request(text) or bool(_product_hint(text))
+    return False
+
+
+def _is_specific_product_lookup(text: str) -> bool:
+    """Identify "shop có laptop không?" without treating policies as products."""
+    folded = _fold_text(text)
+    if not folded or _has_any_term(folded, _DELIVERY_TERMS + _RETURN_TERMS):
+        return False
+    if _has_any_term(folded, _RECOMMENDATION_TERMS):
+        return False
+    if is_browsing_request(text):
+        return False
+    # A code/name followed by a question, or the common "có X không" form.
+    return bool(
+        re.search(r"\bco\s+.+\s+khong\b", folded)
+        or re.search(r"\b(?:tim|xem|tu van|mua)\s+.+", folded)
+    )
+
+
+def _find_exact_product(
+    db: Session,
+    business_id: int,
+    text: str,
+    *,
+    conversation_id: int | None = None,
+) -> tuple[Product | None, str]:
+    """Resolve an explicit product name/SKU, then a short conversational follow-up.
+
+    We intentionally do not use fuzzy semantic matching for an explicit unknown
+    product.  Returning a nearby product is worse than asking the customer to
+    correct a typo, and was the reason ``serum01`` produced the full catalogue.
+    """
+    folded = _fold_text(text)
+    hint = _product_hint(text)
+    try:
+        products = db.query(Product).filter(
+            Product.business_id == business_id,
+            Product.status == "active",
+        ).order_by(Product.id.asc()).all()
+        products = list(products)
+    except Exception:
+        return None, hint
+
+    matches: list[tuple[int, int, Product]] = []
+    for product in products:
+        for alias in product_aliases(product):
+            alias_folded = _fold_text(alias)
+            if len(alias_folded) < 3:
+                continue
+            if alias_folded in folded:
+                matches.append((len(alias_folded), -int(product.id or 0), product))
+    if matches:
+        _length, _id, product = max(matches)
+        return product, hint
+
+    # Follow-ups such as “sản phẩm lúc nãy còn hàng không?” may omit the
+    # product name.  The resolver looks only at the customer's previous
+    # messages, never at the bot's catalogue response.
+    if conversation_id is not None and not hint:
+        try:
+            product = resolve_product(
+                db,
+                business_id=business_id,
+                text=text,
+                conversation_id=conversation_id,
+            )
+            if product is not None:
+                return product, hint
+        except Exception:
+            logger.debug("Could not resolve conversational product", exc_info=True)
+    return None, hint
+
+
+def _format_product_fact_reply(product: Product, folded_query: str) -> str:
+    available = max(
+        int(product.stock_quantity or 0) - int(product.reserved_quantity or 0),
+        0,
+    )
+    name = product.name
+    price_requested = _has_any_term(folded_query, _PRICE_TERMS)
+    stock_requested = _has_any_term(folded_query, _STOCK_TERMS)
+    if price_requested and stock_requested:
+        return f"{name} hiện có giá {_format_vnd(product.price)} đồng và còn {available} sản phẩm."
+    if price_requested:
+        return f"{name} hiện có giá {_format_vnd(product.price)} đồng."
+    return f"{name} hiện còn {available} sản phẩm." if available else f"{name} hiện đã hết hàng."
+
+
+def _recommendation_reply(
+    db: Session,
+    *,
+    business_id: int,
+    query_text: str,
+) -> str | None:
+    """Recommend only products carrying an explicit matching attribute."""
+    folded_query = _fold_text(query_text)
+    query_terms = {
+        token
+        for token in folded_query.split()
+        if len(token) >= 3 and token not in _PRODUCT_HINT_STOP_WORDS and token not in {"phu", "hop"}
+    }
+    if not query_terms:
+        return None
+
+    try:
+        products = db.query(Product).filter(
+            Product.business_id == business_id,
+            Product.status == "active",
+        ).order_by(Product.id.asc()).all()
+    except Exception:
+        return None
+
+    matches: list[tuple[int, Product]] = []
+    for product in products:
+        raw_attributes = (product.metadata_ or {}).get("attributes") if isinstance(product.metadata_, dict) else None
+        if not isinstance(raw_attributes, dict):
+            continue
+        values = [
+            _fold_text(value)
+            for raw in raw_attributes.values()
+            for value in (raw if isinstance(raw, list) else [raw])
+            if str(value or "").strip()
+        ]
+        score = 0
+        for value in values:
+            if value in folded_query:
+                score += 3
+            elif query_terms.intersection(value.split()):
+                score += 1
+        if score:
+            matches.append((score, product))
+
+    if not matches:
+        return None
+    matches.sort(key=lambda item: (-item[0], item[1].id or 0))
+    lines = []
+    for _score, product in matches[:3]:
+        available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+        lines.append(f"- {product.name} — {_format_vnd(product.price)} đồng (còn {available})")
+    return (
+        "Mình tìm thấy một số sản phẩm phù hợp với nhu cầu của bạn:\n"
+        + "\n".join(lines)
+        + "\nBạn muốn xem sản phẩm nào để mình tư vấn thêm?"
+    )
+
+
+def _deterministic_customer_reply(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int,
+    query_text: str,
+) -> tuple[str, str] | None:
+    """Return a safe reply and route for questions that must not enter RAG."""
+    folded = _fold_text(query_text)
+    # Policy questions are checked after retrieval.  If the knowledge base
+    # contains a matching policy, the LLM may summarize it; if not, the caller
+    # sends the explicit missing-policy reply instead of a product catalogue.
+    if _policy_kind(query_text):
+        return None
+
+    if (
+        _has_any_term(folded, _PRICE_TERMS)
+        and not _product_hint(query_text)
+        and (
+            not is_browsing_request(query_text)
+            or "tong" in folded
+            or "thanh tien" in folded
+        )
+    ):
+        return AMBIGUOUS_PRICE_REPLY, "product_price_clarification"
+    if _has_any_term(folded, _RECOMMENDATION_TERMS):
+        recommendation = _recommendation_reply(
+            db,
+            business_id=business_id,
+            query_text=query_text,
+        )
+        if recommendation:
+            return recommendation, "product_recommendation"
+        # If no product carries a matching attribute, continue through the
+        # knowledge-base route so the assistant can ask a clarifying question
+        # instead of inventing suitability.
+        return None
+
+    product_fact = _is_product_fact_question(query_text, conversation_id=conversation_id)
+    specific_lookup = _is_specific_product_lookup(query_text)
+    if not product_fact and not specific_lookup:
+        return None
+
+    product, hint = _find_exact_product(
+        db,
+        business_id,
+        query_text,
+        conversation_id=conversation_id,
+    )
+    if product is not None and product_fact:
+        return _format_product_fact_reply(product, folded), "product_fact"
+    if product is not None and specific_lookup:
+        return (
+            f"Mình tìm thấy {product.name}, giá {_format_vnd(product.price)} đồng, "
+            f"hiện còn {max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)} sản phẩm.",
+            "product_lookup",
+        )
+    if product_fact or specific_lookup:
+        if product_fact and not hint:
+            return AMBIGUOUS_STOCK_REPLY, "product_stock_clarification"
+        if hint:
+            return PRODUCT_NOT_FOUND_WITH_HINT.format(hint=hint), "product_not_found"
+        return PRODUCT_NOT_FOUND_REPLY, "product_not_found"
+    return None
+
+
+def _chunk_supports_policy(chunks: list, policy: str) -> bool:
+    """Reject semantically-near but factually-unrelated catalogue chunks."""
+    terms = _DELIVERY_TERMS if policy == "delivery" else _RETURN_TERMS
+    # Test doubles and legacy retrievers may not expose chunk text.  In that
+    # case keep the old RAG path; real chunks always contain a string.
+    known_text = [getattr(chunk, "content", None) for chunk in chunks]
+    if not any(isinstance(content, str) and content.strip() for content in known_text):
+        return True
+    return any(
+        isinstance(content, str) and _has_any_term(_fold_text(content), terms)
+        for content in known_text
+    )
+
+
+def _policy_kind(text: str) -> str | None:
+    folded = _fold_text(text)
+    if _has_any_term(folded, _DELIVERY_TERMS):
+        return "delivery"
+    if _has_any_term(folded, _RETURN_TERMS):
+        return "return"
+    return None
+
+
 def send_text_reply(
     *,
     db: Session,
@@ -430,6 +854,7 @@ def send_text_reply(
     text: str,
     business_id: int,
     auto_reply_key: str | None = None,
+    extra_metadata: dict | None = None,
 ) -> dict:
     """Send and persist a deterministic non-RAG reply on the conversation channel."""
     stored_channel, recipient_id = _get_conversation_recipient(
@@ -477,6 +902,8 @@ def send_text_reply(
             "meta_response": response,
             "source_document_ids": [],
         }
+        if extra_metadata:
+            save_kwargs["extra_metadata"] = extra_metadata
         if auto_reply_key:
             save_kwargs["auto_reply_key"] = auto_reply_key
         _save_auto_reply_outbound(**save_kwargs)
@@ -570,6 +997,8 @@ def process_rag_auto_reply(
         if config and isinstance(config.similarity_threshold, (int, float))
         else 0.3
     )
+    bandit_choice: ChatbotBanditChoice | None = None
+
     def send_reply(text_value: str) -> dict:
         kwargs = {
             "db": db,
@@ -580,6 +1009,8 @@ def process_rag_auto_reply(
         }
         if auto_reply_key:
             kwargs["auto_reply_key"] = auto_reply_key
+        if bandit_choice is not None:
+            kwargs["extra_metadata"] = bandit_choice.message_metadata()
         return send_text_reply(**kwargs)
 
     with RagRunLog(
@@ -653,10 +1084,36 @@ def process_rag_auto_reply(
             )
             return True
 
+        # Product price/stock and exact product lookup are read from the live
+        # catalogue.  This prevents an unrelated RAG chunk from turning a
+        # typo such as ``serum01`` into a full product-list answer.
+        deterministic_reply = _deterministic_customer_reply(
+            db,
+            business_id=business_id,
+            conversation_id=conversation_id,
+            query_text=query_text,
+        )
+        if deterministic_reply:
+            reply_text, route = deterministic_reply
+            send_reply(reply_text)
+            run.finish(
+                route,
+                phase="complete",
+                chunks_found=0,
+                answer_chars=len(reply_text),
+            )
+            return True
+
+        policy_kind = _policy_kind(query_text)
+        recommendation_question = _has_any_term(_fold_text(query_text), _RECOMMENDATION_TERMS)
+
         # Broad product-discovery questions should show the live catalog
         # deterministically.  Letting them enter RAG first can return a
         # generic greeting even when the knowledge base has unrelated chunks.
-        if is_browsing_request(query_text):
+        # Policy and recommendation questions are deliberately excluded: the
+        # phrase "có ... không" also matches those questions, but a catalogue
+        # dump is not an answer to them.
+        if is_browsing_request(query_text) and not policy_kind and not recommendation_question:
             catalog_reply = build_product_catalog_reply(db, business_id)
             send_reply(catalog_reply)
             run.finish(
@@ -677,6 +1134,7 @@ def process_rag_auto_reply(
         )
 
         # 1. Retrieve
+        retrieval_started = perf_counter()
         chunks = retrieve(
             query=query_text,
             db=db,
@@ -684,7 +1142,64 @@ def process_rag_auto_reply(
             similarity_threshold=similarity_threshold,
             business_id=business_id,
         )
+        run.update(
+            retrieval_topic=infer_query_topic(query_text),
+            retrieval_ms=round((perf_counter() - retrieval_started) * 1000, 2),
+            retrieval_top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
+        )
+        if policy_kind and chunks and not _chunk_supports_policy(chunks, policy_kind):
+            reply_text = NO_DELIVERY_POLICY_REPLY if policy_kind == "delivery" else NO_RETURN_POLICY_REPLY
+            send_reply(reply_text)
+            run.finish(
+                f"{policy_kind}_policy_missing",
+                phase="complete",
+                chunks_found=len(chunks),
+                answer_chars=len(reply_text),
+            )
+            return True
+        if recommendation_question and chunks:
+            # A generic catalogue chunk is not evidence that a product is
+            # suitable for a customer's stated need.
+            query_terms = [
+                token
+                for token in _fold_text(query_text).split()
+                if len(token) >= 3
+                and token not in _PRODUCT_HINT_STOP_WORDS
+                and token not in _NON_PRODUCT_HINT_WORDS
+                and token not in {"phu", "hop"}
+            ]
+            if query_terms and not any(
+                any(term in _fold_text(getattr(chunk, "content", "")) for term in query_terms)
+                for chunk in chunks
+            ):
+                send_reply(NO_RECOMMENDATION_REPLY)
+                run.finish(
+                    "recommendation_missing",
+                    phase="complete",
+                    chunks_found=len(chunks),
+                    answer_chars=len(NO_RECOMMENDATION_REPLY),
+                )
+                return True
         if not chunks:
+            if policy_kind:
+                reply_text = NO_DELIVERY_POLICY_REPLY if policy_kind == "delivery" else NO_RETURN_POLICY_REPLY
+                send_reply(reply_text)
+                run.finish(
+                    f"{policy_kind}_policy_missing",
+                    phase="complete",
+                    chunks_found=0,
+                    answer_chars=len(reply_text),
+                )
+                return True
+            if recommendation_question:
+                send_reply(NO_RECOMMENDATION_REPLY)
+                run.finish(
+                    "recommendation_missing",
+                    phase="complete",
+                    chunks_found=0,
+                    answer_chars=len(NO_RECOMMENDATION_REPLY),
+                )
+                return True
             if is_browsing_request(query_text):
                 catalog_reply = build_product_catalog_reply(db, business_id)
                 send_reply(catalog_reply)
@@ -714,6 +1229,31 @@ def process_rag_auto_reply(
             run.finish("no_context", phase="complete", chunks_found=0)
             return False
 
+        # Live experimentation is explicitly opt-in. Only an active policy
+        # bound to chatbot_auto_reply with reviewed arm controls can create a
+        # decision. Invalid/missing policies safely fall back to the normal
+        # RAG path.
+        try:
+            bandit_choice = select_chatbot_reply_choice(
+                db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                channel=channel,
+                query_topic=infer_query_topic(query_text),
+                auto_reply_key=auto_reply_key,
+            )
+        except Exception:
+            # Experimentation is an optional enhancement. A missing legacy
+            # table or malformed policy must never disable customer replies.
+            db.rollback()
+            bandit_choice = None
+            logger.warning(
+                "Chatbot bandit selection failed; using the default reply path",
+                exc_info=True,
+            )
+        if bandit_choice and bandit_choice.max_context_chunks:
+            chunks = chunks[: bandit_choice.max_context_chunks]
+
         # 2. Build prompt
         run.update(
             phase="build_prompt",
@@ -722,11 +1262,18 @@ def process_rag_auto_reply(
             top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
         )
         memory = build_agent_memory(db, business_id, conversation_id)
+        runtime_system_prompt = config.system_prompt if config and config.system_prompt else None
+        if bandit_choice is not None:
+            style_instruction = response_style_instruction(bandit_choice.response_style)
+            if style_instruction:
+                runtime_system_prompt = "\n\n".join(
+                    value for value in (runtime_system_prompt, style_instruction) if value
+                )
         messages = build_prompt(
             query=query_text,
             chunks=chunks,
             conversation_history=memory["history"][:-1],
-            system_prompt=config.system_prompt if config and config.system_prompt else None,
+            system_prompt=runtime_system_prompt,
         )
 
         # 3. Call LLM
@@ -828,6 +1375,8 @@ def process_rag_auto_reply(
         }
         if auto_reply_key:
             save_kwargs["auto_reply_key"] = auto_reply_key
+        if bandit_choice is not None:
+            save_kwargs["extra_metadata"] = bandit_choice.message_metadata()
         _save_auto_reply_outbound(**save_kwargs)
         logger.info(
             "Auto-reply completed for conversation %d, external_message_id=%s",

@@ -95,6 +95,44 @@ class ProductOrderApiTests(unittest.TestCase):
         self.assertIn(self.product_id, product_ids)
         self.assertNotIn(self.other_product_id, product_ids)
 
+    def test_product_import_restocks_existing_sku_and_creates_new_sku(self):
+        with Session(self.engine) as db:
+            existing = Product(
+                business_id=1,
+                sku="IMPORT-EXISTING",
+                name="Existing import product",
+                price=Decimal("100000"),
+                stock_quantity=10,
+                status="active",
+            )
+            db.add(existing)
+            db.commit()
+            existing_id = existing.id
+
+        content = (
+            "Mã sản phẩm,Tên sản phẩm,Giá,Tồn kho,Trạng thái\n"
+            "IMPORT-EXISTING,Existing import product,100000,5,Đang bán\n"
+            "IMPORT-EXISTING,Existing import product,100000,2,Đang bán\n"
+            "IMPORT-NEW,New import product,250000,7,Đang bán\n"
+        ).encode("utf-8")
+        response = self.client.post(
+            "/api/products/import",
+            headers={"X-Business-Id": "1"},
+            files={"file": ("products.csv", content, "text/csv")},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertEqual(1, body["imported"])
+        self.assertEqual(2, body["restocked"])
+        self.assertEqual(7, body["restocked_quantity"])
+        self.assertEqual(2, body["updated"])
+        self.assertEqual(0, body["skipped"])
+
+        with Session(self.engine) as db:
+            self.assertEqual(17, db.get(Product, existing_id).stock_quantity)
+            created = db.query(Product).filter(Product.business_id == 1, Product.sku == "IMPORT-NEW").one()
+            self.assertEqual(7, created.stock_quantity)
+
     def test_order_uses_database_product_price_and_calculates_total(self):
         response = self.client.post(
             "/api/orders",

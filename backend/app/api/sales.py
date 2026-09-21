@@ -74,6 +74,27 @@ _PRODUCT_IMPORT_FIELDS = {
     "status": "status",
     "trang_thai": "status",
     "trạng_thái": "status",
+    "category": "category",
+    "danh_muc": "category",
+    "danh_mục": "category",
+    "suitable_for": "suitable_for",
+    "phu_hop": "suitable_for",
+    "phù_hợp": "suitable_for",
+    "doi_tuong": "suitable_for",
+    "đối_tượng": "suitable_for",
+    "phu_hop_voi": "suitable_for",
+    "phù_hợp_với": "suitable_for",
+    "doi_tuong_phu_hop": "suitable_for",
+    "đối_tượng_phù_hợp": "suitable_for",
+    "colors": "colors",
+    "mau": "colors",
+    "màu": "colors",
+    "sizes": "sizes",
+    "kich_thuoc": "sizes",
+    "kích_thước": "sizes",
+    "keywords": "keywords",
+    "tu_khoa": "keywords",
+    "từ_khóa": "keywords",
 }
 
 
@@ -112,6 +133,18 @@ def _parse_import_stock(value: str, *, row_number: int) -> int:
     if quantity < 0:
         raise ValueError(f"Dòng {row_number}: tồn kho không được âm.")
     return quantity
+
+
+def _import_product_attributes(values: dict[str, str]) -> dict[str, list[str]]:
+    """Turn optional CSV facet columns into searchable product metadata."""
+    attributes: dict[str, list[str]] = {}
+    for key in ("category", "suitable_for", "colors", "sizes", "keywords"):
+        raw = str(values.get(key) or "").strip()
+        if not raw:
+            continue
+        parts = [" ".join(part.strip().split()) for part in raw.replace(";", ",").split(",")]
+        attributes[key] = list(dict.fromkeys(part for part in parts if part))
+    return attributes
 
 
 def _generated_order_number(db: Session, business_id: int) -> str:
@@ -219,8 +252,11 @@ async def import_products(
     """Nhập danh mục sản phẩm từ CSV/TXT theo từng shop.
 
     The import intentionally accepts a small, human-friendly column set so a
-    shop can export a spreadsheet as CSV without learning an internal API. A
-    matching SKU updates the existing product; a new SKU creates one.
+    shop can export a spreadsheet as CSV without learning an internal API.
+    A new SKU creates a product.  A SKU that already exists is treated as a
+    stock receipt: the imported quantity is added to the existing stock and
+    recorded in the inventory ledger.  This makes re-importing a delivery file
+    safe and avoids silently replacing the current stock balance.
     """
     filename = (file.filename or "").strip()
     if not filename:
@@ -264,10 +300,13 @@ async def import_products(
         raise HTTPException(status_code=400, detail="Định dạng tệp không hợp lệ. Hãy dùng CSV có hàng tiêu đề.") from exc
 
     imported = 0
-    updated = 0
+    # ``updated`` is kept as a backwards-compatible response alias.  The UI
+    # uses ``restocked`` so operators can tell that the existing SKU received
+    # more stock instead of interpreting the result as a failed import.
+    restocked = 0
+    restocked_quantity = 0
     skipped = 0
     errors: list[str] = []
-    seen_skus: set[str] = set()
     for row_number, row in enumerate(reader, start=2):
         values: dict[str, str] = {}
         for source_key, target_key in mapped_headers.items():
@@ -285,11 +324,6 @@ async def import_products(
             skipped += 1
             errors.append(f"Dòng {row_number}: mã tối đa 80 ký tự, tên tối đa 255 ký tự.")
             continue
-        if sku in seen_skus:
-            skipped += 1
-            errors.append(f"Dòng {row_number}: mã sản phẩm bị lặp trong tệp.")
-            continue
-        seen_skus.add(sku)
         try:
             price = _parse_import_decimal(values.get("price", ""), row_number=row_number)
             stock = _parse_import_stock(values.get("stock_quantity", ""), row_number=row_number)
@@ -304,6 +338,7 @@ async def import_products(
             skipped += 1
             errors.append(f"Dòng {row_number}: trạng thái chỉ có Đang bán hoặc Lưu trữ.")
             continue
+        imported_attributes = _import_product_attributes(values)
 
         product = db.query(Product).filter(
             Product.business_id == tenant.business_id,
@@ -318,6 +353,7 @@ async def import_products(
                 price=price,
                 stock_quantity=stock,
                 status=status,
+                metadata_={"attributes": imported_attributes} if imported_attributes else {},
             )
             db.add(product)
             db.flush()
@@ -337,32 +373,33 @@ async def import_products(
             imported += 1
         else:
             before = int(product.stock_quantity or 0)
-            reserved = int(product.reserved_quantity or 0)
-            if stock < reserved:
-                skipped += 1
-                errors.append(f"Dòng {row_number}: tồn kho {stock} thấp hơn số đang giữ {reserved} của sản phẩm hiện có.")
-                continue
+            after = before + stock
             product.name = name
             product.description = values.get("description") or None
             product.price = price
             product.status = status
-            product.stock_quantity = stock
-            if stock != before:
+            product.stock_quantity = after
+            if imported_attributes:
+                metadata = dict(product.metadata_ or {})
+                metadata["attributes"] = imported_attributes
+                product.metadata_ = metadata
+            if stock > 0:
                 db.add(StockMovement(
                     business_id=tenant.business_id,
                     product_id=product.id,
                     movement_type="inventory_import",
-                    quantity=stock - before,
+                    quantity=stock,
                     quantity_before=before,
-                    quantity_after=stock,
+                    quantity_after=after,
                     source_type="product_import",
                     source_id=product.id,
                     actor_id=actor.id if actor else None,
-                    note=f"Cập nhật từ tệp {filename}",
+                    note=f"Cộng tồn từ tệp {filename}",
                 ))
-            updated += 1
+            restocked += 1
+            restocked_quantity += stock
 
-    if imported == 0 and updated == 0:
+    if imported == 0 and restocked == 0:
         db.rollback()
         detail = "Không có sản phẩm hợp lệ để nhập."
         if errors:
@@ -379,10 +416,25 @@ async def import_products(
         user_id=actor.id if actor else None,
         action="import",
         resource_type="product_catalog",
-        metadata={"filename": filename, "imported": imported, "updated": updated, "skipped": skipped},
+        metadata={
+            "filename": filename,
+            "imported": imported,
+            "restocked": restocked,
+            "restocked_quantity": restocked_quantity,
+            "skipped": skipped,
+        },
     )
     db.commit()
-    return {"filename": filename, "imported": imported, "updated": updated, "skipped": skipped, "errors": errors[:25]}
+    return {
+        "filename": filename,
+        "imported": imported,
+        "restocked": restocked,
+        "restocked_quantity": restocked_quantity,
+        # Preserve the old field for API clients that still read it.
+        "updated": restocked,
+        "skipped": skipped,
+        "errors": errors[:25],
+    }
 
 
 @router.post("/products", response_model=ProductOut, status_code=201, dependencies=[Depends(require_write_access)])

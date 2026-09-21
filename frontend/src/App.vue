@@ -538,6 +538,7 @@ const documentRuns = ref({});
 const docsLoading = ref(false);
 const docUploading = ref(false);
 const docUploadError = ref("");
+const docUploadNotice = ref("");
 const docFileInput = ref(null);
 let docPollingTimer = null;
 
@@ -661,6 +662,10 @@ const csatFeedback = ref([]);
 const csatSummary = ref({ responses: 0, average_rating: 0, satisfaction_rate: 0, bot_resolution_rate: 0 });
 const csatLoading = ref(false);
 const csatError = ref("");
+const learningSummary = ref({ period_days: 30, inbound_messages: 0, conversations_sampled: 0, topics: [], response_feedback: {}, method: "" });
+const learningSummaryLoading = ref(false);
+const learningSummaryError = ref("");
+const messageFeedback = ref({});
 
 const metaStatus = ref({
   connected: false,
@@ -927,6 +932,7 @@ function openSettings() {
   void fetchChatbotRuntime();
   void fetchFollowups();
   void fetchCsat();
+  void fetchLearningSummary();
   void fetchQuotaUsage();
   void fetchServiceAccountSummary();
 }
@@ -1023,9 +1029,54 @@ function removeBusinessLogo() {
 function saveLearningPreferences() {
   try {
     localStorage.setItem(`crm-learning-preferences-${authUser.value?.business_id || "shop"}`, JSON.stringify({ messageLearningEnabled: messageLearningEnabled.value, reinforcementLearningEnabled: reinforcementLearningEnabled.value }));
-    learningNotice.value = "Đã lưu lựa chọn học từ hội thoại.";
+    learningNotice.value = "Đã lưu tùy chọn thu thập dữ liệu trên thiết bị này.";
   } catch {
     learningNotice.value = "Chưa thể lưu lựa chọn trên thiết bị này. Vui lòng thử lại sau.";
+  }
+}
+
+async function fetchLearningSummary() {
+  if (!tenantReady.value) return;
+  learningSummaryLoading.value = true;
+  learningSummaryError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/chatbot/learning/summary?days=30`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    learningSummary.value = await response.json();
+  } catch (err) {
+    learningSummaryError.value = friendlyErrorMessage(err, "Chưa thể phân tích nhu cầu từ hội thoại. Vui lòng thử lại sau.");
+  } finally {
+    learningSummaryLoading.value = false;
+  }
+}
+
+async function rateBotMessage(message, rating) {
+  if (!message?.message_id || messageFeedback.value[message.message_id]) return;
+  messageFeedback.value = { ...messageFeedback.value, [message.message_id]: { rating, loading: true } };
+  try {
+    const response = await apiFetch(`${API_BASE}/chatbot/messages/${message.message_id}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rating,
+        idempotency_key: `message-feedback-${authUser.value?.business_id || 'shop'}-${message.message_id}-${authUser.value?.id || 'staff'}`,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    messageFeedback.value = { ...messageFeedback.value, [message.message_id]: { rating, loading: false } };
+    learningNotice.value = "Đã ghi nhận đánh giá để shop theo dõi chất lượng. Đánh giá chưa tự thay đổi cách trợ lý trả lời.";
+    void fetchLearningSummary();
+  } catch (err) {
+    const next = { ...messageFeedback.value };
+    delete next[message.message_id];
+    messageFeedback.value = next;
+    error.value = friendlyErrorMessage(err, "Chưa thể ghi nhận đánh giá câu trả lời.");
   }
 }
 
@@ -1552,14 +1603,6 @@ async function fetchDocumentRuns(items) {
 async function fetchDocuments() {
   docsLoading.value = true;
   try {
-    // Drain one durable ingestion batch before refreshing the list. The same
-    // endpoint is safe for a background worker, so the UI remains useful in
-    // development without spawning request-owned threads.
-    const dispatchResponse = await apiFetch(`${API_BASE}/documents/jobs/dispatch`, { method: "POST" });
-    if (!dispatchResponse.ok) {
-      const detail = await dispatchResponse.json().catch(() => ({}));
-      docUploadError.value = friendlyErrorMessage(detail.detail, "Chưa thể xử lý tài liệu lúc này. Vui lòng thử lại sau.");
-    }
     const res = await apiFetch(`${API_BASE}/documents`);
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
@@ -1589,6 +1632,7 @@ async function uploadDocumentFile(file) {
   if (!file) return;
   docUploading.value = true;
   docUploadError.value = "";
+  docUploadNotice.value = "";
   try {
     const formData = new FormData();
     formData.append("file", file);
@@ -1604,6 +1648,7 @@ async function uploadDocumentFile(file) {
       } catch {}
       throw new Error(errText);
     }
+    docUploadNotice.value = "Đã nhận tài liệu. Hệ thống đang xử lý ở nền; bạn có thể tiếp tục làm việc.";
     await fetchDocuments();
   } catch (err) {
     docUploadError.value = friendlyErrorMessage(err, "Chưa thể nhập tài liệu. Vui lòng kiểm tra tệp rồi thử lại.");
@@ -2042,8 +2087,18 @@ function policyStatusLabel(status) {
 }
 
 function documentEmbeddingStatusLabel(status) {
-  const labels = { pending: "Chờ xử lý", processing: "Đang xử lý", ready: "Sẵn sàng", completed: "Đã hoàn tất", failed: "Lỗi" };
+  const labels = { pending: "Chờ xử lý", processing: "Đang xử lý", ready: "Sẵn sàng", completed: "Đã hoàn tất", failed: "Lỗi", lexical_only: "Đã sẵn sàng" };
   return labels[status] || status || "Chưa rõ";
+}
+
+function ragRunStatusLabel(status) {
+  const labels = { queued: "Đang chuẩn bị", processing: "Đang xử lý", completed: "Đã hoàn tất", failed: "Chưa xử lý được" };
+  return labels[status] || status || "Chưa rõ";
+}
+
+function ragRunPhaseLabel(phase) {
+  const labels = { load: "đọc tài liệu", chunk: "phân tích nội dung", embed: "xử lý nội dung", store: "hoàn thiện", complete: "hoàn tất" };
+  return labels[phase] || phase || "đang xử lý";
 }
 
 function workflowEventLabel(event) {
@@ -2438,7 +2493,17 @@ function formatTime(value) {
     return "";
   }
 
-  const date = new Date(value);
+  // The API stores legacy timestamps as naive UTC datetimes while provider
+  // events and optimistic messages use ISO values with an explicit offset.
+  // Treat only the naive form as UTC; otherwise browsers in different local
+  // timezones show the same chat message at different times.
+  const raw = typeof value === "string" ? value.trim() : value;
+  const normalized = typeof raw === "string"
+    && raw
+    && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)
+    ? `${raw}Z`
+    : raw;
+  const date = new Date(normalized);
 
   if (
     Number.isNaN(
@@ -2451,8 +2516,10 @@ function formatTime(value) {
   return new Intl.DateTimeFormat(
     "vi-VN",
     {
+      timeZone: "Asia/Ho_Chi_Minh",
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
     }
   ).format(date);
 
@@ -3787,9 +3854,16 @@ async function uploadProductFile(file) {
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
     const imported = Number(detail.imported || 0);
-    const updated = Number(detail.updated || 0);
+    const restocked = Number(detail.restocked ?? detail.updated ?? 0);
+    const restockedQuantity = Number(detail.restocked_quantity || 0);
     const skipped = Number(detail.skipped || 0);
-    productUploadNotice.value = `Đã nhập ${imported} sản phẩm${updated ? `, cập nhật ${updated}` : ""}${skipped ? `, bỏ qua ${skipped} dòng` : ""}.`;
+    const messages = [];
+    if (imported) messages.push(`tạo ${imported} sản phẩm mới`);
+    if (restocked) messages.push(`cộng thêm ${restockedQuantity} tồn kho cho ${restocked} mã đã có`);
+    if (skipped) messages.push(`bỏ qua ${skipped} dòng`);
+    productUploadNotice.value = messages.length
+      ? `Đã ${messages.join(", ")}.`
+      : "Không có thay đổi nào trong tệp.";
     if (Array.isArray(detail.errors) && detail.errors.length) {
       productUploadNotice.value += ` ${detail.errors.slice(0, 2).join(" ")}`;
     }
@@ -7269,6 +7343,7 @@ async function initializeTenantWorkspace() {
     fetchChatbotRuntime();
     fetchFollowups();
     fetchCsat();
+    fetchLearningSummary();
     fetchMetaStatus();
 
     const metaResult = new URLSearchParams(window.location.search).get("meta");
@@ -7284,7 +7359,9 @@ async function initializeTenantWorkspace() {
         await loadConversations(false);
         if (selectedId.value) await loadMessages(selectedId.value, false, true);
         void fetchOperationalNotifications();
-      }, 25000);
+      // WebSocket is the primary realtime path.  Keep a short fallback so a
+      // reconnecting browser does not hide a bot reply for 25 seconds.
+      }, 5000);
     }
   } catch (err) {
     tenantWorkspaceInitialized.value = false;
@@ -8821,6 +8898,19 @@ function followupRecommendationLabel(item) {
 
                   </small>
 
+                  <span
+                    v-if="message.direction === 'outbound' && message.sender_type === 'bot' && message.status !== 'sending' && message.status !== 'failed'"
+                    class="bot-response-feedback"
+                    aria-label="Đánh giá câu trả lời của trợ lý"
+                  >
+                    <span v-if="messageFeedback[message.message_id]" class="bot-response-feedback-done">{{ messageFeedback[message.message_id].rating > 0 ? 'Đã ghi nhận hữu ích' : 'Đã ghi nhận cần cải thiện' }}</span>
+                    <template v-else>
+                      <span>Trợ lý trả lời ổn?</span>
+                      <button type="button" title="Câu trả lời hữu ích" @click="rateBotMessage(message, 1)">Hữu ích</button>
+                      <button type="button" title="Cần cải thiện" @click="rateBotMessage(message, -1)">Cần cải thiện</button>
+                    </template>
+                  </span>
+
                 </div>
 
 
@@ -10047,7 +10137,7 @@ function followupRecommendationLabel(item) {
           <div v-if="!productUploading" class="dropzone-content">
             <span class="upload-icon" aria-hidden="true">NHẬP DANH MỤC</span>
             <strong>Nhập tệp sản phẩm để cập nhật nhanh danh mục</strong>
-            <small>CSV hoặc TXT · Tối đa 20MB · Cột cần có: Mã sản phẩm, Tên sản phẩm, Giá, Tồn kho</small>
+            <small>CSV hoặc TXT · Tối đa 20MB · Cột cần có: Mã sản phẩm, Tên sản phẩm, Giá, Tồn kho · SKU trùng sẽ cộng thêm tồn</small>
             <button type="button" class="secondary-btn import-choice" @click.stop="openProductFilePicker">Nhập tệp</button>
           </div>
           <div v-else class="dropzone-content" role="status" aria-live="polite">
@@ -10601,6 +10691,15 @@ function followupRecommendationLabel(item) {
         <div v-if="experimentationLoading" class="products-empty">Đang tải dữ liệu thử nghiệm...</div>
 
         <div v-else class="ai-lab-content">
+          <div class="ai-readiness-notice" role="note">
+            <strong>Khu vực thử nghiệm nội bộ</strong>
+            <span>Đề xuất, phiên bản dự đoán và A/B tại đây chưa tự thay đổi câu trả lời đang gửi cho khách. Quản trị viên vẫn phải duyệt và triển khai riêng.</span>
+          </div>
+          <div class="ai-readiness-grid" aria-label="Mức độ sẵn sàng của các chức năng AI">
+            <div><span class="ai-readiness-badge ready">Đang dùng</span><strong>Kho kiến thức</strong><small>Tra cứu nội dung đã lập chỉ mục để hỗ trợ trả lời.</small></div>
+            <div><span class="ai-readiness-badge limited">Hỗ trợ phân tích</span><strong>Nhóm nhu cầu</strong><small>Tổng hợp theo quy tắc, chưa phải mô hình tự học.</small></div>
+            <div><span class="ai-readiness-badge experimental">Thử nghiệm</span><strong>A/B và dự đoán</strong><small>Chưa tự áp dụng vào hội thoại thật.</small></div>
+          </div>
           <div class="ai-lab-summary">
             <div class="ai-stat-card ai-stat-primary"><span>Tổng đề xuất</span><strong>{{ ruleSuggestions.length }}</strong><small>Đề xuất đã ghi nhận</small></div>
             <div class="ai-stat-card"><span>Chờ duyệt</span><strong>{{ ruleSuggestions.filter(item => item.status === 'pending').length }}</strong><small>Cần người kiểm tra</small></div>
@@ -10640,8 +10739,8 @@ function followupRecommendationLabel(item) {
             </form>
 
             <form class="ai-compose-card" @submit.prevent="createExperiment">
-              <div class="ai-card-heading"><div><span class="card-eyebrow">ĐO LƯỜNG TRƯỚC KHI ÁP DỤNG</span><h3>Tạo thử nghiệm</h3></div><span class="ai-card-icon ai-card-icon-alt">A/B</span></div>
-              <p class="ai-card-help">Tách biến thể bằng dấu phẩy hoặc xuống dòng để đo hiệu quả trước khi tự động hóa.</p>
+              <div class="ai-card-heading"><div><span class="card-eyebrow">THỬ NGHIỆM NỘI BỘ</span><h3>Tạo thử nghiệm A/B</h3></div><span class="ai-card-icon ai-card-icon-alt">A/B</span></div>
+              <p class="ai-card-help">Khai báo các biến thể để ghi nhận và so sánh kết quả. Việc tạo thử nghiệm chưa tự đưa biến thể vào câu trả lời đang gửi cho khách.</p>
               <label class="ai-field">Tên thử nghiệm<input v-model="experimentForm.name" required maxlength="160" placeholder="Ví dụ: Mẫu trả lời giá" /></label>
               <label class="ai-field">Các biến thể<textarea v-model="experimentForm.variants" required rows="4" placeholder="A\nB"></textarea></label>
               <label class="ai-field">Trạng thái ban đầu<select v-model="experimentForm.status"><option value="draft">Bản nháp</option><option value="running">Đang chạy</option><option value="paused">Tạm dừng</option></select></label>
@@ -10650,8 +10749,8 @@ function followupRecommendationLabel(item) {
             </form>
 
             <form class="ai-compose-card" @submit.prevent="createModelVersion">
-              <div class="ai-card-heading"><div><span class="card-eyebrow">PHIÊN BẢN DỰ ĐOÁN</span><h3>Phiên bản trợ lý</h3></div><span class="ai-card-icon">ML</span></div>
-              <p class="ai-card-help">Lưu phiên bản trước, sau đó huấn luyện bằng dữ liệu đã có nhãn để đánh giá rõ ràng.</p>
+              <div class="ai-card-heading"><div><span class="card-eyebrow">BẢN ĐÁNH GIÁ KỸ THUẬT</span><h3>Phiên bản dự đoán thử nghiệm</h3></div><span class="ai-card-icon">ML</span></div>
+              <p class="ai-card-help">Lưu một phiên bản dữ liệu để chạy đánh giá nền. Kết quả chưa phải mô hình tự học và không tự thay đổi trợ lý đang phục vụ khách.</p>
               <label class="ai-field">Tên phiên bản<input v-model="modelForm.name" required maxlength="120" /></label>
               <div class="ai-field-grid"><label class="ai-field">Phiên bản<input v-model="modelForm.version" required maxlength="40" /></label><label class="ai-field">Phiên bản dữ liệu<input v-model="modelForm.feature_version" required maxlength="40" /></label></div>
               <label class="ai-field">Mục tiêu<input v-model="modelForm.target" required maxlength="120" placeholder="tỷ lệ chuyển đổi" /></label>
@@ -10671,13 +10770,13 @@ function followupRecommendationLabel(item) {
           </div>
 
           <div class="ai-board-card">
-            <div class="ai-board-header"><div><span class="card-eyebrow">KHO PHIÊN BẢN</span><h3>Phiên bản &amp; đánh giá trợ lý</h3><p>Phiên bản chỉ chuyển sang sẵn sàng sau khi cập nhật; chỉ số kiểm tra được lưu kèm.</p></div><span class="count-badge">{{ modelVersions.length }}</span></div>
+            <div class="ai-board-header"><div><span class="card-eyebrow">KHO PHIÊN BẢN THỬ NGHIỆM</span><h3>Phiên bản &amp; đánh giá nền</h3><p>Trạng thái “sẵn sàng” chỉ cho biết lần đánh giá đã hoàn tất, không có nghĩa phiên bản đang được dùng để trả lời khách.</p></div><span class="count-badge">{{ modelVersions.length }}</span></div>
             <div v-if="!modelVersions.length" class="ai-empty-state"><strong>Chưa có phiên bản trợ lý</strong><span>Tạo phiên bản đầu tiên để quản lý lịch sử cập nhật.</span></div>
-            <div v-else class="ai-experiment-list"><article v-for="model in modelVersions" :key="model.id" class="ai-experiment-card"><div><strong>{{ model.name }} · {{ model.version }}</strong><span>Dữ liệu {{ model.feature_version }} → {{ model.target }}</span></div><span class="ai-status-pill" :class="`status-${model.status}`">{{ modelStatusLabel(model.status) }}</span><small v-if="model.artifact?.metrics">Độ lệch kiểm tra {{ model.artifact.metrics.mae ?? '—' }} · số mẫu kiểm tra {{ model.artifact.metrics.holdout_count ?? '—' }}</small><button v-if="model.status !== 'ready'" type="button" class="settings-refresh" @click="trainModel(model)">Huấn luyện</button></article></div>
+            <div v-else class="ai-experiment-list"><article v-for="model in modelVersions" :key="model.id" class="ai-experiment-card"><div><strong>{{ model.name }} · {{ model.version }}</strong><span>Dữ liệu {{ model.feature_version }} → {{ model.target }}</span></div><span class="ai-status-pill" :class="`status-${model.status}`">{{ modelStatusLabel(model.status) }}</span><small v-if="model.artifact?.metrics">Độ lệch kiểm tra {{ model.artifact.metrics.mae ?? '—' }} · số mẫu kiểm tra {{ model.artifact.metrics.holdout_count ?? '—' }}</small><button v-if="model.status !== 'ready'" type="button" class="settings-refresh" @click="trainModel(model)">Chạy đánh giá mẫu</button></article></div>
           </div>
 
           <div class="ai-board-card">
-            <div class="ai-board-header"><div><span class="card-eyebrow">THỬ NGHIỆM</span><h3>Thử nghiệm đang theo dõi</h3><p>So sánh các cách trả lời và giữ lại dữ liệu để quyết định.</p></div><span class="count-badge">{{ experiments.length }}</span></div>
+            <div class="ai-board-header"><div><span class="card-eyebrow">THỬ NGHIỆM NỘI BỘ</span><h3>Thử nghiệm đang theo dõi</h3><p>So sánh dữ liệu đã ghi nhận để hỗ trợ quyết định; hệ thống chưa tự phân phối cách trả lời cho khách.</p></div><span class="count-badge">{{ experiments.length }}</span></div>
             <div v-if="!experiments.length" class="ai-empty-state"><strong>Chưa có thử nghiệm</strong><span>Tạo thử nghiệm A/B ở biểu mẫu phía trên.</span></div>
             <div v-else class="ai-experiment-list">
               <article v-for="experiment in experiments" :key="experiment.id" class="ai-experiment-card">
@@ -10700,7 +10799,7 @@ function followupRecommendationLabel(item) {
         <div class="rag-header-panel">
           <div>
             <h2>Kho kiến thức</h2>
-            <p>Nạp tài liệu sản phẩm, câu hỏi thường gặp, chính sách... để trợ lý tự động học và trả lời khách hàng qua Facebook, Instagram và Telegram.</p>
+            <p>Nạp tài liệu sản phẩm, câu hỏi thường gặp và chính sách để trợ lý tra cứu khi trả lời khách. Tài liệu được lập chỉ mục, không dùng để tự huấn luyện mô hình.</p>
           </div>
           <div class="rag-stats">
             <div class="stat-card">
@@ -10740,12 +10839,15 @@ function followupRecommendationLabel(item) {
           </div>
           <div class="dropzone-content" v-else>
             <span class="spinner-icon">...</span>
-            <strong>Đang tải và xử lý nội dung...</strong>
+             <strong>Đang tải tệp lên...</strong>
           </div>
         </div>
 
         <div v-if="docUploadError" class="error-banner">
           {{ docUploadError }}
+        </div>
+        <div v-if="docUploadNotice" class="settings-notice" role="status" aria-live="polite">
+          {{ docUploadNotice }}
         </div>
 
         <div v-if="textImportOpen" class="app-dialog-backdrop" @click.self="textImportOpen = false">
@@ -10803,10 +10905,14 @@ function followupRecommendationLabel(item) {
                     <span v-else-if="doc.status === 'pending'">⏳ Chờ xử lý</span>
                     <span v-else>❌ Lỗi</span>
                   </span>
-                  <small class="doc-embedding-state">Xử lý nội dung: {{ documentEmbeddingStatusLabel(doc.embedding_status || 'pending') }}</small>
-                  <small v-if="doc.retry_after" class="doc-embedding-state">Thử lại sau: {{ formatTime(doc.retry_after) }}</small>
-                  <small v-if="documentRuns[doc.id]" class="doc-embedding-state">
-                    Lần xử lý: {{ documentRuns[doc.id].status }} · lần {{ documentRuns[doc.id].attempts || 0 }}
+                   <small class="doc-embedding-state">Xử lý nội dung: {{ documentEmbeddingStatusLabel(doc.embedding_status || 'pending') }}</small>
+                   <small v-if="doc.retry_after" class="doc-embedding-state">Thử lại sau: {{ formatTime(doc.retry_after) }}</small>
+                   <small v-if="doc.error_message" class="doc-embedding-state doc-error-detail">{{ doc.error_message }}</small>
+                   <small v-if="documentRuns[doc.id]" class="doc-embedding-state">
+                    Lần xử lý: {{ ragRunStatusLabel(documentRuns[doc.id].status) }} · lần {{ documentRuns[doc.id].attempts || 0 }}
+                    <template v-if="documentRuns[doc.id].status === 'processing'">
+                      · {{ ragRunPhaseLabel(documentRuns[doc.id].phase) }} · {{ documentRuns[doc.id].progress_percent || 0 }}%
+                    </template>
                   </small>
                 </td>
                 <td class="text-sm text-gray">{{ formatTime(doc.uploaded_at) }}</td>
@@ -10815,7 +10921,7 @@ function followupRecommendationLabel(item) {
                     Xóa
                   </button>
                   <button class="btn-refresh" @click="reindexDocument(doc)" title="Lập chỉ mục lại">
-                    🔁 Lập chỉ mục lại
+                    🔁 Xử lý lại tài liệu
                   </button>
                   <button
                     v-if="documentRuns[doc.id]?.status === 'failed'"
@@ -11350,9 +11456,21 @@ function followupRecommendationLabel(item) {
         </div>
 
         <div v-if="authUser" class="settings-card learning-card">
-          <div class="settings-card-header"><div><span class="card-eyebrow">CẢI THIỆN TRỢ LÝ</span><h2>Học từ hội thoại</h2><p>Lưu phản hồi và tin nhắn đã duyệt để trợ lý trả lời tốt hơn ở lần sau.</p></div><span class="connection-badge connected">ĐANG BẬT</span></div>
-          <div class="learning-options"><label class="checkbox-field"><input v-model="messageLearningEnabled" type="checkbox" /> Lưu tin nhắn đã chọn làm mẫu tham khảo</label><label class="checkbox-field"><input v-model="reinforcementLearningEnabled" type="checkbox" /> Tự cải thiện từ đánh giá của khách</label></div>
-          <p class="settings-muted">Hệ thống chỉ học các cuộc trò chuyện được shop cho phép; dữ liệu vẫn tách riêng theo từng shop.</p><div v-if="learningNotice" class="settings-notice" role="status">{{ learningNotice }}</div><button type="button" class="primary-btn" @click="saveLearningPreferences">Lưu lựa chọn</button>
+          <div class="settings-card-header"><div><span class="card-eyebrow">DỮ LIỆU CẢI THIỆN TRỢ LÝ</span><h2>Thu thập mẫu và phản hồi</h2><p>Lưu những tín hiệu shop đã chọn để theo dõi chất lượng và chuẩn bị dữ liệu đánh giá.</p></div><span class="connection-badge">CHƯA TỰ HỌC</span></div>
+          <div class="learning-options"><label class="checkbox-field"><input v-model="messageLearningEnabled" type="checkbox" /> Cho phép lưu tin nhắn đã chọn làm mẫu tham khảo</label><label class="checkbox-field"><input v-model="reinforcementLearningEnabled" type="checkbox" /> Cho phép ghi nhận đánh giá hữu ích / cần cải thiện</label></div>
+          <p class="settings-muted">Các lựa chọn này được lưu trên thiết bị hiện tại. Phản hồi chỉ dùng để thống kê và chưa tự thay đổi câu trả lời của trợ lý. Dữ liệu trên máy chủ vẫn tách riêng theo từng shop.</p><div v-if="learningNotice" class="settings-notice" role="status">{{ learningNotice }}</div><button type="button" class="primary-btn" @click="saveLearningPreferences">Lưu tùy chọn trên thiết bị</button>
+          <div class="learning-insights">
+            <div class="settings-card-header"><div><h3>Chủ đề khách thường hỏi</h3><p>Tổng hợp 30 ngày gần nhất theo các nhóm quy tắc có sẵn để gợi ý nội dung cần bổ sung. Đây chưa phải học không giám sát.</p></div><button type="button" class="settings-refresh" :disabled="learningSummaryLoading" @click="fetchLearningSummary">{{ learningSummaryLoading ? 'Đang tổng hợp...' : 'Làm mới' }}</button></div>
+            <div v-if="learningSummaryError" class="settings-notice team-error" role="alert">{{ learningSummaryError }}</div>
+            <div v-if="learningSummary.topics?.length" class="learning-topic-grid">
+              <div v-for="topic in learningSummary.topics.slice(0, 4)" :key="topic.key" class="learning-topic">
+                <strong>{{ topic.label }}</strong><span>{{ topic.message_count }} tin · {{ topic.conversation_count }} hội thoại</span><small v-if="topic.examples?.[0]">“{{ topic.examples[0] }}”</small>
+              </div>
+            </div>
+            <div v-else-if="!learningSummaryLoading" class="settings-empty">Chưa có đủ hội thoại để tổng hợp chủ đề.</div>
+            <p class="settings-muted learning-signal-summary">Phản hồi câu trả lời: {{ learningSummary.response_feedback?.positive || 0 }} hữu ích · {{ learningSummary.response_feedback?.negative || 0 }} cần cải thiện · {{ Math.round(Number(learningSummary.response_feedback?.positive_rate || 0) * 100) }}% tích cực.</p>
+            <small class="learning-method-note">Số liệu dùng để quản trị viên đánh giá chất lượng; chưa được dùng để tự huấn luyện hoặc tự điều chỉnh trợ lý.</small>
+          </div>
         </div>
 
         <div v-if="authUser" class="settings-card csat-card">
@@ -11788,6 +11906,61 @@ function followupRecommendationLabel(item) {
   text-decoration: underline;
 }
 
+.bot-response-feedback {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  color: #71809a;
+  font-size: 10px;
+}
+
+.bot-response-feedback button {
+  padding: 3px 7px;
+  border: 1px solid #b9dfe0;
+  border-radius: 999px;
+  color: #147d82;
+  background: #f2fbfb;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.bot-response-feedback button:hover { background: #def4f4; }
+.bot-response-feedback-done { color: #147d82; font-weight: 700; }
+
+.learning-insights {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--owly-border, #e4e8ed);
+}
+
+.learning-topic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.learning-topic {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--owly-border, #e4e8ed);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .45);
+}
+
+.learning-topic strong { color: var(--owly-ink, #17315c); font-size: 12px; }
+.learning-topic span, .learning-topic small, .learning-method-note { color: var(--owly-muted, #71809a); font-size: 11px; }
+.learning-topic small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.learning-signal-summary { margin: 10px 0 3px; }
+
+@media (max-width: 720px) {
+  .learning-topic-grid { grid-template-columns: 1fr; }
+}
+
 
 /* =========================================================
    IMAGE PREVIEW
@@ -12064,6 +12237,8 @@ function followupRecommendationLabel(item) {
 .status-processing { background: #feebc8; color: #744210; }
 .status-pending { background: #e2e8f0; color: #4a5568; }
 .status-error { background: #fed7d7; color: #742a2a; }
+.doc-embedding-state { display: block; margin-top: 4px; color: #71809a; font-size: 11px; line-height: 1.35; }
+.doc-error-detail { color: #b42318; }
 
 .btn-delete {
   background: #fff5f5;

@@ -25,7 +25,14 @@ Quy tắc:
 3. Nếu không tìm thấy thông tin liên quan hoặc không đủ chắc chắn, nói rõ là chưa có thông tin và đề nghị khách liên hệ nhân viên.
 4. Không tự suy đoán giá, tồn kho, chính sách hoặc thông tin sản phẩm.
 5. Trả lời ngắn gọn, thân thiện, chuyên nghiệp bằng ngôn ngữ của khách hàng.
-6. Nếu khách hàng hỏi về giá, luôn kèm theo đơn vị tiền tệ."""
+6. Nếu khách hàng hỏi về giá, luôn kèm theo đơn vị tiền tệ.
+7. Chỉ dùng nguồn thực sự liên quan đến câu hỏi. Không lấy danh sách sản phẩm
+   để trả lời câu hỏi giao hàng, đổi trả, bảo hành hoặc câu hỏi về một mã sản
+   phẩm không xuất hiện trong nguồn.
+8. Nếu nguồn không có đúng thông tin cần hỏi, nói rõ chưa có thông tin và mời
+   khách để lại câu hỏi cho nhân viên; không đoán và không lặp lại toàn bộ danh sách.
+9. Khi khách hỏi tiếp về "sản phẩm lúc nãy", ưu tiên sản phẩm được nhắc trong
+   lịch sử của chính khách hàng."""
 
 NO_CONTEXT_FALLBACK = """Xin lỗi, tôi chưa có thông tin về vấn đề này trong hệ thống.
 Bạn có thể liên hệ trực tiếp với cửa hàng để được hỗ trợ chi tiết hơn."""

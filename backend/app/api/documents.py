@@ -3,7 +3,6 @@ Document Management API – upload, list, delete tài liệu.
 """
 
 import logging
-from datetime import datetime, timezone
 
 from fastapi import (
     APIRouter,
@@ -18,23 +17,19 @@ from app.tenancy.crm_session import get_tenant_db
 from app.models.document import Document, DocumentChunk
 from app.models.rag_run import RagRun
 from app.rag.loader import detect_file_type, LOADERS
-from app.rag.run_logger import safe_error_message
 from app.schemas.rag import DocumentChunkOut, DocumentListOut, DocumentOut
 from app.services.ingestion_service import (
     delete_document,
     ingest_document,
 )
+from app.services.rag_job_service import dispatch_rag_job
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_write_access
 from app.services.job_service import dispatch_due_jobs, enqueue_job
-from app.services.quota_service import QuotaExceededError, prime_quota, release_quota, reserve_quota
+from app.services.quota_service import QuotaExceededError, reserve_quota
 
 logger = logging.getLogger(__name__)
-
-def _safe_error(exc: Exception) -> str:
-    """Keep provider credentials out of persisted RAG diagnostics."""
-    return safe_error_message(exc)
 
 router = APIRouter()
 
@@ -67,6 +62,9 @@ def _run_out(row: RagRun) -> dict:
         "status": row.status,
         "phase": row.phase,
         "chunk_count": row.chunk_count,
+        "total_chunks": row.total_chunks,
+        "completed_chunks": row.completed_chunks,
+        "progress_percent": row.progress_percent,
         "attempts": row.attempts,
         "error_message": row.error_message,
         "created_at": row.created_at,
@@ -75,76 +73,9 @@ def _run_out(row: RagRun) -> dict:
 
 
 def _dispatch_rag_job(db: Session, payload: dict, business_id: int) -> None:
-    run = db.query(RagRun).filter(RagRun.id == int(payload["run_id"]), RagRun.business_id == business_id).first()
-    doc = db.query(Document).filter(Document.id == int(payload["document_id"]), Document.business_id == business_id).first()
-    if run is None or doc is None:
-        return
-    prior_chunk_count = int(doc.chunk_count or 0)
-    # Seed the current total before ingestion replaces chunks.  This keeps a
-    # reindex from counting the old chunks twice and leaves a safe baseline if
-    # the provider fails before producing a new index.
-    prime_quota(db, business_id, "rag_chunks")
-    db.commit()
-    run.status = "processing"
-    run.phase = "load"
-    run.attempts = (run.attempts or 0) + 1
-    db.commit()
-    try:
-        ingest_document(doc.id, bytes(doc.source_bytes or b""), doc.filename, db, business_id=business_id)
-    except Exception as exc:
-        run.status = "failed"
-        run.phase = "complete"
-        run.error_message = _safe_error(exc)
-        run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        db.commit()
-        raise
-    db.refresh(doc)
-    db.refresh(run)
-    if doc.status == "ready":
-        delta_chunks = max(0, int(doc.chunk_count or 0) - prior_chunk_count)
-        if int(doc.chunk_count or 0) < prior_chunk_count:
-            release_quota(
-                db,
-                business_id,
-                "rag_chunks",
-                amount=prior_chunk_count - int(doc.chunk_count or 0),
-            )
-        if delta_chunks:
-            try:
-                reserve_quota(
-                    db,
-                    business_id,
-                    "rag_chunks",
-                    requested=delta_chunks,
-                    idempotency_key=f"rag-run:{run.id}",
-                )
-            except QuotaExceededError as exc:
-                db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete(synchronize_session=False)
-                doc.status = "error"
-                doc.embedding_status = "error"
-                doc.chunk_count = 0
-                doc.error_message = "Đã vượt quota chunks RAG của gói dịch vụ."
-                if prior_chunk_count:
-                    release_quota(db, business_id, "rag_chunks", prior_chunk_count)
-                run.status = "failed"
-                run.phase = "complete"
-                run.chunk_count = 0
-                run.error_message = doc.error_message
-                run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                db.commit()
-                logger.warning(
-                    "RAG chunk quota exhausted for business %d, document %d: %s",
-                    business_id,
-                    doc.id,
-                    exc.detail,
-                )
-                return
-    run.status = "completed" if doc.status == "ready" else "failed"
-    run.phase = "complete"
-    run.chunk_count = int(doc.chunk_count or 0)
-    run.error_message = doc.error_message
-    run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    db.commit()
+    # Kept as a compatibility seam for the manual dispatch endpoint and
+    # existing integrations. Production uses the dedicated worker directly.
+    dispatch_rag_job(db, payload, business_id, ingest_fn=ingest_document)
 
 
 # =========================================================

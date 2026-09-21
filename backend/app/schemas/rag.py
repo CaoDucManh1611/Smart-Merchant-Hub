@@ -43,6 +43,22 @@ class DocumentChunkOut(BaseModel):
     has_embedding: bool
 
 
+class RagRunOut(BaseModel):
+    id: int
+    document_id: int
+    kind: str
+    status: str
+    phase: str | None = None
+    chunk_count: int = 0
+    total_chunks: int = 0
+    completed_chunks: int = 0
+    progress_percent: int = 0
+    attempts: int = 0
+    error_message: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
 # =========================================================
 # CHAT SCHEMAS
 # =========================================================

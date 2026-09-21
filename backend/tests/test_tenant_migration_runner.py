@@ -35,9 +35,9 @@ def test_two_tenant_schemas_upgrade_independently_and_idempotently():
             repeated_revision = upgrade_tenant_schema(connection, schemas[0])
             connection.commit()
 
-            assert first_revision == second_revision == repeated_revision == "20260915_0001"
-            assert current_tenant_revision(connection, schemas[0]) == "20260915_0001"
-            assert current_tenant_revision(connection, schemas[1]) == "20260915_0001"
+            assert first_revision == second_revision == repeated_revision == "20260921_0002"
+            assert current_tenant_revision(connection, schemas[0]) == "20260921_0002"
+            assert current_tenant_revision(connection, schemas[1]) == "20260921_0002"
 
             inspector = inspect(connection)
             expected = set(TENANT_TABLE_NAMES) | {"alembic_version"}

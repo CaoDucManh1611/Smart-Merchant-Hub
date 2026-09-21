@@ -2,6 +2,7 @@ import logging
 import re
 import time
 from functools import lru_cache
+from collections.abc import Callable
 
 from app.core.config import settings
 from app.services.api_key_pool import ApiKeyPool, ApiKeyPoolUnavailable, call_with_key_rotation
@@ -85,6 +86,7 @@ def _validate_vectors(
 def _embed_with_gemini(
     texts: list[str],
     model: str,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> list[list[float]]:
     """Embed texts bằng Google Gemini API."""
     from google import genai
@@ -93,9 +95,14 @@ def _embed_with_gemini(
     embeddings = []
     # Gemini hỗ trợ batch nhưng giới hạn ~100 texts/request
     batch_size = 100
+    total_batches = max(1, (len(texts) + batch_size - 1) // batch_size)
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        for attempt in range(5):
+        # A quota response must not keep an API request alive for hours. The
+        # worker makes this operation durable; after two short attempts the
+        # ingestion service can store a lexical-only index and expose a clear
+        # retry time instead of blocking the API process.
+        for attempt in range(2):
             try:
                 result = call_with_key_rotation(
                     _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
@@ -103,18 +110,20 @@ def _embed_with_gemini(
                 )
                 break
             except Exception as error:
-                if "429" not in str(error) or attempt == 4:
+                if "429" not in str(error) or attempt == 1:
                     raise
-                delay = _gemini_retry_delay(error)
+                delay = min(_gemini_retry_delay(error), 10)
                 logger.warning(
-                    "Gemini embedding quota reached; retrying batch %d/%d in %ds (attempt %d/5)",
+                    "Gemini embedding quota reached; retrying batch %d/%d in %ds (attempt %d/2)",
                     i // batch_size + 1,
-                    (len(texts) + batch_size - 1) // batch_size,
+                    total_batches,
                     delay,
                     attempt + 1,
                 )
                 time.sleep(delay)
         embeddings.extend(result)
+        if progress_callback is not None:
+            progress_callback(min(1.0, (i + len(batch)) / len(texts)))
 
     return embeddings
 
@@ -165,6 +174,7 @@ def _gemini_embed_query_once(genai, types, api_key: str, text: str, model: str) 
 def _embed_with_local(
     texts: list[str],
     model: str,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> list[list[float]]:
     """Embed bằng mô hình Sentence-Transformers chạy local."""
     encoder = _get_local_encoder(model)
@@ -175,6 +185,8 @@ def _embed_with_local(
         convert_to_numpy=True,
         show_progress_bar=False,
     )
+    if progress_callback is not None:
+        progress_callback(1.0)
     return vectors.tolist()
 
 
@@ -203,6 +215,7 @@ def _embed_query_with_local(
 def _embed_with_openai(
     texts: list[str],
     model: str,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> list[list[float]]:
     """Embed texts bằng OpenAI API."""
     from openai import OpenAI
@@ -220,6 +233,8 @@ def _embed_with_openai(
         )
         for item in response.data:
             embeddings.append(item.embedding)
+        if progress_callback is not None:
+            progress_callback(min(1.0, (i + len(batch)) / len(texts)))
 
     return embeddings
 
@@ -229,7 +244,10 @@ def _embed_with_openai(
 # =========================================================
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+def embed_texts(
+    texts: list[str],
+    progress_callback: Callable[[float], None] | None = None,
+) -> list[list[float]]:
     """
     Embed danh sách texts thành vectors.
     Dùng cho document ingestion (batch).
@@ -251,11 +269,11 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     )
 
     if provider == "local":
-        vectors = _embed_with_local(texts, model)
+        vectors = _embed_with_local(texts, model, progress_callback=progress_callback)
     elif provider == "gemini":
-        vectors = _embed_with_gemini(texts, model)
+        vectors = _embed_with_gemini(texts, model, progress_callback=progress_callback)
     elif provider == "openai":
-        vectors = _embed_with_openai(texts, model)
+        vectors = _embed_with_openai(texts, model, progress_callback=progress_callback)
     else:
         raise ValueError(
             f"Unknown embedding provider: {provider}. "

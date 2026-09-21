@@ -374,8 +374,32 @@ class CustomerCollectionFlowTests(unittest.TestCase):
         self.assertTrue(is_price_quote_request("Tôi muốn mua bin 20 sản phẩm thì giá như nào"))
         self.assertTrue(is_price_quote_request("giá của 18 cái bin"))
         self.assertTrue(is_stock_query_request("tôi muốn mua 20 cái bin bạn có không"))
+        self.assertFalse(is_price_quote_request("Điện gia dụng mẫu 01 giá bao nhiêu và còn bao nhiêu sản phẩm"))
         self.assertFalse(is_order_intent("Tôi muốn mua sản phẩm bạn có gì"))
         self.assertFalse(is_order_intent("tôi muốn mua 20 cái bin bạn có không"))
+
+    def test_model_number_price_question_does_not_start_checkout(self):
+        with Session(self.engine) as db:
+            db.add(Product(
+                business_id=self.business_id,
+                sku="HOME-01",
+                name="Điện gia dụng mẫu 01",
+                price=Decimal("349000"),
+                stock_quantity=138,
+                reserved_quantity=0,
+                status="active",
+            ))
+            db.commit()
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=122,
+                source_channel="telegram",
+                text="Điện gia dụng mẫu 01 giá bao nhiêu và còn bao nhiêu sản phẩm",
+            )
+
+        self.assertIsNone(result)
 
     def test_product_discovery_does_not_start_checkout(self):
         with Session(self.engine) as db:

@@ -1395,7 +1395,8 @@ def get_conversations(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
 
-    query_sql = """
+    customer_filter = "\n          AND cv.customer_id = :customer_id" if customer_id is not None else ""
+    query_sql = f"""
         SELECT
             cv.id AS conversation_id,
             cv.customer_id,
@@ -1516,27 +1517,30 @@ def get_conversations(
            AND c.business_id = :business_id
 
         WHERE cv.business_id = :business_id
-          AND (:customer_id IS NULL OR cv.customer_id = :customer_id)
+          {customer_filter}
 
         ORDER BY
             last_message_at DESC
             NULLS LAST
     """
 
-    params = {"business_id": tenant.business_id, "customer_id": customer_id}
+    params = {"business_id": tenant.business_id}
+    if customer_id is not None:
+        params["customer_id"] = customer_id
     if limit is not None:
         query_sql += "\n LIMIT :limit OFFSET :offset"
         params.update({"limit": limit, "offset": offset})
 
     result = db.execute(text(query_sql), params).mappings().all()
-    total = int(db.execute(
-        text("""
-            SELECT COUNT(*) FROM conversations
-            WHERE business_id = :business_id
-              AND (:customer_id IS NULL OR customer_id = :customer_id)
-        """),
-        {"business_id": tenant.business_id, "customer_id": customer_id},
-    ).scalar_one())
+    total_sql = """
+        SELECT COUNT(*) FROM conversations
+        WHERE business_id = :business_id
+    """
+    total_params = {"business_id": tenant.business_id}
+    if customer_id is not None:
+        total_sql += "\n          AND customer_id = :customer_id"
+        total_params["customer_id"] = customer_id
+    total = int(db.execute(text(total_sql), total_params).scalar_one())
 
     customer_ids = {int(row["customer_id"]) for row in result if row.get("customer_id") is not None}
     tag_map: dict[int, list[str]] = {customer_id: [] for customer_id in customer_ids}
@@ -1780,6 +1784,7 @@ def get_conversation_messages(
             m.channel,
             m.external_user_id,
             m.external_message_id,
+            m.sender_type,
             m.direction,
             m.content,
             m.media_type,

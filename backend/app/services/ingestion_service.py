@@ -5,6 +5,7 @@ Chạy như background task để không block request.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -15,8 +16,9 @@ from app.rag.loader import load_document, detect_file_type
 from app.rag.chunker import chunk_text
 from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog, safe_error_message
+from app.rag.topics import infer_document_topic
 from app.services.product_catalog_service import sync_catalog_products
-from app.services.quota_service import QuotaExceededError, reserve_ai_budget
+from app.services.quota_service import QuotaExceededError, check_quota, reserve_ai_budget
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,7 @@ def embed_chunks_or_fallback(
     chunk_contents: list[str],
     *,
     on_error=None,
+    on_progress: Callable[[float], None] | None = None,
 ) -> tuple[list[list[float] | None], bool]:
     """Embed chunks when possible, otherwise keep a lexical-only index.
 
@@ -38,7 +41,12 @@ def embed_chunks_or_fallback(
     still answer product/SKU questions while semantic indexing is unavailable.
     """
     try:
-        return embed_texts(chunk_contents), True
+        if on_progress is None:
+            # Keep the small one-argument seam used by integrations and tests.
+            vectors = embed_texts(chunk_contents)
+        else:
+            vectors = embed_texts(chunk_contents, progress_callback=on_progress)
+        return vectors, True
     except Exception as error:
         if on_error is not None:
             on_error(error)
@@ -56,6 +64,7 @@ def ingest_document(
     db: Session,
     use_embeddings: bool = True,
     business_id: int | None = None,
+    progress_callback: Callable[[int, str, int | None, int | None], None] | None = None,
 ) -> None:
     """
     Pipeline xử lý tài liệu:
@@ -82,11 +91,21 @@ def ingest_document(
             return
 
         try:
+            def report(
+                percent: int,
+                phase: str,
+                total_chunks: int | None = None,
+                completed_chunks: int | None = None,
+            ) -> None:
+                if progress_callback is not None:
+                    progress_callback(percent, phase, total_chunks, completed_chunks)
+
             # Cập nhật trạng thái
             doc.status = "processing"
             doc.embedding_status = "processing"
             doc.reindex_count = (doc.reindex_count or 0) + 1
             db.commit()
+            report(0, "load")
 
             logger.info(
                 "Starting ingestion for: %s (id=%d)",
@@ -104,6 +123,7 @@ def ingest_document(
                 len(raw_text),
                 filename,
             )
+            report(10, "load")
             if doc.business_id is not None:
                 synced_products = sync_catalog_products(
                     db,
@@ -126,9 +146,13 @@ def ingest_document(
                 text=raw_text,
                 chunk_size=settings.RAG_CHUNK_SIZE,
                 chunk_overlap=settings.RAG_CHUNK_OVERLAP,
-                source_metadata={"source": filename},
+                source_metadata={
+                    "source": filename,
+                    "topic": infer_document_topic(filename, raw_text),
+                },
             )
             logger.info("Created %d chunks", len(chunks))
+            report(20, "chunk", len(chunks), 0)
 
             if not chunks:
                 doc.status = "error"
@@ -142,7 +166,50 @@ def ingest_document(
                 )
                 return
 
+            # Check the RAG chunk allowance before spending AI budget or
+            # calling Gemini. A large upload on a small plan should fail fast
+            # with an actionable upgrade message instead of doing expensive
+            # work only to be discarded by the final quota reservation.
+            if doc.business_id is not None:
+                additional_chunks = max(0, len(chunks) - int(doc.chunk_count or 0))
+                if additional_chunks:
+                    chunk_quota = check_quota(
+                        db,
+                        int(doc.business_id),
+                        "rag_chunks",
+                        requested=additional_chunks,
+                    )
+                    if not chunk_quota.allowed:
+                        used = int(chunk_quota.used)
+                        limit = int(chunk_quota.limit) if chunk_quota.limit is not None else 0
+                        remaining = max(0, limit - used)
+                        format_number = lambda value: f"{int(value):,}".replace(",", ".")
+                        doc.status = "error"
+                        doc.embedding_status = "error"
+                        doc.retry_after = None
+                        doc.error_message = (
+                            f"Tài liệu tạo ra {format_number(len(chunks))} đoạn, "
+                            f"gói hiện tại chỉ còn {format_number(remaining)} đoạn "
+                            f"(giới hạn {format_number(limit)}). Hãy nâng cấp gói dịch vụ "
+                            "hoặc chia nhỏ tài liệu."
+                        )
+                        db.commit()
+                        run.finish("quota_exceeded", phase="complete", quota={
+                            "resource": "rag_chunks",
+                            "used": used,
+                            "limit": limit,
+                            "requested": additional_chunks,
+                        })
+                        logger.warning(
+                            "RAG chunk quota preflight rejected business %s, document %s: %s",
+                            doc.business_id,
+                            doc.id,
+                            doc.error_message,
+                        )
+                        return
+
             run.update(phase="embed", chunks_found=len(chunks))
+            report(20, "embed", len(chunks), 0)
             # -------------------------------------------------
             # Bước 3: Embed chunks (hoặc lưu nhanh khi auto-seed file lớn)
             # -------------------------------------------------
@@ -184,6 +251,12 @@ def ingest_document(
                 embeddings, embeddings_used = embed_chunks_or_fallback(
                     chunk_contents,
                     on_error=capture_embedding_error,
+                    on_progress=lambda fraction: report(
+                        20 + int(max(0.0, min(1.0, fraction)) * 55),
+                        "embed",
+                        len(chunks),
+                        min(len(chunks), int(max(0.0, min(1.0, fraction)) * len(chunks))),
+                    ),
                 )
                 if embeddings_used:
                     logger.info("Embedded %d chunks", len(embeddings))
@@ -217,6 +290,7 @@ def ingest_document(
                 )
 
             run.update(phase="store", embeddings_skipped=not embeddings_used)
+            report(75, "store", len(chunks), 0)
             # -------------------------------------------------
             # Bước 4: Replace the previous index atomically.
             # -------------------------------------------------
@@ -244,6 +318,7 @@ def ingest_document(
             doc.error_message = None
             doc.retry_after = None
             db.commit()
+            report(100, "complete", len(chunks), len(chunks))
 
             logger.info(
                 "Ingestion complete: %s → %d chunks stored",

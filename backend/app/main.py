@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,11 +10,13 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.router import api_router
+from app.auth.dependencies import _authenticate_request
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.database.init_db import init_db
-from app.database.release_readiness import assert_release_database_ready
 from app.database.platform_session import PlatformSessionLocal
+from app.database.session import SessionLocal
+from app.database.release_readiness import assert_release_database_ready
 from app.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
 from app.services.realtime import manager
 from app.services.observability import (
@@ -96,9 +99,40 @@ app.include_router(api_router)
 async def conversations_websocket(
     websocket: WebSocket,
 ):
-    await manager.connect(
-        websocket
-    )
+    access_token = str(websocket.query_params.get("access_token") or "").strip()
+    if not access_token:
+        await websocket.close(code=4401)
+        return
+
+    db = SessionLocal()
+    try:
+        # Browser WebSockets cannot attach an Authorization header reliably in
+        # every client, so the frontend sends the short-lived bearer token as
+        # a query parameter. Reuse the normal bearer/session checks here so
+        # the socket is tenant-scoped just like the REST endpoints.
+        request_context = SimpleNamespace(
+            url=websocket.url,
+            state=SimpleNamespace(),
+        )
+        session, user = _authenticate_request(
+            request_context,
+            f"Bearer {access_token}",
+            db,
+        )
+        if user.mfa_status == "enabled" and not session.mfa_verified:
+            raise HTTPException(status_code=401, detail="Cần xác thực MFA.")
+        db.commit()
+        await manager.connect(
+            websocket,
+            business_id=int(user.business_id),
+            user_id=int(user.id),
+        )
+    except HTTPException:
+        db.rollback()
+        await websocket.close(code=4401)
+        return
+    finally:
+        db.close()
 
     try:
         while True:

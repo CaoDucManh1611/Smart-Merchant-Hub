@@ -87,3 +87,17 @@ class ChatbotAgentToolTests(unittest.TestCase):
             self.assertFalse(is_business_open(db, self.business_id, now=datetime(2026, 9, 7, 10, 0)))
             self.assertFalse(is_business_open(db, self.business_id, now=datetime(2026, 9, 8, 10, 0)))
             self.assertTrue(is_business_open(db, self.business_id, now=datetime(2026, 9, 8, 12, 30)))
+    def test_neutral_return_policy_question_does_not_take_over_conversation(self):
+        with Session(self.engine) as db:
+            conversation = db.get(Conversation, self.conversation_id)
+            conversation.bot_mode = "bot"
+            db.commit()
+            self.assertIsNone(
+                route_escalation(
+                    db,
+                    self.business_id,
+                    self.conversation_id,
+                    "Chính sách đổi trả của shop thế nào?",
+                )
+            )
+            self.assertEqual("bot", db.get(Conversation, self.conversation_id).bot_mode)

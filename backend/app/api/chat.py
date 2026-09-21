@@ -8,6 +8,7 @@ Hỗ trợ:
 
 import json
 import logging
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.tenancy.crm_session import get_tenant_db
 from app.rag.retriever import retrieve
+from app.rag.topics import infer_query_topic
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.rag.prompt_builder import build_prompt
@@ -56,6 +58,7 @@ async def chat(
       try:
         # Bước 1: Retrieve relevant chunks
         run.update(phase="retrieve")
+        retrieval_started = perf_counter()
         chunks = retrieve(
             query=request.query,
             db=db,
@@ -68,6 +71,8 @@ async def chat(
             chunks_found=len(chunks),
             source_document_ids=sorted({c.document_id for c in chunks}),
             top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
+            retrieval_topic=infer_query_topic(request.query),
+            retrieval_ms=round((perf_counter() - retrieval_started) * 1000, 2),
         )
 
         # Bước 2: Build prompt
@@ -161,6 +166,7 @@ async def chat_stream(
           try:
             # Retrieve
             run.update(phase="retrieve")
+            retrieval_started = perf_counter()
             chunks = retrieve(
                 query=request.query,
                 db=db,
@@ -173,6 +179,8 @@ async def chat_stream(
                 chunks_found=len(chunks),
                 source_document_ids=sorted({c.document_id for c in chunks}),
                 top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
+                retrieval_topic=infer_query_topic(request.query),
+                retrieval_ms=round((perf_counter() - retrieval_started) * 1000, 2),
             )
 
             # Build prompt

@@ -5568,6 +5568,76 @@ body,
   gap: 18px;
 }
 
+.ai-readiness-notice {
+  display: grid;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid #e6c769;
+  border-radius: 14px;
+  color: #6b5310;
+  background: #fff8d9;
+}
+
+.ai-readiness-notice strong {
+  font-size: .92rem;
+}
+
+.ai-readiness-notice span {
+  font-size: .82rem;
+  line-height: 1.5;
+}
+
+.ai-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-readiness-grid > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid #f0c7bd;
+  border-radius: 14px;
+  background: #fffaf8;
+}
+
+.ai-readiness-grid strong {
+  color: #6e2828;
+  font-size: .9rem;
+}
+
+.ai-readiness-grid small {
+  color: #806964;
+  line-height: 1.45;
+}
+
+.ai-readiness-badge {
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: .67rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.ai-readiness-badge.ready {
+  color: #17643f;
+  background: #dff5e8;
+}
+
+.ai-readiness-badge.limited {
+  color: #6b5310;
+  background: #fff0b8;
+}
+
+.ai-readiness-badge.experimental {
+  color: #713641;
+  background: #f8dce2;
+}
+
 .ai-lab-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5916,7 +5986,8 @@ body,
 
 @media (max-width: 980px) {
   .ai-lab-summary,
-  .ai-compose-grid {
+  .ai-compose-grid,
+  .ai-readiness-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -5929,7 +6000,8 @@ body,
 @media (max-width: 640px) {
   .ai-lab-summary,
   .ai-compose-grid,
-  .ai-field-grid {
+  .ai-field-grid,
+  .ai-readiness-grid {
     grid-template-columns: 1fr;
   }
 
@@ -11382,6 +11454,8 @@ body.crm-dark .ai-experiment-card,
 body.crm-dark .ai-lab-content,
 body.crm-dark .ai-quality-dashboard,
 body.crm-dark .ai-empty-state,
+body.crm-dark .ai-readiness-notice,
+body.crm-dark .ai-readiness-grid > div,
 body.crm-dark .workflow-form,
 body.crm-dark .workflow-table,
 body.crm-dark .lead-form,
@@ -11397,6 +11471,10 @@ body.crm-dark .business-profile-card,
 body.crm-dark .chatbot-runtime-card,
 body.crm-dark .service-plan-card,
 body.crm-dark .quality-ops-panel { color: #f3f5f6 !important; background: #202427 !important; border-color: #394145 !important; }
+body.crm-dark .ai-readiness-notice strong,
+body.crm-dark .ai-readiness-grid strong { color: #f3f5f6 !important; }
+body.crm-dark .ai-readiness-notice span,
+body.crm-dark .ai-readiness-grid small { color: #c6d0d4 !important; }
 body.crm-dark .ai-card-heading,
 body.crm-dark .ai-rule-title-row,
 body.crm-dark .ai-rule-meta,

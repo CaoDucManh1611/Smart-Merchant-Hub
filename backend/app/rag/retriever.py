@@ -7,6 +7,7 @@ may not always be represented well by an embedding model.
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 
 from sqlalchemy import text as sa_text
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.rag.embedder import embed_query
 from app.rag.run_logger import query_metadata
+from app.rag.topics import infer_query_topic, topic_matches
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +66,18 @@ def retrieve(
     if similarity_threshold is None:
         similarity_threshold = settings.RAG_SIMILARITY_THRESHOLD
 
+    query_topic = infer_query_topic(query)
+    started = time.perf_counter()
+
     # Always collect lexical candidates.  They are especially important for
     # product names, SKU codes and documents ingested without embeddings.
-    lexical_results = _retrieve_lexical(query, db, max(top_k * 3, top_k), business_id=business_id)
+    lexical_results = _retrieve_lexical(
+        query,
+        db,
+        max(top_k * 3, top_k),
+        business_id=business_id,
+        query_topic=query_topic,
+    )
     vector_results: list[RetrievedChunk] = []
 
     # Bước 1: Embed câu hỏi thành vector; nếu hết quota vẫn dùng từ khóa.
@@ -82,6 +93,13 @@ def retrieve(
         query_vector = embed_query(query)
     except Exception as error:
         logger.warning("Vector query unavailable; using lexical retrieval: %s", error)
+        logger.info(
+            "RAG retrieval complete: topic=%s lexical=%d vector=0 returned=%d duration_ms=%.2f",
+            query_topic,
+            len(lexical_results),
+            min(len(lexical_results), top_k),
+            (time.perf_counter() - started) * 1000,
+        )
         return lexical_results[:top_k]
 
     # Search pgvector using a bound parameter.  Do not interpolate the vector
@@ -120,6 +138,13 @@ def retrieve(
             "pgvector search unavailable; using lexical retrieval: %s",
             error,
         )
+        logger.info(
+            "RAG retrieval complete: topic=%s lexical=%d vector=0 returned=%d duration_ms=%.2f",
+            query_topic,
+            len(lexical_results),
+            min(len(lexical_results), top_k),
+            (time.perf_counter() - started) * 1000,
+        )
         return lexical_results[:top_k]
 
     vector_results = []
@@ -135,13 +160,17 @@ def retrieve(
             )
         )
 
-    results = _merge_hybrid_results(vector_results, lexical_results, top_k)
+    results = _merge_hybrid_results(vector_results, lexical_results, top_k, topic=query_topic)
 
     logger.info(
-        "Retrieved %d chunks (top_k=%d, threshold=%.2f)",
+        "Retrieved %d chunks (top_k=%d, threshold=%.2f, topic=%s, lexical=%d, vector=%d, duration_ms=%.2f)",
         len(results),
         top_k,
         similarity_threshold,
+        query_topic,
+        len(lexical_results),
+        len(vector_results),
+        (time.perf_counter() - started) * 1000,
     )
 
     return results
@@ -151,25 +180,28 @@ def _merge_hybrid_results(
     vector_results: list[RetrievedChunk],
     lexical_results: list[RetrievedChunk],
     top_k: int,
+    topic: str | None = None,
 ) -> list[RetrievedChunk]:
     """Merge semantic and lexical candidates without duplicate chunks."""
     merged: dict[int, tuple[RetrievedChunk, float]] = {}
 
     for item in vector_results:
         # Semantic search is the primary signal.
-        merged[item.chunk_id] = (item, 0.65 * item.similarity)
+        topic_bonus = 0.15 if topic_matches(item.metadata, topic) else 0
+        merged[item.chunk_id] = (item, 0.65 * item.similarity + topic_bonus)
 
     for item in lexical_results:
         existing = merged.get(item.chunk_id)
         if existing is None:
-            merged[item.chunk_id] = (item, 0.35 * item.similarity)
+            topic_bonus = 0.15 if topic_matches(item.metadata, topic) else 0
+            merged[item.chunk_id] = (item, 0.35 * item.similarity + topic_bonus)
             continue
 
         current_item, current_score = existing
         current_item.similarity = max(current_item.similarity, item.similarity)
         merged[item.chunk_id] = (
             current_item,
-            current_score + 0.35 * item.similarity,
+            current_score + 0.35 * item.similarity + (0.15 if topic_matches(item.metadata, topic) else 0),
         )
 
     ranked = sorted(merged.values(), key=lambda pair: pair[1], reverse=True)
@@ -181,6 +213,7 @@ def _retrieve_lexical(
     db: Session,
     top_k: int,
     business_id: int,
+    query_topic: str | None = None,
 ) -> list[RetrievedChunk]:
     """Tìm kiếm từ khóa trong toàn bộ chunks, kể cả chunk không có vector."""
     identifiers = list(
@@ -243,7 +276,7 @@ def _retrieve_lexical(
         {**params, **({"business_id": business_id} if not tenant_bound else {}), "candidate_limit": max(100, top_k * 40)},
     ).fetchall()
 
-    scored = []
+    scored: list[tuple[float, RetrievedChunk]] = []
     for row in rows:
         row_data = row._mapping
         content = row_data["content"]
@@ -260,15 +293,14 @@ def _retrieve_lexical(
             0.99,
             0.45 + coverage * 0.25 + phrase_bonus + identifier_bonus,
         )
-        scored.append(
-            RetrievedChunk(
+        topic_bonus = 0.15 if topic_matches(row_data["chunk_metadata"], query_topic) else 0
+        scored.append((score + topic_bonus, RetrievedChunk(
                 chunk_id=row_data["id"],
                 document_id=row_data["document_id"],
                 content=content,
                 similarity=score,
                 metadata=row_data["chunk_metadata"],
-            )
-        )
+            )))
 
-    scored.sort(key=lambda item: item.similarity, reverse=True)
-    return scored[:top_k]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [item for _rank, item in scored[:top_k]]

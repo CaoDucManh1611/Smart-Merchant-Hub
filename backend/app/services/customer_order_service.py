@@ -82,6 +82,12 @@ class CustomerOrderActionError(ValueError):
 def detect_customer_order_intent(text: str | None) -> str | None:
     """Detect only deterministic, high-confidence customer order intents."""
     normalized = str(text or "").casefold()
+    folded = _fold_order_text(normalized)
+    # “Chính sách đổi trả/hoàn tiền” is a read-only policy question.  It is
+    # not a refund request for a specific order and must continue to the
+    # knowledge-base/policy router.
+    if "chinh sach" in folded and any(term in folded for term in ("doi tra", "hoan tien", "bao hanh")):
+        return None
     if any(term in normalized for term in REFUND_TERMS):
         return "refund"
     if any(term in normalized for term in CANCEL_TERMS):
@@ -94,6 +100,11 @@ def detect_customer_order_intent(text: str | None) -> str | None:
     if any(term in normalized for term in ("tôi có đơn hàng nào", "có đơn hàng nào", "đơn hàng nào")):
         return "status"
     if any(term in normalized for term in STATUS_TERMS):
+        return "status"
+    # Natural phrasing often puts the order number before the status phrase:
+    # ``Đơn CHAT-25 đang ở trạng thái nào?``.  The older exact-term check only
+    # recognised ``trạng thái đơn`` and let this common lookup fall into RAG.
+    if "trang thai" in folded and "don" in folded:
         return "status"
     return None
 
@@ -169,6 +180,8 @@ def customer_order_reply(
         else:
             result, order_number = _customer_order_reference(db, business_id, conversation_id, None)
         if not result.get("found"):
+            if order_number:
+                return f"Mình chưa tìm thấy đơn {order_number} thuộc tài khoản của bạn."
             return "Mình chưa tìm thấy đơn hàng thuộc tài khoản của bạn. Bạn gửi giúp mình mã đơn nhé."
         if result.get("requires_order_identifier"):
             refs = ", ".join(item["order_number"] for item in result["items"][:5])
