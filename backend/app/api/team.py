@@ -255,6 +255,50 @@ def update_team_member(
     return _out(_get_user(db, user.id, tenant))
 
 
+@router.delete("/team/{user_id}", status_code=204, dependencies=[Depends(require_admin_access)])
+def delete_team_member(
+    user_id: int,
+    db: Session = Depends(get_db),
+    audit_db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    user = _get_user(db, user_id, tenant)
+    if actor is not None and user.id == actor.id:
+        raise HTTPException(status_code=409, detail="Không thể tự xóa tài khoản đang đăng nhập.")
+    if str(user.role or "").strip().lower() == "owner":
+        raise HTTPException(status_code=409, detail="Không thể xóa tài khoản chủ shop.")
+
+    if user.is_active:
+        release_quota(db, tenant.business_id, "staff_users")
+    db.query(PermissionOverride).filter(
+        PermissionOverride.business_id == tenant.business_id,
+        PermissionOverride.user_id == user.id,
+    ).delete(synchronize_session=False)
+    if actor is not None:
+        record_audit(
+            audit_db,
+            business_id=tenant.business_id,
+            user_id=actor.id,
+            action="delete",
+            resource_type="team_user",
+            resource_id=str(user.id),
+            metadata={"email": user.email, "role": user.role},
+        )
+    db.delete(user)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        audit_db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Không thể xóa tài khoản vì tài khoản đang được dùng cho phiên hỗ trợ.",
+        ) from exc
+    if actor is not None:
+        audit_db.commit()
+
+
 @router.get("/team/{user_id}/permissions/effective", response_model=EffectivePermissionListOut)
 def effective_permissions(user_id: int, db: Session = Depends(get_tenant_db), legacy_db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context)):
     user = _get_user(legacy_db, user_id, tenant)

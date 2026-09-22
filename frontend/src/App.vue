@@ -515,6 +515,7 @@ const workflowForm = ref({
 const teamUsers = ref([]);
 const teamLoading = ref(false);
 const teamSaving = ref(false);
+const teamDeletingId = ref(null);
 const teamError = ref("");
 const permissionOverrides = ref([]);
 const permissionSaving = ref(false);
@@ -5906,6 +5907,28 @@ async function toggleTeamMember(member) {
     await fetchTeam();
   } catch (err) {
     teamError.value = friendlyErrorMessage(err, "Chưa thể cập nhật nhân viên. Vui lòng thử lại sau.");
+  }
+}
+
+async function deleteTeamMember(member) {
+  if (member.role === "owner") {
+    teamError.value = "Không thể xóa tài khoản chủ shop.";
+    return;
+  }
+  if (!window.confirm(`Xóa tài khoản ${member.full_name} khỏi shop? Dữ liệu hội thoại và đơn hàng sẽ được giữ lại.`)) return;
+  teamDeletingId.value = member.id;
+  teamError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/team/${member.id}`, { method: "DELETE" });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    await fetchTeam();
+  } catch (err) {
+    teamError.value = friendlyErrorMessage(err, "Chưa thể xóa tài khoản. Vui lòng thử lại sau.");
+  } finally {
+    teamDeletingId.value = null;
   }
 }
 
@@ -11531,7 +11554,10 @@ function followupRecommendationLabel(item) {
                   <td><strong>{{ member.full_name }}</strong><small>{{ member.email }}</small></td>
                   <td><span class="team-role">{{ roleLabel(member.role) }}</span></td>
                   <td><span class="team-status" :class="{ inactive: !member.is_active }">{{ member.is_active ? 'Đang hoạt động' : 'Đã vô hiệu hóa' }}</span></td>
-                  <td><button type="button" class="team-toggle" @click="toggleTeamMember(member)">{{ member.is_active ? 'Vô hiệu hóa' : 'Kích hoạt' }}</button></td>
+                  <td class="team-actions">
+                    <button type="button" class="team-toggle" @click="toggleTeamMember(member)">{{ member.is_active ? 'Vô hiệu hóa' : 'Kích hoạt' }}</button>
+                    <button v-if="member.role !== 'owner'" type="button" class="team-toggle team-delete" :disabled="teamDeletingId === member.id" @click="deleteTeamMember(member)">{{ teamDeletingId === member.id ? 'Đang xóa...' : 'Xóa tài khoản' }}</button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -12538,6 +12564,22 @@ function followupRecommendationLabel(item) {
   background: #fff0ea;
   cursor: pointer;
   font-weight: 700;
+}
+
+.team-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.team-toggle.team-delete {
+  color: #a1261d;
+  background: #ffe1dc;
+}
+
+.team-toggle:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .team-form {

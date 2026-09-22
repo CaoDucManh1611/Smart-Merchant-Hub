@@ -177,6 +177,24 @@ class TeamApiTests(unittest.TestCase):
         )
         self.assertEqual(404, cross_tenant.status_code)
 
+    def test_delete_team_member_is_tenant_scoped_and_protects_owner(self):
+        headers = {"X-Business-Id": str(self.business_one)}
+        created = self.client.post(
+            "/api/team",
+            headers=headers,
+            json={"full_name": "Delete Me", "email": "delete-me@example.test", "role": "agent"},
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        member_id = created.json()["id"]
+
+        deleted = self.client.delete(f"/api/team/{member_id}", headers=headers)
+        self.assertEqual(204, deleted.status_code, deleted.text)
+        self.assertEqual(404, self.client.get(f"/api/team/{member_id}", headers=headers).status_code)
+
+        owner_id = self.client.get("/api/team", headers=headers).json()["items"][0]["id"]
+        owner_delete = self.client.delete(f"/api/team/{owner_id}", headers=headers)
+        self.assertEqual(409, owner_delete.status_code)
+
     def test_invalid_role_is_rejected(self):
         response = self.client.post(
             "/api/team",
