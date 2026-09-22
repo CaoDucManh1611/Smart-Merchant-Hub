@@ -105,8 +105,6 @@ def retrieve(
     # Search pgvector using a bound parameter.  Do not interpolate the vector
     # into SQL even though it currently comes from a trusted provider.
     vector_str = "[" + ",".join(f"{float(value):.10g}" for value in query_vector) + "]"
-    tenant_bound = bool(db.info.get("tenant_schema"))
-    business_clause = "" if tenant_bound else " AND d.business_id = :business_id"
     raw_sql = f"""
         SELECT
             dc.id,
@@ -116,7 +114,8 @@ def retrieve(
             1 - (dc.embedding <=> CAST(:query_vector AS vector)) AS similarity
         FROM document_chunks dc
         JOIN documents d ON d.id = dc.document_id
-        WHERE d.status = 'ready'{business_clause}
+        WHERE d.status = 'ready'
+          AND d.business_id = :business_id
           AND dc.embedding IS NOT NULL
           AND 1 - (dc.embedding <=> CAST(:query_vector AS vector)) >= :threshold
         ORDER BY dc.embedding <=> CAST(:query_vector AS vector)
@@ -128,7 +127,7 @@ def retrieve(
             sa_text(raw_sql),
             {
                 "query_vector": vector_str,
-            **({"business_id": business_id} if not tenant_bound else {}),
+                "business_id": business_id,
                 "threshold": similarity_threshold,
                 "top_k": max(top_k * 3, top_k),
             },
@@ -259,21 +258,20 @@ def _retrieve_lexical(
         if identifier_conditions
         else "dc.id"
     )
-    tenant_bound = bool(db.info.get("tenant_schema"))
-    business_clause = "" if tenant_bound else " AND d.business_id = :business_id"
     rows = db.execute(
         sa_text(
             f"""
             SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata
             FROM document_chunks dc
             JOIN documents d ON d.id = dc.document_id
-            WHERE d.status = 'ready'{business_clause}
+            WHERE d.status = 'ready'
+              AND d.business_id = :business_id
               AND ({conditions})
             ORDER BY {exact_order}
             LIMIT :candidate_limit
             """
         ),
-        {**params, **({"business_id": business_id} if not tenant_bound else {}), "candidate_limit": max(100, top_k * 40)},
+        {**params, "business_id": business_id, "candidate_limit": max(100, top_k * 40)},
     ).fetchall()
 
     scored: list[tuple[float, RetrievedChunk]] = []

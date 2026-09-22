@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 
 from app.tenancy.crm_session import get_tenant_db
 from app.models.document import Document, DocumentChunk
+from app.models.crm_job import CrmJob
 from app.models.rag_run import RagRun
 from app.rag.loader import detect_file_type, LOADERS
-from app.schemas.rag import DocumentChunkOut, DocumentListOut, DocumentOut
+from app.schemas.rag import DocumentChunkOut, DocumentListOut, DocumentOut, RagRunListOut, RagRunOut
 from app.services.ingestion_service import (
     delete_document,
     ingest_document,
@@ -27,7 +28,7 @@ from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_write_access
 from app.services.job_service import dispatch_due_jobs, enqueue_job
-from app.services.quota_service import QuotaExceededError, reserve_quota
+from app.services.quota_service import QuotaExceededError, release_quota, reserve_quota
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,26 @@ def _queue_ingestion(db: Session, doc: Document, *, kind: str) -> RagRun:
         kind="rag.ingest",
         payload={"run_id": run.id, "document_id": doc.id},
         idempotency_key=f"rag:{kind}:{run.id}",
+        max_attempts=5,
     )
     return run
+
+
+def _has_active_ingestion(db: Session, *, business_id: int, document_id: int) -> bool:
+    active_run = db.query(RagRun.id).filter(
+        RagRun.business_id == business_id,
+        RagRun.document_id == document_id,
+        RagRun.status.in_(("queued", "processing")),
+    ).first()
+    if active_run is not None:
+        return True
+    active_job = db.query(CrmJob.id).filter(
+        CrmJob.business_id == business_id,
+        CrmJob.kind == "rag.ingest",
+        CrmJob.status.in_(("pending", "running")),
+        CrmJob.payload["document_id"].as_integer() == document_id,
+    ).first()
+    return active_job is not None
 
 
 def _run_out(row: RagRun) -> dict:
@@ -132,21 +151,32 @@ async def upload_document(
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=exc.detail) from exc
 
-    # Tạo record Document
-    doc = Document(
-        business_id=tenant.business_id,
-        filename=file.filename,
-        file_type=file_type,
-        file_size=len(file_bytes),
-        status="pending",
-        source_bytes=file_bytes,
-    )
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
-
-    _queue_ingestion(db, doc, kind="ingestion")
-    db.commit()
+    try:
+        # Persist the source, run and queue row as one tenant transaction. The
+        # HTTP request never performs chunking or calls an embedding provider.
+        doc = Document(
+            business_id=tenant.business_id,
+            filename=file.filename,
+            file_type=file_type,
+            file_size=len(file_bytes),
+            status="pending",
+            source_bytes=file_bytes,
+        )
+        db.add(doc)
+        db.flush()
+        _queue_ingestion(db, doc, kind="ingestion")
+        db.commit()
+        db.refresh(doc)
+    except Exception as exc:
+        db.rollback()
+        try:
+            release_quota(db, tenant.business_id, "documents")
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Could not release document quota after queue failure")
+        logger.exception("Could not queue document ingestion")
+        raise HTTPException(503, "Chưa thể xếp hàng xử lý tài liệu. Vui lòng thử lại.") from exc
 
     logger.info(
         "Document uploaded: %s (id=%d), processing in background",
@@ -172,18 +202,18 @@ async def reindex_document(
         raise HTTPException(404, "Tài liệu không tồn tại.")
     if not doc.source_bytes:
         raise HTTPException(409, "Tài liệu cũ không có bản gốc để reindex; hãy upload lại.")
-    source = bytes(doc.source_bytes)
+    if _has_active_ingestion(db, business_id=tenant.business_id, document_id=doc.id):
+        raise HTTPException(409, "Tài liệu đang được xử lý; không thể tạo thêm một lượt trùng.")
     doc.status = "pending"
     doc.embedding_status = "pending"
     doc.error_message = None
-    db.commit()
     _queue_ingestion(db, doc, kind="reindex")
     db.commit()
     db.refresh(doc)
     return doc
 
 
-@router.get("/{document_id}/runs")
+@router.get("/{document_id}/runs", response_model=RagRunListOut)
 async def list_document_runs(document_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     if db.query(Document.id).filter(Document.id == document_id, Document.business_id == tenant.business_id).first() is None:
         raise HTTPException(404, "Tài liệu không tồn tại.")
@@ -191,7 +221,12 @@ async def list_document_runs(document_id: int, db: Session = Depends(get_tenant_
     return {"items": [_run_out(row) for row in runs], "total": len(runs)}
 
 
-@router.post("/runs/{run_id}/retry", status_code=201, dependencies=[Depends(require_write_access)])
+@router.post(
+    "/runs/{run_id}/retry",
+    response_model=RagRunOut,
+    status_code=201,
+    dependencies=[Depends(require_write_access)],
+)
 async def retry_failed_run(
     run_id: int,
     db: Session = Depends(get_tenant_db),
@@ -212,6 +247,8 @@ async def retry_failed_run(
     ).first()
     if doc is None or not doc.source_bytes:
         raise HTTPException(409, "Tài liệu không còn bản gốc để thử lại; hãy upload lại.")
+    if _has_active_ingestion(db, business_id=tenant.business_id, document_id=doc.id):
+        raise HTTPException(409, "Tài liệu đã có một lượt xử lý đang chờ hoặc đang chạy.")
     doc.status = "pending"
     doc.embedding_status = "pending"
     doc.error_message = None
@@ -221,7 +258,7 @@ async def retry_failed_run(
     return _run_out(run)
 
 
-@router.post("/jobs/dispatch")
+@router.post("/jobs/dispatch", dependencies=[Depends(require_write_access)])
 async def dispatch_document_jobs(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     processed = dispatch_due_jobs(
         db,

@@ -540,6 +540,7 @@ const teamForm = ref({
 
 const documents = ref([]);
 const documentRuns = ref({});
+const docRetryingIds = ref(new Set());
 const docsLoading = ref(false);
 const docUploading = ref(false);
 const docUploadError = ref("");
@@ -7162,6 +7163,8 @@ async function recalculateRevenueAttribution() {
 
 async function retryDocumentRun(doc, run) {
   if (!doc?.id || !run?.id) return;
+  if (docRetryingIds.value.has(doc.id)) return;
+  docRetryingIds.value = new Set([...docRetryingIds.value, doc.id]);
   try {
     const response = await apiFetch(`${API_BASE}/documents/runs/${run.id}/retry`, { method: "POST" });
     if (!response.ok) {
@@ -7171,6 +7174,10 @@ async function retryDocumentRun(doc, run) {
     await fetchDocuments();
   } catch (err) {
     docUploadError.value = friendlyErrorMessage(err, "Chưa thể xử lý lại tài liệu. Vui lòng thử lại sau.");
+  } finally {
+    const next = new Set(docRetryingIds.value);
+    next.delete(doc.id);
+    docRetryingIds.value = next;
   }
 }
 
@@ -11165,6 +11172,13 @@ function followupRecommendationLabel(item) {
                       · {{ ragRunPhaseLabel(documentRuns[doc.id].phase) }} · {{ documentRuns[doc.id].progress_percent || 0 }}%
                     </template>
                   </small>
+                  <progress
+                    v-if="documentRuns[doc.id]?.status === 'processing'"
+                    class="doc-progress"
+                    :value="documentRuns[doc.id].progress_percent"
+                    max="100"
+                    :aria-label="`Tiến độ xử lý ${doc.filename}`"
+                  ></progress>
                 </td>
                 <td class="text-sm text-gray">{{ formatTime(doc.uploaded_at) }}</td>
                 <td>
@@ -11177,10 +11191,11 @@ function followupRecommendationLabel(item) {
                   <button
                     v-if="documentRuns[doc.id]?.status === 'failed'"
                     class="btn-refresh"
+                    :disabled="docRetryingIds.has(doc.id)"
                     @click="retryDocumentRun(doc, documentRuns[doc.id])"
                     title="Thử lại xử lý"
                   >
-                    Thử lại xử lý
+                    {{ docRetryingIds.has(doc.id) ? 'Đang xếp hàng...' : 'Thử lại xử lý' }}
                   </button>
                 </td>
               </tr>
@@ -12511,6 +12526,8 @@ function followupRecommendationLabel(item) {
 .status-error { background: #fed7d7; color: #742a2a; }
 .doc-embedding-state { display: block; margin-top: 4px; color: #71809a; font-size: 11px; line-height: 1.35; }
 .doc-error-detail { color: #b42318; }
+.doc-progress { display: block; width: min(220px, 100%); height: 8px; margin-top: 7px; accent-color: #3182ce; }
+.btn-refresh:disabled { cursor: wait; opacity: 0.65; }
 
 .btn-delete {
   background: #fff5f5;
