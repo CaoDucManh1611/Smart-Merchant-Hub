@@ -31,6 +31,8 @@ def test_load_sensitive_paths_keep_route_and_schema_boundaries():
     assert "resolve_webhook_route" in facebook
     assert "tenant_session" in facebook
     assert "SessionLocal" not in facebook
-    assert "tenant_bound" in retriever
+    # Defense in depth: every hybrid-search path must retain an explicit shop
+    # predicate even when the session is already bound to a tenant schema.
+    assert retriever.count("d.business_id = :business_id") >= 2
     assert "TenantJobEnvelope" in worker
     assert "finally" in worker or "finally" in (root / "scripts" / "crm_job_worker.py").read_text(encoding="utf-8")

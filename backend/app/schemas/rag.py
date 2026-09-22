@@ -59,6 +59,11 @@ class RagRunOut(BaseModel):
     completed_at: datetime | None = None
 
 
+class RagRunListOut(BaseModel):
+    items: list[RagRunOut]
+    total: int
+
+
 # =========================================================
 # CHAT SCHEMAS
 # =========================================================

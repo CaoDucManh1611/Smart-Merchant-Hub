@@ -263,6 +263,8 @@ test("Knowledge Base exposes durable RAG run status and retry action", () => {
   assert.match(appSource, /retryDocumentRun/);
   assert.match(appSource, /\/documents\/runs\/\$\{run\.id\}\/retry/);
   assert.match(appSource, /Thử lại xử lý/);
+  assert.match(templateSource, /<progress[^>]+:value="documentRuns\[doc\.id\]\.progress_percent"/);
+  assert.match(appSource, /docRetryingIds/);
 });
 
 test("CRM operations expose attribution, lead conversion, and lead activity actions", () => {

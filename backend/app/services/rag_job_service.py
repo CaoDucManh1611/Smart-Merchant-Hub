@@ -78,12 +78,14 @@ def dispatch_rag_job(
         current = db.get(RagRun, run.id)
         if current is None:
             return
-        current.phase = phase
-        current.progress_percent = max(0, min(100, int(percent)))
+        requested_percent = max(0, min(100, int(percent)))
+        if requested_percent >= int(current.progress_percent or 0):
+            current.phase = phase
+        current.progress_percent = max(int(current.progress_percent or 0), requested_percent)
         if total_chunks is not None:
-            current.total_chunks = max(0, int(total_chunks))
+            current.total_chunks = max(int(current.total_chunks or 0), int(total_chunks), 0)
         if completed_chunks is not None:
-            current.completed_chunks = max(0, int(completed_chunks))
+            current.completed_chunks = max(int(current.completed_chunks or 0), int(completed_chunks), 0)
         db.commit()
 
     try:
