@@ -1001,6 +1001,116 @@ def send_telegram_text(
     return result, channel
 
 
+def _tiktok_thread_id(db: Session, conversation_id: int) -> str:
+    """Recover the ReLttk conversation id saved on the inbound event."""
+    row = db.execute(
+        text("""
+            SELECT raw_payload
+            FROM messages
+            WHERE conversation_id = :conversation_id
+              AND channel = 'tiktok'
+              AND direction = 'inbound'
+            ORDER BY id DESC
+            LIMIT 1
+        """),
+        {"conversation_id": conversation_id},
+    ).first()
+    raw = row[0] if row else None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = {}
+    if not isinstance(raw, dict):
+        return ""
+    return str(raw.get("threadId") or raw.get("thread_id") or raw.get("conv_id") or "").strip()
+
+
+def send_tiktok_text(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    text_content: str,
+    business_id: int,
+) -> tuple[dict, Channel]:
+    """Ask the local ReLttk bridge to send a message on this conversation."""
+    channel_id = conversation.get("channel_id")
+    if channel_id is None:
+        raise HTTPException(status_code=409, detail="TikTok conversation is not linked to a channel connection")
+
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(channel_id),
+            Channel.business_id == business_id,
+            Channel.channel_type == "tiktok",
+            Channel.status == "active",
+        )
+    )
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Active TikTok channel not found for this tenant")
+
+    config = channel.config if isinstance(channel.config, dict) else {}
+    encrypted_secret = config.get("webhook_secret_encrypted")
+    try:
+        if encrypted_secret:
+            bridge_secret = decrypt_token(str(encrypted_secret), settings.CHANNEL_ENCRYPTION_KEY)
+        elif channel.access_token_encrypted:
+            bridge_secret = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+        else:
+            bridge_secret = ""
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="TikTok bridge credentials could not be decrypted") from exc
+    if not bridge_secret:
+        raise HTTPException(status_code=503, detail="TikTok bridge credentials are not configured")
+
+    thread_id = _tiktok_thread_id(db, int(conversation["id"]))
+    if not thread_id:
+        raise HTTPException(status_code=409, detail="TikTok conversation chưa có thread_id để gửi tin")
+
+    # Prefer the current runtime setting over the URL persisted when the
+    # channel was connected.  The launcher uses 127.0.0.1 for a host-run
+    # FastAPI process, while Docker uses host.docker.internal; a stale value
+    # in channel.config must not make an otherwise healthy bridge unreachable.
+    control_url = str(
+        settings.TIKTOK_BRIDGE_CONTROL_URL or config.get("bridge_control_url") or ""
+    ).strip().rstrip("/")
+    if not control_url:
+        raise HTTPException(status_code=503, detail="TikTok outbound bridge chưa được cấu hình")
+
+    try:
+        response = httpx.post(
+            f"{control_url}/send",
+            json={
+                "threadId": thread_id,
+                "message": text_content or "",
+                "conversationId": int(conversation["id"]),
+                "recipientId": str(recipient_id or ""),
+            },
+            headers={"X-TikTok-Bridge-Secret": bridge_secret},
+            timeout=30,
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Không thể kết nối TikTok bridge. Hãy khởi động bot TikTok và kiểm tra cổng 8091.",
+        ) from exc
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code >= 400:
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        raise HTTPException(
+            status_code=502 if response.status_code >= 500 else response.status_code,
+            detail=detail or "TikTok bridge từ chối gửi tin",
+        )
+    if not isinstance(payload, dict):
+        payload = {"status": "sent", "message_id": f"tiktok-bridge:{thread_id}"}
+    return payload, channel
+
+
 def telegram_external_message_id(result: dict, channel: Channel) -> str | None:
     """Build a collision-resistant local id from Telegram's response."""
     message_id = result.get("message_id")
@@ -1321,6 +1431,22 @@ async def send_and_save_outbound(
                 business_id=business_id,
             )
             external_message_id = telegram_external_message_id(result, telegram_channel)
+        elif channel == "tiktok":
+            if business_id is None:
+                raise HTTPException(status_code=400, detail="Tenant context is required")
+            tiktok_conversation = get_conversation_target(
+                db=db,
+                conversation_id=conversation_id,
+                business_id=business_id,
+            )
+            result, _ = await run_in_threadpool(
+                send_tiktok_text,
+                db=db,
+                conversation=tiktok_conversation,
+                recipient_id=recipient_id,
+                text_content=text_content or "",
+                business_id=business_id,
+            )
         elif channel == "zalo":
             if business_id is None:
                 raise HTTPException(status_code=400, detail="Tenant context is required")
@@ -2248,6 +2374,52 @@ def send_message(
             raise HTTPException(
                 status_code=502,
                 detail="Không thể gửi Telegram message",
+            ) from exc
+
+
+    # =====================================================
+    # TIKTOK BRIDGE TEXT
+    # =====================================================
+
+    if channel == "tiktok":
+        try:
+            result, _ = send_tiktok_text(
+                db=db,
+                conversation=conversation,
+                recipient_id=recipient_id,
+                text_content=message_text,
+                business_id=tenant.business_id,
+            )
+            external_message_id = result.get("message_id")
+            saved_message = save_outbound_message(
+                db=db,
+                conversation_id=conversation_id,
+                channel="tiktok",
+                recipient_id=recipient_id,
+                external_message_id=external_message_id,
+                content=message_text,
+                media_type=None,
+                media_url=None,
+                meta_response=result,
+            )
+            return {
+                "success": True,
+                "status": "sent",
+                "channel": "tiktok",
+                "message_type": "text",
+                "conversation_id": conversation_id,
+                "external_message_id": external_message_id,
+                "message": saved_message,
+            }
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            print("❌ TIKTOK SEND ERROR:", str(exc))
+            raise HTTPException(
+                status_code=502,
+                detail="Không thể gửi TikTok message",
             ) from exc
 
 

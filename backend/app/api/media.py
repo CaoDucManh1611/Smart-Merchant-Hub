@@ -3,9 +3,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.dependencies import get_db
+from app.database.tenant_session import tenant_session
 from app.services.media_resolver import resolve_media_response, verify_media_url
 from app.tenancy.context import TenantContext
 from app.tenancy.context import resolve_tenant_context
+from app.tenancy.schema import schema_name_for
 
 router = APIRouter()
 
@@ -44,4 +46,11 @@ def get_media_attachment(
         ):
             raise HTTPException(status_code=401, detail="Tenant context is required") from None
         tenant = TenantContext(int(business_id), "signed_media_url")
+    # Browser media tags use the signed URL branch and cannot send the
+    # tenant header.  Route that request through the shop schema; the legacy
+    # compatibility session points at the control-plane database and cannot
+    # see attachments stored in ``shop_<business_id>``.
+    if tenant.source == "signed_media_url":
+        with tenant_session(schema_name_for(tenant.business_id)) as tenant_db:
+            return resolve_media_response(tenant_db, attachment_id=attachment_id, tenant=tenant)
     return resolve_media_response(db, attachment_id=attachment_id, tenant=tenant)

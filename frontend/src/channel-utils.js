@@ -5,6 +5,7 @@ export const CHANNEL_LABELS = {
   // Keep the provider's official uppercase name for internal matching and tests.
   // User-facing views can apply sentence-case styling where needed.
   zalo: "ZALO",
+  tiktok: "TikTok",
 };
 
 export function channelLabel(channel) {

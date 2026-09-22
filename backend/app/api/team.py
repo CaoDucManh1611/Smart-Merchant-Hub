@@ -1,5 +1,8 @@
 """Tenant-scoped team directory APIs."""
 
+import hmac
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -9,7 +12,8 @@ from app.db.dependencies import get_db
 from app.tenancy.crm_session import get_tenant_db
 from app.auth.passwords import hash_password
 from app.models.business import Business, User
-from app.schemas.team import TeamUserCreate, TeamUserListOut, TeamUserOut, TeamUserUpdate, PermissionOverrideCreate, PermissionOverrideListOut, PermissionOverrideOut, EffectivePermissionListOut, EffectivePermissionOut, normalize_team_role
+from app.models.signup import SignupEmailChallenge
+from app.schemas.team import TeamOtpOut, TeamOtpRequest, TeamOtpVerify, TeamUserCreate, TeamUserListOut, TeamUserOut, TeamUserUpdate, PermissionOverrideCreate, PermissionOverrideListOut, PermissionOverrideOut, EffectivePermissionListOut, EffectivePermissionOut, normalize_team_role
 from app.models.permission import PermissionOverride
 from app.services.permission_service import permission_allowed, role_allows
 from app.tenancy.context import TenantContext
@@ -17,6 +21,8 @@ from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_admin_access
 from app.services.audit_service import record_audit
 from app.services.quota_service import QuotaExceededError, release_quota, reserve_quota
+from app.services.customer_collection import generate_verification_code, hash_verification_code
+from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, deliver_otp
 
 
 router = APIRouter()
@@ -71,6 +77,148 @@ def list_team(
         query = query.filter(User.is_active.is_(True))
     users = query.order_by(User.is_active.desc(), User.full_name.asc(), User.id.asc()).all()
     return TeamUserListOut(items=[_out(user) for user in users], total=len(users))
+
+
+def _require_team_admin(actor: User | None, tenant: TenantContext) -> int:
+    if actor is None or actor.business_id is None:
+        raise HTTPException(status_code=401, detail="Chủ shop cần đăng nhập để quản lý đội ngũ.")
+    business_id = int(actor.business_id)
+    if int(tenant.business_id) != business_id:
+        raise HTTPException(status_code=403, detail="Phiên đăng nhập không thuộc shop hiện tại.")
+    return business_id
+
+
+@router.post("/team/otp/request", response_model=TeamOtpOut, status_code=202, dependencies=[Depends(require_admin_access)])
+def request_team_otp(
+    payload: TeamOtpRequest,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Send an email OTP before creating a staff account."""
+    business_id = _require_team_admin(actor, tenant)
+    email = _normalize_email(payload.email)
+    _ensure_unique_email(db, email, tenant)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    latest = db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == email,
+        SignupEmailChallenge.business_id == business_id,
+        SignupEmailChallenge.purpose == "team_invite",
+        SignupEmailChallenge.status == "pending",
+    ).order_by(SignupEmailChallenge.id.desc()).first()
+    if latest is not None:
+        if latest.expires_at <= now:
+            latest.status = "expired"
+        elif latest.created_at is not None and (now - latest.created_at).total_seconds() < 60:
+            raise HTTPException(status_code=429, detail="Bạn vừa yêu cầu mã OTP. Hãy đợi một phút rồi thử lại.")
+
+    code = generate_verification_code()
+    challenge = SignupEmailChallenge(
+        email=email,
+        owner_name=payload.full_name.strip(),
+        shop_name=f"team:{business_id}",
+        purpose="team_invite",
+        business_id=business_id,
+        role=normalize_team_role(payload.role),
+        password_hash=hash_password(payload.password),
+        code_hash=hash_verification_code(code),
+        status="pending",
+        attempts=0,
+        max_attempts=5,
+        expires_at=now + timedelta(minutes=10),
+    )
+    db.add(challenge)
+    db.flush()
+    try:
+        delivery = deliver_otp(channel="email", destination=email, code=code)
+        if not delivery.delivered:
+            db.rollback()
+            raise HTTPException(status_code=503, detail="Chưa thể gửi mã OTP email. Vui lòng thử lại sau.")
+    except HTTPException:
+        raise
+    except (OtpDeliveryNotConfigured, OtpDeliveryError, ValueError, OSError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Chưa thể gửi mã OTP email. Vui lòng thử lại sau.") from exc
+    db.commit()
+    return TeamOtpOut(status="otp_sent", email=email, expires_in=600)
+
+
+@router.post("/team/otp/verify", response_model=TeamUserOut, status_code=201, dependencies=[Depends(require_admin_access)])
+def verify_team_otp(
+    payload: TeamOtpVerify,
+    db: Session = Depends(get_db),
+    audit_db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Verify the staff email OTP and create the account in this shop."""
+    business_id = _require_team_admin(actor, tenant)
+    email = _normalize_email(payload.email)
+    challenge = db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == email,
+        SignupEmailChallenge.business_id == business_id,
+        SignupEmailChallenge.purpose == "team_invite",
+        SignupEmailChallenge.status == "pending",
+    ).order_by(SignupEmailChallenge.id.desc()).first()
+    if challenge is None:
+        raise HTTPException(status_code=422, detail="Mã OTP không còn hiệu lực. Hãy yêu cầu mã mới.")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if challenge.expires_at <= now:
+        challenge.status = "expired"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã OTP đã hết hạn. Hãy yêu cầu mã mới.")
+    if challenge.attempts >= challenge.max_attempts:
+        challenge.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã OTP đã bị khóa. Hãy yêu cầu mã mới.")
+    challenge.attempts += 1
+    if not hmac.compare_digest(hash_verification_code(payload.otp), challenge.code_hash):
+        if challenge.attempts >= challenge.max_attempts:
+            challenge.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã OTP không đúng.")
+
+    _ensure_unique_email(db, email, tenant)
+    try:
+        reserve_quota(
+            db,
+            business_id,
+            "staff_users",
+            idempotency_key=f"team-user:{business_id}:{email}",
+        )
+    except QuotaExceededError as exc:
+        db.rollback()
+        raise HTTPException(status_code=429, detail=exc.detail) from exc
+
+    user = User(
+        business_id=business_id,
+        full_name=challenge.owner_name.strip(),
+        email=email,
+        role=normalize_team_role(challenge.role),
+        is_active=True,
+        password_hash=challenge.password_hash,
+    )
+    challenge.status = "verified"
+    challenge.verified_at = now
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Email nhân viên đã tồn tại trong business.") from exc
+    db.refresh(user)
+    if actor:
+        record_audit(
+            audit_db,
+            business_id=business_id,
+            user_id=actor.id,
+            action="create",
+            resource_type="team_user",
+            resource_id=str(user.id),
+            metadata={"role": user.role, "email": user.email, "verified_by_otp": True},
+        )
+        audit_db.commit()
+    return _out(user)
 
 
 @router.get("/team/permissions", response_model=PermissionOverrideListOut)

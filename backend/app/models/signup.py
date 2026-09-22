@@ -20,6 +20,11 @@ class SignupEmailChallenge(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     owner_name: Mapped[str] = mapped_column(String(255), nullable=False)
     shop_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The same short-lived challenge store is also used for verified staff
+    # invitations.  Existing signup rows keep the default ``signup`` purpose.
+    purpose: Mapped[str] = mapped_column(String(30), nullable=False, default="signup", server_default="signup", index=True)
+    business_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    role: Mapped[str | None] = mapped_column(String(30), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending", index=True)

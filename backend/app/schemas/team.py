@@ -1,13 +1,17 @@
 """Tenant team directory and role schemas."""
 
 from datetime import datetime
+import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.auth.passwords import validate_signup_password
 
 
 TEAM_ROLES = ("owner", "admin", "agent", "viewer", "business_agent")
 TeamRole = Literal["owner", "admin", "agent", "viewer", "business_agent"]
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # Older installs used ``business_agent`` (and the platform database used
 # ``shop_agent``) for the same human-facing role.  Keep accepting those
@@ -30,7 +34,67 @@ class TeamUserCreate(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=255)
     email: str = Field(..., min_length=3, max_length=255)
     role: TeamRole = "agent"
-    password: str | None = Field(default=None, min_length=8, max_length=256)
+    password: str | None = Field(default=None, min_length=12, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _EMAIL_RE.fullmatch(normalized):
+            raise ValueError("Email công việc không hợp lệ.")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, value: str | None) -> str | None:
+        return validate_signup_password(value) if value is not None else value
+
+
+class TeamOtpRequest(BaseModel):
+    full_name: str = Field(..., min_length=1, max_length=255)
+    email: str = Field(..., min_length=3, max_length=255)
+    role: TeamRole = "agent"
+    password: str = Field(..., min_length=12, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _EMAIL_RE.fullmatch(normalized):
+            raise ValueError("Email công việc không hợp lệ.")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, value: str) -> str:
+        return validate_signup_password(value)
+
+
+class TeamOtpVerify(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    otp: str = Field(..., min_length=6, max_length=6)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not _EMAIL_RE.fullmatch(normalized):
+            raise ValueError("Email công việc không hợp lệ.")
+        return normalized
+
+    @field_validator("otp")
+    @classmethod
+    def validate_otp(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.isdigit():
+            raise ValueError("Mã OTP phải gồm 6 chữ số.")
+        return normalized
+
+
+class TeamOtpOut(BaseModel):
+    status: str
+    email: str
+    expires_in: int
 
 
 class TeamUserUpdate(BaseModel):

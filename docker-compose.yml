@@ -65,6 +65,12 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      # Uploaded media must be visible to both the Docker backend and any
+      # host FastAPI process used by the public tunnel.
+      - ./backend/uploads:/app/uploads
+      # Expose the local TikTok bridge script for the authenticated download
+      # button in the CRM settings screen.
+      - ./scripts:/app/root-scripts:ro
       # Keep the running container's migration directory aligned with the
       # checkout so a restart applies additive P1 revisions immediately.
       - ./backend/alembic:/app/alembic

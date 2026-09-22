@@ -3,6 +3,7 @@
 # Cach chay:
 #   .\start_dev.ps1 -AuthToken "YOUR_NGROK_AUTHTOKEN"
 #   .\start_dev.ps1 -ResetDatabase
+#   `$env:TIKTOK_SHOP_SLUG="your-shop-slug"; `$env:TIKTOK_BRIDGE_SECRET="secret-moi-nhat"; .\start_dev.ps1
 #   .\start_dev.ps1   (neu da add authtoken roi)
 
 param(
@@ -10,7 +11,15 @@ param(
     [string]$AuthToken = "",
 
     [Parameter(Mandatory=$false)]
-    [switch]$ResetDatabase
+    [switch]$ResetDatabase,
+
+    # TikTok bridge credentials are read from the environment by default so
+    # the secret is not printed in the PowerShell command line/history.
+    [Parameter(Mandatory=$false)]
+    [string]$TikTokShopSlug = $env:TIKTOK_SHOP_SLUG,
+
+    [Parameter(Mandatory=$false)]
+    [string]$TikTokBridgeSecret = $env:TIKTOK_BRIDGE_SECRET
 )
 
 $ErrorActionPreference = "Stop"
@@ -177,7 +186,8 @@ Write-Host "   OK: Du lieu seed RAG da san sang" -ForegroundColor Green
 # ----------------------------------------------
 Write-Host ""
 Write-Host ">> Mo terminal FastAPI server..." -ForegroundColor Cyan
-Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", "Set-Location '$BackendPath'; Write-Host 'FastAPI dang chay...' -ForegroundColor Cyan; python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
+$backendCommand = "Set-Location '$BackendPath'; `$env:TIKTOK_BRIDGE_CONTROL_URL='http://127.0.0.1:8091'; Write-Host 'FastAPI dang chay...' -ForegroundColor Cyan; python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
+Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", $backendCommand
 
 Start-Sleep -Seconds 4
 
@@ -190,7 +200,32 @@ Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", "Write-Host 'n
 Start-Sleep -Seconds 5
 
 # ----------------------------------------------
-# 8. Lay URL va hien thi
+# 8. Khoi dong TikTok bridge (neu da cau hinh)
+# ----------------------------------------------
+if (-not [string]::IsNullOrWhiteSpace($TikTokShopSlug) -and -not [string]::IsNullOrWhiteSpace($TikTokBridgeSecret)) {
+    $existingBridge = Get-NetTCPConnection -LocalPort 8091 -State Listen -ErrorAction SilentlyContinue
+    if ($existingBridge) {
+        Write-Host ">> TikTok bridge da dang nghe cong 8091; tai su dung tien trinh hien tai." -ForegroundColor Yellow
+    } else {
+        Write-Host ">> Mo terminal TikTok bridge..." -ForegroundColor Cyan
+        # These variables are inherited by the child terminal.  Binding to
+        # 0.0.0.0 lets a Dockerized FastAPI process reach the host bridge.
+        $env:TIKTOK_BACKEND_URL = "http://127.0.0.1:8000"
+        $env:TIKTOK_BRIDGE_CONTROL_HOST = "0.0.0.0"
+        $env:TIKTOK_BRIDGE_CONTROL_PORT = "8091"
+        $env:TIKTOK_SHOP_SLUG = $TikTokShopSlug
+        $env:TIKTOK_BRIDGE_SECRET = $TikTokBridgeSecret
+        if ([string]::IsNullOrWhiteSpace($env:TIKTOK_AUTO_REPLY)) { $env:TIKTOK_AUTO_REPLY = "0" }
+        $tiktokCommand = "Set-Location '$ComposeProjectPath'; Write-Host 'TikTok bridge dang chay...' -ForegroundColor Cyan; python '.\scripts\tiktok_bot.py'"
+        Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", $tiktokCommand
+    }
+} else {
+    Write-Host ">> Bo qua TikTok bridge: chua co TIKTOK_SHOP_SLUG va TIKTOK_BRIDGE_SECRET." -ForegroundColor Yellow
+    Write-Host "   Dat hai bien moi truong mot lan, sau do chay lai start_dev.ps1." -ForegroundColor Gray
+}
+
+# ----------------------------------------------
+# 9. Lay URL va hien thi
 # ----------------------------------------------
 try {
     $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -TimeoutSec 5
@@ -212,7 +247,7 @@ try {
 }
 
 # ----------------------------------------------
-# 9. Tu dong mo Frontend Web App
+# 10. Tu dong mo Frontend Web App
 # ----------------------------------------------
 $frontendIndex = "$PSScriptRoot\frontend\index.html"
 if (Test-Path $frontendIndex) {

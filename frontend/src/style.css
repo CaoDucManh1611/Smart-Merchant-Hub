@@ -2110,6 +2110,10 @@ button {
   border-radius: 12px;
 }
 
+.message-attachments .message-image.media-load-failed {
+  display: none;
+}
+
 .composer-media-player {
   display: block;
   width: min(360px, 100%);
@@ -2390,7 +2394,17 @@ button:hover {
 .channel span.telegram,
 .platform.telegram,
 .social-icon.telegram {
-  color: #229ed9;
+  display: inline-grid !important;
+  place-items: center !important;
+  width: 18px !important;
+  height: 18px !important;
+  flex: 0 0 auto;
+  color: #ffffff !important;
+  background: #229ed9 !important;
+  border-radius: 50% !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  box-shadow: 0 2px 7px rgba(34, 158, 217, 0.24) !important;
 }
 
 /* Telegram uses a paper-plane mark instead of the Instagram fallback SVG. */
@@ -2432,6 +2446,40 @@ button:hover {
   display: inline-block;
   line-height: 1;
   font-size: 0.95em;
+}
+
+.social-icon.tiktok {
+  display: inline-grid !important;
+  place-items: center !important;
+  width: 18px !important;
+  height: 18px !important;
+  flex: 0 0 auto;
+  background: #101114 !important;
+  color: #fff !important;
+  border: 1px solid #3e454e !important;
+  border-radius: 50% !important;
+  box-shadow: 0 2px 7px rgba(37, 244, 238, 0.28) !important;
+}
+
+.social-icon.tiktok .tiktok-mini-logo {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+/* The inbox icon is rendered in a compact SVG. Explicit fills are required
+   here because the path inherits the browser's default black fill in some
+   Chromium builds, making TikTok look like an empty black dot. */
+.social-icon.tiktok .tiktok-mini-logo .tiktok-logo-cyan {
+  fill: #25f4ee !important;
+}
+
+.social-icon.tiktok .tiktok-mini-logo .tiktok-logo-red {
+  fill: #fe2c55 !important;
+}
+
+.social-icon.tiktok .tiktok-mini-logo .tiktok-logo-main {
+  fill: #ffffff !important;
 }
 
 .customer-360-loading {
@@ -12273,6 +12321,12 @@ body.crm-dark .crm-app .login-feature-icon { color: #8bd8d7 !important; }
 .service-success-actions button { margin: 0; }
 
 .login-service-link { display: block; margin: 16px auto 0; padding: 7px 8px; font-size: 12px; }
+.signup-email-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
+.signup-email-control input { min-width: 0; }
+.signup-otp-button { border: 1px solid #9ccfce; border-radius: 10px; padding: 0 12px; color: #1f6f73; background: #edf9f8; cursor: pointer; font: inherit; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.signup-otp-button:hover { background: #dff3f1; }
+.signup-otp-button:disabled { cursor: wait; opacity: .6; }
+.signup-otp-input:disabled { cursor: not-allowed; opacity: .62; background: #f1f5f7; }
 .signup-otp-note { padding: 10px 12px; border: 1px solid #c8e0e4; border-radius: 10px; color: #4c697b; background: #f0fbfa; font-size: 12px; line-height: 1.5; }
 .signup-otp-input { letter-spacing: .32em; text-align: center; font-size: 18px !important; font-weight: 800 !important; }
 .login-notice { margin-top: 12px; padding: 10px 12px; border: 1px solid #b7deda; border-radius: 10px; color: #246e70; background: #f0fbfa; font-size: 12px; line-height: 1.45; }
@@ -13746,4 +13800,246 @@ body.crm-dark .crm-app.platform-admin-workspace .platform-admin-hero {
   .crm-app:not(.platform-admin-workspace) .top-logout > span {
     display: none;
   }
+}
+
+/* Full-width workspace alignment.
+   Operational pages should use the complete area beside the sidebar instead
+   of leaving a narrow, centered column on wide screens. */
+.crm-app:not(.platform-admin-workspace) .main > :is(.products-layout, .settings-layout, .rag-docs-layout, .rag-chat-layout) {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.crm-app:not(.platform-admin-workspace) .main > .channels-layout > .channel-summary-grid {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.crm-app:not(.platform-admin-workspace) .main > :is(.products-layout, .settings-layout, .rag-docs-layout, .rag-chat-layout) > .settings-card,
+.crm-app:not(.platform-admin-workspace) .main > .products-layout > :is(.products-header, .product-form, .supplier-manager, .products-table-wrap, .report-panel, .report-filters, .operation-mode-banner),
+.crm-app:not(.platform-admin-workspace) .main > .rag-docs-layout > :is(.rag-header-panel, .upload-dropzone, .docs-table-card) {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.crm-app.platform-admin-workspace .platform-admin-layout,
+.crm-app.platform-admin-workspace .main.platform-admin-main {
+  width: 100%;
+  max-width: none;
+}
+
+.public-service-main .service-page-layout {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.crm-app:not(.platform-admin-workspace) .main > .service-page-layout {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+/* Service catalog polish: make plan selection easy to scan at a glance. */
+.service-page-layout {
+  padding: clamp(22px, 3vw, 38px) clamp(18px, 2.4vw, 36px) 56px;
+}
+
+.service-page-hero {
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #d8e6ef;
+}
+
+.service-page-hero h1 {
+  max-width: 820px;
+  margin: 6px 0 8px;
+  font-size: clamp(28px, 3vw, 42px);
+}
+
+.service-page-hero p {
+  max-width: 820px;
+  font-size: 14px;
+}
+
+.service-mode-switch {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.service-mode-option {
+  min-height: 82px;
+  padding: 15px 18px;
+  border-radius: 14px;
+  box-shadow: 0 8px 20px rgba(24, 49, 73, .045);
+}
+
+.service-mode-option small {
+  max-width: 60ch;
+}
+
+.service-page-grid {
+  grid-template-columns: minmax(260px, .72fr) minmax(0, 1.28fr);
+  gap: 18px;
+}
+
+.service-benefits-card,
+.service-request-card {
+  border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(24, 49, 73, .06);
+}
+
+.service-benefits-card {
+  position: sticky;
+  top: 18px;
+  padding: clamp(20px, 2.2vw, 28px);
+}
+
+.service-benefits-card h2 {
+  margin-bottom: 20px;
+  font-size: clamp(20px, 2vw, 26px);
+}
+
+.service-steps {
+  gap: 15px;
+}
+
+.service-steps li {
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.service-steps li > span {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+
+.service-request-card {
+  padding: clamp(20px, 2.2vw, 30px);
+}
+
+.service-request-heading h2 {
+  font-size: clamp(20px, 2vw, 26px);
+}
+
+.service-request-intro {
+  max-width: 78ch;
+  margin-bottom: 16px;
+}
+
+.service-plan-picker {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e0ebf1;
+}
+
+.service-plan-options {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.service-plan-option {
+  min-height: 158px;
+  padding: 14px;
+  border-radius: 12px;
+  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.service-plan-option:hover {
+  border-color: #9bcfce;
+  box-shadow: 0 8px 18px rgba(43, 155, 153, .1);
+  transform: translateY(-1px);
+}
+
+.service-plan-option > span {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+}
+
+.service-plan-option strong {
+  font-size: 14px;
+}
+
+.service-plan-option small {
+  min-height: 0;
+  margin-top: 6px;
+}
+
+.service-plan-option small:first-of-type {
+  min-height: 45px;
+}
+
+.service-plan-option small + small {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  max-width: 100%;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #247f83;
+  background: #e8f7f5;
+  font-size: 10px;
+}
+
+.service-plan-option em {
+  margin-top: auto;
+  padding-top: 12px;
+  color: #1f7778;
+  font-size: 13px;
+}
+
+.service-plan-option.selected {
+  position: relative;
+  border-width: 2px;
+  box-shadow: 0 0 0 3px rgba(43, 155, 153, .1), 0 10px 22px rgba(43, 155, 153, .1);
+}
+
+.service-plan-option.selected::after {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  color: #fff;
+  background: #2b9b99;
+  border-radius: 50%;
+  content: "✓";
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.service-purchase-box,
+.service-channel-summary {
+  border-radius: 11px;
+}
+
+.service-submit {
+  min-height: 46px;
+  border-radius: 10px;
+  font-size: .92rem;
+}
+
+body.crm-dark .service-page-hero { border-color: #394145; }
+body.crm-dark .service-plan-picker { border-color: #394145; }
+body.crm-dark .service-plan-option small + small { color: #d8ffff; background: #1f5559; }
+
+@media (max-width: 880px) {
+  .service-benefits-card { position: static; }
+}
+
+@media (max-width: 560px) {
+  .service-page-layout { padding: 18px 12px 36px; }
+  .service-page-hero { align-items: flex-start; padding-bottom: 16px; }
+  .service-mode-switch,
+  .service-plan-options { grid-template-columns: 1fr; }
+  .service-plan-option { min-height: 0; }
 }

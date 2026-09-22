@@ -124,9 +124,9 @@ class OnboardingPlanPurchase(BaseModel):
     contact_email: str | None = Field(default=None, max_length=255)
     contact_phone: str | None = Field(default=None, max_length=30)
     shop_name: str | None = Field(default=None, max_length=160)
-    channels: list[Literal["Facebook", "Instagram", "Telegram", "Zalo"]] = Field(
+    channels: list[Literal["Facebook", "Instagram", "Telegram", "Zalo", "TikTok", "Shopee"]] = Field(
         default_factory=list,
-        max_length=4,
+        max_length=6,
     )
     notes: str | None = Field(default=None, max_length=1000)
 
@@ -168,6 +168,7 @@ class OnboardingSubscriptionSummaryOut(BaseModel):
     business_id: int
     buyer: OnboardingBuyerOut
     subscription: OnboardingSubscriptionOut | None = None
+    chatbot_subscription: OnboardingSubscriptionOut | None = None
     amount: Decimal | None = None
     currency: str = "VND"
     payment_status: str | None = None

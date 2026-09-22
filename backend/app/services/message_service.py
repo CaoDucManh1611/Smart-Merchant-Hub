@@ -1424,6 +1424,8 @@ def process_and_save_message(
             "facebook",
             "instagram",
             "telegram",
+            "zalo",
+            "tiktok",
         )
         and (
             customer_name

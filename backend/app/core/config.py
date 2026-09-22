@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     # TikTok Shop webhook authentication
     TIKTOK_APP_KEY: str = ""
     TIKTOK_APP_SECRET: str = ""
+    # Local ReLttk control endpoint used for outbound TikTok replies.
+    # Docker Desktop deployments can override this with
+    # http://host.docker.internal:8091.
+    TIKTOK_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8091"
 
     # =========================================================
     # RAG SETTINGS

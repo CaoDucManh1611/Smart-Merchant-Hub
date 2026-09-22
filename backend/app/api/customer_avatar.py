@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.dependencies import get_db
+from app.database.tenant_session import tenant_session
 from app.integrations.telegram import TelegramAdapter
 from app.integrations.zalo import ZaloAdapter
 from app.models.channel import Channel
@@ -19,6 +19,7 @@ from app.services.channel_credentials import decrypt_token
 from app.services.customer_avatar import verify_customer_avatar_url
 from app.services.message_service import fetch_instagram_customer_profile
 from app.tenancy.context import TenantContext, resolve_tenant_context
+from app.tenancy.schema import schema_name_for
 
 
 router = APIRouter()
@@ -31,7 +32,6 @@ def get_customer_avatar(
     business_id: int | None = Query(default=None),
     expires: int | None = Query(default=None),
     signature: str | None = Query(default=None),
-    db: Session = Depends(get_db),
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
 ):
     """Stream a provider profile photo without exposing channel credentials."""
@@ -57,6 +57,15 @@ def get_customer_avatar(
             raise HTTPException(status_code=401, detail="Tenant context is required") from None
         tenant = TenantContext(int(business_id), "signed_customer_avatar_url")
 
+    # The signed URL is intentionally loadable without a bearer token.  It
+    # therefore cannot use the legacy/default database session: in the
+    # multi-tenant runtime that session points at the control database, while
+    # customers and channels live in ``shop_<business_id>``.
+    with tenant_session(schema_name_for(tenant.business_id)) as db:
+        return _stream_customer_avatar(customer_id=customer_id, tenant=tenant, db=db)
+
+
+def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Session):
     customer = db.scalar(
         select(Customer).where(
             Customer.id == customer_id,

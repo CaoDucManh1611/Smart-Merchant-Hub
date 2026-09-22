@@ -156,12 +156,18 @@ def _subscription_is_active(subscription: Subscription | None, *, now: datetime 
     )
 
 
-def _active_subscription_for(db: Session, business_id: int) -> Subscription | None:
+def _active_subscription_for(
+    db: Session,
+    business_id: int,
+    *,
+    service_type: str = "package",
+) -> Subscription | None:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     return db.scalar(
         select(Subscription)
         .where(
             Subscription.business_id == business_id,
+            Subscription.service_type == service_type,
             Subscription.status == "active",
             (Subscription.starts_at.is_(None) | (Subscription.starts_at <= now)),
             (Subscription.ends_at.is_(None) | (Subscription.ends_at > now)),
@@ -437,9 +443,13 @@ def purchase_shop_plan(
     assert business is not None
     ensure_default_plans(db)
     plan = _active_plan(db, payload.plan_code)
-    _validate_requested_channels(plan, payload.channels)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     service_type = payload.service_type
+    if service_type == "package":
+        _validate_requested_channels(plan, payload.channels)
+    # Older clients sent their selected CRM channels with chatbot requests.
+    # Accept that payload for compatibility, but never validate or consume it
+    # as chatbot quota; the assistant is an independent service.
 
     role = (actor.role or "").strip().lower()
     if plan.code == "demo" and role not in {"owner", "admin", "business_admin", "shop_admin"}:
@@ -500,7 +510,7 @@ def purchase_shop_plan(
             status=current_pending.status,
         )
 
-    current_active = _active_subscription_for(db, business_id)
+    current_active = _active_subscription_for(db, business_id, service_type=service_type)
     if (
         current_active is not None
         and current_active.plan_id == plan.id
@@ -513,6 +523,7 @@ def purchase_shop_plan(
         for pending in db.scalars(
             select(Subscription).where(
                 Subscription.business_id == business_id,
+                Subscription.service_type == service_type,
                 Subscription.status == "pending",
             )
         ):
@@ -559,11 +570,12 @@ def purchase_shop_plan(
     # Quota reservations for channels use the control-plane ledger when it is
     # available. Keep the legacy activation successful if a local database has
     # not run the optional platform migration yet; the next restart repairs it.
-    try:
-        _sync_platform_subscription(platform_db, business, plan)
-    except Exception:  # noqa: BLE001 - subscription must remain usable in local demo
-        platform_db.rollback()
-        logger.warning("Platform plan mirror deferred for business_id=%s", business_id, exc_info=True)
+    if service_type == "package":
+        try:
+            _sync_platform_subscription(platform_db, business, plan)
+        except Exception:  # noqa: BLE001 - subscription must remain usable in local demo
+            platform_db.rollback()
+            logger.warning("Platform plan mirror deferred for business_id=%s", business_id, exc_info=True)
 
     return OnboardingSubscriptionOut(
         id=subscription.id,
@@ -589,7 +601,18 @@ def get_shop_subscription_summary(
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     subscription = db.scalar(
         select(Subscription)
-        .where(Subscription.business_id == business_id)
+        .where(
+            Subscription.business_id == business_id,
+            Subscription.service_type == "package",
+        )
+        .order_by(Subscription.id.desc())
+    )
+    chatbot_subscription = db.scalar(
+        select(Subscription)
+        .where(
+            Subscription.business_id == business_id,
+            Subscription.service_type == "chatbot",
+        )
         .order_by(Subscription.id.desc())
     )
     payment = None
@@ -629,6 +652,13 @@ def get_shop_subscription_summary(
             service_type=subscription.service_type,
             status=subscription.status,
         ) if subscription is not None else None),
+        chatbot_subscription=(OnboardingSubscriptionOut(
+            id=chatbot_subscription.id,
+            plan_code=(chatbot_subscription.plan.code if chatbot_subscription.plan else ""),
+            plan_name=(chatbot_subscription.plan.name if chatbot_subscription.plan else "Trợ lý AI"),
+            service_type="chatbot",
+            status=chatbot_subscription.status,
+        ) if chatbot_subscription is not None else None),
         amount=payment.amount if payment is not None else (plan.price if plan is not None else None),
         currency=payment.currency if payment is not None else "VND",
         payment_status=payment.status if payment is not None else None,
@@ -649,6 +679,7 @@ def request_signup_otp(payload: SignupOtpRequest, db: Session = Depends(get_db))
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     latest = db.query(SignupEmailChallenge).filter(
         SignupEmailChallenge.email == email,
+        SignupEmailChallenge.purpose == "signup",
         SignupEmailChallenge.status == "pending",
     ).order_by(SignupEmailChallenge.id.desc()).first()
     if latest is not None:
@@ -691,6 +722,7 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
     email = payload.email.strip().lower()
     challenge = db.query(SignupEmailChallenge).filter(
         SignupEmailChallenge.email == email,
+        SignupEmailChallenge.purpose == "signup",
         SignupEmailChallenge.status == "pending",
     ).order_by(SignupEmailChallenge.id.desc()).first()
     if challenge is None:
@@ -1082,6 +1114,77 @@ def list_connected_channels(
         return output
 
 
+@router.post("/shops/{business_id}/channels/tiktok/bridge")
+def connect_tiktok_bridge(
+    business_id: int,
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Create or rotate the local ReLttk TikTok bridge credentials."""
+
+    _require_shop_admin(db, business_id, actor)
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+
+    import secrets
+
+    bridge_secret = secrets.token_hex(32)
+    platform_slug = platform_db.scalar(
+        select(PlatformBusiness.slug).where(PlatformBusiness.id == int(business_id))
+    ) or business.slug
+    webhook_url = f"{str(settings.PUBLIC_BASE_URL or '').strip().rstrip('/')}/api/channels/tiktok/incoming"
+    if webhook_url.startswith("/api"):
+        webhook_url = "/api/channels/tiktok/incoming"
+    try:
+        with tenant_session(schema_name_for(business_id)) as tenant_db:
+            channel = upsert_channel_connection(
+                tenant_db,
+                business_id=business_id,
+                channel_type="tiktok",
+                external_account_id=f"tiktok-bridge-{business_id}",
+                name="TikTok Bridge",
+                access_token=bridge_secret,
+                config=_safe_channel_config(
+                    {
+                        "provider": "tiktok_bridge",
+                        "webhook_url": webhook_url,
+                        "bridge_control_url": str(settings.TIKTOK_BRIDGE_CONTROL_URL or "").strip().rstrip("/"),
+                        "webhook_secret": bridge_secret,
+                        "provider_account": {"id": f"tiktok-bridge-{business_id}", "name": "TikTok Bridge"},
+                    }
+                ),
+                reserve_channel_slot=lambda: __import__("app.services.quota_service", fromlist=["reserve_quota"]).reserve_quota(platform_db, business_id, "connected_channels"),
+                commit=False,
+            )
+            channel_id = int(channel.id)
+            channel_status = normalized_connection_state(channel)
+        platform_db.commit()
+    except QuotaExceededError as exc:
+        platform_db.rollback()
+        raise HTTPException(status_code=429, detail=exc.detail) from exc
+    except (ValueError, RuntimeError) as exc:
+        platform_db.rollback()
+        raise HTTPException(status_code=503, detail="Secret manager chưa sẵn sàng để lưu mã TikTok bridge.") from exc
+    except Exception:
+        platform_db.rollback()
+        raise
+
+    return {
+        "id": channel_id,
+        "business_id": business_id,
+        "channel_type": "tiktok",
+        "name": "TikTok Bridge",
+        "status": channel_status,
+        "shop_slug": platform_slug,
+        "webhook_url": webhook_url,
+        "bridge_secret": bridge_secret,
+        "headers": {"X-TikTok-Shop-Slug": platform_slug, "X-TikTok-Bridge-Secret": bridge_secret},
+        "notice": "Hãy sao chép mã này vào máy chạy TikTok bridge. Mã chỉ hiển thị sau khi tạo hoặc cấp lại.",
+    }
+
+
 @router.delete("/shops/{business_id}/channels/{channel_id}")
 def disconnect_bot_channel(
     business_id: int,
@@ -1095,7 +1198,7 @@ def disconnect_bot_channel(
     _require_shop_admin(db, business_id, actor)
     with tenant_session(schema_name_for(business_id)) as tenant_db:
         channel = tenant_db.get(Channel, channel_id)
-        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo"}:
+        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo", "tiktok"}:
             raise HTTPException(status_code=404, detail="Kênh bot không tồn tại.")
         config = channel.config if isinstance(channel.config, dict) else {}
         if channel.status == "active":

@@ -146,6 +146,15 @@ def resolve_media_response(
                 "User-Agent": "Mozilla/5.0 (CRM Chatbot media proxy)",
                 "Accept": "image/avif,image/webp,image/apng,image/*,audio/*,video/*,*/*;q=0.8",
             }
+        elif channel.channel_type == "tiktok":
+            # TikTok CDN URLs commonly reject httpx's default user agent and
+            # may return an HTML challenge unless the request resembles the
+            # browser that received the media URL.
+            request_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+                "Referer": "https://www.tiktok.com/",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,video/*,audio/*,*/*;q=0.8",
+            }
         response = httpx.get(
             url,
             headers=request_headers,

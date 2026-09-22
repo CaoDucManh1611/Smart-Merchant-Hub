@@ -66,6 +66,11 @@ api_router.include_router(
     prefix="/webhooks/tiktok",
     tags=["TikTok"],
 )
+api_router.include_router(
+    tiktok.bridge_router,
+    prefix="/channels/tiktok",
+    tags=["TikTok bridge"],
+)
 
 # New shop-scoped webhook URL. Register it after every provider-specific route
 # so a slug such as "tiktok" cannot shadow the existing TikTok endpoint.

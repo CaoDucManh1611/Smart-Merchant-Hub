@@ -434,6 +434,7 @@ def approve_subscription_request(
     for active_row in db.scalars(
         select(Subscription).where(
             Subscription.business_id == business.id,
+            Subscription.service_type == (row.service_type or "package"),
             Subscription.status == "active",
             Subscription.id != row.id,
         )
@@ -456,6 +457,13 @@ def approve_subscription_request(
     db.refresh(row)
 
     try:
+        if row.service_type == "package":
+            # Paid CRM approvals must update the control-plane quota now. A
+            # chatbot approval intentionally skips this mirror because it is
+            # an add-on and must not replace the shop's CRM package.
+            from app.api.onboarding import _sync_platform_subscription
+
+            _sync_platform_subscription(platform_db, business, plan)
         _sync_platform_business(platform_db, db, business.id)
         registry = provision_shop(
             platform_db,
@@ -530,7 +538,10 @@ def get_shop_subscription(
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     row = db.scalar(
         select(Subscription)
-        .where(Subscription.business_id == business_id)
+        .where(
+            Subscription.business_id == business_id,
+            Subscription.service_type == "package",
+        )
         .order_by(Subscription.id.desc())
     )
     if row is None:
@@ -554,15 +565,18 @@ def upsert_shop_subscription(
         raise HTTPException(status_code=409, detail="Không thể kích hoạt gói đã lưu trữ.")
     row = db.scalar(
         select(Subscription)
-        .where(Subscription.business_id == business_id)
+        .where(
+            Subscription.business_id == business_id,
+            Subscription.service_type == "package",
+        )
         .order_by(Subscription.id.desc())
     )
     if row is None:
-        row = Subscription(business_id=business_id)
+        row = Subscription(business_id=business_id, service_type="package")
         db.add(row)
     elif row.status == "active" and row.plan_id != plan.id:
         row.status = "cancelled"
-        row = Subscription(business_id=business_id)
+        row = Subscription(business_id=business_id, service_type="package")
         db.add(row)
     row.plan_id = plan.id
     row.status = payload.status
