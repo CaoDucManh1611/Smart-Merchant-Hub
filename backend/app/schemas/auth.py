@@ -13,7 +13,9 @@ class LoginRequest(BaseModel):
 
 class AuthUserOut(BaseModel):
     id: int
-    business_id: int
+    # Platform administrators are control-plane identities and do not belong
+    # to any shop tenant. Shop users still always receive an integer id.
+    business_id: int | None = None
     full_name: str
     email: str
     role: str

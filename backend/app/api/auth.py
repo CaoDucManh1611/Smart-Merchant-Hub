@@ -144,7 +144,7 @@ def login(
             )
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")
     user = users[0]
-    business = db.get(Business, user.business_id)
+    business = db.get(Business, user.business_id) if user.business_id is not None else None
     is_platform_member = db.query(PlatformMembership.id).filter(
         PlatformMembership.user_id == user.id,
     ).first() is not None
@@ -167,14 +167,15 @@ def login(
         ip_hash=hashlib.sha256((request.client.host if request.client else "unknown").encode()).hexdigest(),
         mfa_verified=user.mfa_status != "enabled",
     ))
-    record_audit(
-        db,
-        business_id=user.business_id,
-        user_id=user.id,
-        action="login",
-        resource_type="auth_session",
-        metadata={"email": user.email},
-    )
+    if user.business_id is not None:
+        record_audit(
+            db,
+            business_id=user.business_id,
+            user_id=user.id,
+            action="login",
+            resource_type="auth_session",
+            metadata={"email": user.email},
+        )
     db.commit()
     limiter.reset(login_key)
     return LoginOut(
@@ -200,7 +201,8 @@ def logout(
     session = db.query(AuthSession).filter(AuthSession.token_hash == token_hash(token)).first()
     if session is not None:
         session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    record_audit(db, business_id=user.business_id, user_id=user.id, action="logout", resource_type="auth_session")
+    if user.business_id is not None:
+        record_audit(db, business_id=user.business_id, user_id=user.id, action="logout", resource_type="auth_session")
     db.commit()
 
 
@@ -228,7 +230,8 @@ def revoke_session(
         raise HTTPException(status_code=404, detail="Phiên đăng nhập không tồn tại.")
     if session.revoked_at is None:
         session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    record_audit(db, business_id=user.business_id, user_id=user.id, action="session_revoked", resource_type="auth_session", resource_id=session.id)
+    if user.business_id is not None:
+        record_audit(db, business_id=user.business_id, user_id=user.id, action="session_revoked", resource_type="auth_session", resource_id=session.id)
     db.commit()
 
 
@@ -238,7 +241,8 @@ def prepare_mfa_enrollment(
     db: Session = Depends(get_db),
 ):
     provisioning_uri = prepare_mfa(user)
-    record_audit(db, business_id=user.business_id, user_id=user.id, action="mfa_prepared", resource_type="user", resource_id=user.id, metadata={"status": "prepared"})
+    if user.business_id is not None:
+        record_audit(db, business_id=user.business_id, user_id=user.id, action="mfa_prepared", resource_type="user", resource_id=user.id, metadata={"status": "prepared"})
     db.commit()
     return MfaPrepareOut(status="prepared", provisioning_uri=provisioning_uri)
 
@@ -252,7 +256,8 @@ def disable_mfa_enrollment(
     if not payload.confirm:
         raise HTTPException(status_code=422, detail="Cần xác nhận trước khi tắt MFA.")
     disable_mfa(user)
-    record_audit(db, business_id=user.business_id, user_id=user.id, action="mfa_disabled", resource_type="user", resource_id=user.id, metadata={"status": "disabled"})
+    if user.business_id is not None:
+        record_audit(db, business_id=user.business_id, user_id=user.id, action="mfa_disabled", resource_type="user", resource_id=user.id, metadata={"status": "disabled"})
     db.commit()
 
 
@@ -267,7 +272,8 @@ def verify_mfa_enrollment(
         raise HTTPException(status_code=401, detail="Mã MFA không đúng hoặc đã hết hạn.")
     enable_mfa(user)
     session.mfa_verified = True
-    record_audit(db, business_id=user.business_id, user_id=user.id, actor_type="staff", action="mfa_verified", resource_type="auth_session", resource_id=session.id, metadata={"status": "enabled"})
+    if user.business_id is not None:
+        record_audit(db, business_id=user.business_id, user_id=user.id, actor_type="staff", action="mfa_verified", resource_type="auth_session", resource_id=session.id, metadata={"status": "enabled"})
     db.commit()
     return MfaVerifyOut(status="enabled", mfa_verified=True)
 

@@ -155,6 +155,30 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(200, self.client.get("/api/platform/shops", headers=headers).status_code)
         self.assertEqual(423, self.client.get("/api/customers", headers=headers).status_code)
 
+    def test_platform_admin_is_not_attached_to_a_shop_tenant(self):
+        with Session(self.engine) as db:
+            platform_admin = User(
+                business_id=None,
+                full_name="Platform Admin",
+                email="platform-admin@auth.test",
+                role="admin",
+                password_hash=hash_password("platform-admin-password"),
+            )
+            db.add(platform_admin)
+            db.flush()
+            db.add(PlatformMembership(user_id=platform_admin.id))
+            db.commit()
+
+        login = self.client.post(
+            "/api/auth/login",
+            json={"email": "platform-admin@auth.test", "password": "platform-admin-password"},
+        )
+        self.assertEqual(200, login.status_code, login.text)
+        self.assertIsNone(login.json()["user"]["business_id"])
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        self.assertEqual(200, self.client.get("/api/platform/shops", headers=headers).status_code)
+        self.assertEqual(403, self.client.get("/api/customers", headers=headers).status_code)
+
     def test_audit_log_is_admin_only_and_redacted(self):
         body = self.login()
         headers = {"Authorization": f"Bearer {body['access_token']}", "X-Business-Id": str(self.business_id)}

@@ -106,14 +106,23 @@ def _authenticate_request(request: Request, authorization: str | None, db: Sessi
     if int(payload.get("sub", 0)) != session.user_id:
         raise HTTPException(status_code=401, detail="Bearer token không hợp lệ.")
     user = db.query(User).filter(User.id == session.user_id, User.is_active.is_(True)).first()
-    if user is None or user.business_id is None:
+    if user is None:
+        raise HTTPException(status_code=401, detail="Tài khoản không còn hoạt động.")
+    # A platform admin is intentionally not attached to a shop. The active
+    # membership is the control-plane identity check; tenant routes still fail
+    # closed because they require a concrete business_id.
+    is_platform_admin = db.query(PlatformMembership.id).filter(
+        PlatformMembership.user_id == user.id,
+        PlatformMembership.is_active.is_(True),
+    ).first() is not None
+    if user.business_id is None and not is_platform_admin:
         raise HTTPException(status_code=401, detail="Tài khoản không còn hoạt động.")
     if str(user.role or "").strip().lower() in {"support", "platform_support"}:
         # Support identities are intentionally unusable against normal tenant
         # APIs.  They must present a grant-bound token to /api/support only.
         if not request.url.path.startswith("/api/support") and not request.url.path.startswith("/api/platform/support-sessions"):
             raise HTTPException(status_code=403, detail="Support account chỉ được dùng trong phiên hỗ trợ có cấp quyền.")
-    business = db.get(Business, user.business_id)
+    business = db.get(Business, user.business_id) if user.business_id is not None else None
     if business is not None and business.status != "active":
         is_platform_member = db.query(PlatformMembership.id).filter(
             PlatformMembership.user_id == user.id,
