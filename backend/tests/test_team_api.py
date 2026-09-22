@@ -39,6 +39,10 @@ class TeamApiTests(unittest.TestCase):
             db.commit()
             cls.business_one = one.id
             cls.business_two = two.id
+            token, expires_at = issue_token(owner.id, business_id=one.id, role=owner.role)
+            db.add(AuthSession(user_id=owner.id, token_hash=token_hash(token), expires_at=expires_at, mfa_verified=True))
+            db.commit()
+            cls.owner_headers = {"Authorization": f"Bearer {token}"}
 
         def override_get_db():
             with Session(cls.engine) as db:
@@ -63,7 +67,7 @@ class TeamApiTests(unittest.TestCase):
     def test_create_and_update_team_member(self):
         created = self.client.post(
             "/api/team",
-            headers={"X-Business-Id": str(self.business_one)},
+            headers={**self.owner_headers, "X-Business-Id": str(self.business_one)},
             json={"full_name": "Support Agent", "email": "AGENT@example.test", "role": "agent"},
         )
         self.assertEqual(201, created.status_code)
@@ -73,12 +77,20 @@ class TeamApiTests(unittest.TestCase):
 
         updated = self.client.patch(
             f"/api/team/{body['id']}",
-            headers={"X-Business-Id": str(self.business_one)},
+            headers={**self.owner_headers, "X-Business-Id": str(self.business_one)},
             json={"role": "viewer", "is_active": False},
         )
         self.assertEqual(200, updated.status_code)
         self.assertEqual("viewer", updated.json()["role"])
         self.assertFalse(updated.json()["is_active"])
+
+    def test_create_team_member_requires_authenticated_shop_admin(self):
+        response = self.client.post(
+            "/api/team",
+            headers={"X-Business-Id": str(self.business_one)},
+            json={"full_name": "Anonymous Agent", "email": "anonymous-agent@example.test", "role": "agent"},
+        )
+        self.assertEqual(401, response.status_code, response.text)
 
     def test_authenticated_admin_adds_staff_to_same_shop_without_creating_shop(self):
         with Session(self.engine) as db:
@@ -116,8 +128,26 @@ class TeamApiTests(unittest.TestCase):
         self.assertEqual(200, login.status_code, login.text)
         self.assertEqual(self.business_one, login.json()["user"]["business_id"])
 
+    def test_authenticated_admin_cannot_create_staff_in_another_shop(self):
+        with Session(self.engine) as db:
+            owner = db.query(User).filter(User.business_id == self.business_one, User.role == "owner").one()
+            token, expires_at = issue_token(owner.id, business_id=self.business_one, role=owner.role)
+            db.add(AuthSession(user_id=owner.id, token_hash=token_hash(token), expires_at=expires_at, mfa_verified=True))
+            db.commit()
+
+        response = self.client.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {token}", "X-Business-Id": str(self.business_two)},
+            json={"full_name": "Wrong Shop Agent", "email": "wrong-shop-agent@example.test", "role": "agent", "password": "wrong-shop-pass-1"},
+        )
+        self.assertEqual(201, response.status_code, response.text)
+        self.assertEqual(self.business_one, response.json()["business_id"])
+        with Session(self.engine) as db:
+            created = db.query(User).filter(User.email == "wrong-shop-agent@example.test").one()
+            self.assertEqual(self.business_one, created.business_id)
+
     def test_multiple_staff_accounts_can_log_in_to_the_same_shop_at_once(self):
-        headers = {"X-Business-Id": str(self.business_one)}
+        headers = {**self.owner_headers, "X-Business-Id": str(self.business_one)}
         first = self.client.post(
             "/api/team",
             headers=headers,
@@ -165,7 +195,7 @@ class TeamApiTests(unittest.TestCase):
     def test_duplicate_email_and_cross_tenant_resource_are_rejected(self):
         duplicate = self.client.post(
             "/api/team",
-            headers={"X-Business-Id": str(self.business_one)},
+            headers={**self.owner_headers, "X-Business-Id": str(self.business_one)},
             json={"full_name": "Duplicate", "email": "OWNER@example.test", "role": "agent"},
         )
         self.assertEqual(409, duplicate.status_code)
@@ -178,7 +208,7 @@ class TeamApiTests(unittest.TestCase):
         self.assertEqual(404, cross_tenant.status_code)
 
     def test_delete_team_member_is_tenant_scoped_and_protects_owner(self):
-        headers = {"X-Business-Id": str(self.business_one)}
+        headers = {**self.owner_headers, "X-Business-Id": str(self.business_one)}
         created = self.client.post(
             "/api/team",
             headers=headers,
@@ -198,7 +228,7 @@ class TeamApiTests(unittest.TestCase):
     def test_invalid_role_is_rejected(self):
         response = self.client.post(
             "/api/team",
-            headers={"X-Business-Id": str(self.business_one)},
+            headers={**self.owner_headers, "X-Business-Id": str(self.business_one)},
             json={"full_name": "Unknown", "email": "unknown@example.test", "role": "superuser"},
         )
         self.assertEqual(422, response.status_code)

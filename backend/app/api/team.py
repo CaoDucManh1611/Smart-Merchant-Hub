@@ -176,8 +176,10 @@ def create_team_member(
 ):
     # An authenticated admin is the source of truth for the shop.  Do not
     # let a stale/dev tenant header redirect a staff account to another shop.
-    business_id = int(actor.business_id) if actor is not None and actor.business_id is not None else int(tenant.business_id)
-    if actor is not None and int(tenant.business_id) != business_id:
+    if actor is None or actor.business_id is None:
+        raise HTTPException(status_code=401, detail="Chủ shop cần đăng nhập để thêm tài khoản.")
+    business_id = int(actor.business_id)
+    if int(tenant.business_id) != business_id:
         raise HTTPException(status_code=403, detail="Phiên đăng nhập không thuộc shop hiện tại.")
     if db.get(Business, business_id) is None:
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
