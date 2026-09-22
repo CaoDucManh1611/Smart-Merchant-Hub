@@ -8,6 +8,9 @@ from sqlalchemy.pool import StaticPool
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, User
+from app.models.auth_session import AuthSession
+from app.auth.dependencies import issue_token, token_hash
+from app.auth.passwords import hash_password
 from app.models.business import ServicePlan, Subscription
 
 
@@ -25,7 +28,14 @@ class TeamApiTests(unittest.TestCase):
             two = Business(name="Team Two", slug="team-two")
             db.add_all([one, two])
             db.flush()
-            db.add(User(business_id=one.id, full_name="Owner", email="owner@example.test", role="owner"))
+            owner = User(
+                business_id=one.id,
+                full_name="Owner",
+                email="owner@example.test",
+                password_hash=hash_password("owner-pass-1"),
+                role="owner",
+            )
+            db.add(owner)
             db.commit()
             cls.business_one = one.id
             cls.business_two = two.id
@@ -69,6 +79,42 @@ class TeamApiTests(unittest.TestCase):
         self.assertEqual(200, updated.status_code)
         self.assertEqual("viewer", updated.json()["role"])
         self.assertFalse(updated.json()["is_active"])
+
+    def test_authenticated_admin_adds_staff_to_same_shop_without_creating_shop(self):
+        with Session(self.engine) as db:
+            owner = db.query(User).filter(User.business_id == self.business_one, User.role == "owner").one()
+            token, expires_at = issue_token(owner.id, business_id=self.business_one, role=owner.role)
+            db.add(AuthSession(user_id=owner.id, token_hash=token_hash(token), expires_at=expires_at, mfa_verified=True))
+            before = db.query(Business).count()
+            db.commit()
+
+        created = self.client.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "full_name": "Same Shop Agent",
+                "email": "same-shop-agent@example.test",
+                "role": "agent",
+                "password": "same-shop-pass-1",
+            },
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        self.assertEqual(self.business_one, created.json()["business_id"])
+        with Session(self.engine) as db:
+            self.assertEqual(before, db.query(Business).count())
+            staff = db.query(User).filter(User.email == "same-shop-agent@example.test").one()
+            self.assertEqual(self.business_one, staff.business_id)
+
+        login = self.client.post(
+            "/api/auth/login",
+            json={
+                "email": "same-shop-agent@example.test",
+                "password": "same-shop-pass-1",
+                "shop_slug": "team-one",
+            },
+        )
+        self.assertEqual(200, login.status_code, login.text)
+        self.assertEqual(self.business_one, login.json()["user"]["business_id"])
 
     def test_multiple_staff_accounts_can_log_in_to_the_same_shop_at_once(self):
         headers = {"X-Business-Id": str(self.business_one)}

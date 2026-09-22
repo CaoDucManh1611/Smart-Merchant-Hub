@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.dependencies import get_db
 from app.tenancy.crm_session import get_tenant_db
 from app.auth.passwords import hash_password
-from app.models.business import User
+from app.models.business import Business, User
 from app.schemas.team import TeamUserCreate, TeamUserListOut, TeamUserOut, TeamUserUpdate, PermissionOverrideCreate, PermissionOverrideListOut, PermissionOverrideOut, EffectivePermissionListOut, EffectivePermissionOut, normalize_team_role
 from app.models.permission import PermissionOverride
 from app.services.permission_service import permission_allowed, role_allows
@@ -174,19 +174,27 @@ def create_team_member(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):
+    # An authenticated admin is the source of truth for the shop.  Do not
+    # let a stale/dev tenant header redirect a staff account to another shop.
+    business_id = int(actor.business_id) if actor is not None and actor.business_id is not None else int(tenant.business_id)
+    if actor is not None and int(tenant.business_id) != business_id:
+        raise HTTPException(status_code=403, detail="Phiên đăng nhập không thuộc shop hiện tại.")
+    if db.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+
     email = _normalize_email(payload.email)
     _ensure_unique_email(db, email, tenant)
     try:
         reserve_quota(
             db,
-            tenant.business_id,
+            business_id,
             "staff_users",
-            idempotency_key=f"team-user:{tenant.business_id}:{email}",
+            idempotency_key=f"team-user:{business_id}:{email}",
         )
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=exc.detail) from exc
     user = User(
-        business_id=tenant.business_id,
+        business_id=business_id,
         full_name=payload.full_name.strip(),
         email=email,
         role=normalize_team_role(payload.role),
@@ -201,7 +209,7 @@ def create_team_member(
         raise HTTPException(status_code=409, detail="Email nhân viên đã tồn tại trong business.") from exc
     db.refresh(user)
     if actor:
-        record_audit(audit_db, business_id=tenant.business_id, user_id=actor.id, action="create", resource_type="team_user", resource_id=str(user.id), metadata={"role": user.role, "email": user.email})
+        record_audit(audit_db, business_id=business_id, user_id=actor.id, action="create", resource_type="team_user", resource_id=str(user.id), metadata={"role": user.role, "email": user.email})
         audit_db.commit()
     return _out(user)
 
