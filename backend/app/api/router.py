@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding, support
+from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding, support, recommendations
 from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo, zalo_personal, webhooks
 
 
@@ -175,6 +175,11 @@ api_router.include_router(
 api_router.include_router(
     experimentation.router,
     tags=["Experimentation"],
+)
+
+api_router.include_router(
+    recommendations.router,
+    tags=["Recommendations"],
 )
 
 api_router.include_router(

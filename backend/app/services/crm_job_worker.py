@@ -18,6 +18,7 @@ from app.services.workflow_engine import execute_workflow
 from app.services.chatbot_followup import dispatch_due_followups
 from app.services.order_service import release_expired_draft_reservations
 from app.services.rag_job_service import dispatch_rag_job
+from app.services.recommendation_service import train_customer_segments
 from app.tenancy.context import TenantContext
 from app.tenancy.schema import schema_name_for, validate_schema_name
 
@@ -161,6 +162,12 @@ def _dispatch_notification_email_job(db: Session, business_id: int, payload: dic
     notification.metadata_ = {**metadata, "email_status": "sent"}
 
 
+def _dispatch_recommendation_segment_training_job(db: Session, business_id: int, payload: dict) -> None:
+    training_run_id = int(payload.get("training_run_id") or 0)
+    if training_run_id <= 0:
+        raise ValueError("Recommendation training job is missing training_run_id")
+    train_customer_segments(db, business_id=business_id, training_run_id=training_run_id)
+
 def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 100, platform_db: Session | None = None) -> int:
     """Run CRM and knowledge-base jobs for one tenant.
 
@@ -180,6 +187,7 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         "workflow.run": lambda payload: _dispatch_workflow_run_job(db, business_id, payload, platform_db=platform_db),
         "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),
         "notification.email": lambda payload: _dispatch_notification_email_job(db, business_id, payload),
+        "recommendations.train_segments": lambda payload: _dispatch_recommendation_segment_training_job(db, business_id, payload),
     }
     processed_jobs = dispatch_due_jobs(
         db,

@@ -20,6 +20,10 @@ from app.models.experimentation import (
     ModelVersion, ModelTrainingRun, ModelEvaluationMetric,
     BanditPolicy, BanditArmStat, BanditDecision,
 )
+from app.models.recommendation import (
+    CustomerProductInteraction, RecommendationRequest, RecommendationFeedback,
+    RecommendationCustomerProfile, RecommendationTrainingRun,
+)
 from app.models.business_setting import BusinessSetting
 from app.models.oauth_state import OAuthState
 from app.models.channel_migration import ChannelMigrationAudit
@@ -81,6 +85,11 @@ __all__ = [
     "BanditPolicy",
     "BanditArmStat",
     "BanditDecision",
+    "RecommendationRequest",
+    "RecommendationFeedback",
+    "CustomerProductInteraction",
+    "RecommendationCustomerProfile",
+    "RecommendationTrainingRun",
     "Conversation",
     "Message",
     "MessageAttachment",

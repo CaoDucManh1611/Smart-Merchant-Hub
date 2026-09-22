@@ -13,6 +13,7 @@ from app.models.order_payment import OrderPayment
 from app.models.purchase_order import PurchaseOrder
 from app.models.sales import Order, OrderItem, Product
 from app.services.audit_service import record_audit
+from app.services.recommendation_interaction_service import record_order_purchase_interactions
 
 
 SALES_TRANSITIONS = {
@@ -653,4 +654,8 @@ def transition_sales_order(
         actor_id=actor_id,
         metadata_={"reserved_quantity": int(order.reserved_quantity or 0)},
     ))
+    # A completed, fully paid order is the strongest recommender signal. The
+    # deterministic key inside the recorder makes retries of this transition
+    # harmless and covers every caller of the lifecycle service.
+    record_order_purchase_interactions(db, order=order)
     return order

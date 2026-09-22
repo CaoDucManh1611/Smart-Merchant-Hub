@@ -60,6 +60,13 @@ from app.models.experimentation import (  # noqa: F401,E402
     ModelVersion, ModelTrainingRun, ModelEvaluationMetric,
     BanditPolicy, BanditArmStat, BanditDecision,
 )
+from app.models.recommendation import (  # noqa: F401,E402
+    CustomerProductInteraction,
+    RecommendationCustomerProfile,
+    RecommendationFeedback,
+    RecommendationRequest,
+    RecommendationTrainingRun,
+)
 from app.models.saas import DataLifecycleRequest  # noqa: F401,E402
 
 
@@ -103,6 +110,11 @@ TENANT_TABLE_NAMES = (
     "notifications",
     "crm_jobs",
     "rag_runs",
+    "recommendation_requests",
+    "recommendation_feedback",
+    "recommendation_customer_profiles",
+    "recommendation_training_runs",
+    "customer_product_interactions",
     "business_settings",
     "app_settings",
     "audit_logs",

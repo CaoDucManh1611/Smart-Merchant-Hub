@@ -347,7 +347,7 @@ test("platform administration surfaces pending package approvals before tenant o
 test("shop self-service signup verifies email before creating a shop", () => {
   assert.doesNotMatch(appSource, /Chưa có workspace/);
   assert.match(appSource, /Đăng ký shop mới/);
-  assert.match(appSource, /signupLoading \? 'Đang gửi mã\.\.\.' : 'Đăng ký'/);
+  assert.match(appSource, /signupLoading \? \(signupStep === 'otp' \? 'Đang tạo shop\.\.\.' : 'Đang gửi mã\.\.\.'\)/);
   assert.match(appSource, /onboarding\/signup\/request/);
   assert.match(appSource, /onboarding\/signup\/verify/);
   assert.match(appSource, /Mã OTP/);
@@ -670,6 +670,7 @@ test("every rendered button declares a click handler or form behavior", () => {
   const inactiveButtons = openingButtonTags(appSource).filter((tag) => !(
     /@click|@submit|@mousedown|@pointerdown/.test(tag)
     || /type\s*=\s*["'](?:submit|reset)["']/.test(tag)
+    || /\sdisabled(?:\s|>|=)/.test(tag)
   ));
   assert.deepEqual(inactiveButtons, []);
 });

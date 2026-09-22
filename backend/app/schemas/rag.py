@@ -81,6 +81,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="Lịch sử hội thoại [{role, content}, ...]",
     )
+    # Optional because the internal knowledge-base chat has no end customer.
+    # Customer-facing channels pass it to turn a question into a safe
+    # tenant-scoped recommendation signal.
+    customer_id: int | None = Field(default=None, ge=1)
 
 
 class SourceChunk(BaseModel):

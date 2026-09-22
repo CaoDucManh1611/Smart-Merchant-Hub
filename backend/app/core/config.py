@@ -135,6 +135,11 @@ class Settings(BaseSettings):
     # Auto-reply defaults to on for the demo/development deployment. A row in
     # app_settings or this environment variable can still turn it off.
     RAG_AUTO_REPLY_ENABLED: bool = True
+    # Offline recommendation artifacts are optional.  Keep the public UCI
+    # checkpoints disabled by default because their customer/product IDs do
+    # not belong to a production tenant.
+    RECOMMENDATION_ARTIFACT_DIR: str = "artifacts"
+    RECOMMENDATION_ARTIFACT_MODE: str = "fallback"
     # Extract durable customer facts in a background worker. Keep this
     # opt-in so a deployment never starts making LLM calls unexpectedly.
     CUSTOMER_FACT_EXTRACTION_ENABLED: bool = False

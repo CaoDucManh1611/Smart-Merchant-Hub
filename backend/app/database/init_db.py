@@ -129,12 +129,16 @@ def _bootstrap_development_saas() -> None:
                     registry.feature_enabled = False
                     registry.migration_error = None
                     platform_db.commit()
-                    repair_key = f"dev-bootstrap-repair-{business_id}"
+                    repair_key = f"dev-bootstrap-repair-{TENANT_HEAD}-{business_id}"
                 try:
                     provision_shop(
                         platform_db,
                         business_id=business_id,
-                        idempotency_key=repair_key or f"dev-bootstrap-{business_id}",
+                        # Provisioning operations are terminal after success.
+                        # Scope the key to the required tenant head so a later
+                        # release can repair/re-enable an existing schema
+                        # instead of replaying an older successful operation.
+                        idempotency_key=repair_key or f"dev-bootstrap-{TENANT_HEAD}-{business_id}",
                     )
                 except Exception:
                     # Isolate one malformed shop from the rest of the local

@@ -25,10 +25,47 @@ from app.rag.llm_caller import call_llm, stream_llm
 from app.rag.run_logger import RagRunLog, safe_error_message
 from app.schemas.rag import ChatRequest, ChatResponse, SourceChunk
 from app.services.quota_service import QuotaExceededError, reserve_ai_budget
+from app.services.recommendation_interaction_service import (
+    RecommendationInteractionError,
+    record_interaction,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _record_customer_question(
+    db: Session,
+    *,
+    business_id: int,
+    request: ChatRequest,
+    idempotency_key: str | None,
+) -> None:
+    """Persist customer RAG intent when the caller supplied a CRM customer."""
+    if request.customer_id is None:
+        return
+    event_key = (idempotency_key or "").strip() or uuid4().hex
+    try:
+        record_interaction(
+            db,
+            business_id=business_id,
+            customer_id=request.customer_id,
+            product_id=None,
+            request_id=None,
+            event_type="ask",
+            source="rag",
+            query=request.query,
+            idempotency_key=f"rag-question:{event_key}",
+            metadata={"top_k": request.top_k},
+            occurred_at=None,
+        )
+        # Keep the behavioral event durable even if the model call later fails
+        # or the tenant has exhausted its AI budget.
+        db.commit()
+    except RecommendationInteractionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 # =========================================================
@@ -56,6 +93,12 @@ async def chat(
         top_k=request.top_k,
     ) as run:
       try:
+        _record_customer_question(
+            db,
+            business_id=tenant.business_id,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
         # Bước 1: Retrieve relevant chunks
         run.update(phase="retrieve")
         retrieval_started = perf_counter()
@@ -164,6 +207,12 @@ async def chat_stream(
             top_k=request.top_k,
         ) as run:
           try:
+            _record_customer_question(
+                db,
+                business_id=tenant.business_id,
+                request=request,
+                idempotency_key=idempotency_key,
+            )
             # Retrieve
             run.update(phase="retrieve")
             retrieval_started = perf_counter()

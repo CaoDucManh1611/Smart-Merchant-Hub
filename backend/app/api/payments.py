@@ -30,6 +30,7 @@ from app.services.order_service import (
     record_purchase_payment,
     refund_order_payment,
 )
+from app.services.recommendation_interaction_service import record_order_refund_interactions
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 
@@ -130,7 +131,7 @@ def create_order_refund(
     actor: User | None = Depends(require_write_access),
 ):
     try:
-        payment, _, created = refund_order_payment(
+        payment, order, created = refund_order_payment(
             db,
             order_id=order_id,
             amount=payload.amount,
@@ -152,6 +153,9 @@ def create_order_refund(
         )
         created = False
     if created:
+        # Only fully refunded orders are emitted as negative product signals;
+        # a partial monetary refund cannot be attributed to a specific item.
+        record_order_refund_interactions(db, order=order)
         db.commit()
         response.status_code = 201
         if actor:
