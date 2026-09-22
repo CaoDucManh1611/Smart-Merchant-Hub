@@ -798,6 +798,22 @@ def _authorize_provisioning(actor: User, business_id: int) -> None:
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
 
 
+def _authorize_provisioning_status(legacy_db: Session, actor: User, business_id: int) -> None:
+    """Allow every active shop member to read readiness for their shop.
+
+    Only owners/admins may trigger provisioning or retries; regular users still
+    need the read-only status so the CRM does not mistake a valid tenant for a
+    missing shop during login.
+    """
+    if actor.business_id != business_id or not actor.is_active:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    business = legacy_db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    if business.status != "active":
+        raise HTTPException(status_code=423, detail={"code": "business_suspended", "message": "Shop đang tạm khóa bởi quản trị nền tảng."})
+
+
 def _ensure_platform_identity(platform_db: Session, legacy_db: Session, business_id: int) -> None:
     if platform_db.get(PlatformBusiness, business_id) is not None:
         return
@@ -858,7 +874,7 @@ def get_onboarding_provisioning_status(
 ):
     """Expose only the readiness state needed to safely open a new workspace."""
 
-    _authorize_provisioning(actor, business_id)
+    _authorize_provisioning_status(legacy_db, actor, business_id)
     _ensure_platform_identity(platform_db, legacy_db, business_id)
     latest_subscription = legacy_db.scalar(
         select(Subscription)

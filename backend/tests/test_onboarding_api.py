@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.router import api_router
 from app.auth.dependencies import issue_token, token_hash
+from app.auth.passwords import hash_password
 from app.database.platform_session import get_platform_db
 from app.database.bases import PlatformBase, TenantBase
 from app.db.dependencies import get_db
@@ -69,6 +70,34 @@ class OnboardingApiTests(unittest.TestCase):
         me = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"})
         self.assertEqual(200, me.status_code, me.text)
         self.assertEqual(body["business_id"], me.json()["business_id"])
+
+    def test_regular_shop_member_can_read_provisioning_status(self):
+        with Session(self.engine) as db:
+            business = Business(name="Member Status Shop", slug="member-status-shop")
+            plan = ServicePlan(code="member-status-plan", name="Member Status Plan", price=Decimal("0"))
+            db.add_all([business, plan])
+            db.flush()
+            db.add(Subscription(business_id=business.id, plan_id=plan.id, status="active"))
+            member = User(
+                business_id=business.id,
+                full_name="Shop Agent",
+                email="member-status@onboarding.test",
+                password_hash=hash_password("member-status-pass-1"),
+                role="agent",
+            )
+            db.add(member)
+            db.flush()
+            token, expires_at = issue_token(member.id, business_id=business.id, role=member.role)
+            db.add(AuthSession(user_id=member.id, token_hash=token_hash(token), expires_at=expires_at, mfa_verified=True))
+            db.commit()
+            business_id = business.id
+
+        response = self.client.get(
+            f"/api/onboarding/shops/{business_id}/provision",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(business_id, response.json()["business_id"])
 
     def test_plan_purchase_rejects_channels_above_package_limit(self):
         created = self.client.post(
