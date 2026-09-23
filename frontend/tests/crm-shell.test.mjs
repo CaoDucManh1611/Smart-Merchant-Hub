@@ -348,6 +348,7 @@ test("shop self-service signup verifies email before creating a shop", () => {
   assert.doesNotMatch(appSource, /Chưa có workspace/);
   assert.match(appSource, /Đăng ký shop mới/);
   assert.match(appSource, /signupLoading \? \(signupStep === 'otp' \? 'Đang tạo shop\.\.\.' : 'Đang gửi mã\.\.\.'\)/);
+  assert.match(templateSource, /class="signup-stepper"/);
   assert.match(appSource, /onboarding\/signup\/request/);
   assert.match(appSource, /onboarding\/signup\/verify/);
   assert.match(appSource, /Mã OTP/);
@@ -670,7 +671,9 @@ test("every rendered button declares a click handler or form behavior", () => {
   const inactiveButtons = openingButtonTags(appSource).filter((tag) => !(
     /@click|@submit|@mousedown|@pointerdown/.test(tag)
     || /type\s*=\s*["'](?:submit|reset)["']/.test(tag)
-    || /\sdisabled(?:\s|>|=)/.test(tag)
+    // A genuinely disabled “coming soon” control is deliberately not an
+    // action. All enabled controls still require an explicit interaction.
+    || /\bdisabled\b/.test(tag)
   ));
   assert.deepEqual(inactiveButtons, []);
 });

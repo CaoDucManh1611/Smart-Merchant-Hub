@@ -1,0 +1,25 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY backend/requirements.txt ./requirements.txt
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+
+COPY backend/alembic.ini .
+COPY backend/alembic ./alembic
+COPY backend/alembic-platform.ini ./alembic-platform.ini
+COPY backend/alembic_platform ./alembic_platform
+COPY backend/alembic-tenant.ini ./alembic-tenant.ini
+COPY backend/alembic_tenant ./alembic_tenant
+COPY backend/scripts ./scripts
+RUN python scripts/generate_seed_dataset.py
+
+COPY backend/app ./app
+COPY scripts ./root-scripts
+RUN mkdir -p /app/uploads
+
+CMD ["sh", "-c", "python -m alembic -c alembic.ini upgrade head && python -m alembic -c alembic-platform.ini upgrade head && python -m alembic -c alembic-tenant.ini upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

@@ -14043,3 +14043,146 @@ body.crm-dark .service-plan-option small + small { color: #d8ffff; background: #
   .service-plan-options { grid-template-columns: 1fr; }
   .service-plan-option { min-height: 0; }
 }
+
+/* Admin tenant cards keep the system-control surface readable without relying
+   on a horizontally clipped table. */
+.platform-admin-layout,
+.login-shell,
+.settings-grid {
+  min-width: 0;
+}
+
+.platform-admin-tenant-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.platform-admin-tenant-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--owly-border);
+  border-radius: 13px;
+  background: var(--owly-surface-soft);
+}
+
+.platform-admin-tenant-card.suspended { border-color: #dfb9b9; }
+.platform-tenant-card-header,
+.platform-tenant-actions,
+.channel-capacity-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.platform-tenant-card-header > div,
+.platform-tenant-card-header strong,
+.platform-tenant-card-header small { min-width: 0; }
+.platform-tenant-card-header strong,
+.platform-tenant-card-header small { display: block; overflow-wrap: anywhere; }
+.platform-tenant-card-header small { margin-top: 3px; color: var(--owly-muted); font-size: .76rem; }
+
+.platform-tenant-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin: 14px 0;
+}
+
+.platform-tenant-summary > div,
+.platform-tenant-detail-grid > div,
+.platform-quota-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--owly-border);
+  border-radius: 10px;
+  background: var(--owly-surface);
+}
+
+.platform-tenant-summary dt,
+.platform-tenant-detail-grid span,
+.platform-quota-card > span { color: var(--owly-muted); font-size: .72rem; }
+.platform-tenant-summary dd { margin: 5px 0 0; color: var(--owly-ink); font-size: .84rem; font-weight: 750; overflow-wrap: anywhere; }
+.platform-status-chip { display: inline-flex; padding: 3px 7px; border-radius: 999px; background: #edf1f4; color: #53616c; font-size: .74rem; font-weight: 750; }
+.platform-status-chip.success { background: #e6f7ef; color: #17734c; }
+.platform-status-chip.warning { background: #fff3d8; color: #8b6200; }
+.platform-status-chip.danger { background: #ffe6e5; color: #b23d3c; }
+
+.platform-tenant-detail { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--owly-border); }
+.platform-tenant-detail-grid,
+.platform-quota-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.platform-tenant-detail-grid strong,
+.platform-tenant-detail-grid small,
+.platform-quota-card strong,
+.platform-quota-card small { display: block; margin-top: 5px; overflow-wrap: anywhere; }
+.platform-tenant-detail-grid strong,
+.platform-quota-card strong { color: var(--owly-ink); }
+.platform-tenant-detail-grid small,
+.platform-quota-card small { color: var(--owly-muted); font-size: .74rem; }
+.platform-quota-card.warning { border-color: #e4bc65; }
+.platform-quota-card.exceeded { border-color: #dd8c8c; }
+.platform-shop-notice { margin: 0 0 12px; }
+
+.channel-capacity-alert {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e4bc65;
+  border-radius: 10px;
+  color: #765400;
+  background: #fff7e3;
+  font-size: .82rem;
+  line-height: 1.45;
+}
+.channel-capacity-alert span { min-width: 0; overflow-wrap: anywhere; }
+.channel-capacity-alert button { flex: 0 0 auto; }
+
+.signup-stepper {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+}
+.signup-stepper li { display: flex; gap: 7px; min-width: 0; color: #788491; font-size: .7rem; line-height: 1.25; }
+.signup-stepper li > span { display: grid; flex: 0 0 22px; width: 22px; height: 22px; place-items: center; border: 1px solid #c9d5df; border-radius: 50%; font-weight: 800; }
+.signup-stepper strong,
+.signup-stepper small { display: block; overflow-wrap: anywhere; }
+.signup-stepper small { margin-top: 2px; font-size: .64rem; }
+.signup-stepper li.active,
+.signup-stepper li.complete { color: #1d697b; }
+.signup-stepper li.active > span,
+.signup-stepper li.complete > span { color: #fff; border-color: #2b9b99; background: #2b9b99; }
+
+body.crm-dark .platform-admin-tenant-card,
+body.crm-dark .platform-tenant-summary > div,
+body.crm-dark .platform-tenant-detail-grid > div,
+body.crm-dark .platform-quota-card { border-color: #394145; background: #202427; }
+body.crm-dark .channel-capacity-alert { color: #ffe3a5; border-color: #816725; background: #453b22; }
+
+@media (max-width: 768px) {
+  .platform-admin-layout { gap: 12px; padding-bottom: 20px; }
+  .platform-admin-hero,
+  .platform-admin-panel-heading,
+  .platform-tenant-card-header,
+  .platform-tenant-actions,
+  .channel-capacity-alert { align-items: flex-start; flex-direction: column; }
+  .platform-admin-tenant-list { gap: 10px; }
+  .platform-tenant-summary,
+  .platform-tenant-detail-grid,
+  .platform-quota-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .platform-tenant-actions > button,
+  .channel-capacity-alert button { width: 100%; }
+  .login-page { padding: 14px; overflow-y: auto; }
+  .login-shell { grid-template-columns: minmax(0, 1fr); overflow: visible; }
+  .login-showcase { display: none; }
+}
+
+@media (max-width: 480px) {
+  .platform-tenant-summary,
+  .platform-tenant-detail-grid,
+  .platform-quota-card-grid,
+  .signup-stepper { grid-template-columns: minmax(0, 1fr); }
+  .platform-admin-panel { padding: 14px; }
+}

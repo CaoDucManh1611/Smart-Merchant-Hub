@@ -88,6 +88,7 @@ services:
   frontend:
     build:
       context: ./frontend
+      target: development
     container_name: crm_chatbot_frontend
     ports:
       - "5173:5173"

@@ -1,0 +1,107 @@
+# Production topology: no source-code bind mounts and no publicly exposed
+# database/Redis ports. Keep real values in untracked .env.production and
+# backend/.env files.
+services:
+  db:
+    build:
+      context: ./docker/postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-crm_chatbot}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env.production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}
+    volumes:
+      - production_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - production_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.production
+    restart: unless-stopped
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend/.env}
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER must be set in .env.production}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@db:5432/${POSTGRES_DB:-crm_chatbot}
+      PLATFORM_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER must be set in .env.production}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@db:5432/crm_platform
+      TENANT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER must be set in .env.production}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@db:5432/crm_tenant
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - production_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; request=urllib.request.Request('http://127.0.0.1:8000/health', headers={'Host': '${HEALTHCHECK_HOST:?HEALTHCHECK_HOST must be set in .env.production}', 'X-Forwarded-Proto': 'https'}); response=urllib.request.urlopen(request, timeout=3); raise SystemExit(0 if response.status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 45s
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.production
+    restart: unless-stopped
+    command: ["python", "-m", "app.scripts.crm_job_worker"]
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend/.env}
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER must be set in .env.production}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@db:5432/${POSTGRES_DB:-crm_chatbot}
+      PLATFORM_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER must be set in .env.production}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@db:5432/crm_platform
+      TENANT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER must be set in .env.production}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@db:5432/crm_tenant
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - production_uploads:/app/uploads
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from sqlalchemy import text; from app.database.platform_session import PlatformSessionLocal; from app.database.tenant_session import TenantSessionLocal; p=PlatformSessionLocal(); t=TenantSessionLocal(); p.execute(text('SELECT 1')); t.execute(text('SELECT 1')); p.close(); t.close()"]
+      interval: 15s
+      timeout: 8s
+      retries: 12
+      start_period: 45s
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  production_postgres_data:
+  production_redis_data:
+  production_uploads:

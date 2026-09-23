@@ -18,6 +18,14 @@ import { criticalConversationNotificationCounts, notificationDestination, unread
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
 import { apiFetch } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
+import {
+  channelCapacityState,
+  connectionStateMeta,
+  latestPayment,
+  paymentStatusMeta,
+  platformQuotaCards,
+  subscriptionStatusMeta,
+} from "./platform-admin-utils.js";
 
 // Keep browser requests same-origin by default. Vite proxies /api to the
 // backend container in development, and an Ngrok frontend address therefore
@@ -331,6 +339,10 @@ const inPlatformAdminWorkspace = computed(() => (
   Boolean(authUser.value && platformAdmin.value && currentTab.value === "platform_admin")
 ));
 const platformShops = ref([]);
+const platformShopDetails = ref({});
+const platformShopDetailLoadingIds = ref(new Set());
+const platformShopMutatingIds = ref(new Set());
+const platformShopNotice = ref("");
 const platformPlans = ref([]);
 const platformPlanEditingId = ref(null);
 const platformPlanSaving = ref(false);
@@ -710,8 +722,8 @@ const tiktokBridgeNotice = ref("");
 const notificationError = ref("");
 const activeBotConnections = computed(() => botConnections.value.filter((item) => ["connected", "active"].includes(String(item.status || "").toLowerCase())));
 const activeTikTokConnection = computed(() => activeBotConnections.value.find((item) => item.channel_type === "tiktok"));
-const demoChannelsLocked = computed(() => String(quotaSnapshot.value?.plan_code || "").toLowerCase() === "demo"
-  || Number(quotaSnapshot.value?.resources?.connected_channels?.limit) === 0);
+const channelCapacity = computed(() => channelCapacityState(quotaSnapshot.value));
+const demoChannelsLocked = computed(() => channelCapacity.value.blocked);
 
 
 /* META OAUTH */
@@ -732,7 +744,7 @@ async function fetchMetaStatus() {
 
 async function connectMeta() {
   if (demoChannelsLocked.value) {
-    metaNotice.value = "Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Hãy chọn và kích hoạt một gói dịch vụ trước.";
+    metaNotice.value = channelCapacity.value.reason;
     return;
   }
   metaLoading.value = true;
@@ -777,15 +789,7 @@ function botChannelLabel(channelType) {
 }
 
 function botConnectionStateLabel(state) {
-  const labels = {
-    connected: "Đang hoạt động",
-    active: "Đang hoạt động",
-    disconnected: "Đã ngắt kết nối",
-    reconnect_required: "Cần kết nối lại",
-    verifying: "Đang xác minh",
-    error: "Lỗi kết nối",
-  };
-  return labels[String(state || "").toLowerCase()] || "Chưa xác định";
+  return connectionStateMeta(state).label;
 }
 
 function botConnectionErrorMessage(payload, fallback) {
@@ -838,7 +842,7 @@ async function fetchBotConnections() {
 
 async function connectBotChannel() {
   if (demoChannelsLocked.value) {
-    botConnectionError.value = "Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Hãy chọn và kích hoạt một gói dịch vụ trước.";
+    botConnectionError.value = channelCapacity.value.reason;
     return;
   }
   const token = String(botConnectionForm.value.access_token || "").trim();
@@ -935,6 +939,11 @@ function openChannelModal(tab = "meta") {
 
 function closeChannelModal() {
   channelModalOpen.value = false;
+}
+
+function openServicePageFromChannelLimit() {
+  closeChannelModal();
+  openServicePage();
 }
 
 function openWebhooks() {
@@ -4944,10 +4953,12 @@ async function fetchAuditLogs() {
 async function fetchPlatformAdmin() {
   platformLoading.value = true;
   platformError.value = "";
+  platformShopNotice.value = "";
   try {
     if (!authUser.value) {
       platformAdmin.value = false;
       platformShops.value = [];
+      platformShopDetails.value = {};
       platformPlans.value = [];
       platformSchemas.value = [];
       platformAuditLogs.value = [];
@@ -4959,6 +4970,7 @@ async function fetchPlatformAdmin() {
     if (!shopsResponse.ok) {
       platformAdmin.value = false;
       platformShops.value = [];
+      platformShopDetails.value = {};
       platformPlans.value = [];
       platformSchemas.value = [];
       platformAuditLogs.value = [];
@@ -4969,6 +4981,10 @@ async function fetchPlatformAdmin() {
     const shopsPayload = await shopsResponse.json();
     platformAdmin.value = true;
     platformShops.value = shopsPayload.items || [];
+    const availableShopIds = new Set(platformShops.value.map((shop) => String(shop.id)));
+    platformShopDetails.value = Object.fromEntries(
+      Object.entries(platformShopDetails.value).filter(([shopId]) => availableShopIds.has(shopId)),
+    );
     const plansResponse = await apiFetch(`${API_BASE}/platform/plans`);
     platformPlans.value = plansResponse.ok ? await plansResponse.json() : [];
     const schemasResponse = await apiFetch(`${API_BASE}/platform/tenant-schemas`);
@@ -5000,6 +5016,94 @@ async function fetchPlatformAdmin() {
   } finally {
     platformLoading.value = false;
   }
+}
+
+function changePlatformShopIdState(stateRef, shopId, enabled) {
+  const next = new Set(stateRef.value);
+  if (enabled) next.add(String(shopId));
+  else next.delete(String(shopId));
+  stateRef.value = next;
+}
+
+function platformShopDetail(shopId) {
+  return platformShopDetails.value[String(shopId)] || { open: false, loaded: false };
+}
+
+function platformShopQuota(shop) {
+  return platformShopDetail(shop.id)?.usage?.quota || shop?.quota || {};
+}
+
+function platformShopLatestPayment(shop) {
+  return latestPayment(platformShopDetail(shop.id)?.payments || []);
+}
+
+async function loadPlatformShopDetails(shop) {
+  if (!shop?.id || platformShopDetailLoadingIds.value.has(String(shop.id))) return;
+  changePlatformShopIdState(platformShopDetailLoadingIds, shop.id, true);
+  const previous = platformShopDetail(shop.id);
+  platformShopDetails.value = {
+    ...platformShopDetails.value,
+    [shop.id]: { ...previous, open: true, loading: true, error: "" },
+  };
+
+  try {
+    const [subscriptionResponse, paymentsResponse, usageResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/platform/shops/${shop.id}/subscription`),
+      apiFetch(`${API_BASE}/platform/shops/${shop.id}/payments`),
+      apiFetch(`${API_BASE}/platform/shops/${shop.id}/usage`),
+    ]);
+    const subscription = subscriptionResponse.ok ? await subscriptionResponse.json() : null;
+    const paymentsPayload = paymentsResponse.ok ? await paymentsResponse.json() : [];
+    const usage = usageResponse.ok ? await usageResponse.json() : null;
+    const payments = Array.isArray(paymentsPayload) ? paymentsPayload : paymentsPayload.items || [];
+    platformShopDetails.value = {
+      ...platformShopDetails.value,
+      [shop.id]: {
+        ...platformShopDetail(shop.id),
+        open: true,
+        loading: false,
+        loaded: true,
+        subscription,
+        payments,
+        usage,
+        error: subscriptionResponse.ok && paymentsResponse.ok && usageResponse.ok
+          ? ""
+          : "Một phần thông tin chi tiết chưa tải được. Hãy thử lại.",
+      },
+    };
+  } catch (err) {
+    platformShopDetails.value = {
+      ...platformShopDetails.value,
+      [shop.id]: {
+        ...platformShopDetail(shop.id),
+        open: true,
+        loading: false,
+        loaded: false,
+        error: friendlyErrorMessage(err, "Chưa tải được chi tiết tenant. Vui lòng thử lại."),
+      },
+    };
+  } finally {
+    changePlatformShopIdState(platformShopDetailLoadingIds, shop.id, false);
+  }
+}
+
+function togglePlatformShopDetails(shop) {
+  const detail = platformShopDetail(shop.id);
+  if (detail.open) {
+    platformShopDetails.value = {
+      ...platformShopDetails.value,
+      [shop.id]: { ...detail, open: false },
+    };
+    return;
+  }
+  if (detail.loaded) {
+    platformShopDetails.value = {
+      ...platformShopDetails.value,
+      [shop.id]: { ...detail, open: true },
+    };
+    return;
+  }
+  void loadPlatformShopDetails(shop);
 }
 
 async function refreshPlatformSubscriptionRequests() {
@@ -5173,8 +5277,17 @@ async function savePlatformPlan() {
 }
 
 async function togglePlatformShop(shop) {
+  if (!shop?.id || platformShopMutatingIds.value.has(String(shop.id))) return;
   platformError.value = "";
+  platformShopNotice.value = "";
   const status = shop.status === "suspended" ? "active" : "suspended";
+  const action = status === "active" ? "mở lại" : "khóa";
+  const confirmed = await requestConfirmation(
+    `Bạn có chắc muốn ${action} shop “${shop.name}”? Người dùng của shop sẽ ${status === "active" ? "có thể truy cập CRM trở lại" : "tạm thời không thể truy cập CRM"}.`,
+    { title: `${status === "active" ? "Mở" : "Khóa"} shop`, confirmLabel: `${status === "active" ? "Mở shop" : "Khóa shop"}`, tone: status === "active" ? "default" : "danger" },
+  );
+  if (!confirmed) return;
+  changePlatformShopIdState(platformShopMutatingIds, shop.id, true);
   try {
     const response = await apiFetch(`${API_BASE}/platform/shops/${shop.id}/status`, {
       method: "PATCH",
@@ -5186,8 +5299,13 @@ async function togglePlatformShop(shop) {
     platformShops.value = platformShops.value.map((item) => (
       item.id === updated.id ? { ...item, status: updated.status } : item
     ));
+    platformShopNotice.value = updated.status === "suspended"
+      ? `Đã khóa ${shop.name}. Shop sẽ không thể truy cập CRM cho đến khi được mở lại.`
+      : `Đã mở lại ${shop.name}. Người dùng có thể truy cập CRM theo gói hiện tại.`;
   } catch (err) {
     platformError.value = friendlyErrorMessage(err, "Chưa thể cập nhật trạng thái shop. Vui lòng thử lại sau.");
+  } finally {
+    changePlatformShopIdState(platformShopMutatingIds, shop.id, false);
   }
 }
 
@@ -6031,7 +6149,7 @@ async function toggleTeamMember(member) {
 
 async function connectTikTokBridge() {
   if (demoChannelsLocked.value) {
-    tiktokBridgeError.value = "Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Hãy chọn và kích hoạt một gói dịch vụ trước.";
+    tiktokBridgeError.value = channelCapacity.value.reason;
     return;
   }
   tiktokBridgeLoading.value = true;
@@ -10286,20 +10404,42 @@ function followupRecommendationLabel(item) {
         <div class="platform-admin-grid">
           <section class="platform-admin-panel platform-admin-tenant-panel">
             <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">TENANTS</span><h3>Danh sách tenant</h3><p>Quản lý trạng thái và hạn mức; dữ liệu vận hành vẫn nằm trong workspace riêng.</p></div><span class="platform-admin-count">{{ platformShops.length }} tenant</span></div>
+            <p v-if="platformShopNotice" class="settings-notice platform-shop-notice" role="status">{{ platformShopNotice }}</p>
             <div v-if="!platformShops.length" class="settings-empty">Chưa có tenant trên nền tảng.</div>
-            <div v-else class="platform-table-wrap">
-              <table class="team-table platform-table">
-                <thead><tr><th>Tenant</th><th>Gói dịch vụ</th><th>Trạng thái</th><th>Hạn mức</th><th></th></tr></thead>
-                <tbody>
-                  <tr v-for="shop in platformShops" :key="shop.id">
-                    <td><strong>{{ shop.name }}</strong><small>{{ shop.slug }} · #{{ shop.id }}</small></td>
-                    <td><span class="platform-plan-chip">{{ shop.plan_name || 'Chưa cấp gói' }}</span></td>
-                    <td><span class="team-status" :class="{ inactive: shop.status === 'suspended' }">{{ shop.status === 'suspended' ? 'Đã khóa' : 'Đang hoạt động' }}</span></td>
-                    <td><small v-if="Object.keys(shop.usage || {}).length">{{ Object.entries(shop.usage).slice(0, 3).map(([key, value]) => `${key}: ${value}`).join(' · ') }}</small><small v-else>Chưa ghi nhận</small></td>
-                    <td><button type="button" class="team-toggle" @click="togglePlatformShop(shop)">{{ shop.status === 'suspended' ? 'Mở shop' : 'Khóa shop' }}</button></td>
-                  </tr>
-                </tbody>
-              </table>
+            <div v-else class="platform-admin-tenant-list">
+              <article v-for="shop in platformShops" :key="shop.id" class="platform-admin-tenant-card" :class="{ suspended: shop.status === 'suspended' }">
+                <div class="platform-tenant-card-header">
+                  <div><strong>{{ shop.name }}</strong><small>{{ shop.slug }} · #{{ shop.id }}</small></div>
+                  <span class="team-status" :class="{ inactive: shop.status === 'suspended' }">{{ shop.status === 'suspended' ? 'Đã khóa' : 'Đang hoạt động' }}</span>
+                </div>
+                <dl class="platform-tenant-summary">
+                  <div><dt>Gói đang dùng</dt><dd><span class="platform-plan-chip">{{ platformShopDetail(shop.id).subscription?.plan_name || shop.plan_name || 'Chưa cấp gói' }}</span></dd></div>
+                  <div><dt>Trạng thái thanh toán</dt><dd><span class="platform-status-chip" :class="paymentStatusMeta(platformShopLatestPayment(shop)?.status).tone">{{ paymentStatusMeta(platformShopLatestPayment(shop)?.status).label }}</span></dd></div>
+                  <div><dt>Nhân viên</dt><dd>{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'staff_users')?.used ?? 0 }}{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'staff_users')?.limit === null ? '' : ` / ${platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'staff_users')?.limit ?? 0}` }}</dd></div>
+                  <div><dt>Kênh kết nối</dt><dd>{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.used ?? 0 }}{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.limit === null ? '' : ` / ${platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.limit ?? 0}` }}</dd></div>
+                </dl>
+                <div class="platform-tenant-actions">
+                  <button type="button" class="settings-refresh" :aria-expanded="platformShopDetail(shop.id).open" :aria-controls="`platform-shop-detail-${shop.id}`" @click="togglePlatformShopDetails(shop)">{{ platformShopDetail(shop.id).open ? 'Ẩn chi tiết' : 'Xem chi tiết' }}</button>
+                  <button type="button" class="team-toggle" :class="{ danger: shop.status !== 'suspended' }" :disabled="platformShopMutatingIds.has(String(shop.id))" @click="togglePlatformShop(shop)">{{ platformShopMutatingIds.has(String(shop.id)) ? 'Đang cập nhật...' : shop.status === 'suspended' ? 'Mở shop' : 'Khóa shop' }}</button>
+                </div>
+                <section v-if="platformShopDetail(shop.id).open" :id="`platform-shop-detail-${shop.id}`" class="platform-tenant-detail">
+                  <p v-if="platformShopDetail(shop.id).loading" class="settings-empty" role="status">Đang tải gói, thanh toán và hạn mức của shop...</p>
+                  <template v-else>
+                    <p v-if="platformShopDetail(shop.id).error" class="settings-notice team-error" role="alert">{{ platformShopDetail(shop.id).error }}</p>
+                    <div class="platform-tenant-detail-grid">
+                      <div><span>Gói đang dùng</span><strong>{{ platformShopDetail(shop.id).subscription?.plan_name || shop.plan_name || 'Chưa cấp gói' }}</strong><small>{{ subscriptionStatusMeta(platformShopDetail(shop.id).subscription?.status).label }}</small></div>
+                      <div><span>Trạng thái thanh toán</span><strong>{{ paymentStatusMeta(platformShopLatestPayment(shop)?.status).label }}</strong><small v-if="platformShopLatestPayment(shop)?.paid_at">{{ new Date(platformShopLatestPayment(shop).paid_at).toLocaleString('vi-VN') }}</small><small v-else>Chưa có giao dịch gần đây</small></div>
+                    </div>
+                    <div class="platform-quota-card-grid" aria-label="Hạn mức tenant: Kênh kết nối, Nhân viên, Tài liệu và Dung lượng tra cứu">
+                      <div v-for="item in platformQuotaCards(platformShopQuota(shop))" :key="item.key" class="platform-quota-card" :class="{ warning: item.nearLimit, exceeded: item.exceeded }">
+                        <span>{{ item.label }}</span><strong>{{ item.limit === null ? `${item.used} đã dùng` : `${item.used} / ${item.limit}` }}</strong>
+                        <div class="quota-track" aria-hidden="true"><span :style="{ width: `${Math.min(100, item.percent)}%` }"></span></div>
+                        <small v-if="item.exceeded">Đã vượt hạn mức</small><small v-else-if="item.nearLimit">Sắp chạm hạn mức</small><small v-else>Trong giới hạn</small>
+                      </div>
+                    </div>
+                  </template>
+                </section>
+              </article>
             </div>
           </section>
 
@@ -10947,9 +11087,9 @@ function followupRecommendationLabel(item) {
             <span>Đề xuất, phiên bản dự đoán và A/B tại đây chưa tự thay đổi câu trả lời đang gửi cho khách. Quản trị viên vẫn phải duyệt và triển khai riêng.</span>
           </div>
           <div class="ai-readiness-grid" aria-label="Mức độ sẵn sàng của các chức năng AI">
-            <div><span class="ai-readiness-badge ready">Đang dùng</span><strong>Kho kiến thức</strong><small>Tra cứu nội dung đã lập chỉ mục để hỗ trợ trả lời.</small></div>
-            <div><span class="ai-readiness-badge limited">Hỗ trợ phân tích</span><strong>Nhóm nhu cầu</strong><small>Tổng hợp theo quy tắc, chưa phải mô hình tự học.</small></div>
-            <div><span class="ai-readiness-badge experimental">Thử nghiệm</span><strong>A/B và dự đoán</strong><small>Chưa tự áp dụng vào hội thoại thật.</small></div>
+            <div><span class="ai-readiness-badge ready">Đang dùng</span><strong>Kho kiến thức</strong><small>RAG dùng để tra cứu kho kiến thức đã lập chỉ mục khi hỗ trợ trả lời.</small></div>
+            <div><span class="ai-readiness-badge limited">Hỗ trợ phân tích</span><strong>Nhóm nhu cầu</strong><small>Tổng hợp theo quy tắc, chưa phải học không giám sát hoàn chỉnh.</small></div>
+            <div><span class="ai-readiness-badge experimental">Thử nghiệm</span><strong>A/B và dự đoán</strong><small>A/B đang thử nghiệm, chưa tự thay đổi bot hoặc áp dụng vào hội thoại thật.</small></div>
           </div>
           <div class="ai-lab-summary">
             <div class="ai-stat-card ai-stat-primary"><span>Tổng đề xuất</span><strong>{{ ruleSuggestions.length }}</strong><small>Đề xuất đã ghi nhận</small></div>
@@ -11050,7 +11190,7 @@ function followupRecommendationLabel(item) {
         <div class="rag-header-panel">
           <div>
             <h2>Kho kiến thức</h2>
-            <p>Nạp tài liệu sản phẩm, câu hỏi thường gặp và chính sách để trợ lý tra cứu khi trả lời khách. Tài liệu được lập chỉ mục, không dùng để tự huấn luyện mô hình.</p>
+            <p>Nạp tài liệu sản phẩm, câu hỏi thường gặp và chính sách để trợ lý tra cứu kho kiến thức khi trả lời khách. Tài liệu được lập chỉ mục, không dùng để tự huấn luyện mô hình.</p>
           </div>
           <div class="rag-stats">
             <div class="stat-card">
@@ -11451,7 +11591,8 @@ function followupRecommendationLabel(item) {
             </span>
           </div>
           <p class="settings-muted">Mỗi shop chỉ nhìn thấy mã kết nối, nhận sự kiện và lịch sử của chính shop đó. Dữ liệu không dùng chung giữa các không gian.</p>
-          <div v-if="quotaSnapshot?.resources?.connected_channels" class="channel-quota-note">Kênh đang dùng: <strong>{{ quotaSnapshot.resources.connected_channels.used }} / {{ quotaSnapshot.resources.connected_channels.limit ?? '∞' }}</strong> theo gói {{ quotaSnapshot.plan_name || 'hiện tại' }}.</div>
+          <div v-if="quotaSnapshot?.resources?.connected_channels" class="channel-quota-note">Kênh đang dùng: <strong>{{ channelCapacity.limit === null ? `${channelCapacity.used} / ∞` : `${channelCapacity.used} / ${channelCapacity.limit}` }}</strong> theo gói {{ quotaSnapshot.plan_name || 'hiện tại' }}.</div>
+          <div v-if="channelCapacity.blocked" class="channel-capacity-alert" role="status"><span>{{ channelCapacity.reason }}</span><button type="button" class="settings-refresh" @click="openServicePage">Nâng cấp gói</button></div>
         </div>
 
         <div v-if="authUser" class="channel-summary-grid channel-summary-grid-six">
@@ -11494,10 +11635,10 @@ function followupRecommendationLabel(item) {
             <span class="visually-hidden">Kết nối Telegram/Zalo · Quét QR để tạo bot · BotFather · Zalo Bot Manager</span>
             <template v-if="['meta', 'facebook', 'instagram'].includes(channelModalTab)">
               <div v-if="metaNotice" class="settings-notice team-error">{{ metaNotice }}</div>
-              <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked">Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Chọn và kích hoạt gói dịch vụ để tiếp tục.</div>
+              <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked"><span>{{ channelCapacity.reason }}</span><button type="button" class="settings-refresh" @click="openServicePageFromChannelLimit">Nâng cấp gói</button></div>
               <div class="meta-channel-grid">
-                <article class="meta-channel-card meta-facebook" :class="{ active: channelModalTab === 'facebook' }"><div><span class="channel-card-icon">f</span><h3>Facebook</h3><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected }">{{ metaStatus.connected ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Trang:</strong> {{ metaStatus.facebook_page_name || 'Đã kết nối' }}</div><div><strong>Mã trang:</strong> {{ metaStatus.facebook_page_id || '—' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading || demoChannelsLocked" @click="connectMeta">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : metaLoading ? 'Đang kết nối...' : 'Kết nối Facebook' }}</button></article>
-                <article class="meta-channel-card meta-instagram" :class="{ active: channelModalTab === 'instagram' }"><div><span class="channel-card-icon">◎</span><h3>Instagram</h3><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Tài khoản:</strong> {{ metaStatus.instagram_account_id || 'Chưa liên kết' }}</div><div><strong>Nhận tin:</strong> {{ metaStatus.subscription_status || 'Chưa kiểm tra' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading || demoChannelsLocked" @click="connectMeta">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : metaLoading ? 'Đang kết nối...' : 'Kết nối Instagram' }}</button></article>
+                <article class="meta-channel-card meta-facebook" :class="{ active: channelModalTab === 'facebook' }"><div><span class="channel-card-icon">f</span><h3>Facebook</h3><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected }">{{ metaStatus.connected ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Trang:</strong> {{ metaStatus.facebook_page_name || 'Đã kết nối' }}</div><div><strong>Mã trang:</strong> {{ metaStatus.facebook_page_id || '—' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading || demoChannelsLocked" @click="connectMeta">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : metaLoading ? 'Đang kết nối...' : 'Kết nối Facebook' }}</button></article>
+                <article class="meta-channel-card meta-instagram" :class="{ active: channelModalTab === 'instagram' }"><div><span class="channel-card-icon">◎</span><h3>Instagram</h3><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Tài khoản:</strong> {{ metaStatus.instagram_account_id || 'Chưa liên kết' }}</div><div><strong>Nhận tin:</strong> {{ metaStatus.subscription_status || 'Chưa kiểm tra' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading || demoChannelsLocked" @click="connectMeta">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : metaLoading ? 'Đang kết nối...' : 'Kết nối Instagram' }}</button></article>
               </div>
               <p class="settings-muted meta-oauth-note">Facebook và Instagram dùng chung một lần cấp quyền; CRM vẫn tách riêng dữ liệu và trạng thái hiển thị cho từng kênh.</p>
               <div v-if="metaStatus.connected" class="settings-actions"><button class="btn-meta-disconnect" type="button" :disabled="metaLoading" @click="disconnectMeta">Ngắt kết nối Facebook/Instagram</button></div>
@@ -11507,7 +11648,7 @@ function followupRecommendationLabel(item) {
               <div v-if="tiktokBridgeNotice" class="settings-notice">{{ tiktokBridgeNotice }}</div>
               <div class="bot-provider-heading"><span class="channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><div><h3>TikTok Bridge</h3><p>Nhận tin TikTok qua tệp bridge đang chạy trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: activeTikTokConnection }">{{ activeTikTokConnection ? 'ĐÃ BẬT BRIDGE' : 'CHƯA CẤU HÌNH' }}</span></div>
               <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 1 0-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></div><div><ol><li>Tải file ZIP TikTok đã cấu hình sẵn cho shop.</li><li>Giải nén rồi mở <code>SmartMerchantTikTok.exe</code>.</li><li>Ứng dụng tự lấy phiên TikTok và chuyển tin về CRM.</li></ol><p class="bot-connect-note">Cookie chỉ được đọc trên máy chạy ứng dụng và không gửi lên CRM. Không cần sao chép mã kết nối.</p></div></div>
-              <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="tiktokBotDownloadLoading || demoChannelsLocked" @click="downloadTikTokBot">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : tiktokBotDownloadLoading ? 'Đang chuẩn bị file ZIP...' : 'Tải file ZIP TikTok' }}</button><button class="secondary-btn" type="button" :disabled="tiktokBridgeLoading || demoChannelsLocked" @click="connectTikTokBridge">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : tiktokBridgeLoading ? 'Đang tạo...' : activeTikTokConnection ? 'Cấp lại cấu hình' : 'Tạo cấu hình' }}</button></div>
+              <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="tiktokBotDownloadLoading || demoChannelsLocked" @click="downloadTikTokBot">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : tiktokBotDownloadLoading ? 'Đang chuẩn bị file ZIP...' : 'Tải file ZIP TikTok' }}</button><button class="secondary-btn" type="button" :disabled="tiktokBridgeLoading || demoChannelsLocked" @click="connectTikTokBridge">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : tiktokBridgeLoading ? 'Đang tạo...' : activeTikTokConnection ? 'Cấp lại cấu hình' : 'Tạo cấu hình' }}</button></div>
               <div v-if="tiktokBridgeSecret" class="settings-notice tiktok-bridge-secret"><strong>Bridge đã được cấu hình tự động.</strong><small>Không cần sao chép mã. Nếu tải lại file, hệ thống sẽ cấp lại cấu hình mới.</small></div>
               <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === 'tiktok').length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'tiktok')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>TikTok bridge · {{ botConnectionStateLabel(connection.status) }}</small></div><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul>
               <div v-else class="settings-empty">Chưa có TikTok bridge nào.</div>
@@ -11517,8 +11658,8 @@ function followupRecommendationLabel(item) {
               <div v-if="botConnectionError" class="settings-notice team-error bot-connection-alert"><span>{{ botConnectionError }}</span><button type="button" class="settings-refresh" :disabled="botConnectionLoading" @click="fetchBotConnections">{{ botConnectionLoading ? 'Đang tải...' : 'Thử lại' }}</button></div><div v-if="botConnectionNotice" class="settings-notice">{{ botConnectionNotice }}</div>
               <div class="bot-provider-heading"><span class="channel-card-icon">{{ channelModalTab === 'zalo' ? 'Z' : '✈' }}</span><div><h3>{{ channelModalTab === 'zalo' ? 'Zalo Bot Creator' : 'Telegram BotFather' }}</h3><p>{{ channelModalTab === 'zalo' ? 'Kết nối Zalo Bot chính thức của shop.' : 'Kết nối kênh Telegram chính thức của shop.' }}</p></div><span class="connection-badge" :class="{ connected: activeBotConnections.some((item) => item.channel_type === channelModalTab) }">{{ activeBotConnections.some((item) => item.channel_type === channelModalTab) ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
               <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap"><img :src="botQrUrl(channelModalTab)" :alt="`Mã QR mở ${channelModalTab === 'zalo' ? 'Zalo Bot Creator' : 'Telegram BotFather'}`" loading="lazy" /></div><div><ol v-if="channelModalTab === 'telegram'"><li>Mở BotFather.</li><li>Gõ <code>/newbot</code> và tạo bot.</li><li>Sao chép mã bot gửi cho bạn.</li></ol><ol v-else><li>Mở Zalo Bot Manager và chọn Tạo bot.</li><li>Sao chép Bot Token được cấp sau khi tạo.</li><li>Dán Bot Token vào đây để CRM đăng ký webhook.</li></ol><a class="bot-guide-link" :href="botGuideUrl(channelModalTab)" target="_blank" rel="noreferrer">{{ channelModalTab === 'zalo' ? 'Mở hướng dẫn Zalo Bot' : 'Mở Telegram BotFather' }}</a></div></div>
-              <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked">Gói Demo 0 đồng chưa mở kết nối mạng xã hội. Chọn và kích hoạt gói dịch vụ để tiếp tục.</div>
-              <form class="bot-connect-form" @submit.prevent="connectBotChannel"><input type="hidden" v-model="botConnectionForm.channel_type" /><label class="bot-token-field">{{ channelModalTab === 'zalo' ? 'Bot Token Zalo' : 'Mã bot' }}<div class="bot-token-input-wrap"><input v-model="botConnectionForm.access_token" :type="botTokenVisible ? 'text' : 'password'" autocomplete="off" required :disabled="demoChannelsLocked" :placeholder="demoChannelsLocked ? 'Chọn gói dịch vụ để mở kết nối' : channelModalTab === 'zalo' ? 'Dán Bot Token Zalo tại đây' : 'Dán mã bot tại đây'" /><button type="button" class="token-visibility-btn" :disabled="demoChannelsLocked" @click="botTokenVisible = !botTokenVisible">{{ botTokenVisible ? 'Ẩn' : 'Hiện' }}</button></div></label><button class="primary-btn bot-connect-submit" type="submit" :disabled="botConnectionSaving || demoChannelsLocked">{{ demoChannelsLocked ? 'Chưa mở trong gói Demo' : botConnectionSaving ? 'Đang kiểm tra...' : 'Kiểm tra và kết nối' }}</button></form>
+              <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked"><span>{{ channelCapacity.reason }}</span><button type="button" class="settings-refresh" @click="openServicePageFromChannelLimit">Nâng cấp gói</button></div>
+              <form class="bot-connect-form" @submit.prevent="connectBotChannel"><input type="hidden" v-model="botConnectionForm.channel_type" /><label class="bot-token-field">{{ channelModalTab === 'zalo' ? 'Bot Token Zalo' : 'Mã bot' }}<div class="bot-token-input-wrap"><input v-model="botConnectionForm.access_token" :type="botTokenVisible ? 'text' : 'password'" autocomplete="off" required :disabled="demoChannelsLocked" :placeholder="demoChannelsLocked ? 'Nâng cấp gói để mở kết nối' : channelModalTab === 'zalo' ? 'Dán Bot Token Zalo tại đây' : 'Dán mã bot tại đây'" /><button type="button" class="token-visibility-btn" :disabled="demoChannelsLocked" @click="botTokenVisible = !botTokenVisible">{{ botTokenVisible ? 'Ẩn' : 'Hiện' }}</button></div></label><button class="primary-btn bot-connect-submit" type="submit" :disabled="botConnectionSaving || demoChannelsLocked">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : botConnectionSaving ? 'Đang kiểm tra...' : 'Kiểm tra và kết nối' }}</button></form>
               <p class="bot-connect-note">{{ channelModalTab === 'zalo' ? 'Bot Token được mã hóa khi lưu. Chỉ dùng tiền tố personal: nếu shop thực sự dùng bridge cá nhân.' : 'Mã kết nối chỉ dùng cho shop này và được lưu an toàn.' }}</p><div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === channelModalTab).length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === channelModalTab)" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ channelModalTab === 'zalo' ? 'Zalo Bot' : 'Telegram' }} · {{ botConnectionStateLabel(connection.status) }} · Nhận tin {{ connection.webhook_status === 'connected' ? 'hoạt động' : connection.webhook_status === 'disconnected' ? 'đã ngắt' : 'cần kiểm tra' }}</small></div><button v-if="['connected', 'active', 'verifying', 'reconnect_required', 'error'].includes(String(connection.status || '').toLowerCase())" type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có kết nối {{ channelModalTab === 'zalo' ? 'Zalo Bot' : 'Telegram' }} nào.</div>
             </template>
           </section>
@@ -11731,7 +11872,7 @@ function followupRecommendationLabel(item) {
           <div class="learning-options"><label class="checkbox-field"><input v-model="messageLearningEnabled" type="checkbox" /> Cho phép lưu tin nhắn đã chọn làm mẫu tham khảo</label><label class="checkbox-field"><input v-model="reinforcementLearningEnabled" type="checkbox" /> Cho phép ghi nhận đánh giá hữu ích / cần cải thiện</label></div>
           <p class="settings-muted">Các lựa chọn này được lưu trên thiết bị hiện tại. Phản hồi chỉ dùng để thống kê và chưa tự thay đổi câu trả lời của trợ lý. Dữ liệu trên máy chủ vẫn tách riêng theo từng shop.</p><div v-if="learningNotice" class="settings-notice" role="status">{{ learningNotice }}</div><button type="button" class="primary-btn" @click="saveLearningPreferences">Lưu tùy chọn trên thiết bị</button>
           <div class="learning-insights">
-            <div class="settings-card-header"><div><h3>Chủ đề khách thường hỏi</h3><p>Tổng hợp 30 ngày gần nhất theo các nhóm quy tắc có sẵn để gợi ý nội dung cần bổ sung. Đây chưa phải học không giám sát.</p></div><button type="button" class="settings-refresh" :disabled="learningSummaryLoading" @click="fetchLearningSummary">{{ learningSummaryLoading ? 'Đang tổng hợp...' : 'Làm mới' }}</button></div>
+            <div class="settings-card-header"><div><h3>Chủ đề khách thường hỏi</h3><p>Tổng hợp 30 ngày gần nhất theo các nhóm quy tắc có sẵn để gợi ý nội dung cần bổ sung. Đây chưa phải học không giám sát hoàn chỉnh.</p></div><button type="button" class="settings-refresh" :disabled="learningSummaryLoading" @click="fetchLearningSummary">{{ learningSummaryLoading ? 'Đang tổng hợp...' : 'Làm mới' }}</button></div>
             <div v-if="learningSummaryError" class="settings-notice team-error" role="alert">{{ learningSummaryError }}</div>
             <div v-if="learningSummary.topics?.length" class="learning-topic-grid">
               <div v-for="topic in learningSummary.topics.slice(0, 4)" :key="topic.key" class="learning-topic">
@@ -12056,6 +12197,11 @@ function followupRecommendationLabel(item) {
             <h2>Tạo không gian shop</h2>
             <p>Nhập email công việc để nhận mã OTP. Shop chỉ được tạo sau khi xác minh thành công.</p>
           </div>
+          <ol class="signup-stepper" aria-label="Tiến trình tạo shop">
+            <li :class="{ active: signupStep === 'details', complete: signupStep === 'otp' }"><span>1</span><div><strong>Thông tin shop</strong><small>Người đại diện, email và mật khẩu</small></div></li>
+            <li :class="{ active: signupStep === 'otp' }"><span>2</span><div><strong>Xác minh OTP</strong><small>Xác nhận email công việc</small></div></li>
+            <li><span>3</span><div><strong>Chọn gói</strong><small>Chọn dịch vụ sau khi shop được tạo</small></div></li>
+          </ol>
           <form class="login-form" @submit.prevent="handleSignupSubmit">
             <label>Người đại diện<input v-model="signupForm.owner_name" @input="invalidateSignupOtp" required minlength="2" maxlength="255" autocomplete="name" placeholder="Nguyễn Văn A" /></label>
             <label>Email công việc
