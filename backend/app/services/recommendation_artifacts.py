@@ -88,7 +88,7 @@ class RecommendationArtifactRegistry:
                     ),
                 }
             )
-        return {"root": str(self.root), "mode": mode, "artifacts": entries}
+        return {"mode": mode, "artifacts": entries}
 
     def require_demo_artifact(self, key: str) -> Path:
         mode = str(settings.RECOMMENDATION_ARTIFACT_MODE or "fallback").strip().lower()

@@ -33,9 +33,11 @@ docker compose --env-file .env.production -f docker-compose.production.yml up --
 docker compose --env-file .env.production -f docker-compose.production.yml ps
 ```
 
-Container backend tự chạy ba migration (`crm_chatbot`, `crm_platform`,
-`crm_tenant`) trước khi mở API. Wait cho tất cả dịch vụ đạt `healthy`, sau đó
-kiểm tra từ host:
+Container backend tự nâng cấp hai control database (`crm_chatbot`,
+`crm_platform`), rồi chạy `upgrade_active_tenants --apply` để nâng cấp độc lập
+từng schema shop đang hoạt động trước khi mở API. Shop mới tiếp tục được tạo và
+migrate tenant schema trong luồng provisioning. Chờ tất cả dịch vụ đạt
+`healthy`, sau đó kiểm tra từ host:
 
 ```powershell
 Invoke-WebRequest http://127.0.0.1:8080/ -UseBasicParsing

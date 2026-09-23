@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import require_write_access
+from app.auth.dependencies import require_admin_access, require_write_access
 from app.tenancy.crm_session import get_tenant_db
 from app.models.recommendation import RecommendationCustomerProfile, RecommendationTrainingRun
 from app.schemas.recommendation import (
@@ -43,7 +43,7 @@ def _raise_interaction_error(exc: RecommendationInteractionError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
-@router.get("/artifacts")
+@router.get("/artifacts", dependencies=[Depends(require_admin_access)])
 def artifacts_status():
     """Expose artifact discovery without loading untrusted checkpoints."""
     return recommendation_artifact_status()

@@ -146,6 +146,10 @@ jobs:
           ALLOWED_HOSTS=*
           EOF
           docker compose config --quiet
+          BACKEND_ENV_FILE=./backend/.env docker compose \
+            --env-file .env.production.example \
+            -f docker-compose.production.yml \
+            config --quiet
 
       - name: Start Compose stack
         run: docker compose up -d --build

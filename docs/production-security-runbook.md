@@ -87,7 +87,9 @@ alembic upgrade head
 alembic check
 ```
 
-The current head is `20260919_0043_signup_email_verification`. On PostgreSQL it enables
+The current CRM head is `20260922_0054_scale_plan_and_premium_price`; the
+platform head is `20260922_0014_scale_plan_and_premium_price`, and the tenant
+head is `20260923_0003_recommendations`. On PostgreSQL the CRM migration chain enables
 tenant RLS policies for applicable `business_id` tables. Application requests
 set a transaction-local `app.business_id`; platform-admin operations must use
 the explicit platform context. Do not run the application with a database role
