@@ -109,6 +109,46 @@ def _number(value):
     return integer if value == integer else float(value)
 
 
+def _record_plan_audit(
+    db: Session,
+    platform_db: Session,
+    actor: User,
+    *,
+    action: str,
+    plan: ServicePlan,
+) -> None:
+    """Write plan changes to the correct audit store.
+
+    Platform admins are intentionally not attached to a shop, so the legacy
+    tenant audit table cannot accept their ``NULL`` business id. Keep shop
+    admins on the existing audit path and use the control-plane audit table
+    for global plan changes.
+    """
+
+    metadata = {"code": plan.code, "status": plan.status, "legacy_actor_user_id": actor.id}
+    if actor.business_id is not None:
+        record_audit(
+            db,
+            business_id=actor.business_id,
+            user_id=actor.id,
+            action=action,
+            resource_type="service_plan",
+            resource_id=plan.id,
+            metadata=metadata,
+        )
+        return
+    platform_db.add(
+        PlatformAudit(
+            actor_user_id=None,
+            business_id=None,
+            action=action,
+            resource_type="service_plan",
+            resource_id=str(plan.id),
+            metadata_json=metadata,
+        )
+    )
+
+
 def _plan_for(db: Session, business_id: int) -> ServicePlan | None:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     return db.scalar(
@@ -300,6 +340,7 @@ def list_plans(
 def create_plan(
     payload: PlatformPlanCreate,
     db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
     actor: User = Depends(require_platform_admin),
 ):
     plan = ServicePlan(**payload.model_dump())
@@ -309,16 +350,10 @@ def create_plan(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Mã gói dịch vụ đã tồn tại.") from exc
-    record_audit(
-        db,
-        business_id=actor.business_id,
-        user_id=actor.id,
-        action="platform_plan_created",
-        resource_type="service_plan",
-        resource_id=plan.id,
-        metadata={"code": plan.code, "status": plan.status},
-    )
+    _record_plan_audit(db, platform_db, actor, action="platform_plan_created", plan=plan)
     db.commit()
+    if platform_db is not db:
+        platform_db.commit()
     db.refresh(plan)
     return plan
 
@@ -328,6 +363,7 @@ def update_plan(
     plan_id: int,
     payload: PlatformPlanCreate,
     db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
     actor: User = Depends(require_platform_admin),
 ):
     plan = db.get(ServicePlan, plan_id)
@@ -340,16 +376,10 @@ def update_plan(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Mã gói dịch vụ đã tồn tại.") from exc
-    record_audit(
-        db,
-        business_id=actor.business_id,
-        user_id=actor.id,
-        action="platform_plan_updated",
-        resource_type="service_plan",
-        resource_id=plan.id,
-        metadata={"code": plan.code, "status": plan.status},
-    )
+    _record_plan_audit(db, platform_db, actor, action="platform_plan_updated", plan=plan)
     db.commit()
+    if platform_db is not db:
+        platform_db.commit()
     db.refresh(plan)
     return plan
 
