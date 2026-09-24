@@ -5057,6 +5057,9 @@ async function loadPlatformShopDetails(shop) {
     const paymentsPayload = paymentsResponse.ok ? await paymentsResponse.json() : [];
     const usage = usageResponse.ok ? await usageResponse.json() : null;
     const payments = Array.isArray(paymentsPayload) ? paymentsPayload : paymentsPayload.items || [];
+    // A shop without a package is a valid state, not a failed detail load.
+    // The subscription endpoint returns 404 for that empty state.
+    const subscriptionMissing = subscriptionResponse.status === 404;
     platformShopDetails.value = {
       ...platformShopDetails.value,
       [shop.id]: {
@@ -5067,7 +5070,7 @@ async function loadPlatformShopDetails(shop) {
         subscription,
         payments,
         usage,
-        error: subscriptionResponse.ok && paymentsResponse.ok && usageResponse.ok
+        error: (subscriptionResponse.ok || subscriptionMissing) && paymentsResponse.ok && usageResponse.ok
           ? ""
           : "Một phần thông tin chi tiết chưa tải được. Hãy thử lại.",
       },
