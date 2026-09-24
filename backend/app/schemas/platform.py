@@ -180,10 +180,16 @@ class PlatformPaymentCreate(BaseModel):
     paid_at: datetime | None = None
 
 
-class PlatformPaymentOut(PlatformPaymentCreate):
+class PlatformPaymentOut(BaseModel):
     id: int
     business_id: int
+    subscription_id: int
+    amount: Decimal = Field(..., ge=0, max_digits=12, decimal_places=2)
+    currency: str
+    provider: str
     provider_transaction_id: str | None = None
+    status: Literal["pending", "paid", "failed", "refunded"]
+    paid_at: datetime | None = None
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
