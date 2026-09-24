@@ -502,6 +502,12 @@ class PlatformApiTests(unittest.TestCase):
         )
         self.assertEqual(409, blocked.status_code, blocked.text)
 
+        default_plan = self.client.get("/api/platform/plans", headers=headers)
+        default_id = next(item["id"] for item in default_plan.json() if item["code"] == "demo")
+        default_blocked = self.client.delete(f"/api/platform/plans/{default_id}", headers=headers)
+        self.assertEqual(409, default_blocked.status_code, default_blocked.text)
+        self.assertIn("mặc định", default_blocked.json()["detail"])
+
     def test_subscription_rejects_an_impossible_billing_period(self):
         token = self.login("platform-admin@test", "platform-password")
         headers = {"Authorization": f"Bearer {token}"}

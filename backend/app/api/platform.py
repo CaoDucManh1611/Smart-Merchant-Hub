@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.platform import require_platform_admin
-from app.database.bootstrap import ensure_default_plans
+from app.database.bootstrap import DEFAULT_PLANS, ensure_default_plans
 from app.db.dependencies import get_db
 from app.database.platform_session import get_platform_db
 from app.models.audit_log import AuditLog
@@ -394,6 +394,11 @@ def delete_plan(
     plan = db.get(ServicePlan, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="Gói dịch vụ không tồn tại.")
+    if plan.code in {item["code"] for item in DEFAULT_PLANS}:
+        raise HTTPException(
+            status_code=409,
+            detail="Không thể xóa gói mặc định. Hãy chuyển gói sang trạng thái Lưu trữ.",
+        )
     subscription_count = db.scalar(
         select(func.count(Subscription.id)).where(Subscription.plan_id == plan_id)
     ) or 0
