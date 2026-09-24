@@ -346,6 +346,7 @@ const platformShopNotice = ref("");
 const platformPlans = ref([]);
 const platformPlanEditingId = ref(null);
 const platformPlanSaving = ref(false);
+const platformPlanDeletingId = ref(null);
 const platformPlanNotice = ref("");
 const platformPlanForm = ref({
   code: "",
@@ -5277,6 +5278,29 @@ async function savePlatformPlan() {
     platformPlanNotice.value = friendlyErrorMessage(err, "Chưa thể lưu gói dịch vụ. Vui lòng thử lại sau.");
   } finally {
     platformPlanSaving.value = false;
+  }
+}
+
+async function deletePlatformPlan(plan) {
+  if (!plan?.id || platformPlanDeletingId.value) return;
+  const confirmed = await requestConfirmation(
+    `Xóa gói “${plan.name}”? Chỉ gói chưa từng được đăng ký mới có thể xóa.`,
+    { title: "Xóa gói dịch vụ", confirmLabel: "Xóa gói", tone: "danger" },
+  );
+  if (!confirmed) return;
+  platformPlanDeletingId.value = plan.id;
+  platformPlanNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/platform/plans/${plan.id}`, { method: "DELETE" });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    platformPlans.value = platformPlans.value.filter((item) => item.id !== plan.id);
+    if (platformPlanEditingId.value === plan.id) resetPlatformPlanForm();
+    platformPlanNotice.value = `Đã xóa gói ${plan.name}.`;
+  } catch (err) {
+    platformPlanNotice.value = friendlyErrorMessage(err, "Chưa thể xóa gói dịch vụ. Nếu gói đã có đăng ký, hãy chuyển sang Lưu trữ.");
+  } finally {
+    platformPlanDeletingId.value = null;
   }
 }
 
@@ -10471,7 +10495,7 @@ function followupRecommendationLabel(item) {
               <article v-for="plan in platformPlans" :key="plan.id" class="platform-plan-item">
                 <div><strong>{{ plan.name }}</strong><span>Gói CRM: {{ formatPlanPrice(plan.price, plan.billing_cycle) }}</span><small>Trợ lý chatbot: {{ formatPlanPrice(chatbotRentalPrice(plan), plan.billing_cycle) }}</small></div>
                 <span class="team-status" :class="{ inactive: plan.status !== 'active' }">{{ plan.status === 'active' ? 'Đang bán' : 'Lưu trữ' }}</span>
-                <button type="button" class="settings-refresh platform-plan-edit" @click="editPlatformPlan(plan)">Sửa giá</button>
+                <div class="platform-plan-actions"><button type="button" class="settings-refresh platform-plan-edit" :disabled="Boolean(platformPlanDeletingId)" @click="editPlatformPlan(plan)">Sửa giá</button><button type="button" class="platform-plan-delete" :disabled="Boolean(platformPlanDeletingId)" @click="deletePlatformPlan(plan)">{{ platformPlanDeletingId === plan.id ? 'Đang xóa...' : 'Xóa' }}</button></div>
                 <small v-if="plan.features && Object.keys(plan.features).length">{{ Object.keys(plan.features).slice(0, 3).join(' · ') }}</small>
               </article>
             </div>

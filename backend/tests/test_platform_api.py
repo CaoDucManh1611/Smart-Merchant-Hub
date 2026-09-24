@@ -465,6 +465,43 @@ class PlatformApiTests(unittest.TestCase):
             )
             self.assertIsNotNone(audit)
 
+    def test_platform_admin_can_delete_unused_plan_but_protect_used_plan(self):
+        token = self.login("platform-admin@test", "platform-password")
+        headers = {"Authorization": f"Bearer {token}"}
+        deletable = self.client.post(
+            "/api/platform/plans",
+            headers=headers,
+            json={"code": "deletable-plan", "name": "Deletable Plan", "price": "0"},
+        )
+        self.assertEqual(201, deletable.status_code, deletable.text)
+        deleted = self.client.delete(
+            f"/api/platform/plans/{deletable.json()['id']}",
+            headers=headers,
+        )
+        self.assertEqual(204, deleted.status_code, deleted.text)
+        listed = self.client.get("/api/platform/plans", headers=headers)
+        self.assertNotIn("deletable-plan", [item["code"] for item in listed.json()])
+
+        protected = self.client.post(
+            "/api/platform/plans",
+            headers=headers,
+            json={"code": "protected-delete-plan", "name": "Protected Delete Plan", "price": "100"},
+        )
+        self.assertEqual(201, protected.status_code, protected.text)
+        with Session(self.engine) as db:
+            db.add(Subscription(
+                business_id=self.business_id,
+                plan_id=protected.json()["id"],
+                service_type="package",
+                status="cancelled",
+            ))
+            db.commit()
+        blocked = self.client.delete(
+            f"/api/platform/plans/{protected.json()['id']}",
+            headers=headers,
+        )
+        self.assertEqual(409, blocked.status_code, blocked.text)
+
     def test_subscription_rejects_an_impossible_billing_period(self):
         token = self.login("platform-admin@test", "platform-password")
         headers = {"Authorization": f"Bearer {token}"}

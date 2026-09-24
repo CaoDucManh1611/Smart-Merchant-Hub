@@ -12,6 +12,8 @@ test("platform admin loads shop subscription, payment and quota details through 
   assert.match(appSource, /platform\/shops\/\$\{shop\.id\}\/payments/);
   assert.match(appSource, /platform\/shops\/\$\{shop\.id\}\/usage/);
   assert.match(appSource, /subscriptionResponse\.status === 404/);
+  assert.match(appSource, /platform\/plans\/\$\{plan\.id\}/);
+  assert.match(appSource, /deletePlatformPlan/);
   assert.match(templateSource, /Gói đang dùng/);
   assert.match(templateSource, /Trạng thái thanh toán/);
   assert.match(templateSource, /Dung lượng tra cứu/);
