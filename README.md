@@ -114,6 +114,27 @@ không đưa channel token ra trình duyệt. Nhân viên gửi media bằng
 `POST /api/conversations/{conversation_id}/send-media`. Xem chi tiết endpoint,
 giới hạn provider và lệnh kiểm thử trong [`backend/README.md`](backend/README.md).
 
+## 3.2 Bàn giao cho người khác chạy từ Git
+
+Branch bàn giao gồm toàn bộ frontend, backend, Docker Compose, migration và seed
+dữ liệu mặc định. Database không được commit kèm mật khẩu hoặc dữ liệu shop thật;
+PostgreSQL sẽ tự tạo ba database (`crm_chatbot`, `crm_platform`, `crm_tenant`)
+và backend tự chạy migration khi khởi động.
+
+Sau khi clone:
+
+```powershell
+copy .env.example .env
+# Đổi POSTGRES_PASSWORD và DATABASE_URL trong .env cho cùng một mật khẩu.
+copy backend\.env.example backend\.env
+docker compose up --build
+```
+
+Mở frontend tại `http://localhost:5173`, API tại `http://localhost:8000/docs`.
+Không copy các file `.env` thật, token kênh, cookie TikTok hoặc database dump lên
+Git. Nếu cần chuyển dữ liệu thật, dùng file dump riêng và khôi phục vào PostgreSQL
+sau khi các container đã khởi động.
+
 ## 4. Facebook Webhook
 
 Callback URL:
