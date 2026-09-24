@@ -16,7 +16,7 @@ from app.database.platform_session import get_platform_db
 from app.db.dependencies import get_db
 from app.main import app
 from app.models.audit_log import AuditLog
-from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.platform_control import PlatformAudit, PlatformProviderIncident
 from app.models.saas import PlatformMembership
 
@@ -210,6 +210,39 @@ class PlatformApiTests(unittest.TestCase):
         )
         self.assertEqual(200, replay.status_code, replay.text)
         self.assertEqual(payment.json()["id"], replay.json()["id"])
+
+    def test_platform_admin_can_list_zero_value_demo_payment(self):
+        with Session(self.engine) as db:
+            plan = ServicePlan(code="zero-payment-plan", name="Zero Payment Plan", price=Decimal("0"))
+            db.add(plan)
+            db.flush()
+            subscription = Subscription(
+                business_id=self.business_id,
+                plan_id=plan.id,
+                status="active",
+                service_type="package",
+            )
+            db.add(subscription)
+            db.flush()
+            db.add(Payment(
+                business_id=self.business_id,
+                subscription_id=subscription.id,
+                amount=Decimal("0"),
+                currency="VND",
+                provider="demo",
+                provider_transaction_id="demo-zero-payment",
+                status="paid",
+            ))
+            db.commit()
+
+        token = self.login("platform-admin@test", "platform-password")
+        response = self.client.get(
+            f"/api/platform/shops/{self.business_id}/payments",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        demo_payment = next(item for item in response.json() if item["provider_transaction_id"] == "demo-zero-payment")
+        self.assertEqual("0.00", demo_payment["amount"])
 
     def test_platform_admin_can_approve_or_reject_pending_subscription_requests(self):
         requested_at = datetime.now().replace(microsecond=0)
