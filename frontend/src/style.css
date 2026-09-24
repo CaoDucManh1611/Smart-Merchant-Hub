@@ -13129,6 +13129,14 @@ body.crm-dark .crm-app .product-status-saving { color: #b6c0c5 !important; }
 .platform-plan-item span,
 .platform-plan-item small { color: var(--owly-muted); font-size: .78rem; }
 .platform-plan-item small { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.platform-plan-actions { display: flex; align-items: flex-start; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.platform-plan-delete {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 34px;
+  padding: 7px 10px; border: 1px solid #efb8b4; border-radius: 8px;
+  color: #b51f38; background: transparent; font-size: .78rem; font-weight: 750;
+}
+.platform-plan-delete:hover:not(:disabled) { background: #fff0ee; }
+.platform-plan-delete:disabled { cursor: wait; opacity: .62; }
 .platform-plan-chip { color: var(--workspace-primary-dark); font-weight: 750; }
 .platform-schema-list { margin: 0; }
 .platform-schema-list li { align-items: center; }
@@ -13158,6 +13166,7 @@ body.crm-dark .crm-app .platform-alert-list li small { color: #b6c0c5 !important
 body.crm-dark .crm-app .platform-admin-metric-alert strong { color: #ffd0d5 !important; }
 body.crm-dark .crm-app .platform-plan-item { background: #252a2d !important; border-color: #394145 !important; }
 body.crm-dark .crm-app .platform-plan-chip { color: #d8ffff !important; }
+body.crm-dark .crm-app .platform-plan-delete { color: #ffb4bc; border-color: #8d4b55; }
 
 @media (max-width: 980px) {
   .platform-admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

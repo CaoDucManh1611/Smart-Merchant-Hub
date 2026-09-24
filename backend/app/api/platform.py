@@ -384,6 +384,32 @@ def update_plan(
     return plan
 
 
+@router.delete("/plans/{plan_id}", status_code=204)
+def delete_plan(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    actor: User = Depends(require_platform_admin),
+):
+    plan = db.get(ServicePlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Gói dịch vụ không tồn tại.")
+    subscription_count = db.scalar(
+        select(func.count(Subscription.id)).where(Subscription.plan_id == plan_id)
+    ) or 0
+    if subscription_count:
+        raise HTTPException(
+            status_code=409,
+            detail="Không thể xóa gói đã có đăng ký. Hãy chuyển gói sang trạng thái Lưu trữ.",
+        )
+    _record_plan_audit(db, platform_db, actor, action="platform_plan_deleted", plan=plan)
+    db.delete(plan)
+    db.commit()
+    if platform_db is not db:
+        platform_db.commit()
+    return Response(status_code=204)
+
+
 @router.get("/shops", response_model=PlatformShopListOut)
 def list_shops(
     db: Session = Depends(get_db),
