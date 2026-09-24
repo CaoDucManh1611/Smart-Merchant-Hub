@@ -17,7 +17,7 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models.audit_log import AuditLog
 from app.models.business import Business, ServicePlan, Subscription, User
-from app.models.platform_control import PlatformProviderIncident
+from app.models.platform_control import PlatformAudit, PlatformProviderIncident
 from app.models.saas import PlatformMembership
 
 
@@ -383,6 +383,54 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(200, listed.status_code, listed.text)
         persisted = next(item for item in listed.json() if item["id"] == created.json()["id"])
         self.assertEqual(650000, int(persisted["features"]["chatbot_rental_price"]))
+
+    def test_global_platform_admin_can_update_plan_without_shop_audit_fk(self):
+        with Session(self.engine) as db:
+            global_admin = User(
+                business_id=None,
+                full_name="Global Platform Admin",
+                email="global-platform-admin@test",
+                role="admin",
+                password_hash=hash_password("global-platform-password"),
+            )
+            db.add(global_admin)
+            db.flush()
+            db.add(PlatformMembership(user_id=global_admin.id))
+            db.commit()
+
+        login = self.client.post(
+            "/api/auth/login",
+            json={"email": "global-platform-admin@test", "password": "global-platform-password"},
+        )
+        self.assertEqual(200, login.status_code, login.text)
+        token = login.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        payload = {
+            "code": "global-platform-plan",
+            "name": "Global Platform Plan",
+            "price": "100000",
+            "features": {"chatbot_rental_price": 120000},
+        }
+        created = self.client.post("/api/platform/plans", headers=headers, json=payload)
+        self.assertEqual(201, created.status_code, created.text)
+
+        payload["price"] = "150000"
+        updated = self.client.patch(
+            f"/api/platform/plans/{created.json()['id']}",
+            headers=headers,
+            json=payload,
+        )
+        self.assertEqual(200, updated.status_code, updated.text)
+        self.assertEqual("150000.00", updated.json()["price"])
+
+        with Session(self.engine) as db:
+            audit = db.scalar(
+                select(PlatformAudit).where(
+                    PlatformAudit.action == "platform_plan_updated",
+                    PlatformAudit.resource_id == str(created.json()["id"]),
+                )
+            )
+            self.assertIsNotNone(audit)
 
     def test_subscription_rejects_an_impossible_billing_period(self):
         token = self.login("platform-admin@test", "platform-password")
