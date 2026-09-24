@@ -87,7 +87,17 @@ def provision_shop(
         if operation.business_id != business_id:
             raise ProvisioningValidationError("idempotency_key đã được dùng cho shop khác")
         registry = registry or _existing_registry(platform_db, operation.business_id)
-        if operation.state == "succeeded" and registry is not None:
+        # A previous run can commit the operation before the registry update
+        # (for example if the process is restarted between those writes).
+        # Only treat a successful idempotency key as terminal when the
+        # registry is usable too; otherwise replay the same key to reconcile
+        # the tenant and restore the active flag.
+        if (
+            operation.state == "succeeded"
+            and registry is not None
+            and registry.state == "active"
+            and registry.feature_enabled is True
+        ):
             return registry
     else:
         operation = ProvisioningOperation(

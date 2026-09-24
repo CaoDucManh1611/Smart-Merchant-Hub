@@ -110,11 +110,13 @@ def _bootstrap_development_saas() -> None:
                     )
                 )
                 repair_key = None
-                if registry is not None and registry.state == "active" and registry.feature_enabled:
-                    # A previous development run could mark provisioning as
-                    # successful before the tenant database was recreated.
-                    # Do not trust the platform flag alone: verify the
-                    # schema migration marker and repair a missing schema.
+                if registry is not None:
+                    # The schema marker is the source of truth during a
+                    # restart.  A previous interrupted bootstrap can leave
+                    # the registry flagged as ``provisioning`` even though
+                    # the tenant migration already reached the current head.
+                    # Restore the usable state without asking the shop to
+                    # purchase/approve its package again.
                     try:
                         with tenant_engine.connect() as tenant_connection:
                             tenant_revision = current_tenant_revision(
@@ -124,7 +126,21 @@ def _bootstrap_development_saas() -> None:
                     except Exception:
                         tenant_revision = None
                     if tenant_revision == TENANT_HEAD:
+                        if (
+                            registry.state != "active"
+                            or registry.feature_enabled is not True
+                            or registry.migration_error
+                        ):
+                            registry.state = "active"
+                            registry.feature_enabled = True
+                            registry.tenant_revision = TENANT_HEAD
+                            registry.migration_error = None
+                            platform_db.commit()
                         continue
+                    # A previous development run could mark provisioning as
+                    # successful before the tenant database was recreated.
+                    # Use a fresh repair key so a stale successful operation
+                    # cannot short-circuit the migration retry.
                     registry.state = "provisioning"
                     registry.feature_enabled = False
                     registry.migration_error = None

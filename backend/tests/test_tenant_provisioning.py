@@ -69,6 +69,31 @@ def test_failed_provisioning_is_retryable_and_never_drops_schema(monkeypatch):
         assert db.query(TenantRegistry).one().schema_name == "shop_8"
 
 
+def test_successful_operation_reconciles_a_stale_registry(monkeypatch):
+    engine = _engine()
+    calls = []
+
+    @contextmanager
+    def connect():
+        yield _Connection()
+
+    monkeypatch.setattr(provisioning, "upgrade_tenant_schema", lambda conn, schema: calls.append(schema) or "20260915_0001")
+    monkeypatch.setattr(provisioning, "current_tenant_revision", lambda conn, schema: "20260915_0001")
+    with Session(engine) as db:
+        db.add(PlatformBusiness(id=9, name="Stale", slug="stale-9"))
+        db.commit()
+        first = provisioning.provision_shop(db, business_id=9, idempotency_key="req-9", tenant_connect=connect)
+        first.state = "provisioning"
+        first.feature_enabled = False
+        db.commit()
+
+        repaired = provisioning.provision_shop(db, business_id=9, idempotency_key="req-9", tenant_connect=connect)
+
+        assert repaired.state == "active"
+        assert repaired.feature_enabled is True
+        assert calls == ["shop_9", "shop_9"]
+
+
 def test_provisioning_rejects_invalid_identity_and_cross_shop_idempotency_reuse(monkeypatch):
     engine = _engine()
 
