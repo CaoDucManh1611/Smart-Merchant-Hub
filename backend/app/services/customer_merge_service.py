@@ -438,6 +438,8 @@ def merge_customer(
             raise HTTPException(status_code=409, detail="Hai customer này đã được gộp.")
 
     before_counts = _counts(db, source)
+    survivor_custom_fields_before = dict(survivor.custom_fields or {})
+    merged_custom_fields = {**(source.custom_fields or {}), **survivor_custom_fields_before}
     track_models = {
         "conversations": Conversation,
         "notes": CustomerNote,
@@ -470,8 +472,11 @@ def merge_customer(
 
     identity_manifest = _reassign_identities(db, business_id, source.id, survivor.id)
     tag_manifest = _reassign_tags(db, business_id, source.id, survivor.id)
+    survivor.custom_fields = merged_custom_fields
     moved_records = {
         "survivor_existing": survivor_existing,
+        "survivor_custom_fields_before": survivor_custom_fields_before,
+        "survivor_custom_fields_after": merged_custom_fields,
         "moved": {
             "identities": identity_manifest["moved"],
             "tags": tag_manifest["moved"],
@@ -575,6 +580,9 @@ def _undo_is_safe(
 
     manifest = operation["moved_records"] or {}
     survivor_existing = manifest.get("survivor_existing", {})
+    expected_custom_fields = manifest.get("survivor_custom_fields_after")
+    if expected_custom_fields is not None and (survivor.custom_fields or {}) != expected_custom_fields:
+        raise HTTPException(status_code=409, detail="Không thể hoàn tác vì trường khách hàng đã được chỉnh sửa sau lần gộp.")
     moved = manifest.get("moved", {})
     models = {
         "conversations": Conversation,
@@ -690,6 +698,9 @@ def undo_customer_merge(
             customer_id=source.id,
             tag_id=int(tag_data["tag_id"]),
         ))
+
+    if "survivor_custom_fields_before" in manifest:
+        survivor.custom_fields = manifest["survivor_custom_fields_before"]
 
     source.status = "active"
     source.merged_into_customer_id = None

@@ -32,6 +32,7 @@ class PrivacyApiTests(unittest.TestCase):
                 email="private@example.test",
                 phone="0900000000",
                 address="Địa chỉ riêng",
+                custom_fields={"loyalty_id": "VIP-123"},
             )
             other = Customer(
                 business_id=two.id,
@@ -73,6 +74,7 @@ class PrivacyApiTests(unittest.TestCase):
         self.assertEqual(200, response.status_code, response.text)
         self.assertEqual("completed", response.json()["status"])
         self.assertEqual("Người Cần Xóa", response.json()["data"]["customers"][0]["name"])
+        self.assertEqual({"loyalty_id": "VIP-123"}, response.json()["data"]["customers"][0]["custom_fields"])
         self.assertNotIn("Other Tenant", str(response.json()))
         self.assertNotIn("password_hash", str(response.json()))
 
@@ -108,6 +110,7 @@ class PrivacyApiTests(unittest.TestCase):
             other = db.query(Customer).filter(Customer.business_id == self.other_business_id).one()
             self.assertEqual("deleted", customer.status)
             self.assertIsNone(customer.email)
+            self.assertEqual({}, customer.custom_fields)
             self.assertEqual("Other Tenant", other.name)
             logs = db.scalars(select(AuditLog).where(AuditLog.action == "privacy_delete")).all()
             self.assertTrue(logs)

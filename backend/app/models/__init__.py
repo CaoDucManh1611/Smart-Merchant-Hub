@@ -25,6 +25,7 @@ from app.models.recommendation import (
     RecommendationCustomerProfile, RecommendationTrainingRun,
 )
 from app.models.business_setting import BusinessSetting
+from app.models.crm_workspace_config import CrmWorkspaceConfig
 from app.models.oauth_state import OAuthState
 from app.models.channel_migration import ChannelMigrationAudit
 from app.models.conversation import Conversation
@@ -56,6 +57,7 @@ from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, Dat
 from app.models.platform_control import TenantRegistry, SupportGrant, ProvisioningOperation, TenantMigrationOperation, PlatformAudit, PlatformProviderIncident
 from app.models.channel_route import ChannelRoute
 from app.models.signup import SignupEmailChallenge
+from app.models.industry_modules import AppointmentService, Appointment, CommercialQuote, CommercialProject, CommercialInvoice, CommercialInvoicePayment
 
 __all__ = [
     "Customer",
@@ -148,4 +150,11 @@ __all__ = [
     "PlatformProviderIncident",
     "ChannelRoute",
     "SignupEmailChallenge",
+    "AppointmentService",
+    "Appointment",
+    "CommercialQuote",
+    "CommercialProject",
+    "CommercialInvoice",
+    "CommercialInvoicePayment",
+    "CrmWorkspaceConfig",
 ]

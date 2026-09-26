@@ -22,6 +22,9 @@ export function criticalConversationNotificationCounts(items = []) {
 
 export function notificationDestination(notification = {}) {
   const metadata = notification.metadata || {};
+  if (notification.kind === "appointment_reminder" && metadata.appointment_id) {
+    return { tab: "appointments", appointmentId: Number(metadata.appointment_id) };
+  }
   if (notification.kind === "new_message" && metadata.conversation_id) {
     return {
       tab: "inbox",

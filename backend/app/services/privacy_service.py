@@ -101,6 +101,7 @@ def export_customer_data(db: Session, business_id: int) -> tuple[dict, dict[str,
             "email": customer.email,
             "phone": customer.phone,
             "address": customer.address,
+            "custom_fields": customer.custom_fields or {},
             "channel": customer.channel,
             "external_user_id": customer.external_user_id,
             "identities": [
@@ -141,6 +142,7 @@ def _anonymize_customer(db: Session, customer: Customer, *, deleted: bool) -> di
     customer.email = None
     customer.phone = None
     customer.address = None
+    customer.custom_fields = {}
     customer.avatar_url = None
     customer.external_user_id = f"anon-{marker}"
     customer.status = "deleted" if deleted else "anonymized"

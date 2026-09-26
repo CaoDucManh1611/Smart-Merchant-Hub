@@ -5,6 +5,7 @@ services:
   db:
     build:
       context: ./docker/postgres
+    shm_size: 512mb
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-crm_chatbot}

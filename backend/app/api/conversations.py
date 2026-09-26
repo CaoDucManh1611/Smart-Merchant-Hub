@@ -3,6 +3,7 @@ import logging
 import mimetypes
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from io import BytesIO
 from pathlib import Path
@@ -21,7 +22,7 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from fastapi.concurrency import run_in_threadpool
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -200,6 +201,15 @@ class SendMediaRequest(
 
 class ConversationAssignmentRequest(BaseModel):
     assigned_user_id: int | None = None
+
+
+class BulkConversationAssignmentRequest(BaseModel):
+    conversation_ids: list[int] = Field(min_length=1, max_length=100)
+    assigned_user_id: int | None = None
+
+
+class ConversationOutcomeRequest(BaseModel):
+    outcome: Literal["resolved", "needs_human", "customer_unanswered"] | None
 
 
 # =========================================================
@@ -1536,6 +1546,7 @@ def get_conversations(
             cv.channel,
             cv.status,
             cv.bot_mode,
+            cv.resolution_outcome,
             cv.assigned_user_id,
             cv.created_at,
             cv.updated_at,
@@ -1754,6 +1765,39 @@ def mark_conversation_read(
     }
 
 
+@router.patch("/{conversation_id}/outcome", dependencies=[Depends(require_write_access)])
+def set_conversation_outcome(
+    conversation_id: int,
+    payload: ConversationOutcomeRequest,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == tenant.business_id,
+    ).first()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation không tồn tại.")
+
+    previous = conversation.resolution_outcome
+    if previous != payload.outcome:
+        conversation.resolution_outcome = payload.outcome
+        conversation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="conversation_outcome_recorded",
+            resource_type="conversation",
+            resource_id=conversation.id,
+            metadata={"from": previous, "to": payload.outcome},
+        )
+        db.commit()
+
+    return {"conversation_id": conversation.id, "resolution_outcome": conversation.resolution_outcome}
+
+
 @router.patch("/{conversation_id}/assignment", dependencies=[Depends(require_write_access)])
 def reassign_conversation(
     conversation_id: int,
@@ -1820,6 +1864,89 @@ def reassign_conversation(
         "conversation_id": conversation.id,
         "business_id": conversation.business_id,
         "assigned_user_id": conversation.assigned_user_id,
+    }
+
+
+@router.patch("/bulk-assignment", dependencies=[Depends(require_write_access)])
+def bulk_reassign_conversations(
+    payload: BulkConversationAssignmentRequest,
+    db: Session = Depends(get_tenant_db),
+    user_db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    conversation_ids = payload.conversation_ids
+    if any(conversation_id <= 0 for conversation_id in conversation_ids) or len(set(conversation_ids)) != len(conversation_ids):
+        raise HTTPException(status_code=422, detail="Danh sách hội thoại không hợp lệ hoặc bị trùng.")
+
+    if payload.assigned_user_id is not None:
+        assignee = user_db.query(User).filter(
+            User.id == payload.assigned_user_id,
+            User.business_id == tenant.business_id,
+            User.is_active.is_(True),
+        ).first()
+        if assignee is None:
+            raise HTTPException(status_code=404, detail="Nhân viên không thuộc business hoặc đã bị vô hiệu hóa.")
+
+    conversations = db.query(Conversation).filter(
+        Conversation.id.in_(conversation_ids),
+        Conversation.business_id == tenant.business_id,
+    ).with_for_update().all()
+    if len(conversations) != len(conversation_ids):
+        raise HTTPException(status_code=404, detail="Một hoặc nhiều hội thoại không tồn tại trong shop này.")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    active_assignments = db.query(ConversationAssignment).join(
+        Conversation,
+        Conversation.id == ConversationAssignment.conversation_id,
+    ).filter(
+        ConversationAssignment.conversation_id.in_(conversation_ids),
+        ConversationAssignment.unassigned_at.is_(None),
+        Conversation.business_id == tenant.business_id,
+    ).all()
+    assignments_by_conversation: dict[int, list[ConversationAssignment]] = {}
+    for assignment in active_assignments:
+        assignments_by_conversation.setdefault(assignment.conversation_id, []).append(assignment)
+
+    changed_count = 0
+    for conversation in conversations:
+        if conversation.assigned_user_id == payload.assigned_user_id:
+            continue
+        for assignment in assignments_by_conversation.get(conversation.id, []):
+            assignment.unassigned_at = now
+        if payload.assigned_user_id is not None:
+            db.add(ConversationAssignment(
+                conversation_id=conversation.id,
+                user_id=payload.assigned_user_id,
+                assigned_by=actor.id if actor else None,
+                assignment_type="manual",
+                assigned_at=now,
+            ))
+        previous_user_id = conversation.assigned_user_id
+        conversation.assigned_user_id = payload.assigned_user_id
+        conversation.updated_at = now
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="conversation_assignment",
+            resource_type="conversation",
+            resource_id=conversation.id,
+            metadata={
+                "previous_user_id": previous_user_id,
+                "assigned_user_id": payload.assigned_user_id,
+                "bulk": True,
+            },
+        )
+        changed_count += 1
+
+    db.commit()
+    return {
+        "changed_count": changed_count,
+        "items": [
+            {"conversation_id": conversation.id, "assigned_user_id": conversation.assigned_user_id}
+            for conversation in conversations
+        ],
     }
 
 

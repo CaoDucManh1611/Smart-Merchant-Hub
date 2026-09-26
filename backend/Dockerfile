@@ -25,4 +25,4 @@ RUN python scripts/generate_seed_dataset.py
 COPY app ./app
 COPY artifacts ./artifacts
 
-CMD ["sh", "-c", "python -m alembic -c alembic.ini upgrade head && python -m alembic -c alembic-platform.ini upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python -m alembic -c alembic.ini upgrade head && python -m alembic -c alembic-platform.ini upgrade head && python -m app.scripts.upgrade_active_tenants --apply && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

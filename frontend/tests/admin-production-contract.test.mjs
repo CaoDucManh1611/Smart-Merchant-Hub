@@ -14,6 +14,9 @@ test("platform admin loads shop subscription, payment and quota details through 
   assert.match(appSource, /subscriptionResponse\.status === 404/);
   assert.match(appSource, /platform\/plans\/\$\{plan\.id\}/);
   assert.match(appSource, /deletePlatformPlan/);
+  assert.match(appSource, /Tạo cấu hình trước/);
+  assert.match(appSource, /delivery: "url"/);
+  assert.match(appSource, /:href="tiktokBridgeDownloadUrl" download="SmartMerchantTikTok\.zip"/);
   assert.match(templateSource, /Gói đang dùng/);
   assert.match(templateSource, /Trạng thái thanh toán/);
   assert.match(templateSource, /Dung lượng tra cứu/);

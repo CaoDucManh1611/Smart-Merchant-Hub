@@ -74,3 +74,10 @@ test("notificationDestination sends a new customer message to its conversation",
     conversationId: 19,
   });
 });
+
+test("notificationDestination opens the appointment schedule for a reminder", () => {
+  assert.deepEqual(notificationDestination({
+    kind: "appointment_reminder",
+    metadata: { appointment_id: "31" },
+  }), { tab: "appointments", appointmentId: 31 });
+});

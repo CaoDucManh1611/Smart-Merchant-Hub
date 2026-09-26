@@ -7,6 +7,8 @@ import hmac
 import re
 import secrets
 
+from cryptography.fernet import InvalidToken
+
 from app.core.config import settings
 from app.services.channel_credentials import decrypt_token, encrypt_token
 
@@ -45,6 +47,32 @@ def decrypt_contact(kind: str, value_encrypted: str) -> str:
     """Decrypt a contact only for an already-authorized, tenant-scoped read."""
     value = decrypt_token(value_encrypted, _secret().decode("utf-8"))
     return normalize_contact(kind, value)
+
+
+def customer_email_for_delivery(db, *, business_id: int, customer_id: int) -> str | None:
+    """Read a tenant-owned email for a requested CRM delivery."""
+    from app.models.customer import Customer
+    from app.models.customer_collection import CustomerContact
+
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.business_id == business_id,
+    ).first()
+    if customer is None:
+        return None
+    if customer.email and "@" in customer.email:
+        return normalize_contact("email", customer.email)
+    contacts = db.query(CustomerContact).filter(
+        CustomerContact.business_id == business_id,
+        CustomerContact.customer_id == customer_id,
+        CustomerContact.kind == "email",
+    ).order_by(CustomerContact.is_primary.desc(), CustomerContact.id.asc()).all()
+    for contact in contacts:
+        try:
+            return decrypt_contact("email", contact.value_encrypted)
+        except (InvalidToken, ValueError, TypeError):
+            continue
+    return None
 
 
 def mask_contact(kind: str, value: str) -> str:

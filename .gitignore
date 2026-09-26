@@ -26,6 +26,7 @@ Thumbs.db
 # Runtime artifacts
 rag_runs.json
 ngrok.exe
+/build/
 
 # Database backups are deployment artifacts, never source-controlled.
 backups/

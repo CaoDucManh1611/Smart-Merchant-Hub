@@ -3,7 +3,9 @@ import hmac
 import io
 import json
 import logging
+import time
 from pathlib import Path
+from urllib.parse import quote
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -20,7 +22,7 @@ from app.models.platform_control import PlatformBusiness, TenantRegistry
 from app.services.message_service import process_and_save_message
 from app.services.message_service import normalize_message
 from app.services.realtime import manager
-from app.services.channel_credentials import decrypt_token
+from app.services.channel_credentials import decrypt_token, encrypt_token
 from app.auth.dependencies import require_admin_access
 from app.tenancy.schema import schema_name_for, validate_schema_name
 from app.tenancy.webhook import verify_tiktok_webhook_signature
@@ -159,16 +161,45 @@ def download_configured_tiktok_bot_file(
         if not expected_secret or not hmac.compare_digest(expected_secret, bridge_secret):
             raise HTTPException(status_code=401, detail="Mã bảo vệ TikTok bridge không đúng")
 
-    path = _tiktok_bot_path()
-    if path is None:
-        raise HTTPException(status_code=404, detail="Chưa có file tiktok_bot.py trên máy chủ")
-
     backend_url = str(payload.get("backend_url") or "").strip().rstrip("/")
     if not backend_url.startswith(("https://", "http://")):
         raise HTTPException(status_code=400, detail="Địa chỉ máy chủ TikTok không hợp lệ")
 
+    if str(payload.get("format") or "").strip().lower() == "exe" and payload.get("delivery") == "url":
+        download_payload = json.dumps(
+            {
+                "business_id": business_id,
+                "shop_slug": shop_slug,
+                "bridge_secret": bridge_secret,
+                "backend_url": backend_url,
+                "format": "exe",
+                "expires_at": int(time.time()) + 900,
+            },
+            separators=(",", ":"),
+        )
+        token = encrypt_token(download_payload, settings.CHANNEL_ENCRYPTION_KEY)
+        return {
+            "download_url": f"/api/channels/tiktok/bot-file/download?token={quote(token, safe='')}"
+        }
+
+    path = _tiktok_bot_path()
+    if path is None:
+        raise HTTPException(status_code=404, detail="Chưa có file tiktok_bot.py trên máy chủ")
+
     source = path.read_text(encoding="utf-8")
-    marker = "BASE=Path(__file__).resolve().parent\n"
+    # Keep the generated bridge compatible with both the current frozen-aware
+    # launcher and older source bundles that used a plain ``__file__`` base.
+    marker = next(
+        (
+            candidate
+            for candidate in (
+                "BASE=Path(sys.executable).resolve().parent if IS_FROZEN else Path(__file__).resolve().parent\n",
+                "BASE=Path(__file__).resolve().parent\n",
+            )
+            if candidate in source
+        ),
+        None,
+    )
     defaults = {
         "TIKTOK_BACKEND_URL": backend_url,
         "TIKTOK_SHOP_SLUG": shop_slug,
@@ -181,13 +212,18 @@ def download_configured_tiktok_bot_file(
         "for _key, _value in _EMBEDDED_CONFIG.items():\n"
         "    os.environ.setdefault(_key, _value)\n"
     )
-    if marker not in source:
+    if marker is None:
         raise HTTPException(status_code=500, detail="File TikTok bridge không đúng phiên bản")
     configured_source = source.replace(marker, marker + embedded, 1)
     if str(payload.get("format") or "").strip().lower() == "exe":
         exe_path = _tiktok_exe_path()
         if exe_path is None:
             raise HTTPException(status_code=404, detail="Chưa có bản SmartMerchantTikTok.exe trên máy chủ")
+        try:
+            if exe_path.stat().st_size <= 0:
+                raise HTTPException(status_code=503, detail="Bản SmartMerchantTikTok.exe trên máy chủ đang rỗng")
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Không thể đọc bản SmartMerchantTikTok.exe trên máy chủ") from exc
         archive = io.BytesIO()
         with ZipFile(archive, "w", compression=ZIP_DEFLATED) as package:
             package.write(exe_path, "SmartMerchantTikTok.exe")
@@ -209,16 +245,42 @@ def download_configured_tiktok_bot_file(
                 "Ung dung tu doc phien TikTok tren may nay va tu dong gui tin ve CRM.\n"
                 "Khong gui file tiktok_config.json cho nguoi khac.\n",
             )
+        archive_bytes = archive.getvalue()
+        if not archive_bytes:
+            raise HTTPException(status_code=503, detail="Không thể tạo file ZIP TikTok")
         return Response(
-            content=archive.getvalue(),
+            content=archive_bytes,
             media_type="application/zip",
-            headers={"Content-Disposition": 'attachment; filename="SmartMerchantTikTok.zip"'},
+            headers={
+                "Content-Disposition": 'attachment; filename="SmartMerchantTikTok.zip"',
+                "Cache-Control": "no-store",
+            },
         )
     return Response(
         content=configured_source.encode("utf-8"),
         media_type="text/x-python; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="tiktok_bot.py"'},
     )
+
+
+@bridge_router.get("/bot-file/download")
+def download_configured_tiktok_bot_file_by_token(
+    token: str,
+    platform_db: Session = Depends(get_platform_db),
+):
+    """Serve a short-lived native download URL for browsers that truncate Blob downloads."""
+
+    try:
+        raw_payload = decrypt_token(token, settings.CHANNEL_ENCRYPTION_KEY)
+        payload = json.loads(raw_payload)
+        if int(payload.get("expires_at", 0)) <= int(time.time()):
+            raise ValueError("expired")
+        payload.pop("expires_at", None)
+        payload.pop("delivery", None)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Liên kết tải file TikTok không hợp lệ hoặc đã hết hạn") from exc
+
+    return download_configured_tiktok_bot_file(payload, platform_db=platform_db, actor=None)
 
 
 def _bridge_message_id(payload: dict) -> str:

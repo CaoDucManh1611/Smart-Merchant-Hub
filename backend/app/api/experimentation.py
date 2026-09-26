@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,7 @@ from app.models.message import Message
 from app.models.audit_log import AuditLog
 from app.models.sales import Order
 from app.models.chatbot_followup import ChatbotFollowUp
+from app.models.ticket import Ticket
 from app.models.experimentation import (
     BanditDecision, BanditPolicy, BanditArmStat,
     Experiment,
@@ -86,6 +88,70 @@ def _json_number(value):
     return value
 
 
+def _conversation_outcome_summary(db: Session, business_id: int, conversation_ids: set[int]) -> dict[str, int]:
+    """Classify current CRM outcomes from closure, open handoffs, and reply age."""
+    outcomes = {"resolved": 0, "needs_human": 0, "customer_unanswered": 0, "in_progress": 0}
+    if not conversation_ids:
+        return outcomes
+    conversations = db.query(Conversation).filter(
+        Conversation.business_id == business_id,
+        Conversation.id.in_(conversation_ids),
+    ).all()
+    latest_message_ids = db.query(
+        Message.conversation_id.label("conversation_id"),
+        func.max(Message.id).label("message_id"),
+    ).filter(Message.conversation_id.in_(conversation_ids)).group_by(Message.conversation_id).subquery()
+    latest_messages = {
+        int(message.conversation_id): message
+        for message in db.query(Message).join(latest_message_ids, Message.id == latest_message_ids.c.message_id).all()
+    }
+    latest_ticket_ids = db.query(
+        Ticket.conversation_id.label("conversation_id"),
+        func.max(Ticket.id).label("ticket_id"),
+    ).filter(
+        Ticket.business_id == business_id,
+        Ticket.conversation_id.in_(conversation_ids),
+    ).group_by(Ticket.conversation_id).subquery()
+    latest_tickets = {
+        int(ticket.conversation_id): ticket.status
+        for ticket in db.query(Ticket).join(latest_ticket_ids, Ticket.id == latest_ticket_ids.c.ticket_id).all()
+    }
+    unanswered_before = _now() - timedelta(hours=24)
+    for conversation in conversations:
+        latest_message = latest_messages.get(int(conversation.id))
+        ticket_status = latest_tickets.get(int(conversation.id))
+        if conversation.status in {"closed", "resolved"} or ticket_status in {"resolved", "closed"}:
+            key = "resolved"
+        elif ticket_status in {"open", "pending"} or conversation.bot_mode == "human":
+            key = "needs_human"
+        elif (
+            conversation.status == "open"
+            and latest_message is not None
+            and latest_message.direction == "outbound"
+            and latest_message.received_at is not None
+            and latest_message.received_at <= unanswered_before
+        ):
+            key = "customer_unanswered"
+        else:
+            key = "in_progress"
+        outcomes[key] += 1
+    return outcomes
+
+
+def _confirmed_conversation_outcome_summary(db: Session, business_id: int, conversation_ids: set[int]) -> dict[str, int]:
+    outcomes = {"resolved": 0, "needs_human": 0, "customer_unanswered": 0}
+    if conversation_ids:
+        rows = db.query(Conversation.resolution_outcome).filter(
+            Conversation.business_id == business_id,
+            Conversation.id.in_(conversation_ids),
+        ).all()
+        for (outcome,) in rows:
+            if outcome in outcomes:
+                outcomes[outcome] += 1
+    outcomes["unclassified"] = max(0, len(conversation_ids) - sum(outcomes.values()))
+    return outcomes
+
+
 @router.get("/evaluation/dashboard")
 def evaluation_dashboard(
     days: int = 30,
@@ -123,24 +189,53 @@ def evaluation_dashboard(
     rag_by_status: dict[str, int] = {}
     for run in rag_runs:
         rag_by_status[run.status] = rag_by_status.get(run.status, 0) + 1
-    inbound_count = db.query(Message).join(Conversation, Conversation.id == Message.conversation_id).filter(
+    inbound_conversation_ids = {
+        conversation_id for (conversation_id,) in db.query(Message.conversation_id).join(Conversation, Conversation.id == Message.conversation_id).filter(
         Conversation.business_id == tenant.business_id,
         Message.direction == "inbound",
         Message.received_at >= since,
-    ).count()
+        ).distinct().all()
+    }
     bot_outbound_count = db.query(Message).join(Conversation, Conversation.id == Message.conversation_id).filter(
         Conversation.business_id == tenant.business_id,
         Message.direction == "outbound",
         Message.sender_type == "bot",
         Message.received_at >= since,
     ).count()
-    handoff_count = db.query(AuditLog).filter(
+    bot_conversation_ids = {
+        conversation_id for (conversation_id,) in db.query(Message.conversation_id).join(Conversation, Conversation.id == Message.conversation_id).filter(
+            Conversation.business_id == tenant.business_id,
+            Message.direction == "outbound",
+            Message.sender_type == "bot",
+            Message.received_at >= since,
+        ).distinct().all()
+    }
+    handoff_audits = db.query(AuditLog).filter(
         AuditLog.business_id == tenant.business_id,
         AuditLog.created_at >= since,
-        AuditLog.action.in_(
-            ("chatbot_escalated", "chatbot_human", "customer_order_hủy/hoàn", "customer_order_hoàn/đổi trả")
-        ),
-    ).count()
+        AuditLog.action.in_(("chatbot_handoff", "chatbot_escalated", "chatbot_human")),
+    ).all()
+    handoff_conversation_ids = set()
+    for audit in handoff_audits:
+        raw = audit.metadata_ if isinstance(audit.metadata_, dict) else {}
+        conversation_id = raw.get("conversation_id")
+        if conversation_id is None and audit.resource_type == "conversation":
+            conversation_id = audit.resource_id
+        try:
+            handoff_conversation_ids.add(int(conversation_id))
+        except (TypeError, ValueError):
+            continue
+    handoff_conversation_ids.intersection_update(inbound_conversation_ids)
+    inbound_count = len(inbound_conversation_ids)
+    handoff_count = len(handoff_conversation_ids)
+    bot_only_conversations = len((bot_conversation_ids & inbound_conversation_ids) - handoff_conversation_ids)
+    ai_touched_conversation_ids = (bot_conversation_ids | handoff_conversation_ids) & inbound_conversation_ids
+    outcome_summary = _conversation_outcome_summary(
+        db, tenant.business_id, inbound_conversation_ids,
+    )
+    confirmed_outcome_summary = _confirmed_conversation_outcome_summary(
+        db, tenant.business_id, ai_touched_conversation_ids,
+    )
     duplicate_reply_attempts = db.query(AuditLog).filter(
         AuditLog.business_id == tenant.business_id,
         AuditLog.created_at >= since,
@@ -203,6 +298,21 @@ def evaluation_dashboard(
             "handoff": {
                 "count": int(handoff_count),
                 "rate": round(handoff_count / inbound_count, 4) if inbound_count else 0.0,
+                "bot_only_count": bot_only_conversations,
+                "bot_only_rate": round(bot_only_conversations / inbound_count, 4) if inbound_count else 0.0,
+                "inbound_conversation_count": inbound_count,
+            },
+            "outcomes": {
+                **outcome_summary,
+                "classified": sum(outcome_summary[key] for key in ("resolved", "needs_human", "customer_unanswered")),
+                "inbound_conversation_count": inbound_count,
+                "unclassified": outcome_summary["in_progress"],
+                "unanswered_after_hours": 24,
+            },
+            "confirmed_outcomes": {
+                **confirmed_outcome_summary,
+                "tracked_conversation_count": len(ai_touched_conversation_ids),
+                "confirmed": sum(confirmed_outcome_summary[key] for key in ("resolved", "needs_human", "customer_unanswered")),
             },
             "reliability": {
                 "duplicate_reply_attempts": int(duplicate_reply_attempts),

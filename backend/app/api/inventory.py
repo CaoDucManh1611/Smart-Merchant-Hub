@@ -18,9 +18,10 @@ from app.schemas.inventory import (
 from app.services.audit_service import record_audit
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
+from app.tenancy.workspace_modules import require_module_enabled
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module_enabled("retail"))])
 
 
 def _balance(product: Product) -> InventoryBalanceOut:

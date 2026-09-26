@@ -11,7 +11,7 @@ from app.database.tenant_session import tenant_engine
 
 
 PLATFORM_HEAD = "20260922_0014"
-TENANT_HEAD = "20260923_0003"
+TENANT_HEAD = "20260926_0007"
 
 
 @dataclass(frozen=True)

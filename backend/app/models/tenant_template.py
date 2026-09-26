@@ -28,6 +28,7 @@ from app.models.customer_collection import (  # noqa: F401,E402
 from app.models.customer_360 import customer_merge_operations, customer_segments  # noqa: F401,E402
 from app.models.audit_log import AuditLog  # noqa: F401,E402
 from app.models.business_setting import BusinessSetting  # noqa: F401,E402
+from app.models.crm_workspace_config import CrmWorkspaceConfig  # noqa: F401,E402
 from app.models.channel import Channel, ChannelEvent  # noqa: F401,E402
 from app.models.conversation import Conversation  # noqa: F401,E402
 from app.models.message import Message  # noqa: F401,E402
@@ -68,6 +69,14 @@ from app.models.recommendation import (  # noqa: F401,E402
     RecommendationTrainingRun,
 )
 from app.models.saas import DataLifecycleRequest  # noqa: F401,E402
+from app.models.industry_modules import (  # noqa: F401,E402
+    AppointmentService,
+    Appointment,
+    CommercialQuote,
+    CommercialProject,
+    CommercialInvoice,
+    CommercialInvoicePayment,
+)
 
 
 def _base_table(name: str) -> Table:
@@ -115,7 +124,14 @@ TENANT_TABLE_NAMES = (
     "recommendation_customer_profiles",
     "recommendation_training_runs",
     "customer_product_interactions",
+    "appointment_services",
+    "appointments",
+    "commercial_quotes",
+    "commercial_projects",
+    "commercial_invoices",
+    "commercial_invoice_payments",
     "business_settings",
+    "crm_workspace_configs",
     "app_settings",
     "audit_logs",
     "data_lifecycle_requests",

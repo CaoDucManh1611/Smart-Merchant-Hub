@@ -48,6 +48,8 @@ Get-ChildItem $lttk -Recurse -File | Where-Object {
   --workpath $work `
   --specpath $work `
   --add-data "$bundle;lttk" `
+  --hidden-import sqlite3 `
+  --hidden-import _sqlite3 `
   --collect-submodules lttk `
   --collect-all qrcode `
   --collect-all websockets `

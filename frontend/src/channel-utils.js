@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 export const CHANNEL_LABELS = {
   facebook: "Facebook",
   instagram: "Instagram",
@@ -10,5 +12,5 @@ export const CHANNEL_LABELS = {
 
 export function channelLabel(channel) {
   const normalized = String(channel || "").toLowerCase();
-  return CHANNEL_LABELS[normalized] || (normalized ? normalized.toUpperCase() : "Kênh khác");
+  return CHANNEL_LABELS[normalized] || (normalized ? normalized.toUpperCase() : t("Kênh khác"));
 }

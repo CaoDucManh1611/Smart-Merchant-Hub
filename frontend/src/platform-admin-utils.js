@@ -1,3 +1,5 @@
+import { locale, t } from "./i18n.js";
+
 const asNumber = (value, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -16,7 +18,8 @@ export function subscriptionStatusMeta(status) {
     cancelled: { label: "Đã hủy", tone: "muted" },
     expired: { label: "Đã hết hạn", tone: "muted" },
   };
-  return states[value] || { label: status ? "Chưa xác định" : "Chưa có gói", tone: "muted" };
+  const meta = states[value] || { label: status ? "Chưa xác định" : "Chưa có gói", tone: "muted" };
+  return { ...meta, label: t(meta.label) };
 }
 
 export function paymentStatusMeta(status) {
@@ -29,7 +32,8 @@ export function paymentStatusMeta(status) {
     refunded: { label: "Đã hoàn tiền", tone: "muted" },
     cancelled: { label: "Đã hủy", tone: "muted" },
   };
-  return states[value] || { label: status ? "Chưa xác định" : "Chưa có thanh toán", tone: "muted" };
+  const meta = states[value] || { label: status ? "Chưa xác định" : "Chưa có thanh toán", tone: "muted" };
+  return { ...meta, label: t(meta.label) };
 }
 
 export function connectionStateMeta(status) {
@@ -42,7 +46,8 @@ export function connectionStateMeta(status) {
     error: { label: "Lỗi kết nối", tone: "danger" },
     disconnected: { label: "Đã ngắt", tone: "muted" },
   };
-  return states[value] || { label: "Chưa xác định", tone: "muted" };
+  const meta = states[value] || { label: "Chưa xác định", tone: "muted" };
+  return { ...meta, label: t(meta.label) };
 }
 
 export function latestPayment(payments) {
@@ -73,7 +78,7 @@ export function platformQuotaCards(quota) {
       : Math.max(0, Math.min(100, asNumber(resource.percent, limit > 0 ? (used / limit) * 100 : 100)));
     const exceeded = Boolean(resource.exceeded) || (limit !== null && used > limit);
     const nearLimit = !exceeded && (Boolean(resource.near_limit) || (limit !== null && limit > 0 && used / limit >= 0.8));
-    return { key, label, used, limit, percent, nearLimit, exceeded };
+    return { key, label: t(label), used, limit, percent, nearLimit, exceeded };
   });
 }
 
@@ -84,13 +89,17 @@ export function channelCapacityState(quotaSnapshot) {
   const planName = String(quotaSnapshot?.plan_name || quotaSnapshot?.plan_code || "gói hiện tại");
   const demoPlan = normalized(quotaSnapshot?.plan_code || quotaSnapshot?.plan_name) === "demo";
   const blocked = limit === 0 || (limit !== null && used >= limit);
+  const planLabel = t(planName);
+  const english = locale.value === "en";
 
   if (limit === 0 || demoPlan) {
     return {
       blocked: true,
       used,
       limit: 0,
-      reason: "Gói Demo chưa mở kết nối kênh. Hãy chọn hoặc nâng cấp gói để tiếp tục.",
+      reason: english
+        ? "The Demo plan does not include channel connections. Choose or upgrade a plan to continue."
+        : "Gói Demo chưa mở kết nối kênh. Hãy chọn hoặc nâng cấp gói để tiếp tục.",
     };
   }
   if (blocked) {
@@ -98,7 +107,9 @@ export function channelCapacityState(quotaSnapshot) {
       blocked: true,
       used,
       limit,
-      reason: `Đã dùng ${used}/${limit} kênh của gói ${planName}. Hãy nâng cấp gói hoặc ngắt một kênh đang dùng.`,
+      reason: english
+        ? `Using ${used}/${limit} channels on ${planLabel}. Upgrade your plan or disconnect a channel.`
+        : `Đã dùng ${used}/${limit} kênh của gói ${planName}. Hãy nâng cấp gói hoặc ngắt một kênh đang dùng.`,
     };
   }
   return {
@@ -106,7 +117,7 @@ export function channelCapacityState(quotaSnapshot) {
     used,
     limit,
     reason: limit === null
-      ? `Gói ${planName} không giới hạn số kênh kết nối.`
-      : `Đang dùng ${used}/${limit} kênh của gói ${planName}.`,
+      ? english ? `${planLabel} has no channel connection limit.` : `Gói ${planName} không giới hạn số kênh kết nối.`
+      : english ? `Using ${used}/${limit} channels on ${planLabel}.` : `Đang dùng ${used}/${limit} kênh của gói ${planName}.`,
   };
 }

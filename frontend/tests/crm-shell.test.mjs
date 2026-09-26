@@ -60,6 +60,15 @@ test("inbox starts compact and loads further conversation pages on scroll", () =
   assert.doesNotMatch(templateSource, /<details class="inbox-filter-disclosure" open>/);
 });
 
+test("inbox supports confirmed bulk assignment for selected conversations", () => {
+  assert.match(appSource, /\/conversations\/bulk-assignment/);
+  assert.match(appSource, /conversation_ids: conversationIds, assigned_user_id: assignedUserId/);
+  assert.match(templateSource, /class="inbox-bulk-toolbar"/);
+  assert.match(templateSource, /toggleBulkConversationSelection/);
+  assert.match(appSource, /Chỉ có thể phân công tối đa 100 hội thoại cùng lúc/);
+  assert.match(appSource, /requestConfirmation\([\s\S]*?Phân công các hội thoại đã chọn/);
+});
+
 test("inbox shows blue unread badges and red badges for urgent customer work", () => {
   assert.match(appSource, /criticalConversationNotificationCount/);
   assert.match(appSource, /pending_order_confirmation_count/);
@@ -116,10 +125,10 @@ test("customer avatars use the local API proxy and fall back when providers reje
 });
 
 test("CRM shell exposes the product's operational navigation", () => {
-  assert.match(appSource, />Hộp thư &amp; Khách hàng 360</);
-  assert.match(appSource, />Đơn bán</);
+  assert.match(appSource, /t\(["']Hộp thư & Khách hàng 360["']\)/);
+  assert.match(appSource, /t\(["']Đơn bán["']\)/);
   assert.doesNotMatch(appSource, />Đơn nhập</);
-  assert.match(appSource, />Báo cáo</);
+  assert.match(appSource, /t\(["']Báo cáo["']\)/);
   assert.match(appSource, /data-testid="crm-brand-mark"/);
 });
 
@@ -165,7 +174,7 @@ test("platform admins use a dedicated shop-administration shell, not CRM chrome"
   assert.match(templateSource, /<header v-if="authUser && !inPlatformAdminWorkspace" class="top">/);
   assert.match(templateSource, /v-if="authUser && !tenantReady && !inPlatformAdminWorkspace" class="tenant-provisioning-banner"/);
   assert.match(templateSource, /class="platform-workspace-header"/);
-  assert.match(templateSource, />Đăng xuất<\/button>/);
+  assert.match(templateSource, /t\('Đăng xuất'\)/);
   assert.match(styleSource, /\.crm-app\.platform-admin-workspace\s*\{/);
 });
 
@@ -184,8 +193,8 @@ test("operations navigation keeps only customer-facing processing modules", () =
   const operationsStart = appSource.indexOf('class="menu-group menu-group-operations"');
   const operationsEnd = appSource.indexOf('class="menu-group menu-group-ai"', operationsStart);
   const operationsNav = appSource.slice(operationsStart, operationsEnd);
-  assert.match(operationsNav, />Sản phẩm</);
-  assert.match(operationsNav, />Đơn bán</);
+  assert.match(operationsNav, /t\(["']Sản phẩm["']\)/);
+  assert.match(operationsNav, /t\(["']Đơn bán["']\)/);
   assert.doesNotMatch(operationsNav, /Đơn nhập|purchase-orders/);
   assert.doesNotMatch(operationsNav, /Tạo sản phẩm|Tạo đơn bán/);
 });
@@ -194,8 +203,8 @@ test("AI navigation keeps knowledge and workflow without assistant or rule lab s
   const aiStart = appSource.indexOf('class="menu-group menu-group-ai"');
   const aiEnd = appSource.indexOf('class="menu-group menu-group-insights"', aiStart);
   const aiNav = appSource.slice(aiStart, aiEnd);
-  assert.match(aiNav, />Kho kiến thức</);
-  assert.match(aiNav, />Quy trình</);
+  assert.match(aiNav, /t\(["']Kho kiến thức["']\)/);
+  assert.match(aiNav, /t\(["']Quy trình["']\)/);
   assert.doesNotMatch(aiNav, />AI Assistant</);
   assert.doesNotMatch(aiNav, />AI Rule Lab</);
 });
@@ -221,8 +230,8 @@ test("sidebar groups customer, operations, AI, and system navigation", () => {
   assert.match(appSource, /class="menu-group menu-group-insights"/);
   assert.match(appSource, /class="menu-group menu-group-system"/);
   assert.match(appSource, /class="menu-group-label"/);
-  assert.match(appSource, />Kiến thức &amp; tự động hóa</);
-  assert.match(appSource, />Phân tích</);
+  assert.match(appSource, /t\(["']Kiến thức & tự động hóa["']\)/);
+  assert.match(appSource, /t\(["']Phân tích["']\)/);
   assert.doesNotMatch(appSource, /<b>Customer 360<\/b>/);
 });
 
@@ -303,6 +312,13 @@ test("AI quality dashboard exposes handoff and duplicate reply signals", () => {
   assert.match(appSource, /Tỷ lệ chuyển nhân viên/);
   assert.match(appSource, /Phản hồi trùng/);
   assert.match(appSource, /Đơn chốt tự động/);
+});
+
+test("Inbox records staff-confirmed outcomes for chatbot conversations", () => {
+  assert.match(appSource, /selectedHasAiActivity/);
+  assert.match(appSource, /conversations\/\$\{conversation\.conversation_id\}\/outcome/);
+  assert.match(appSource, /confirmed_outcomes/);
+  assert.match(appSource, /Kết quả được nhân viên xác nhận/);
 });
 
 test("Team settings expose tenant-scoped permission overrides", () => {
@@ -398,7 +414,7 @@ test("P1 conversation revenue metrics are visible in the AI dashboard", () => {
   assert.match(appSource, /Doanh thu cứu lại/);
   assert.match(appSource, /recovered_revenue/);
   assert.match(appSource, /recovered_orders/);
-  assert.match(appSource, /Trợ lý tự xử lý/);
+  assert.match(appSource, /Bot phản hồi, chưa bàn giao/);
   assert.match(appSource, /bot_resolution_rate/);
 });
 
@@ -409,6 +425,14 @@ test("P2 workflow builder exposes durable trigger, action and run controls", () 
   assert.match(appSource, /toggleWorkflow/);
   assert.match(appSource, /Chạy lại/);
   assert.match(appSource, /Tạo quy trình/);
+});
+
+test("shops can configure customer fields and lead stages, and Customer 360 edits configured values", () => {
+  assert.match(appSource, /workspace\/crm-config/);
+  assert.match(appSource, /customer_fields: crmConfig\.value\.customer_fields/);
+  assert.match(appSource, /pipeline_stages: crmConfig\.value\.pipeline_stages/);
+  assert.match(appSource, /customers\/\$\{customerId\}\/custom-fields/);
+  assert.match(appSource, /v-for="stage in crmConfig\.pipeline_stages"/);
 });
 
 test("P2 logistics and payment history remain actionable in sales orders", () => {
@@ -453,8 +477,8 @@ test("AI navigation keeps knowledge and workflow under one group", () => {
   const navEnd = appSource.indexOf("</nav>", navStart);
   const navSource = appSource.slice(navStart, navEnd);
   assert.match(navSource, /class="ai-submenu"/);
-  assert.match(navSource, />Kho kiến thức</);
-  assert.match(navSource, />Quy trình</);
+  assert.match(navSource, /t\(["']Kho kiến thức["']\)/);
+  assert.match(navSource, /t\(["']Quy trình["']\)/);
   assert.doesNotMatch(navSource, />AI Rule Lab</);
   assert.doesNotMatch(navSource, />AI Assistant</);
   assert.match(styleSource, /\.menu-group-ai/);
@@ -636,7 +660,7 @@ test("CRM workspace header exposes logout independently of tenant readiness", ()
   assert.notEqual(headerEnd, -1);
   const crmHeader = templateSource.slice(headerStart, headerEnd);
   assert.match(crmHeader, /class="top-logout"/);
-  assert.match(crmHeader, /aria-label="Đăng xuất"/);
+  assert.match(crmHeader, /:aria-label="t\('Đăng xuất'\)"/);
   assert.match(crmHeader, /@click="logout"/);
 });
 
@@ -683,7 +707,8 @@ test("every rendered button declares a click handler or form behavior", () => {
 test("every directly referenced UI event handler exists", () => {
   const handlerPattern = /@(?:click|submit|change|keyup|keydown)(?:\.[\w]+)*\s*=\s*(["'])\s*([A-Za-z_][\w]*)\s*(?=\(|\1)/g;
   const handlers = new Set(Array.from(templateSource.matchAll(handlerPattern), (match) => match[2]));
-  const missing = Array.from(handlers).filter((handler) => !new RegExp(`\\b(?:async\\s+)?function\\s+${handler}\\s*\\(`).test(appSource));
+  const importedHandlers = new Set(["setUiLocale"]);
+  const missing = Array.from(handlers).filter((handler) => !importedHandlers.has(handler) && !new RegExp(`\\b(?:async\\s+)?function\\s+${handler}\\s*\\(`).test(appSource));
   assert.deepEqual(missing, []);
 });
 

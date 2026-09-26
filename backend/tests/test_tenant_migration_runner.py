@@ -35,14 +35,21 @@ def test_two_tenant_schemas_upgrade_independently_and_idempotently():
             repeated_revision = upgrade_tenant_schema(connection, schemas[0])
             connection.commit()
 
-            assert first_revision == second_revision == repeated_revision == "20260923_0003"
-            assert current_tenant_revision(connection, schemas[0]) == "20260923_0003"
-            assert current_tenant_revision(connection, schemas[1]) == "20260923_0003"
+            assert first_revision == second_revision == repeated_revision == "20260926_0007"
+            assert current_tenant_revision(connection, schemas[0]) == "20260926_0007"
+            assert current_tenant_revision(connection, schemas[1]) == "20260926_0007"
 
             inspector = inspect(connection)
             expected = set(TENANT_TABLE_NAMES) | {"alembic_version"}
+            expected |= {"appointment_services", "appointments", "commercial_quotes", "commercial_projects", "commercial_invoices", "commercial_invoice_payments"}
+            expected |= {"crm_workspace_configs"}
             assert expected <= set(inspector.get_table_names(schema=schemas[0]))
             assert expected <= set(inspector.get_table_names(schema=schemas[1]))
+            for schema in schemas:
+                customer_columns = {column["name"] for column in inspector.get_columns("customers", schema=schema)}
+                assert "custom_fields" in customer_columns
+                conversation_columns = {column["name"] for column in inspector.get_columns("conversations", schema=schema)}
+                assert "resolution_outcome" in conversation_columns
         finally:
             connection.rollback()
             for schema in schemas:

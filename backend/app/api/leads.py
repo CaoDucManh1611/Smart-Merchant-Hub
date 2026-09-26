@@ -24,7 +24,6 @@ from app.schemas.lead import (
     LeadUpdate,
     PipelineReportOut,
     PipelineStageItem,
-    PIPELINE_STAGES,
     LeadActivityCreate,
     LeadActivityListOut,
     LeadActivityOut,
@@ -35,14 +34,17 @@ from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.services.workflow_engine import emit_workflow_event
 from app.auth.dependencies import require_write_access
+from app.services.crm_workspace_config import get_crm_workspace_config
+from app.services.audit_service import record_audit
 
 
 router = APIRouter()
 
 
-def _validate_stage(stage: str | None) -> None:
-    if stage is not None and stage not in PIPELINE_STAGES:
-        raise HTTPException(status_code=422, detail=f"Stage không hợp lệ. Chọn một trong: {', '.join(PIPELINE_STAGES)}")
+def _validate_stage(db: Session, tenant: TenantContext, stage: str | None) -> None:
+    stages = [item["key"] for item in get_crm_workspace_config(db, tenant.business_id)["pipeline_stages"]]
+    if stage is not None and stage not in stages:
+        raise HTTPException(status_code=422, detail=f"Stage không hợp lệ. Chọn một trong: {', '.join(stages)}")
 
 
 def _get_customer(db: Session, customer_id: int, tenant: TenantContext) -> Customer:
@@ -122,7 +124,7 @@ def list_leads(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
-    _validate_stage(stage)
+    _validate_stage(db, tenant, stage)
     query = db.query(Lead).options(joinedload(Lead.customer)).filter(Lead.business_id == tenant.business_id)
     if stage:
         query = query.filter(Lead.stage == stage)
@@ -140,8 +142,9 @@ def create_lead(
     platform_db: Session = Depends(get_platform_db),
     user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
-    _validate_stage(payload.stage)
+    _validate_stage(db, tenant, payload.stage)
     customer = _get_customer(db, payload.customer_id, tenant)
     conversation = None
     if payload.conversation_id is not None:
@@ -163,7 +166,10 @@ def create_lead(
         metadata_=payload.metadata,
     )
     db.add(lead)
+    db.flush()
+    record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action="lead_created", resource_type="lead", resource_id=lead.id, metadata={"customer_id": lead.customer_id, "conversation_id": lead.conversation_id, "stage": lead.stage})
     db.commit()
+    db.refresh(lead)
     emit_workflow_event(
         db,
         tenant,
@@ -188,11 +194,12 @@ def update_lead(
     platform_db: Session = Depends(get_platform_db),
     user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
 ):
     lead = _get_lead(db, lead_id, tenant)
     previous_stage = lead.stage
     data = payload.model_dump(exclude_unset=True)
-    _validate_stage(data.get("stage"))
+    _validate_stage(db, tenant, data.get("stage"))
     customer_id = data.get("customer_id", lead.customer_id)
     _get_customer(db, customer_id, tenant)
     if customer_id != lead.customer_id and "conversation_id" not in data:
@@ -209,6 +216,8 @@ def update_lead(
         if field in {"title", "notes", "source_channel"} and isinstance(value, str):
             value = value.strip() or None
         setattr(lead, field, value)
+    if "stage" in data and data["stage"] != previous_stage:
+        record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action="lead_stage_changed", resource_type="lead", resource_id=lead.id, metadata={"customer_id": lead.customer_id, "conversation_id": lead.conversation_id, "from_stage": previous_stage, "to_stage": lead.stage})
     db.commit()
     if "stage" in data and data["stage"] != previous_stage:
         emit_workflow_event(

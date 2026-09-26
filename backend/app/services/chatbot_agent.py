@@ -19,6 +19,7 @@ from app.models.platform_control import PlatformUser
 from app.models.chatbot import ChatbotConfig
 from app.models.canned_response import CannedResponse
 from app.models.conversation import Conversation
+from app.models.audit_log import AuditLog
 from app.models.customer_fact import CustomerFact
 from app.models.crm_extended import ConversationAssignment, CustomerTag, Tag
 from app.models.message import Message
@@ -56,6 +57,17 @@ ESCALATION_TERMS = (
     "gặp nhân viên", "nhân viên", "khiếu nại", "hoàn tiền", "đổi trả",
     "hàng lỗi", "hàng bị lỗi", "bị hỏng", "không nhận được", "hỗ trợ gấp",
 )
+
+
+def _record_handoff(db: Session, business_id: int, conversation_id: int, *, reason_code: str, reason: str | None, ticket_id: int | None = None, source: str) -> None:
+    record_audit(
+        db,
+        business_id=business_id,
+        action="chatbot_handoff",
+        resource_type="conversation",
+        resource_id=conversation_id,
+        metadata={"conversation_id": conversation_id, "ticket_id": ticket_id, "reason_code": reason_code, "reason": str(reason or "")[:500], "source": source},
+    )
 
 
 def _is_neutral_policy_question(text: str | None) -> bool:
@@ -225,6 +237,8 @@ def route_escalation(
         Ticket.status.in_(("open", "pending")),
     ).order_by(Ticket.id.desc()).first()
     if existing:
+        if conversation.bot_mode != "human":
+            _record_handoff(db, business_id, conversation_id, reason_code="support_needed", reason=text, ticket_id=existing.id, source="automatic_escalation")
         conversation.bot_mode = "human"
         return existing
     assignee = _find_assignee(db, business_id, platform_db=platform_db)
@@ -289,6 +303,11 @@ def route_escalation(
     except Exception:
         # Notification persistence must never block the customer response.
         pass
+    _record_handoff(
+        db, business_id, conversation_id,
+        reason_code="customer_requested_staff" if "nhân viên" in text.casefold() else "support_needed",
+        reason=text, ticket_id=ticket.id, source="automatic_escalation",
+    )
     record_audit(db, business_id=business_id, action="chatbot_escalated", resource_type="ticket", resource_id=ticket.id, metadata={"conversation_id": conversation_id, "reason": text[:500]})
     return ticket
 
@@ -375,11 +394,14 @@ def execute_chatbot_tool(
         return {"tag": tag.name, "customer_id": conversation.customer_id}
     if tool_name == "chuyen_nhan_vien":
         conversation = _conversation(db, business_id, conversation_id)
+        was_auto = conversation.bot_mode != "human"
         assignee = _find_assignee(db, business_id, platform_db=platform_db)
         conversation.bot_mode = "human"
         if assignee:
             conversation.assigned_user_id = assignee.id
             db.add(ConversationAssignment(conversation_id=conversation.id, user_id=assignee.id, assignment_type="bot_tool"))
+        if was_auto:
+            _record_handoff(db, business_id, conversation_id, reason_code="bot_requested_staff", reason=args.get("reason") or "tool_call", source="chatbot_tool")
         record_audit(db, business_id=business_id, action="chatbot_human", resource_type="conversation", resource_id=conversation_id, metadata={"reason": args.get("reason") or "tool_call"})
         return {"bot_mode": "human", "assigned_user_id": assignee.id if assignee else None}
     if tool_name == "tao_ticket":
@@ -392,9 +414,23 @@ def execute_chatbot_tool(
         )
         if ticket is None:
             conversation = _conversation(db, business_id, conversation_id)
-            ticket = Ticket(business_id=business_id, customer_id=conversation.customer_id, conversation_id=conversation_id, title=str(args.get("title") or "Yêu cầu hỗ trợ"), description=str(args.get("description") or ""), priority=str(args.get("priority") or "normal"), status="open")
+            assignee = _find_assignee(db, business_id, platform_db=platform_db)
+            ticket = Ticket(
+                business_id=business_id, customer_id=conversation.customer_id, conversation_id=conversation_id,
+                title=str(args.get("title") or "Yêu cầu hỗ trợ"), description=str(args.get("description") or ""),
+                priority=str(args.get("priority") or "normal"), status="open",
+                assigned_user_id=assignee.id if assignee else None,
+            )
+            was_auto = conversation.bot_mode != "human"
+            conversation.bot_mode = "human"
+            if assignee:
+                conversation.assigned_user_id = assignee.id
+                db.add(ConversationAssignment(conversation_id=conversation.id, user_id=assignee.id, assignment_type="bot_tool"))
             db.add(ticket)
             db.flush()
+            db.add(TicketEvent(business_id=business_id, ticket_id=ticket.id, event_type="created", to_value=ticket.priority))
+            if was_auto:
+                _record_handoff(db, business_id, conversation_id, reason_code="ticket_created", reason=args.get("reason") or "tao_ticket", ticket_id=ticket.id, source="chatbot_tool")
         return {"ticket_id": ticket.id, "status": ticket.status, "priority": ticket.priority}
     if tool_name == "tao_don_nhap":
         conversation = _conversation(db, business_id, conversation_id)

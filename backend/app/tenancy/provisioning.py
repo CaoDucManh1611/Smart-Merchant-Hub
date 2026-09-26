@@ -129,7 +129,7 @@ def provision_shop(
     platform_db.flush()
     platform_db.commit()
 
-    connect = tenant_connect or (lambda: tenant_engine.connect())
+    connect = tenant_connect or (lambda: tenant_engine.begin())
     try:
         # Production always uses the explicitly configured tenant engine.
         connection_context = connect()

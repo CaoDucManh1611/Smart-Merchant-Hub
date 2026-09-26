@@ -640,6 +640,7 @@ def test_ai_evaluation_dashboard_reports_handoff_and_duplicate_attempts():
             business_id=business.id,
             customer_id=customer.id,
             channel="telegram",
+            resolution_outcome="resolved",
         )
         db.add(conversation)
         db.flush()
@@ -692,5 +693,13 @@ def test_ai_evaluation_dashboard_reports_handoff_and_duplicate_attempts():
         assert "duplicate_reply_attempts" in body["ai"]["reliability"]
         assert body["ai"]["handoff"]["count"] == 1
         assert body["ai"]["reliability"]["duplicate_reply_attempts"] == 1
+        assert body["ai"]["confirmed_outcomes"] == {
+            "resolved": 1,
+            "needs_human": 0,
+            "customer_unanswered": 0,
+            "unclassified": 0,
+            "tracked_conversation_count": 1,
+            "confirmed": 1,
+        }
     finally:
         app.dependency_overrides.clear()

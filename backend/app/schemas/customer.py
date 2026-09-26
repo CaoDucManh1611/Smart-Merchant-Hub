@@ -52,6 +52,7 @@ class CustomerProfileOut(BaseModel):
     email: str | None = None
     phone: str | None = None
     address: str | None = None
+    custom_fields: dict[str, Any] = Field(default_factory=dict)
     avatar_url: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

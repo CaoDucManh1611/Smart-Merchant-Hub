@@ -12,6 +12,15 @@ WORKFLOW_EVENTS = (
     "ticket.status_changed",
     "lead.stage_changed",
     "order.created",
+    "appointment.created",
+    "appointment.status_changed",
+    "quote.created",
+    "quote.status_changed",
+    "project.created",
+    "project.status_changed",
+    "invoice.created",
+    "invoice.status_changed",
+    "invoice.payment_recorded",
 )
 WORKFLOW_ACTIONS = ("create_ticket", "assign_user", "add_tag")
 

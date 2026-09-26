@@ -27,9 +27,10 @@ from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.auth.dependencies import require_write_access
 from app.services.audit_service import record_audit
+from app.tenancy.workspace_modules import require_module_enabled
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module_enabled("retail"))])
 
 PURCHASE_TRANSITIONS = {
     "draft": {"submitted", "cancelled"},

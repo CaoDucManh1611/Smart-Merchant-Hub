@@ -1277,6 +1277,9 @@ button {
   background: #fffaf8;
 }
 
+.conversation-outcome-control select { max-width: 158px; }
+.conversation-outcome-error { max-width: 158px; color: #b42318; font-size: 10px; }
+
 .chat-tools button {
   width: 38px;
   height: 38px;
@@ -6512,6 +6515,17 @@ body,
   box-shadow: 0 0 0 3px rgba(223, 119, 112, .12);
 }
 
+.inbox-saved-view-actions { display: flex; gap: 5px; margin-top: 6px; }
+.inbox-saved-view-actions input { flex: 1; min-width: 0; min-height: 32px; padding: 0 8px; border: 1px solid #efc8c0; border-radius: 8px; background: #fffaf8; font: inherit; font-size: .7rem; }
+.inbox-saved-view-actions button { padding: 0 8px; border: 1px solid #df7770; border-radius: 8px; color: #a33b3b; background: #fff0eb; font-size: .68rem; font-weight: 700; cursor: pointer; }
+.inbox-saved-view-actions .inbox-saved-view-delete { border-color: #efc8c0; background: transparent; }
+.inbox-saved-view-error,
+.inbox-saved-view-notice,
+.inbox-saved-view-scope { display: block; margin: 6px 0 0; font-size: .66rem; }
+.inbox-saved-view-scope { color: #a77c75; }
+.inbox-saved-view-error { color: #b42318; }
+.inbox-saved-view-notice { color: #087f5b; }
+
 .conversation-scroll {
   padding: 5px 9px 7px;
   border-top: 1px solid #f5e1dc;
@@ -7234,6 +7248,8 @@ body,
   .chat-shell .conversation-assignment select {
     max-width: 130px;
   }
+
+  .chat-shell .conversation-outcome-error { max-width: 130px; }
 
   .conversation-actions-popover {
     right: -4px;
@@ -11319,6 +11335,11 @@ body.crm-dark .inbox-search-box input,
 body.crm-dark .personal-filter-grid input,
 body.crm-dark .inbox-filter-panel select,
 body.crm-dark .segment-control select { color: #f3f5f6 !important; background: #1a1e20 !important; border-color: #4a555a !important; }
+body.crm-dark .inbox-saved-view-actions input { color: #f3f5f6; background: #1a1e20; border-color: #4a555a; }
+body.crm-dark .inbox-saved-view-actions button { color: #d8ffff; background: #173f43; border-color: #3c777a; }
+body.crm-dark .inbox-saved-view-error { color: #ff9c96; }
+body.crm-dark .inbox-saved-view-notice { color: #82d8b0; }
+body.crm-dark .inbox-saved-view-scope { color: #b6c0c5; }
 body.crm-dark .inbox-search-box > span,
 body.crm-dark .filter-panel-heading,
 body.crm-dark .filter-panel-heading button,
@@ -11350,6 +11371,7 @@ body.crm-dark .chat-person p,
 body.crm-dark .conversation-assignment { color: #b6c0c5 !important; }
 body.crm-dark .conversation-assignment select,
 body.crm-dark .chat-tools button { color: #e5eaec !important; background: #252a2d !important; border-color: #4a555a !important; }
+body.crm-dark .conversation-outcome-error { color: #ffaaa2 !important; }
 body.crm-dark .composer-tabs { border-color: #394145 !important; }
 body.crm-dark .composer-tabs button { color: #b6c0c5 !important; }
 body.crm-dark .composer-tabs button.active { color: #8bd8d7 !important; border-bottom-color: #39a7ad !important; }
@@ -14195,3 +14217,47 @@ body.crm-dark .channel-capacity-alert { color: #ffe3a5; border-color: #816725; b
   .signup-stepper { grid-template-columns: minmax(0, 1fr); }
   .platform-admin-panel { padding: 14px; }
 }
+
+.inbox-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 38px;
+  margin: 0 10px 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--owly-border);
+  border-radius: 9px;
+  background: var(--owly-surface, #fff);
+  font-size: .7rem;
+}
+.inbox-bulk-toolbar button,
+.inbox-bulk-toolbar select {
+  min-height: 28px;
+  border: 1px solid var(--owly-border);
+  border-radius: 7px;
+  color: var(--owly-ink);
+  background: var(--owly-surface, #fff);
+  font: inherit;
+}
+.inbox-bulk-toolbar button { padding: 3px 9px; cursor: pointer; }
+.inbox-bulk-toolbar button:disabled,
+.inbox-bulk-toolbar select:disabled { opacity: .55; cursor: not-allowed; }
+.inbox-bulk-toolbar .inbox-bulk-submit { color: #fff; border-color: var(--workspace-primary); background: var(--workspace-primary); font-weight: 750; }
+.inbox-bulk-toolbar select { min-width: 140px; max-width: 190px; padding: 3px 7px; }
+.inbox-select-visible { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.inbox-bulk-count { color: var(--owly-muted); font-weight: 750; }
+.inbox-bulk-error,
+.inbox-bulk-notice { flex: 1 0 100%; margin: 0; line-height: 1.35; }
+.inbox-bulk-error { color: #b42318; }
+.inbox-bulk-notice { color: #087f5b; }
+.conversation-row { display: flex; align-items: stretch; gap: 5px; margin: 2px 0; }
+.conversation-row .conversation { flex: 1; min-width: 0; margin: 0; }
+.conversation-select-checkbox { display: grid; flex: 0 0 27px; place-items: center; }
+.conversation-select-checkbox input,
+.inbox-select-visible input { accent-color: var(--workspace-primary); }
+body.crm-dark .inbox-bulk-toolbar,
+body.crm-dark .inbox-bulk-toolbar button,
+body.crm-dark .inbox-bulk-toolbar select { color: #e5eaec; border-color: #394145; background: #202427; }
+body.crm-dark .inbox-bulk-toolbar .inbox-bulk-submit { border-color: var(--workspace-primary); background: var(--workspace-primary); }
+body.crm-dark .inbox-bulk-notice { color: #82d8b0; }

@@ -5,6 +5,7 @@ import {
   onUnmounted,
   ref,
   nextTick,
+  watch,
 } from "vue";
 
 import "./style.css";
@@ -13,11 +14,14 @@ import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js"
 import { filterConversationsForCustomer } from "./ticket-utils.js";
 import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
 import { getInboxChannels } from "./inbox-utils.js";
+import { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxViews } from "./inbox-view-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
 import { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
 import { apiFetch } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
+import { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";
+import IndustryModules from "./IndustryModules.vue";
 import {
   channelCapacityState,
   connectionStateMeta,
@@ -64,6 +68,10 @@ const customer360 = ref(null);
 const customer360Loading = ref(false);
 const customer360Error = ref("");
 const customer360OverflowOpen = ref(false);
+const customerCustomFieldsDraft = ref({});
+const customerCustomFieldsSaving = ref(false);
+const customerCustomFieldsError = ref("");
+const customerCustomFieldsNotice = ref("");
 
 const customer360ContactGroups = computed(() => {
   const contacts = Array.isArray(customer360.value?.contacts) ? customer360.value.contacts : [];
@@ -103,6 +111,14 @@ const customerFactDraft = ref({
 });
 
 const selectedId = ref(null);
+const bulkSelectionMode = ref(false);
+const bulkSelectedConversationIds = ref(new Set());
+const bulkAssignmentTarget = ref("");
+const bulkAssignmentSaving = ref(false);
+const bulkAssignmentError = ref("");
+const bulkAssignmentNotice = ref("");
+const conversationOutcomeSaving = ref(false);
+const conversationOutcomeError = ref("");
 const conversationActionsOpen = ref(false);
 const conversationPriorityIds = ref(new Set());
 const conversationFavoriteIds = ref(new Set());
@@ -118,6 +134,12 @@ const inboxPersonalFilters = ref({ phone: "", email: "" });
 const tagCatalog = ref([]);
 const tagFilters = ref([]);
 const tagFilterMode = ref("all");
+const savedInboxViews = ref([]);
+const selectedSavedInboxViewId = ref("");
+const savedInboxViewName = ref("");
+const savedInboxViewNotice = ref("");
+const savedInboxViewError = ref("");
+const applyingSavedInboxView = ref(false);
 const savedSegments = ref([]);
 const selectedSegmentId = ref("");
 const segmentCustomerIds = ref(new Set());
@@ -327,6 +349,173 @@ const signupError = ref("");
 const signupNotice = ref("");
 const signupForm = ref({ owner_name: "", email: "", shop_name: "", password: "", otp: "" });
 const quotaSnapshot = ref(null);
+const workspaceConfig = ref({ business_type: "retail", enabled_modules: ["retail"], modules: [] });
+const workspaceConfigLoading = ref(false);
+const workspaceConfigSaving = ref(false);
+const workspaceConfigError = ref("");
+const workspaceConfigNotice = ref("");
+const canManageWorkspace = computed(() => ["owner", "admin"].includes(String(authUser.value?.role || "").toLowerCase()));
+const defaultCrmPipelineStages = [
+  { key: "new", label: "Mới" },
+  { key: "qualified", label: "Đã xác định nhu cầu" },
+  { key: "proposal", label: "Đã gửi đề xuất" },
+  { key: "won", label: "Đã chốt" },
+  { key: "lost", label: "Không thành công" },
+];
+const crmConfig = ref({ customer_fields: [], pipeline_stages: defaultCrmPipelineStages.map((item) => ({ ...item })) });
+const crmConfigLoading = ref(false);
+const crmConfigSaving = ref(false);
+const crmConfigError = ref("");
+const crmConfigNotice = ref("");
+const crmFieldDraft = ref({ key: "", label: "", type: "text", options: "" });
+const crmStageDraft = ref("");
+
+async function fetchCrmConfig() {
+  if (!authUser.value || !tenantReady.value) return;
+  crmConfigLoading.value = true;
+  crmConfigError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/workspace/crm-config`);
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    crmConfig.value = {
+      customer_fields: Array.isArray(detail.customer_fields) ? detail.customer_fields : [],
+      pipeline_stages: Array.isArray(detail.pipeline_stages) && detail.pipeline_stages.length
+        ? detail.pipeline_stages : defaultCrmPipelineStages.map((item) => ({ ...item })),
+    };
+  } catch (err) {
+    crmConfigError.value = friendlyErrorMessage(err, "Chưa tải được cấu hình trường và pipeline.");
+  } finally {
+    crmConfigLoading.value = false;
+  }
+}
+
+function addCrmCustomerField() {
+  const draft = crmFieldDraft.value;
+  const key = draft.key.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^[^a-z]+/, "");
+  const field = { key, label: draft.label.trim(), type: draft.type, options: draft.type === "select" ? draft.options.split(",").map((value) => value.trim()).filter(Boolean) : [] };
+  if (!field.key || !field.label || crmConfig.value.customer_fields.some((item) => item.key === field.key)) {
+    crmConfigError.value = "Nhập mã và tên trường hợp lệ, chưa được dùng.";
+    return;
+  }
+  crmConfig.value.customer_fields.push(field);
+  crmFieldDraft.value = { key: "", label: "", type: "text", options: "" };
+  crmConfigError.value = "";
+}
+
+function addCrmPipelineStage() {
+  const label = crmStageDraft.value.trim();
+  const base = label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 26);
+  if (!label || !base || crmConfig.value.pipeline_stages.length >= 20) return;
+  let key = base;
+  let suffix = 2;
+  while (crmConfig.value.pipeline_stages.some((item) => item.key === key)) key = `${base.slice(0, 27 - String(suffix).length)}_${suffix++}`;
+  crmConfig.value.pipeline_stages.push({ key, label });
+  crmStageDraft.value = "";
+}
+
+async function saveCrmConfig() {
+  if (!canManageWorkspace.value) return;
+  crmConfigSaving.value = true;
+  crmConfigError.value = "";
+  crmConfigNotice.value = "";
+  try {
+    const payload = {
+      customer_fields: crmConfig.value.customer_fields.map(({ key, label, type, options }) => ({ key, label, type, options: type === "select" ? options || [] : [] })),
+      pipeline_stages: crmConfig.value.pipeline_stages,
+    };
+    const response = await apiFetch(`${API_BASE}/workspace/crm-config`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    crmConfig.value = detail;
+    crmConfigNotice.value = "Đã lưu trường khách hàng và pipeline cho shop.";
+  } catch (err) {
+    crmConfigError.value = friendlyErrorMessage(err, "Chưa lưu được cấu hình quản lý khách hàng.");
+  } finally {
+    crmConfigSaving.value = false;
+  }
+}
+
+async function saveCustomerCustomFields() {
+  const customerId = customer360.value?.id;
+  if (!customerId || customerCustomFieldsSaving.value) return;
+  customerCustomFieldsSaving.value = true;
+  customerCustomFieldsError.value = "";
+  customerCustomFieldsNotice.value = "";
+  const values = Object.fromEntries(Object.entries(customerCustomFieldsDraft.value).filter(([key, value]) => (
+    crmConfig.value.customer_fields.some((field) => field.key === key) && value !== "" && value !== null && value !== undefined
+  )));
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/custom-fields`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    customerCustomFieldsDraft.value = detail.custom_fields || {};
+    customer360.value = { ...customer360.value, custom_fields: detail.custom_fields || {} };
+    customerCustomFieldsNotice.value = "Đã lưu thông tin bổ sung.";
+  } catch (err) {
+    customerCustomFieldsError.value = friendlyErrorMessage(err, "Chưa lưu được thông tin bổ sung.");
+  } finally {
+    customerCustomFieldsSaving.value = false;
+  }
+}
+
+function workspaceModuleEnabled(module) {
+  return workspaceConfig.value.enabled_modules.includes(module);
+}
+
+async function fetchWorkspaceConfig() {
+  if (!authUser.value || !tenantReady.value) return;
+  workspaceConfigLoading.value = true;
+  workspaceConfigError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/workspace/modules`);
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    workspaceConfig.value = {
+      business_type: detail.business_type || "retail",
+      enabled_modules: Array.isArray(detail.enabled_modules) ? detail.enabled_modules : ["retail"],
+      modules: Array.isArray(detail.modules) ? detail.modules : [],
+    };
+  } catch (err) {
+    workspaceConfigError.value = friendlyErrorMessage(err, "Chưa tải được mô hình shop.");
+  } finally {
+    workspaceConfigLoading.value = false;
+  }
+}
+
+async function saveWorkspaceConfig() {
+  if (!canManageWorkspace.value) return;
+  workspaceConfigSaving.value = true;
+  workspaceConfigError.value = "";
+  workspaceConfigNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/workspace/modules`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        business_type: workspaceConfig.value.business_type,
+        enabled_modules: workspaceConfig.value.enabled_modules,
+      }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    workspaceConfig.value = { ...workspaceConfig.value, ...detail };
+    workspaceConfigNotice.value = "Đã lưu mô hình và module cho shop. Dữ liệu cũ vẫn được giữ nguyên.";
+    if ((["appointments"].includes(currentTab.value) && !workspaceModuleEnabled("appointments"))
+      || (["commercial"].includes(currentTab.value) && !workspaceModuleEnabled("projects"))
+      || (!workspaceModuleEnabled("retail") && ["products", "orders", "purchase-orders"].includes(currentTab.value))) {
+      currentTab.value = "inbox";
+    }
+  } catch (err) {
+    workspaceConfigError.value = friendlyErrorMessage(err, "Chưa lưu được cấu hình mô hình shop.");
+  } finally {
+    workspaceConfigSaving.value = false;
+  }
+}
 const quotaLoading = ref(false);
 const quotaError = ref("");
 const serviceAccountSummary = ref(null);
@@ -717,8 +906,8 @@ const tiktokBridgeSecret = ref("");
 const tiktokBridgeEndpoint = ref("");
 const tiktokBridgeBackendUrl = ref("");
 const tiktokBridgeShopSlug = ref("");
+const tiktokBridgeDownloadUrl = ref("");
 const tiktokBridgeLoading = ref(false);
-const tiktokBotDownloadLoading = ref(false);
 const tiktokBridgeError = ref("");
 const tiktokBridgeNotice = ref("");
 const notificationError = ref("");
@@ -966,6 +1155,7 @@ function openSettings() {
   currentTab.value = "settings";
   if (!authUser.value) return;
   void fetchSecuritySettings();
+  void fetchWorkspaceConfig();
   if (!tenantReady.value) return;
   void fetchTeam();
   void fetchAuditLogs();
@@ -1196,7 +1386,7 @@ function chatbotRentalPrice(plan) {
 
 function formatPlanPrice(value, billingCycle = "monthly") {
   const cycle = billingCycle === "yearly" ? "năm" : billingCycle === "one_time" ? "lần" : "tháng";
-  return `${numericPlanPrice(value).toLocaleString("vi-VN")}đ / ${cycle}`;
+  return `${formatMoney(numericPlanPrice(value))} / ${t(cycle)}`;
 }
 
 function preferredServicePlanCode() {
@@ -1354,11 +1544,11 @@ function servicePlanCodeForPurchase(code) {
 }
 
 function subscriptionStatusLabel(status) {
-  if (status === "active") return "Đang hoạt động";
-  if (status === "pending") return "Đang chờ quản trị viên duyệt";
-  if (status === "cancelled") return "Yêu cầu đã bị từ chối hoặc hủy";
-  if (status === "expired") return "Đã hết hiệu lực";
-  return "Chưa kích hoạt";
+  if (status === "active") return t("Đang hoạt động");
+  if (status === "pending") return t("Đang chờ quản trị viên duyệt");
+  if (status === "cancelled") return t("Yêu cầu đã bị từ chối hoặc hủy");
+  if (status === "expired") return t("Đã hết hiệu lực");
+  return t("Chưa kích hoạt");
 }
 
 async function purchaseServicePlan() {
@@ -1392,8 +1582,8 @@ async function purchaseServicePlan() {
     servicePurchaseStatus.value = String(detail.status || "");
     if (detail.status === "pending") {
       servicePurchaseNotice.value = serviceMode.value === "chatbot"
-        ? `Đã gửi yêu cầu thuê trợ lý ${detail.plan_name || planCode}. Shop sẽ mở CRM sau khi quản trị viên duyệt và không gian dữ liệu được chuẩn bị.`
-        : `Đã gửi yêu cầu thuê gói ${detail.plan_name || planCode}. Yêu cầu đang chờ quản trị viên duyệt và CRM sẽ mở sau khi dữ liệu riêng được chuẩn bị.`;
+        ? `Đã gửi yêu cầu thuê trợ lý ${detail.plan_name || planCode}. Shop sẽ mở không gian làm việc sau khi quản trị viên duyệt và dữ liệu được chuẩn bị.`
+        : `Đã gửi yêu cầu thuê gói ${detail.plan_name || planCode}. Yêu cầu đang chờ quản trị viên duyệt và không gian làm việc sẽ mở sau khi dữ liệu riêng được chuẩn bị.`;
       await Promise.all([fetchServiceAccountSummary(), fetchTenantProvisioning()]);
     } else {
       servicePurchaseNotice.value = `Đã kích hoạt gói ${detail.plan_name || planCode}. Shop có thể kết nối kênh và thêm nhân viên theo hạn mức.`;
@@ -1593,12 +1783,16 @@ async function activateNotification(notification) {
   }
   const destination = notificationDestination(notification);
   notificationsOpen.value = false;
-  currentTab.value = destination.tab;
+  currentTab.value = destination.tab === "appointments" && !workspaceModuleEnabled("appointments")
+    ? "settings"
+    : destination.tab;
   if (destination.tab === "orders") {
     await Promise.all([fetchOrderCustomers(), fetchProducts(), fetchOrders()]);
   } else if (destination.tab === "inbox") {
     await loadConversations(false);
     if (destination.conversationId) await selectConversation(destination.conversationId);
+  } else if (destination.tab === "appointments") {
+    // The appointments pane loads the shop calendar when mounted.
   } else {
     await Promise.all([fetchOrderCustomers(), fetchTickets()]);
   }
@@ -1902,6 +2096,11 @@ const selectedBotMode = computed(() => (
     ? botModes.value[selected.value.conversation_id] || selected.value.bot_mode || "auto"
     : "auto"
 ));
+const selectedHasAiActivity = computed(() => Boolean(selected.value && (
+  selectedBotMode.value === "human"
+  || selected.value.resolution_outcome
+  || messages.value.some((message) => message.direction === "outbound" && message.sender_type === "bot")
+)));
 
 // The inbox stays visible to every employee in the shop. Assignment is about
 // accountability for customer-facing replies: once a conversation has an
@@ -2058,18 +2257,11 @@ function salesOrderStatusLabel(status) {
     refunded: "Đã hoàn tiền",
     cancelled: "Đã hủy",
   };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function leadStageLabel(stage) {
-  const labels = {
-    new: "Mới",
-    qualified: "Đã xác định nhu cầu",
-    proposal: "Đã gửi đề xuất",
-    won: "Đã chốt",
-    lost: "Không thành công",
-  };
-  return labels[stage] || stage || "Chưa rõ";
+  return crmConfig.value.pipeline_stages.find((item) => item.key === stage)?.label || stage || "Chưa rõ";
 }
 
 function ticketStatusLabel(status) {
@@ -2079,12 +2271,12 @@ function ticketStatusLabel(status) {
     resolved: "Đã xử lý",
     closed: "Đã đóng",
   };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function ticketPriorityLabel(priority) {
   const labels = { low: "Thấp", normal: "Bình thường", high: "Cao", urgent: "Khẩn cấp" };
-  return labels[priority] || priority || "Bình thường";
+  return t(labels[priority] || priority || "Bình thường");
 }
 
 function purchaseStatusLabel(status) {
@@ -2096,12 +2288,12 @@ function purchaseStatusLabel(status) {
     closed: "Đã hoàn tất",
     cancelled: "Đã hủy",
   };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function paymentStatusLabel(status) {
   const labels = { unpaid: "Chưa thanh toán", partially_paid: "Thanh toán một phần", paid: "Đã thanh toán", refunded: "Đã hoàn tiền" };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function shippingStatusLabel(status) {
@@ -2112,37 +2304,37 @@ function shippingStatusLabel(status) {
     failed: "Giao thất bại",
     returned: "Đã hoàn",
   };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function modelStatusLabel(status) {
   const labels = { draft: "Bản nháp", training: "Đang huấn luyện", ready: "Sẵn sàng", failed: "Lỗi" };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function experimentStatusLabel(status) {
   const labels = { draft: "Bản nháp", running: "Đang chạy", paused: "Tạm dừng", completed: "Đã hoàn tất", archived: "Đã lưu trữ" };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function policyStatusLabel(status) {
   const labels = { active: "Đang dùng", paused: "Tạm dừng", archived: "Đã lưu trữ" };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function documentEmbeddingStatusLabel(status) {
   const labels = { pending: "Chờ xử lý", processing: "Đang xử lý", ready: "Sẵn sàng", completed: "Đã hoàn tất", failed: "Lỗi", lexical_only: "Đã sẵn sàng" };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function ragRunStatusLabel(status) {
   const labels = { queued: "Đang chuẩn bị", processing: "Đang xử lý", completed: "Đã hoàn tất", failed: "Chưa xử lý được" };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function ragRunPhaseLabel(phase) {
   const labels = { load: "đọc tài liệu", chunk: "phân tích nội dung", embed: "xử lý nội dung", store: "hoàn thiện", complete: "hoàn tất" };
-  return labels[phase] || phase || "đang xử lý";
+  return t(labels[phase] || phase || "đang xử lý");
 }
 
 function workflowEventLabel(event) {
@@ -2152,23 +2344,32 @@ function workflowEventLabel(event) {
     "ticket.status_changed": "Phiếu đổi trạng thái",
     "lead.stage_changed": "Cơ hội đổi giai đoạn",
     "order.created": "Tạo đơn hàng",
+    "appointment.created": "Tạo lịch hẹn",
+    "appointment.status_changed": "Lịch hẹn đổi trạng thái",
+    "quote.created": "Tạo báo giá",
+    "quote.status_changed": "Báo giá đổi trạng thái",
+    "project.created": "Tạo dự án",
+    "project.status_changed": "Dự án đổi trạng thái",
+    "invoice.created": "Tạo hóa đơn",
+    "invoice.status_changed": "Hóa đơn đổi trạng thái",
+    "invoice.payment_recorded": "Ghi nhận thanh toán hóa đơn",
   };
-  return labels[event] || "Sự kiện mới";
+  return t(labels[event] || "Sự kiện mới");
 }
 
 function workflowActionLabel(action) {
   const labels = { create_ticket: "Tạo phiếu hỗ trợ", add_tag: "Gắn nhãn", assign_user: "Chuyển người hỗ trợ + gửi email" };
-  return labels[action] || action || "Chưa rõ";
+  return t(labels[action] || action || "Chưa rõ");
 }
 
 function workflowRunStatusLabel(status) {
   const labels = { queued: "Đang chờ", running: "Đang chạy", succeeded: "Đã hoàn tất", failed: "Lỗi", skipped: "Đã bỏ qua" };
-  return labels[status] || status || "Chưa rõ";
+  return t(labels[status] || status || "Chưa rõ");
 }
 
 function leadActivityTypeLabel(type) {
   const labels = { note: "Ghi chú", call: "Cuộc gọi", email: "Email", meeting: "Lịch hẹn", task: "Công việc" };
-  return labels[type] || "Hoạt động";
+  return t(labels[type] || "Hoạt động");
 }
 
 function ticketHistoryEventLabel(type) {
@@ -2179,7 +2380,7 @@ function ticketHistoryEventLabel(type) {
     comment_added: "Thêm ghi chú",
     priority_changed: "Đổi mức ưu tiên",
   };
-  return labels[type] || "Cập nhật phiếu";
+  return t(labels[type] || "Cập nhật phiếu");
 }
 
 function resourceLabel(type) {
@@ -2197,7 +2398,7 @@ function resourceLabel(type) {
     team: "Nhân sự",
     report: "Báo cáo",
   };
-  return labels[type] || "Mục dữ liệu";
+  return t(labels[type] || "Mục dữ liệu");
 }
 
 function roleLabel(role) {
@@ -2210,7 +2411,7 @@ function roleLabel(role) {
     shop_agent: "Nhân viên",
     viewer: "Chỉ xem",
   };
-  return labels[role] || role || "Chưa rõ";
+  return t(labels[role] || role || "Chưa rõ");
 }
 
 function usageResourceLabel(resource) {
@@ -2228,12 +2429,12 @@ function usageResourceLabel(resource) {
     documents: "Tài liệu",
     storage_bytes: "Dung lượng lưu trữ",
   };
-  return labels[resource] || resource || "Tài nguyên";
+  return t(labels[resource] || resource || "Tài nguyên");
 }
 
 function schemaStateLabel(state) {
   const labels = { ready: "Sẵn sàng", disabled: "Đã tắt", pending: "Đang chờ", failed: "Lỗi" };
-  return labels[state] || state || "Chưa rõ";
+  return t(labels[state] || state || "Chưa rõ");
 }
 
 function openInboxOrderDetail(order) {
@@ -2322,7 +2523,7 @@ function customerOptionLabel(customer) {
   if (email) return email;
 
   const phone = maskCustomerPhone(customer?.phone);
-  return phone || customer?.channel || "Khách hàng";
+  return phone || customer?.channel || t("Khách hàng");
 }
 
 function orderConversationLabel(conversation) {
@@ -2422,6 +2623,28 @@ const filtered = computed(() => {
   );
 
 });
+
+const allVisibleConversationsSelected = computed(() =>
+  filtered.value.length > 0
+  && filtered.value.every((item) => bulkSelectedConversationIds.value.has(Number(item.conversation_id)))
+);
+
+watch(
+  () => [
+    search.value,
+    activeFilter.value,
+    inboxQuickFilter.value,
+    inboxPersonalFilters.value.phone,
+    inboxPersonalFilters.value.email,
+    [...tagFilters.value].sort().join("\u0000"),
+    tagFilterMode.value,
+    selectedSegmentId.value,
+  ],
+  () => {
+    if (!applyingSavedInboxView.value) selectedSavedInboxViewId.value = "";
+  },
+  { flush: "sync" },
+);
 
 const inboxChannels = computed(() => getInboxChannels(conversations.value));
 
@@ -2558,7 +2781,7 @@ function formatTime(value) {
   }
 
   return new Intl.DateTimeFormat(
-    "vi-VN",
+    uiLocale.value === "en" ? "en-US" : "vi-VN",
     {
       timeZone: "Asia/Ho_Chi_Minh",
       hour: "2-digit",
@@ -3235,7 +3458,7 @@ async function startVoiceRecording() {
     resetVoiceRecordingState();
     const name = String(err?.name || "");
     error.value = name === "NotAllowedError" || name === "SecurityError"
-      ? "Bạn chưa cấp quyền microphone cho CRM."
+      ? "Bạn chưa cấp quyền microphone cho hệ thống."
       : "Chưa thể mở micrô. Hãy kiểm tra thiết bị rồi thử lại.";
   }
 }
@@ -3401,6 +3624,94 @@ function clearInboxSearch() {
   search.value = "";
 }
 
+function inboxSavedViewsStorageKey() {
+  const businessId = authUser.value?.business_id || authUser.value?.business?.id || "shop";
+  const userId = authUser.value?.id || authUser.value?.email || "staff";
+  return `crm-inbox-saved-views-${businessId}-${userId}`;
+}
+
+function loadSavedInboxViews() {
+  try {
+    savedInboxViews.value = normalizeSavedInboxViews(JSON.parse(localStorage.getItem(inboxSavedViewsStorageKey()) || "[]"));
+  } catch {
+    savedInboxViews.value = [];
+  }
+}
+
+function persistSavedInboxViews() {
+  try {
+    localStorage.setItem(inboxSavedViewsStorageKey(), JSON.stringify(savedInboxViews.value));
+    return true;
+  } catch {
+    savedInboxViewError.value = "Không thể lưu chế độ xem trên thiết bị này.";
+    return false;
+  }
+}
+
+function currentInboxViewFilters() {
+  return normalizeInboxViewFilters({
+    search: search.value,
+    channel: activeFilter.value,
+    quickFilter: inboxQuickFilter.value,
+    phone: inboxPersonalFilters.value.phone,
+    email: inboxPersonalFilters.value.email,
+    tags: tagFilters.value,
+    tagFilterMode: tagFilterMode.value,
+    segmentId: selectedSegmentId.value,
+  });
+}
+
+function saveCurrentInboxView() {
+  const name = savedInboxViewName.value.trim().slice(0, 48);
+  if (!name) {
+    savedInboxViewError.value = "Nhập tên chế độ xem trước khi lưu.";
+    return;
+  }
+  const existing = savedInboxViews.value.find((view) => view.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  if (!existing && savedInboxViews.value.length >= MAX_SAVED_INBOX_VIEWS) {
+    savedInboxViewError.value = "Chỉ lưu tối đa 12 chế độ xem.";
+    return;
+  }
+  const id = existing?.id || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const view = { id, name, filters: currentInboxViewFilters() };
+  savedInboxViews.value = existing
+    ? savedInboxViews.value.map((item) => item.id === existing.id ? view : item)
+    : [...savedInboxViews.value, view];
+  savedInboxViewError.value = "";
+  savedInboxViewNotice.value = "Đã lưu chế độ xem trên trình duyệt này.";
+  savedInboxViewName.value = "";
+  selectedSavedInboxViewId.value = id;
+  persistSavedInboxViews();
+}
+
+function applySavedInboxView() {
+  const view = savedInboxViews.value.find((item) => item.id === selectedSavedInboxViewId.value);
+  if (!view) return;
+  const filters = normalizeInboxViewFilters(view.filters);
+  applyingSavedInboxView.value = true;
+  search.value = filters.search;
+  activeFilter.value = filters.channel;
+  inboxQuickFilter.value = filters.quickFilter;
+  inboxPersonalFilters.value = { phone: filters.phone, email: filters.email };
+  tagFilters.value = filters.tags;
+  tagFilterMode.value = filters.tagFilterMode;
+  selectedSegmentId.value = filters.segmentId;
+  applyingSavedInboxView.value = false;
+  savedInboxViewError.value = "";
+  savedInboxViewNotice.value = "Đã áp dụng chế độ xem.";
+  void loadSegmentMembers();
+}
+
+function deleteSelectedInboxView() {
+  const id = selectedSavedInboxViewId.value;
+  if (!id) return;
+  savedInboxViews.value = savedInboxViews.value.filter((view) => view.id !== id);
+  selectedSavedInboxViewId.value = "";
+  savedInboxViewNotice.value = "Đã xóa chế độ xem trên thiết bị này.";
+  savedInboxViewError.value = "";
+  persistSavedInboxViews();
+}
+
 function clearInboxPersonalFilters() {
   inboxPersonalFilters.value = { phone: "", email: "" };
 }
@@ -3464,6 +3775,7 @@ function timelineLabel(event) {
     fact: "Thông tin khách hàng",
     note: "Ghi chú",
     lead: "Cơ hội bán hàng",
+    lead_stage: "Lịch sử cơ hội",
     sales_order: "Đơn bán",
     order_payment: "Thanh toán đơn",
     purchase_order: "Đơn nhập",
@@ -3477,8 +3789,14 @@ function timelineLabel(event) {
     customer_tag: "Thay đổi nhãn",
     ai_tool: "Trợ lý dùng dữ liệu",
     ai_handoff: "Trợ lý chuyển nhân viên",
+    lead_activity: "Hoạt động cơ hội",
+    appointment: "Lịch hẹn",
+    quote: "Báo giá",
+    project: "Dự án",
+    invoice: "Hóa đơn",
+    invoice_payment: "Thanh toán hóa đơn",
   };
-  return labels[event?.event_type] || channelLabel(event?.channel) || "Sự kiện CRM";
+  return t(labels[event?.event_type] || channelLabel(event?.channel) || "Sự kiện CRM");
 }
 
 function orderEventLabel(event) {
@@ -3489,26 +3807,26 @@ function orderEventLabel(event) {
     order_created: "Tạo đơn hàng",
     logistics_updated: "Cập nhật vận chuyển",
   };
-  return labels[event?.event_type] || "Sự kiện đơn hàng";
+  return t(labels[event?.event_type] || "Sự kiện đơn hàng");
 }
 
 function orderEventSummary(event) {
   if (event?.event_type === "status_changed") {
-    return `${event.from_status || "—"} → ${event.to_status || "—"}`;
+    return `${salesOrderStatusLabel(event.from_status)} → ${salesOrderStatusLabel(event.to_status)}`;
   }
   if (event?.event_type === "order_created") {
-    return "Khởi tạo đơn ở trạng thái draft";
+    return t("Khởi tạo đơn ở trạng thái draft");
   }
   if (event?.event_type === "logistics_updated") {
     const metadata = event?.metadata || event?.metadata_ || {};
     const provider = metadata.shipping_provider || "Chưa có đơn vị vận chuyển";
     const status = metadata.shipping_status || "pending";
-    return `${provider} · ${status}`;
+    return `${provider} · ${shippingStatusLabel(status)}`;
   }
   const metadata = event?.metadata || event?.metadata_ || {};
   const amount = Number(metadata.amount || 0);
-  if (amount > 0) return `${amount.toLocaleString("vi-VN")}đ`;
-  return "Không có chi tiết";
+  if (amount > 0) return formatMoney(amount);
+  return t("Không có chi tiết");
 }
 
 function chronologicalOrderEvents(events) {
@@ -4014,7 +4332,7 @@ async function saveProduct() {
 }
 
 function productStatusLabel(status) {
-  return status === "archived" ? "Lưu trữ" : "Đang bán";
+  return t(status === "archived" ? "Lưu trữ" : "Đang bán");
 }
 
 async function changeProductStatus(product, status) {
@@ -4245,7 +4563,7 @@ async function recordSalesPayment(order, kind = "payment") {
   try {
     const isRefund = kind === "refund";
     const payload = isRefund
-      ? { idempotency_key: `ui-refund-${order.id}-${Date.now()}`, amount, reason: "Thao tác từ CRM" }
+      ? { idempotency_key: `ui-refund-${order.id}-${Date.now()}`, amount, reason: "Thao tác từ hệ thống" }
       : { idempotency_key: `ui-payment-${order.id}-${Date.now()}`, amount, method: "manual", status: "paid" };
     const response = await apiFetch(`${API_BASE}/orders/${order.id}/${isRefund ? "refunds" : "payments"}`, {
       method: "POST",
@@ -4361,13 +4679,13 @@ function purchaseOrderEventLabel(event) {
     payment_created: "Thanh toán nhà cung cấp",
     refund_created: "Hoàn tiền nhà cung cấp",
   };
-  return labels[event?.event_type] || "Cập nhật phiếu nhập";
+  return t(labels[event?.event_type] || "Cập nhật phiếu nhập");
 }
 
 function purchaseOrderEventSummary(event) {
   const metadata = event?.metadata || {};
   if (event?.event_type === "status_changed") return `${metadata.from_status || "—"} → ${metadata.to_status || "—"}`;
-  if (metadata.amount !== undefined) return `${Number(metadata.amount).toLocaleString("vi-VN")}đ`;
+  if (metadata.amount !== undefined) return formatMoney(metadata.amount);
   if (metadata.received_quantity !== undefined) return `Đã nhận ${metadata.received_quantity}`;
   return metadata.note || "Có thay đổi được ghi nhận.";
 }
@@ -4454,7 +4772,7 @@ async function receivePurchaseOrder(order) {
     const response = await apiFetch(`${API_BASE}/purchase-orders/${order.id}/receipts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idempotency_key: `ui-receipt-${order.id}-${Date.now()}`, items, note: "Nhận hàng từ CRM" }),
+      body: JSON.stringify({ idempotency_key: `ui-receipt-${order.id}-${Date.now()}`, items, note: "Nhận hàng từ hệ thống" }),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
@@ -4662,6 +4980,7 @@ async function verifySignupOtp() {
     resetServiceRequestForm();
     loadBusinessProfile();
     loadThemePreference();
+    loadSavedInboxViews();
     await fetchSecuritySettings();
     await fetchQuotaUsage();
     await fetchPlatformAdmin();
@@ -4670,7 +4989,7 @@ async function verifySignupOtp() {
       await initializeTenantWorkspace();
     } else {
       currentTab.value = "service";
-      signupNotice.value = "Đã tạo shop. Không gian dữ liệu riêng đang được chuẩn bị; hãy kiểm tra lại để mở CRM khi quá trình hoàn tất.";
+      signupNotice.value = "Đã tạo shop. Không gian dữ liệu riêng đang được chuẩn bị; hãy kiểm tra lại khi quá trình hoàn tất.";
     }
   } catch (err) {
     signupError.value = friendlyErrorMessage(err, "Mã OTP chưa đúng hoặc đã hết hạn. Vui lòng thử lại.");
@@ -4737,6 +5056,7 @@ async function login() {
       currentTab.value = "platform_admin";
       return;
     }
+    loadSavedInboxViews();
     if (!mfaVerifyPending.value) {
       await fetchTenantProvisioning();
       if (tenantReady.value) {
@@ -5127,16 +5447,16 @@ async function refreshPlatformSubscriptionRequests() {
 }
 
 function platformServiceLabel(serviceType) {
-  return serviceType === "chatbot" ? "Thuê trợ lý chatbot" : "Gói quản lý shop";
+  return t(serviceType === "chatbot" ? "Thuê trợ lý chatbot" : "Gói quản lý shop");
 }
 
 function formatPlatformRequestDate(value) {
-  if (!value) return "Vừa gửi";
+  if (!value) return t("Vừa gửi");
   const timestamp = typeof value === "string" && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)
     ? `${value}Z`
     : value;
   const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? "Vừa gửi" : date.toLocaleString("vi-VN");
+  return Number.isNaN(date.getTime()) ? t("Vừa gửi") : formatDateTime(date);
 }
 
 async function approvePlatformSubscriptionRequest(request) {
@@ -5168,7 +5488,7 @@ async function approvePlatformSubscriptionRequest(request) {
 async function rejectPlatformSubscriptionRequest(request) {
   if (!request?.subscription_id || platformApprovalLoadingId.value) return;
   const confirmed = await requestConfirmation(
-    `Từ chối yêu cầu ${request.plan_name} của ${request.shop_name}? Shop sẽ chưa được mở quyền sử dụng CRM.`,
+    `Từ chối yêu cầu ${request.plan_name} của ${request.shop_name}? Shop sẽ chưa được mở quyền sử dụng hệ thống.`,
     { title: "Từ chối yêu cầu thuê gói", confirmLabel: "Từ chối yêu cầu", tone: "danger" },
   );
   if (!confirmed) return;
@@ -5272,7 +5592,7 @@ async function savePlatformPlan() {
       : [...platformPlans.value, detail];
     platformPlanEditingId.value = null;
     platformPlanForm.value = platformPlanDraft();
-    platformPlanNotice.value = "Đã lưu giá gói CRM và giá thuê trợ lý chatbot.";
+    platformPlanNotice.value = "Đã lưu giá gói quản lý khách hàng và giá thuê trợ lý chatbot.";
     void fetchPublicServicePlans();
   } catch (err) {
     platformPlanNotice.value = friendlyErrorMessage(err, "Chưa thể lưu gói dịch vụ. Vui lòng thử lại sau.");
@@ -5311,7 +5631,7 @@ async function togglePlatformShop(shop) {
   const status = shop.status === "suspended" ? "active" : "suspended";
   const action = status === "active" ? "mở lại" : "khóa";
   const confirmed = await requestConfirmation(
-    `Bạn có chắc muốn ${action} shop “${shop.name}”? Người dùng của shop sẽ ${status === "active" ? "có thể truy cập CRM trở lại" : "tạm thời không thể truy cập CRM"}.`,
+    `Bạn có chắc muốn ${action} shop “${shop.name}”? Người dùng của shop sẽ ${status === "active" ? "có thể truy cập hệ thống trở lại" : "tạm thời không thể truy cập hệ thống"}.`,
     { title: `${status === "active" ? "Mở" : "Khóa"} shop`, confirmLabel: `${status === "active" ? "Mở shop" : "Khóa shop"}`, tone: status === "active" ? "default" : "danger" },
   );
   if (!confirmed) return;
@@ -5328,8 +5648,8 @@ async function togglePlatformShop(shop) {
       item.id === updated.id ? { ...item, status: updated.status } : item
     ));
     platformShopNotice.value = updated.status === "suspended"
-      ? `Đã khóa ${shop.name}. Shop sẽ không thể truy cập CRM cho đến khi được mở lại.`
-      : `Đã mở lại ${shop.name}. Người dùng có thể truy cập CRM theo gói hiện tại.`;
+      ? `Đã khóa ${shop.name}. Shop sẽ không thể truy cập hệ thống cho đến khi được mở lại.`
+      : `Đã mở lại ${shop.name}. Người dùng có thể truy cập hệ thống theo gói hiện tại.`;
   } catch (err) {
     platformError.value = friendlyErrorMessage(err, "Chưa thể cập nhật trạng thái shop. Vui lòng thử lại sau.");
   } finally {
@@ -5523,6 +5843,9 @@ async function fetchLeads() {
     if (!leadsResponse.ok) throw new Error(`HTTP ${leadsResponse.status}`);
     const data = await leadsResponse.json();
     leads.value = data.items || [];
+    if (!crmConfig.value.pipeline_stages.some((item) => item.key === leadForm.value.stage)) {
+      leadForm.value.stage = crmConfig.value.pipeline_stages[0]?.key || "new";
+    }
     if (pipelineResponse.ok) {
       const summary = await pipelineResponse.json();
       pipelineSummary.value = summary.items || [];
@@ -5698,6 +6021,78 @@ async function reassignConversation(conversation, assignedUserId) {
   } catch (err) {
     error.value = friendlyErrorMessage(err, "Chưa thể phân công hội thoại. Vui lòng thử lại sau.");
   }
+}
+
+function toggleBulkConversationSelection(conversationId, checked) {
+  const next = new Set(bulkSelectedConversationIds.value);
+  if (checked && next.size >= 100 && !next.has(Number(conversationId))) {
+    bulkAssignmentError.value = "Chỉ có thể phân công tối đa 100 hội thoại cùng lúc.";
+    return;
+  }
+  if (checked) next.add(Number(conversationId));
+  else next.delete(Number(conversationId));
+  bulkAssignmentError.value = "";
+  bulkSelectedConversationIds.value = next;
+}
+
+function toggleVisibleConversationSelection(checked) {
+  const next = new Set(bulkSelectedConversationIds.value);
+  for (const conversation of filtered.value) {
+    if (checked) next.add(Number(conversation.conversation_id));
+    else next.delete(Number(conversation.conversation_id));
+  }
+  if (next.size > 100) {
+    bulkAssignmentError.value = "Chỉ có thể phân công tối đa 100 hội thoại cùng lúc.";
+    return;
+  }
+  bulkAssignmentError.value = "";
+  bulkSelectedConversationIds.value = next;
+}
+
+async function bulkReassignConversations() {
+  const conversationIds = [...bulkSelectedConversationIds.value];
+  if (!conversationIds.length || !bulkAssignmentTarget.value || bulkAssignmentSaving.value) return;
+  const assignedUserId = bulkAssignmentTarget.value === "unassigned" ? null : Number(bulkAssignmentTarget.value);
+  const confirmed = await requestConfirmation(
+    "Phân công các hội thoại đã chọn cho nhân viên này?",
+    { title: t("Xác nhận phân công"), confirmLabel: t("Phân công") },
+  );
+  if (!confirmed) return;
+
+  bulkAssignmentSaving.value = true;
+  bulkAssignmentError.value = "";
+  bulkAssignmentNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/conversations/bulk-assignment`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_ids: conversationIds, assigned_user_id: assignedUserId }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    const assignments = new Map((result.items || []).map((item) => [Number(item.conversation_id), item.assigned_user_id]));
+    conversations.value = conversations.value.map((item) => assignments.has(Number(item.conversation_id))
+      ? { ...item, assigned_user_id: assignments.get(Number(item.conversation_id)) }
+      : item);
+    if (selected.value && assignments.has(Number(selected.value.conversation_id))) {
+      void loadCustomer360(selected.value.customer_id);
+    }
+    bulkAssignmentNotice.value = t("Phân công hàng loạt hoàn tất.");
+    bulkSelectedConversationIds.value = new Set();
+    bulkAssignmentTarget.value = "";
+    bulkSelectionMode.value = false;
+  } catch (err) {
+    bulkAssignmentError.value = friendlyErrorMessage(err, "Chưa thể phân công hàng loạt. Vui lòng thử lại sau.");
+  } finally {
+    bulkAssignmentSaving.value = false;
+  }
+}
+
+function closeBulkSelectionMode() {
+  bulkSelectionMode.value = false;
+  bulkSelectedConversationIds.value = new Set();
+  bulkAssignmentTarget.value = "";
+  bulkAssignmentError.value = "";
 }
 
 async function fetchTeam() {
@@ -6038,14 +6433,14 @@ async function createBanditPolicy(experiment) {
 }
 
 function ruleStatusLabel(status) {
-  return { pending: "Chờ duyệt", accepted: "Đã duyệt", rejected: "Từ chối" }[status] || status || "—";
+  return t({ pending: "Chờ duyệt", accepted: "Đã duyệt", rejected: "Từ chối" }[status] || status || "—");
 }
 
 function ruleActionLabel(action = {}) {
-  if (action.type === "add_tag") return `Gắn nhãn: ${action.tag || "—"}`;
-  if (action.type === "create_ticket") return `Tạo phiếu hỗ trợ: ${action.title || "Nhắc chăm sóc"}`;
-  if (action.type === "assign_user") return `Phân công #${action.user_id || "—"}`;
-  return action.type || "Chưa xác định";
+  if (action.type === "add_tag") return `${t("Gắn nhãn")}: ${action.tag || "—"}`;
+  if (action.type === "create_ticket") return `${t("Tạo phiếu hỗ trợ")}: ${action.title || t("Nhắc chăm sóc")}`;
+  if (action.type === "assign_user") return `${t("Phân công")}: #${action.user_id || "—"}`;
+  return action.type || t("Chưa xác định");
 }
 
 async function reviewRuleSuggestion(suggestion, status) {
@@ -6183,6 +6578,7 @@ async function connectTikTokBridge() {
   tiktokBridgeLoading.value = true;
   tiktokBridgeError.value = "";
   tiktokBridgeNotice.value = "";
+  tiktokBridgeDownloadUrl.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels/tiktok/bridge`, { method: "POST" });
     const detail = await response.json().catch(() => ({}));
@@ -6191,31 +6587,7 @@ async function connectTikTokBridge() {
     tiktokBridgeEndpoint.value = String(detail.webhook_url || `${window.location.origin}${API_BASE}/channels/tiktok/incoming`);
     tiktokBridgeBackendUrl.value = new URL(tiktokBridgeEndpoint.value, window.location.origin).origin;
     tiktokBridgeShopSlug.value = String(detail.shop_slug || "");
-    tiktokBridgeNotice.value = "Đã tạo cấu hình TikTok. Khi tải bridge, mã kết nối sẽ được gắn tự động.";
-    await fetchBotConnections();
-    return detail;
-  } catch (err) {
-    tiktokBridgeError.value = botConnectionErrorMessage(err?.payload, "Chưa thể tạo kết nối TikTok bridge. Vui lòng thử lại sau.");
-  } finally {
-    tiktokBridgeLoading.value = false;
-  }
-}
-
-async function downloadTikTokBot() {
-  if (tiktokBotDownloadLoading.value) return;
-  tiktokBotDownloadLoading.value = true;
-  tiktokBridgeError.value = "";
-  let objectUrl = "";
-  try {
-    // Generate/rotate the bridge first so the downloaded file is ready to
-    // run. The shop owner no longer has to copy a slug or secret manually.
-    if (!tiktokBridgeSecret.value) {
-      await connectTikTokBridge();
-    }
-    if (!tiktokBridgeSecret.value) {
-      throw new Error("Chưa tạo được cấu hình TikTok. Vui lòng thử lại.");
-    }
-    const response = await apiFetch(`${API_BASE}/channels/tiktok/bot-file`, {
+    const downloadResponse = await apiFetch(`${API_BASE}/channels/tiktok/bot-file`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -6224,26 +6596,23 @@ async function downloadTikTokBot() {
         bridge_secret: tiktokBridgeSecret.value,
         backend_url: tiktokBridgeBackendUrl.value,
         format: "exe",
+        delivery: "url",
       }),
     });
-    if (!response.ok) {
-      const detail = await response.json().catch(() => ({}));
-      throw new Error(detail.detail || `HTTP ${response.status}`);
-    }
-    objectUrl = URL.createObjectURL(await response.blob());
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = "SmartMerchantTikTok.zip";
-    anchor.hidden = true;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    tiktokBridgeNotice.value = "Đã tải file ZIP TikTok đã cấu hình. Giải nén rồi mở SmartMerchantTikTok.exe; không cần sao chép mã.";
+    const downloadDetail = await downloadResponse.json().catch(() => ({}));
+    if (!downloadResponse.ok) throw new Error(downloadDetail.detail || `HTTP ${downloadResponse.status}`);
+    const downloadUrl = String(downloadDetail.download_url || "").trim();
+    if (!downloadUrl) throw new Error("Chưa tạo được liên kết tải file ZIP TikTok");
+    const parsedDownloadUrl = new URL(downloadUrl, window.location.origin);
+    if (parsedDownloadUrl.origin !== window.location.origin) throw new Error("Liên kết tải file ZIP TikTok không hợp lệ");
+    tiktokBridgeDownloadUrl.value = parsedDownloadUrl.toString();
+    tiktokBridgeNotice.value = "Đã tạo cấu hình TikTok. Bây giờ hãy bấm tải ZIP để nhận file.";
+    await fetchBotConnections();
+    return detail;
   } catch (err) {
-    tiktokBridgeError.value = friendlyErrorMessage(err, "Chưa thể tải file TikTok. Vui lòng thử lại sau.");
+    tiktokBridgeError.value = botConnectionErrorMessage(err?.payload, "Chưa thể tạo kết nối TikTok bridge. Vui lòng thử lại sau.");
   } finally {
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
-    tiktokBotDownloadLoading.value = false;
+    tiktokBridgeLoading.value = false;
   }
 }
 
@@ -6561,6 +6930,9 @@ async function loadCustomer360(customerId) {
       timelineOffset: 0,
       timelineHasMore: false,
     };
+    customerCustomFieldsDraft.value = { ...(profile.custom_fields || {}) };
+    customerCustomFieldsError.value = "";
+    customerCustomFieldsNotice.value = "";
     customer360OverflowOpen.value = false;
     customer360Error.value = "";
     customerTimelineError.value = "";
@@ -7685,18 +8057,25 @@ async function initializeTenantWorkspace() {
   tenantWorkspaceActive.value = true;
 
   try {
+    await fetchWorkspaceConfig();
+    await fetchCrmConfig();
     void fetchQuotaUsage();
     await loadConversations(true);
-    await Promise.all([fetchProducts(), fetchOrderCustomers()]);
-    resetOrderForm();
-    resetPurchaseOrderForm();
+    await fetchOrderCustomers();
+    if (workspaceModuleEnabled("retail")) {
+      await fetchProducts();
+      resetOrderForm();
+      resetPurchaseOrderForm();
+    }
     fetchTagCatalog();
     fetchSavedSegments();
 
     connectRealtime();
     fetchDocuments();
-    fetchOrders();
-    fetchSuppliers();
+    if (workspaceModuleEnabled("retail")) {
+      fetchOrders();
+      fetchSuppliers();
+    }
     fetchPurchaseOrders();
     fetchLeads();
     fetchTickets();
@@ -7767,6 +8146,7 @@ onMounted(async () => {
       currentTab.value = "platform_admin";
       return;
     }
+    loadSavedInboxViews();
     await fetchTenantProvisioning();
     if (!tenantReady.value) {
       currentTab.value = "service";
@@ -7886,13 +8266,36 @@ async function toggleBotMode() {
     const response = await apiFetch(`${API_BASE}/chatbot/conversations/${selected.value.conversation_id}/${mode}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: mode === "pause" ? "Nhân viên tiếp quản từ CRM" : "Nhân viên trả lại cho bot" }),
+      body: JSON.stringify({ reason: mode === "pause" ? "Nhân viên tiếp quản từ hệ thống" : "Nhân viên trả lại cho bot" }),
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
     botModes.value = { ...botModes.value, [selected.value.conversation_id]: (await response.json()).bot_mode };
     await loadCustomer360(customerId);
   } catch (err) {
     error.value = friendlyErrorMessage(err, "Chưa thể đổi cách trả lời. Vui lòng thử lại sau.");
+  }
+}
+
+async function saveSelectedConversationOutcome(value) {
+  const conversation = selected.value;
+  if (!conversation?.conversation_id || conversationOutcomeSaving.value) return;
+  conversationOutcomeSaving.value = true;
+  conversationOutcomeError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/conversations/${conversation.conversation_id}/outcome`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome: value || null }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    conversations.value = conversations.value.map((item) => Number(item.conversation_id) === Number(conversation.conversation_id)
+      ? { ...item, resolution_outcome: detail.resolution_outcome }
+      : item);
+  } catch (err) {
+    conversationOutcomeError.value = friendlyErrorMessage(err, "Chưa lưu được kết quả hội thoại. Vui lòng thử lại.");
+  } finally {
+    conversationOutcomeSaving.value = false;
   }
 }
 
@@ -8093,7 +8496,7 @@ function followupRecommendationLabel(item) {
         </div>
         <div class="brand-copy">
           <strong>Smart Merchant Hub</strong>
-          <small>Không gian quản lý shop</small>
+          <small>{{ t("Không gian quản lý shop") }}</small>
         </div>
       </div>
 
@@ -8105,82 +8508,88 @@ function followupRecommendationLabel(item) {
             class="menu-item"
             :class="{ active: currentTab === 'inbox' }"
             :disabled="!tenantReady"
-            title="Hộp thư & Khách hàng 360"
+            :title="t('Hộp thư & Khách hàng 360')"
             @click="currentTab = 'inbox'"
           >
             <svg class="nav-icon nav-icon-inbox" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.6 7.6 0 0 1-8 7.5 8.8 8.8 0 0 1-3.6-.8L4 20l1.4-3.5A7.1 7.1 0 0 1 4 12a7.6 7.6 0 0 1 8-7.5 7.6 7.6 0 0 1 8 7Z" /></svg>
-            <b>Hộp thư &amp; Khách hàng 360</b>
+            <b>{{ t("Hộp thư & Khách hàng 360") }}</b>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'leads' }" :disabled="!tenantReady" title="Luồng bán hàng" @click="currentTab = 'leads'; fetchOrderCustomers(); fetchLeads()">
-            <svg class="nav-icon nav-icon-pipeline" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7v5.5l-3.6 2V12Z" /></svg><b>Luồng bán hàng</b>
+          <button class="menu-item" :class="{ active: currentTab === 'leads' }" :disabled="!tenantReady" :title="t('Luồng bán hàng')" @click="currentTab = 'leads'; fetchOrderCustomers(); fetchLeads()">
+            <svg class="nav-icon nav-icon-pipeline" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7v5.5l-3.6 2V12Z" /></svg><b>{{ t("Luồng bán hàng") }}</b>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'tickets' }" :disabled="!tenantReady" title="Phiếu hỗ trợ & thời hạn" @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()">
-            <svg class="nav-icon nav-icon-tickets" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="m8.3 12.3 2.3 2.3 5-5" /></svg><b>Phiếu hỗ trợ &amp; thời hạn</b>
+          <button class="menu-item" :class="{ active: currentTab === 'tickets' }" :disabled="!tenantReady" :title="t('Phiếu hỗ trợ & thời hạn')" @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()">
+            <svg class="nav-icon nav-icon-tickets" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="m8.3 12.3 2.3 2.3 5-5" /></svg><b>{{ t("Phiếu hỗ trợ & thời hạn") }}</b>
           </button>
         </div>
 
         <div class="menu-group menu-group-operations">
-          <span class="menu-group-label">Vận hành</span>
-          <button class="menu-item" :class="{ active: currentTab === 'products' }" :disabled="!tenantReady" title="Sản phẩm" @click="currentTab = 'products'; fetchProducts()">
-            <svg class="nav-icon nav-icon-products" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="m4 7.5 8 4.5 8-4.5M12 12v9" /></svg><b>Sản phẩm</b>
+          <span class="menu-group-label">{{ t("Vận hành") }}</span>
+          <button v-if="workspaceModuleEnabled('retail')" class="menu-item" :class="{ active: currentTab === 'products' }" :disabled="!tenantReady" :title="t('Sản phẩm')" @click="currentTab = 'products'; fetchProducts()">
+            <svg class="nav-icon nav-icon-products" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="m4 7.5 8 4.5 8-4.5M12 12v9" /></svg><b>{{ t('Sản phẩm') }}</b>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'orders' }" :disabled="!tenantReady" title="Đơn bán" @click="currentTab = 'orders'; loadConversations(false); fetchOrderCustomers(); fetchProducts(); fetchOrders()">
-            <svg class="nav-icon nav-icon-orders" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6Z" /><path d="M15 3v4h4M9 11h6M9 15h6M9 19h4" /></svg><b>Đơn bán</b>
+          <button v-if="workspaceModuleEnabled('retail')" class="menu-item" :class="{ active: currentTab === 'orders' }" :disabled="!tenantReady" :title="t('Đơn bán')" @click="currentTab = 'orders'; loadConversations(false); fetchOrderCustomers(); fetchProducts(); fetchOrders()">
+            <svg class="nav-icon nav-icon-orders" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6Z" /><path d="M15 3v4h4M9 11h6M9 15h6M9 19h4" /></svg><b>{{ t('Đơn bán') }}</b>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'business_hours' }" :disabled="!tenantReady" title="Giờ làm việc" @click="currentTab = 'business_hours'; fetchChatbotRuntime()">
-            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.5 2" /></svg><b>Giờ làm việc</b>
+          <button v-if="workspaceModuleEnabled('appointments')" class="menu-item" :class="{ active: currentTab === 'appointments' }" :disabled="!tenantReady" title="Lịch hẹn" @click="currentTab = 'appointments'">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="2" /><path d="M8 3v4m8-4v4M4 10h16M8 14h3m-3 3h6" /></svg><b>Lịch hẹn</b>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'sla_rules' }" :disabled="!tenantReady" title="Quy tắc thời hạn" @click="currentTab = 'sla_rules'">
-            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h9M5 18h14" /><circle cx="17" cy="12" r="2" /></svg><b>Quy tắc thời hạn</b>
+          <button v-if="workspaceModuleEnabled('projects')" class="menu-item" :class="{ active: currentTab === 'commercial' }" :disabled="!tenantReady" title="Báo giá, dự án & hóa đơn" @click="currentTab = 'commercial'">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h10l4 4V21H5Z" /><path d="M15 3.5V8h4M8 12h8m-8 4h8m-8 3h5" /></svg><b>Báo giá &amp; dự án</b>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'business_hours' }" :disabled="!tenantReady" :title="t('Giờ làm việc')" @click="currentTab = 'business_hours'; fetchChatbotRuntime()">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.5 2" /></svg><b>{{ t('Giờ làm việc') }}</b>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'sla_rules' }" :disabled="!tenantReady" :title="t('Quy tắc thời hạn')" @click="currentTab = 'sla_rules'">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h9M5 18h14" /><circle cx="17" cy="12" r="2" /></svg><b>{{ t('Quy tắc thời hạn') }}</b>
           </button>
           <!-- Nhập hàng được xử lý nội bộ, không hiển thị trong workspace CSKH. -->
         </div>
 
         <div class="menu-group menu-group-ai">
-          <span class="menu-group-label">Kiến thức &amp; tự động hóa</span>
+          <span class="menu-group-label">{{ t("Kiến thức & tự động hóa") }}</span>
           <div class="ai-submenu">
-            <button class="menu-item" :class="{ active: currentTab === 'documents' }" :disabled="!tenantReady" title="Kho kiến thức" @click="currentTab = 'documents'; fetchDocuments()">
-              <svg class="nav-icon nav-icon-knowledge" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5c2.8-1 5.4-.6 8 1v12c-2.6-1.6-5.2-2-8-1Zm16 0c-2.8-1-5.4-.6-8 1v12c2.6-1.6 5.2-2-8-1Z" /><path d="M12 6.5v12" /></svg><b>Kho kiến thức</b>
+            <button class="menu-item" :class="{ active: currentTab === 'documents' }" :disabled="!tenantReady" :title="t('Kho kiến thức')" @click="currentTab = 'documents'; fetchDocuments()">
+              <svg class="nav-icon nav-icon-knowledge" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5c2.8-1 5.4-.6 8 1v12c-2.6-1.6-5.2-2-8-1Zm16 0c-2.8-1-5.4-.6-8 1v12c2.6-1.6 5.2-2-8-1Z" /><path d="M12 6.5v12" /></svg><b>{{ t('Kho kiến thức') }}</b>
             </button>
             <!-- Trợ lý chat được dùng trong Inbox, không cần shortcut riêng. -->
-            <button class="menu-item" :class="{ active: currentTab === 'workflows' }" :disabled="!tenantReady" title="Quy trình" @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()">
-              <svg class="nav-icon nav-icon-workflow" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="5" height="5" rx="1" /><rect x="15.5" y="4" width="5" height="5" rx="1" /><rect x="9.5" y="15" width="5" height="5" rx="1" /><path d="M8.5 6.5h7M12 9v6" /></svg><b>Quy trình</b>
+            <button class="menu-item" :class="{ active: currentTab === 'workflows' }" :disabled="!tenantReady" :title="t('Quy trình')" @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()">
+              <svg class="nav-icon nav-icon-workflow" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="5" height="5" rx="1" /><rect x="15.5" y="4" width="5" height="5" rx="1" /><rect x="9.5" y="15" width="5" height="5" rx="1" /><path d="M8.5 6.5h7M12 9v6" /></svg><b>{{ t('Quy trình') }}</b>
             </button>
             <!-- Rule Lab giữ ở tầng quản trị, không hiển thị cho nhân viên vận hành. -->
           </div>
         </div>
 
         <div class="menu-group menu-group-insights">
-          <span class="menu-group-label">Phân tích</span>
-          <button class="menu-item" :class="{ active: currentTab === 'reports' }" :disabled="!tenantReady" title="Báo cáo" @click="currentTab = 'reports'; fetchReports()">
-            <svg class="nav-icon nav-icon-reports" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V7" /></svg><b>Báo cáo</b>
+          <span class="menu-group-label">{{ t("Phân tích") }}</span>
+          <button class="menu-item" :class="{ active: currentTab === 'reports' }" :disabled="!tenantReady" :title="t('Báo cáo')" @click="currentTab = 'reports'; fetchReports()">
+            <svg class="nav-icon nav-icon-reports" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V7" /></svg><b>{{ t('Báo cáo') }}</b>
           </button>
         </div>
 
         <div class="menu-group menu-group-channels">
-          <span class="menu-group-label">Kênh liên kết</span>
-          <button class="menu-item" :class="{ active: currentTab === 'channels' }" :disabled="!tenantReady" title="Kết nối mạng xã hội" @click="openChannels">
-            <svg class="nav-icon nav-icon-channels" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="12" r="3" /><circle cx="17" cy="7" r="3" /><circle cx="17" cy="17" r="3" /><path d="m9.5 10.8 4.8-2.6M9.5 13.2l4.8 2.6" /></svg><b>Kết nối mạng xã hội</b>
+          <span class="menu-group-label">{{ t("Kênh liên kết") }}</span>
+          <button class="menu-item" :class="{ active: currentTab === 'channels' }" :disabled="!tenantReady" :title="t('Kết nối mạng xã hội')" @click="openChannels">
+            <svg class="nav-icon nav-icon-channels" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="12" r="3" /><circle cx="17" cy="7" r="3" /><circle cx="17" cy="17" r="3" /><path d="m9.5 10.8 4.8-2.6M9.5 13.2l4.8 2.6" /></svg><b>{{ t('Kết nối mạng xã hội') }}</b>
           </button>
-          <button class="menu-item" :class="{ active: currentTab === 'webhooks' }" :disabled="!tenantReady" title="Nhận sự kiện" @click="openWebhooks">
-            <svg class="nav-icon nav-icon-webhooks" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v5m10-5v5M4 9h16M6 14h5m2 0h5M6 18h5m2 0h5" /><rect x="4" y="3" width="16" height="18" rx="2" /></svg><b>Nhận sự kiện</b>
+          <button class="menu-item" :class="{ active: currentTab === 'webhooks' }" :disabled="!tenantReady" :title="t('Nhận sự kiện')" @click="openWebhooks">
+            <svg class="nav-icon nav-icon-webhooks" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v5m10-5v5M4 9h16M6 14h5m2 0h5M6 18h5m2 0h5" /><rect x="4" y="3" width="16" height="18" rx="2" /></svg><b>{{ t('Nhận sự kiện') }}</b>
           </button>
         </div>
 
         <div class="menu-group menu-group-system">
-          <span class="menu-group-label">Hệ thống</span>
-          <button class="menu-item menu-item-service" :class="{ active: currentTab === 'service' }" title="Chọn gói dịch vụ" @click="openServicePage">
-            <svg class="nav-icon nav-icon-service" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 14.1 9l5.9.4-4.5 3.8 1.5 5.7-5-3.1-5 3.1 1.5-5.7L4 9.4l5.9-.4Z" /><path d="M12 14v6.5M8.5 20.5h7" /></svg><b>Chọn gói dịch vụ</b>
+          <span class="menu-group-label">{{ t("Hệ thống") }}</span>
+          <button class="menu-item menu-item-service" :class="{ active: currentTab === 'service' }" :title="t('Chọn gói dịch vụ')" @click="openServicePage">
+            <svg class="nav-icon nav-icon-service" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 14.1 9l5.9.4-4.5 3.8 1.5 5.7-5-3.1-5 3.1 1.5-5.7L4 9.4l5.9-.4Z" /><path d="M12 14v6.5M8.5 20.5h7" /></svg><b>{{ t('Chọn gói dịch vụ') }}</b>
           </button>
-          <button class="menu-item menu-item-settings" :class="{ active: currentTab === 'settings' }" :disabled="!tenantReady && !mfaVerifyPending" title="Cài đặt" @click="openSettings">
-            <svg class="nav-icon nav-icon-settings" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19 13.5v-3l-2.1-.7a5.3 5.3 0 0 0-.5-1.1l1-2-2.1-2.1-2 1a5.3 5.3 0 0 0-1.1-.5L11.5 3h-3l-.7 2.1a5.3 5.3 0 0 0-1.1.5l-2-1L2.6 6.7l1 2a5.3 5.3 0 0 0-.5 1.1l-2.1.7v3l2.1.7a5.3 5.3 0 0 0 .5 1.1l-1 2 2.1 2.1 2-1a5.3 5.3 0 0 0 1.1.5l.7 2.1h3l.7-2.1a5.3 5.3 0 0 0 1.1-.5l2 1 2.1-2.1-1-2a5.3 5.3 0 0 0 .5-1.1Z" /></svg><b>Cài đặt</b>
+          <button class="menu-item menu-item-settings" :class="{ active: currentTab === 'settings' }" :disabled="!tenantReady && !mfaVerifyPending" :title="t('Cài đặt')" @click="openSettings">
+            <svg class="nav-icon nav-icon-settings" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19 13.5v-3l-2.1-.7a5.3 5.3 0 0 0-.5-1.1l1-2-2.1-2.1-2 1a5.3 5.3 0 0 0-1.1-.5L11.5 3h-3l-.7 2.1a5.3 5.3 0 0 0-1.1.5l-2-1L2.6 6.7l1 2a5.3 5.3 0 0 0-.5 1.1l-2.1.7v3l2.1.7a5.3 5.3 0 0 0 .5 1.1l-1 2 2.1 2.1 2-1a5.3 5.3 0 0 0 1.1.5l.7 2.1h3l.7-2.1a5.3 5.3 0 0 0 1.1-.5l2 1 2.1-2.1-1-2a5.3 5.3 0 0 0 .5-1.1Z" /></svg><b>{{ t('Cài đặt') }}</b>
           </button>
         </div>
 
         <div v-if="platformAdmin" class="menu-group menu-group-platform-admin">
-          <span class="menu-group-label">Quản trị nền tảng</span>
+          <span class="menu-group-label">{{ t("Quản trị nền tảng") }}</span>
           <button class="menu-item" :class="{ active: currentTab === 'platform_admin' }" title="Quản trị nền tảng" @click="openPlatformAdmin">
-            <svg class="nav-icon nav-icon-platform-admin" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16v13H4z" /><path d="M8 6.5V4h8v2.5M8 11h8M8 15h5" /><circle cx="17" cy="16" r="2.5" /></svg><b>Quản trị nền tảng</b>
+            <svg class="nav-icon nav-icon-platform-admin" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16v13H4z" /><path d="M8 6.5V4h8v2.5M8 11h8M8 15h5" /><circle cx="17" cy="16" r="2.5" /></svg><b>{{ t("Quản trị nền tảng") }}</b>
           </button>
         </div>
 
@@ -8189,10 +8598,10 @@ function followupRecommendationLabel(item) {
 
 
       <div class="side-card">
-          <span class="side-card-kicker">TRẠNG THÁI HỆ THỐNG</span>
-        <strong>{{ tenantReady ? 'CRM đang hoạt động' : 'Đang chuẩn bị CRM' }}</strong>
-        <small>{{ tenantReady ? 'Dữ liệu hội thoại và vận hành được đồng bộ theo business.' : 'Dữ liệu riêng của shop sẽ sẵn sàng sau khi chuẩn bị xong.' }}</small>
-        <span class="status-dot"><i></i> {{ tenantReady ? 'Đang hoạt động' : 'Đang chờ' }}</span>
+          <span class="side-card-kicker">{{ t('TRẠNG THÁI HỆ THỐNG') }}</span>
+        <strong>{{ t(tenantReady ? 'CRM đang hoạt động' : 'Đang chuẩn bị CRM') }}</strong>
+        <small>{{ t(tenantReady ? 'Dữ liệu hội thoại và vận hành được đồng bộ theo business.' : 'Dữ liệu riêng của shop sẽ sẵn sàng sau khi chuẩn bị xong.') }}</small>
+        <span class="status-dot"><i></i> {{ t(tenantReady ? 'Đang hoạt động' : 'Đang chờ') }}</span>
       </div>
 
 
@@ -8200,12 +8609,12 @@ function followupRecommendationLabel(item) {
         type="button"
         class="collapse"
         :aria-expanded="String(!sidebarCollapsed)"
-        :aria-label="sidebarCollapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'"
-        :title="sidebarCollapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng'"
+        :aria-label="t(sidebarCollapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng')"
+        :title="t(sidebarCollapsed ? 'Mở rộng thanh điều hướng' : 'Thu gọn thanh điều hướng')"
         @click="toggleSidebar"
       >
         <span class="collapse-icon" aria-hidden="true">‹</span>
-        <span>{{ sidebarCollapsed ? 'Mở rộng' : 'Thu gọn' }}</span>
+        <span>{{ t(sidebarCollapsed ? 'Mở rộng' : 'Thu gọn') }}</span>
       </button>
 
     </aside>
@@ -8236,11 +8645,11 @@ function followupRecommendationLabel(item) {
         <div class="welcome">
 
           <strong>
-            {{ workspaceGreeting }} <span aria-hidden="true">👋</span>
+            {{ t(workspaceGreeting) }} <span aria-hidden="true">👋</span>
           </strong>
 
           <span>
-            Theo dõi khách hàng, hội thoại và vận hành trong một không gian.
+            {{ t('Theo dõi khách hàng, hội thoại và vận hành trong một không gian.') }}
           </span>
 
         </div>
@@ -8253,8 +8662,8 @@ function followupRecommendationLabel(item) {
               class="top-search-input"
               v-model="search"
               type="search"
-              placeholder="Tìm kiếm khách hàng, tin nhắn, đơn hàng..."
-              aria-label="Tìm kiếm khách hàng, tin nhắn, đơn hàng"
+              :placeholder="t('Tìm kiếm khách hàng, tin nhắn, đơn hàng...')"
+              :aria-label="t('Tìm kiếm khách hàng, tin nhắn, đơn hàng')"
               :disabled="!tenantReady"
               @keydown.enter="runGlobalSearch"
             />
@@ -8264,12 +8673,12 @@ function followupRecommendationLabel(item) {
           <button
             type="button"
             class="quick-action-trigger"
-            aria-label="Mở thao tác nhanh"
-            title="Thao tác nhanh (Ctrl+K)"
+            :aria-label="t('Mở thao tác nhanh')"
+            :title="`${t('Thao tác nhanh')} (Ctrl+K)`"
             :disabled="!tenantReady"
             @click="openQuickActions"
           >
-            <span>Thao tác nhanh</span><kbd>Ctrl K</kbd>
+            <span>{{ t('Thao tác nhanh') }}</span><kbd>Ctrl K</kbd>
           </button>
 
 
@@ -8277,8 +8686,8 @@ function followupRecommendationLabel(item) {
             <button
               type="button"
               class="bell"
-              aria-label="Mở thông báo"
-            title="Mở thông báo"
+              :aria-label="t('Mở thông báo')"
+            :title="t('Mở thông báo')"
             :aria-expanded="String(notificationsOpen)"
             :disabled="!tenantReady"
             @click="openNotifications"
@@ -8286,13 +8695,13 @@ function followupRecommendationLabel(item) {
               <svg class="top-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 10a6 6 0 0 0-12 0c0 6-2.5 6.5-2.5 8h17C20.5 16.5 18 16 18 10Z" /><path d="M10 21h4" /></svg>
               <i v-if="unreadOperationalNotificationCount">{{ unreadOperationalNotificationCount }}</i>
             </button>
-            <div v-if="notificationsOpen" class="notification-popover" role="dialog" aria-label="Thông báo CRM">
+              <div v-if="notificationsOpen" class="notification-popover" role="dialog" :aria-label="t('Thông báo hệ thống')">
               <div class="notification-popover-head">
-                <strong>Thông báo</strong>
-                <span>{{ unreadOperationalNotificationCount }} chưa đọc</span>
+                <strong>{{ t('Thông báo') }}</strong>
+                <span>{{ unreadOperationalNotificationCount }} {{ t('chưa đọc') }}</span>
               </div>
               <p v-if="notificationError" class="notification-empty notification-error" role="alert">{{ notificationError }}</p>
-              <p v-else-if="!operationalNotifications.length" class="notification-empty">Chưa có thông báo mới.</p>
+              <p v-else-if="!operationalNotifications.length" class="notification-empty">{{ t('Chưa có thông báo mới.') }}</p>
               <button
                 v-for="notification in operationalNotifications"
                 :key="notification.id"
@@ -8310,20 +8719,28 @@ function followupRecommendationLabel(item) {
             type="button"
             class="dark-mode-toggle"
             :aria-pressed="darkMode"
-            :aria-label="darkMode ? 'Tắt chế độ tối' : 'Bật chế độ tối'"
-            :title="darkMode ? 'Tắt chế độ tối' : 'Bật chế độ tối'"
+            :aria-label="t(darkMode ? 'Tắt chế độ tối' : 'Bật chế độ tối')"
+            :title="t(darkMode ? 'Tắt chế độ tối' : 'Bật chế độ tối')"
             @click="toggleDarkMode"
           >
             <span class="help" aria-hidden="true"></span>
             <span aria-hidden="true">{{ darkMode ? '☀' : '☾' }}</span>
           </button>
 
+          <label class="ui-language-control">
+            <span class="visually-hidden">{{ t('Ngôn ngữ giao diện') }}</span>
+            <select :value="uiLocale" :aria-label="t('Ngôn ngữ giao diện')" @change="setUiLocale($event.target.value)">
+              <option value="vi">Tiếng Việt</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+
 
           <button
             type="button"
             class="team"
-            aria-label="Mở Cài đặt"
-            title="Mở Cài đặt"
+            :aria-label="t('Mở Cài đặt')"
+            :title="t('Mở Cài đặt')"
             :disabled="!tenantReady && !mfaVerifyPending"
             @click="openSettings"
           >
@@ -8335,11 +8752,11 @@ function followupRecommendationLabel(item) {
             <div>
 
               <b>
-                Không gian quản lý shop
+                {{ t('Không gian quản lý shop') }}
               </b>
 
               <small>
-                Quản trị viên
+                {{ t('Quản trị viên') }}
               </small>
 
             </div>
@@ -8349,12 +8766,12 @@ function followupRecommendationLabel(item) {
           <button
             type="button"
             class="top-logout"
-            aria-label="Đăng xuất"
-            title="Đăng xuất"
+            :aria-label="t('Đăng xuất')"
+            :title="t('Đăng xuất')"
             @click="logout"
           >
             <svg class="top-logout-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5M15 12H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></svg>
-            <span>Đăng xuất</span>
+            <span>{{ t('Đăng xuất') }}</span>
           </button>
 
         </div>
@@ -8407,6 +8824,9 @@ function followupRecommendationLabel(item) {
       <!-- ===================================================
            3 CỘT
       ==================================================== -->
+
+      <IndustryModules v-if="currentTab === 'appointments'" module="appointments" :api-base="API_BASE" />
+      <IndustryModules v-else-if="currentTab === 'commercial'" module="projects" :api-base="API_BASE" />
 
       <section
         v-if="currentTab === 'inbox'"
@@ -8518,7 +8938,40 @@ function followupRecommendationLabel(item) {
                 <option v-for="segment in savedSegments" :key="segment.id" :value="segment.id">{{ segment.name }} ({{ segment.customer_count }})</option>
               </select>
             </div>
+            <div class="segment-control inbox-saved-views">
+              <div class="filter-panel-heading"><span>{{ $t('Chế độ xem đã lưu') }}</span><small>{{ savedInboxViews.length }}/{{ MAX_SAVED_INBOX_VIEWS }}</small></div>
+              <select v-model="selectedSavedInboxViewId" :aria-label="$t('Chọn chế độ xem')" @change="applySavedInboxView">
+                <option value="">{{ $t('Chọn chế độ xem') }}</option>
+                <option v-for="view in savedInboxViews" :key="view.id" :value="view.id">{{ view.name }}</option>
+              </select>
+              <div class="inbox-saved-view-actions">
+                <input v-model="savedInboxViewName" maxlength="48" :placeholder="$t('Tên chế độ xem')" :aria-label="$t('Tên chế độ xem')" @keydown.enter.prevent="saveCurrentInboxView" />
+                <button type="button" @click="saveCurrentInboxView">{{ $t('Lưu bộ lọc') }}</button>
+                <button v-if="selectedSavedInboxViewId" type="button" class="inbox-saved-view-delete" @click="deleteSelectedInboxView">{{ $t('Xóa') }}</button>
+              </div>
+              <small class="inbox-saved-view-scope">{{ $t('Chỉ lưu trên trình duyệt này.') }}</small>
+              <p v-if="savedInboxViewError" class="inbox-saved-view-error" role="alert">{{ $t(savedInboxViewError) }}</p>
+              <p v-else-if="savedInboxViewNotice" class="inbox-saved-view-notice" role="status">{{ $t(savedInboxViewNotice) }}</p>
+            </div>
           </details>
+          </div>
+
+          <div class="inbox-bulk-toolbar">
+            <button v-if="!bulkSelectionMode" type="button" class="inbox-bulk-toggle" :disabled="!filtered.length" @click="bulkSelectionMode = true; bulkAssignmentNotice = ''">Chọn nhiều</button>
+            <template v-else>
+              <label class="inbox-select-visible"><input type="checkbox" :checked="allVisibleConversationsSelected" :disabled="!filtered.length" @change="toggleVisibleConversationSelection($event.target.checked)" /> {{ t('Chọn') }} {{ filtered.length }} {{ t('đang hiển thị') }}</label>
+              <span class="inbox-bulk-count">{{ t('Đã chọn') }} {{ bulkSelectedConversationIds.size }}</span>
+              <label class="visually-hidden" for="inbox-bulk-assignee">Giao hội thoại đã chọn</label>
+              <select id="inbox-bulk-assignee" v-model="bulkAssignmentTarget" :disabled="bulkAssignmentSaving">
+                <option value="">Chọn nhân viên...</option>
+                <option value="unassigned">Bỏ phân công</option>
+                <option v-for="member in activeTeamUsers" :key="member.id" :value="String(member.id)">{{ member.full_name }}</option>
+              </select>
+              <button type="button" class="inbox-bulk-submit" :disabled="!bulkSelectedConversationIds.size || !bulkAssignmentTarget || bulkAssignmentSaving" @click="bulkReassignConversations">{{ bulkAssignmentSaving ? 'Đang phân công...' : 'Phân công' }}</button>
+              <button type="button" class="inbox-bulk-cancel" :disabled="bulkAssignmentSaving" @click="closeBulkSelectionMode">Hủy</button>
+            </template>
+            <p v-if="bulkAssignmentError" class="inbox-bulk-error" role="alert">{{ $t(bulkAssignmentError) }}</p>
+            <p v-else-if="bulkAssignmentNotice" class="inbox-bulk-notice" role="status">{{ $t(bulkAssignmentNotice) }}</p>
           </div>
 
 
@@ -8535,11 +8988,16 @@ function followupRecommendationLabel(item) {
               <p>{{ conversations.length ? "Thử thay đổi từ khóa hoặc bộ lọc để xem lại." : "Hội thoại từ Facebook, Instagram, Telegram, Zalo và TikTok sẽ xuất hiện tại đây." }}</p>
             </div>
 
-            <button
-              v-for="item in filtered"
-              :key="
-                item.conversation_id
-              "
+            <div v-for="item in filtered" :key="item.conversation_id" class="conversation-row">
+              <label v-if="bulkSelectionMode" class="conversation-select-checkbox">
+                <input
+                  type="checkbox"
+                  :checked="bulkSelectedConversationIds.has(Number(item.conversation_id))"
+                  :aria-label="`Chọn hội thoại ${nameOf(item)}`"
+                  @change="toggleBulkConversationSelection(item.conversation_id, $event.target.checked)"
+                />
+              </label>
+              <button
               class="conversation"
 
               :class="{
@@ -8688,7 +9146,8 @@ function followupRecommendationLabel(item) {
 
               </div>
 
-            </button>
+              </button>
+            </div>
 
             <div v-if="inboxLoadingMore" class="conversation-load-state" role="status">
               Đang tải thêm hội thoại...
@@ -8928,6 +9387,21 @@ function followupRecommendationLabel(item) {
                       {{ member.full_name }}
                     </option>
                   </select>
+                </label>
+
+                <label v-if="selectedHasAiActivity" class="conversation-assignment conversation-outcome-control" title="Xác nhận kết quả chatbot">
+                  <span>Kết quả chatbot</span>
+                  <select
+                    :value="selected.resolution_outcome || ''"
+                    :disabled="conversationOutcomeSaving"
+                    @change="saveSelectedConversationOutcome($event.target.value)"
+                  >
+                    <option value="">Chưa xác nhận</option>
+                    <option value="resolved">Đã giải quyết</option>
+                    <option value="needs_human">Cần nhân viên hỗ trợ</option>
+                    <option value="customer_unanswered">Khách chưa phản hồi</option>
+                  </select>
+                  <small v-if="conversationOutcomeError" class="conversation-outcome-error" role="alert">{{ $t(conversationOutcomeError) }}</small>
                 </label>
 
                 <button
@@ -9720,7 +10194,7 @@ function followupRecommendationLabel(item) {
               >
                 <span class="customer-message-search-result-head">
                   <strong>{{ customerMessageSearchActor(item) }}</strong>
-                  <time>{{ item.occurred_at ? new Date(item.occurred_at).toLocaleString('vi-VN') : 'Không rõ thời gian' }}</time>
+                  <time>{{ item.occurred_at ? new Date(item.occurred_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : 'Không rõ thời gian' }}</time>
                 </span>
                 <span>{{ customerMessageSearchPreview(item) }}</span>
               </button>
@@ -10021,6 +10495,25 @@ function followupRecommendationLabel(item) {
                 </div>
               </div>
 
+              <div v-if="crmConfig.customer_fields.length" class="section customer-custom-fields-section">
+                <div class="section-head"><h4>Thông tin riêng của shop</h4><span>{{ crmConfig.customer_fields.length }}</span></div>
+                <div class="customer-profile-fields customer-custom-fields-grid">
+                  <label v-for="field in crmConfig.customer_fields" :key="field.key" class="customer-custom-field">
+                    <span>{{ field.label }}</span>
+                    <select v-if="field.type === 'select'" v-model="customerCustomFieldsDraft[field.key]">
+                      <option value="">Chưa chọn</option><option v-for="option in field.options" :key="option" :value="option">{{ option }}</option>
+                    </select>
+                    <input v-else-if="field.type === 'number'" v-model.number="customerCustomFieldsDraft[field.key]" type="number" />
+                    <input v-else-if="field.type === 'date'" v-model="customerCustomFieldsDraft[field.key]" type="date" />
+                    <input v-else-if="field.type === 'boolean'" v-model="customerCustomFieldsDraft[field.key]" type="checkbox" />
+                    <textarea v-else v-model="customerCustomFieldsDraft[field.key]" maxlength="2000" rows="2" />
+                  </label>
+                </div>
+                <div v-if="customerCustomFieldsError" class="facts-error" role="alert">{{ customerCustomFieldsError }}</div>
+                <div v-if="customerCustomFieldsNotice" class="settings-notice" role="status">{{ customerCustomFieldsNotice }}</div>
+                <button type="button" class="table-action-btn" :disabled="customerCustomFieldsSaving" @click="saveCustomerCustomFields">{{ customerCustomFieldsSaving ? 'Đang lưu...' : 'Lưu thông tin' }}</button>
+              </div>
+
               <div class="section customer-timeline-section">
                 <div class="section-head">
                   <h4>Lịch sử tương tác</h4>
@@ -10103,7 +10596,7 @@ function followupRecommendationLabel(item) {
                         <p>{{ customerTimelineContent(event) }}</p>
                         <small v-if="timelineExplainability(event)" class="timeline-explainability">{{ timelineExplainability(event) }}</small>
                         <small class="customer-timeline-meta">
-                          {{ event.occurred_at ? new Date(event.occurred_at).toLocaleString('vi-VN') : 'Không rõ thời gian' }}
+                          {{ event.occurred_at ? new Date(event.occurred_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : 'Không rõ thời gian' }}
                           <span
                             class="timeline-actor"
                             :class="`timeline-actor-${timelineActor(event).kind}`"
@@ -10135,7 +10628,7 @@ function followupRecommendationLabel(item) {
                 <div v-if="customerPendingApprovalOrders.length" class="customer-order-approval" role="status">
                   <div class="customer-order-approval-head"><strong>{{ customerPendingApprovalOrders.length }} đơn chờ xác nhận</strong><span>Khách đã duyệt hóa đơn</span></div>
                   <article v-for="order in customerPendingApprovalOrders" :key="`customer-order-approval-${order.id}`" class="customer-order-approval-card">
-                    <div><strong>{{ order.order_number || `Đơn #${order.id}` }}</strong><small>{{ order.items?.map((item) => `${item.product_name || item.name || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') || 'Chưa có sản phẩm' }}</small><small>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ · {{ order.shipping_phone || 'Chưa có SĐT giao hàng' }}</small></div>
+                    <div><strong>{{ order.order_number || `Đơn #${order.id}` }}</strong><small>{{ order.items?.map((item) => `${item.product_name || item.name || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') || 'Chưa có sản phẩm' }}</small><small>{{ Number(order.total_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ · {{ order.shipping_phone || 'Chưa có SĐT giao hàng' }}</small></div>
                     <button type="button" class="table-action-btn customer-order-approve-btn" :disabled="orderTransitionSaving[order.id]" @click="confirmCustomerOrder(order)">{{ orderTransitionSaving[order.id] ? 'Đang xác nhận...' : 'Đồng ý đơn' }}</button>
                   </article>
                 </div>
@@ -10146,14 +10639,14 @@ function followupRecommendationLabel(item) {
                   <article v-for="order in customerVisibleOrderHistory" :key="`customer-order-${order.id}`" class="customer-order-card">
                     <div>
                       <strong>{{ order.order_number || `Đơn #${order.id}` }}</strong>
-                      <small>{{ order.created_at ? new Date(order.created_at).toLocaleDateString('vi-VN') : 'Chưa rõ ngày đặt' }}</small>
+                      <small>{{ order.created_at ? formatDate(order.created_at) : t('Chưa rõ ngày đặt') }}</small>
                       <small v-if="order.items?.length" class="customer-order-items">
                         {{ order.items.map((item) => `${item.name || item.sku || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') }}
                       </small>
                     </div>
                     <div class="customer-order-card-meta">
                       <span>{{ salesOrderStatusLabel(order.status) }}</span>
-                      <strong>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</strong>
+                      <strong>{{ Number(order.total_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong>
                     </div>
                   </article>
                 </div>
@@ -10383,12 +10876,18 @@ function followupRecommendationLabel(item) {
             <div class="platform-workspace-mark" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M4 6.5h16v13H4z" /><path d="M8 6.5V4h8v2.5M8 11h8M8 15h5" /><circle cx="17" cy="16" r="2.5" /></svg>
             </div>
-            <div><strong>Smart Merchant Hub</strong><span>Quản trị hệ thống</span></div>
+            <div><strong>Smart Merchant Hub</strong><span>{{ t('Quản trị hệ thống') }}</span></div>
           </div>
           <div class="platform-workspace-actions">
-            <span class="platform-workspace-role">Admin nền tảng</span>
-            <button type="button" class="dark-mode-toggle" :aria-pressed="darkMode" :aria-label="darkMode ? 'Tắt chế độ tối' : 'Bật chế độ tối'" :title="darkMode ? 'Tắt chế độ tối' : 'Bật chế độ tối'" @click="toggleDarkMode"><span class="help" aria-hidden="true"></span><span aria-hidden="true">{{ darkMode ? '☀' : '☾' }}</span></button>
-            <button type="button" class="platform-logout" @click="logout">Đăng xuất</button>
+            <span class="platform-workspace-role">{{ t('Admin nền tảng') }}</span>
+            <label class="ui-language-control">
+              <span class="visually-hidden">{{ t('Ngôn ngữ giao diện') }}</span>
+              <select :value="uiLocale" :aria-label="t('Ngôn ngữ giao diện')" @change="setUiLocale($event.target.value)">
+                <option value="vi">Tiếng Việt</option><option value="en">English</option>
+              </select>
+            </label>
+            <button type="button" class="dark-mode-toggle" :aria-pressed="darkMode" :aria-label="t(darkMode ? 'Tắt chế độ tối' : 'Bật chế độ tối')" :title="t(darkMode ? 'Tắt chế độ tối' : 'Bật chế độ tối')" @click="toggleDarkMode"><span class="help" aria-hidden="true"></span><span aria-hidden="true">{{ darkMode ? '☀' : '☾' }}</span></button>
+            <button type="button" class="platform-logout" @click="logout">{{ t('Đăng xuất') }}</button>
           </div>
         </header>
         <div class="products-header platform-admin-hero">
@@ -10462,7 +10961,7 @@ function followupRecommendationLabel(item) {
                     <p v-if="platformShopDetail(shop.id).error" class="settings-notice team-error" role="alert">{{ platformShopDetail(shop.id).error }}</p>
                     <div class="platform-tenant-detail-grid">
                       <div><span>Gói đang dùng</span><strong>{{ platformShopDetail(shop.id).subscription?.plan_name || shop.plan_name || 'Chưa cấp gói' }}</strong><small>{{ subscriptionStatusMeta(platformShopDetail(shop.id).subscription?.status).label }}</small></div>
-                      <div><span>Trạng thái thanh toán</span><strong>{{ paymentStatusMeta(platformShopLatestPayment(shop)?.status).label }}</strong><small v-if="platformShopLatestPayment(shop)?.paid_at">{{ new Date(platformShopLatestPayment(shop).paid_at).toLocaleString('vi-VN') }}</small><small v-else>Chưa có giao dịch gần đây</small></div>
+                      <div><span>Trạng thái thanh toán</span><strong>{{ paymentStatusMeta(platformShopLatestPayment(shop)?.status).label }}</strong><small v-if="platformShopLatestPayment(shop)?.paid_at">{{ new Date(platformShopLatestPayment(shop).paid_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</small><small v-else>Chưa có giao dịch gần đây</small></div>
                     </div>
                     <div class="platform-quota-card-grid" aria-label="Hạn mức tenant: Kênh kết nối, Nhân viên, Tài liệu và Dung lượng tra cứu">
                       <div v-for="item in platformQuotaCards(platformShopQuota(shop))" :key="item.key" class="platform-quota-card" :class="{ warning: item.nearLimit, exceeded: item.exceeded }">
@@ -10521,7 +11020,7 @@ function followupRecommendationLabel(item) {
             <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">CHANNEL HEALTH</span><h3>Kết nối &amp; cảnh báo</h3><p>Theo dõi lỗi Facebook, Instagram, Telegram, Zalo và các kênh sẽ bổ sung như TikTok, Shopee.</p></div></div>
             <p v-if="!platformProviderErrors.length" class="settings-empty">Chưa có cảnh báo kết nối.</p>
             <ul v-else class="audit-list platform-alert-list">
-              <li v-for="errorItem in platformProviderErrors.slice(0, 10)" :key="errorItem.id"><strong>{{ channelLabel(errorItem.channel_type) }}</strong><span> · {{ workflowEventLabel(errorItem.event_type) }} · {{ errorItem.error_type || 'Lỗi kết nối' }}</span><small>{{ errorItem.received_at ? new Date(errorItem.received_at).toLocaleString('vi-VN') : '' }}</small></li>
+              <li v-for="errorItem in platformProviderErrors.slice(0, 10)" :key="errorItem.id"><strong>{{ channelLabel(errorItem.channel_type) }}</strong><span> · {{ workflowEventLabel(errorItem.event_type) }} · {{ errorItem.error_type || 'Lỗi kết nối' }}</span><small>{{ errorItem.received_at ? new Date(errorItem.received_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '' }}</small></li>
             </ul>
           </section>
         </div>
@@ -10530,7 +11029,7 @@ function followupRecommendationLabel(item) {
           <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">AUDIT</span><h3>Nhật ký nền tảng</h3><p>Ghi lại thao tác quản trị tenant, gói dịch vụ, thanh toán và tách dữ liệu.</p></div><span class="platform-admin-count">{{ platformAuditLogs.length }} sự kiện</span></div>
           <p v-if="!platformAuditLogs.length" class="settings-empty">Chưa có nhật ký nền tảng.</p>
           <ul v-else class="audit-list platform-alert-list">
-            <li v-for="log in platformAuditLogs.slice(0, 12)" :key="log.id"><strong>{{ log.action }}</strong><span> · {{ resourceLabel(log.resource_type) }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span><small>{{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '' }}</small></li>
+            <li v-for="log in platformAuditLogs.slice(0, 12)" :key="log.id"><strong>{{ log.action }}</strong><span> · {{ resourceLabel(log.resource_type) }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span><small>{{ log.created_at ? new Date(log.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '' }}</small></li>
           </ul>
         </section>
       </section>
@@ -10538,7 +11037,7 @@ function followupRecommendationLabel(item) {
       <!-- ===================================================
            SẢN PHẨM (PRODUCT CATALOG)
       ==================================================== -->
-      <section v-if="currentTab === 'products'" class="products-layout">
+      <section v-if="currentTab === 'products' && workspaceModuleEnabled('retail')" class="products-layout">
         <div class="products-header">
           <div>
             <h2>Sản phẩm</h2>
@@ -10590,7 +11089,7 @@ function followupRecommendationLabel(item) {
                 <tr>
                   <td><strong>{{ product.sku }}</strong></td>
                   <td><div>{{ product.name }}</div><small>{{ product.description || 'Không có mô tả' }}</small></td>
-                  <td>{{ Number(product.price).toLocaleString('vi-VN') }}đ</td>
+                  <td>{{ Number(product.price).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</td>
                   <td class="inventory-cell">
                     <div class="inventory-summary">
                       <div class="inventory-total">
@@ -10673,10 +11172,10 @@ function followupRecommendationLabel(item) {
         <div v-if="leadError" class="product-error">{{ leadError }}</div>
 
         <div class="pipeline-summary">
-          <div v-for="stage in ['new', 'qualified', 'proposal', 'won', 'lost']" :key="stage" class="pipeline-card">
-            <span>{{ leadStageLabel(stage) }}</span>
-            <strong>{{ (pipelineSummary.find(item => item.stage === stage) || {}).lead_count || 0 }}</strong>
-            <small>{{ Number((pipelineSummary.find(item => item.stage === stage) || {}).value || 0).toLocaleString('vi-VN') }}đ</small>
+          <div v-for="stage in crmConfig.pipeline_stages" :key="stage.key" class="pipeline-card">
+            <span>{{ stage.label }}</span>
+            <strong>{{ (pipelineSummary.find(item => item.stage === stage.key) || {}).lead_count || 0 }}</strong>
+            <small>{{ Number((pipelineSummary.find(item => item.stage === stage.key) || {}).value || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small>
           </div>
         </div>
 
@@ -10695,7 +11194,7 @@ function followupRecommendationLabel(item) {
                 </option>
               </select>
             </label>
-            <label>Giai đoạn<select v-model="leadForm.stage"><option value="new">Mới</option><option value="qualified">Đã xác định nhu cầu</option><option value="proposal">Đã gửi đề xuất</option><option value="won">Đã chốt</option><option value="lost">Không thành công</option></select></label>
+            <label>Giai đoạn<select v-model="leadForm.stage"><option v-for="stage in crmConfig.pipeline_stages" :key="stage.key" :value="stage.key">{{ stage.label }}</option></select></label>
             <label>Giá trị dự kiến<input v-model.number="leadForm.value" type="number" min="0" step="1" /></label>
             <label>Xác suất (%)<input v-model.number="leadForm.probability" type="number" min="0" max="100" step="1" /></label>
             <label>Mã hội thoại (không bắt buộc)<input v-model="leadForm.conversation_id" type="number" min="1" /></label>
@@ -10714,10 +11213,10 @@ function followupRecommendationLabel(item) {
                 <td><strong>{{ lead.title }}</strong></td>
                 <td>#{{ lead.customer_id }} {{ lead.customer_name || '' }}</td>
                 <td>{{ lead.source_channel || '—' }}</td>
-                <td><select class="inline-stage" :value="lead.stage" @change="changeLeadStage(lead, $event.target.value)"><option value="new">Mới</option><option value="qualified">Đã xác định nhu cầu</option><option value="proposal">Đã gửi đề xuất</option><option value="won">Đã chốt</option><option value="lost">Không thành công</option></select></td>
-                <td>{{ Number(lead.value || 0).toLocaleString('vi-VN') }}đ</td>
+                <td><select class="inline-stage" :value="lead.stage" @change="changeLeadStage(lead, $event.target.value)"><option v-for="stage in crmConfig.pipeline_stages" :key="stage.key" :value="stage.key">{{ stage.label }}</option></select></td>
+                <td>{{ Number(lead.value || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</td>
                 <td>{{ lead.probability }}%</td>
-                <td>{{ lead.updated_at ? new Date(lead.updated_at).toLocaleDateString('vi-VN') : '—' }}</td>
+                <td>{{ formatDate(lead.updated_at) }}</td>
                 <td class="lead-actions"><button type="button" class="table-link" @click="toggleLeadActivities(lead)">{{ leadActivityVisible[lead.id] ? 'Ẩn hoạt động' : 'Hoạt động' }}</button></td>
               </tr>
               <tr v-if="leadActivityVisible[lead.id]" class="lead-detail-row">
@@ -10725,7 +11224,7 @@ function followupRecommendationLabel(item) {
                   <div class="lead-detail">
                     <div class="lead-detail-header"><strong>Hoạt động & chuyển đổi</strong><span v-if="leadActivityLoading[lead.id]">Đang tải...</span></div>
                     <div class="lead-activity-list" v-if="(leadActivities[lead.id] || []).length">
-                      <div v-for="activity in leadActivities[lead.id]" :key="activity.id" class="lead-activity"><b>{{ activity.subject }}</b><small>{{ leadActivityTypeLabel(activity.activity_type) }} · {{ activity.occurred_at ? new Date(activity.occurred_at).toLocaleString('vi-VN') : '—' }}</small></div>
+                      <div v-for="activity in leadActivities[lead.id]" :key="activity.id" class="lead-activity"><b>{{ activity.subject }}</b><small>{{ leadActivityTypeLabel(activity.activity_type) }} · {{ activity.occurred_at ? new Date(activity.occurred_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</small></div>
                     </div>
                     <div v-else class="settings-empty">Chưa có hoạt động.</div>
                     <form class="lead-activity-form" @submit.prevent="addLeadActivity(lead)">
@@ -10735,7 +11234,7 @@ function followupRecommendationLabel(item) {
                     <div v-if="lead.stage !== 'won'" class="lead-conversion-form">
                       <select v-model="leadConversionOrders[lead.id]">
                         <option value="">Chọn đơn để chuyển đổi</option>
-                        <option v-for="order in orders.filter(item => item.customer_id === lead.customer_id)" :key="order.id" :value="order.id">{{ order.order_number || `Đơn #${order.id}` }} · {{ Number(order.total_amount || order.total || 0).toLocaleString('vi-VN') }}đ</option>
+                        <option v-for="order in orders.filter(item => item.customer_id === lead.customer_id)" :key="order.id" :value="order.id">{{ order.order_number || `Đơn #${order.id}` }} · {{ Number(order.total_amount || order.total || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</option>
                       </select>
                       <button class="primary-btn" type="button" :disabled="leadConversionSaving[lead.id]" @click="convertLead(lead)">{{ leadConversionSaving[lead.id] ? 'Đang lưu...' : 'Ghi nhận chuyển đổi' }}</button>
                     </div>
@@ -10823,7 +11322,7 @@ function followupRecommendationLabel(item) {
                 <td>{{ ticket.channel || '—' }}</td>
                 <td><span class="product-status" :class="ticket.priority">{{ ticketPriorityLabel(ticket.priority) }}</span></td>
                 <td><select class="inline-stage" :value="ticket.status" @change="changeTicketStatus(ticket, $event.target.value)"><option value="open">Đang mở</option><option value="pending">Đang chờ</option><option value="resolved">Đã xử lý</option><option value="closed">Đã đóng</option></select></td>
-                <td>{{ ticket.sla_due_at ? new Date(ticket.sla_due_at).toLocaleString('vi-VN') : '—' }}</td>
+                <td>{{ ticket.sla_due_at ? new Date(ticket.sla_due_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</td>
                 <td>
                   <select class="inline-stage" :value="ticket.assigned_user_id || ''" @change="assignTicket(ticket, $event.target.value)">
                     <option value="">Chưa phân công</option>
@@ -10840,7 +11339,7 @@ function followupRecommendationLabel(item) {
                   <span v-if="!ticketHistory[ticket.id].length"> Chưa có sự kiện.</span>
                   <ul v-else>
                     <li v-for="event in ticketHistory[ticket.id]" :key="event.id">
-                      {{ ticketHistoryEventLabel(event.event_type) }} · {{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}
+                      {{ ticketHistoryEventLabel(event.event_type) }} · {{ event.created_at ? new Date(event.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}
                       <span v-if="event.from_value || event.to_value">({{ event.from_value || '—' }} → {{ event.to_value || '—' }})</span>
                     </li>
                   </ul>
@@ -10859,7 +11358,7 @@ function followupRecommendationLabel(item) {
       <!-- ===================================================
            ĐƠN HÀNG + DOANH THU (SALES CRM)
       ==================================================== -->
-      <section v-if="currentTab === 'orders'" class="products-layout orders-layout">
+      <section v-if="currentTab === 'orders'" v-show="workspaceModuleEnabled('retail')" class="products-layout orders-layout">
         <div class="products-header">
           <div>
             <h2>Đơn bán</h2>
@@ -10872,11 +11371,11 @@ function followupRecommendationLabel(item) {
         <div class="revenue-cards">
           <div class="revenue-card total">
             <span>Tổng doanh thu</span>
-            <strong>{{ Number(revenueByChannel.reduce((sum, item) => sum + Number(item.revenue || 0), 0)).toLocaleString('vi-VN') }}đ</strong>
+            <strong>{{ Number(revenueByChannel.reduce((sum, item) => sum + Number(item.revenue || 0), 0)).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong>
           </div>
           <div v-for="item in revenueByChannel" :key="item.channel" class="revenue-card">
             <span>{{ item.channel === 'unknown' ? 'Không gắn kênh' : item.channel }}</span>
-            <strong>{{ Number(item.revenue || 0).toLocaleString('vi-VN') }}đ</strong>
+            <strong>{{ Number(item.revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong>
             <small>{{ item.order_count }} đơn</small>
           </div>
         </div>
@@ -10908,15 +11407,15 @@ function followupRecommendationLabel(item) {
                 <td><button type="button" class="table-action-btn" data-testid="order-history-button" title="Xem toàn bộ quy trình" aria-label="Xem toàn bộ quy trình" @click.stop="loadSalesOrderEvents(order)">Quy trình</button><small>Nhật ký bất biến</small></td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ paymentStatusLabel(order.payment_status) }}</span>
-                  <small>{{ Number(order.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</small>
+                  <small>{{ Number(order.paid_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ / {{ Number(order.total_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small>
                   <div class="order-payment-actions">
                     <input v-model.number="orderPaymentDrafts[order.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" />
                     <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận thanh toán" title="Ghi nhận thanh toán" @click="recordSalesPayment(order)">Thu</button>
                     <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận hoàn tiền" title="Ghi nhận hoàn tiền" @click="recordSalesPayment(order, 'refund')">Hoàn</button>
                   </div>
                 </td>
-                <td><strong>{{ Number(order.total_amount || 0).toLocaleString('vi-VN') }}đ</strong></td>
-                <td>{{ order.created_at ? new Date(order.created_at).toLocaleString('vi-VN') : '—' }}</td>
+                <td><strong>{{ Number(order.total_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></td>
+                <td>{{ order.created_at ? new Date(order.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -10930,18 +11429,18 @@ function followupRecommendationLabel(item) {
               <label>Mã vận đơn<input v-model="orderLogisticsDraft.tracking_code" maxlength="160" placeholder="Nhập mã vận đơn" /></label>
               <label>Trạng thái<select v-model="orderLogisticsDraft.shipping_status"><option value="pending">Chưa bàn giao</option><option value="in_transit">Đang vận chuyển</option><option value="delivered">Đã giao</option><option value="failed">Giao thất bại</option><option value="returned">Đã hoàn</option></select></label>
             </div>
-            <div class="order-logistics-actions"><span v-if="selectedOrderEvents.order.shipping_updated_at" class="field-hint">Cập nhật: {{ new Date(selectedOrderEvents.order.shipping_updated_at).toLocaleString('vi-VN') }}</span><button class="table-action-btn" type="submit" :disabled="orderLogisticsSaving">{{ orderLogisticsSaving ? 'Đang lưu...' : 'Lưu vận chuyển' }}</button></div>
+            <div class="order-logistics-actions"><span v-if="selectedOrderEvents.order.shipping_updated_at" class="field-hint">Cập nhật: {{ new Date(selectedOrderEvents.order.shipping_updated_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</span><button class="table-action-btn" type="submit" :disabled="orderLogisticsSaving">{{ orderLogisticsSaving ? 'Đang lưu...' : 'Lưu vận chuyển' }}</button></div>
           </form>
           <div v-if="orderEventsLoading" class="products-empty">Đang tải lịch sử...</div>
               <div v-else-if="!selectedOrderEvents.items?.length" class="products-empty">Chưa có sự kiện nào.</div>
-          <ol v-else class="order-events-list"><li v-for="event in chronologicalOrderEvents(selectedOrderEvents.items)" :key="event.id"><strong>{{ orderEventLabel(event) }}</strong><span>{{ orderEventSummary(event) }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small></li></ol>
+          <ol v-else class="order-events-list"><li v-for="event in chronologicalOrderEvents(selectedOrderEvents.items)" :key="event.id"><strong>{{ orderEventLabel(event) }}</strong><span>{{ orderEventSummary(event) }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</small></li></ol>
         </div>
       </section>
 
       <!-- ===================================================
            PURCHASE ORDERS (SUPPLIER / SHOP PROCUREMENT)
       ==================================================== -->
-      <section v-if="currentTab === 'purchase-orders'" class="products-layout orders-layout purchase-orders-layout">
+      <section v-if="currentTab === 'purchase-orders'" v-show="workspaceModuleEnabled('retail')" class="products-layout orders-layout purchase-orders-layout">
         <div class="products-header">
           <div>
             <h2>Đơn nhập hàng / dịch vụ</h2>
@@ -11007,9 +11506,9 @@ function followupRecommendationLabel(item) {
                   </select>
                   <button v-if="['submitted', 'partially_received'].includes(purchase.status)" type="button" class="table-action-btn" @click="receivePurchaseOrder(purchase)">Nhận hàng</button>
                 </td>
-                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ paymentStatusLabel(purchase.payment_status || 'unpaid') }}</span><small>{{ Number(purchase.paid_amount || 0).toLocaleString('vi-VN') }}đ / {{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Thanh toán công nợ</button></div></td>
-                <td><strong>{{ Number(purchase.total_spend || 0).toLocaleString('vi-VN') }}đ</strong></td>
-                <td>{{ purchase.updated_at ? new Date(purchase.updated_at).toLocaleString('vi-VN') : '—' }}</td>
+                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ paymentStatusLabel(purchase.payment_status || 'unpaid') }}</span><small>{{ Number(purchase.paid_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ / {{ Number(purchase.total_spend || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Thanh toán công nợ</button></div></td>
+                <td><strong>{{ Number(purchase.total_spend || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></td>
+                <td>{{ purchase.updated_at ? new Date(purchase.updated_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</td>
                 <td><button type="button" class="table-action-btn" data-testid="purchase-order-history-button" @click.stop="loadPurchaseOrderEvents(purchase)">Lịch sử</button></td>
               </tr>
             </tbody>
@@ -11026,7 +11525,7 @@ function followupRecommendationLabel(item) {
             <li v-for="event in selectedPurchaseOrderEvents.items" :key="event.id">
               <strong>{{ purchaseOrderEventLabel(event) }}</strong>
               <span>{{ purchaseOrderEventSummary(event) }}</span>
-              <small>{{ event.created_at ? new Date(event.created_at).toLocaleString('vi-VN') : '—' }}</small>
+              <small>{{ event.created_at ? new Date(event.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</small>
             </li>
           </ol>
         </div>
@@ -11052,7 +11551,7 @@ function followupRecommendationLabel(item) {
           </div>
           <div class="product-form-grid">
             <label>Tên quy trình<input v-model="workflowForm.name" required maxlength="160" placeholder="Ví dụ: Gắn nhãn khách Telegram" /></label>
-            <label>Sự kiện<select v-model="workflowForm.event_type"><option value="message.created">Tin nhắn mới</option><option value="ticket.created">Phiếu hỗ trợ được tạo</option><option value="ticket.status_changed">Phiếu hỗ trợ đổi trạng thái</option><option value="lead.stage_changed">Cơ hội đổi giai đoạn</option><option value="order.created">Đơn hàng được tạo</option></select></label>
+            <label>Sự kiện<select v-model="workflowForm.event_type"><option value="message.created">Tin nhắn mới</option><option value="ticket.created">Phiếu hỗ trợ được tạo</option><option value="ticket.status_changed">Phiếu hỗ trợ đổi trạng thái</option><option value="lead.stage_changed">Cơ hội đổi giai đoạn</option><option value="order.created">Đơn hàng được tạo</option><option value="appointment.created">Tạo lịch hẹn</option><option value="appointment.status_changed">Lịch hẹn đổi trạng thái</option><option value="quote.created">Tạo báo giá</option><option value="quote.status_changed">Báo giá đổi trạng thái</option><option value="project.created">Tạo dự án</option><option value="project.status_changed">Dự án đổi trạng thái</option><option value="invoice.created">Tạo hóa đơn</option><option value="invoice.status_changed">Hóa đơn đổi trạng thái</option><option value="invoice.payment_recorded">Ghi nhận thanh toán hóa đơn</option></select></label>
           <label>Điều kiện kênh<select v-model="workflowForm.condition_channel"><option value="">Mọi kênh</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="telegram">Telegram</option><option value="zalo">Zalo</option><option value="tiktok">TikTok</option></select></label>
             <label>Hành động<select v-model="workflowForm.action_type"><option value="create_ticket">Tạo phiếu hỗ trợ</option><option value="add_tag">Gắn nhãn</option><option value="assign_user">Chuyển người hỗ trợ và gửi email</option></select></label>
             <label v-if="workflowForm.action_type === 'create_ticket'">Tiêu đề phiếu hỗ trợ<input v-model="workflowForm.action_title" maxlength="255" placeholder="Nhắc chăm sóc khách" /></label>
@@ -11141,8 +11640,26 @@ function followupRecommendationLabel(item) {
               <div class="ai-stat-card"><span>Tỷ lệ chuyển nhân viên</span><strong>{{ ((aiEvaluationDashboard.ai?.handoff?.rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.ai?.handoff?.count || 0 }} lượt chuyển nhân viên</small></div>
               <div class="ai-stat-card"><span>Phản hồi trùng</span><strong>{{ aiEvaluationDashboard.ai?.reliability?.duplicate_reply_attempts || 0 }}</strong><small>{{ ((aiEvaluationDashboard.ai?.reliability?.duplicate_reply_rate || 0) * 100).toFixed(1) }}% trên phản hồi tự động</small></div>
               <div class="ai-stat-card"><span>Đơn chốt tự động</span><strong>{{ ((aiEvaluationDashboard.commerce?.conversion_rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.commerce?.confirmed || 0 }} đơn xác nhận / {{ aiEvaluationDashboard.commerce?.started || 0 }} đơn bắt đầu</small></div>
-              <div class="ai-stat-card"><span>Doanh thu cứu lại</span><strong>{{ Number(aiEvaluationDashboard.commerce?.recovered_revenue || 0).toLocaleString('vi-VN') }}đ</strong><small>{{ aiEvaluationDashboard.commerce?.recovered_orders || 0 }} đơn sau nhắc chăm sóc</small></div>
-              <div class="ai-stat-card"><span>Trợ lý tự xử lý</span><strong>{{ ((aiEvaluationDashboard.commerce?.bot_resolution_rate || 0) * 100).toFixed(1) }}%</strong><small>Hội thoại được giải quyết không cần chuyển nhân viên</small></div>
+              <div class="ai-stat-card"><span>Doanh thu cứu lại</span><strong>{{ Number(aiEvaluationDashboard.commerce?.recovered_revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong><small>{{ aiEvaluationDashboard.commerce?.recovered_orders || 0 }} đơn sau nhắc chăm sóc</small></div>
+              <div class="ai-stat-card"><span>Bot phản hồi, chưa bàn giao</span><strong>{{ ((aiEvaluationDashboard.ai?.handoff?.bot_only_rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.ai?.handoff?.bot_only_count || 0 }} / {{ aiEvaluationDashboard.ai?.handoff?.inbound_conversation_count || 0 }} hội thoại có bot trả lời và chưa ghi nhận bàn giao</small></div>
+            </div>
+            <div class="ai-outcome-summary">
+              <h4>Kết quả được nhân viên xác nhận</h4>
+              <p>Chỉ tính hội thoại có chatbot trả lời hoặc đã chuyển nhân viên. Hội thoại chưa được gắn kết quả sẽ không bị suy đoán.</p>
+              <div class="ai-lab-summary ai-quality-grid">
+                <div class="ai-stat-card"><span>Đã xác nhận giải quyết</span><strong>{{ aiEvaluationDashboard.ai?.confirmed_outcomes?.resolved || 0 }}</strong><small>Nhân viên xác nhận đã xử lý xong</small></div>
+                <div class="ai-stat-card"><span>Cần nhân viên hỗ trợ</span><strong>{{ aiEvaluationDashboard.ai?.confirmed_outcomes?.needs_human || 0 }}</strong><small>Kết quả được xác nhận cần hỗ trợ người thật</small></div>
+                <div class="ai-stat-card"><span>Khách chưa phản hồi</span><strong>{{ aiEvaluationDashboard.ai?.confirmed_outcomes?.customer_unanswered || 0 }}</strong><small>Nhân viên xác nhận đang chờ khách</small></div>
+                <div class="ai-stat-card"><span>Chưa ghi nhận</span><strong>{{ aiEvaluationDashboard.ai?.confirmed_outcomes?.unclassified || 0 }}</strong><small>Trong {{ aiEvaluationDashboard.ai?.confirmed_outcomes?.tracked_conversation_count || 0 }} hội thoại có AI tham gia</small></div>
+              </div>
+              <h4>Ước tính theo trạng thái CRM</h4>
+              <p>Các số liệu dưới đây được suy ra từ trạng thái hội thoại/phiếu và thời gian phản hồi, không phải xác nhận của nhân viên.</p>
+              <div class="ai-lab-summary ai-quality-grid">
+                <div class="ai-stat-card"><span>Đã giải quyết</span><strong>{{ aiEvaluationDashboard.ai?.outcomes?.resolved || 0 }}</strong><small>Hội thoại đã đóng hoặc phiếu mới nhất đã xử lý</small></div>
+                <div class="ai-stat-card"><span>Cần người hỗ trợ</span><strong>{{ aiEvaluationDashboard.ai?.outcomes?.needs_human || 0 }}</strong><small>Đang tiếp quản hoặc phiếu mới nhất còn mở</small></div>
+                <div class="ai-stat-card"><span>Khách chưa phản hồi</span><strong>{{ aiEvaluationDashboard.ai?.outcomes?.customer_unanswered || 0 }}</strong><small>Shop đã trả lời nhưng khách chưa phản hồi trong 24 giờ</small></div>
+                <div class="ai-stat-card"><span>Đang tiếp tục</span><strong>{{ aiEvaluationDashboard.ai?.outcomes?.in_progress || 0 }}</strong><small>{{ aiEvaluationDashboard.ai?.outcomes?.inbound_conversation_count || 0 }} hội thoại có tin đến trong kỳ</small></div>
+              </div>
             </div>
           </div>
 
@@ -11500,11 +12017,11 @@ function followupRecommendationLabel(item) {
             <div class="report-card accent"><span>Khách hàng</span><strong>{{ crmOverview.customer_count }}</strong></div>
             <div class="report-card"><span>Hội thoại</span><strong>{{ crmOverview.conversation_count }}</strong></div>
             <div class="report-card"><span>Đơn hàng</span><strong>{{ crmOverview.order_count }}</strong></div>
-            <div class="report-card"><span>Doanh thu</span><strong>{{ Number(crmOverview.total_revenue || 0).toLocaleString('vi-VN') }}đ</strong></div>
+            <div class="report-card"><span>Doanh thu</span><strong>{{ Number(crmOverview.total_revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></div>
             <div class="report-card"><span>Tỷ lệ chốt cơ hội</span><strong>{{ crmOverview.conversion_rate }}%</strong><small>{{ crmOverview.won_lead_count }}/{{ crmOverview.lead_count }} cơ hội</small></div>
             <div class="report-card"><span>Đơn / hội thoại</span><strong>{{ crmOverview.conversation_to_order_rate }}%</strong></div>
             <div class="report-card"><span>Phiếu đang mở</span><strong>{{ crmOverview.open_ticket_count }}</strong><small>{{ crmOverview.ticket_count }} phiếu tổng</small></div>
-            <div class="report-card"><span>Đơn nhập hàng</span><strong>{{ crmOverview.purchase_order_count || 0 }}</strong><small>Chi {{ Number(crmOverview.purchase_spend || 0).toLocaleString('vi-VN') }}đ</small></div>
+            <div class="report-card"><span>Đơn nhập hàng</span><strong>{{ crmOverview.purchase_order_count || 0 }}</strong><small>Chi {{ Number(crmOverview.purchase_spend || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small></div>
           </div>
           <div class="report-panel quality-ops-panel">
             <div class="report-panel-header">
@@ -11514,7 +12031,7 @@ function followupRecommendationLabel(item) {
             <div class="report-cards quality-ops-cards">
               <div class="report-card"><span>Kênh lỗi</span><strong>{{ qualityDashboard.provider?.failed_events || 0 }}</strong><small>{{ qualityDashboard.provider?.retrying_events || 0 }} đang thử lại</small></div>
               <div class="report-card"><span>Lượt trợ lý</span><strong>{{ qualityDashboard.ai?.calls || 0 }}</strong><small>{{ qualityDashboard.ai?.tool_errors || 0 }} lỗi công cụ</small></div>
-              <div class="report-card"><span>Chi phí trợ lý</span><strong>{{ Number(qualityDashboard.ai?.cost || 0).toLocaleString('vi-VN') }}</strong><small>theo hạn mức kỳ hiện tại</small></div>
+              <div class="report-card"><span>Chi phí trợ lý</span><strong>{{ Number(qualityDashboard.ai?.cost || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</strong><small>theo hạn mức kỳ hiện tại</small></div>
               <div class="report-card"><span>Phiếu quá hạn</span><strong>{{ qualityDashboard.sla?.overdue_tickets || 0 }}</strong><small>{{ qualityDashboard.sla?.due_soon_tickets || 0 }} sắp đến hạn</small></div>
             </div>
             <div class="quality-usage-list" v-if="Object.keys(qualityDashboard.usage || {}).length">
@@ -11550,21 +12067,21 @@ function followupRecommendationLabel(item) {
           <div v-if="revenueAttribution" class="report-panel">
             <div class="report-panel-header"><div><h3>Phân bổ doanh thu</h3><span>Ghi nhận theo lần tương tác cuối</span></div><button type="button" class="settings-refresh" :disabled="attributionSaving" @click="recalculateRevenueAttribution">{{ attributionSaving ? 'Đang tính...' : 'Tính lại nguồn doanh thu' }}</button></div>
             <div class="report-cards">
-              <div class="report-card accent"><span>Doanh thu được gán</span><strong>{{ Number(revenueAttribution.total_attributed || 0).toLocaleString('vi-VN') }}đ</strong></div>
+              <div class="report-card accent"><span>Doanh thu được gán</span><strong>{{ Number(revenueAttribution.total_attributed || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></div>
               <div class="report-card"><span>Điểm tương tác</span><strong>{{ revenueAttribution.items?.length || 0 }}</strong></div>
             </div>
             <div v-if="!revenueAttribution.items?.length" class="products-empty">Chưa có dữ liệu điểm tương tác. Doanh thu sẽ xuất hiện sau khi gắn nguồn hội thoại/chiến dịch.</div>
             <div v-else class="products-table-wrap">
               <table class="products-table reports-table">
                 <thead><tr><th>Kênh</th><th>Nguồn</th><th>Campaign</th><th>Doanh thu gán</th></tr></thead>
-                <tbody><tr v-for="item in revenueAttribution.items" :key="`${item.channel}-${item.source}-${item.campaign || ''}`"><td>{{ item.channel || '—' }}</td><td>{{ item.source }}</td><td>{{ item.campaign || '—' }}</td><td><strong>{{ Number(item.attributed_revenue || 0).toLocaleString('vi-VN') }}đ</strong></td></tr></tbody>
+                <tbody><tr v-for="item in revenueAttribution.items" :key="`${item.channel}-${item.source}-${item.campaign || ''}`"><td>{{ item.channel || '—' }}</td><td>{{ item.source }}</td><td>{{ item.campaign || '—' }}</td><td><strong>{{ Number(item.attributed_revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></td></tr></tbody>
               </table>
             </div>
           </div>
           <div class="report-panel">
             <div class="report-panel-header"><div><h3>Luồng bán hàng & chuyển đổi</h3><span>Cơ hội theo giai đoạn trong phạm vi lọc</span></div><strong>{{ pipelineSummary.reduce((total, item) => total + Number(item.lead_count || 0), 0) }} cơ hội</strong></div>
             <div v-if="!pipelineSummary.length" class="products-empty">Chưa có cơ hội phù hợp với bộ lọc.</div>
-            <div v-else class="pipeline-summary"><div v-for="item in pipelineSummary" :key="item.stage" class="pipeline-card"><span>{{ leadStageLabel(item.stage) }}</span><strong>{{ item.lead_count }}</strong><small>{{ Number(item.value || 0).toLocaleString('vi-VN') }}đ</small></div></div>
+            <div v-else class="pipeline-summary"><div v-for="item in pipelineSummary" :key="item.stage" class="pipeline-card"><span>{{ leadStageLabel(item.stage) }}</span><strong>{{ item.lead_count }}</strong><small>{{ Number(item.value || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small></div></div>
           </div>
           <div class="report-panel">
             <div class="report-panel-header"><div><h3>Phiếu hỗ trợ & thời hạn</h3><span>Phiếu theo trạng thái trong phạm vi lọc</span></div><strong>{{ ticketReport.overdue_tickets || 0 }} quá hạn</strong></div>
@@ -11573,7 +12090,7 @@ function followupRecommendationLabel(item) {
           </div>
           <div v-if="crmOverview.time_series?.length" class="report-panel">
             <div class="report-panel-header"><h3>Xu hướng theo ngày</h3><span>Hội thoại · đơn bán · doanh thu</span></div>
-            <div class="report-series"><div v-for="point in crmOverview.time_series.slice(-14)" :key="point.date" class="report-series-row"><span>{{ point.date }}</span><b>{{ point.conversations }} hội thoại · {{ point.orders }} đơn · {{ Number(point.revenue || 0).toLocaleString('vi-VN') }}đ</b></div></div>
+            <div class="report-series"><div v-for="point in crmOverview.time_series.slice(-14)" :key="point.date" class="report-series-row"><span>{{ point.date }}</span><b>{{ point.conversations }} hội thoại · {{ point.orders }} đơn · {{ Number(point.revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</b></div></div>
           </div>
           <div v-if="inventoryReport" class="report-panel">
             <div class="report-panel-header"><h3>Tồn kho</h3><span>{{ inventoryReport.total || 0 }} sản phẩm</span></div>
@@ -11590,9 +12107,9 @@ function followupRecommendationLabel(item) {
             </div>
           </div>
           <div v-if="purchaseCostReport" class="report-panel">
-            <div class="report-panel-header"><h3>Chi phí nhập đã nhận</h3><strong>{{ Number(purchaseCostReport.total_received_cost || 0).toLocaleString('vi-VN') }}đ</strong></div>
+            <div class="report-panel-header"><h3>Chi phí nhập đã nhận</h3><strong>{{ Number(purchaseCostReport.total_received_cost || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></div>
             <div v-if="!purchaseCostReport.items?.length" class="products-empty">Chưa có phiếu nhập trong khoảng thời gian này.</div>
-            <div v-else class="products-table-wrap"><table class="products-table reports-table"><thead><tr><th>Nhà cung cấp</th><th>Số phiếu</th><th>Số lượng</th><th>Chi phí nhận</th></tr></thead><tbody><tr v-for="item in purchaseCostReport.items" :key="item.supplier_name"><td>{{ item.supplier_name }}</td><td>{{ item.receipt_count }}</td><td>{{ item.received_quantity }}</td><td><strong>{{ Number(item.received_cost || 0).toLocaleString('vi-VN') }}đ</strong></td></tr></tbody></table></div>
+            <div v-else class="products-table-wrap"><table class="products-table reports-table"><thead><tr><th>Nhà cung cấp</th><th>Số phiếu</th><th>Số lượng</th><th>Chi phí nhận</th></tr></thead><tbody><tr v-for="item in purchaseCostReport.items" :key="item.supplier_name"><td>{{ item.supplier_name }}</td><td>{{ item.receipt_count }}</td><td>{{ item.received_quantity }}</td><td><strong>{{ Number(item.received_cost || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></td></tr></tbody></table></div>
           </div>
         </template>
       </section>
@@ -11690,8 +12207,8 @@ function followupRecommendationLabel(item) {
               <div v-if="tiktokBridgeNotice" class="settings-notice">{{ tiktokBridgeNotice }}</div>
               <div class="bot-provider-heading"><span class="channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><div><h3>TikTok Bridge</h3><p>Nhận tin TikTok qua tệp bridge đang chạy trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: activeTikTokConnection }">{{ activeTikTokConnection ? 'ĐÃ BẬT BRIDGE' : 'CHƯA CẤU HÌNH' }}</span></div>
               <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 1 0-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></div><div><ol><li>Tải file ZIP TikTok đã cấu hình sẵn cho shop.</li><li>Giải nén rồi mở <code>SmartMerchantTikTok.exe</code>.</li><li>Ứng dụng tự lấy phiên TikTok và chuyển tin về CRM.</li></ol><p class="bot-connect-note">Cookie chỉ được đọc trên máy chạy ứng dụng và không gửi lên CRM. Không cần sao chép mã kết nối.</p></div></div>
-              <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="tiktokBotDownloadLoading || demoChannelsLocked" @click="downloadTikTokBot">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : tiktokBotDownloadLoading ? 'Đang chuẩn bị file ZIP...' : 'Tải file ZIP TikTok' }}</button><button class="secondary-btn" type="button" :disabled="tiktokBridgeLoading || demoChannelsLocked" @click="connectTikTokBridge">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : tiktokBridgeLoading ? 'Đang tạo...' : activeTikTokConnection ? 'Cấp lại cấu hình' : 'Tạo cấu hình' }}</button></div>
-              <div v-if="tiktokBridgeSecret" class="settings-notice tiktok-bridge-secret"><strong>Bridge đã được cấu hình tự động.</strong><small>Không cần sao chép mã. Nếu tải lại file, hệ thống sẽ cấp lại cấu hình mới.</small></div>
+              <div class="tiktok-bridge-actions"><a v-if="tiktokBridgeDownloadUrl && !demoChannelsLocked" class="primary-btn bot-connect-submit" :href="tiktokBridgeDownloadUrl" download="SmartMerchantTikTok.zip">Tải file ZIP TikTok</a><button v-else class="primary-btn bot-connect-submit" type="button" :disabled="true">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : 'Tạo cấu hình trước' }}</button><button class="secondary-btn" type="button" :disabled="tiktokBridgeLoading || demoChannelsLocked" @click="connectTikTokBridge">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : tiktokBridgeLoading ? 'Đang tạo...' : activeTikTokConnection ? 'Cấp lại cấu hình' : 'Tạo cấu hình' }}</button></div>
+              <div v-if="tiktokBridgeSecret" class="settings-notice tiktok-bridge-secret"><strong>Cấu hình TikTok đã sẵn sàng.</strong><small>File ZIP đã gắn sẵn cấu hình; bridge chỉ bắt đầu hoạt động sau khi bạn giải nén và mở SmartMerchantTikTok.exe.</small></div>
               <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === 'tiktok').length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'tiktok')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>TikTok bridge · {{ botConnectionStateLabel(connection.status) }}</small></div><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul>
               <div v-else class="settings-empty">Chưa có TikTok bridge nào.</div>
             </template>
@@ -11738,8 +12255,8 @@ function followupRecommendationLabel(item) {
         <div class="settings-card auth-card">
           <div class="settings-card-header">
             <div>
-              <h2>Đăng nhập CRM</h2>
-              <p>Phiên đăng nhập giúp áp dụng vai trò và ghi nhật ký thao tác.</p>
+              <h2>Tài khoản &amp; phiên đăng nhập</h2>
+              <p>Phiên đăng nhập áp dụng đúng vai trò và lưu nhật ký thao tác.</p>
             </div>
             <span class="connection-badge" :class="{ connected: authUser }">{{ authUser ? 'ĐÃ ĐĂNG NHẬP' : 'CẦN ĐĂNG NHẬP' }}</span>
           </div>
@@ -11770,6 +12287,86 @@ function followupRecommendationLabel(item) {
               <small v-if="item.exceeded">Đã vượt giới hạn</small><small v-else-if="item.near_limit">Sắp chạm hạn mức</small>
             </div>
           </div>
+        </div>
+
+        <div v-if="authUser" class="settings-card workspace-config-card">
+          <div class="settings-card-header">
+            <div><span class="card-eyebrow">CÀI ĐẶT SHOP</span><h2>Loại hình kinh doanh &amp; tính năng</h2><p>Các chức năng chính dùng chung cho mọi loại hình. Có thể bật thêm công cụ phù hợp; khi tắt, công cụ bị ẩn nhưng dữ liệu vẫn được giữ.</p></div>
+            <button type="button" class="settings-refresh" :disabled="workspaceConfigLoading" @click="fetchWorkspaceConfig">{{ workspaceConfigLoading ? 'Đang tải...' : 'Làm mới' }}</button>
+          </div>
+          <div v-if="workspaceConfigError" class="settings-notice team-error" role="alert">{{ $t(workspaceConfigError) }}</div>
+          <div class="workspace-profile-grid" role="radiogroup" aria-label="Mô hình kinh doanh">
+            <label v-for="profile in [
+              { id: 'retail', name: 'Bán lẻ', desc: 'Sản phẩm, đơn bán và tồn kho.' },
+              { id: 'services', name: 'Dịch vụ theo lịch', desc: 'Khách hàng, cuộc trò chuyện, công việc và chăm sóc.' },
+              { id: 'b2b', name: 'Dự án / Khách doanh nghiệp', desc: 'Doanh nghiệp, khách tiềm năng và quy trình bán hàng.' },
+              { id: 'mixed', name: 'Đa dịch vụ', desc: 'Kết hợp nhiều mô hình trong cùng shop.' },
+            ]" :key="profile.id" class="workspace-profile-option" :class="{ selected: workspaceConfig.business_type === profile.id }">
+              <input v-model="workspaceConfig.business_type" type="radio" name="workspace-business-type" :value="profile.id" :disabled="!canManageWorkspace" />
+              <span><strong>{{ $t(profile.name) }}</strong><small>{{ $t(profile.desc) }}</small></span>
+            </label>
+          </div>
+          <div class="workspace-module-row">
+            <div><strong>Chức năng chính <span class="connection-badge connected">LUÔN BẬT</span></strong><small>Khách hàng, doanh nghiệp, cuộc trò chuyện, công việc, quy trình bán hàng, phân quyền, tự động hóa và báo cáo.</small></div>
+          </div>
+          <label class="workspace-module-row workspace-module-toggle" :class="{ disabled: !canManageWorkspace }">
+            <input v-model="workspaceConfig.enabled_modules" type="checkbox" value="retail" :disabled="!canManageWorkspace" />
+            <span><strong>Bộ bán lẻ</strong><small>Sản phẩm, đơn bán, nhà cung cấp, nhập hàng và tồn kho.</small></span>
+            <span class="connection-badge" :class="{ connected: workspaceModuleEnabled('retail') }">{{ workspaceModuleEnabled('retail') ? 'ĐANG BẬT' : 'ĐANG TẮT' }}</span>
+          </label>
+          <label class="workspace-module-row workspace-module-toggle" :class="{ disabled: !canManageWorkspace }">
+            <input v-model="workspaceConfig.enabled_modules" type="checkbox" value="appointments" :disabled="!canManageWorkspace" />
+            <span><strong>Dịch vụ theo lịch</strong><small>Danh mục dịch vụ, lịch hẹn, nhân viên phụ trách và nhắc lịch gắn với hồ sơ khách hàng.</small></span>
+            <span class="connection-badge" :class="{ connected: workspaceModuleEnabled('appointments') }">{{ workspaceModuleEnabled('appointments') ? 'ĐANG BẬT' : 'ĐANG TẮT' }}</span>
+          </label>
+          <label class="workspace-module-row workspace-module-toggle" :class="{ disabled: !canManageWorkspace }">
+            <input v-model="workspaceConfig.enabled_modules" type="checkbox" value="projects" :disabled="!canManageWorkspace" />
+            <span><strong>Báo giá &amp; dự án</strong><small>Báo giá có tính thuế, theo dõi dự án, hóa đơn và thanh toán một phần/toàn phần.</small></span>
+            <span class="connection-badge" :class="{ connected: workspaceModuleEnabled('projects') }">{{ workspaceModuleEnabled('projects') ? 'ĐANG BẬT' : 'ĐANG TẮT' }}</span>
+          </label>
+          <div v-if="workspaceConfigNotice" class="settings-notice" role="status">{{ $t(workspaceConfigNotice) }}</div>
+          <button v-if="canManageWorkspace" type="button" class="primary-btn" :disabled="workspaceConfigSaving || workspaceConfigLoading" @click="saveWorkspaceConfig">{{ workspaceConfigSaving ? 'Đang lưu...' : 'Lưu mô hình' }}</button>
+          <p v-else class="settings-muted">Chỉ chủ shop hoặc quản trị viên được thay đổi cấu hình này.</p>
+        </div>
+
+        <div v-if="authUser" class="settings-card crm-config-card">
+          <div class="settings-card-header">
+            <div><span class="card-eyebrow">TÙY CHỈNH QUY TRÌNH</span><h2>Thông tin khách hàng &amp; quy trình bán hàng</h2><p>Thiết lập riêng cho shop; không thể xóa bước đang có khách tiềm năng để tránh mất liên kết dữ liệu.</p></div>
+            <button type="button" class="settings-refresh" :disabled="crmConfigLoading" @click="fetchCrmConfig">{{ crmConfigLoading ? 'Đang tải...' : 'Làm mới' }}</button>
+          </div>
+          <div v-if="crmConfigError" class="settings-notice team-error" role="alert">{{ crmConfigError }}</div>
+          <div v-if="crmConfigNotice" class="settings-notice" role="status">{{ crmConfigNotice }}</div>
+          <div class="crm-config-editor-grid">
+            <section>
+              <h3>Trường hồ sơ khách hàng</h3>
+              <div v-if="!crmConfig.customer_fields.length" class="settings-empty">Chưa có trường bổ sung.</div>
+              <div v-for="(field, index) in crmConfig.customer_fields" :key="field.key" class="crm-config-row">
+                <label>Tên<input v-model="field.label" maxlength="80" :disabled="!canManageWorkspace" /></label>
+                <label>Mã<input :value="field.key" disabled /></label>
+                <label>Kiểu<select v-model="field.type" :disabled="!canManageWorkspace"><option value="text">Văn bản</option><option value="number">Số</option><option value="date">Ngày</option><option value="select">Danh sách</option><option value="boolean">Đúng / sai</option></select></label>
+                <label v-if="field.type === 'select'">Lựa chọn<input :value="(field.options || []).join(', ')" :disabled="!canManageWorkspace" placeholder="Mới, Đang chăm sóc, VIP" @input="field.options = $event.target.value.split(',').map(value => value.trim()).filter(Boolean)" /></label>
+                <button v-if="canManageWorkspace" type="button" class="team-toggle danger" :aria-label="`Xóa trường ${field.label}`" @click="crmConfig.customer_fields.splice(index, 1)">Xóa</button>
+              </div>
+              <div v-if="canManageWorkspace" class="crm-config-add-row">
+                <input v-model="crmFieldDraft.label" placeholder="Tên trường" maxlength="80" />
+                <input v-model="crmFieldDraft.key" placeholder="Mã, ví dụ: loai_khach" maxlength="40" />
+                <select v-model="crmFieldDraft.type"><option value="text">Văn bản</option><option value="number">Số</option><option value="date">Ngày</option><option value="select">Danh sách</option><option value="boolean">Đúng / sai</option></select>
+                <input v-if="crmFieldDraft.type === 'select'" v-model="crmFieldDraft.options" placeholder="Các lựa chọn, ngăn cách dấu phẩy" />
+                <button type="button" class="settings-refresh" @click="addCrmCustomerField">Thêm trường</button>
+              </div>
+            </section>
+            <section>
+              <h3>Các giai đoạn cơ hội</h3>
+              <div v-for="(stage, index) in crmConfig.pipeline_stages" :key="stage.key" class="crm-config-stage-row">
+                <code>{{ stage.key }}</code><input v-model="stage.label" maxlength="60" :disabled="!canManageWorkspace" />
+                <button v-if="canManageWorkspace && !['new', 'won', 'lost'].includes(stage.key)" type="button" class="team-toggle danger" :aria-label="`Xóa giai đoạn ${stage.label}`" @click="crmConfig.pipeline_stages.splice(index, 1)">Xóa</button>
+                <span v-else class="settings-muted">Bắt buộc</span>
+              </div>
+              <div v-if="canManageWorkspace" class="crm-config-add-row"><input v-model="crmStageDraft" placeholder="Tên giai đoạn mới" maxlength="60" @keydown.enter.prevent="addCrmPipelineStage" /><button type="button" class="settings-refresh" :disabled="crmConfig.pipeline_stages.length >= 20" @click="addCrmPipelineStage">Thêm giai đoạn</button></div>
+            </section>
+          </div>
+          <button v-if="canManageWorkspace" type="button" class="primary-btn" :disabled="crmConfigSaving || crmConfigLoading" @click="saveCrmConfig">{{ crmConfigSaving ? 'Đang lưu...' : 'Lưu cấu hình' }}</button>
+          <p v-else class="settings-muted">Chỉ chủ shop hoặc quản trị viên được thay đổi cấu hình.</p>
         </div>
 
         <div v-if="authUser" class="settings-card business-profile-card">
@@ -11843,7 +12440,7 @@ function followupRecommendationLabel(item) {
             <div v-if="!authSessions.length" class="settings-empty">Chưa có thông tin phiên đăng nhập.</div>
             <ul v-else class="session-list">
               <li v-for="session in authSessions" :key="session.id">
-                <span><strong>{{ session.device_label || 'Thiết bị không đặt tên' }}</strong><small>Tạo {{ session.created_at ? new Date(session.created_at).toLocaleString('vi-VN') : '—' }} · {{ session.mfa_verified ? 'Đã xác minh 2 bước' : 'Chưa xác minh 2 bước' }}</small></span>
+                <span><strong>{{ session.device_label || 'Thiết bị không đặt tên' }}</strong><small>Tạo {{ session.created_at ? new Date(session.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }} · {{ session.mfa_verified ? 'Đã xác minh 2 bước' : 'Chưa xác minh 2 bước' }}</small></span>
                 <button v-if="!session.revoked_at" type="button" class="team-toggle" @click="revokeAuthSession(session)">Thu hồi</button>
                 <span v-else class="settings-muted">Đã thu hồi</span>
               </li>
@@ -11902,7 +12499,7 @@ function followupRecommendationLabel(item) {
           <div v-else-if="!followups.length" class="settings-empty">Chưa có lịch nhắc chăm sóc đang chờ.</div>
           <ul v-else class="followup-list">
             <li v-for="item in followups" :key="item.id">
-              <div><strong>{{ followupProductLabel(item) }}</strong><small>{{ new Date(item.run_at).toLocaleString('vi-VN') }}</small></div>
+              <div><strong>{{ followupProductLabel(item) }}</strong><small>{{ new Date(item.run_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</small></div>
               <span>{{ item.message }}<small v-if="followupRecommendationLabel(item)" class="followup-recommendation">Gợi ý mua thêm: {{ followupRecommendationLabel(item) }}</small></span>
               <button type="button" class="history-btn" @click="cancelFollowup(item)">Hủy</button>
             </li>
@@ -11940,12 +12537,12 @@ function followupRecommendationLabel(item) {
             <div><strong>{{ csatSummary.average_rating.toFixed(1) }}/5</strong><span>Điểm hài lòng</span></div>
             <div><strong>{{ Math.round(csatSummary.satisfaction_rate * 100) }}%</strong><span>Tỷ lệ hài lòng</span></div>
             <div><strong>{{ csatSummary.responses }}</strong><span>Lượt đánh giá</span></div>
-            <div><strong>{{ Math.round(csatSummary.bot_resolution_rate * 100) }}%</strong><span>Trợ lý tự xử lý</span></div>
+            <div><strong>{{ Math.round(csatSummary.bot_resolution_rate * 100) }}%</strong><span>Khảo sát gửi khi bot đang bật</span></div>
           </div>
           <div v-if="!csatLoading && !csatFeedback.length" class="settings-empty">Chưa có phản hồi đánh giá.</div>
           <ul v-else class="csat-feedback-list">
             <li v-for="item in csatFeedback.slice(0, 5)" :key="item.id">
-              <div><strong>{{ item.rating ? `${item.rating}/5 sao` : 'Chờ đánh giá' }}</strong><small>{{ new Date(item.requested_at).toLocaleString('vi-VN') }}</small></div>
+              <div><strong>{{ item.rating ? `${item.rating}/5 sao` : 'Chờ đánh giá' }}</strong><small>{{ new Date(item.requested_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</small></div>
               <span>{{ item.comment || (item.status === 'sent' ? 'Đã gửi khảo sát, đang chờ khách trả lời.' : 'Đang chờ gửi khảo sát.') }}</span>
             </li>
           </ul>
@@ -12073,7 +12670,7 @@ function followupRecommendationLabel(item) {
             </div>
             <div v-if="!auditLogs.length" class="settings-empty">Chưa có nhật ký thao tác.</div>
             <ul v-else class="audit-list">
-              <li v-for="log in auditLogs.slice(0, 10)" :key="log.id"><strong>{{ log.action }}</strong> · {{ resourceLabel(log.resource_type) }} {{ log.resource_id ? `#${log.resource_id}` : '' }} · {{ log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : '' }}</li>
+              <li v-for="log in auditLogs.slice(0, 10)" :key="log.id"><strong>{{ log.action }}</strong> · {{ resourceLabel(log.resource_type) }} {{ log.resource_id ? `#${log.resource_id}` : '' }} · {{ log.created_at ? new Date(log.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '' }}</li>
             </ul>
           </div>
         </div>
@@ -12138,7 +12735,7 @@ function followupRecommendationLabel(item) {
                 <label>Số điện thoại <span>(không bắt buộc)</span><input v-model="serviceRequestForm.phone" type="tel" maxlength="30" placeholder="0901 234 567" /></label>
                 <label>Tên shop<input v-model="serviceRequestForm.shop_name" required maxlength="160" placeholder="Shop của bạn" /></label>
               </div>
-              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><small v-if="serviceMode !== 'chatbot'">{{ plan.max_channels }} nền tảng kết nối</small><small v-else>Thuê riêng, không trừ hạn mức kênh CRM</small><em>{{ plan.price }}</em></span></label></div></fieldset>
+              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ $t(plan.name) }}</strong><small>{{ $t(plan.description) }}</small><small v-if="serviceMode !== 'chatbot'">{{ plan.max_channels }} nền tảng kết nối</small><small v-else>Thuê riêng, không trừ hạn mức kênh CRM</small><em>{{ plan.price }}</em></span></label></div></fieldset>
               <div v-if="authUser" class="service-purchase-box">
                 <div v-if="servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo'"><strong>Gói Demo được mở ngay</strong><small>Sau khi gửi đăng ký, shop có thể dùng thử ngay khi không gian dữ liệu sẵn sàng.</small></div>
                 <div v-else><strong>Gói trả phí cần admin xác nhận</strong><small>Yêu cầu được chuyển vào hàng chờ duyệt. CRM chỉ mở sau khi admin duyệt và hệ thống chuẩn bị xong dữ liệu riêng.</small></div>
@@ -12190,80 +12787,92 @@ function followupRecommendationLabel(item) {
                 <path d="M8 18h32" stroke="#fffaf8" stroke-width="3" stroke-linecap="round" />
               </svg>
             </div>
-            <div><strong>Smart Merchant Hub</strong><span>Không gian quản lý shop</span></div>
+            <div><strong>Smart Merchant Hub</strong><span>{{ t('Không gian quản lý shop') }}</span></div>
           </div>
-          <span class="login-eyebrow">CỔNG VẬN HÀNH SHOP</span>
-          <h1>Chăm khách gọn hơn,<br /><em>bán hàng chắc hơn.</em></h1>
-          <p class="login-showcase-copy">Một nơi để đội ngũ xử lý hội thoại, đơn bán và các công việc cần người thật — rõ ràng theo từng shop.</p>
+          <span class="login-eyebrow">{{ t('CỔNG VẬN HÀNH SHOP') }}</span>
+          <h1>{{ t('Chăm khách gọn hơn,') }}<br /><em>{{ t('bán hàng chắc hơn.') }}</em></h1>
+          <p class="login-showcase-copy">{{ t('Một nơi để đội ngũ xử lý hội thoại, đơn bán và các công việc cần người thật — rõ ràng theo từng shop.') }}</p>
           <div class="login-feature-list">
-            <div><span class="login-feature-icon">✓</span><span><strong>Hộp thư hợp nhất</strong><small>Không bỏ sót khách từ mọi kênh.</small></span></div>
-            <div><span class="login-feature-icon">✓</span><span><strong>Quy trình có kiểm soát</strong><small>Trạng thái, thời hạn và nhật ký rõ ràng.</small></span></div>
-            <div><span class="login-feature-icon">✓</span><span><strong>Dữ liệu riêng từng shop</strong><small>Phân quyền theo không gian của bạn.</small></span></div>
+            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Hộp thư hợp nhất') }}</strong><small>{{ t('Không bỏ sót khách từ mọi kênh.') }}</small></span></div>
+            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Quy trình có kiểm soát') }}</strong><small>{{ t('Trạng thái, thời hạn và nhật ký rõ ràng.') }}</small></span></div>
+            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Dữ liệu riêng từng shop') }}</strong><small>{{ t('Phân quyền theo không gian của bạn.') }}</small></span></div>
           </div>
         </div>
 
         <div v-if="authView === 'login'" class="login-card">
           <div class="login-card-topline">
-            <span class="login-card-kicker">CHÀO MỪNG TRỞ LẠI</span>
-            <span class="login-security-pill"><i></i> Kết nối bảo mật</span>
+            <span class="login-card-kicker">{{ t('CHÀO MỪNG TRỞ LẠI') }}</span>
+            <span class="login-security-pill"><i></i> {{ t('Kết nối bảo mật') }}</span>
+            <label class="ui-language-control">
+              <span class="visually-hidden">{{ t('Ngôn ngữ giao diện') }}</span>
+              <select :value="uiLocale" :aria-label="t('Ngôn ngữ giao diện')" @change="setUiLocale($event.target.value)">
+                <option value="vi">Tiếng Việt</option><option value="en">English</option>
+              </select>
+            </label>
           </div>
           <div class="login-card-heading">
-            <h2>Đăng nhập CRM</h2>
-            <p>Sử dụng tài khoản đã được cấp để tiếp tục xử lý không gian của shop.</p>
+            <h2>{{ t('Đăng nhập CRM') }}</h2>
+            <p>{{ t('Sử dụng tài khoản đã được cấp để tiếp tục xử lý không gian của shop.') }}</p>
           </div>
           <form class="login-form" @submit.prevent="login">
-            <label>Email đăng nhập<input v-model="loginForm.email" required type="email" maxlength="255" autocomplete="username" placeholder="admin@gmail.com" /></label>
-            <label>Mật khẩu<input v-model="loginForm.password" required type="password" autocomplete="current-password" placeholder="Nhập mật khẩu" /></label>
-            <label>Mã shop <span>(không bắt buộc)</span><input v-model="loginForm.shop_slug" type="text" maxlength="120" autocomplete="organization" placeholder="shop-cua-ban" /></label>
+            <label>{{ t('Email đăng nhập') }}<input v-model="loginForm.email" required type="email" maxlength="255" autocomplete="username" placeholder="admin@gmail.com" /></label>
+            <label>{{ t('Mật khẩu') }}<input v-model="loginForm.password" required type="password" autocomplete="current-password" :placeholder="t('Nhập mật khẩu')" /></label>
+            <label>{{ t('Mã shop') }} <span>{{ t('(không bắt buộc)') }}</span><input v-model="loginForm.shop_slug" type="text" maxlength="120" autocomplete="organization" placeholder="shop-cua-ban" /></label>
             <button class="login-submit" type="submit" :disabled="authLoading || authRateLimitSeconds > 0">
-              <span>{{ authLoading ? 'Đang xác thực...' : authRateLimitSeconds > 0 ? 'Tạm khóa đăng nhập' : 'Đăng nhập' }}</span>
+              <span>{{ t(authLoading ? 'Đang xác thực...' : authRateLimitSeconds > 0 ? 'Tạm khóa đăng nhập' : 'Đăng nhập') }}</span>
               <span class="login-submit-arrow" aria-hidden="true">→</span>
             </button>
           </form>
           <div v-if="authError" class="login-alert" role="alert">{{ authError }}</div>
           <div v-if="authRateLimitSeconds > 0" class="login-rate-limit" role="status">
             <span class="login-rate-limit-icon" aria-hidden="true">⏱</span>
-            <span>Quá nhiều lần thử. Thử lại sau <strong>{{ formatRateLimitDuration(authRateLimitSeconds) }}</strong>.</span>
+            <span>{{ t('Quá nhiều lần thử. Thử lại sau') }} <strong>{{ formatRateLimitDuration(authRateLimitSeconds) }}</strong>.</span>
           </div>
-          <small class="login-footer-note">Phiên làm việc được ghi lại đầy đủ và áp dụng đúng quyền của bạn.</small>
-          <button type="button" class="login-service-link" @click="openPublicServicePage">Xem gói dịch vụ và thuê chatbot →</button>
-          <button type="button" class="login-service-link" @click="openSignup">Đăng ký shop mới →</button>
+          <small class="login-footer-note">{{ t('Phiên làm việc được ghi lại đầy đủ và áp dụng đúng quyền của bạn.') }}</small>
+          <button type="button" class="login-service-link" @click="openPublicServicePage">{{ t('Xem gói dịch vụ và thuê chatbot →') }}</button>
+          <button type="button" class="login-service-link" @click="openSignup">{{ t('Đăng ký shop mới →') }}</button>
         </div>
 
         <div v-else class="login-card signup-card">
           <div class="login-card-topline">
-            <span class="login-card-kicker">BẮT ĐẦU VỚI SHOP CỦA BẠN</span>
-            <span class="login-security-pill"><i></i> Xác minh email</span>
+            <span class="login-card-kicker">{{ t('BẮT ĐẦU VỚI SHOP CỦA BẠN') }}</span>
+            <span class="login-security-pill"><i></i> {{ t('Xác minh email') }}</span>
+            <label class="ui-language-control">
+              <span class="visually-hidden">{{ t('Ngôn ngữ giao diện') }}</span>
+              <select :value="uiLocale" :aria-label="t('Ngôn ngữ giao diện')" @change="setUiLocale($event.target.value)">
+                <option value="vi">Tiếng Việt</option><option value="en">English</option>
+              </select>
+            </label>
           </div>
           <div class="login-card-heading">
-            <h2>Tạo không gian shop</h2>
-            <p>Nhập email công việc để nhận mã OTP. Shop chỉ được tạo sau khi xác minh thành công.</p>
+            <h2>{{ t('Tạo không gian shop') }}</h2>
+            <p>{{ t('Nhập email công việc để nhận mã OTP. Shop chỉ được tạo sau khi xác minh thành công.') }}</p>
           </div>
-          <ol class="signup-stepper" aria-label="Tiến trình tạo shop">
-            <li :class="{ active: signupStep === 'details', complete: signupStep === 'otp' }"><span>1</span><div><strong>Thông tin shop</strong><small>Người đại diện, email và mật khẩu</small></div></li>
-            <li :class="{ active: signupStep === 'otp' }"><span>2</span><div><strong>Xác minh OTP</strong><small>Xác nhận email công việc</small></div></li>
-            <li><span>3</span><div><strong>Chọn gói</strong><small>Chọn dịch vụ sau khi shop được tạo</small></div></li>
+          <ol class="signup-stepper" :aria-label="t('Tiến trình tạo shop')">
+            <li :class="{ active: signupStep === 'details', complete: signupStep === 'otp' }"><span>1</span><div><strong>{{ t('Thông tin shop') }}</strong><small>{{ t('Người đại diện, email và mật khẩu') }}</small></div></li>
+            <li :class="{ active: signupStep === 'otp' }"><span>2</span><div><strong>{{ t('Xác minh OTP') }}</strong><small>{{ t('Xác nhận email công việc') }}</small></div></li>
+            <li><span>3</span><div><strong>{{ t('Chọn gói') }}</strong><small>{{ t('Chọn dịch vụ sau khi shop được tạo') }}</small></div></li>
           </ol>
           <form class="login-form" @submit.prevent="handleSignupSubmit">
-            <label>Người đại diện<input v-model="signupForm.owner_name" @input="invalidateSignupOtp" required minlength="2" maxlength="255" autocomplete="name" placeholder="Nguyễn Văn A" /></label>
-            <label>Email công việc
+            <label>{{ t('Người đại diện') }}<input v-model="signupForm.owner_name" @input="invalidateSignupOtp" required minlength="2" maxlength="255" autocomplete="name" placeholder="Nguyễn Văn A" /></label>
+            <label>{{ t('Email công việc') }}
               <div class="signup-email-control">
                 <input v-model="signupForm.email" @input="invalidateSignupOtp" required type="email" maxlength="255" autocomplete="email" placeholder="banhang@shop.vn" />
-                <button class="signup-otp-button" type="button" :disabled="signupLoading" @click="requestSignupOtp">{{ signupStep === 'otp' ? 'Gửi lại OTP' : 'Gửi mã OTP' }}</button>
+                <button class="signup-otp-button" type="button" :disabled="signupLoading" @click="requestSignupOtp">{{ t(signupStep === 'otp' ? 'Gửi lại OTP' : 'Gửi mã OTP') }}</button>
               </div>
             </label>
-            <div v-if="signupStep === 'otp'" class="signup-otp-note">Mã xác minh đã gửi tới <strong>{{ signupForm.email }}</strong>. Kiểm tra cả mục Spam nếu chưa thấy email.</div>
-            <label>Mã OTP
+            <div v-if="signupStep === 'otp'" class="signup-otp-note">{{ t('Mã xác minh đã gửi tới') }} <strong>{{ signupForm.email }}</strong>. {{ t('Kiểm tra cả mục Spam nếu chưa thấy email.') }}</div>
+            <label>{{ t('Mã OTP') }}
               <input v-model="signupForm.otp" class="signup-otp-input" :disabled="signupStep !== 'otp'" :required="signupStep === 'otp'" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="Nhập mã OTP 6 số" />
             </label>
-            <label>Tên shop<input v-model="signupForm.shop_name" @input="invalidateSignupOtp" required minlength="2" maxlength="255" autocomplete="organization" placeholder="Shop của bạn" /></label>
-            <label>Mật khẩu<input v-model="signupForm.password" @input="invalidateSignupOtp" required minlength="12" type="password" autocomplete="new-password" placeholder="Tối thiểu 12 ký tự, gồm 3 nhóm ký tự" /><small class="signup-password-hint">Dùng ít nhất 3 nhóm: chữ thường, chữ hoa, số, ký tự đặc biệt.</small></label>
-            <button class="login-submit" type="submit" :disabled="signupLoading"><span>{{ signupLoading ? (signupStep === 'otp' ? 'Đang tạo shop...' : 'Đang gửi mã...') : (signupStep === 'otp' ? 'Xác minh và đăng ký' : 'Đăng ký') }}</span><span class="login-submit-arrow" aria-hidden="true">→</span></button>
+            <label>{{ t('Tên shop') }}<input v-model="signupForm.shop_name" @input="invalidateSignupOtp" required minlength="2" maxlength="255" autocomplete="organization" :placeholder="t('Shop của bạn')" /></label>
+            <label>{{ t('Mật khẩu') }}<input v-model="signupForm.password" @input="invalidateSignupOtp" required minlength="12" type="password" autocomplete="new-password" :placeholder="t('Tối thiểu 12 ký tự, gồm 3 nhóm ký tự')" /><small class="signup-password-hint">{{ t('Dùng ít nhất 3 nhóm: chữ thường, chữ hoa, số, ký tự đặc biệt.') }}</small></label>
+            <button class="login-submit" type="submit" :disabled="signupLoading"><span>{{ t(signupLoading ? (signupStep === 'otp' ? 'Đang tạo shop...' : 'Đang gửi mã...') : (signupStep === 'otp' ? 'Xác minh và đăng ký' : 'Đăng ký')) }}</span><span class="login-submit-arrow" aria-hidden="true">→</span></button>
           </form>
           <div v-if="signupError" class="login-alert" role="alert">{{ signupError }}</div>
           <div v-if="signupNotice" class="login-notice" role="status">{{ signupNotice }}</div>
-          <small class="login-footer-note">Sau khi tạo, shop bắt đầu với Gói Demo 0 đồng. Gói Demo chưa mở kết nối mạng xã hội.</small>
-          <button type="button" class="login-service-link" @click="openLogin">← Quay lại đăng nhập</button>
+          <small class="login-footer-note">{{ t('Sau khi tạo, shop bắt đầu với Gói Demo 0 đồng. Gói Demo chưa mở kết nối mạng xã hội.') }}</small>
+          <button type="button" class="login-service-link" @click="openLogin">{{ t('← Quay lại đăng nhập') }}</button>
         </div>
       </div>
     </section>
@@ -12294,6 +12903,20 @@ function followupRecommendationLabel(item) {
 
 
 <style scoped>
+
+.ui-language-control { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.ui-language-control select {
+  min-height: 34px;
+  padding: 0 8px;
+  color: var(--leader-sidebar-ink, #263746);
+  background: var(--leader-sidebar-surface, #fff);
+  border: 1px solid var(--leader-sidebar-border, #d5e1ec);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ui-language-control select:focus-visible { outline: 2px solid var(--leader-sidebar-accent, #137d82); outline-offset: 2px; }
 
 /* =========================================================
    MEDIA MESSAGE
@@ -13969,6 +14592,31 @@ function followupRecommendationLabel(item) {
 .error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .error-retry-btn { border: 1px solid #d78b92; border-radius: 8px; padding: 7px 12px; color: #8e2f3c; background: #fff; cursor: pointer; font-weight: 700; }
 .business-hours-grid, .sla-rules-grid, .business-profile-grid, .service-plan-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
+.workspace-profile-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.crm-config-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 14px 0; }
+.crm-config-editor-grid section { min-width: 0; padding: 14px; border: 1px solid var(--owly-border); border-radius: 12px; }
+.crm-config-editor-grid h3 { margin: 0 0 12px; }
+.crm-config-row, .crm-config-add-row, .crm-config-stage-row { display: flex; align-items: end; gap: 8px; margin: 8px 0; }
+.crm-config-row label { display: grid; flex: 1 1 120px; gap: 5px; min-width: 80px; font-size: .82rem; }
+.crm-config-row input, .crm-config-row select, .crm-config-add-row input, .crm-config-add-row select, .crm-config-stage-row input { width: 100%; min-width: 0; border: 1px solid var(--owly-border); border-radius: 8px; padding: 8px; background: var(--owly-surface); color: var(--owly-ink); }
+.crm-config-add-row { flex-wrap: wrap; }
+.crm-config-add-row > input, .crm-config-add-row > select { flex: 1 1 140px; }
+.crm-config-stage-row code { flex: 0 0 110px; color: var(--owly-muted); }
+.crm-config-stage-row input { flex: 1; }
+.customer-custom-fields-grid { gap: 10px; }
+.customer-custom-field { display: grid; gap: 5px; min-width: 0; }
+.customer-custom-field input:not([type="checkbox"]), .customer-custom-field select, .customer-custom-field textarea { width: 100%; min-width: 0; border: 1px solid var(--owly-border); border-radius: 8px; padding: 8px; background: var(--owly-surface); color: var(--owly-ink); }
+.customer-custom-field input[type="checkbox"] { justify-self: start; accent-color: var(--salon-accent); }
+.workspace-profile-option, .workspace-module-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--owly-border); border-radius: 10px; background: var(--owly-surface); }
+.workspace-profile-option { cursor: pointer; }
+.workspace-profile-option.selected { border-color: var(--salon-accent); background: var(--salon-accent-soft); }
+.workspace-profile-option input, .workspace-module-toggle input { flex: 0 0 auto; margin-top: 3px; accent-color: var(--salon-accent); }
+.workspace-profile-option span, .workspace-module-row > div, .workspace-module-toggle > span:nth-child(2) { display: grid; gap: 4px; min-width: 0; }
+.workspace-profile-option small, .workspace-module-row small { color: var(--owly-muted); font-size: .84rem; line-height: 1.4; }
+.workspace-module-row { align-items: center; justify-content: space-between; margin: 8px 0; }
+.workspace-module-toggle { cursor: pointer; }
+.workspace-module-row .connection-badge { flex: 0 0 auto; margin-left: auto; }
+.workspace-config-card > .primary-btn { min-width: 170px; }
 .business-hours-grid label, .sla-rules-grid label, .business-profile-grid label { display: grid; gap: 6px; color: var(--owly-ink); font-weight: 700; }
 .business-hours-grid input, .business-hours-grid select, .sla-rules-grid input, .business-profile-grid input, .business-profile-grid select, .business-profile-grid textarea, .voice-settings-row select { border: 1px solid var(--owly-border); border-radius: 9px; padding: 10px 12px; background: #fff; color: var(--owly-ink); }
 .business-profile-wide { grid-column: 1 / -1; }
@@ -14084,7 +14732,8 @@ function followupRecommendationLabel(item) {
 .bot-connect-guide-single ol { margin: 0 0 8px; padding-left: 20px; color: var(--owly-muted); line-height: 1.55; }
 .bot-connect-guide-single .bot-guide-link { display: inline-flex; }
 .tiktok-bridge-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 12px; }
-.tiktok-bridge-actions button { width: 100%; margin-top: 0; }
+.tiktok-bridge-actions button, .tiktok-bridge-actions a { width: 100%; margin-top: 0; }
+.tiktok-bridge-actions a { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .business-days-fieldset { margin: 8px 0 18px; padding: 12px 14px 14px; border: 1px solid var(--owly-border); border-radius: 12px; }
 .business-days-fieldset legend { padding: 0 6px; color: var(--owly-ink); font-weight: 800; }
 .business-day-options { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
@@ -14113,6 +14762,9 @@ function followupRecommendationLabel(item) {
 .crm-dark .business-hours-grid label,
 .crm-dark .sla-rules-grid label,
 .crm-dark .business-profile-grid label { color: #f3f5f6; }
+.crm-dark .workspace-profile-option, .crm-dark .workspace-module-row { border-color: #414c50; background: #20272a; }
+.crm-dark .workspace-profile-option.selected { border-color: #37b4af; background: #173e41; }
+.crm-dark .workspace-profile-option small, .crm-dark .workspace-module-row small { color: #b6c0c5; }
 .crm-dark .top p,
 .crm-dark .settings-layout > .settings-card p,
 .crm-dark .settings-layout > .settings-card .settings-muted,
@@ -14588,6 +15240,9 @@ function followupRecommendationLabel(item) {
 
 @media (max-width: 760px) {
   .channel-summary-grid, .business-hours-grid, .sla-rules-grid, .business-profile-grid, .service-plan-grid { grid-template-columns: 1fr; }
+  .crm-config-editor-grid { grid-template-columns: 1fr; }
+  .crm-config-row, .crm-config-add-row { align-items: stretch; flex-direction: column; }
+  .workspace-profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .business-profile-wide { grid-column: auto; }
   .team-form,
   .permission-form { grid-template-columns: 1fr; }

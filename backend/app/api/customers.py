@@ -27,6 +27,8 @@ from app.models.customer_merge import CustomerMerge
 from app.models.customer_collection import CustomerAddress, CustomerContact
 from app.models.audit_log import AuditLog
 from app.models.order_event import OrderEvent
+from app.models.revenue import LeadActivity
+from app.models.industry_modules import Appointment, AppointmentService, CommercialInvoice, CommercialInvoicePayment, CommercialProject, CommercialQuote
 from app.models.business_setting import BusinessSetting
 from app.schemas.customer import (
     CustomerFactCreate,
@@ -51,6 +53,7 @@ from app.schemas.customer import (
     CustomerTimelineOut,
     CustomerTimelineSummary,
 )
+from app.schemas.crm_config import CustomerCustomFieldsUpdate
 from app.schemas.customer_collection import CustomerAddressOut, CustomerContactOut
 from app.schemas.customer_merge import (
     CustomerMergeOut,
@@ -81,6 +84,7 @@ from app.services.customer_collection import decrypt_contact
 from app.auth.dependencies import require_write_access
 from app.models.business import User
 from app.services.audit_service import record_audit
+from app.services.crm_workspace_config import get_crm_workspace_config, validate_customer_custom_fields
 
 
 router = APIRouter()
@@ -98,6 +102,13 @@ TIMELINE_OPERATIONAL_EVENT_TYPES = {
     "ticket_event",
     "ticket_comment",
     "assignment",
+    "lead_activity",
+    "lead_stage",
+    "appointment",
+    "quote",
+    "project",
+    "invoice",
+    "invoice_payment",
 }
 
 
@@ -815,6 +826,7 @@ def get_customer(
         email=profile_email,
         phone=profile_phone,
         address=customer.address,
+        custom_fields=customer.custom_fields or {},
         avatar_url=refresh_customer_avatar_url(
             customer.avatar_url,
             customer_id=customer.id,
@@ -831,6 +843,33 @@ def get_customer(
         addresses=[CustomerAddressOut.model_validate(address) for address in addresses],
         conversation_count=len(conversations),
     )
+
+
+@router.put("/{customer_id}/custom-fields", dependencies=[Depends(require_write_access)])
+def update_customer_custom_fields(
+    customer_id: int,
+    payload: CustomerCustomFieldsUpdate,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    customer = _get_customer(db, customer_id, tenant)
+    definitions = get_crm_workspace_config(db, tenant.business_id)["customer_fields"]
+    try:
+        customer.custom_fields = validate_customer_custom_fields(payload.values, definitions)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="customer_custom_fields_updated",
+        resource_type="customer",
+        resource_id=customer.id,
+        metadata={"field_keys": sorted(customer.custom_fields)},
+    )
+    db.commit()
+    return {"custom_fields": customer.custom_fields}
 
 
 @router.get("/{customer_id}/facts", response_model=CustomerFactListOut)
@@ -1208,8 +1247,17 @@ def customer_timeline(
     conversation_ids = {message.conversation_id for message in messages}
     ai_audits = db.query(AuditLog).filter(
         AuditLog.business_id == tenant.business_id,
-        AuditLog.action.in_(("chatbot_tool_executed", "chatbot_human", "chatbot_escalated")),
+        AuditLog.action.in_(("chatbot_tool_executed", "chatbot_human", "chatbot_escalated", "chatbot_handoff")),
     ).all()
+    canonical_handoffs = set()
+    for audit in ai_audits:
+        if audit.action != "chatbot_handoff":
+            continue
+        raw = audit.metadata_ if isinstance(audit.metadata_, dict) else {}
+        try:
+            canonical_handoffs.add(int(raw.get("conversation_id") or audit.resource_id))
+        except (TypeError, ValueError):
+            continue
     notes = db.query(CustomerNote).filter(
         CustomerNote.business_id == tenant.business_id,
         CustomerNote.customer_id == customer_id,
@@ -1218,6 +1266,45 @@ def customer_timeline(
         Lead.business_id == tenant.business_id,
         Lead.customer_id == customer_id,
     ).all()
+    lead_ids = [lead.id for lead in leads]
+    lead_history = db.query(AuditLog).filter(
+        AuditLog.business_id == tenant.business_id,
+        AuditLog.resource_type == "lead",
+        AuditLog.resource_id.in_([str(lead_id) for lead_id in lead_ids]),
+        AuditLog.action.in_(("lead_created", "lead_stage_changed")),
+    ).all() if lead_ids else []
+    lead_activities = db.query(LeadActivity).filter(
+        LeadActivity.business_id == tenant.business_id,
+        LeadActivity.lead_id.in_(lead_ids),
+    ).all() if lead_ids else []
+    appointments = db.query(Appointment).filter(
+        Appointment.business_id == tenant.business_id,
+        Appointment.customer_id == customer_id,
+    ).all()
+    appointment_services = {
+        service.id: service.name
+        for service in db.query(AppointmentService).filter(
+            AppointmentService.business_id == tenant.business_id,
+            AppointmentService.id.in_([appointment.service_id for appointment in appointments]),
+        ).all()
+    } if appointments else {}
+    quotes = db.query(CommercialQuote).filter(
+        CommercialQuote.business_id == tenant.business_id,
+        CommercialQuote.customer_id == customer_id,
+    ).all()
+    projects = db.query(CommercialProject).filter(
+        CommercialProject.business_id == tenant.business_id,
+        CommercialProject.customer_id == customer_id,
+    ).all()
+    invoices = db.query(CommercialInvoice).filter(
+        CommercialInvoice.business_id == tenant.business_id,
+        CommercialInvoice.customer_id == customer_id,
+    ).all()
+    invoice_ids = [invoice.id for invoice in invoices]
+    invoice_payments = db.query(CommercialInvoicePayment).filter(
+        CommercialInvoicePayment.business_id == tenant.business_id,
+        CommercialInvoicePayment.invoice_id.in_(invoice_ids),
+    ).all() if invoice_ids else []
     orders = db.query(Order).filter(
         Order.business_id == tenant.business_id,
         Order.customer_id == customer_id,
@@ -1315,6 +1402,8 @@ def customer_timeline(
             continue
         if audit_conversation_id not in conversation_ids:
             continue
+        if audit.action in {"chatbot_human", "chatbot_escalated"} and audit_conversation_id in canonical_handoffs:
+            continue
         is_tool = audit.action == "chatbot_tool_executed"
         safe_metadata = {
             "action": audit.action,
@@ -1324,6 +1413,8 @@ def customer_timeline(
             safe_metadata["tool"] = str(raw["tool"])[:60]
         if not is_tool and raw.get("reason"):
             safe_metadata["reason"] = str(raw["reason"])[:500]
+        if audit.action == "chatbot_handoff":
+            safe_metadata.update({key: raw[key] for key in ("reason_code", "ticket_id", "source") if raw.get(key) is not None})
         items.append(CustomerTimelineItem(
             event_type="ai_tool" if is_tool else "ai_handoff",
             event_id=audit.id,
@@ -1384,6 +1475,60 @@ def customer_timeline(
         created_by=lead.assigned_user_id,
         metadata={"stage": lead.stage, "status": lead.status, "value": str(lead.value)},
     ) for lead in leads)
+    items.extend(CustomerTimelineItem(
+        event_type="lead_stage",
+        event_id=audit.id,
+        occurred_at=audit.created_at,
+        content="Tạo cơ hội" if audit.action == "lead_created" else "Cập nhật giai đoạn cơ hội",
+        created_by=audit.user_id,
+        metadata={"action": audit.action, **(audit.metadata_ or {})},
+    ) for audit in lead_history)
+    items.extend(CustomerTimelineItem(
+        event_type="lead_activity",
+        event_id=activity.id,
+        occurred_at=activity.occurred_at or activity.created_at,
+        content=activity.subject,
+        created_by=activity.actor_id,
+        metadata={"lead_id": activity.lead_id, "activity_type": activity.activity_type, "body": activity.body},
+    ) for activity in lead_activities)
+    items.extend(CustomerTimelineItem(
+        event_type="appointment",
+        event_id=appointment.id,
+        occurred_at=appointment.updated_at or appointment.starts_at,
+        content=appointment_services.get(appointment.service_id, "Lịch hẹn"),
+        created_by=appointment.assigned_user_id,
+        metadata={"status": appointment.status, "starts_at": appointment.starts_at.isoformat(), "ends_at": appointment.ends_at.isoformat()},
+    ) for appointment in appointments)
+    items.extend(CustomerTimelineItem(
+        event_type="quote",
+        event_id=quote.id,
+        occurred_at=quote.updated_at or quote.created_at,
+        content=quote.title,
+        metadata={"quote_number": quote.quote_number, "status": quote.status, "total_amount": str(quote.total_amount)},
+    ) for quote in quotes)
+    items.extend(CustomerTimelineItem(
+        event_type="project",
+        event_id=project.id,
+        occurred_at=project.updated_at or project.created_at,
+        content=project.title,
+        created_by=project.assigned_user_id,
+        metadata={"status": project.status, "budget": str(project.budget), "quote_id": project.quote_id},
+    ) for project in projects)
+    items.extend(CustomerTimelineItem(
+        event_type="invoice",
+        event_id=invoice.id,
+        occurred_at=invoice.updated_at or invoice.created_at,
+        content=invoice.description,
+        metadata={"invoice_number": invoice.invoice_number, "status": invoice.status, "total_amount": str(invoice.total_amount), "paid_amount": str(invoice.paid_amount), "due_on": invoice.due_on.isoformat() if invoice.due_on else None},
+    ) for invoice in invoices)
+    invoice_by_id = {invoice.id: invoice for invoice in invoices}
+    items.extend(CustomerTimelineItem(
+        event_type="invoice_payment",
+        event_id=payment.id,
+        occurred_at=payment.created_at,
+        content=f"Thanh toán hóa đơn {invoice_by_id[payment.invoice_id].invoice_number}" if payment.invoice_id in invoice_by_id else "Thanh toán hóa đơn",
+        metadata={"invoice_id": payment.invoice_id, "amount": str(payment.amount), "paid_on": payment.paid_on.isoformat(), "method": payment.method, "reference": payment.reference},
+    ) for payment in invoice_payments)
     items.extend(CustomerTimelineItem(
         event_type="sales_order",
         event_id=order.id,

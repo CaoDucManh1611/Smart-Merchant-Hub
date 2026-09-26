@@ -37,12 +37,14 @@ class CustomerMergeApiTests(unittest.TestCase):
                 channel="telegram",
                 external_user_id="survivor",
                 name="Khách chính",
+                custom_fields={"segment": "VIP"},
             )
             source = Customer(
                 business_id=one.id,
                 channel="facebook",
                 external_user_id="source",
                 name="Khách trùng",
+                custom_fields={"segment": "Bán lẻ", "budget": 1500000},
             )
             other = Customer(
                 business_id=two.id,
@@ -156,6 +158,20 @@ class CustomerMergeApiTests(unittest.TestCase):
             )
             purchase = db.query(PurchaseOrder).filter(PurchaseOrder.po_number == "PO-MERGE-1").one()
             self.assertEqual(self.survivor_id, purchase.metadata_["customer_id"])
+            survivor = db.get(Customer, self.survivor_id)
+            self.assertEqual({"segment": "VIP", "budget": 1500000}, survivor.custom_fields)
+
+        history = self.client.get(f"/api/customers/{self.survivor_id}/merge-history", headers=self.headers())
+        merge_id = history.json()["items"][0]["merge_id"]
+        undone = self.client.post(
+            f"/api/customers/{self.survivor_id}/merge-history/{merge_id}/undo",
+            headers=self.headers(),
+            json={"reason": "Kiểm tra hoàn tác trường tùy chỉnh"},
+        )
+        self.assertEqual(200, undone.status_code, undone.text)
+        with Session(self.engine) as db:
+            self.assertEqual({"segment": "VIP"}, db.get(Customer, self.survivor_id).custom_fields)
+            self.assertEqual({"segment": "Bán lẻ", "budget": 1500000}, db.get(Customer, self.source_id).custom_fields)
 
     def test_duplicate_merge_is_rejected(self):
         with Session(self.engine) as db:

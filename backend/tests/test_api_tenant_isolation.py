@@ -8,12 +8,15 @@ from sqlalchemy.pool import StaticPool
 
 from app.database.bases import TenantBase
 from app.main import app
+from app.models.audit_log import AuditLog
 from app.models.customer import Customer
 from app.models.conversation import Conversation
+from app.models.crm_extended import ConversationAssignment
 from app.models.message import Message
 from app.models.business import Business, User
 from app.models.permission import PermissionOverride
 from app.database.platform_session import get_platform_db
+from app.db.dependencies import get_db
 from app.auth.dependencies import require_write_access
 from app.tenancy.context import TenantContext
 from app.tenancy.crm_session import get_tenant_db
@@ -65,13 +68,17 @@ class ApiTenantIsolationTests(unittest.TestCase):
         User.__table__.create(cls.platform_engine)
         with cls.platform_engine.begin() as connection:
             connection.execute(Business.__table__.insert(), [{"id": 1, "name": "One", "slug": "one"}, {"id": 2, "name": "Two", "slug": "two"}])
-            connection.execute(User.__table__.insert(), {"id": 201, "business_id": 2, "full_name": "Other shop agent", "email": "other@example.test", "role": "agent"})
+            connection.execute(User.__table__.insert(), [
+                {"id": 101, "business_id": 1, "full_name": "Shop one agent", "email": "one@example.test", "role": "agent", "is_active": True},
+                {"id": 201, "business_id": 2, "full_name": "Other shop agent", "email": "other@example.test", "role": "agent", "is_active": True},
+            ])
 
         def override_platform_db():
             with Session(cls.platform_engine) as db:
                 yield db
 
         app.dependency_overrides[get_platform_db] = override_platform_db
+        app.dependency_overrides[get_db] = override_platform_db
         cls.client = TestClient(app)
 
     @classmethod
@@ -119,6 +126,76 @@ class ApiTenantIsolationTests(unittest.TestCase):
             headers={"X-Business-Id": "1"},
         )
         self.assertEqual(404, response.status_code, response.text)
+
+    def test_bulk_assignment_is_tenant_scoped_atomic_and_audited(self):
+        success = self.client.patch(
+            "/api/conversations/bulk-assignment",
+            json={"conversation_ids": [1], "assigned_user_id": 101},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, success.status_code, success.text)
+        self.assertEqual(1, success.json()["changed_count"])
+        with Session(self.engines[1]) as db:
+            conversation = db.get(Conversation, 1)
+            self.assertEqual(101, conversation.assigned_user_id)
+            self.assertEqual(101, db.query(ConversationAssignment).filter_by(conversation_id=1, unassigned_at=None).one().user_id)
+            audit = db.query(AuditLog).filter_by(action="conversation_assignment", resource_id="1").one()
+            self.assertTrue(audit.metadata_["bulk"])
+
+        # Conversation 2 exists only in shop 2. The mixed request must not
+        # partially reassign conversation 1 in shop 1.
+        with Session(self.engines[2]) as db:
+            db.add(Conversation(id=2, business_id=2, customer_id=1, channel="facebook"))
+            db.commit()
+        rejected = self.client.patch(
+            "/api/conversations/bulk-assignment",
+            json={"conversation_ids": [1, 2], "assigned_user_id": None},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(404, rejected.status_code, rejected.text)
+        with Session(self.engines[1]) as db:
+            self.assertEqual(101, db.get(Conversation, 1).assigned_user_id)
+
+        duplicate = self.client.patch(
+            "/api/conversations/bulk-assignment",
+            json={"conversation_ids": [1, 1], "assigned_user_id": 101},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(422, duplicate.status_code, duplicate.text)
+
+    def test_conversation_outcome_is_validated_audited_and_tenant_scoped(self):
+        for business_id, outcome in ((1, "resolved"), (2, "needs_human")):
+            response = self.client.patch(
+                "/api/conversations/1/outcome",
+                json={"outcome": outcome},
+                headers={"X-Business-Id": str(business_id)},
+            )
+            self.assertEqual(200, response.status_code, response.text)
+            self.assertEqual(outcome, response.json()["resolution_outcome"])
+
+        invalid = self.client.patch(
+            "/api/conversations/1/outcome",
+            json={"outcome": "probably_resolved"},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(422, invalid.status_code, invalid.text)
+
+        for business_id, expected in ((1, "resolved"), (2, "needs_human")):
+            with Session(self.engines[business_id]) as db:
+                self.assertEqual(expected, db.get(Conversation, 1).resolution_outcome)
+                audit = db.query(AuditLog).filter_by(
+                    business_id=business_id,
+                    action="conversation_outcome_recorded",
+                    resource_id="1",
+                ).one()
+                self.assertEqual(expected, audit.metadata_["to"])
+
+            listing = self.client.get(
+                "/api/conversations?limit=10",
+                headers={"X-Business-Id": str(business_id)},
+            )
+            row = next(item for item in listing.json()["items"] if item["conversation_id"] == 1)
+            self.assertEqual(expected, row["resolution_outcome"])
 
     def test_team_permission_overrides_with_identical_ids_are_shop_local(self):
         for business_id, effect in ((1, "allow"), (2, "deny")):

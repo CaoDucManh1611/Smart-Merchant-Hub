@@ -11,9 +11,12 @@ from sqlalchemy.orm import Session
 from app.models.ticket import Ticket
 from app.models.workflow import Workflow
 from app.models.notification import Notification
+from app.models.customer import Customer
+from app.models.industry_modules import Appointment, AppointmentService
 from app.models.platform_control import TenantRegistry
 from app.services.job_service import dispatch_due_jobs
-from app.services.notification_service import create_sla_notification, create_sla_warning_notification, deliver_notification_email
+from app.services.notification_service import create_notification, create_sla_notification, create_sla_warning_notification, deliver_notification_email
+from app.services.customer_collection import customer_email_for_delivery
 from app.services.workflow_engine import execute_workflow
 from app.services.chatbot_followup import dispatch_due_followups
 from app.services.order_service import release_expired_draft_reservations
@@ -21,6 +24,7 @@ from app.services.rag_job_service import dispatch_rag_job
 from app.services.recommendation_service import train_customer_segments
 from app.tenancy.context import TenantContext
 from app.tenancy.schema import schema_name_for, validate_schema_name
+from app.tenancy.workspace_modules import get_workspace_config
 
 
 @dataclass(frozen=True)
@@ -168,6 +172,64 @@ def _dispatch_recommendation_segment_training_job(db: Session, business_id: int,
         raise ValueError("Recommendation training job is missing training_run_id")
     train_customer_segments(db, business_id=business_id, training_run_id=training_run_id)
 
+
+def _dispatch_appointment_reminder_job(db: Session, business_id: int, payload: dict) -> None:
+    if "appointments" not in get_workspace_config(db, business_id)["enabled_modules"]:
+        return
+    appointment = db.query(Appointment).filter(
+        Appointment.id == int(payload.get("appointment_id") or 0),
+        Appointment.business_id == business_id,
+    ).first()
+    expected_at = str(payload.get("reminder_at") or "")
+    if (
+        appointment is None
+        or appointment.status not in {"scheduled", "confirmed"}
+        or appointment.reminder_at is None
+        or appointment.reminder_at.isoformat() != expected_at
+        or appointment.reminder_at > _now()
+        or appointment.starts_at <= _now()
+        or appointment.reminder_sent_at is not None
+    ):
+        return
+    create_notification(
+        db,
+        business_id=business_id,
+        user_id=appointment.assigned_user_id,
+        kind="appointment_reminder",
+        title="Sắp đến lịch hẹn",
+        body=f"Lịch hẹn #{appointment.id} sắp bắt đầu. Mở mục Lịch hẹn để xem thông tin.",
+        metadata={"appointment_id": appointment.id, "starts_at": appointment.starts_at.isoformat()},
+    )
+    if appointment.send_customer_reminder:
+        recipient = customer_email_for_delivery(
+            db,
+            business_id=business_id,
+            customer_id=appointment.customer_id,
+        )
+        if not recipient:
+            raise RuntimeError("Không thể gửi nhắc lịch: email khách hàng không còn hợp lệ.")
+        customer = db.query(Customer).filter(
+            Customer.id == appointment.customer_id,
+            Customer.business_id == business_id,
+        ).first()
+        service = db.query(AppointmentService).filter(
+            AppointmentService.id == appointment.service_id,
+            AppointmentService.business_id == business_id,
+        ).first()
+        sent = deliver_notification_email(
+            recipient_email=recipient,
+            title="Nhắc lịch hẹn với shop",
+            body=(
+                f"Xin chào {customer.name if customer and customer.name else 'quý khách'},\n\n"
+                f"Shop xin nhắc bạn có lịch {service.name if service else 'hẹn'} "
+                f"lúc {appointment.starts_at:%H:%M %d/%m/%Y}.\n"
+                "Nếu cần đổi lịch, vui lòng liên hệ lại với shop."
+            ),
+        )
+        if not sent:
+            raise RuntimeError("Chưa gửi được email nhắc lịch; kiểm tra cấu hình SMTP.")
+    appointment.reminder_sent_at = _now()
+
 def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 100, platform_db: Session | None = None) -> int:
     """Run CRM and knowledge-base jobs for one tenant.
 
@@ -188,6 +250,7 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),
         "notification.email": lambda payload: _dispatch_notification_email_job(db, business_id, payload),
         "recommendations.train_segments": lambda payload: _dispatch_recommendation_segment_training_job(db, business_id, payload),
+        "appointment.reminder": lambda payload: _dispatch_appointment_reminder_job(db, business_id, payload),
     }
     processed_jobs = dispatch_due_jobs(
         db,

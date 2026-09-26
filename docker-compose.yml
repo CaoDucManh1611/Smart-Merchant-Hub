@@ -2,6 +2,7 @@ services:
   db:
     image: pgvector/pgvector:pg16
     container_name: crm_chatbot_db
+    shm_size: 512mb
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-crm_chatbot}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}

@@ -28,7 +28,7 @@ def upgrade_active_tenants(*, apply: bool) -> list[dict[str, object]]:
         ).all()
 
         for registry in registries:
-            with tenant_engine.connect() as connection:
+            with (tenant_engine.begin() if apply else tenant_engine.connect()) as connection:
                 before = current_tenant_revision(connection, registry.schema_name)
                 after = before
                 if apply:

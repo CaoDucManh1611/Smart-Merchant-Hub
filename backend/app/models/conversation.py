@@ -48,6 +48,8 @@ class Conversation(TenantBase):
         server_default="auto",
     )
 
+    resolution_outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     priority: Mapped[str] = mapped_column(
         String(20),
         default="normal",

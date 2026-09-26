@@ -94,6 +94,39 @@ def test_successful_operation_reconciles_a_stale_registry(monkeypatch):
         assert calls == ["shop_9", "shop_9"]
 
 
+def test_default_tenant_migration_commits_before_activating_shop(monkeypatch):
+    engine = _engine()
+    events = []
+
+    @contextmanager
+    def begin():
+        events.append("begin")
+        try:
+            yield _Connection()
+        except Exception:
+            events.append("rollback")
+            raise
+        else:
+            events.append("commit")
+
+    monkeypatch.setattr(provisioning.tenant_engine, "begin", begin)
+
+    def migrate(_connection, _schema):
+        events.append("migrate")
+        return "20260926_0007"
+
+    monkeypatch.setattr(provisioning, "upgrade_tenant_schema", migrate)
+    monkeypatch.setattr(provisioning, "current_tenant_revision", lambda _connection, _schema: "20260926_0007")
+    with Session(engine) as db:
+        db.add(PlatformBusiness(id=12, name="Transaction", slug="shop-12"))
+        db.commit()
+        registry = provisioning.provision_shop(db, business_id=12, idempotency_key="transaction-12")
+
+        assert events == ["begin", "migrate", "commit"]
+        assert registry.state == "active"
+        assert registry.tenant_revision == "20260926_0007"
+
+
 def test_provisioning_rejects_invalid_identity_and_cross_shop_idempotency_reuse(monkeypatch):
     engine = _engine()
 
