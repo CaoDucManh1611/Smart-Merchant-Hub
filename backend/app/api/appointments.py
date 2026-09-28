@@ -72,6 +72,12 @@ def _naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
+def _aware_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def _customer(db: Session, customer_id: int, tenant: TenantContext) -> Customer:
     row = db.query(Customer).filter(Customer.id == customer_id, Customer.business_id == tenant.business_id).first()
     if row is None:
@@ -135,16 +141,16 @@ def _appointment_out(db: Session, row: Appointment) -> dict:
         "service_name": service.name if service else None,
         "service_price": service.price if service else Decimal("0"),
         "assigned_user_id": row.assigned_user_id,
-        "starts_at": row.starts_at,
-        "ends_at": row.ends_at,
+        "starts_at": _aware_utc(row.starts_at),
+        "ends_at": _aware_utc(row.ends_at),
         "status": row.status,
         "notes": row.notes,
         "reminder_minutes_before": row.reminder_minutes_before,
         "send_customer_reminder": row.send_customer_reminder,
-        "reminder_at": row.reminder_at,
-        "reminder_sent_at": row.reminder_sent_at,
-        "created_at": row.created_at,
-        "updated_at": row.updated_at,
+        "reminder_at": _aware_utc(row.reminder_at),
+        "reminder_sent_at": _aware_utc(row.reminder_sent_at),
+        "created_at": _aware_utc(row.created_at),
+        "updated_at": _aware_utc(row.updated_at),
     }
 
 
