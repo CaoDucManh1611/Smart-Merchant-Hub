@@ -22,6 +22,7 @@ import { apiFetch } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
 import { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";
 import IndustryModules from "./IndustryModules.vue";
+import WorkQueue from "./WorkQueue.vue";
 import {
   channelCapacityState,
   connectionStateMeta,
@@ -48,6 +49,65 @@ function friendlyErrorMessage(error, fallback = "Chưa thể hoàn tất yêu c�
     return fallback;
   }
   return message;
+}
+
+// Only localize copy authored by this screen. API details and customer content
+// are not translation keys, so unknown errors use a localized safe fallback.
+const crmEnglishCopy = {
+  "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.": "Could not complete the request. Please try again later.",
+  "Xin chào! Tôi là trợ lý tra cứu của shop. Bạn có thể hỏi về sản phẩm, đơn hàng và chính sách trong kho thông tin.": "Hello! I'm your shop's knowledge assistant. Ask me about products, orders, and policies in the knowledge base.",
+  "Chưa tải được tài liệu của shop. Vui lòng thử lại sau.": "Could not load this shop's documents. Please try again later.",
+  "Chưa thể nhập tài liệu. Vui lòng kiểm tra tệp rồi thử lại.": "Could not upload the document. Check the file and try again.",
+  "Chưa thể xóa tài liệu. Vui lòng thử lại sau.": "Could not delete the document. Please try again later.",
+  "Chưa thể cập nhật tài liệu. Vui lòng thử lại sau.": "Could not update the document. Please try again later.",
+  "Chưa thể xử lý lại tài liệu. Vui lòng thử lại sau.": "Could not process the document again. Please try again later.",
+  "Chưa tải được luồng bán hàng. Vui lòng thử lại sau.": "Could not load the sales pipeline. Please try again later.",
+  "Tên cơ hội và khách hàng là bắt buộc.": "Enter an opportunity name and choose a customer.",
+  "Chưa thể tạo cơ hội bán hàng. Vui lòng thử lại sau.": "Could not create the opportunity. Please try again later.",
+  "Chưa thể cập nhật giai đoạn cơ hội. Vui lòng thử lại sau.": "Could not update the opportunity stage. Please try again later.",
+  "Chưa tải được lịch sử hoạt động. Vui lòng thử lại sau.": "Could not load activity history. Please try again later.",
+  "Chưa thể ghi hoạt động. Vui lòng thử lại sau.": "Could not save the activity. Please try again later.",
+  "Chọn đơn hàng để ghi nhận chuyển đổi.": "Choose an order to record the conversion.",
+  "Chưa thể ghi nhận kết quả bán hàng. Vui lòng thử lại sau.": "Could not record the sales result. Please try again later.",
+  "Chưa tải được danh sách phiếu hỗ trợ. Vui lòng thử lại sau.": "Could not load support tickets. Please try again later.",
+  "Tiêu đề phiếu hỗ trợ và khách hàng là bắt buộc.": "Enter a ticket title and choose a customer.",
+  "Chưa thể tạo phiếu hỗ trợ. Vui lòng thử lại sau.": "Could not create the ticket. Please try again later.",
+  "Chưa thể cập nhật trạng thái phiếu hỗ trợ. Vui lòng thử lại sau.": "Could not update the ticket status. Please try again later.",
+  "Chưa tải được lịch sử xử lý phiếu hỗ trợ. Vui lòng thử lại sau.": "Could not load ticket history. Please try again later.",
+  "Chưa thể thêm ghi chú xử lý. Vui lòng thử lại sau.": "Could not add the ticket note. Please try again later.",
+  "Chưa thể chuyển phiếu hỗ trợ. Vui lòng thử lại sau.": "Could not assign the ticket. Please try again later.",
+  "Không tải được hồ sơ khách hàng. Hãy thử lại.": "Could not load the customer profile. Please try again.",
+  "Không thể tìm trong hội thoại. Vui lòng thử lại.": "Could not search this conversation. Please try again.",
+  "Không thể mở đúng tin nhắn này. Vui lòng thử lại.": "Could not open this message. Please try again.",
+  "Chọn ít nhất một khoảng ngày hoặc một nhân viên để tra cứu lịch sử.": "Choose a date range or staff member to search history.",
+  "Ngày bắt đầu không được sau ngày kết thúc.": "The start date must be before the end date.",
+  "Không thể lọc lịch sử tương tác. Vui lòng thử lại.": "Could not filter interaction history. Please try again.",
+  "Không tải thêm được lịch sử khách hàng.": "Could not load more customer history.",
+  "Chọn một khách hàng trùng khác để xem trước.": "Choose another duplicate customer to preview.",
+  "Chọn một khách hàng trùng khác để gộp.": "Choose another duplicate customer to merge.",
+  "Nhập khóa và giá trị tri thức trước khi lưu.": "Enter a knowledge key and value before saving.",
+  "Chưa tải được tin nhắn. Vui lòng thử lại sau.": "Could not load messages. Please try again later.",
+  "Chưa thể phân công hội thoại. Vui lòng thử lại sau.": "Could not assign the conversation. Please try again later.",
+  "Chỉ có thể phân công tối đa 100 hội thoại cùng lúc.": "You can assign up to 100 conversations at once.",
+  "Chưa thể phân công hàng loạt. Vui lòng thử lại sau.": "Could not assign conversations. Please try again later.",
+  "Chưa tải được báo cáo. Vui lòng thử lại sau.": "Could not load reports. Please try again later.",
+  "Chưa thể tải báo cáo dạng tệp. Vui lòng thử lại sau.": "Could not download the report. Please try again later.",
+  "Chưa thể cập nhật số liệu. Vui lòng thử lại sau.": "Could not refresh the report figures. Please try again later.",
+  "Chi": "Spent",
+  "Đã lưu thông tin bổ sung.": "Additional customer information saved.",
+  "Đã nhận tài liệu. Hệ thống đang xử lý ở nền; bạn có thể tiếp tục làm việc.": "Document received. Processing will continue in the background while you work.",
+};
+
+function crmUiText(message) {
+  if (uiLocale.value !== "en" || !message) return message;
+  return crmEnglishCopy[message] || t(message);
+}
+
+function crmErrorText(message, fallback = "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.") {
+  if (!message) return "";
+  if (uiLocale.value !== "en") return message;
+  const translated = crmUiText(message);
+  return translated !== message ? translated : crmUiText(fallback);
 }
 
 
@@ -213,6 +273,59 @@ let reconnectTimer = null;
 
 /* RAG & TAB STATE */
 const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 'tickets' | 'reports' | 'documents' | 'rag_chat' | 'experiments' | 'channels' | 'webhooks' | 'settings' | 'platform_admin' | 'service'
+const workQueueTarget = ref(null);
+watch(currentTab, (tab) => {
+  const target = workQueueTarget.value;
+  if (!target) return;
+  const destination = target.kind === "appointment" ? "appointments" : target.kind === "quote" ? "commercial" : null;
+  if (tab !== destination) workQueueTarget.value = null;
+});
+
+function focusWorkQueueRecord(kind, id) {
+  nextTick(() => {
+    const target = document.querySelector(`[data-work-record="${kind}-${Number(id)}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+    target?.focus();
+  });
+}
+
+async function openWorkQueueItem(item) {
+  workQueueTarget.value = { kind: item.kind, id: item.id };
+  if (item.kind === "conversation") {
+    search.value = "";
+    activeFilter.value = "all";
+    inboxQuickFilter.value = "all";
+    tagFilters.value = [];
+    selectedSegmentId.value = "";
+    linkedCustomerOnly.value = false;
+    inboxCustomerFilterId.value = null;
+    inboxPersonalFilters.value = { phone: "", email: "" };
+    if (!conversations.value.some((row) => Number(row.conversation_id) === Number(item.id))) {
+      conversations.value = [item.record, ...conversations.value];
+    }
+    currentTab.value = "inbox";
+    await nextTick();
+    await selectConversation(item.id);
+    return;
+  }
+  if (item.kind === "ticket") {
+    currentTab.value = "tickets";
+    await fetchTickets();
+    if (!tickets.value.some((row) => Number(row.id) === Number(item.id))) {
+      const response = await apiFetch(`${API_BASE}/tickets/${Number(item.id)}`);
+      if (response.ok) tickets.value = [await response.json(), ...tickets.value];
+    }
+    focusWorkQueueRecord("ticket", item.id);
+    return;
+  }
+  if (item.kind === "document") {
+    currentTab.value = "documents";
+    await fetchDocuments();
+    focusWorkQueueRecord("document", item.id);
+    return;
+  }
+  currentTab.value = item.kind === "appointment" ? "appointments" : "commercial";
+}
 // The inbox is the primary working surface. Keep navigation compact by default;
 // users can still expand it with the persistent control at the bottom.
 // Keep the full navigation visible on desktop so the workspace feels like a
@@ -628,6 +741,7 @@ const leads = ref([]);
 const leadsLoading = ref(false);
 const leadSaving = ref(false);
 const leadError = ref("");
+const leadsLoadFailed = ref(false);
 const leadActivities = ref({});
 const leadActivityVisible = ref({});
 const leadActivityDrafts = ref({});
@@ -647,6 +761,7 @@ const tickets = ref([]);
 const ticketsLoading = ref(false);
 const ticketSaving = ref(false);
 const ticketError = ref("");
+const ticketsLoadFailed = ref(false);
 const ticketReport = ref({ items: [], overdue_tickets: 0 });
 const slaNotifications = ref([]);
 const operationalNotifications = ref([]);
@@ -746,6 +861,7 @@ const docRetryingIds = ref(new Set());
 const docsLoading = ref(false);
 const docUploading = ref(false);
 const docUploadError = ref("");
+const documentsLoadFailed = ref(false);
 const docUploadNotice = ref("");
 const docFileInput = ref(null);
 let docPollingTimer = null;
@@ -754,6 +870,7 @@ const ragMessages = ref([
   {
     role: "assistant",
     content: "Xin chào! Tôi là trợ lý tra cứu của shop. Bạn có thể hỏi về sản phẩm, đơn hàng và chính sách trong kho thông tin.",
+    localize: true,
     sources: [],
   }
 ]);
@@ -1840,11 +1957,13 @@ async function fetchDocumentRuns(items) {
 
 async function fetchDocuments() {
   docsLoading.value = true;
+  docUploadError.value = "";
+  documentsLoadFailed.value = false;
   try {
     const res = await apiFetch(`${API_BASE}/documents`);
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
-      throw new Error(detail.detail || `HTTP ${res.status}`);
+      throw apiResponseError(res, detail, `HTTP ${res.status}`);
     }
     const data = await res.json();
     documents.value = data.documents || [];
@@ -1860,7 +1979,10 @@ async function fetchDocuments() {
     }
   } catch (err) {
     console.error("Fetch documents error:", err);
-    docUploadError.value = friendlyErrorMessage(err, "Chưa tải được tài liệu của shop. Vui lòng thử lại sau.");
+    documentsLoadFailed.value = true;
+    docUploadError.value = Number(err?.status) === 403
+      ? "Tài khoản hiện tại không có quyền xem tài liệu của shop này."
+      : friendlyErrorMessage(err, "Chưa tải được tài liệu của shop. Vui lòng thử lại sau.");
   } finally {
     docsLoading.value = false;
   }
@@ -1987,7 +2109,7 @@ async function sendRagQuery(presetText = null) {
   if (!query || ragSending.value) return;
 
   const conversationHistory = ragMessages.value
-    .filter(m => m.content && !m.loading)
+    .filter(m => m.content && !m.loading && !m.localize)
     .slice(-6)
     .map(m => ({ role: m.role, content: m.content }));
 
@@ -2021,7 +2143,7 @@ async function sendRagQuery(presetText = null) {
     });
 
     if (!response.ok) {
-      throw new Error(await response.text());
+      throw apiResponseError(response, {}, `HTTP ${response.status}`);
     }
 
     const reader = response.body.getReader();
@@ -2051,7 +2173,8 @@ async function sendRagQuery(presetText = null) {
               assistantMsg.content += data.content || "";
               scrollRagChatToBottom();
             } else if (data.type === "error") {
-              assistantMsg.content += `\n[Lỗi: ${data.message}]`;
+              assistantMsg.content = "Chưa thể trả lời lúc này. Vui lòng thử lại sau.";
+              assistantMsg.localize = true;
             }
           } catch (e) {
             console.error("SSE parse error", e);
@@ -2061,7 +2184,10 @@ async function sendRagQuery(presetText = null) {
     }
   } catch (err) {
     assistantMsg.loading = false;
-    assistantMsg.content = `❌ Chưa thể trả lời lúc này. ${friendlyErrorMessage(err, "Vui lòng thử lại sau.")}`;
+    assistantMsg.content = Number(err?.status) === 403
+      ? "Tài khoản hiện tại không có quyền dùng trợ lý tra cứu."
+      : "Chưa thể trả lời lúc này. Vui lòng thử lại sau.";
+    assistantMsg.localize = true;
   } finally {
     ragSending.value = false;
     scrollRagChatToBottom();
@@ -2261,7 +2387,13 @@ function salesOrderStatusLabel(status) {
 }
 
 function leadStageLabel(stage) {
-  return crmConfig.value.pipeline_stages.find((item) => item.key === stage)?.label || stage || "Chưa rõ";
+  const configured = crmConfig.value.pipeline_stages.find((item) => item.key === stage);
+  return configured ? configuredLeadStageLabel(configured) : stage || t("Chưa rõ");
+}
+
+function configuredLeadStageLabel(stage) {
+  const defaultStage = defaultCrmPipelineStages.find((item) => item.key === stage?.key);
+  return defaultStage?.label === stage?.label ? t(stage.label) : stage?.label || t("Chưa rõ");
 }
 
 function ticketStatusLabel(status) {
@@ -5695,6 +5827,14 @@ async function registerPlatformSchema(businessId) {
 async function fetchReports() {
   reportsLoading.value = true;
   reportsError.value = "";
+  crmOverview.value = null;
+  agentPerformance.value = [];
+  inventoryReport.value = null;
+  purchaseCostReport.value = null;
+  revenueAttribution.value = null;
+  pipelineSummary.value = [];
+  ticketReport.value = { items: [], overdue_tickets: 0 };
+  qualityDashboard.value = {};
   try {
     const params = new URLSearchParams();
     Object.entries(reportFilters.value).forEach(([key, value]) => { if (value) params.set(key, value); });
@@ -5712,7 +5852,9 @@ async function fetchReports() {
       apiFetch(`${API_BASE}/reports/tickets${suffix}`),
       apiFetch(`${API_BASE}/reports/quality?days=30`),
     ]);
-    if (!overviewResponse.ok) throw new Error(`HTTP ${overviewResponse.status}`);
+    if (![overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse, pipelineResponse, ticketResponse, qualityResponse].every((response) => response.ok)) {
+      throw new Error("A report request failed");
+    }
     crmOverview.value = await overviewResponse.json();
     if (performanceResponse.ok) {
       agentPerformance.value = (await performanceResponse.json()).items || [];
@@ -5725,6 +5867,7 @@ async function fetchReports() {
     if (qualityResponse.ok) qualityDashboard.value = await qualityResponse.json();
   } catch (err) {
     console.error("Fetch reports error:", err);
+    crmOverview.value = null;
     reportsError.value = "Chưa tải được báo cáo. Vui lòng thử lại sau.";
   } finally {
     reportsLoading.value = false;
@@ -5835,12 +5978,13 @@ async function saveOrder() {
 async function fetchLeads() {
   leadsLoading.value = true;
   leadError.value = "";
+  leadsLoadFailed.value = false;
   try {
     const [leadsResponse, pipelineResponse] = await Promise.all([
       apiFetch(`${API_BASE}/leads`),
       apiFetch(`${API_BASE}/reports/pipeline`),
     ]);
-    if (!leadsResponse.ok) throw new Error(`HTTP ${leadsResponse.status}`);
+    if (!leadsResponse.ok) throw apiResponseError(leadsResponse, {}, `HTTP ${leadsResponse.status}`);
     const data = await leadsResponse.json();
     leads.value = data.items || [];
     if (!crmConfig.value.pipeline_stages.some((item) => item.key === leadForm.value.stage)) {
@@ -5852,7 +5996,10 @@ async function fetchLeads() {
     }
   } catch (err) {
     console.error("Fetch leads error:", err);
-    leadError.value = "Chưa tải được luồng bán hàng. Vui lòng thử lại sau.";
+    leadsLoadFailed.value = true;
+    leadError.value = Number(err?.status) === 403
+      ? "Tài khoản hiện tại không có quyền xem luồng bán hàng."
+      : "Chưa tải được luồng bán hàng. Vui lòng thử lại sau.";
   } finally {
     leadsLoading.value = false;
   }
@@ -5921,20 +6068,24 @@ async function changeLeadStage(lead, stage) {
 async function fetchTickets() {
   ticketsLoading.value = true;
   ticketError.value = "";
+  ticketsLoadFailed.value = false;
   try {
     const [ticketsResponse, reportResponse, slaResponse] = await Promise.all([
       apiFetch(`${API_BASE}/tickets`),
       apiFetch(`${API_BASE}/reports/tickets`),
       apiFetch(`${API_BASE}/tickets/sla-notifications`),
     ]);
-    if (!ticketsResponse.ok) throw new Error(`HTTP ${ticketsResponse.status}`);
+    if (!ticketsResponse.ok) throw apiResponseError(ticketsResponse, {}, `HTTP ${ticketsResponse.status}`);
     const data = await ticketsResponse.json();
     tickets.value = data.items || [];
     if (reportResponse.ok) ticketReport.value = await reportResponse.json();
     if (slaResponse.ok) slaNotifications.value = (await slaResponse.json()).items || [];
   } catch (err) {
     console.error("Fetch tickets error:", err);
-    ticketError.value = "Chưa tải được danh sách phiếu hỗ trợ. Vui lòng thử lại sau.";
+    ticketsLoadFailed.value = true;
+    ticketError.value = Number(err?.status) === 403
+      ? "Tài khoản hiện tại không có quyền xem phiếu hỗ trợ."
+      : "Chưa tải được danh sách phiếu hỗ trợ. Vui lòng thử lại sau.";
   } finally {
     ticketsLoading.value = false;
   }
@@ -8520,6 +8671,9 @@ function followupRecommendationLabel(item) {
           <button class="menu-item" :class="{ active: currentTab === 'tickets' }" :disabled="!tenantReady" :title="t('Phiếu hỗ trợ & thời hạn')" @click="currentTab = 'tickets'; fetchOrderCustomers(); fetchTickets()">
             <svg class="nav-icon nav-icon-tickets" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="m8.3 12.3 2.3 2.3 5-5" /></svg><b>{{ t("Phiếu hỗ trợ & thời hạn") }}</b>
           </button>
+          <button class="menu-item" :class="{ active: currentTab === 'work_queue' }" :aria-current="currentTab === 'work_queue' ? 'page' : undefined" :disabled="!tenantReady" :title="t('Việc cần xử lý')" @click="currentTab = 'work_queue'">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5zM8 10h8M8 14h5" /></svg><b>{{ t('Việc cần xử lý') }}</b>
+          </button>
         </div>
 
         <div class="menu-group menu-group-operations">
@@ -8530,11 +8684,11 @@ function followupRecommendationLabel(item) {
           <button v-if="workspaceModuleEnabled('retail')" class="menu-item" :class="{ active: currentTab === 'orders' }" :disabled="!tenantReady" :title="t('Đơn bán')" @click="currentTab = 'orders'; loadConversations(false); fetchOrderCustomers(); fetchProducts(); fetchOrders()">
             <svg class="nav-icon nav-icon-orders" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6Z" /><path d="M15 3v4h4M9 11h6M9 15h6M9 19h4" /></svg><b>{{ t('Đơn bán') }}</b>
           </button>
-          <button v-if="workspaceModuleEnabled('appointments')" class="menu-item" :class="{ active: currentTab === 'appointments' }" :disabled="!tenantReady" title="Lịch hẹn" @click="currentTab = 'appointments'">
-            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="2" /><path d="M8 3v4m8-4v4M4 10h16M8 14h3m-3 3h6" /></svg><b>Lịch hẹn</b>
+          <button v-if="workspaceModuleEnabled('appointments')" class="menu-item" :class="{ active: currentTab === 'appointments' }" :disabled="!tenantReady" :title="t('Lịch hẹn')" @click="currentTab = 'appointments'">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="2" /><path d="M8 3v4m8-4v4M4 10h16M8 14h3m-3 3h6" /></svg><b>{{ t('Lịch hẹn') }}</b>
           </button>
-          <button v-if="workspaceModuleEnabled('projects')" class="menu-item" :class="{ active: currentTab === 'commercial' }" :disabled="!tenantReady" title="Báo giá, dự án & hóa đơn" @click="currentTab = 'commercial'">
-            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h10l4 4V21H5Z" /><path d="M15 3.5V8h4M8 12h8m-8 4h8m-8 3h5" /></svg><b>Báo giá &amp; dự án</b>
+          <button v-if="workspaceModuleEnabled('projects')" class="menu-item" :class="{ active: currentTab === 'commercial' }" :disabled="!tenantReady" :title="t('Báo giá, dự án & hóa đơn')" @click="currentTab = 'commercial'">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h10l4 4V21H5Z" /><path d="M15 3.5V8h4M8 12h8m-8 4h8m-8 3h5" /></svg><b>{{ t('Báo giá & dự án') }}</b>
           </button>
           <button class="menu-item" :class="{ active: currentTab === 'business_hours' }" :disabled="!tenantReady" :title="t('Giờ làm việc')" @click="currentTab = 'business_hours'; fetchChatbotRuntime()">
             <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.5 2" /></svg><b>{{ t('Giờ làm việc') }}</b>
@@ -8647,10 +8801,6 @@ function followupRecommendationLabel(item) {
           <strong>
             {{ t(workspaceGreeting) }} <span aria-hidden="true">👋</span>
           </strong>
-
-          <span>
-            {{ t('Theo dõi khách hàng, hội thoại và vận hành trong một không gian.') }}
-          </span>
 
         </div>
 
@@ -8784,8 +8934,9 @@ function followupRecommendationLabel(item) {
       <div
         v-if="error && !inPlatformAdminWorkspace"
         class="error"
+        role="alert"
       >
-        <span>{{ error }}</span>
+        <span>{{ crmErrorText(error) }}</span>
         <button type="button" class="error-retry-btn" :disabled="loading || !tenantReady" @click="loadConversations()">{{ loading ? 'Đang tải...' : 'Thử lại' }}</button>
       </div>
 
@@ -8825,8 +8976,9 @@ function followupRecommendationLabel(item) {
            3 CỘT
       ==================================================== -->
 
-      <IndustryModules v-if="currentTab === 'appointments'" module="appointments" :api-base="API_BASE" />
-      <IndustryModules v-else-if="currentTab === 'commercial'" module="projects" :api-base="API_BASE" />
+      <WorkQueue v-if="currentTab === 'work_queue'" :api-base="API_BASE" :modules="{ appointments: workspaceModuleEnabled('appointments'), projects: workspaceModuleEnabled('projects') }" @open="openWorkQueueItem" />
+      <IndustryModules v-if="currentTab === 'appointments'" module="appointments" :api-base="API_BASE" :focus-record="workQueueTarget" />
+      <IndustryModules v-else-if="currentTab === 'commercial'" module="projects" :api-base="API_BASE" :focus-record="workQueueTarget" />
 
       <section
         v-if="currentTab === 'inbox'"
@@ -8835,6 +8987,7 @@ function followupRecommendationLabel(item) {
           'has-selected-conversation': !!selected,
           'mobile-inbox-open': mobileInboxOpen,
           'mobile-customer-open': mobileCustomerOpen,
+          'customer-panel-collapsed': customerPanelCollapsed,
         }"
       >
 
@@ -8866,6 +9019,14 @@ function followupRecommendationLabel(item) {
                 <button type="button" :class="{ active: inboxQuickFilter === 'unread' }" :aria-selected="inboxQuickFilter === 'unread'" @click="inboxQuickFilter = 'unread'">Chưa đọc <i>{{ unreadConversationCount }}</i></button>
                 <button type="button" :class="{ active: inboxQuickFilter === 'important' }" :aria-selected="inboxQuickFilter === 'important'" @click="inboxQuickFilter = 'important'">Quan trọng <i>{{ importantConversationCount }}</i></button>
               </div>
+            </div>
+
+            <div class="inbox-search-row">
+              <div class="search-box inbox-search-box">
+                <span aria-hidden="true">⌕</span>
+                <input ref="inboxSearchInput" v-model="search" aria-label="Tìm hội thoại" placeholder="Tìm theo tên, nội dung hoặc kênh..." @keydown.escape="clearInboxSearch" />
+                <button v-if="search" type="button" class="search-clear" aria-label="Xóa tìm kiếm" @click="clearInboxSearch">×</button>
+              </div>
               <label class="inbox-channel-select">
                 <span class="visually-hidden">Lọc theo kênh</span>
                 <select v-model="activeFilter" aria-label="Lọc theo kênh hội thoại">
@@ -8873,13 +9034,6 @@ function followupRecommendationLabel(item) {
                   <option v-for="channel in inboxChannels" :key="channel.value" :value="channel.value">{{ channel.label }} ({{ channel.count }})</option>
                 </select>
               </label>
-            </div>
-
-
-          <div class="search-box inbox-search-box">
-            <span aria-hidden="true">⌕</span>
-            <input ref="inboxSearchInput" v-model="search" aria-label="Tìm hội thoại" placeholder="Tìm theo tên, nội dung hoặc kênh..." @keydown.escape="clearInboxSearch" />
-            <button v-if="search" type="button" class="search-clear" aria-label="Xóa tìm kiếm" @click="clearInboxSearch">×</button>
             </div>
 
           <details class="inbox-filter-disclosure">
@@ -10154,7 +10308,7 @@ function followupRecommendationLabel(item) {
                 :title="customerPanelCollapsed ? 'Mở rộng thông tin khách hàng' : 'Thu gọn thông tin khách hàng'"
                 @click="toggleCustomerPanel"
               >
-                {{ customerPanelCollapsed ? '⌄' : '⌃' }}
+                {{ customerPanelCollapsed ? '‹' : '›' }}
               </button>
             </div>
 
@@ -10194,13 +10348,13 @@ function followupRecommendationLabel(item) {
               >
                 <span class="customer-message-search-result-head">
                   <strong>{{ customerMessageSearchActor(item) }}</strong>
-                  <time>{{ item.occurred_at ? new Date(item.occurred_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : 'Không rõ thời gian' }}</time>
+                  <time>{{ item.occurred_at ? formatDateTime(item.occurred_at) : t('Không rõ thời gian') }}</time>
                 </span>
                 <span>{{ customerMessageSearchPreview(item) }}</span>
               </button>
               <p v-if="customerMessageSearchQuery.trim().length >= 2 && !customerMessageSearchLoading && !customerMessageSearchItems.length && !customerMessageSearchError" class="customer-message-search-empty">Không tìm thấy tin nhắn phù hợp.</p>
               <p v-if="customerMessageSearchLoading && customerMessageSearchItems.length" class="customer-message-search-loading">Đang tải thêm kết quả...</p>
-              <p v-if="customerMessageSearchError" class="customer-message-search-error">{{ customerMessageSearchError }}</p>
+              <p v-if="customerMessageSearchError" class="customer-message-search-error" role="alert">{{ crmErrorText(customerMessageSearchError) }}</p>
             </div>
             <div v-if="customerMessageSearchHasMore" class="customer-message-search-footer">Cuộn xuống để tải thêm kết quả</div>
           </section>
@@ -10404,13 +10558,13 @@ function followupRecommendationLabel(item) {
             </div>
 
 
-            <div v-if="customer360Loading" class="customer-360-loading">
+            <div v-if="customer360Loading" class="customer-360-loading" role="status" aria-live="polite">
               Đang tải hồ sơ khách hàng...
             </div>
 
             <div v-else-if="customer360Error" class="customer-360-error" role="alert">
               <strong>Không thể tải hồ sơ khách hàng</strong>
-              <span>{{ customer360Error }}</span>
+              <span>{{ crmErrorText(customer360Error) }}</span>
               <button type="button" class="table-action-btn" @click="loadCustomer360(selected?.customer_id)">Thử lại</button>
             </div>
 
@@ -10509,8 +10663,8 @@ function followupRecommendationLabel(item) {
                     <textarea v-else v-model="customerCustomFieldsDraft[field.key]" maxlength="2000" rows="2" />
                   </label>
                 </div>
-                <div v-if="customerCustomFieldsError" class="facts-error" role="alert">{{ customerCustomFieldsError }}</div>
-                <div v-if="customerCustomFieldsNotice" class="settings-notice" role="status">{{ customerCustomFieldsNotice }}</div>
+                <div v-if="customerCustomFieldsError" class="facts-error" role="alert">{{ crmErrorText(customerCustomFieldsError) }}</div>
+                <div v-if="customerCustomFieldsNotice" class="settings-notice" role="status">{{ crmUiText(customerCustomFieldsNotice) }}</div>
                 <button type="button" class="table-action-btn" :disabled="customerCustomFieldsSaving" @click="saveCustomerCustomFields">{{ customerCustomFieldsSaving ? 'Đang lưu...' : 'Lưu thông tin' }}</button>
               </div>
 
@@ -10596,7 +10750,7 @@ function followupRecommendationLabel(item) {
                         <p>{{ customerTimelineContent(event) }}</p>
                         <small v-if="timelineExplainability(event)" class="timeline-explainability">{{ timelineExplainability(event) }}</small>
                         <small class="customer-timeline-meta">
-                          {{ event.occurred_at ? new Date(event.occurred_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : 'Không rõ thời gian' }}
+                          {{ event.occurred_at ? formatDateTime(event.occurred_at) : t('Không rõ thời gian') }}
                           <span
                             class="timeline-actor"
                             :class="`timeline-actor-${timelineActor(event).kind}`"
@@ -10607,7 +10761,7 @@ function followupRecommendationLabel(item) {
                     </div>
                   </div>
                 </template>
-                <div v-if="customerTimelineError" class="facts-error">{{ customerTimelineError }}</div>
+                <div v-if="customerTimelineError" class="facts-error" role="alert">{{ crmErrorText(customerTimelineError) }}</div>
                 <button
                   v-if="customerTimelineFilterApplied && customerTimelineDetailsOpen && customer360.timelineHasMore"
                   type="button"
@@ -10628,7 +10782,7 @@ function followupRecommendationLabel(item) {
                 <div v-if="customerPendingApprovalOrders.length" class="customer-order-approval" role="status">
                   <div class="customer-order-approval-head"><strong>{{ customerPendingApprovalOrders.length }} đơn chờ xác nhận</strong><span>Khách đã duyệt hóa đơn</span></div>
                   <article v-for="order in customerPendingApprovalOrders" :key="`customer-order-approval-${order.id}`" class="customer-order-approval-card">
-                    <div><strong>{{ order.order_number || `Đơn #${order.id}` }}</strong><small>{{ order.items?.map((item) => `${item.product_name || item.name || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') || 'Chưa có sản phẩm' }}</small><small>{{ Number(order.total_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ · {{ order.shipping_phone || 'Chưa có SĐT giao hàng' }}</small></div>
+                    <div><strong>{{ order.order_number || `Đơn #${order.id}` }}</strong><small>{{ order.items?.map((item) => `${item.product_name || item.name || 'Sản phẩm'} ×${item.quantity || 1}`).join(', ') || 'Chưa có sản phẩm' }}</small><small>{{ formatMoney(order.total_amount) }} · {{ order.shipping_phone || 'Chưa có SĐT giao hàng' }}</small></div>
                     <button type="button" class="table-action-btn customer-order-approve-btn" :disabled="orderTransitionSaving[order.id]" @click="confirmCustomerOrder(order)">{{ orderTransitionSaving[order.id] ? 'Đang xác nhận...' : 'Đồng ý đơn' }}</button>
                   </article>
                 </div>
@@ -10646,7 +10800,7 @@ function followupRecommendationLabel(item) {
                     </div>
                     <div class="customer-order-card-meta">
                       <span>{{ salesOrderStatusLabel(order.status) }}</span>
-                      <strong>{{ Number(order.total_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong>
+                      <strong>{{ formatMoney(order.total_amount) }}</strong>
                     </div>
                   </article>
                 </div>
@@ -10671,7 +10825,7 @@ function followupRecommendationLabel(item) {
                     <button type="submit" :disabled="customerFactSaving">{{ customerFactSaving ? 'Đang lưu...' : 'Ghi nhận' }}</button>
                   </div>
                 </form>
-                <div v-if="customerFactError" class="facts-error">{{ customerFactError }}</div>
+                <div v-if="customerFactError" class="facts-error" role="alert">{{ crmErrorText(customerFactError) }}</div>
                 <div v-if="customer360.facts?.length" class="customer-facts">
                   <div
                     v-for="fact in customer360.facts.slice(0, 8)"
@@ -10723,7 +10877,7 @@ function followupRecommendationLabel(item) {
                 <input v-model="customerTagDraft" maxlength="80" placeholder="Thêm nhãn / nhóm khách hàng" />
                 <button type="submit" :disabled="customerTagSaving">{{ customerTagSaving ? '...' : 'Gắn nhãn' }}</button>
               </form>
-              <div v-if="customerTagError" class="facts-error">{{ customerTagError }}</div>
+              <div v-if="customerTagError" class="facts-error" role="alert">{{ crmErrorText(customerTagError) }}</div>
 
             </div>
 
@@ -10747,7 +10901,7 @@ function followupRecommendationLabel(item) {
                 <span>{{ customerMergePreview.confidence_label }}</span>
                 <small>{{ customerMergePreview.matched_fields.join(', ') || 'Chưa có tín hiệu trùng mạnh' }}</small>
               </div>
-              <div v-if="customerMergeError" class="facts-error">{{ customerMergeError }}</div>
+              <div v-if="customerMergeError" class="facts-error" role="alert">{{ crmErrorText(customerMergeError) }}</div>
               <div v-if="customerMergeHistory.length" class="merge-history">
                 <div class="section-head"><h5>Lịch sử merge</h5><span>{{ customerMergeHistory.length }}</span></div>
                 <div v-for="merge in customerMergeHistory" :key="merge.merge_id" class="merge-history-row">
@@ -10785,7 +10939,7 @@ function followupRecommendationLabel(item) {
                   </div>
                 </div>
               </div>
-              <div v-if="segmentError" class="facts-error">{{ segmentError }}</div>
+              <div v-if="segmentError" class="facts-error" role="alert">{{ crmErrorText(segmentError) }}</div>
             </div>
 
 
@@ -10961,7 +11115,7 @@ function followupRecommendationLabel(item) {
                     <p v-if="platformShopDetail(shop.id).error" class="settings-notice team-error" role="alert">{{ platformShopDetail(shop.id).error }}</p>
                     <div class="platform-tenant-detail-grid">
                       <div><span>Gói đang dùng</span><strong>{{ platformShopDetail(shop.id).subscription?.plan_name || shop.plan_name || 'Chưa cấp gói' }}</strong><small>{{ subscriptionStatusMeta(platformShopDetail(shop.id).subscription?.status).label }}</small></div>
-                      <div><span>Trạng thái thanh toán</span><strong>{{ paymentStatusMeta(platformShopLatestPayment(shop)?.status).label }}</strong><small v-if="platformShopLatestPayment(shop)?.paid_at">{{ new Date(platformShopLatestPayment(shop).paid_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</small><small v-else>Chưa có giao dịch gần đây</small></div>
+                      <div><span>Trạng thái thanh toán</span><strong>{{ paymentStatusMeta(platformShopLatestPayment(shop)?.status).label }}</strong><small v-if="platformShopLatestPayment(shop)?.paid_at">{{ formatDateTime(platformShopLatestPayment(shop).paid_at) }}</small><small v-else>Chưa có giao dịch gần đây</small></div>
                     </div>
                     <div class="platform-quota-card-grid" aria-label="Hạn mức tenant: Kênh kết nối, Nhân viên, Tài liệu và Dung lượng tra cứu">
                       <div v-for="item in platformQuotaCards(platformShopQuota(shop))" :key="item.key" class="platform-quota-card" :class="{ warning: item.nearLimit, exceeded: item.exceeded }">
@@ -11020,7 +11174,7 @@ function followupRecommendationLabel(item) {
             <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">CHANNEL HEALTH</span><h3>Kết nối &amp; cảnh báo</h3><p>Theo dõi lỗi Facebook, Instagram, Telegram, Zalo và các kênh sẽ bổ sung như TikTok, Shopee.</p></div></div>
             <p v-if="!platformProviderErrors.length" class="settings-empty">Chưa có cảnh báo kết nối.</p>
             <ul v-else class="audit-list platform-alert-list">
-              <li v-for="errorItem in platformProviderErrors.slice(0, 10)" :key="errorItem.id"><strong>{{ channelLabel(errorItem.channel_type) }}</strong><span> · {{ workflowEventLabel(errorItem.event_type) }} · {{ errorItem.error_type || 'Lỗi kết nối' }}</span><small>{{ errorItem.received_at ? new Date(errorItem.received_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '' }}</small></li>
+              <li v-for="errorItem in platformProviderErrors.slice(0, 10)" :key="errorItem.id"><strong>{{ channelLabel(errorItem.channel_type) }}</strong><span> · {{ workflowEventLabel(errorItem.event_type) }} · {{ errorItem.error_type || 'Lỗi kết nối' }}</span><small>{{ errorItem.received_at ? formatDateTime(errorItem.received_at) : '' }}</small></li>
             </ul>
           </section>
         </div>
@@ -11029,7 +11183,7 @@ function followupRecommendationLabel(item) {
           <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">AUDIT</span><h3>Nhật ký nền tảng</h3><p>Ghi lại thao tác quản trị tenant, gói dịch vụ, thanh toán và tách dữ liệu.</p></div><span class="platform-admin-count">{{ platformAuditLogs.length }} sự kiện</span></div>
           <p v-if="!platformAuditLogs.length" class="settings-empty">Chưa có nhật ký nền tảng.</p>
           <ul v-else class="audit-list platform-alert-list">
-            <li v-for="log in platformAuditLogs.slice(0, 12)" :key="log.id"><strong>{{ log.action }}</strong><span> · {{ resourceLabel(log.resource_type) }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span><small>{{ log.created_at ? new Date(log.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '' }}</small></li>
+            <li v-for="log in platformAuditLogs.slice(0, 12)" :key="log.id"><strong>{{ log.action }}</strong><span> · {{ resourceLabel(log.resource_type) }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span><small>{{ log.created_at ? formatDateTime(log.created_at) : '' }}</small></li>
           </ul>
         </section>
       </section>
@@ -11089,7 +11243,7 @@ function followupRecommendationLabel(item) {
                 <tr>
                   <td><strong>{{ product.sku }}</strong></td>
                   <td><div>{{ product.name }}</div><small>{{ product.description || 'Không có mô tả' }}</small></td>
-                  <td>{{ Number(product.price).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</td>
+                  <td>{{ formatMoney(product.price) }}</td>
                   <td class="inventory-cell">
                     <div class="inventory-summary">
                       <div class="inventory-total">
@@ -11169,13 +11323,13 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
-        <div v-if="leadError" class="product-error">{{ leadError }}</div>
+        <div v-if="leadError" class="product-error" role="alert">{{ crmErrorText(leadError) }}</div>
 
         <div class="pipeline-summary">
           <div v-for="stage in crmConfig.pipeline_stages" :key="stage.key" class="pipeline-card">
-            <span>{{ stage.label }}</span>
+            <span>{{ configuredLeadStageLabel(stage) }}</span>
             <strong>{{ (pipelineSummary.find(item => item.stage === stage.key) || {}).lead_count || 0 }}</strong>
-            <small>{{ Number((pipelineSummary.find(item => item.stage === stage.key) || {}).value || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small>
+            <small>{{ formatMoney((pipelineSummary.find(item => item.stage === stage.key) || {}).value) }}</small>
           </div>
         </div>
 
@@ -11194,7 +11348,7 @@ function followupRecommendationLabel(item) {
                 </option>
               </select>
             </label>
-            <label>Giai đoạn<select v-model="leadForm.stage"><option v-for="stage in crmConfig.pipeline_stages" :key="stage.key" :value="stage.key">{{ stage.label }}</option></select></label>
+            <label>Giai đoạn<select v-model="leadForm.stage"><option v-for="stage in crmConfig.pipeline_stages" :key="stage.key" :value="stage.key">{{ configuredLeadStageLabel(stage) }}</option></select></label>
             <label>Giá trị dự kiến<input v-model.number="leadForm.value" type="number" min="0" step="1" /></label>
             <label>Xác suất (%)<input v-model.number="leadForm.probability" type="number" min="0" max="100" step="1" /></label>
             <label>Mã hội thoại (không bắt buộc)<input v-model="leadForm.conversation_id" type="number" min="1" /></label>
@@ -11202,7 +11356,8 @@ function followupRecommendationLabel(item) {
           <button class="primary-btn" type="submit" :disabled="leadSaving">{{ leadSaving ? 'Đang tạo...' : 'Tạo cơ hội' }}</button>
         </form>
 
-        <div v-if="leadsLoading" class="products-empty">Đang tải luồng bán hàng...</div>
+        <div v-if="leadsLoading" class="products-empty" role="status">Đang tải luồng bán hàng...</div>
+        <div v-else-if="leadsLoadFailed" class="products-empty"><button type="button" @click="fetchLeads">{{ t('Thử lại') }}</button></div>
         <div v-else-if="!leads.length" class="products-empty">Chưa có cơ hội nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table leads-table">
@@ -11213,8 +11368,8 @@ function followupRecommendationLabel(item) {
                 <td><strong>{{ lead.title }}</strong></td>
                 <td>#{{ lead.customer_id }} {{ lead.customer_name || '' }}</td>
                 <td>{{ lead.source_channel || '—' }}</td>
-                <td><select class="inline-stage" :value="lead.stage" @change="changeLeadStage(lead, $event.target.value)"><option v-for="stage in crmConfig.pipeline_stages" :key="stage.key" :value="stage.key">{{ stage.label }}</option></select></td>
-                <td>{{ Number(lead.value || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</td>
+                <td><select class="inline-stage" :value="lead.stage" @change="changeLeadStage(lead, $event.target.value)"><option v-for="stage in crmConfig.pipeline_stages" :key="stage.key" :value="stage.key">{{ configuredLeadStageLabel(stage) }}</option></select></td>
+                <td>{{ formatMoney(lead.value) }}</td>
                 <td>{{ lead.probability }}%</td>
                 <td>{{ formatDate(lead.updated_at) }}</td>
                 <td class="lead-actions"><button type="button" class="table-link" @click="toggleLeadActivities(lead)">{{ leadActivityVisible[lead.id] ? 'Ẩn hoạt động' : 'Hoạt động' }}</button></td>
@@ -11224,7 +11379,7 @@ function followupRecommendationLabel(item) {
                   <div class="lead-detail">
                     <div class="lead-detail-header"><strong>Hoạt động & chuyển đổi</strong><span v-if="leadActivityLoading[lead.id]">Đang tải...</span></div>
                     <div class="lead-activity-list" v-if="(leadActivities[lead.id] || []).length">
-                      <div v-for="activity in leadActivities[lead.id]" :key="activity.id" class="lead-activity"><b>{{ activity.subject }}</b><small>{{ leadActivityTypeLabel(activity.activity_type) }} · {{ activity.occurred_at ? new Date(activity.occurred_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</small></div>
+                      <div v-for="activity in leadActivities[lead.id]" :key="activity.id" class="lead-activity"><b>{{ activity.subject }}</b><small>{{ leadActivityTypeLabel(activity.activity_type) }} · {{ formatDateTime(activity.occurred_at) }}</small></div>
                     </div>
                     <div v-else class="settings-empty">Chưa có hoạt động.</div>
                     <form class="lead-activity-form" @submit.prevent="addLeadActivity(lead)">
@@ -11234,7 +11389,7 @@ function followupRecommendationLabel(item) {
                     <div v-if="lead.stage !== 'won'" class="lead-conversion-form">
                       <select v-model="leadConversionOrders[lead.id]">
                         <option value="">Chọn đơn để chuyển đổi</option>
-                        <option v-for="order in orders.filter(item => item.customer_id === lead.customer_id)" :key="order.id" :value="order.id">{{ order.order_number || `Đơn #${order.id}` }} · {{ Number(order.total_amount || order.total || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</option>
+                        <option v-for="order in orders.filter(item => item.customer_id === lead.customer_id)" :key="order.id" :value="order.id">{{ order.order_number || `Đơn #${order.id}` }} · {{ formatMoney(order.total_amount || order.total) }}</option>
                       </select>
                       <button class="primary-btn" type="button" :disabled="leadConversionSaving[lead.id]" @click="convertLead(lead)">{{ leadConversionSaving[lead.id] ? 'Đang lưu...' : 'Ghi nhận chuyển đổi' }}</button>
                     </div>
@@ -11258,7 +11413,7 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
-        <div v-if="ticketError" class="product-error">{{ ticketError }}</div>
+        <div v-if="ticketError" class="product-error" role="alert">{{ crmErrorText(ticketError) }}</div>
 
         <div v-if="slaNotifications.length" class="sla-alert">
           Có {{ slaNotifications.length }} phiếu hỗ trợ đã quá hạn cần xử lý.
@@ -11308,21 +11463,22 @@ function followupRecommendationLabel(item) {
           <button class="primary-btn" type="submit" :disabled="ticketSaving">{{ ticketSaving ? 'Đang tạo...' : 'Tạo phiếu hỗ trợ' }}</button>
         </form>
 
-        <div v-if="ticketsLoading" class="products-empty">Đang tải phiếu hỗ trợ...</div>
+        <div v-if="ticketsLoading" class="products-empty" role="status">Đang tải phiếu hỗ trợ...</div>
+        <div v-else-if="ticketsLoadFailed" class="products-empty"><button type="button" @click="fetchTickets">{{ t('Thử lại') }}</button></div>
         <div v-else-if="!tickets.length" class="products-empty">Chưa có phiếu hỗ trợ nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table tickets-table">
             <thead><tr><th>Phiếu hỗ trợ</th><th>Mô tả</th><th>Khách hàng</th><th>Kênh</th><th>Ưu tiên</th><th>Trạng thái</th><th>Thời hạn</th><th>Phụ trách</th></tr></thead>
             <tbody>
               <template v-for="ticket in tickets" :key="ticket.id">
-              <tr>
+              <tr :data-work-record="`ticket-${ticket.id}`" tabindex="-1">
                 <td><strong>#{{ ticket.id }} — {{ ticket.title }}</strong></td>
                 <td class="ticket-description-cell">{{ ticket.description || '—' }}</td>
                 <td>#{{ ticket.customer_id }} {{ ticket.customer_name || '' }}</td>
                 <td>{{ ticket.channel || '—' }}</td>
                 <td><span class="product-status" :class="ticket.priority">{{ ticketPriorityLabel(ticket.priority) }}</span></td>
                 <td><select class="inline-stage" :value="ticket.status" @change="changeTicketStatus(ticket, $event.target.value)"><option value="open">Đang mở</option><option value="pending">Đang chờ</option><option value="resolved">Đã xử lý</option><option value="closed">Đã đóng</option></select></td>
-                <td>{{ ticket.sla_due_at ? new Date(ticket.sla_due_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</td>
+                <td>{{ formatDateTime(ticket.sla_due_at) }}</td>
                 <td>
                   <select class="inline-stage" :value="ticket.assigned_user_id || ''" @change="assignTicket(ticket, $event.target.value)">
                     <option value="">Chưa phân công</option>
@@ -11339,7 +11495,7 @@ function followupRecommendationLabel(item) {
                   <span v-if="!ticketHistory[ticket.id].length"> Chưa có sự kiện.</span>
                   <ul v-else>
                     <li v-for="event in ticketHistory[ticket.id]" :key="event.id">
-                      {{ ticketHistoryEventLabel(event.event_type) }} · {{ event.created_at ? new Date(event.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}
+                      {{ ticketHistoryEventLabel(event.event_type) }} · {{ formatDateTime(event.created_at) }}
                       <span v-if="event.from_value || event.to_value">({{ event.from_value || '—' }} → {{ event.to_value || '—' }})</span>
                     </li>
                   </ul>
@@ -11371,11 +11527,11 @@ function followupRecommendationLabel(item) {
         <div class="revenue-cards">
           <div class="revenue-card total">
             <span>Tổng doanh thu</span>
-            <strong>{{ Number(revenueByChannel.reduce((sum, item) => sum + Number(item.revenue || 0), 0)).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong>
+            <strong>{{ formatMoney(revenueByChannel.reduce((sum, item) => sum + Number(item.revenue || 0), 0)) }}</strong>
           </div>
           <div v-for="item in revenueByChannel" :key="item.channel" class="revenue-card">
             <span>{{ item.channel === 'unknown' ? 'Không gắn kênh' : item.channel }}</span>
-            <strong>{{ Number(item.revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong>
+            <strong>{{ formatMoney(item.revenue || 0) }}</strong>
             <small>{{ item.order_count }} đơn</small>
           </div>
         </div>
@@ -11407,15 +11563,15 @@ function followupRecommendationLabel(item) {
                 <td><button type="button" class="table-action-btn" data-testid="order-history-button" title="Xem toàn bộ quy trình" aria-label="Xem toàn bộ quy trình" @click.stop="loadSalesOrderEvents(order)">Quy trình</button><small>Nhật ký bất biến</small></td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ paymentStatusLabel(order.payment_status) }}</span>
-                  <small>{{ Number(order.paid_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ / {{ Number(order.total_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small>
+                  <small>{{ formatMoney(order.paid_amount || 0) }} / {{ formatMoney(order.total_amount || 0) }}</small>
                   <div class="order-payment-actions">
                     <input v-model.number="orderPaymentDrafts[order.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" />
                     <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận thanh toán" title="Ghi nhận thanh toán" @click="recordSalesPayment(order)">Thu</button>
                     <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận hoàn tiền" title="Ghi nhận hoàn tiền" @click="recordSalesPayment(order, 'refund')">Hoàn</button>
                   </div>
                 </td>
-                <td><strong>{{ Number(order.total_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></td>
-                <td>{{ order.created_at ? new Date(order.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</td>
+                <td><strong>{{ formatMoney(order.total_amount || 0) }}</strong></td>
+                <td>{{ order.created_at ? formatDateTime(order.created_at) : '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -11429,11 +11585,11 @@ function followupRecommendationLabel(item) {
               <label>Mã vận đơn<input v-model="orderLogisticsDraft.tracking_code" maxlength="160" placeholder="Nhập mã vận đơn" /></label>
               <label>Trạng thái<select v-model="orderLogisticsDraft.shipping_status"><option value="pending">Chưa bàn giao</option><option value="in_transit">Đang vận chuyển</option><option value="delivered">Đã giao</option><option value="failed">Giao thất bại</option><option value="returned">Đã hoàn</option></select></label>
             </div>
-            <div class="order-logistics-actions"><span v-if="selectedOrderEvents.order.shipping_updated_at" class="field-hint">Cập nhật: {{ new Date(selectedOrderEvents.order.shipping_updated_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</span><button class="table-action-btn" type="submit" :disabled="orderLogisticsSaving">{{ orderLogisticsSaving ? 'Đang lưu...' : 'Lưu vận chuyển' }}</button></div>
+            <div class="order-logistics-actions"><span v-if="selectedOrderEvents.order.shipping_updated_at" class="field-hint">Cập nhật: {{ formatDateTime(selectedOrderEvents.order.shipping_updated_at) }}</span><button class="table-action-btn" type="submit" :disabled="orderLogisticsSaving">{{ orderLogisticsSaving ? 'Đang lưu...' : 'Lưu vận chuyển' }}</button></div>
           </form>
           <div v-if="orderEventsLoading" class="products-empty">Đang tải lịch sử...</div>
               <div v-else-if="!selectedOrderEvents.items?.length" class="products-empty">Chưa có sự kiện nào.</div>
-          <ol v-else class="order-events-list"><li v-for="event in chronologicalOrderEvents(selectedOrderEvents.items)" :key="event.id"><strong>{{ orderEventLabel(event) }}</strong><span>{{ orderEventSummary(event) }}</span><small>{{ event.created_at ? new Date(event.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</small></li></ol>
+          <ol v-else class="order-events-list"><li v-for="event in chronologicalOrderEvents(selectedOrderEvents.items)" :key="event.id"><strong>{{ orderEventLabel(event) }}</strong><span>{{ orderEventSummary(event) }}</span><small>{{ event.created_at ? formatDateTime(event.created_at) : '—' }}</small></li></ol>
         </div>
       </section>
 
@@ -11506,9 +11662,9 @@ function followupRecommendationLabel(item) {
                   </select>
                   <button v-if="['submitted', 'partially_received'].includes(purchase.status)" type="button" class="table-action-btn" @click="receivePurchaseOrder(purchase)">Nhận hàng</button>
                 </td>
-                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ paymentStatusLabel(purchase.payment_status || 'unpaid') }}</span><small>{{ Number(purchase.paid_amount || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ / {{ Number(purchase.total_spend || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Thanh toán công nợ</button></div></td>
-                <td><strong>{{ Number(purchase.total_spend || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></td>
-                <td>{{ purchase.updated_at ? new Date(purchase.updated_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</td>
+                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ paymentStatusLabel(purchase.payment_status || 'unpaid') }}</span><small>{{ formatMoney(purchase.paid_amount || 0) }} / {{ formatMoney(purchase.total_spend || 0) }}</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Thanh toán công nợ</button></div></td>
+                <td><strong>{{ formatMoney(purchase.total_spend || 0) }}</strong></td>
+                <td>{{ purchase.updated_at ? formatDateTime(purchase.updated_at) : '—' }}</td>
                 <td><button type="button" class="table-action-btn" data-testid="purchase-order-history-button" @click.stop="loadPurchaseOrderEvents(purchase)">Lịch sử</button></td>
               </tr>
             </tbody>
@@ -11525,7 +11681,7 @@ function followupRecommendationLabel(item) {
             <li v-for="event in selectedPurchaseOrderEvents.items" :key="event.id">
               <strong>{{ purchaseOrderEventLabel(event) }}</strong>
               <span>{{ purchaseOrderEventSummary(event) }}</span>
-              <small>{{ event.created_at ? new Date(event.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }}</small>
+              <small>{{ event.created_at ? formatDateTime(event.created_at) : '—' }}</small>
             </li>
           </ol>
         </div>
@@ -11640,7 +11796,7 @@ function followupRecommendationLabel(item) {
               <div class="ai-stat-card"><span>Tỷ lệ chuyển nhân viên</span><strong>{{ ((aiEvaluationDashboard.ai?.handoff?.rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.ai?.handoff?.count || 0 }} lượt chuyển nhân viên</small></div>
               <div class="ai-stat-card"><span>Phản hồi trùng</span><strong>{{ aiEvaluationDashboard.ai?.reliability?.duplicate_reply_attempts || 0 }}</strong><small>{{ ((aiEvaluationDashboard.ai?.reliability?.duplicate_reply_rate || 0) * 100).toFixed(1) }}% trên phản hồi tự động</small></div>
               <div class="ai-stat-card"><span>Đơn chốt tự động</span><strong>{{ ((aiEvaluationDashboard.commerce?.conversion_rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.commerce?.confirmed || 0 }} đơn xác nhận / {{ aiEvaluationDashboard.commerce?.started || 0 }} đơn bắt đầu</small></div>
-              <div class="ai-stat-card"><span>Doanh thu cứu lại</span><strong>{{ Number(aiEvaluationDashboard.commerce?.recovered_revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong><small>{{ aiEvaluationDashboard.commerce?.recovered_orders || 0 }} đơn sau nhắc chăm sóc</small></div>
+              <div class="ai-stat-card"><span>Doanh thu cứu lại</span><strong>{{ formatMoney(aiEvaluationDashboard.commerce?.recovered_revenue || 0) }}</strong><small>{{ aiEvaluationDashboard.commerce?.recovered_orders || 0 }} đơn sau nhắc chăm sóc</small></div>
               <div class="ai-stat-card"><span>Bot phản hồi, chưa bàn giao</span><strong>{{ ((aiEvaluationDashboard.ai?.handoff?.bot_only_rate || 0) * 100).toFixed(1) }}%</strong><small>{{ aiEvaluationDashboard.ai?.handoff?.bot_only_count || 0 }} / {{ aiEvaluationDashboard.ai?.handoff?.inbound_conversation_count || 0 }} hội thoại có bot trả lời và chưa ghi nhận bàn giao</small></div>
             </div>
             <div class="ai-outcome-summary">
@@ -11742,6 +11898,7 @@ function followupRecommendationLabel(item) {
           <div>
             <h2>Kho kiến thức</h2>
             <p>Nạp tài liệu sản phẩm, câu hỏi thường gặp và chính sách để trợ lý tra cứu kho kiến thức khi trả lời khách. Tài liệu được lập chỉ mục, không dùng để tự huấn luyện mô hình.</p>
+            <button type="button" class="secondary-btn rag-assistant-link" @click="currentTab = 'rag_chat'">Mở trợ lý hỏi đáp</button>
           </div>
           <div class="rag-stats">
             <div class="stat-card">
@@ -11765,6 +11922,11 @@ function followupRecommendationLabel(item) {
           @dragover.prevent
           @drop.prevent="handleDocDrop"
           @click="$refs.docFileInput.click()"
+          @keydown.enter.prevent="$refs.docFileInput.click()"
+          @keydown.space.prevent="$refs.docFileInput.click()"
+          role="button"
+          tabindex="0"
+          :aria-label="t('Nhập tệp vào Kho kiến thức')"
         >
           <input
             type="file"
@@ -11785,11 +11947,11 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
-        <div v-if="docUploadError" class="error-banner">
-          {{ docUploadError }}
+        <div v-if="docUploadError" class="error-banner" role="alert">
+          {{ crmErrorText(docUploadError) }}
         </div>
         <div v-if="docUploadNotice" class="settings-notice" role="status" aria-live="polite">
-          {{ docUploadNotice }}
+          {{ crmUiText(docUploadNotice) }}
         </div>
 
         <div v-if="textImportOpen" class="app-dialog-backdrop" @click.self="textImportOpen = false">
@@ -11810,15 +11972,17 @@ function followupRecommendationLabel(item) {
             </button>
           </div>
 
-          <div v-if="docsLoading && !documents.length" class="loading-state">
+          <div v-if="docsLoading && !documents.length" class="loading-state" role="status">
             Đang tải danh sách tài liệu...
           </div>
+
+          <div v-else-if="documentsLoadFailed" class="empty-docs-state"><button type="button" @click="fetchDocuments">{{ t('Thử lại') }}</button></div>
 
           <div v-else-if="!documents.length" class="empty-docs-state">
             📭 Chưa có tài liệu nào trong Kho kiến thức. Hãy nhập tệp hoặc dán văn bản ở trên!
           </div>
 
-          <table v-else class="docs-table">
+          <div v-else class="docs-table-scroll" role="region" :aria-label="t('Danh sách tài liệu đã nạp')" tabindex="0"><table class="docs-table">
             <thead>
               <tr>
                 <th>ID</th>
@@ -11832,7 +11996,7 @@ function followupRecommendationLabel(item) {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="doc in documents" :key="doc.id">
+              <tr v-for="doc in documents" :key="doc.id" :data-work-record="`document-${doc.id}`" tabindex="-1">
                 <td>#{{ doc.id }}</td>
                 <td class="font-medium">
                   <span class="doc-file-icon">DOC</span> {{ doc.filename }}
@@ -11884,7 +12048,7 @@ function followupRecommendationLabel(item) {
                 </td>
               </tr>
             </tbody>
-          </table>
+          </table></div>
         </div>
       </section>
 
@@ -11942,7 +12106,10 @@ function followupRecommendationLabel(item) {
               <h2>Trợ lý hỏi đáp</h2>
               <small>Hỏi đáp trực tiếp với kho thông tin – trả lời theo thời gian thực</small>
             </div>
-            <span class="badge-online">● Đang hoạt động</span>
+            <div class="rag-chat-header-actions">
+              <button type="button" class="secondary-btn" @click="currentTab = 'documents'">Quay lại Kho kiến thức</button>
+              <span class="badge-online">● Đang hoạt động</span>
+            </div>
           </div>
 
           <div class="rag-chat-messages" ref="ragChatBox">
@@ -11960,7 +12127,7 @@ function followupRecommendationLabel(item) {
                   {{ m.role === 'user' ? 'Bạn' : 'Trợ lý' }}
                 </div>
                 <div class="rag-msg-text" v-if="m.content">
-                  {{ m.content }}
+                  {{ m.localize ? crmUiText(m.content) : m.content }}
                 </div>
                 <div class="rag-msg-loading" v-if="m.loading">
                   <span class="dot-pulse">●</span> Đang tra cứu kho thông tin...
@@ -11974,7 +12141,7 @@ function followupRecommendationLabel(item) {
               v-model="ragQuery"
               placeholder="Nhập câu hỏi tại đây... (VD: Áo thun nam giá bao nhiêu?)"
               rows="2"
-              @keydown.enter.prevent="sendRagQuery()"
+              @keydown.enter.exact.prevent="sendRagQuery()"
             ></textarea>
             <button
               class="btn-send-rag"
@@ -11999,7 +12166,7 @@ function followupRecommendationLabel(item) {
           </div>
           <button type="button" class="settings-refresh" @click="fetchReports">Làm mới</button>
         </div>
-        <div v-if="reportsError" class="product-error">{{ reportsError }}</div>
+        <div v-if="reportsError" class="product-error" role="alert">{{ crmErrorText(reportsError) }}</div>
         <form class="report-filters" @submit.prevent="fetchReports">
           <label>Từ ngày<input v-model="reportFilters.start_at" type="date" /></label>
           <label>Đến ngày<input v-model="reportFilters.end_at" type="date" /></label>
@@ -12011,17 +12178,18 @@ function followupRecommendationLabel(item) {
           <button type="button" class="settings-refresh" :disabled="reportCsvDownloading" @click="downloadReportCsv">{{ reportCsvDownloading ? 'Đang tải tệp...' : 'Tải tệp báo cáo' }}</button>
         </form>
         <p v-if="reportCsvStatus" class="settings-notice" role="status" aria-live="polite">{{ reportCsvStatus }}</p>
-        <div v-if="reportsLoading" class="products-empty">Đang tải báo cáo...</div>
+        <div v-if="reportsLoading" class="products-empty" role="status">Đang tải báo cáo...</div>
+        <div v-else-if="!crmOverview" class="products-empty"><button type="button" @click="fetchReports">{{ t('Thử lại') }}</button></div>
         <template v-else-if="crmOverview">
           <div class="report-cards">
             <div class="report-card accent"><span>Khách hàng</span><strong>{{ crmOverview.customer_count }}</strong></div>
             <div class="report-card"><span>Hội thoại</span><strong>{{ crmOverview.conversation_count }}</strong></div>
             <div class="report-card"><span>Đơn hàng</span><strong>{{ crmOverview.order_count }}</strong></div>
-            <div class="report-card"><span>Doanh thu</span><strong>{{ Number(crmOverview.total_revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></div>
+            <div class="report-card"><span>Doanh thu</span><strong>{{ formatMoney(crmOverview.total_revenue) }}</strong></div>
             <div class="report-card"><span>Tỷ lệ chốt cơ hội</span><strong>{{ crmOverview.conversion_rate }}%</strong><small>{{ crmOverview.won_lead_count }}/{{ crmOverview.lead_count }} cơ hội</small></div>
             <div class="report-card"><span>Đơn / hội thoại</span><strong>{{ crmOverview.conversation_to_order_rate }}%</strong></div>
             <div class="report-card"><span>Phiếu đang mở</span><strong>{{ crmOverview.open_ticket_count }}</strong><small>{{ crmOverview.ticket_count }} phiếu tổng</small></div>
-            <div class="report-card"><span>Đơn nhập hàng</span><strong>{{ crmOverview.purchase_order_count || 0 }}</strong><small>Chi {{ Number(crmOverview.purchase_spend || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small></div>
+            <div class="report-card"><span>Đơn nhập hàng</span><strong>{{ crmOverview.purchase_order_count || 0 }}</strong><small>{{ crmUiText('Chi') }} {{ formatMoney(crmOverview.purchase_spend) }}</small></div>
           </div>
           <div class="report-panel quality-ops-panel">
             <div class="report-panel-header">
@@ -12067,21 +12235,21 @@ function followupRecommendationLabel(item) {
           <div v-if="revenueAttribution" class="report-panel">
             <div class="report-panel-header"><div><h3>Phân bổ doanh thu</h3><span>Ghi nhận theo lần tương tác cuối</span></div><button type="button" class="settings-refresh" :disabled="attributionSaving" @click="recalculateRevenueAttribution">{{ attributionSaving ? 'Đang tính...' : 'Tính lại nguồn doanh thu' }}</button></div>
             <div class="report-cards">
-              <div class="report-card accent"><span>Doanh thu được gán</span><strong>{{ Number(revenueAttribution.total_attributed || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></div>
+              <div class="report-card accent"><span>Doanh thu được gán</span><strong>{{ formatMoney(revenueAttribution.total_attributed) }}</strong></div>
               <div class="report-card"><span>Điểm tương tác</span><strong>{{ revenueAttribution.items?.length || 0 }}</strong></div>
             </div>
             <div v-if="!revenueAttribution.items?.length" class="products-empty">Chưa có dữ liệu điểm tương tác. Doanh thu sẽ xuất hiện sau khi gắn nguồn hội thoại/chiến dịch.</div>
             <div v-else class="products-table-wrap">
               <table class="products-table reports-table">
                 <thead><tr><th>Kênh</th><th>Nguồn</th><th>Campaign</th><th>Doanh thu gán</th></tr></thead>
-                <tbody><tr v-for="item in revenueAttribution.items" :key="`${item.channel}-${item.source}-${item.campaign || ''}`"><td>{{ item.channel || '—' }}</td><td>{{ item.source }}</td><td>{{ item.campaign || '—' }}</td><td><strong>{{ Number(item.attributed_revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></td></tr></tbody>
+                <tbody><tr v-for="item in revenueAttribution.items" :key="`${item.channel}-${item.source}-${item.campaign || ''}`"><td>{{ item.channel || '—' }}</td><td>{{ item.source }}</td><td>{{ item.campaign || '—' }}</td><td><strong>{{ formatMoney(item.attributed_revenue) }}</strong></td></tr></tbody>
               </table>
             </div>
           </div>
           <div class="report-panel">
             <div class="report-panel-header"><div><h3>Luồng bán hàng & chuyển đổi</h3><span>Cơ hội theo giai đoạn trong phạm vi lọc</span></div><strong>{{ pipelineSummary.reduce((total, item) => total + Number(item.lead_count || 0), 0) }} cơ hội</strong></div>
             <div v-if="!pipelineSummary.length" class="products-empty">Chưa có cơ hội phù hợp với bộ lọc.</div>
-            <div v-else class="pipeline-summary"><div v-for="item in pipelineSummary" :key="item.stage" class="pipeline-card"><span>{{ leadStageLabel(item.stage) }}</span><strong>{{ item.lead_count }}</strong><small>{{ Number(item.value || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</small></div></div>
+            <div v-else class="pipeline-summary"><div v-for="item in pipelineSummary" :key="item.stage" class="pipeline-card"><span>{{ leadStageLabel(item.stage) }}</span><strong>{{ item.lead_count }}</strong><small>{{ formatMoney(item.value) }}</small></div></div>
           </div>
           <div class="report-panel">
             <div class="report-panel-header"><div><h3>Phiếu hỗ trợ & thời hạn</h3><span>Phiếu theo trạng thái trong phạm vi lọc</span></div><strong>{{ ticketReport.overdue_tickets || 0 }} quá hạn</strong></div>
@@ -12090,7 +12258,7 @@ function followupRecommendationLabel(item) {
           </div>
           <div v-if="crmOverview.time_series?.length" class="report-panel">
             <div class="report-panel-header"><h3>Xu hướng theo ngày</h3><span>Hội thoại · đơn bán · doanh thu</span></div>
-            <div class="report-series"><div v-for="point in crmOverview.time_series.slice(-14)" :key="point.date" class="report-series-row"><span>{{ point.date }}</span><b>{{ point.conversations }} hội thoại · {{ point.orders }} đơn · {{ Number(point.revenue || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</b></div></div>
+            <div class="report-series"><div v-for="point in crmOverview.time_series.slice(-14)" :key="point.date" class="report-series-row"><span>{{ formatDate(point.date) }}</span><b>{{ point.conversations }} hội thoại · {{ point.orders }} đơn · {{ formatMoney(point.revenue || 0) }}</b></div></div>
           </div>
           <div v-if="inventoryReport" class="report-panel">
             <div class="report-panel-header"><h3>Tồn kho</h3><span>{{ inventoryReport.total || 0 }} sản phẩm</span></div>
@@ -12107,9 +12275,9 @@ function followupRecommendationLabel(item) {
             </div>
           </div>
           <div v-if="purchaseCostReport" class="report-panel">
-            <div class="report-panel-header"><h3>Chi phí nhập đã nhận</h3><strong>{{ Number(purchaseCostReport.total_received_cost || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></div>
+            <div class="report-panel-header"><h3>Chi phí nhập đã nhận</h3><strong>{{ formatMoney(purchaseCostReport.total_received_cost) }}</strong></div>
             <div v-if="!purchaseCostReport.items?.length" class="products-empty">Chưa có phiếu nhập trong khoảng thời gian này.</div>
-            <div v-else class="products-table-wrap"><table class="products-table reports-table"><thead><tr><th>Nhà cung cấp</th><th>Số phiếu</th><th>Số lượng</th><th>Chi phí nhận</th></tr></thead><tbody><tr v-for="item in purchaseCostReport.items" :key="item.supplier_name"><td>{{ item.supplier_name }}</td><td>{{ item.receipt_count }}</td><td>{{ item.received_quantity }}</td><td><strong>{{ Number(item.received_cost || 0).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}đ</strong></td></tr></tbody></table></div>
+            <div v-else class="products-table-wrap"><table class="products-table reports-table"><thead><tr><th>Nhà cung cấp</th><th>Số phiếu</th><th>Số lượng</th><th>Chi phí nhận</th></tr></thead><tbody><tr v-for="item in purchaseCostReport.items" :key="item.supplier_name"><td>{{ item.supplier_name }}</td><td>{{ item.receipt_count }}</td><td>{{ item.received_quantity }}</td><td><strong>{{ formatMoney(item.received_cost) }}</strong></td></tr></tbody></table></div>
           </div>
         </template>
       </section>
@@ -12440,7 +12608,7 @@ function followupRecommendationLabel(item) {
             <div v-if="!authSessions.length" class="settings-empty">Chưa có thông tin phiên đăng nhập.</div>
             <ul v-else class="session-list">
               <li v-for="session in authSessions" :key="session.id">
-                <span><strong>{{ session.device_label || 'Thiết bị không đặt tên' }}</strong><small>Tạo {{ session.created_at ? new Date(session.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '—' }} · {{ session.mfa_verified ? 'Đã xác minh 2 bước' : 'Chưa xác minh 2 bước' }}</small></span>
+                <span><strong>{{ session.device_label || 'Thiết bị không đặt tên' }}</strong><small>Tạo {{ session.created_at ? formatDateTime(session.created_at) : '—' }} · {{ session.mfa_verified ? 'Đã xác minh 2 bước' : 'Chưa xác minh 2 bước' }}</small></span>
                 <button v-if="!session.revoked_at" type="button" class="team-toggle" @click="revokeAuthSession(session)">Thu hồi</button>
                 <span v-else class="settings-muted">Đã thu hồi</span>
               </li>
@@ -12499,7 +12667,7 @@ function followupRecommendationLabel(item) {
           <div v-else-if="!followups.length" class="settings-empty">Chưa có lịch nhắc chăm sóc đang chờ.</div>
           <ul v-else class="followup-list">
             <li v-for="item in followups" :key="item.id">
-              <div><strong>{{ followupProductLabel(item) }}</strong><small>{{ new Date(item.run_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</small></div>
+              <div><strong>{{ followupProductLabel(item) }}</strong><small>{{ formatDateTime(item.run_at) }}</small></div>
               <span>{{ item.message }}<small v-if="followupRecommendationLabel(item)" class="followup-recommendation">Gợi ý mua thêm: {{ followupRecommendationLabel(item) }}</small></span>
               <button type="button" class="history-btn" @click="cancelFollowup(item)">Hủy</button>
             </li>
@@ -12542,7 +12710,7 @@ function followupRecommendationLabel(item) {
           <div v-if="!csatLoading && !csatFeedback.length" class="settings-empty">Chưa có phản hồi đánh giá.</div>
           <ul v-else class="csat-feedback-list">
             <li v-for="item in csatFeedback.slice(0, 5)" :key="item.id">
-              <div><strong>{{ item.rating ? `${item.rating}/5 sao` : 'Chờ đánh giá' }}</strong><small>{{ new Date(item.requested_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') }}</small></div>
+              <div><strong>{{ item.rating ? `${item.rating}/5 sao` : 'Chờ đánh giá' }}</strong><small>{{ formatDateTime(item.requested_at) }}</small></div>
               <span>{{ item.comment || (item.status === 'sent' ? 'Đã gửi khảo sát, đang chờ khách trả lời.' : 'Đang chờ gửi khảo sát.') }}</span>
             </li>
           </ul>
@@ -12670,7 +12838,7 @@ function followupRecommendationLabel(item) {
             </div>
             <div v-if="!auditLogs.length" class="settings-empty">Chưa có nhật ký thao tác.</div>
             <ul v-else class="audit-list">
-              <li v-for="log in auditLogs.slice(0, 10)" :key="log.id"><strong>{{ log.action }}</strong> · {{ resourceLabel(log.resource_type) }} {{ log.resource_id ? `#${log.resource_id}` : '' }} · {{ log.created_at ? new Date(log.created_at).toLocaleString(uiLocale.value === 'en' ? 'en-US' : 'vi-VN') : '' }}</li>
+              <li v-for="log in auditLogs.slice(0, 10)" :key="log.id"><strong>{{ log.action }}</strong> · {{ resourceLabel(log.resource_type) }} {{ log.resource_id ? `#${log.resource_id}` : '' }} · {{ log.created_at ? formatDateTime(log.created_at) : '' }}</li>
             </ul>
           </div>
         </div>
@@ -12903,6 +13071,10 @@ function followupRecommendationLabel(item) {
 
 
 <style scoped>
+[data-work-record]:focus { outline: 3px solid #17888c; outline-offset: -3px; }
+.docs-table-scroll { max-width: 100%; overflow-x: auto; }
+.docs-table-scroll .docs-table { min-width: 760px; }
+.docs-table-scroll:focus-visible { outline: 2px solid #17888c; outline-offset: 2px; }
 
 .ui-language-control { display: inline-flex; align-items: center; flex: 0 0 auto; }
 .ui-language-control select {
@@ -14480,6 +14652,8 @@ function followupRecommendationLabel(item) {
 }
 .rag-header-panel h2 { color: var(--owly-ink) !important; font-size: clamp(22px, 2vw, 30px); }
 .rag-header-panel p { color: var(--owly-muted) !important; max-width: 720px; line-height: 1.55; }
+.rag-assistant-link { margin-top: 12px; }
+.rag-chat-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
 .rag-stats { display: grid; grid-template-columns: repeat(3, minmax(90px, 1fr)); gap: 10px; min-width: min(100%, 330px); }
 .stat-card { min-width: 90px; padding: 13px 16px; border: 1px solid #cfe7e6; border-radius: 12px; background: #f7fcfc; }
 .stat-num { color: var(--workspace-primary-dark) !important; }
@@ -14489,7 +14663,7 @@ function followupRecommendationLabel(item) {
 .dropzone-content strong { color: var(--owly-ink); }
 .dropzone-content small { color: var(--owly-muted); }
 .docs-table-card { overflow-x: auto; padding: 0; border: 1px solid var(--owly-border); border-radius: 16px; background: #fff; }
-.docs-table-card .card-header { min-width: 760px; margin: 0; padding: 16px 20px; border-bottom: 1px solid var(--owly-border); }
+.docs-table-card .card-header { width: 100%; min-width: 0; box-sizing: border-box; margin: 0; padding: 16px 20px; border-bottom: 1px solid var(--owly-border); }
 .docs-table { min-width: 760px; }
 .docs-table th { color: var(--owly-muted); background: #f1f9f9; border-color: var(--owly-border); }
 .docs-table td { color: var(--owly-ink); border-color: var(--owly-border); }
@@ -14561,6 +14735,11 @@ function followupRecommendationLabel(item) {
 @media (max-width: 760px) {
   .rag-header-panel { grid-template-columns: 1fr; }
   .rag-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); min-width: 0; }
+  .rag-chat-layout { flex-direction: column; }
+  .rag-chat-sidebar { width: 100%; }
+  .rag-chat-main { min-height: 55vh; }
+  .rag-chat-header { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .rag-chat-header-actions { justify-content: flex-start; }
 }
 
 @media (max-width: 520px) {

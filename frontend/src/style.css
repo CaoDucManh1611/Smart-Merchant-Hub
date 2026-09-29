@@ -14261,3 +14261,571 @@ body.crm-dark .inbox-bulk-toolbar button,
 body.crm-dark .inbox-bulk-toolbar select { color: #e5eaec; border-color: #394145; background: #202427; }
 body.crm-dark .inbox-bulk-toolbar .inbox-bulk-submit { border-color: var(--workspace-primary); background: var(--workspace-primary); }
 body.crm-dark .inbox-bulk-notice { color: #82d8b0; }
+
+@media (max-width: 600px) {
+  .crm-app:not(.platform-admin-workspace) .top {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top > .welcome {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-actions {
+    flex: 1 1 100%;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 7px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tools {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+.crm-app:not(.platform-admin-workspace) .chat-shell {
+  container-type: inline-size;
+}
+
+@container (max-width: 620px) {
+  .crm-app:not(.platform-admin-workspace) .chat-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-person {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-tools {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 860px) {
+  .crm-app:not(.platform-admin-workspace) .layout {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Keep the light CRM inbox and Customer 360 on the shared blue/teal palette.
+   Red stays reserved for errors, urgent work, destructive actions, and recording. */
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-shell .chat-head,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-title {
+  border-color: var(--owly-border) !important;
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-title {
+  border-color: #6f91a3 !important;
+  border-bottom-width: 1.5px !important;
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer {
+  color: var(--owly-ink);
+  background: var(--owly-surface);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .composer-tabs {
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .composer-tabs button.active {
+  color: var(--workspace-primary-dark);
+  border-bottom-color: var(--salon-accent);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .composer-tabs button:not(.active) {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .left-actions button:not(.template),
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .right-actions button:not(.send):not(.voucher) {
+  color: var(--workspace-primary-dark);
+  border-color: transparent;
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .left-actions button:hover,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .right-actions button:hover {
+  color: var(--workspace-primary-dark);
+  background: var(--salon-accent-soft);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .left-actions button.active:not(.voice-record-button.recording) {
+  color: #fff;
+  background: var(--salon-accent);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .voice-record-button:not(.recording) {
+  color: #fff !important;
+  background: linear-gradient(135deg, var(--salon-accent), #257c9b) !important;
+  box-shadow: 0 5px 12px rgba(37, 124, 155, .18) !important;
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .template,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .voucher {
+  color: var(--workspace-primary-dark) !important;
+  background: var(--salon-accent-soft) !important;
+  border-color: var(--owly-border) !important;
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-composer .send {
+  color: #fff;
+  background: linear-gradient(135deg, var(--salon-accent), #257c9b);
+  border-color: transparent;
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .chat-timeline .brand-mini {
+  background: linear-gradient(135deg, var(--salon-accent), #257c9b);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .conversation .avatar {
+  color: var(--workspace-primary-dark);
+  background: var(--salon-accent-soft);
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .section {
+  border-top-color: #6f91a3 !important;
+  border-top-width: 1.5px !important;
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .section h4,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .section-head button,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .section-head a {
+  color: var(--workspace-primary-dark);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-section-hint,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-filter-note,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-contact-card > small,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-contact-status-row,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-row small,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-summary-card span,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-summary-card small,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-order-card small,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-order-card-meta span {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-contact-card,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-filters,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-placeholder,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-summary-card,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-order-card {
+  color: var(--owly-ink);
+  background: #f6fbfd;
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-contact-status-list {
+  border-top-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-identity-row small {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-profile-field,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-contact-row,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-address-row,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-row p {
+  color: var(--owly-ink);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-profile-field span,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-contact-empty {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-profile-field strong,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-contact-row strong,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-address-row strong,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-summary-card strong,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-order-card strong {
+  color: var(--owly-ink);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-filters label {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-filters input,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-filters select {
+  color: var(--owly-ink);
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-filter-actions .table-action-btn.secondary {
+  color: var(--workspace-primary-dark);
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .table-action-btn:not(.customer-order-approve-btn),
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .section:not(.customer-merge-section) > .customer-tag-form button,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-merge-section .customer-tag-form button[type="button"],
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-merge-section .customer-tag-form button[type="submit"],
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .segment-form button,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .merge-history-row button,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-fact-form-row button,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-fact-actions button:not(:last-child) {
+  color: var(--workspace-primary-dark);
+  background: var(--salon-accent-soft);
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-tag-form input,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-tag-form select,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .segment-form input,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .segment-form select,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-fact-form input:not([type="checkbox"]),
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-filters input,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-timeline-filters select {
+  color: var(--owly-ink);
+  background: var(--owly-surface);
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-fact-form-row,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .segment-form label {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-fact-row,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .merge-history-row,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .saved-segment-row {
+  color: var(--owly-ink);
+  background: #f6fbfd;
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-fact-copy strong,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .merge-history-row strong,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .saved-segment-row strong,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .merge-history h5 {
+  color: var(--owly-ink);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-fact-copy p,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-fact-row small,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .saved-segment-row small {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-merge-section .merge-preview-card {
+  color: var(--owly-ink);
+  background: #f1f8fb;
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-merge-section .merge-preview-card small {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .stats > div {
+  background: linear-gradient(145deg, #edf8fb, #f7fbfd);
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .stats span {
+  color: var(--owly-muted);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .stats b {
+  color: var(--workspace-primary-dark);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .tags span {
+  color: var(--workspace-primary-dark);
+  background: var(--salon-accent-soft);
+  border-color: var(--owly-border);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .conversation-scroll::-webkit-scrollbar-thumb,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .messages-scroll::-webkit-scrollbar-thumb,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer::-webkit-scrollbar-thumb {
+  background: var(--salon-accent);
+}
+
+/* Prevent the workspace avatar from shrinking into an oval in compact headers. */
+.crm-app:not(.platform-admin-workspace) .team .team-avatar {
+  flex: 0 0 40px;
+  aspect-ratio: 1;
+}
+
+@media (max-width: 1180px) {
+  .crm-app:not(.platform-admin-workspace) .team .team-avatar {
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+  }
+}
+
+@media (min-width: 1181px) {
+  .crm-app:not(.platform-admin-workspace) .layout.customer-panel-collapsed {
+    grid-template-columns: minmax(280px, 348px) minmax(0, 1fr) 60px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .customer.customer-collapsed {
+    align-self: stretch;
+    min-width: 0;
+    min-height: 0;
+    padding: 8px 6px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .customer.customer-collapsed .customer-title {
+    justify-content: center;
+    padding: 4px 0 10px;
+    border-bottom: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .customer.customer-collapsed .customer-title h3 {
+    display: none;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .customer.customer-collapsed .customer-title-actions {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .customer.customer-collapsed .customer-title-actions > button:not(:last-child) {
+    display: none;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .customer.customer-collapsed .customer-title-actions > button:last-child {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+  }
+}
+
+/* Keep inbox filters available while consolidating their default vertical space. */
+.crm-app:not(.platform-admin-workspace) .inbox-channel-filter {
+  justify-content: flex-start;
+  padding: 0 12px 3px;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-quick-tabs {
+  gap: 10px;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-quick-tabs button {
+  min-height: 31px;
+  font-size: .72rem;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(92px, 36%, 112px);
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 4px;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-search-box {
+  min-width: 0;
+  min-height: 34px;
+  margin: 0;
+  padding: 5px 8px;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-search-box input {
+  min-width: 0;
+  font-size: .73rem;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-channel-select {
+  min-width: 0;
+  width: 100%;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-channel-select select {
+  min-height: 34px;
+  padding-inline: 7px 18px;
+  font-size: .66rem;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-filter-disclosure {
+  margin: 0 12px 4px;
+}
+
+.crm-app:not(.platform-admin-workspace) .inbox-filter-disclosure summary {
+  min-height: 25px;
+}
+
+/* Reclaim transcript space in the embedded inbox without hiding any chat actions. */
+@container (max-width: 620px) {
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-head {
+    min-height: 0;
+    padding: 7px 10px;
+    gap: 5px 8px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person {
+    flex: 1 1 100%;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person .avatar-lg {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person h2 {
+    font-size: 15px;
+    line-height: 1.15;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person p {
+    margin: 2px 0 0;
+    font-size: 10px;
+    line-height: 1.2;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tools {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    padding-left: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tools > button {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tools > .bot-mode-button {
+    flex: 0 0 auto;
+    min-width: 58px;
+    height: 28px;
+    padding-inline: 6px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .conversation-assignment {
+    position: relative;
+    flex: 1 1 95px;
+    min-width: 95px;
+    max-width: none;
+    gap: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .conversation-assignment > span {
+    position: absolute;
+    z-index: 1;
+    top: -4px;
+    left: 6px;
+    padding: 0 3px;
+    color: var(--owly-muted);
+    background: var(--owly-surface);
+    font-size: 8px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .conversation-assignment select {
+    width: 100%;
+    min-height: 28px;
+    max-width: none;
+    padding: 0 17px 0 6px;
+    font-size: 10px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer {
+    padding: 4px 10px 6px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .composer-tabs {
+    gap: 16px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .composer-tabs button {
+    min-height: 28px;
+    padding: 4px 0 3px;
+    font-size: 11px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .composer-access-notice {
+    margin: 3px 0 0;
+    font-size: 10px;
+    line-height: 1.25;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .composer-access-notice.is-read-only {
+    padding: 3px 6px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer textarea {
+    height: 46px;
+    min-height: 46px;
+    max-height: 92px;
+    padding: 6px 2px;
+    line-height: 1.35;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .composer-bottom {
+    min-height: 32px;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .left-actions,
+  .crm-app:not(.platform-admin-workspace) .chat-composer .right-actions {
+    gap: 4px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .voice-record-button {
+    width: 30px !important;
+    height: 30px !important;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .send {
+    height: 32px;
+    padding-inline: 10px;
+  }
+}
+
+@container (max-width: 420px) {
+  .crm-app:not(.platform-admin-workspace) .chat-composer .composer-bottom {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .right-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

@@ -209,6 +209,58 @@ test("AI navigation keeps knowledge and workflow without assistant or rule lab s
   assert.doesNotMatch(aiNav, />AI Rule Lab</);
 });
 
+test("Knowledge Base opens and returns from the RAG assistant with a stacked mobile layout", () => {
+  const docsStart = appSource.indexOf("currentTab === 'documents'");
+  const ragStart = appSource.indexOf("currentTab === 'rag_chat'");
+  const docsView = appSource.slice(docsStart, ragStart);
+  const ragView = appSource.slice(ragStart, appSource.indexOf("currentTab === 'reports'", ragStart));
+  assert.match(docsView, /Mở trợ lý hỏi đáp/);
+  assert.match(docsView, /currentTab = 'rag_chat'/);
+  assert.match(ragView, /Quay lại Kho kiến thức/);
+  assert.match(ragView, /currentTab = 'documents'/);
+  assert.match(appSource, /\.rag-chat-layout\s*\{\s*flex-direction:\s*column/);
+});
+
+test("Knowledge Base keeps refresh visible above the horizontally scrollable document table", () => {
+  const headerStyle = appSource.match(/\.docs-table-card \.card-header \{[^}]+\}/);
+  assert.ok(headerStyle);
+  assert.match(headerStyle[0], /width:\s*100%/);
+  assert.match(headerStyle[0], /min-width:\s*0/);
+  assert.match(headerStyle[0], /box-sizing:\s*border-box/);
+  assert.match(appSource, /\.docs-table-card \{ overflow-x: auto;/);
+});
+
+test("mobile CRM header wraps its actions instead of clipping them", () => {
+  assert.ok(/@media \(max-width:\s*600px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top\s*\{[^}]*flex-wrap:\s*wrap/.test(styleSource), "mobile header must wrap into multiple rows");
+  assert.ok(/@media \(max-width:\s*600px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top-actions\s*\{[^}]*flex-wrap:\s*wrap/.test(styleSource), "mobile header actions must wrap within the available width");
+  assert.ok(/@media \(max-width:\s*860px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(styleSource), "mobile inbox panels must use one viewport-sized column");
+});
+
+test("conversation header wraps controls inside the embedded browser width", () => {
+  const compactLayout = styleSource.slice(styleSource.lastIndexOf("@media (max-width: 1024px)"));
+  assert.match(compactLayout, /\.crm-app:not\(\.platform-admin-workspace\) \.chat-shell \.chat-head\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(compactLayout, /\.crm-app:not\(\.platform-admin-workspace\) \.chat-shell \.chat-tools\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(compactLayout, /\.crm-app:not\(\.platform-admin-workspace\) \.chat-shell \.chat-tools\s*\{[^}]*flex:\s*1 1 100%/);
+  assert.match(compactLayout, /\.crm-app:not\(\.platform-admin-workspace\) \.chat-shell\s*\{[^}]*container-type:\s*inline-size/);
+  assert.match(compactLayout, /@container\s*\(max-width:\s*620px\)/);
+});
+
+test("light conversation and Customer 360 surfaces use the shared blue-teal palette", () => {
+  const palette = styleSource.slice(styleSource.lastIndexOf("/* Keep the light CRM inbox and Customer 360"));
+  assert.match(palette, /\.chat-composer \.composer-tabs button\.active\s*\{[^}]*color:\s*var\(--workspace-primary-dark\)[^}]*border-bottom-color:\s*var\(--salon-accent\)/);
+  assert.match(palette, /\.chat-composer \.composer-tabs button:not\(\.active\)\s*\{[^}]*color:\s*var\(--owly-muted\)/);
+  assert.match(palette, /\.customer \.section h4[\s\S]*?color:\s*var\(--workspace-primary-dark\)/);
+  assert.match(palette, /\.conversation \.avatar\s*\{[^}]*color:\s*var\(--workspace-primary-dark\)[^}]*background:\s*var\(--salon-accent-soft\)/);
+  assert.match(palette, /\.customer \.customer-contact-card[\s\S]*?background:\s*#f6fbfd[^}]*border-color:\s*var\(--owly-border\)/);
+  assert.match(palette, /\.customer \.customer-profile-field strong[\s\S]*?color:\s*var\(--owly-ink\)/);
+  assert.match(palette, /\.customer \.section\s*\{[^}]*border-top-color:\s*#6f91a3 !important[^}]*border-top-width:\s*1\.5px !important/);
+  assert.match(palette, /\.customer \.customer-title\s*\{[^}]*border-color:\s*#6f91a3 !important[^}]*border-bottom-width:\s*1\.5px !important/);
+  assert.match(palette, /\.chat-composer \.send\s*\{[^}]*background:\s*linear-gradient\(135deg,\s*var\(--salon-accent\)/);
+  assert.match(palette, /\.customer \.stats > div\s*\{[^}]*background:\s*linear-gradient\(145deg,\s*#edf8fb/);
+  assert.match(palette, /\.customer \.table-action-btn:not\(\.customer-order-approve-btn\)/);
+  assert.match(palette, /Red stays reserved for errors, urgent work, destructive actions, and recording/);
+});
+
 test("product and sales screens expose processing controls without intake forms", () => {
   const productsStart = appSource.indexOf('currentTab === \'products\'');
   const productsEnd = appSource.indexOf('currentTab === \'leads\'', productsStart);
@@ -659,6 +711,8 @@ test("CRM workspace header exposes logout independently of tenant readiness", ()
   assert.notEqual(headerStart, -1);
   assert.notEqual(headerEnd, -1);
   const crmHeader = templateSource.slice(headerStart, headerEnd);
+  assert.match(crmHeader, /t\(workspaceGreeting\)/);
+  assert.doesNotMatch(crmHeader, /Theo dõi khách hàng, hội thoại và vận hành trong một không gian/);
   assert.match(crmHeader, /class="top-logout"/);
   assert.match(crmHeader, /:aria-label="t\('Đăng xuất'\)"/);
   assert.match(crmHeader, /@click="logout"/);
@@ -671,6 +725,18 @@ test("compact CRM header keeps logout visible without squeezing the greeting", (
   assert.match(styleSource, /@media \(max-width: 860px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top-search[\s\S]*?display:\s*none/);
 });
 
+test("workspace avatar stays circular when the header becomes compact", () => {
+  assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.team \.team-avatar\s*\{[^}]*flex:\s*0 0 40px[^}]*aspect-ratio:\s*1/);
+  assert.match(styleSource, /@media \(max-width: 1180px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.team \.team-avatar\s*\{[^}]*flex:\s*0 0 30px[^}]*width:\s*30px[^}]*height:\s*30px/);
+});
+
+test("collapsing Customer 360 frees chat width and keeps a right-side reopen control", () => {
+  assert.match(appSource, /'customer-panel-collapsed':\s*customerPanelCollapsed/);
+  assert.match(appSource, /customerPanelCollapsed\s*\?\s*'‹'\s*:\s*'›'/);
+  assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.layout\.customer-panel-collapsed\s*\{[^}]*grid-template-columns:\s*minmax\(280px,\s*348px\)\s+minmax\(0,\s*1fr\)\s+60px/);
+  assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.customer\.customer-collapsed \.customer-title-actions > button:not\(:last-child\)\s*\{\s*display:\s*none/);
+});
+
 test("compact inbox workspace keeps every new UI control actionable", () => {
   assert.match(appSource, /const sidebarCollapsed = ref\(false\)/);
   assert.match(appSource, /class="inbox-filter-disclosure"/);
@@ -681,6 +747,20 @@ test("compact inbox workspace keeps every new UI control actionable", () => {
   assert.match(appSource, /@click="toggleVoiceRecording"/);
   assert.match(styleSource, /\.layout\s*\{[\s\S]*?grid-template-columns:\s*218px\s+minmax\(0,\s*1fr\)/);
   assert.match(styleSource, /\.customer\.customer-collapsed\s*>\s*:not\(\.customer-title\)/);
+});
+
+test("inbox search and channel filters share a compact row without removing filter actions", () => {
+  const toolbarStart = appSource.indexOf('<div class="inbox-toolbar">');
+  const listStart = appSource.indexOf('ref="inboxConversationScroll"', toolbarStart);
+  const toolbar = appSource.slice(toolbarStart, listStart);
+  assert.notEqual(toolbarStart, -1);
+  assert.match(toolbar, /class="inbox-quick-tabs"/);
+  assert.match(toolbar, /class="inbox-search-row"/);
+  assert.match(toolbar, /class="search-box inbox-search-box"/);
+  assert.match(toolbar, /class="inbox-channel-select"/);
+  assert.match(toolbar, /class="inbox-filter-disclosure"/);
+  assert.match(appSource, /class="inbox-bulk-toolbar"/);
+  assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.inbox-search-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+clamp\(92px,\s*36%,\s*112px\)/);
 });
 
 test("empty workspace explains missing data without rendering fake customer records", () => {
@@ -870,6 +950,18 @@ test("chat bot toggle stays on one line in the compact header", () => {
     styleSource,
     /\.chat-shell \.chat-tools\s*>\s*\.bot-mode-button\s*\{[\s\S]*?flex:\s*0\s+0\s+auto[\s\S]*?white-space:\s*nowrap/
   );
+});
+
+test("embedded conversation keeps its controls while compacting the header and composer", () => {
+  const compactStyles = styleSource.slice(styleSource.lastIndexOf("/* Reclaim transcript space in the embedded inbox"));
+  assert.match(compactStyles, /\.chat-head\s*\{[^}]*padding:\s*7px 10px/);
+  assert.match(compactStyles, /\.chat-tools\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(compactStyles, /\.conversation-assignment > span\s*\{[^}]*position:\s*absolute/);
+  assert.match(compactStyles, /\.chat-composer textarea\s*\{[^}]*height:\s*46px/);
+  assert.match(compactStyles, /\.composer-tabs button\s*\{[^}]*min-height:\s*28px/);
+  assert.match(appSource, /class="conversation-assignment conversation-outcome-control"/);
+  assert.match(appSource, /class="composer-access-notice"/);
+  assert.match(appSource, /class="composer-bottom"/);
 });
 
 test("opening a conversation marks its inbound messages as read through the Inbox API", () => {

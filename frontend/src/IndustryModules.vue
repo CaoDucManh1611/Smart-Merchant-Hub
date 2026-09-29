@@ -1,12 +1,19 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { apiFetch } from "./api-client.js";
 import { appointmentsToIcs } from "./calendar-utils.js";
-import { formatDate, formatDateTime, formatMoney, t } from "./i18n.js";
+import { formatDate, formatDateTime, formatMoney, locale, t } from "./i18n.js";
 
-const props = defineProps({ module: { type: String, required: true }, apiBase: { type: String, default: "/api" } });
+const props = defineProps({
+  module: { type: String, required: true },
+  apiBase: { type: String, default: "/api" },
+  focusRecord: { type: Object, default: null },
+});
 const api = (path) => `${props.apiBase}${path}`;
-const busy = ref(false);
+const workspace = ref(null);
+const busy = ref(true);
+const loaded = ref(false);
+const saving = ref(false);
 const error = ref("");
 const notice = ref("");
 const customers = ref([]);
@@ -16,6 +23,7 @@ const appointments = ref([]);
 const quotes = ref([]);
 const projects = ref([]);
 const invoices = ref([]);
+let loadVersion = 0;
 const activeTab = ref(props.module === "appointments" ? "appointments" : "quotes");
 const appointmentPeriod = ref("upcoming");
 const editingServiceId = ref(null);
@@ -33,6 +41,56 @@ const projectForm = reactive({ customer_id: "", title: "", budget: 0, starts_on:
 const invoiceForm = reactive({ customer_id: "", project_id: "", quote_id: "", description: "", total_amount: 0, status: "draft", issued_on: "", due_on: "", notes: "" });
 const quoteSubtotal = computed(() => quoteForm.items.reduce((sum, line) => sum + (Number(line.quantity) || 0) * (Number(line.unit_price) || 0), 0));
 const quoteTotal = computed(() => quoteSubtotal.value * (1 + (Number(quoteForm.tax_rate) || 0) / 100));
+// Use the shared catalog first; keep this screen bilingual where a catalog key is absent.
+const tr = (vi, en) => {
+  const translated = t(vi);
+  return locale.value === "en" && translated === vi ? en : translated;
+};
+const customerLabel = (id) => `${t("Khách hàng #")}${id}`;
+const countLabel = (count, vi, en) => `${count} ${tr(vi, en)}`;
+const minutesLabel = (minutes) => `${minutes} ${tr("phút", "minutes")}`;
+const noCustomersLabel = () => tr("Chưa có khách hàng. Hãy thêm khách hàng trước khi tạo bản ghi mới.", "No customers yet. Add a customer before creating a new record.");
+const paymentHistoryLabel = (count) => `${tr("Lịch sử thu (", "Payment history (")}${count})`;
+const errorMessage = (err, vi, en) => {
+  if (Number(err?.status) === 403) return tr("Tài khoản hiện tại không có quyền xem hoặc sửa dữ liệu này.", "Your account cannot view or change this data.");
+  const source = err?.message && !/^Lỗi HTTP \d+$/.test(err.message) ? err.message : "";
+  const detail = source ? t(source) : "";
+  return locale.value === "en" && detail === source ? tr(vi, en) : detail || tr(vi, en);
+};
+const requestedRecordId = (kind) => props.focusRecord?.kind === kind && props.focusRecord.id != null
+  ? String(props.focusRecord.id) : null;
+async function includeRequestedRecord(firstPage, path, kind) {
+  const items = [...(firstPage.items || [])];
+  const id = requestedRecordId(kind);
+  const total = Number(firstPage.total) || items.length;
+  while (id && !items.some((item) => String(item.id) === id) && items.length < total) {
+    const separator = path.includes("?") ? "&" : "?";
+    const page = await request(`${path}${separator}offset=${items.length}`);
+    if (!page.items?.length) break;
+    items.push(...page.items);
+  }
+  return items;
+}
+const hasRequestedRecord = () => {
+  const kind = props.focusRecord?.kind;
+  const id = requestedRecordId(kind);
+  if (!id) return true;
+  if (kind === "appointment") return appointments.value.some((item) => String(item.id) === id);
+  if (kind === "quote") return quotes.value.some((item) => String(item.id) === id);
+  return true;
+};
+async function focusRecordArticle() {
+  const { kind, id } = props.focusRecord || {};
+  if (id == null || !["appointment", "quote"].includes(kind)) return;
+  if ((kind === "appointment" && props.module !== "appointments") || (kind === "quote" && props.module === "appointments")) return;
+  activeTab.value = kind === "appointment" ? "appointments" : "quotes";
+  await nextTick();
+  if (requestedRecordId(kind) !== String(id)) return;
+  const article = [...(workspace.value?.querySelectorAll("[data-record-kind]") || [])]
+    .find((element) => element.dataset.recordKind === kind && element.dataset.recordId === String(id));
+  article?.scrollIntoView?.({ block: "center" });
+  article?.focus({ preventScroll: true });
+}
 
 const money = formatMoney;
 const dateTimeInput = (value) => {
@@ -41,26 +99,30 @@ const dateTimeInput = (value) => {
 };
 const showTime = formatDateTime;
 const showDate = formatDate;
-const customerName = (id) => customers.value.find((customer) => Number(customer.id) === Number(id))?.name || t("Khách hàng");
-const staffName = (id) => staff.value.find((member) => Number(member.id) === Number(id))?.full_name || t("Chưa phân công");
+const customerName = (id) => customers.value.find((customer) => Number(customer.id) === Number(id))?.name || tr("Khách hàng", "Customer");
+const staffName = (id) => staff.value.find((member) => Number(member.id) === Number(id))?.full_name || tr("Chưa phân công", "Unassigned");
 const statusLabels = {
   scheduled: "Đã đặt", confirmed: "Đã xác nhận", completed: "Hoàn tất", cancelled: "Đã hủy", no_show: "Không đến",
   draft: "Bản nháp", sent: "Đã gửi", accepted: "Đã chấp thuận", rejected: "Từ chối", expired: "Hết hạn",
   planned: "Lên kế hoạch", active: "Đang thực hiện", on_hold: "Tạm dừng", completed_project: "Hoàn tất", cancelled_project: "Đã hủy",
   issued: "Đã phát hành", paid: "Đã thanh toán", overdue: "Quá hạn", void: "Đã hủy",
 };
-const statusLabel = (value) => t(statusLabels[value] || value || "Chưa rõ");
-const projectStatusLabel = (value) => t(({ completed: "Hoàn tất", cancelled: "Đã hủy" })[value] || statusLabels[value] || value || "Chưa rõ");
+const statusLabel = (value) => t(statusLabels[value] || value || tr("Chưa rõ", "Unknown"));
 const paymentMethodLabel = (value) => t(({ bank_transfer: "Chuyển khoản", cash: "Tiền mặt", card: "Thẻ", other: "Khác" })[value] || value || "Khác");
 
 async function request(path, options) {
   const response = await apiFetch(api(path), options);
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail?.message || body.detail || `Lỗi HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(body.detail?.message || (typeof body.detail === "string" ? body.detail : "") || `Lỗi HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
 async function load() {
+  const version = ++loadVersion;
   busy.value = true;
   error.value = "";
   try {
@@ -68,9 +130,8 @@ async function load() {
       request("/customers?limit=200"),
       request("/team?active_only=true"),
     ]);
-    customers.value = customerData.items || [];
-    staff.value = staffData.items || [];
     if (props.module === "appointments") {
+      if (requestedRecordId("appointment") && (!loaded.value || !hasRequestedRecord())) appointmentPeriod.value = "all";
       const now = new Date();
       const params = new URLSearchParams({ limit: "500" });
       if (appointmentPeriod.value !== "all") {
@@ -90,41 +151,71 @@ async function load() {
       const [serviceData, appointmentData] = await Promise.all([
         request("/appointments/services"), request(`/appointments?${params.toString()}`),
       ]);
+      const appointmentItems = await includeRequestedRecord(appointmentData, `/appointments?${params.toString()}`, "appointment");
+      if (version !== loadVersion) return false;
+      customers.value = customerData.items || [];
+      staff.value = staffData.items || [];
       services.value = serviceData.items || [];
-      appointments.value = appointmentData.items || [];
+      appointments.value = appointmentItems;
     } else {
       const [quoteData, projectData, invoiceData] = await Promise.all([
         request("/commercial/quotes?limit=200"), request("/commercial/projects?limit=200"), request("/commercial/invoices?limit=200"),
       ]);
-      quotes.value = quoteData.items || [];
+      const quoteItems = await includeRequestedRecord(quoteData, "/commercial/quotes?limit=200", "quote");
+      if (version !== loadVersion) return false;
+      customers.value = customerData.items || [];
+      staff.value = staffData.items || [];
+      quotes.value = quoteItems;
       projects.value = projectData.items || [];
       invoices.value = invoiceData.items || [];
     }
+    loaded.value = true;
+    await focusRecordArticle();
+    return true;
   } catch (err) {
-    error.value = err.message || "Chưa tải được dữ liệu. Hãy thử lại.";
+    if (version === loadVersion) error.value = errorMessage(err, "Chưa tải được dữ liệu. Hãy thử lại.", "Could not load data. Please try again.");
+    return false;
   } finally {
-    busy.value = false;
+    if (version === loadVersion) busy.value = false;
   }
 }
 
 async function run(action, success) {
+  if (saving.value) return false;
+  saving.value = true;
   error.value = "";
   notice.value = "";
   try {
     await action();
-    notice.value = success;
-    await load();
+    const refreshed = await load();
+    if (refreshed) notice.value = tr(success, successMessages[success] || success);
+    return true;
   } catch (err) {
-    error.value = err.message || "Không thể lưu thay đổi.";
+    error.value = errorMessage(err, "Không thể lưu thay đổi.", "Could not save changes.");
+    return false;
+  } finally {
+    saving.value = false;
   }
 }
+
+const successMessages = {
+  "Đã cập nhật dịch vụ.": "Service updated.", "Đã thêm dịch vụ.": "Service added.",
+  "Đã tạm ngừng nhận lịch dịch vụ.": "Service bookings paused.", "Đã mở lại dịch vụ.": "Service resumed.",
+  "Đã cập nhật lịch hẹn và lịch nhắc.": "Appointment and reminder updated.", "Đã tạo lịch hẹn.": "Appointment created.",
+  "Đã cập nhật trạng thái lịch hẹn.": "Appointment status updated.", "Đã cập nhật trạng thái dự án.": "Project status updated.",
+  "Đã cập nhật báo giá.": "Quote updated.", "Đã tạo báo giá.": "Quote created.",
+  "Đã cập nhật trạng thái báo giá.": "Quote status updated.", "Đã chuyển báo giá thành dự án.": "Quote converted to a project.",
+  "Đã cập nhật dự án.": "Project updated.", "Đã tạo dự án.": "Project created.",
+  "Đã tạo hóa đơn.": "Invoice created.", "Đã cập nhật hóa đơn.": "Invoice updated.",
+  "Đã gửi báo giá qua email khách hàng.": "Quote emailed to customer.", "Đã gửi hóa đơn qua email khách hàng.": "Invoice emailed to customer.",
+  "Đã ghi nhận khoản thanh toán.": "Payment recorded.",
+};
 
 function resetService() { editingServiceId.value = null; Object.assign(serviceForm, { name: "", description: "", duration_minutes: 60, price: 0 }); }
 async function saveService() {
   const editing = editingServiceId.value;
   const path = editing ? `/appointments/services/${editing}` : "/appointments/services";
-  await run(() => request(path, { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(serviceForm) }), editing ? "Đã cập nhật dịch vụ." : "Đã thêm dịch vụ.");
-  resetService();
+  if (await run(() => request(path, { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(serviceForm) }), editing ? "Đã cập nhật dịch vụ." : "Đã thêm dịch vụ.")) resetService();
 }
 function editService(service) { editingServiceId.value = service.id; Object.assign(serviceForm, { name: service.name, description: service.description || "", duration_minutes: service.duration_minutes, price: service.price }); }
 async function toggleService(service) {
@@ -134,11 +225,10 @@ function resetAppointment() { editingAppointmentId.value = null; Object.assign(a
 async function saveAppointment() {
   const editing = editingAppointmentId.value;
   const startsAt = new Date(appointmentForm.starts_at);
-  if (Number.isNaN(startsAt.getTime())) { error.value = "Chọn ngày và giờ hợp lệ."; return; }
+  if (Number.isNaN(startsAt.getTime())) { error.value = tr("Chọn ngày và giờ hợp lệ.", "Choose a valid date and time."); return; }
   const payload = { ...appointmentForm, customer_id: Number(appointmentForm.customer_id), service_id: Number(appointmentForm.service_id), assigned_user_id: appointmentForm.assigned_user_id ? Number(appointmentForm.assigned_user_id) : null, starts_at: startsAt.toISOString(), reminder_minutes_before: Number(appointmentForm.reminder_minutes_before) };
   const path = editing ? `/appointments/${editing}` : "/appointments";
-  await run(() => request(path, { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), editing ? "Đã cập nhật lịch hẹn và lịch nhắc." : "Đã tạo lịch hẹn.");
-  resetAppointment();
+  if (await run(() => request(path, { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), editing ? "Đã cập nhật lịch hẹn và lịch nhắc." : "Đã tạo lịch hẹn.")) resetAppointment();
 }
 function editAppointment(item) {
   editingAppointmentId.value = item.id;
@@ -155,8 +245,7 @@ function resetQuote() { editingQuoteId.value = null; Object.assign(quoteForm, { 
 async function saveQuote() {
   const editing = editingQuoteId.value;
   const payload = { ...quoteForm, customer_id: Number(quoteForm.customer_id), tax_rate: Number(quoteForm.tax_rate), valid_until: quoteForm.valid_until || null, items: quoteForm.items.map((line) => ({ ...line, quantity: Number(line.quantity), unit_price: Number(line.unit_price) })) };
-  await run(() => request(editing ? `/commercial/quotes/${editing}` : "/commercial/quotes", { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), editing ? "Đã cập nhật báo giá." : "Đã tạo báo giá.");
-  resetQuote();
+  if (await run(() => request(editing ? `/commercial/quotes/${editing}` : "/commercial/quotes", { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), editing ? "Đã cập nhật báo giá." : "Đã tạo báo giá.")) resetQuote();
 }
 function editQuote(quote) {
   editingQuoteId.value = quote.id;
@@ -166,27 +255,24 @@ async function setQuoteStatus(quote, status) {
   await run(() => request(`/commercial/quotes/${quote.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }), "Đã cập nhật trạng thái báo giá.");
 }
 async function convertQuote(quote) {
-  await run(() => request(`/commercial/quotes/${quote.id}/project`, { method: "POST" }), "Đã chuyển báo giá thành dự án.");
-  activeTab.value = "projects";
+  if (await run(() => request(`/commercial/quotes/${quote.id}/project`, { method: "POST" }), "Đã chuyển báo giá thành dự án.")) activeTab.value = "projects";
 }
 
 function resetProject() { editingProjectId.value = null; Object.assign(projectForm, { customer_id: "", title: "", budget: 0, starts_on: "", due_on: "", assigned_user_id: "", description: "" }); }
 async function saveProject() {
   const editing = editingProjectId.value;
   const payload = { ...projectForm, customer_id: Number(projectForm.customer_id), budget: Number(projectForm.budget), assigned_user_id: projectForm.assigned_user_id ? Number(projectForm.assigned_user_id) : null, starts_on: projectForm.starts_on || null, due_on: projectForm.due_on || null };
-  await run(() => request(editing ? `/commercial/projects/${editing}` : "/commercial/projects", { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), editing ? "Đã cập nhật dự án." : "Đã tạo dự án.");
-  resetProject();
+  if (await run(() => request(editing ? `/commercial/projects/${editing}` : "/commercial/projects", { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), editing ? "Đã cập nhật dự án." : "Đã tạo dự án.")) resetProject();
 }
 function editProject(item) { editingProjectId.value = item.id; Object.assign(projectForm, { customer_id: String(item.customer_id), title: item.title, budget: item.budget, starts_on: item.starts_on || "", due_on: item.due_on || "", assigned_user_id: item.assigned_user_id ? String(item.assigned_user_id) : "", description: item.description || "" }); }
 function createInvoiceForProject(project) {
   activeTab.value = "invoices";
-  Object.assign(invoiceForm, { customer_id: String(project.customer_id), project_id: String(project.id), quote_id: project.quote_id ? String(project.quote_id) : "", description: `Dịch vụ dự án: ${project.title}`, total_amount: Number(project.budget), status: "draft", issued_on: new Date().toISOString().slice(0, 10), due_on: "", notes: "" });
+  Object.assign(invoiceForm, { customer_id: String(project.customer_id), project_id: String(project.id), quote_id: project.quote_id ? String(project.quote_id) : "", description: `${tr("Dịch vụ dự án:", "Project services:")} ${project.title}`, total_amount: Number(project.budget), status: "draft", issued_on: new Date().toISOString().slice(0, 10), due_on: "", notes: "" });
 }
 
 async function saveInvoice() {
   const payload = { ...invoiceForm, customer_id: Number(invoiceForm.customer_id), project_id: invoiceForm.project_id ? Number(invoiceForm.project_id) : null, quote_id: invoiceForm.quote_id ? Number(invoiceForm.quote_id) : null, total_amount: Number(invoiceForm.total_amount), issued_on: invoiceForm.issued_on || null, due_on: invoiceForm.due_on || null };
-  await run(() => request("/commercial/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), "Đã tạo hóa đơn.");
-  Object.assign(invoiceForm, { customer_id: "", project_id: "", quote_id: "", description: "", total_amount: 0, status: "draft", issued_on: "", due_on: "", notes: "" });
+  if (await run(() => request("/commercial/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), "Đã tạo hóa đơn.")) Object.assign(invoiceForm, { customer_id: "", project_id: "", quote_id: "", description: "", total_amount: 0, status: "draft", issued_on: "", due_on: "", notes: "" });
 }
 async function updateInvoice(invoice, changes) {
   await run(() => request(`/commercial/invoices/${invoice.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) }), "Đã cập nhật hóa đơn.");
@@ -199,19 +285,19 @@ async function emailInvoice(invoice) {
 }
 function exportCalendar() {
   const content = appointmentsToIcs(appointments.value);
-  if (!content.includes("BEGIN:VEVENT")) { error.value = "Không có lịch hợp lệ để xuất."; return; }
+  if (!content.includes("BEGIN:VEVENT")) { error.value = tr("Không có lịch hợp lệ để xuất.", "No valid appointments to export."); return; }
   const url = URL.createObjectURL(new Blob([content], { type: "text/calendar;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
   link.download = "smart-merchant-appointments.ics";
   link.click();
   URL.revokeObjectURL(url);
-  notice.value = "Đã tải lịch .ics. Nhập tệp này vào Google Calendar hoặc Outlook.";
+  notice.value = tr("Đã tải lịch .ics. Nhập tệp này vào Google Calendar hoặc Outlook.", "Calendar downloaded. Import the .ics file into Google Calendar or Outlook.");
 }
 async function recordPayment(invoice) {
   if (paymentSavingId.value === invoice.id) return;
   const amount = Number(paymentAmounts[invoice.id] ?? invoice.balance_due);
-  if (!(amount > 0) || amount > Number(invoice.balance_due)) { error.value = "Khoản thu phải lớn hơn 0 và không vượt số dư."; return; }
+  if (!(amount > 0) || amount > Number(invoice.balance_due)) { error.value = tr("Khoản thu phải lớn hơn 0 và không vượt số dư.", "Payment must be greater than zero and no more than the balance due."); return; }
   paymentSavingId.value = invoice.id;
   try {
     await run(() => request(`/commercial/invoices/${invoice.id}/payments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount, method: paymentMethods[invoice.id] || "bank_transfer" }) }), "Đã ghi nhận khoản thanh toán.");
@@ -221,65 +307,77 @@ async function recordPayment(invoice) {
 }
 
 onMounted(load);
+watch(() => [props.focusRecord?.kind, props.focusRecord?.id], () => {
+  if (loaded.value) {
+    if (hasRequestedRecord()) focusRecordArticle();
+    else load();
+  }
+});
 watch(() => props.module, () => {
   activeTab.value = props.module === "appointments" ? "appointments" : "quotes";
+  loaded.value = false;
   load();
 });
 </script>
 
 <template>
-  <section class="industry-workspace">
+  <section ref="workspace" class="industry-workspace" :aria-busy="busy || saving">
     <header class="industry-heading">
       <div>
-        <span class="industry-eyebrow">KHÔNG GIAN NGHIỆP VỤ</span>
-        <h1>{{ module === "appointments" ? "Lịch hẹn & dịch vụ" : "Báo giá, dự án & hóa đơn" }}</h1>
-        <p>{{ module === "appointments" ? "Quản lý dịch vụ, lịch khách và nhắc nhân viên đúng giờ." : "Theo dõi báo giá đến dự án, lập hóa đơn và ghi nhận công nợ." }}</p>
+        <span class="industry-eyebrow">{{ tr("KHÔNG GIAN NGHIỆP VỤ", "BUSINESS WORKSPACE") }}</span>
+        <h1>{{ module === "appointments" ? tr("Lịch hẹn & dịch vụ", "Appointments & services") : tr("Báo giá, dự án & hóa đơn", "Quotes, projects & invoices") }}</h1>
+        <p>{{ module === "appointments" ? tr("Quản lý dịch vụ, lịch khách và nhắc nhân viên đúng giờ.", "Manage services, customer appointments, and timely staff reminders.") : tr("Theo dõi báo giá đến dự án, lập hóa đơn và ghi nhận công nợ.", "Track quotes through projects, issue invoices, and record payments due.") }}</p>
       </div>
-      <button type="button" class="industry-refresh" :disabled="busy" @click="load">{{ busy ? "Đang tải…" : "Làm mới" }}</button>
+      <button type="button" class="industry-refresh" :disabled="busy || saving" @click="load">{{ busy ? tr("Đang tải…", "Loading…") : tr("Làm mới", "Refresh") }}</button>
     </header>
     <p v-if="error" class="industry-alert error" role="alert">{{ error }}</p>
     <p v-if="notice" class="industry-alert success" role="status">{{ notice }}</p>
-    <div v-if="busy && !customers.length" class="industry-empty">Đang tải dữ liệu shop…</div>
+    <p v-if="busy && !loaded" class="industry-empty" role="status">{{ tr("Đang tải dữ liệu shop…", "Loading shop data…") }}</p>
+    <div v-else-if="!loaded" class="industry-empty" role="status">
+      <p>{{ tr("Chưa tải được dữ liệu. Hãy thử lại.", "Could not load data. Please try again.") }}</p>
+      <button type="button" class="industry-secondary" @click="load">{{ tr("Thử lại", "Try again") }}</button>
+    </div>
+    <p v-if="loaded && !customers.length" class="industry-empty" role="status">{{ noCustomersLabel() }}</p>
 
     <template v-else-if="module === 'appointments'">
       <nav class="industry-tabs" aria-label="Quản lý dịch vụ">
-        <button :class="{ selected: activeTab === 'appointments' }" @click="activeTab = 'appointments'">Lịch hẹn <span>{{ appointments.length }}</span></button>
-        <button :class="{ selected: activeTab === 'services' }" @click="activeTab = 'services'">Dịch vụ <span>{{ services.length }}</span></button>
+        <button type="button" :aria-current="activeTab === 'appointments' ? 'page' : undefined" :class="{ selected: activeTab === 'appointments' }" @click="activeTab = 'appointments'">{{ tr("Lịch hẹn", "Appointments") }} <span>{{ appointments.length }}</span></button>
+        <button type="button" :aria-current="activeTab === 'services' ? 'page' : undefined" :class="{ selected: activeTab === 'services' }" @click="activeTab = 'services'">{{ tr("Dịch vụ", "Services") }} <span>{{ services.length }}</span></button>
       </nav>
       <div v-if="activeTab === 'services'" class="industry-columns">
         <form class="industry-card industry-form" @submit.prevent="saveService">
-          <h2>{{ editingServiceId ? "Sửa dịch vụ" : "Thêm dịch vụ" }}</h2>
+          <h2>{{ editingServiceId ? tr("Sửa dịch vụ", "Edit service") : tr("Thêm dịch vụ", "Add service") }}</h2>
           <label>Tên dịch vụ<input v-model="serviceForm.name" required maxlength="160" placeholder="Ví dụ: Tư vấn 1:1" /></label>
           <div class="industry-form-row"><label>Thời lượng (phút)<input v-model.number="serviceForm.duration_minutes" type="number" min="5" max="1440" required /></label><label>Giá (đ)<input v-model.number="serviceForm.price" type="number" min="0" step="1000" required /></label></div>
           <label>Mô tả<textarea v-model="serviceForm.description" rows="3" maxlength="2000" /></label>
-          <div class="industry-actions"><button class="industry-primary">{{ editingServiceId ? "Lưu dịch vụ" : "Thêm dịch vụ" }}</button><button v-if="editingServiceId" type="button" class="industry-secondary" @click="resetService">Hủy sửa</button></div>
+          <div class="industry-actions"><button class="industry-primary">{{ editingServiceId ? tr("Lưu dịch vụ", "Save service") : tr("Thêm dịch vụ", "Add service") }}</button><button v-if="editingServiceId" type="button" class="industry-secondary" @click="resetService">Hủy sửa</button></div>
         </form>
         <div class="industry-card">
           <h2>Danh mục dịch vụ</h2>
           <p v-if="!services.length" class="industry-empty">Chưa có dịch vụ. Thêm dịch vụ trước khi tạo lịch hẹn.</p>
           <article v-for="service in services" :key="service.id" class="industry-row">
-            <div><strong>{{ service.name }}</strong><small>{{ service.duration_minutes }} phút · {{ money(service.price) }} · {{ service.description || "Không có mô tả" }}</small></div>
-            <div class="industry-actions"><span class="industry-pill" :class="{ muted: !service.is_active }">{{ service.is_active ? "Đang nhận lịch" : "Đã tạm ngừng" }}</span><button class="industry-secondary" @click="editService(service)">Sửa</button><button class="industry-secondary" @click="toggleService(service)">{{ service.is_active ? "Tạm ngừng" : "Mở lại" }}</button></div>
+            <div><strong>{{ service.name }}</strong><small>{{ minutesLabel(service.duration_minutes) }} · {{ money(service.price) }} · {{ service.description || tr("Không có mô tả", "No description") }}</small></div>
+            <div class="industry-actions"><span class="industry-pill" :class="{ muted: !service.is_active }">{{ service.is_active ? tr("Đang nhận lịch", "Accepting appointments") : tr("Đã tạm ngừng", "Paused") }}</span><button class="industry-secondary" @click="editService(service)">Sửa</button><button class="industry-secondary" @click="toggleService(service)">{{ service.is_active ? tr("Tạm ngừng", "Pause") : tr("Mở lại", "Resume") }}</button></div>
           </article>
         </div>
       </div>
       <div v-else class="industry-columns">
         <form class="industry-card industry-form" @submit.prevent="saveAppointment">
-          <h2>{{ editingAppointmentId ? "Chỉnh sửa lịch" : "Đặt lịch mới" }}</h2>
-          <label>Khách hàng<select v-model="appointmentForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || customer.phone || `Khách hàng #${customer.id}` }}</option></select></label>
-          <label>Dịch vụ<select v-model="appointmentForm.service_id" required><option value="" disabled>Chọn dịch vụ</option><option v-for="service in services.filter((item) => item.is_active)" :key="service.id" :value="String(service.id)">{{ service.name }} · {{ service.duration_minutes }} phút</option></select></label>
+          <h2>{{ editingAppointmentId ? tr("Chỉnh sửa lịch", "Edit appointment") : tr("Đặt lịch mới", "Book appointment") }}</h2>
+          <label>Khách hàng<select v-model="appointmentForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || customer.phone || customerLabel(customer.id) }}</option></select></label>
+          <label>Dịch vụ<select v-model="appointmentForm.service_id" required><option value="" disabled>Chọn dịch vụ</option><option v-for="service in services.filter((item) => item.is_active)" :key="service.id" :value="String(service.id)">{{ service.name }} · {{ minutesLabel(service.duration_minutes) }}</option></select></label>
           <label>Ngày, giờ<input v-model="appointmentForm.starts_at" type="datetime-local" required /></label>
           <div class="industry-form-row"><label>Nhân viên<select v-model="appointmentForm.assigned_user_id"><option value="">Chưa phân công</option><option v-for="member in staff" :key="member.id" :value="String(member.id)">{{ member.full_name }}</option></select></label><label>Nhắc trước (phút)<input v-model.number="appointmentForm.reminder_minutes_before" type="number" min="0" max="10080" /></label></div>
           <label class="industry-checkbox"><input v-model="appointmentForm.send_customer_reminder" type="checkbox" /> Gửi email nhắc lịch cho khách (cần có email)</label>
           <label>Ghi chú<textarea v-model="appointmentForm.notes" rows="3" maxlength="4000" /></label>
-          <div class="industry-actions"><button class="industry-primary">{{ editingAppointmentId ? "Lưu lịch hẹn" : "Tạo lịch hẹn" }}</button><button v-if="editingAppointmentId" type="button" class="industry-secondary" @click="resetAppointment">Hủy sửa</button></div>
+          <div class="industry-actions"><button class="industry-primary">{{ editingAppointmentId ? tr("Lưu lịch hẹn", "Save appointment") : tr("Tạo lịch hẹn", "Create appointment") }}</button><button v-if="editingAppointmentId" type="button" class="industry-secondary" @click="resetAppointment">Hủy sửa</button></div>
         </form>
         <div class="industry-card">
-          <div class="industry-card-head"><h2>Lịch hẹn</h2><div class="industry-actions"><select v-model="appointmentPeriod" aria-label="Khoảng thời gian lịch hẹn" @change="load"><option value="upcoming">Sắp tới</option><option value="today">Hôm nay</option><option value="week">7 ngày tới</option><option value="all">Tất cả</option></select><span>{{ appointments.length }} lịch</span><button type="button" class="industry-secondary" @click="exportCalendar">Xuất .ics</button></div></div>
+          <div class="industry-card-head"><h2>Lịch hẹn</h2><div class="industry-actions"><select v-model="appointmentPeriod" aria-label="Khoảng thời gian lịch hẹn" @change="load"><option value="upcoming">Sắp tới</option><option value="today">Hôm nay</option><option value="week">7 ngày tới</option><option value="all">Tất cả</option></select><span>{{ countLabel(appointments.length, "lịch", "appointments") }}</span><button type="button" class="industry-secondary" @click="exportCalendar">Xuất .ics</button></div></div>
           <p v-if="!appointments.length" class="industry-empty">Chưa có lịch hẹn nào.</p>
-          <article v-for="item in appointments" :key="item.id" class="industry-row industry-record">
-            <div class="industry-record-main"><strong>{{ item.customer_name || customerName(item.customer_id) }} <span class="industry-pill">{{ item.service_name }}</span></strong><small>{{ showTime(item.starts_at) }} – {{ showTime(item.ends_at) }} · {{ staffName(item.assigned_user_id) }}</small><small v-if="item.notes">{{ item.notes }}</small><small>{{ item.reminder_sent_at ? (item.send_customer_reminder ? "Đã gửi nhắc qua email" : "Đã tạo thông báo nhắc") : item.reminder_at ? `Nhắc trước ${item.reminder_minutes_before} phút` : "Không đặt nhắc" }}</small></div>
-            <div class="industry-actions"><select :value="item.status" :aria-label="`Trạng thái lịch ${item.id}`" @change="setAppointmentStatus(item, $event.target.value)"><option value="scheduled">Đã đặt</option><option value="confirmed">Đã xác nhận</option><option value="completed">Hoàn tất</option><option value="cancelled">Đã hủy</option><option value="no_show">Không đến</option></select><button class="industry-secondary" @click="editAppointment(item)">Sửa lịch</button></div>
+          <article v-for="item in appointments" :key="item.id" class="industry-row industry-record" data-record-kind="appointment" :data-record-id="String(item.id)" tabindex="-1">
+            <div class="industry-record-main"><strong>{{ item.customer_name || customerName(item.customer_id) }} <span class="industry-pill">{{ item.service_name }}</span></strong><small>{{ showTime(item.starts_at) }} – {{ showTime(item.ends_at) }} · {{ staffName(item.assigned_user_id) }}</small><small v-if="item.notes">{{ item.notes }}</small><small>{{ item.reminder_sent_at ? (item.send_customer_reminder ? tr("Đã gửi nhắc qua email", "Email reminder sent") : tr("Đã tạo thông báo nhắc", "Reminder notification created")) : item.reminder_at ? `${tr("Nhắc trước", "Remind before")} ${minutesLabel(item.reminder_minutes_before)}` : tr("Không đặt nhắc", "No reminder set") }}</small></div>
+            <div class="industry-actions"><select :value="item.status" :aria-label="`${tr('Trạng thái lịch', 'Appointment status')} ${item.id}`" @change="setAppointmentStatus(item, $event.target.value)"><option value="scheduled">Đã đặt</option><option value="confirmed">Đã xác nhận</option><option value="completed">Hoàn tất</option><option value="cancelled">Đã hủy</option><option value="no_show">Không đến</option></select><button class="industry-secondary" @click="editAppointment(item)">Sửa lịch</button></div>
           </article>
         </div>
       </div>
@@ -287,47 +385,47 @@ watch(() => props.module, () => {
 
     <template v-else>
       <nav class="industry-tabs" aria-label="Quản lý khách hàng doanh nghiệp">
-        <button :class="{ selected: activeTab === 'quotes' }" @click="activeTab = 'quotes'">Báo giá <span>{{ quotes.length }}</span></button>
-        <button :class="{ selected: activeTab === 'projects' }" @click="activeTab = 'projects'">Dự án <span>{{ projects.length }}</span></button>
-        <button :class="{ selected: activeTab === 'invoices' }" @click="activeTab = 'invoices'">Hóa đơn <span>{{ invoices.length }}</span></button>
+        <button type="button" :aria-current="activeTab === 'quotes' ? 'page' : undefined" :class="{ selected: activeTab === 'quotes' }" @click="activeTab = 'quotes'">{{ tr("Báo giá", "Quotes") }} <span>{{ quotes.length }}</span></button>
+        <button type="button" :aria-current="activeTab === 'projects' ? 'page' : undefined" :class="{ selected: activeTab === 'projects' }" @click="activeTab = 'projects'">{{ tr("Dự án", "Projects") }} <span>{{ projects.length }}</span></button>
+        <button type="button" :aria-current="activeTab === 'invoices' ? 'page' : undefined" :class="{ selected: activeTab === 'invoices' }" @click="activeTab = 'invoices'">{{ tr("Hóa đơn", "Invoices") }} <span>{{ invoices.length }}</span></button>
       </nav>
       <div v-if="activeTab === 'quotes'" class="industry-columns">
         <form class="industry-card industry-form" @submit.prevent="saveQuote">
-          <h2>{{ editingQuoteId ? "Sửa báo giá" : "Tạo báo giá" }}</h2>
-          <label>Khách hàng<select v-model="quoteForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || customer.phone || `Khách hàng #${customer.id}` }}</option></select></label>
+          <h2>{{ editingQuoteId ? tr("Sửa báo giá", "Edit quote") : tr("Tạo báo giá", "Create quote") }}</h2>
+          <label>Khách hàng<select v-model="quoteForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || customer.phone || customerLabel(customer.id) }}</option></select></label>
           <label>Tiêu đề<input v-model="quoteForm.title" required maxlength="200" placeholder="Tên gói công việc / dịch vụ" /></label>
           <div class="industry-line-items"><div class="industry-card-head"><strong>Hạng mục</strong><button type="button" class="industry-secondary" @click="quoteForm.items.push({ name: '', quantity: 1, unit_price: 0 })">+ Thêm dòng</button></div><div v-for="(line, index) in quoteForm.items" :key="index" class="industry-quote-line"><label>Mô tả<input v-model="line.name" required maxlength="200" /></label><label>SL<input v-model.number="line.quantity" type="number" min="0.01" step="0.01" required /></label><label>Đơn giá<input v-model.number="line.unit_price" type="number" min="0" step="1000" required /></label><button v-if="quoteForm.items.length > 1" type="button" class="industry-icon-button" :aria-label="`Xóa dòng ${index + 1}`" @click="quoteForm.items.splice(index, 1)">×</button></div></div>
           <div class="industry-form-row"><label>Thuế (%)<input v-model.number="quoteForm.tax_rate" type="number" min="0" max="100" step="0.1" /></label><label>Hiệu lực đến<input v-model="quoteForm.valid_until" type="date" /></label></div>
           <div class="industry-total"><span>Tạm tính {{ money(quoteSubtotal) }} · Thuế {{ money(quoteTotal - quoteSubtotal) }}</span><strong>{{ money(quoteTotal) }}</strong></div>
           <label>Ghi chú<textarea v-model="quoteForm.notes" rows="2" maxlength="4000" /></label>
-          <div class="industry-actions"><button class="industry-primary">{{ editingQuoteId ? "Lưu báo giá" : "Tạo báo giá" }}</button><button v-if="editingQuoteId" type="button" class="industry-secondary" @click="resetQuote">Hủy sửa</button></div>
+          <div class="industry-actions"><button class="industry-primary">{{ editingQuoteId ? tr("Lưu báo giá", "Save quote") : tr("Tạo báo giá", "Create quote") }}</button><button v-if="editingQuoteId" type="button" class="industry-secondary" @click="resetQuote">Hủy sửa</button></div>
         </form>
-        <div class="industry-card"><div class="industry-card-head"><h2>Báo giá</h2><span>{{ quotes.length }} báo giá</span></div><p v-if="!quotes.length" class="industry-empty">Tạo báo giá đầu tiên cho khách hàng.</p>
-          <article v-for="quote in quotes" :key="quote.id" class="industry-row industry-record"><div class="industry-record-main"><strong>{{ quote.quote_number }} · {{ quote.title }}</strong><small>{{ quote.customer_name }} · {{ quote.items?.length || 0 }} hạng mục · {{ quote.valid_until ? `Hạn ${showDate(quote.valid_until)}` : "Không đặt hạn" }}</small><b class="industry-amount">{{ money(quote.total_amount) }}</b><small v-if="quote.email_sent_at">Đã gửi email lúc {{ showTime(quote.email_sent_at) }}</small></div><div class="industry-actions"><select :value="quote.status" :aria-label="`Trạng thái báo giá ${quote.quote_number}`" @change="setQuoteStatus(quote, $event.target.value)"><option v-for="state in ['draft','sent','accepted','rejected','expired']" :key="state" :value="state">{{ statusLabel(state) }}</option></select><button class="industry-secondary" @click="editQuote(quote)">Sửa</button><button v-if="['draft','sent'].includes(quote.status) && !quote.email_sent_at" class="industry-secondary" :disabled="busy" @click="emailQuote(quote)">Gửi email</button><button v-if="quote.status === 'accepted'" class="industry-primary" @click="convertQuote(quote)">Tạo dự án</button></div></article>
+        <div class="industry-card"><div class="industry-card-head"><h2>Báo giá</h2><span>{{ countLabel(quotes.length, "báo giá", "quotes") }}</span></div><p v-if="!quotes.length" class="industry-empty">Tạo báo giá đầu tiên cho khách hàng.</p>
+          <article v-for="quote in quotes" :key="quote.id" class="industry-row industry-record" data-record-kind="quote" :data-record-id="String(quote.id)" tabindex="-1"><div class="industry-record-main"><strong>{{ quote.quote_number }} · {{ quote.title }}</strong><small>{{ quote.customer_name }} · {{ countLabel(quote.items?.length || 0, "hạng mục", "line items") }} · {{ quote.valid_until ? `${tr("Hạn", "Due")} ${showDate(quote.valid_until)}` : tr("Không đặt hạn", "No due date") }}</small><b class="industry-amount">{{ money(quote.total_amount) }}</b><small v-if="quote.email_sent_at">{{ tr("Đã gửi email lúc", "Email sent at") }} {{ showTime(quote.email_sent_at) }}</small></div><div class="industry-actions"><select :value="quote.status" :aria-label="`${tr('Trạng thái báo giá', 'Quote status')} ${quote.quote_number}`" @change="setQuoteStatus(quote, $event.target.value)"><option v-for="state in ['draft','sent','accepted','rejected','expired']" :key="state" :value="state">{{ statusLabel(state) }}</option></select><button class="industry-secondary" @click="editQuote(quote)">Sửa</button><button v-if="['draft','sent'].includes(quote.status) && !quote.email_sent_at" class="industry-secondary" :disabled="busy || saving" @click="emailQuote(quote)">Gửi email</button><button v-if="quote.status === 'accepted'" class="industry-primary" @click="convertQuote(quote)">Tạo dự án</button></div></article>
         </div>
       </div>
       <div v-else-if="activeTab === 'projects'" class="industry-columns">
-        <form class="industry-card industry-form" @submit.prevent="saveProject"><h2>{{ editingProjectId ? "Sửa dự án" : "Tạo dự án" }}</h2>
-          <label>Khách hàng<select v-model="projectForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || `Khách hàng #${customer.id}` }}</option></select></label>
+        <form class="industry-card industry-form" @submit.prevent="saveProject"><h2>{{ editingProjectId ? tr("Sửa dự án", "Edit project") : tr("Tạo dự án", "Create project") }}</h2>
+          <label>Khách hàng<select v-model="projectForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || customerLabel(customer.id) }}</option></select></label>
           <label>Tên dự án<input v-model="projectForm.title" required maxlength="200" /></label><label>Ngân sách (đ)<input v-model.number="projectForm.budget" type="number" min="0" step="1000" /></label>
           <div class="industry-form-row"><label>Bắt đầu<input v-model="projectForm.starts_on" type="date" /></label><label>Hạn hoàn thành<input v-model="projectForm.due_on" type="date" /></label></div>
           <label>Phụ trách<select v-model="projectForm.assigned_user_id"><option value="">Chưa phân công</option><option v-for="member in staff" :key="member.id" :value="String(member.id)">{{ member.full_name }}</option></select></label><label>Mô tả<textarea v-model="projectForm.description" rows="3" maxlength="4000" /></label>
-          <div class="industry-actions"><button class="industry-primary">{{ editingProjectId ? "Lưu dự án" : "Tạo dự án" }}</button><button v-if="editingProjectId" type="button" class="industry-secondary" @click="resetProject">Hủy sửa</button></div>
+          <div class="industry-actions"><button class="industry-primary">{{ editingProjectId ? tr("Lưu dự án", "Save project") : tr("Tạo dự án", "Create project") }}</button><button v-if="editingProjectId" type="button" class="industry-secondary" @click="resetProject">Hủy sửa</button></div>
         </form>
-        <div class="industry-card"><div class="industry-card-head"><h2>Dự án</h2><span>{{ projects.length }} dự án</span></div><p v-if="!projects.length" class="industry-empty">Duyệt một báo giá hoặc tạo dự án trực tiếp.</p>
-          <article v-for="project in projects" :key="project.id" class="industry-row industry-record"><div class="industry-record-main"><strong>{{ project.title }}</strong><small>{{ project.customer_name }} · {{ project.starts_on ? showDate(project.starts_on) : "Chưa bắt đầu" }} → {{ showDate(project.due_on) }} · {{ staffName(project.assigned_user_id) }}</small><b class="industry-amount">Ngân sách {{ money(project.budget) }}</b></div><div class="industry-actions"><select :value="project.status" :aria-label="`Trạng thái dự án ${project.title}`" @change="setProjectStatus(project, $event.target.value)"><option value="planned">Lên kế hoạch</option><option value="active">Đang thực hiện</option><option value="on_hold">Tạm dừng</option><option value="completed">Hoàn tất</option><option value="cancelled">Đã hủy</option></select><button class="industry-secondary" @click="editProject(project)">Sửa</button><button class="industry-primary" @click="createInvoiceForProject(project)">Lập hóa đơn</button></div></article>
+        <div class="industry-card"><div class="industry-card-head"><h2>Dự án</h2><span>{{ countLabel(projects.length, "dự án", "projects") }}</span></div><p v-if="!projects.length" class="industry-empty">Duyệt một báo giá hoặc tạo dự án trực tiếp.</p>
+          <article v-for="project in projects" :key="project.id" class="industry-row industry-record"><div class="industry-record-main"><strong>{{ project.title }}</strong><small>{{ project.customer_name }} · {{ project.starts_on ? showDate(project.starts_on) : tr("Chưa bắt đầu", "Not started") }} → {{ showDate(project.due_on) }} · {{ staffName(project.assigned_user_id) }}</small><b class="industry-amount">{{ tr("Ngân sách", "Budget") }} {{ money(project.budget) }}</b></div><div class="industry-actions"><select :value="project.status" :aria-label="`${tr('Trạng thái dự án', 'Project status')} ${project.title}`" @change="setProjectStatus(project, $event.target.value)"><option value="planned">Lên kế hoạch</option><option value="active">Đang thực hiện</option><option value="on_hold">Tạm dừng</option><option value="completed">Hoàn tất</option><option value="cancelled">Đã hủy</option></select><button class="industry-secondary" @click="editProject(project)">Sửa</button><button class="industry-primary" @click="createInvoiceForProject(project)">Lập hóa đơn</button></div></article>
         </div>
       </div>
       <div v-else class="industry-columns">
         <form class="industry-card industry-form" @submit.prevent="saveInvoice"><h2>Tạo hóa đơn</h2>
-          <label>Khách hàng<select v-model="invoiceForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || `Khách hàng #${customer.id}` }}</option></select></label>
+          <label>Khách hàng<select v-model="invoiceForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || customerLabel(customer.id) }}</option></select></label>
           <label>Dự án<select v-model="invoiceForm.project_id"><option value="">Không gắn dự án</option><option v-for="project in projects.filter((item) => Number(item.customer_id) === Number(invoiceForm.customer_id))" :key="project.id" :value="String(project.id)">{{ project.title }}</option></select></label>
           <label>Mô tả<input v-model="invoiceForm.description" required maxlength="240" /></label><label>Tổng tiền (đ)<input v-model.number="invoiceForm.total_amount" type="number" min="1" step="1000" required /></label>
           <div class="industry-form-row"><label>Ngày phát hành<input v-model="invoiceForm.issued_on" type="date" /></label><label>Hạn thanh toán<input v-model="invoiceForm.due_on" type="date" /></label></div><label>Ghi chú<textarea v-model="invoiceForm.notes" rows="2" maxlength="4000" /></label>
           <button class="industry-primary">Tạo hóa đơn</button>
         </form>
-        <div class="industry-card"><div class="industry-card-head"><h2>Hóa đơn &amp; công nợ</h2><span>{{ invoices.length }} hóa đơn</span></div><p v-if="!invoices.length" class="industry-empty">Chưa có hóa đơn.</p>
-          <article v-for="invoice in invoices" :key="invoice.id" class="industry-row industry-record"><div class="industry-record-main"><strong>{{ invoice.invoice_number }} · {{ invoice.description }}</strong><small>{{ invoice.customer_name }} · Hạn {{ showDate(invoice.due_on) }}</small><b class="industry-amount">Còn {{ money(invoice.balance_due) }} / {{ money(invoice.total_amount) }}</b><small v-if="invoice.email_sent_at">Đã gửi email lúc {{ showTime(invoice.email_sent_at) }}</small><button type="button" class="industry-link" @click="showPaymentHistoryId = showPaymentHistoryId === invoice.id ? null : invoice.id">{{ showPaymentHistoryId === invoice.id ? "Ẩn lịch sử" : `Lịch sử thu (${invoice.payments?.length || 0})` }}</button><div v-if="showPaymentHistoryId === invoice.id" class="industry-payment-history"><small v-for="payment in invoice.payments || []" :key="payment.id">{{ showDate(payment.paid_on) }} · {{ money(payment.amount) }} · {{ paymentMethodLabel(payment.method) }}{{ payment.reference ? ` · ${payment.reference}` : "" }}</small><small v-if="!invoice.payments?.length">Chưa ghi nhận khoản thu nào.</small></div></div><div class="industry-actions"><span class="industry-pill" :class="{ warning: invoice.status === 'overdue', muted: invoice.status === 'void' }">{{ statusLabel(invoice.status) }}</span><label v-if="['issued','overdue'].includes(invoice.status) && Number(invoice.balance_due) > 0" class="industry-paid-field">Ghi khoản thu<input :value="paymentAmounts[invoice.id] ?? invoice.balance_due" type="number" min="0.01" :max="invoice.balance_due" step="1000" :aria-label="`Khoản thanh toán ${invoice.invoice_number}`" @input="paymentAmounts[invoice.id] = $event.target.value" /></label><select v-if="['issued','overdue'].includes(invoice.status) && Number(invoice.balance_due) > 0" class="industry-method" :value="paymentMethods[invoice.id] || 'bank_transfer'" :aria-label="`Phương thức thanh toán ${invoice.invoice_number}`" @change="paymentMethods[invoice.id] = $event.target.value"><option value="bank_transfer">Chuyển khoản</option><option value="cash">Tiền mặt</option><option value="card">Thẻ</option><option value="other">Khác</option></select><button v-if="['issued','overdue'].includes(invoice.status) && Number(invoice.balance_due) > 0" class="industry-primary" :disabled="paymentSavingId === invoice.id" @click="recordPayment(invoice)">{{ paymentSavingId === invoice.id ? "Đang lưu…" : "Ghi nhận thu" }}</button><button v-if="['issued','overdue'].includes(invoice.status) && !invoice.email_sent_at" class="industry-secondary" :disabled="busy" @click="emailInvoice(invoice)">Gửi email</button><button v-if="invoice.status === 'draft'" class="industry-secondary" @click="updateInvoice(invoice, { status: 'issued', issued_on: invoice.issued_on || new Date().toISOString().slice(0, 10) })">Phát hành</button><button v-if="invoice.status !== 'void' && invoice.status !== 'paid' && Number(invoice.paid_amount) === 0" class="industry-danger" @click="updateInvoice(invoice, { status: 'void' })">Hủy</button></div></article>
+        <div class="industry-card"><div class="industry-card-head"><h2>Hóa đơn &amp; công nợ</h2><span>{{ countLabel(invoices.length, "hóa đơn", "invoices") }}</span></div><p v-if="!invoices.length" class="industry-empty">Chưa có hóa đơn.</p>
+          <article v-for="invoice in invoices" :key="invoice.id" class="industry-row industry-record"><div class="industry-record-main"><strong>{{ invoice.invoice_number }} · {{ invoice.description }}</strong><small>{{ invoice.customer_name }} · {{ tr("Hạn", "Due") }} {{ showDate(invoice.due_on) }}</small><b class="industry-amount">{{ tr("Còn", "Remaining") }} {{ money(invoice.balance_due) }} / {{ money(invoice.total_amount) }}</b><small v-if="invoice.email_sent_at">{{ tr("Đã gửi email lúc", "Email sent at") }} {{ showTime(invoice.email_sent_at) }}</small><button type="button" class="industry-link" :aria-expanded="showPaymentHistoryId === invoice.id" @click="showPaymentHistoryId = showPaymentHistoryId === invoice.id ? null : invoice.id">{{ showPaymentHistoryId === invoice.id ? tr("Ẩn lịch sử", "Hide history") : paymentHistoryLabel(invoice.payments?.length || 0) }}</button><div v-if="showPaymentHistoryId === invoice.id" class="industry-payment-history"><small v-for="payment in invoice.payments || []" :key="payment.id">{{ showDate(payment.paid_on) }} · {{ money(payment.amount) }} · {{ paymentMethodLabel(payment.method) }}{{ payment.reference ? ` · ${payment.reference}` : "" }}</small><small v-if="!invoice.payments?.length">Chưa ghi nhận khoản thu nào.</small></div></div><div class="industry-actions"><span class="industry-pill" :class="{ warning: invoice.status === 'overdue', muted: invoice.status === 'void' }">{{ statusLabel(invoice.status) }}</span><label v-if="['issued','overdue'].includes(invoice.status) && Number(invoice.balance_due) > 0" class="industry-paid-field">Ghi khoản thu<input :value="paymentAmounts[invoice.id] ?? invoice.balance_due" type="number" min="0.01" :max="invoice.balance_due" step="1000" :aria-label="`${tr('Khoản thanh toán', 'Payment amount')} ${invoice.invoice_number}`" @input="paymentAmounts[invoice.id] = $event.target.value" /></label><select v-if="['issued','overdue'].includes(invoice.status) && Number(invoice.balance_due) > 0" class="industry-method" :value="paymentMethods[invoice.id] || 'bank_transfer'" :aria-label="`${tr('Phương thức thanh toán', 'Payment method')} ${invoice.invoice_number}`" @change="paymentMethods[invoice.id] = $event.target.value"><option value="bank_transfer">Chuyển khoản</option><option value="cash">Tiền mặt</option><option value="card">Thẻ</option><option value="other">Khác</option></select><button v-if="['issued','overdue'].includes(invoice.status) && Number(invoice.balance_due) > 0" class="industry-primary" :disabled="paymentSavingId === invoice.id || saving" @click="recordPayment(invoice)">{{ paymentSavingId === invoice.id ? tr("Đang lưu…", "Saving…") : tr("Ghi nhận thu", "Record payment") }}</button><button v-if="['issued','overdue'].includes(invoice.status) && !invoice.email_sent_at" class="industry-secondary" :disabled="busy || saving" @click="emailInvoice(invoice)">Gửi email</button><button v-if="invoice.status === 'draft'" class="industry-secondary" @click="updateInvoice(invoice, { status: 'issued', issued_on: invoice.issued_on || new Date().toISOString().slice(0, 10) })">Phát hành</button><button v-if="invoice.status !== 'void' && invoice.status !== 'paid' && Number(invoice.paid_amount) === 0" class="industry-danger" @click="updateInvoice(invoice, { status: 'void' })">Hủy</button></div></article>
         </div>
       </div>
     </template>
@@ -356,12 +454,15 @@ watch(() => props.module, () => {
 .industry-primary { color: #fff; background: linear-gradient(120deg, #28a4a0, #247f9b); border-color: transparent; }
 .industry-danger { color: #b53c34; }
 .industry-refresh:disabled { opacity: .6; cursor: wait; }
-.industry-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--owly-border, #d8e2e9); }
-.industry-tabs button { border: 0; border-radius: 9px 9px 0 0; color: var(--owly-muted, #687d8d); }
+.industry-tabs { display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid var(--owly-border, #d8e2e9); }
+.industry-tabs button { flex: 0 0 auto; border: 0; border-radius: 9px 9px 0 0; color: var(--owly-muted, #687d8d); }
 .industry-tabs button.selected { color: #087d82; background: #e8f8f7; box-shadow: inset 0 -2px #1ba19b; }
 .industry-tabs span { margin-left: 5px; font-size: .76rem; }
 .industry-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--owly-border, #d8e2e9); }
 .industry-row:last-child { border-bottom: 0; }
+.industry-record:focus { outline: 3px solid #168d91; outline-offset: 3px; border-radius: 6px; }
+.industry-workspace button:focus-visible, .industry-workspace input:focus-visible, .industry-workspace select:focus-visible, .industry-workspace textarea:focus-visible { outline: 3px solid #168d91; outline-offset: 2px; }
+.industry-workspace button:disabled { opacity: .6; cursor: wait; }
 .industry-record-main { display: grid; gap: 5px; min-width: 0; }
 .industry-record-main strong { line-height: 1.35; }
 .industry-record-main small, .industry-row small { color: var(--owly-muted, #687d8d); line-height: 1.4; }
@@ -397,5 +498,15 @@ watch(() => props.module, () => {
 .crm-dark .industry-payment-history { background: #182d30; }
 .crm-dark .industry-primary, .crm-dark .industry-secondary, .crm-dark .industry-danger, .crm-dark .industry-refresh, .crm-dark .industry-icon-button { background-color: #20272a; }
 @media (max-width: 980px) { .industry-columns { grid-template-columns: 1fr; } }
-@media (max-width: 620px) { .industry-row { align-items: flex-start; flex-direction: column; } .industry-actions { justify-content: flex-start; } .industry-form-row { grid-template-columns: 1fr; } .industry-quote-line { grid-template-columns: minmax(0, 1fr) 54px 90px 28px; } .industry-paid-field { width: 100%; } }
+@media (max-width: 620px) {
+  .industry-heading, .industry-card-head { align-items: flex-start; flex-wrap: wrap; }
+  .industry-row { align-items: flex-start; flex-direction: column; }
+  .industry-row > *, .industry-row .industry-actions { width: 100%; min-width: 0; }
+  .industry-actions { justify-content: flex-start; }
+  .industry-form-row { grid-template-columns: 1fr; }
+  .industry-quote-line { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .industry-quote-line label:first-child { grid-column: 1 / -1; }
+  .industry-quote-line .industry-icon-button { justify-self: start; }
+  .industry-paid-field { width: 100%; }
+}
 </style>

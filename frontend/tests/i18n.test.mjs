@@ -61,6 +61,21 @@ test("English UI copy replaces CRM jargon with plain language", () => {
   setLocale("vi");
 });
 
+test("English localizes every default sales pipeline stage consistently", () => {
+  setLocale("en");
+  assert.deepEqual(
+    ["Mới", "Đã xác định nhu cầu", "Đã gửi đề xuất", "Đã chốt", "Không thành công"].map(t),
+    ["New", "Qualified", "Proposal sent", "Won", "Lost"],
+  );
+  setLocale("vi");
+});
+
+test("English RAG assistant toggle uses a clear active-state label", () => {
+  setLocale("en");
+  assert.equal(t("ĐANG BẬT"), "ON");
+  setLocale("vi");
+});
+
 test("Vue static copy and accessible labels are routed through the active locale", () => {
   const source = '<template><button aria-label="Đóng">Lưu thay đổi</button><input placeholder="Tìm khách hàng" /><span>{{ connected ? \'Đã kết nối\' : \'Chưa kết nối\' }}</span><button :aria-label="`Xóa ${name}`" /></template>';
   const output = transformVueTemplateText(source, "/frontend/src/Probe.vue");
@@ -125,10 +140,14 @@ test("English covers all Vietnamese static Vue copy and localizes dates and curr
   const missingExpressions = [...untranslatedExpressionCopy];
   assert.equal(missingExpressions.length, 0, missingExpressions.join("\n"));
   assert.match(formatMoney(1200000), /1,200,000/);
+  assert.match(formatMoney(1200000), /₫/);
   assert.match(formatDate("2026-09-26"), /Sep|September/);
   assert.match(formatDateTime("2026-09-26T08:30:00Z"), /AM|PM/);
+  const appVue = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
+  assert.doesNotMatch(appVue, /\.toLocaleString\([^)]*\)\s*\}\}đ/, "VND displays must use the shared currency formatter");
   setLocale("vi");
   assert.match(formatMoney(1200000), /1\.200\.000/);
+  assert.match(formatMoney(1200000), /₫/);
 });
 
 test("English localizes derived CRM status labels and channel limit messages", () => {
@@ -207,5 +226,30 @@ test("English localizes dynamic workspace business profile labels and descriptio
   assert.match(appSource, /\$t\(profile\.desc\)/);
   assert.match(appSource, /\$t\(workspaceConfigNotice\)/);
   assert.match(appSource, /\$t\(workspaceConfigError\)/);
+  setLocale("vi");
+});
+
+test("English covers the work queue and business-module notices", () => {
+  const copy = [
+    ["Việc cần xử lý", "Work queue"],
+    ["Các việc cần chú ý từ dữ liệu hiện có của shop.", "Items that need attention based on your shop's current data."],
+    ["Phiếu quá hạn", "Overdue tickets"],
+    ["Hội thoại chưa phân công", "Unassigned conversations"],
+    ["Lịch hẹn sắp tới", "Upcoming appointments"],
+    ["Báo giá cần theo dõi", "Quotes to follow up"],
+    ["Tài liệu nạp lỗi", "Failed document imports"],
+    ["Không có việc cần xử lý trong mục này.", "No items need attention in this section."],
+    ["Không đủ quyền xem dữ liệu này.", "You do not have permission to view this data."],
+    ["Chưa tải được dữ liệu. Hãy thử lại.", "Could not load data. Please try again."],
+    ["Thử lại", "Try again"],
+    ["Báo giá & dự án", "Quotes & projects"],
+    ["Báo giá, dự án & hóa đơn", "Quotes, projects & invoices"],
+    ["Lịch hẹn", "Appointments"],
+    ["Đã cập nhật trạng thái lịch hẹn.", "Appointment status updated."],
+    ["Đã chuyển báo giá thành dự án.", "Quote converted to a project."],
+    ["Đã ghi nhận khoản thanh toán.", "Payment recorded."],
+  ];
+  setLocale("en");
+  for (const [source, expected] of copy) assert.equal(t(source), expected);
   setLocale("vi");
 });
