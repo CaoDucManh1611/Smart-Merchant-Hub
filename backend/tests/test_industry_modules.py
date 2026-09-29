@@ -6,26 +6,37 @@ from sqlalchemy.orm import Session
 import pytest
 from fastapi import HTTPException
 
-from app.api.appointments import AppointmentCreate, ServiceCreate, _ensure_no_conflict, create_appointment, create_service
+from app.api.appointments import AppointmentCreate, ServiceCreate, _ensure_no_conflict, create_appointment, create_service, list_appointments
 from app.api.commercial import (
     InvoiceCreate,
     InvoicePaymentCreate,
     InvoiceUpdate,
+    ProjectUpdate,
     QuoteCreate,
     QuoteLine,
     QuoteUpdate,
     convert_quote_to_project,
     create_invoice,
     create_quote,
+    list_invoices,
+    list_projects,
+    list_quotes,
     record_invoice_payment,
     send_invoice_email,
     send_quote_email,
     update_invoice,
+    update_project,
     update_quote,
 )
 from app.database.bases import TenantBase
 from app.models.customer import Customer
-from app.models.industry_modules import Appointment, CommercialInvoice
+from app.models.industry_modules import (
+    Appointment,
+    AppointmentService,
+    CommercialInvoice,
+    CommercialProject,
+    CommercialQuote,
+)
 from app.models.notification import Notification
 from app.models.ticket import Ticket
 from app.models.workflow import Workflow, WorkflowRun
@@ -51,17 +62,20 @@ def test_appointments_remind_once_and_quote_to_project_to_paid_invoice(monkeypat
             db.commit()
 
             service = create_service(ServiceCreate(name="Tư vấn", duration_minutes=45, price=Decimal("100000")), db, tenant)
+            local_start = datetime.now(timezone(timedelta(hours=7))) + timedelta(hours=2)
             appointment = create_appointment(
                 AppointmentCreate(
                     customer_id=customer.id,
                     service_id=service.id,
-                    starts_at=datetime.now(timezone.utc) + timedelta(hours=2),
+                    starts_at=local_start,
                     reminder_minutes_before=60,
                 ),
                 db=db,
                 user_db=db,
                 tenant=tenant,
             )
+            assert appointment["starts_at"].utcoffset() == timedelta(0)
+            assert appointment["starts_at"].replace(tzinfo=None) == local_start.astimezone(timezone.utc).replace(tzinfo=None)
             assert appointment["ends_at"] - appointment["starts_at"] == timedelta(minutes=45)
             assert db.query(Ticket).filter_by(title="Confirm appointment").count() == 1
             appointment_row = db.query(Appointment).filter_by(id=appointment["id"]).one()
@@ -165,5 +179,66 @@ def test_appointments_remind_once_and_quote_to_project_to_paid_invoice(monkeypat
             with pytest.raises(HTTPException) as void_paid:
                 update_invoice(invoice["id"], InvoiceUpdate(status="void"), db, tenant)
             assert void_paid.value.status_code == 409
+    finally:
+        engine.dispose()
+
+
+def test_appointment_and_b2b_reads_and_writes_are_tenant_scoped():
+    engine = create_engine("sqlite://")
+    TenantBase.metadata.create_all(engine)
+    one, two = TenantContext(1, "test"), TenantContext(2, "test")
+    try:
+        with Session(engine) as db:
+            customers = [
+                Customer(business_id=business_id, channel="web", external_user_id=f"c-{business_id}", name=f"Shop {business_id}")
+                for business_id in (1, 2)
+            ]
+            services = [
+                AppointmentService(business_id=business_id, name=f"Service {business_id}", duration_minutes=60, price=Decimal("100"))
+                for business_id in (1, 2)
+            ]
+            db.add_all([*customers, *services])
+            db.flush()
+            appointments = [
+                Appointment(
+                    business_id=business_id,
+                    customer_id=customers[business_id - 1].id,
+                    service_id=services[business_id - 1].id,
+                    starts_at=datetime(2030, 1, 1, 9),
+                    ends_at=datetime(2030, 1, 1, 10),
+                    status="scheduled",
+                )
+                for business_id in (1, 2)
+            ]
+            foreign_quote = CommercialQuote(
+                business_id=2, customer_id=customers[1].id, quote_number="Q-FOREIGN",
+                title="Foreign quote", items=[], subtotal=Decimal("100"), tax_rate=Decimal("0"),
+                tax_amount=Decimal("0"), total_amount=Decimal("100"),
+            )
+            foreign_project = CommercialProject(
+                business_id=2, customer_id=customers[1].id, title="Foreign project", budget=Decimal("100"),
+            )
+            foreign_invoice = CommercialInvoice(
+                business_id=2, customer_id=customers[1].id, invoice_number="INV-FOREIGN",
+                description="Foreign invoice", total_amount=Decimal("100"), paid_amount=Decimal("0"), status="issued",
+            )
+            db.add_all([*appointments, foreign_quote, foreign_project, foreign_invoice])
+            db.commit()
+
+            assert [row["id"] for row in list_appointments(db, one, None, None, None, 100, 0)["items"]] == [appointments[0].id]
+            assert [row["id"] for row in list_appointments(db, two, None, None, None, 100, 0)["items"]] == [appointments[1].id]
+            assert list_quotes(db, one, None, 100, 0)["total"] == 0
+            assert list_projects(db, one, None, 100, 0)["total"] == 0
+            assert list_invoices(db, one, None, 100, 0)["total"] == 0
+
+            with pytest.raises(HTTPException) as quote_access:
+                update_quote(foreign_quote.id, QuoteUpdate(title="Cross-shop edit"), db, one)
+            with pytest.raises(HTTPException) as project_access:
+                update_project(foreign_project.id, ProjectUpdate(title="Cross-shop edit"), db, db, one)
+            with pytest.raises(HTTPException) as invoice_access:
+                update_invoice(foreign_invoice.id, InvoiceUpdate(description="Cross-shop edit"), db, one)
+            with pytest.raises(HTTPException) as payment_access:
+                record_invoice_payment(foreign_invoice.id, InvoicePaymentCreate(amount=Decimal("1")), db, one)
+            assert [error.value.status_code for error in (quote_access, project_access, invoice_access, payment_access)] == [404] * 4
     finally:
         engine.dispose()

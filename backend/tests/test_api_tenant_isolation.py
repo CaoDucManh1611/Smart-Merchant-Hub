@@ -6,15 +6,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.auth.dependencies import issue_token, token_hash
 from app.database.bases import TenantBase
 from app.main import app
+from app.models.auth_session import AuthSession
 from app.models.audit_log import AuditLog
 from app.models.customer import Customer
 from app.models.conversation import Conversation
-from app.models.crm_extended import ConversationAssignment
+from app.models.crm_extended import ConversationAssignment, ConversationTag, CustomerTag, Tag
 from app.models.message import Message
 from app.models.business import Business, User
 from app.models.permission import PermissionOverride
+from app.models.saas import PlatformMembership
 from app.database.platform_session import get_platform_db
 from app.db.dependencies import get_db
 from app.auth.dependencies import require_write_access
@@ -94,8 +97,10 @@ class ApiTenantIsolationTests(unittest.TestCase):
 
         self.assertEqual(200, one.status_code)
         self.assertEqual(200, two.status_code)
-        self.assertEqual("Shop 1 customer", one.json()["items"][0]["name"])
-        self.assertEqual("Shop 2 customer", two.json()["items"][0]["name"])
+        one_customer = next(item for item in one.json()["items"] if item["id"] == 1)
+        two_customer = next(item for item in two.json()["items"] if item["id"] == 1)
+        self.assertEqual("Shop 1 customer", one_customer["name"])
+        self.assertEqual("Shop 2 customer", two_customer["name"])
 
     def test_identical_conversation_ids_read_only_shop_messages(self):
         for business_id in (1, 2):
@@ -105,6 +110,27 @@ class ApiTenantIsolationTests(unittest.TestCase):
             self.assertEqual(200, response.status_code, response.text)
             self.assertIn(f"Shop {business_id} message", response.text)
             self.assertNotIn(f"Shop {3 - business_id} message", response.text)
+
+    def test_unassigned_conversation_filter_is_tenant_scoped_and_paginates_total(self):
+        with Session(self.engines[1]) as db:
+            db.get(Conversation, 1).assigned_user_id = 101
+            db.add(Conversation(id=2, business_id=1, customer_id=1, channel="facebook"))
+            db.commit()
+
+        response = self.client.get(
+            "/api/conversations?unassigned_only=true&limit=10",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(1, response.json()["total"])
+        self.assertEqual([2], [item["conversation_id"] for item in response.json()["items"]])
+        self.assertTrue(all(item["customer_name"] == "Shop 1 customer" for item in response.json()["items"]))
+
+        all_conversations = self.client.get(
+            "/api/conversations?limit=10",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(2, all_conversations.json()["total"])
 
     def test_unassignment_changes_only_authenticated_shop_conversation(self):
         for business_id, engine in self.engines.items():
@@ -196,6 +222,159 @@ class ApiTenantIsolationTests(unittest.TestCase):
             )
             row = next(item for item in listing.json()["items"] if item["conversation_id"] == 1)
             self.assertEqual(expected, row["resolution_outcome"])
+
+    def test_bulk_customer_tags_are_atomic_tenant_scoped_and_audited(self):
+        with Session(self.engines[1]) as db:
+            tag = Tag(business_id=1, name="Bulk VIP")
+            db.add(tag)
+            db.commit()
+            tag_id = tag.id
+        with Session(self.engines[2]) as db:
+            # A foreign-only tag and customer make cross-tenant attempts observable.
+            db.add_all([
+                Tag(id=999, business_id=2, name="Foreign tag"),
+                Customer(id=2, business_id=2, channel="facebook", external_user_id="tenant-two-only"),
+            ])
+            db.commit()
+
+        response = self.client.patch(
+            "/api/customers/bulk-tags",
+            json={"customer_ids": [1], "tag_id": tag_id, "action": "add"},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(1, response.json()["changed_count"])
+        with Session(self.engines[1]) as db:
+            self.assertEqual(1, db.query(CustomerTag).filter_by(customer_id=1, tag_id=tag_id).count())
+            audit = db.query(AuditLog).filter_by(action="tag_add", resource_id="1").one()
+            self.assertTrue(audit.metadata_["bulk"])
+        with Session(self.engines[2]) as db:
+            self.assertEqual(0, db.query(CustomerTag).count())
+
+        # Idempotent add and batch validation do not create duplicate links or partial writes.
+        repeated = self.client.patch(
+            "/api/customers/bulk-tags",
+            json={"customer_ids": [1], "tag_id": tag_id, "action": "add"},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(0, repeated.json()["changed_count"])
+        foreign_tag = self.client.patch(
+            "/api/customers/bulk-tags",
+            json={"customer_ids": [1], "tag_id": 999, "action": "add"},
+            headers={"X-Business-Id": "1"},
+        )
+        mixed = self.client.patch(
+            "/api/customers/bulk-tags",
+            json={"customer_ids": [1, 2], "tag_id": tag_id, "action": "remove"},
+            headers={"X-Business-Id": "1"},
+        )
+        duplicate = self.client.patch(
+            "/api/customers/bulk-tags",
+            json={"customer_ids": [1, 1], "tag_id": tag_id, "action": "add"},
+            headers={"X-Business-Id": "1"},
+        )
+        too_many = self.client.patch(
+            "/api/customers/bulk-tags",
+            json={"customer_ids": list(range(1, 102)), "tag_id": tag_id, "action": "add"},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(404, foreign_tag.status_code)
+        self.assertEqual(404, mixed.status_code)
+        self.assertEqual(422, duplicate.status_code)
+        self.assertEqual(422, too_many.status_code)
+        with Session(self.engines[1]) as db:
+            self.assertEqual(1, db.query(CustomerTag).filter_by(customer_id=1, tag_id=tag_id).count())
+
+        removed = self.client.patch(
+            "/api/customers/bulk-tags",
+            json={"customer_ids": [1], "tag_id": tag_id, "action": "remove"},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(1, removed.json()["changed_count"])
+        with Session(self.engines[1]) as db:
+            self.assertEqual(0, db.query(CustomerTag).filter_by(customer_id=1, tag_id=tag_id).count())
+            self.assertEqual(1, db.query(AuditLog).filter_by(action="tag_remove", resource_id="1").count())
+
+    def test_bulk_tag_writes_allow_shop_roles_and_reject_viewers(self):
+        AuthSession.__table__.create(self.platform_engine, checkfirst=True)
+        PlatformMembership.__table__.create(self.platform_engine, checkfirst=True)
+        identities = {}
+        with Session(self.platform_engine) as db:
+            for role in ("owner", "admin", "agent", "viewer"):
+                user = User(
+                    business_id=1,
+                    full_name=f"{role} user",
+                    email=f"{role}@bulk-tags.test",
+                    role=role,
+                    is_active=True,
+                )
+                db.add(user)
+                db.flush()
+                token, expires_at = issue_token(user.id, business_id=1, role=role)
+                db.add(AuthSession(user_id=user.id, token_hash=token_hash(token), expires_at=expires_at, mfa_verified=True))
+                identities[role] = (token, user.id)
+            db.commit()
+
+        tag_ids = {}
+        with Session(self.engines[1]) as db:
+            for role in identities:
+                tag = Tag(business_id=1, name=f"Role {role}")
+                db.add(tag)
+                db.flush()
+                tag_ids[role] = tag.id
+            db.commit()
+
+        write_override = app.dependency_overrides.pop(require_write_access)
+        try:
+            for role, (token, user_id) in identities.items():
+                response = self.client.patch(
+                    "/api/customers/bulk-tags",
+                    json={"customer_ids": [1], "tag_id": tag_ids[role], "action": "add"},
+                    headers={"Authorization": f"Bearer {token}", "X-Business-Id": "1"},
+                )
+                if role == "viewer":
+                    self.assertEqual(403, response.status_code, response.text)
+                else:
+                    self.assertEqual(200, response.status_code, response.text)
+                    with Session(self.engines[1]) as db:
+                        link = db.query(CustomerTag).filter_by(customer_id=1, tag_id=tag_ids[role]).one()
+                        self.assertEqual(user_id, link.created_by)
+        finally:
+            app.dependency_overrides[require_write_access] = write_override
+
+    def test_bulk_conversation_tags_are_tenant_scoped_and_returned_in_inbox(self):
+        with Session(self.engines[1]) as db:
+            tag = Tag(business_id=1, name="Conversation VIP")
+            db.add(tag)
+            db.commit()
+            tag_id = tag.id
+        with Session(self.engines[2]) as db:
+            if db.get(Conversation, 2) is None:
+                db.add(Conversation(id=2, business_id=2, customer_id=1, channel="facebook"))
+                db.commit()
+
+        response = self.client.patch(
+            "/api/conversations/bulk-tags",
+            json={"conversation_ids": [1], "tag_id": tag_id, "action": "add"},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(1, response.json()["changed_count"])
+        listing = self.client.get("/api/conversations", headers={"X-Business-Id": "1"})
+        row = next(item for item in listing.json()["items"] if item["conversation_id"] == 1)
+        self.assertEqual(["Conversation VIP"], row["conversation_tags"])
+        with Session(self.engines[1]) as db:
+            audit = db.query(AuditLog).filter_by(action="conversation_tag_add", resource_id="1").one()
+            self.assertTrue(audit.metadata_["bulk"])
+
+        rejected = self.client.patch(
+            "/api/conversations/bulk-tags",
+            json={"conversation_ids": [1, 2], "tag_id": tag_id, "action": "remove"},
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(404, rejected.status_code)
+        with Session(self.engines[1]) as db:
+            self.assertEqual(1, db.query(ConversationTag).filter_by(conversation_id=1, tag_id=tag_id).count())
 
     def test_team_permission_overrides_with_identical_ids_are_shop_local(self):
         for business_id, effect in ((1, "allow"), (2, "deny")):

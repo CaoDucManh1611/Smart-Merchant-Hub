@@ -63,7 +63,7 @@ from app.integrations.telegram import TelegramAdapter
 from app.models.channel import Channel
 from app.models.business import User
 from app.models.conversation import Conversation
-from app.models.crm_extended import ConversationAssignment, CustomerTag, Tag
+from app.models.crm_extended import ConversationAssignment, ConversationTag, CustomerTag, Tag
 from app.services.channel_credentials import decrypt_token
 from app.auth.dependencies import require_write_access
 
@@ -206,6 +206,12 @@ class ConversationAssignmentRequest(BaseModel):
 class BulkConversationAssignmentRequest(BaseModel):
     conversation_ids: list[int] = Field(min_length=1, max_length=100)
     assigned_user_id: int | None = None
+
+
+class BulkConversationTagUpdate(BaseModel):
+    conversation_ids: list[int] = Field(min_length=1, max_length=100)
+    tag_id: int = Field(gt=0)
+    action: Literal["add", "remove"]
 
 
 class ConversationOutcomeRequest(BaseModel):
@@ -1525,6 +1531,7 @@ def get_conversations(
     limit: int | None = Query(default=None, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
     customer_id: int | None = Query(default=None, ge=1),
+    unassigned_only: bool = Query(default=False),
     db: Session = Depends(
         get_tenant_db
     ),
@@ -1532,6 +1539,7 @@ def get_conversations(
 ):
 
     customer_filter = "\n          AND cv.customer_id = :customer_id" if customer_id is not None else ""
+    assignment_filter = "\n          AND cv.assigned_user_id IS NULL" if unassigned_only else ""
     query_sql = f"""
         SELECT
             cv.id AS conversation_id,
@@ -1655,6 +1663,7 @@ def get_conversations(
 
         WHERE cv.business_id = :business_id
           {customer_filter}
+          {assignment_filter}
 
         ORDER BY
             last_message_at DESC
@@ -1673,6 +1682,8 @@ def get_conversations(
         SELECT COUNT(*) FROM conversations
         WHERE business_id = :business_id
     """
+    if unassigned_only:
+        total_sql += "\n          AND assigned_user_id IS NULL"
     total_params = {"business_id": tenant.business_id}
     if customer_id is not None:
         total_sql += "\n          AND customer_id = :customer_id"
@@ -1692,6 +1703,18 @@ def get_conversations(
         for customer_id, tag_name in tag_rows:
             tag_map.setdefault(int(customer_id), []).append(tag_name)
 
+    conversation_ids = {int(row["conversation_id"]) for row in result}
+    conversation_tag_map: dict[int, list[str]] = {conversation_id: [] for conversation_id in conversation_ids}
+    if conversation_ids:
+        tag_rows = db.query(ConversationTag.conversation_id, Tag.name).join(
+            Tag, Tag.id == ConversationTag.tag_id
+        ).filter(
+            ConversationTag.conversation_id.in_(conversation_ids),
+            Tag.business_id == tenant.business_id,
+        ).order_by(Tag.name.asc()).all()
+        for conversation_id, tag_name in tag_rows:
+            conversation_tag_map.setdefault(int(conversation_id), []).append(tag_name)
+
     items = [
             {
                 **dict(row),
@@ -1702,6 +1725,7 @@ def get_conversations(
                     channel=row.get("channel"),
                 ),
                 "customer_tags": tag_map.get(int(row["customer_id"]), []),
+                "conversation_tags": conversation_tag_map.get(int(row["conversation_id"]), []),
             }
             for row in result
         ]
@@ -1948,6 +1972,63 @@ def bulk_reassign_conversations(
             for conversation in conversations
         ],
     }
+
+
+@router.patch("/bulk-tags", dependencies=[Depends(require_write_access)])
+def bulk_update_conversation_tags(
+    payload: BulkConversationTagUpdate,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    conversation_ids = payload.conversation_ids
+    if any(conversation_id <= 0 for conversation_id in conversation_ids) or len(set(conversation_ids)) != len(conversation_ids):
+        raise HTTPException(status_code=422, detail="Danh sách hội thoại không hợp lệ hoặc bị trùng.")
+
+    conversations = db.query(Conversation).filter(
+        Conversation.id.in_(conversation_ids),
+        Conversation.business_id == tenant.business_id,
+    ).with_for_update().all()
+    if len(conversations) != len(conversation_ids):
+        raise HTTPException(status_code=404, detail="Một hoặc nhiều hội thoại không tồn tại trong shop này.")
+    tag = db.query(Tag).filter(
+        Tag.id == payload.tag_id,
+        Tag.business_id == tenant.business_id,
+    ).first()
+    if tag is None:
+        raise HTTPException(status_code=404, detail="Tag không tồn tại trong shop này.")
+
+    links = db.query(ConversationTag).filter(
+        ConversationTag.conversation_id.in_(conversation_ids),
+        ConversationTag.tag_id == tag.id,
+    ).all()
+    links_by_conversation = {link.conversation_id: link for link in links}
+    changed_ids = []
+    for conversation in conversations:
+        link = links_by_conversation.get(conversation.id)
+        if (link is not None) == (payload.action == "add"):
+            continue
+        if payload.action == "add":
+            db.add(ConversationTag(
+                conversation_id=conversation.id,
+                tag_id=tag.id,
+                created_by=actor.id if actor else None,
+            ))
+        else:
+            db.delete(link)
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="conversation_tag_add" if payload.action == "add" else "conversation_tag_remove",
+            resource_type="conversation",
+            resource_id=conversation.id,
+            metadata={"tag_id": tag.id, "tag": tag.name, "bulk": True},
+        )
+        changed_ids.append(conversation.id)
+
+    db.commit()
+    return {"action": payload.action, "tag_id": tag.id, "changed_count": len(changed_ids), "changed_ids": changed_ids}
 
 
 @router.get("/{conversation_id}/assignments")

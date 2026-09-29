@@ -1,10 +1,12 @@
 """Customer 360 and unified timeline endpoints."""
 
 from datetime import date, datetime, timezone
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
@@ -88,6 +90,12 @@ from app.services.crm_workspace_config import get_crm_workspace_config, validate
 
 
 router = APIRouter()
+
+
+class BulkCustomerTagUpdate(BaseModel):
+    customer_ids: list[int] = Field(min_length=1, max_length=100)
+    tag_id: int = Field(gt=0)
+    action: Literal["add", "remove"]
 
 
 # The CRM is operated in Vietnam. Keeping the date comparison here (instead of
@@ -771,6 +779,65 @@ def list_customer_tag_catalog(
         ],
         "total": len(rows),
     }
+
+
+@router.patch("/bulk-tags", dependencies=[Depends(require_write_access)])
+def bulk_update_customer_tags(
+    payload: BulkCustomerTagUpdate,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    customer_ids = payload.customer_ids
+    if any(customer_id <= 0 for customer_id in customer_ids) or len(set(customer_ids)) != len(customer_ids):
+        raise HTTPException(status_code=422, detail="Danh sách khách hàng không hợp lệ hoặc bị trùng.")
+
+    customers = db.query(Customer).filter(
+        Customer.id.in_(customer_ids),
+        Customer.business_id == tenant.business_id,
+    ).with_for_update().all()
+    if len(customers) != len(customer_ids):
+        raise HTTPException(status_code=404, detail="Một hoặc nhiều khách hàng không tồn tại trong shop này.")
+    tag = db.query(Tag).filter(
+        Tag.id == payload.tag_id,
+        Tag.business_id == tenant.business_id,
+    ).first()
+    if tag is None:
+        raise HTTPException(status_code=404, detail="Tag không tồn tại trong shop này.")
+
+    links = db.query(CustomerTag).filter(
+        CustomerTag.business_id == tenant.business_id,
+        CustomerTag.customer_id.in_(customer_ids),
+        CustomerTag.tag_id == tag.id,
+    ).all()
+    links_by_customer = {link.customer_id: link for link in links}
+    changed_ids = []
+    for customer in customers:
+        link = links_by_customer.get(customer.id)
+        if (link is not None) == (payload.action == "add"):
+            continue
+        if payload.action == "add":
+            db.add(CustomerTag(
+                business_id=tenant.business_id,
+                customer_id=customer.id,
+                tag_id=tag.id,
+                created_by=actor.id if actor else None,
+            ))
+        else:
+            db.delete(link)
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="tag_add" if payload.action == "add" else "tag_remove",
+            resource_type="customer",
+            resource_id=customer.id,
+            metadata={"tag_id": tag.id, "tag": tag.name, "bulk": True},
+        )
+        changed_ids.append(customer.id)
+
+    db.commit()
+    return {"action": payload.action, "tag_id": tag.id, "changed_count": len(changed_ids), "changed_ids": changed_ids}
 
 
 @router.get("/{customer_id}", response_model=CustomerProfileOut)
