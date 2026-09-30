@@ -1714,18 +1714,9 @@ def advance_customer_collection(
                 text=text,
             )
         if _is_underspecified_purchase_request(text):
-            prompt = (
-                "Which product would you like to buy? Send its name or code, and I’ll check the price and stock."
-                if detect_reply_language(text) == "en"
-                else "Bạn muốn mua sản phẩm nào? Gửi tên hoặc mã sản phẩm để mình kiểm tra giá và tồn kho nhé."
-            )
-            return CollectionFlowResult(
-                session_id=0,
-                status="needs_product",
-                current_field=None,
-                prompt=prompt,
-                started=True,
-            )
+            # The shared assistant can show the live catalogue or ask a
+            # context-aware question without opening a checkout session.
+            return None
         if is_browsing_request(text):
             return None
         if not is_order_intent(text):

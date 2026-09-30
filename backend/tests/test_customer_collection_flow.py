@@ -626,7 +626,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 db.delete(product)
             db.commit()
 
-    def test_underspecified_purchase_asks_for_product_without_opening_checkout(self):
+    def test_underspecified_purchase_returns_to_shared_assistant_without_opening_checkout(self):
         for conversation_id, text in (
             (98001, "Tôi muốn mua hàng"),
             (98002, "Lấy giúp mình 2 cái"),
@@ -642,10 +642,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                     source_channel="telegram",
                     text=text,
                 )
-                self.assertIsNotNone(result)
-                self.assertEqual("needs_product", result.status)
-                self.assertEqual(0, result.session_id)
-                self.assertIsNone(result.current_field)
+                self.assertIsNone(result)
                 self.assertEqual(
                     0,
                     db.query(CustomerCollectionSession).filter_by(

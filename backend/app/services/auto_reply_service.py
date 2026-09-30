@@ -8,7 +8,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from threading import Lock, Thread
 
@@ -42,7 +42,7 @@ from app.services.facebook_service import send_facebook_message
 from app.services.instagram_service import send_instagram_message
 from app.services.telegram_service import send_telegram_message
 from app.services.zalo_service import send_zalo_message
-from app.services.customer_collection_flow import is_browsing_request
+from app.services.customer_collection_flow import is_browsing_request, is_greeting
 from app.services.chatbot_agent import build_agent_memory, is_business_open
 from app.services.customer_order_service import customer_order_reply
 from app.services.product_resolver import (
@@ -139,7 +139,35 @@ _NON_PRODUCT_HINT_WORDS = set(_DELIVERY_TERMS + _RETURN_TERMS + (
     "chinh sach", "nhan vien", "ho tro", "don hang", "thanh toan", "dat hang",
 ))
 
+# ponytail: process-local duplicate guard; use a database lock if multiple backend workers can race.
 _reply_locks: dict[str, Lock] = defaultdict(Lock)
+
+
+def _is_casual_query(query: str) -> bool:
+    """Keep short social messages away from unrelated knowledge chunks."""
+    if is_greeting(query):
+        return True
+    folded = _fold_text(query)
+    words = folded.split()
+    if not words or len(words) > 10:
+        return False
+    business_terms = (
+        _STOCK_TERMS
+        + _PRICE_TERMS
+        + _DELIVERY_TERMS
+        + _RETURN_TERMS
+        + _RECOMMENDATION_TERMS
+        + (
+            "mua", "dat hang", "chot", "san pham", "don hang", "thanh toan",
+            "quy dinh", "chinh sach", "hoi vien", "thong tin shop", "dia chi",
+            "gio mo cua", "gio ho tro",
+            "buy", "order", "product", "payment", "catalog", "catalogue",
+            "policy", "membership", "address", "opening hours",
+        )
+    )
+    # ponytail: short lexical gate; replace with an intent model only when
+    # measured traffic shows this heuristic misroutes real commerce queries.
+    return not _has_any_term(folded, business_terms)
 
 
 def _notify_rag_handoff_required(
@@ -342,6 +370,24 @@ def _send_channel_reply(
             recipient_id=recipient_id,
             text=text,
         )
+    if channel in {"shopee", "tiktok"}:
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id,
+            Conversation.business_id == business_id,
+        ).first()
+        if conversation is None:
+            raise ValueError(f"Không tìm thấy hội thoại {conversation_id} trong shop.")
+        from app.api.conversations import send_shopee_text, send_tiktok_text
+
+        send = send_shopee_text if channel == "shopee" else send_tiktok_text
+        response, _ = send(
+            db=db,
+            conversation={"id": conversation.id, "channel_id": conversation.channel_id},
+            recipient_id=recipient_id,
+            text_content=text,
+            business_id=business_id,
+        )
+        return response
     raise ValueError(f"Unsupported auto-reply channel: {channel}")
 
 
@@ -499,8 +545,30 @@ def _claim_auto_reply(
     auto_reply_key: str,
 ) -> bool:
     """Claim one deterministic response before calling an external provider."""
-    lock = _reply_locks[auto_reply_key]
+    lock_key = auto_reply_key
+    if channel == "shopee":
+        lock_key = f"shopee:{conversation_id}:{content}"
+    lock = _reply_locks[lock_key]
     with lock:
+        if channel == "shopee":
+            cooldown_start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=90)
+            recent_duplicate = db.query(Message).filter(
+                Message.conversation_id == conversation_id,
+                Message.channel == "shopee",
+                Message.sender_type == "bot",
+                Message.direction == "outbound",
+                Message.status == "sent",
+                Message.content == content,
+                Message.sent_at >= cooldown_start,
+            ).first()
+            if recent_duplicate is not None:
+                _record_duplicate_reply_attempt(
+                    db,
+                    business_id=business_id,
+                    conversation_id=conversation_id,
+                    auto_reply_key=auto_reply_key,
+                )
+                return False
         existing = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
         if existing is not None and existing.status in {"sending", "sent"}:
             _record_duplicate_reply_attempt(
@@ -1265,7 +1333,7 @@ def process_rag_auto_reply(
 
         # 1. Retrieve
         retrieval_started = perf_counter()
-        chunks = retrieve(
+        chunks = [] if _is_casual_query(query_text) else retrieve(
             query=query_text,
             db=db,
             top_k=top_k,
@@ -1349,10 +1417,10 @@ def process_rag_auto_reply(
                     answer_chars=len(catalog_reply),
                 )
                 return True
-            logger.info("Auto-reply has no relevant source for conversation %d; handing off", conversation_id)
-            send_handoff_reply(NO_CONTEXT_FALLBACK, reason="no_rag_context")
-            run.finish("no_context", phase="complete", chunks_found=0, answer_chars=len(NO_CONTEXT_FALLBACK), handoff_required=True)
-            return True
+            logger.info(
+                "Auto-reply has no relevant source for conversation %d; using safe conversational mode",
+                conversation_id,
+            )
 
         # Live experimentation is explicitly opt-in. Only an active policy
         # bound to chatbot_auto_reply with reviewed arm controls can create a
@@ -1451,7 +1519,7 @@ def process_rag_auto_reply(
             send_handoff_reply(SERVICE_ERROR_FALLBACK, reason="empty_llm_answer")
             run.finish("service_error", phase="complete", reason="empty_llm_answer", answer_chars=0, handoff_required=True)
             return True
-        if not has_valid_citations(answer, [chunk.content for chunk in chunks]):
+        if chunks and not has_valid_citations(answer, [chunk.content for chunk in chunks]):
             send_handoff_reply(NO_CONTEXT_FALLBACK, reason="missing_or_invalid_citation")
             run.finish("no_context", phase="complete", reason="missing_or_invalid_citation", handoff_required=True)
             return True

@@ -22,8 +22,11 @@ from app.database.platform_session import get_platform_db
 from app.database.tenant_session import tenant_session
 from app.models.business import User
 from app.models.channel import Channel
+from app.models.customer_identity import CustomerIdentity
 from app.models.platform_control import PlatformBusiness, TenantRegistry
+from app.services.audit_service import record_audit
 from app.services.channel_credentials import decrypt_token, encrypt_token
+from app.services.customer_profile import normalize_avatar_url
 from app.services.message_service import process_and_save_message
 from app.services.realtime import manager
 from app.services.quota_service import QuotaExceededError, reserve_quota
@@ -224,6 +227,7 @@ async def receive_local_connector_message(
                 "media_url": str(payload.get("mediaUrl") or payload.get("media_url") or "")[:2000] or None,
                 "attachments": attachments[:20],
                 "raw_payload": {
+                    "threadId": thread_id,
                     "message_type": message_type,
                     "created_at": str(payload.get("createdAt") or payload.get("created_at") or "")[:100],
                     "source": str(payload.get("source") or "local_connector")[:100],
@@ -253,6 +257,62 @@ async def receive_shopee_connector_message(
     platform_db: Session = Depends(get_platform_db),
 ):
     return await receive_local_connector_message("shopee", payload, authorization, platform_db)
+
+
+@router.post("/channels/shopee/profiles")
+def sync_shopee_customer_avatars(
+    payload: dict,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    """Fill missing avatars for already-known Shopee identities; never create customers."""
+    profiles = payload.get("profiles")
+    if not isinstance(profiles, list) or len(profiles) > 200:
+        raise HTTPException(status_code=422, detail="Danh sách hồ sơ Shopee không hợp lệ.")
+    avatars = {}
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        external_user_id = str(profile.get("externalUserId") or "").strip()[:255]
+        avatar_url = normalize_avatar_url(profile.get("avatarUrl"))
+        if external_user_id and avatar_url:
+            avatars[external_user_id] = avatar_url
+    if not avatars:
+        return {"status": "unchanged", "updated": 0}
+
+    business_id, channel_id = _connector_channel("shopee", authorization, platform_db)
+    schema = _tenant_schema(platform_db, business_id)
+    updated = 0
+    with tenant_session(schema) as tenant_db:
+        channel = tenant_db.get(Channel, channel_id)
+        if channel is None:
+            raise HTTPException(status_code=401, detail="Shopee connector không còn hợp lệ.")
+        identities = tenant_db.scalars(
+            select(CustomerIdentity).where(
+                CustomerIdentity.business_id == business_id,
+                CustomerIdentity.channel == "shopee",
+                CustomerIdentity.external_account_id == str(channel.external_account_id or ""),
+                CustomerIdentity.external_user_id.in_(avatars),
+            )
+        ).all()
+        for identity in identities:
+            customer = identity.customer
+            avatar_url = avatars.get(identity.external_user_id)
+            if customer.business_id != business_id or not avatar_url or customer.avatar_url:
+                continue
+            customer.avatar_url = avatar_url
+            record_audit(
+                tenant_db,
+                business_id=business_id,
+                action="profile_update",
+                resource_type="customer",
+                resource_id=customer.id,
+                actor_type="system",
+                metadata={"fields": ["avatar_url"], "source": "shopee_connector"},
+            )
+            updated += 1
+        tenant_db.commit()
+    return {"status": "synced", "updated": updated}
 
 
 def _connector_exe_path(channel_type: str) -> Path | None:

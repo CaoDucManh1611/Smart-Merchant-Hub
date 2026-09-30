@@ -94,7 +94,8 @@ class _TikTokControlHandler(BaseHTTPRequestHandler):
             self._reply(404, {"detail":"TikTok bridge route not found"})
             return
         provided=self.headers.get("X-TikTok-Bridge-Secret", "")
-        if not BRIDGE_SECRET or not _hmac.compare_digest(str(provided), str(BRIDGE_SECRET)):
+        bridge_secret=(os.getenv("TIKTOK_BRIDGE_SECRET") or os.getenv("TIKTOK_CONNECTOR_TOKEN") or "").strip()
+        if not bridge_secret or not _hmac.compare_digest(str(provided), bridge_secret):
             self._reply(401, {"detail":"TikTok bridge secret không đúng"})
             return
         try:
@@ -138,7 +139,8 @@ def start_control_server(bot):
     CONTROL_BOT=bot
     if CONTROL_SERVER is not None:
         return
-    host=os.getenv("TIKTOK_BRIDGE_CONTROL_HOST", "127.0.0.1")
+    # Docker reaches the host via host.docker.internal; every request still requires the shop secret.
+    host=os.getenv("TIKTOK_BRIDGE_CONTROL_HOST", "0.0.0.0")
     try:
         port=int(os.getenv("TIKTOK_BRIDGE_CONTROL_PORT", "8091"))
         CONTROL_SERVER=ThreadingHTTPServer((host, port), _TikTokControlHandler)
@@ -277,8 +279,8 @@ def patch_api():
         p.write_text(s,encoding="utf-8")
         log("🔧 Fix thiếu hashlib trong core/api.py")
 
-def install_plugin():
-    PLUGIN.parent.mkdir(parents=True,exist_ok=True)
+def install_plugin(path: Path = PLUGIN):
+    path.parent.mkdir(parents=True,exist_ok=True)
     # Keep the imported bridge compatible with this CRM's tenant-scoped API.
     # The source plugin is embedded above so ReLttk can still run standalone.
     code=PLUGIN_CODE
@@ -294,6 +296,11 @@ def install_plugin():
         'return (s(reply).strip(),None) if reply else (None,"Backend không có response/reply/message/text")',
         'return (s(reply).strip(),None) if reply else (None,None)',
     )
+    code=code.replace('AUTO_REPLY=os.getenv("TIKTOK_AUTO_REPLY","0")=="1"\n', "")
+    code=code.replace(
+        'log("🤖 Auto reply: "+("ON" if AUTO_REPLY else "OFF"))',
+        'log("🤖 RAG auto reply: CRM xử lý và gửi qua bridge theo cấu hình shop")',
+    )
     code=code.replace('seen={}\n', CONTROL_CODE+'\nseen={}\n', 1)
     code=code.replace(
         'async def on_start(bot):\n',
@@ -301,8 +308,8 @@ def install_plugin():
         1,
     )
     code=code.replace(
-        '        log("🤖 AI response: "+reply)\n\n        if not AUTO_REPLY:',
-        '        if reply:\n            log("🤖 AI response: "+reply)\n        else:\n            log("✅ Backend đã lưu tin TikTok.")\n\n        if not AUTO_REPLY or not reply:',
+        '        log("🤖 AI response: "+reply)\n\n        if not AUTO_REPLY:\n            log("🚫 Không gửi reply về TikTok vì TIKTOK_AUTO_REPLY=0")\n            return\n\n        try:\n            await bot.send_message(text=reply,msg=msg)\n            log("✅ Đã gửi TikTok reply: "+reply)\n        except Exception as e:\n            log(f"❌ send_message: {type(e).__name__}: {e}")\n            traceback.print_exc()',
+        '        if reply:\n            log("🤖 AI response: "+reply)\n        else:\n            log("✅ Backend đã lưu tin TikTok; CRM xử lý RAG và gửi trả lời qua bridge nếu bot đang bật.")',
     )
     # Forward the profile photo returned by ReLttk when available. TikTok
     # does not guarantee this field, so the CRM keeps initials as fallback.
@@ -379,8 +386,8 @@ def install_plugin():
         '        effective=text or media_text or ""\n',
         1,
     )
-    compile(code,str(PLUGIN),"exec")
-    PLUGIN.write_text(code,encoding="utf-8")
+    compile(code,str(path),"exec")
+    path.write_text(code,encoding="utf-8")
     log("✅ TikTok realtime bridge OK")
 
 def sessions():
@@ -630,11 +637,11 @@ def main():
         log("❌ Chưa có phiên TikTok. Mở lại ứng dụng để nhập cookie hoặc thử tự đọc hồ sơ trình duyệt.")
         raise SystemExit(1)
     if not verify_session():
-        if not _show_cookie_setup_ui("Phiên hiện tại chưa xác thực được. Hãy dán cookie mới rồi thử lại.") or not verify_session():
-            log("❌ Cookie TikTok chưa hợp lệ hoặc đã hết hạn; chưa khởi động bridge.")
-            raise SystemExit(1)
+        # TikTok may redirect this lightweight web check even while ReLttk's
+        # realtime session is still valid. Let the actual client decide.
+        log("⚠️ Không xác minh được phiên qua web; đang thử kết nối realtime bằng phiên đã lưu.")
     log("🧪 Echo="+os.getenv("TIKTOK_ECHO_TEST","0"))
-    log("🤖 AutoReply="+os.getenv("TIKTOK_AUTO_REPLY","0"))
+    log("🤖 RAG auto reply do CRM quản lý; không gửi reply trực tiếp từ plugin.")
     log("👉 Gửi DM từ account TikTok khác để test. Ctrl+C để dừng.\n")
     try:
         if IS_FROZEN:

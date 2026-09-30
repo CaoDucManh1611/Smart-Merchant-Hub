@@ -2451,6 +2451,49 @@ button:hover {
   font-size: 0.95em;
 }
 
+.channel span.shopee,
+.platform.shopee,
+.social-icon.shopee {
+  position: relative;
+  display: inline-grid !important;
+  place-items: center !important;
+  width: 18px !important;
+  height: 18px !important;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 5px !important;
+  background: #ee4d2d !important;
+  color: #ee4d2d !important;
+}
+
+.social-icon.shopee svg {
+  display: none;
+}
+
+.social-icon.shopee::before {
+  content: "S";
+  position: absolute;
+  inset: 38% 22% 16%;
+  display: grid;
+  place-items: center;
+  border-radius: 1px 1px 3px 3px;
+  background: #fff;
+  color: #ee4d2d;
+  font: 900 clamp(6px, 0.48em, 9px)/1 Arial, sans-serif;
+}
+
+.social-icon.shopee::after {
+  content: "";
+  position: absolute;
+  top: 16%;
+  left: 38%;
+  width: 24%;
+  height: 25%;
+  border: 1.25px solid #fff;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+}
+
 .social-icon.tiktok {
   display: inline-grid !important;
   place-items: center !important;

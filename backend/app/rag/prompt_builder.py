@@ -204,7 +204,12 @@ def build_prompt(
     else:
         full_system = (
             f"{system_prompt}\n\n"
-            f"Lưu ý: Không tìm thấy thông tin liên quan trong hệ thống."
+            "Không tìm thấy nguồn liên quan trong kho kiến thức. "
+            "Nếu đây là lời chào, lời cảm ơn, câu nói đời thường hoặc ý định chưa rõ, "
+            "hãy trả lời tự nhiên, ngắn gọn và hỏi tối đa một câu để làm rõ nhu cầu. "
+            "Nếu khách hỏi một sự kiện cụ thể về shop, sản phẩm, giá, tồn kho hoặc chính sách, "
+            "hãy nói rõ hệ thống chưa có đủ thông tin và mời nhân viên hỗ trợ. "
+            "Không được bịa dữ liệu của shop và không cần gắn nhãn nguồn khi không có nguồn."
         )
 
     messages.append({

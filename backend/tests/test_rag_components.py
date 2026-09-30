@@ -147,6 +147,8 @@ def test_prompt_and_no_context_fallback_follow_customer_language():
     messages = build_prompt(query="How do I return this product?", chunks=[])
     assert "Required reply language: English" in messages[0]["content"]
     assert "Ngôn ngữ trả lời bắt buộc" not in messages[0]["content"]
+    assert "hãy trả lời tự nhiên" in messages[0]["content"]
+    assert "không cần gắn nhãn nguồn" in messages[0]["content"]
     assert localize_rag_fallback(NO_CONTEXT_CHAT_FALLBACK, query="What is the return policy?").startswith("I couldn't find")
 
 
