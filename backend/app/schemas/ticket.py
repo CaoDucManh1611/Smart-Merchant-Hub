@@ -51,6 +51,8 @@ class TicketOut(BaseModel):
     status: str
     priority: str
     assigned_user_id: int | None = None
+    first_response_due_at: datetime | None = None
+    first_response_at: datetime | None = None
     sla_due_at: datetime | None = None
     resolved_at: datetime | None = None
     channel: str | None = None
@@ -105,8 +107,14 @@ class SlaNotificationOut(BaseModel):
     priority: str
     status: str
     assigned_user_id: int | None = None
+    sla_stage: str = "resolution"
     sla_due_at: datetime
     overdue_seconds: int
+
+
+class SlaRules(BaseModel):
+    first_response_hours: int = Field(default=2, ge=1, le=168, strict=True)
+    resolution_hours: int = Field(default=24, ge=1, le=720, strict=True)
 
 
 class SlaNotificationListOut(BaseModel):

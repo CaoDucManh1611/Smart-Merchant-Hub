@@ -60,6 +60,9 @@ const crmEnglishCopy = {
   "Trợ lý đang gặp sự cố; hãy thử lại hoặc chuyển câu hỏi cho nhân viên.": "The assistant is temporarily unavailable. Try again or ask a staff member.",
   "Chưa tải được tài liệu của shop. Vui lòng thử lại sau.": "Could not load this shop's documents. Please try again later.",
   "Chưa thể nhập tài liệu. Vui lòng kiểm tra tệp rồi thử lại.": "Could not upload the document. Check the file and try again.",
+  "Chưa tải được quy tắc thời hạn. Vui lòng thử lại sau.": "Could not load SLA rules. Please try again later.",
+  "Chưa lưu được quy tắc thời hạn. Vui lòng thử lại sau.": "Could not save SLA rules. Please try again later.",
+  "Thời hạn phản hồi phải từ 1–168 giờ và xử lý từ 1–720 giờ.": "Response targets must be 1–168 hours and resolution targets 1–720 hours.",
   "Chưa thể xóa tài liệu. Vui lòng thử lại sau.": "Could not delete the document. Please try again later.",
   "Chưa thể cập nhật tài liệu. Vui lòng thử lại sau.": "Could not update the document. Please try again later.",
   "Chưa thể xử lý lại tài liệu. Vui lòng thử lại sau.": "Could not process the document again. Please try again later.",
@@ -101,6 +104,63 @@ const crmEnglishCopy = {
   "Chưa thể tải báo cáo dạng tệp. Vui lòng thử lại sau.": "Could not download the report. Please try again later.",
   "Chưa thể cập nhật số liệu. Vui lòng thử lại sau.": "Could not refresh the report figures. Please try again later.",
   "Chi": "Spent",
+  "Xuất sản phẩm & tồn kho": "Export products & inventory",
+  "Xuất đơn hàng CSV": "Export orders CSV",
+  "Nhập CSV đơn hàng (tạo đơn nháp)": "Import orders from CSV (creates drafts)",
+  "Chọn tệp CSV": "Choose CSV file",
+  "Xem trước": "Preview",
+  "Nhập các đơn nháp": "Import draft orders",
+  "CSV cần các cột order_number,customer_id,sku,quantity; conversation_id tùy chọn.": "CSV columns: order_number, customer_id, sku, quantity; conversation_id is optional.",
+  "Dùng giá hiện tại trong danh mục; đơn nhập luôn ở trạng thái nháp và phải xác nhận qua quy trình tồn kho.": "Uses current catalog prices. Imported orders stay as drafts and must pass the normal stock confirmation flow.",
+  "Chưa chọn tệp CSV.": "Choose a CSV file first.",
+  "Tệp này đã được nhập; không tạo đơn trùng.": "This file was already imported; no duplicate orders were created.",
+  "Đã nhập đơn nháp. Xác nhận từng đơn qua quy trình bán hàng.": "Draft orders imported. Confirm each one through the sales workflow.",
+  "Đơn nháp trong tệp": "Draft orders in file",
+  "Một trăm đơn đầu tiên được hiển thị.": "Showing the first 100 orders.",
+  "Dòng sản phẩm": "Order lines",
+  "Tổng theo giá hiện tại": "Total at current prices",
+  "Sửa lỗi trước khi nhập.": "Fix the errors before importing.",
+  "Không thể xem trước tệp đơn hàng.": "Could not preview the order file.",
+  "Không thể nhập đơn hàng.": "Could not import the orders.",
+  "Nhập": "Import",
+  "Hủy": "Cancel",
+  "Đơn hàng, lịch hẹn, báo giá & hóa đơn": "Orders, appointments, quotes & invoices",
+  "Doanh thu tính từ đơn ở trạng thái đã xác nhận trở đi; Shopee không nằm trong phạm vi.": "Revenue includes orders from confirmed status onward; Shopee is excluded.",
+  "bản ghi nguồn": "source records",
+  "Doanh thu đơn đã ghi nhận": "Recognized order revenue",
+  "đơn trong bộ lọc": "orders in filters",
+  "báo giá trong bộ lọc": "quotes in filters",
+  "Lịch hẹn": "Appointments",
+  "Chưa có lịch": "No appointments",
+  "Báo giá được chấp thuận": "Accepted quote value",
+  "Công nợ hóa đơn": "Invoice balance due",
+  "Đã thu": "Collected",
+  "Chưa có bản ghi thương mại trong phạm vi lọc.": "No commerce records match these filters.",
+  "Loại": "Type",
+  "Mã / nội dung": "Reference / details",
+  "Khách hàng": "Customer",
+  "Trạng thái": "Status",
+  "Kênh": "Channel",
+  "Số tiền": "Amount",
+  "Mở nguồn": "Open source",
+  "Mở bản ghi": "Open record",
+  "Đơn hàng": "Order",
+  "Báo giá": "Quote",
+  "Hóa đơn": "Invoice",
+  "scheduled": "Scheduled",
+  "confirmed": "Confirmed",
+  "completed": "Completed",
+  "cancelled": "Cancelled",
+  "no_show": "No show",
+  "draft": "Draft",
+  "sent": "Sent",
+  "accepted": "Accepted",
+  "rejected": "Rejected",
+  "expired": "Expired",
+  "issued": "Issued",
+  "paid": "Paid",
+  "overdue": "Overdue",
+  "void": "Void",
   "Đã lưu thông tin bổ sung.": "Additional customer information saved.",
   "Đã nhận tài liệu. Hệ thống đang xử lý ở nền; bạn có thể tiếp tục làm việc.": "Document received. Processing will continue in the background while you work.",
 };
@@ -108,6 +168,17 @@ const crmEnglishCopy = {
 function crmUiText(message) {
   if (uiLocale.value !== "en" || !message) return message;
   return crmEnglishCopy[message] || t(message);
+}
+
+function commerceStatusLabel(status) {
+  const labels = {
+    scheduled: ["Đã đặt", "Scheduled"], confirmed: ["Đã xác nhận", "Confirmed"], completed: ["Hoàn tất", "Completed"],
+    cancelled: ["Đã hủy", "Cancelled"], no_show: ["Không đến", "No show"], draft: ["Bản nháp", "Draft"],
+    sent: ["Đã gửi", "Sent"], accepted: ["Đã chấp thuận", "Accepted"], rejected: ["Từ chối", "Rejected"],
+    expired: ["Hết hạn", "Expired"], issued: ["Đã phát hành", "Issued"], paid: ["Đã thanh toán", "Paid"],
+    overdue: ["Quá hạn", "Overdue"], void: ["Đã hủy", "Void"],
+  };
+  return labels[status] ? labels[status][uiLocale.value === "en" ? 1 : 0] : status;
 }
 
 function crmErrorText(message, fallback = "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.") {
@@ -208,7 +279,7 @@ const bulkAssignmentNotice = ref("");
 const conversationOutcomeSaving = ref(false);
 const conversationOutcomeError = ref("");
 const conversationActionsOpen = ref(false);
-const conversationPriorityIds = ref(new Set());
+const conversationPrioritySaving = ref(false);
 const conversationFavoriteIds = ref(new Set());
 const composerMode = ref("reply");
 
@@ -394,6 +465,11 @@ const orders = ref([]);
 const ordersLoading = ref(false);
 const orderSaving = ref(false);
 const orderError = ref("");
+const orderImportInput = ref(null);
+const orderImportFile = ref(null);
+const orderImportPreview = ref(null);
+const orderImportBusy = ref(false);
+const orderImportNotice = ref("");
 const orderCustomers = ref([]);
 const revenueByChannel = ref([]);
 const orderPaymentDrafts = ref({});
@@ -478,6 +554,9 @@ const tenantReady = computed(() => (
   && Boolean(tenantProvisioning.value?.feature_enabled)
   && Boolean(tenantProvisioning.value?.subscription_active)
 ));
+watch([currentTab, tenantReady], ([tab, ready]) => {
+  if (tab === "sla_rules" && ready) void loadSlaRules();
+});
 const authLoading = ref(false);
 const authError = ref("");
 const authRateLimitSeconds = ref(0);
@@ -792,12 +871,15 @@ const ticketError = ref("");
 const ticketsLoadFailed = ref(false);
 const ticketReport = ref({ items: [], overdue_tickets: 0 });
 const slaNotifications = ref([]);
+const firstResponseSlaBreachCount = computed(() => slaNotifications.value.filter((item) => item.sla_stage === "first_response").length);
+const resolutionSlaBreachCount = computed(() => slaNotifications.value.filter((item) => item.sla_stage !== "first_response").length);
 const operationalNotifications = ref([]);
 const notificationsOpen = ref(false);
 const ticketHistory = ref({});
 const ticketHistoryLoading = ref({});
 const ticketCommentDrafts = ref({});
 const crmOverview = ref(null);
+const commerceReport = ref(null);
 const revenueAttribution = ref(null);
 const attributionSaving = ref(false);
 const agentPerformance = ref([]);
@@ -931,6 +1013,9 @@ const businessHourDayLabels = Object.freeze([
 const businessHoursNotice = ref("");
 const slaRulesForm = ref({ firstResponseHours: 2, resolutionHours: 24 });
 const slaRulesNotice = ref("");
+const slaRulesError = ref("");
+const slaRulesLoading = ref(false);
+const slaRulesSaving = ref(false);
 const channelModalOpen = ref(false);
 const channelModalTab = ref("meta");
 const textImportOpen = ref(false);
@@ -1513,8 +1598,54 @@ function removeSpecialBusinessDate(index) {
   specialBusinessDates.value = specialBusinessDates.value.filter((_, itemIndex) => itemIndex !== index);
 }
 
-function saveSlaRules() {
-  slaRulesNotice.value = `Đã lưu quy tắc: phản hồi trong ${slaRulesForm.value.firstResponseHours} giờ, xử lý trong ${slaRulesForm.value.resolutionHours} giờ.`;
+async function loadSlaRules() {
+  if (!tenantReady.value || slaRulesLoading.value) return;
+  slaRulesLoading.value = true;
+  slaRulesError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/tickets/sla/rules`);
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
+    slaRulesForm.value = {
+      firstResponseHours: Number(detail.first_response_hours),
+      resolutionHours: Number(detail.resolution_hours),
+    };
+  } catch (err) {
+    slaRulesError.value = friendlyErrorMessage(err, "Chưa tải được quy tắc thời hạn. Vui lòng thử lại sau.");
+  } finally {
+    slaRulesLoading.value = false;
+  }
+}
+
+async function saveSlaRules() {
+  const firstResponseHours = Number(slaRulesForm.value.firstResponseHours);
+  const resolutionHours = Number(slaRulesForm.value.resolutionHours);
+  if (!Number.isInteger(firstResponseHours) || firstResponseHours < 1 || firstResponseHours > 168
+    || !Number.isInteger(resolutionHours) || resolutionHours < 1 || resolutionHours > 720) {
+    slaRulesError.value = "Thời hạn phản hồi phải từ 1–168 giờ và xử lý từ 1–720 giờ.";
+    return;
+  }
+  slaRulesSaving.value = true;
+  slaRulesError.value = "";
+  slaRulesNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/tickets/sla/rules`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ first_response_hours: firstResponseHours, resolution_hours: resolutionHours }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
+    slaRulesForm.value = {
+      firstResponseHours: Number(detail.first_response_hours),
+      resolutionHours: Number(detail.resolution_hours),
+    };
+    slaRulesNotice.value = "Đã lưu quy tắc. Hạn mới áp dụng cho phiếu được tạo sau thời điểm này.";
+  } catch (err) {
+    slaRulesError.value = friendlyErrorMessage(err, "Chưa lưu được quy tắc thời hạn. Vui lòng thử lại sau.");
+  } finally {
+    slaRulesSaving.value = false;
+  }
 }
 
 function numericPlanPrice(value) {
@@ -2326,7 +2457,7 @@ function conversationUrgentCount(item) {
 
 const conversationPriorityActive = computed(() => (
   selectedId.value !== null
-  && conversationPriorityIds.value.has(selectedId.value)
+  && String(selected.value?.priority || "normal") !== "normal"
 ));
 
 const conversationFavoriteActive = computed(() => (
@@ -2392,7 +2523,7 @@ const unreadConversationCount = computed(() => (
 ));
 
 const importantConversationCount = computed(() => (
-  conversations.value.filter((item) => conversationPriorityIds.value.has(item.conversation_id)).length
+  conversations.value.filter((item) => String(item.priority || "normal") !== "normal").length
 ));
 
 const salesOrderProgress = [
@@ -2614,6 +2745,19 @@ function openInboxOrderDetail(order) {
   void loadSalesOrderEvents(order);
 }
 
+async function openCommerceReportRecord(record) {
+  if (record?.kind === "order") {
+    currentTab.value = "orders";
+    await fetchOrders();
+    const order = orders.value.find((item) => Number(item.id) === Number(record.id));
+    if (order) await loadSalesOrderEvents(order);
+    return;
+  }
+  if (["appointment", "quote", "invoice"].includes(record?.kind)) {
+    await openWorkQueueItem({ kind: record.kind, id: record.id });
+  }
+}
+
 const activeOrderProducts = computed(() => (
   products.value.filter((product) => product.status === "active")
 ));
@@ -2750,7 +2894,7 @@ const filtered = computed(() => {
 
       const quickFilterOk = inboxQuickFilter.value === "all"
         || (inboxQuickFilter.value === "unread" && Number(item.unread_count || 0) > 0)
-        || (inboxQuickFilter.value === "important" && conversationPriorityIds.value.has(item.conversation_id));
+        || (inboxQuickFilter.value === "important" && String(item.priority || "normal") !== "normal");
 
       const segmentOk = !selectedSegmentId.value
         || segmentCustomerIds.value.has(Number(item.customer_id));
@@ -4384,6 +4528,86 @@ async function fetchProducts() {
   }
 }
 
+async function downloadCommerceCsv(path, filename, target) {
+  const errorRef = target === "orders" ? orderError : productError;
+  errorRef.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}${path}`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    errorRef.value = friendlyErrorMessage(err, "Chưa thể xuất CSV. Vui lòng thử lại sau.");
+  }
+}
+
+function selectOrderImportFile(event) {
+  orderImportFile.value = event.target.files?.[0] || null;
+  orderImportPreview.value = null;
+  orderImportNotice.value = "";
+  orderError.value = "";
+}
+
+async function previewOrderImport() {
+  if (!orderImportFile.value || orderImportBusy.value) {
+    orderError.value = crmUiText("Chưa chọn tệp CSV.");
+    return;
+  }
+  orderImportBusy.value = true;
+  orderError.value = "";
+  orderImportNotice.value = "";
+  try {
+    const formData = new FormData();
+    formData.append("file", orderImportFile.value);
+    const response = await apiFetch(`${API_BASE}/orders/import?preview=true`, { method: "POST", body: formData });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail?.message || body.detail || crmUiText("Không thể xem trước tệp đơn hàng."));
+    orderImportPreview.value = body;
+    if (body.already_imported) orderImportNotice.value = crmUiText("Tệp này đã được nhập; không tạo đơn trùng.");
+  } catch (error) {
+    orderError.value = friendlyErrorMessage(error, crmUiText("Không thể xem trước tệp đơn hàng."));
+  } finally {
+    orderImportBusy.value = false;
+  }
+}
+
+async function importDraftOrders() {
+  const preview = orderImportPreview.value;
+  if (!orderImportFile.value || !preview || preview.already_imported || preview.errors?.length || orderImportBusy.value) return;
+  const confirmed = await requestConfirmation(
+    `${uiLocale.value === "en" ? "Import" : "Nhập"} ${preview.orders || 0} ${uiLocale.value === "en" ? "draft order(s) using current catalog prices?" : "đơn nháp theo giá hiện tại trong danh mục?"}`,
+    { title: crmUiText("Nhập các đơn nháp"), confirmLabel: crmUiText("Nhập"), cancelLabel: crmUiText("Hủy") },
+  );
+  if (!confirmed) return;
+  orderImportBusy.value = true;
+  orderError.value = "";
+  try {
+    const formData = new FormData();
+    formData.append("file", orderImportFile.value);
+    const response = await apiFetch(`${API_BASE}/orders/import`, { method: "POST", body: formData });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail?.message || body.detail || crmUiText("Không thể nhập đơn hàng."));
+    orderImportNotice.value = body.already_imported
+      ? crmUiText("Tệp này đã được nhập; không tạo đơn trùng.")
+      : `${crmUiText("Đã nhập đơn nháp. Xác nhận từng đơn qua quy trình bán hàng.")} (${body.imported || 0})`;
+    orderImportPreview.value = null;
+    orderImportFile.value = null;
+    if (orderImportInput.value) orderImportInput.value.value = "";
+    await fetchOrders();
+  } catch (error) {
+    orderError.value = friendlyErrorMessage(error, crmUiText("Không thể nhập đơn hàng."));
+  } finally {
+    orderImportBusy.value = false;
+  }
+}
+
 function openProductFilePicker() {
   productFileInput.value?.click();
 }
@@ -5925,6 +6149,7 @@ async function fetchReports() {
   reportsLoading.value = true;
   reportsError.value = "";
   crmOverview.value = null;
+  commerceReport.value = null;
   agentPerformance.value = [];
   inventoryReport.value = null;
   purchaseCostReport.value = null;
@@ -5939,8 +6164,9 @@ async function fetchReports() {
     const attributionParams = new URLSearchParams(params);
     attributionParams.set("model", "last_touch");
     const attributionSuffix = `?${attributionParams.toString()}`;
-    const [overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse, pipelineResponse, ticketResponse, qualityResponse] = await Promise.all([
+    const [overviewResponse, commerceResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse, pipelineResponse, ticketResponse, qualityResponse] = await Promise.all([
       apiFetch(`${API_BASE}/reports/overview${suffix}`),
+      apiFetch(`${API_BASE}/reports/commerce${suffix}`),
       apiFetch(`${API_BASE}/reports/agent-performance`),
       apiFetch(`${API_BASE}/reports/inventory`),
       apiFetch(`${API_BASE}/reports/purchase-costs${suffix}`),
@@ -5949,10 +6175,11 @@ async function fetchReports() {
       apiFetch(`${API_BASE}/reports/tickets${suffix}`),
       apiFetch(`${API_BASE}/reports/quality?days=30`),
     ]);
-    if (![overviewResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse, pipelineResponse, ticketResponse, qualityResponse].every((response) => response.ok)) {
+    if (![overviewResponse, commerceResponse, performanceResponse, inventoryResponse, purchaseCostResponse, attributionResponse, pipelineResponse, ticketResponse, qualityResponse].every((response) => response.ok)) {
       throw new Error("A report request failed");
     }
     crmOverview.value = await overviewResponse.json();
+    commerceReport.value = await commerceResponse.json();
     if (performanceResponse.ok) {
       agentPerformance.value = (await performanceResponse.json()).items || [];
     }
@@ -8139,12 +8366,28 @@ async function toggleLinkedCustomerInbox() {
   await loadConversations(false, { customerId: inboxCustomerFilterId.value });
 }
 
-function toggleConversationPriority() {
-  if (selectedId.value === null) return;
-  const next = new Set(conversationPriorityIds.value);
-  if (next.has(selectedId.value)) next.delete(selectedId.value);
-  else next.add(selectedId.value);
-  conversationPriorityIds.value = next;
+async function toggleConversationPriority() {
+  const conversation = selected.value;
+  if (!conversation || conversationPrioritySaving.value) return;
+  conversationPrioritySaving.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/conversations/${conversation.conversation_id}/priority`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_priority: !conversationPriorityActive.value }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
+    conversations.value = conversations.value.map((item) => (
+      Number(item.conversation_id) === Number(detail.conversation_id)
+        ? { ...item, priority: detail.priority }
+        : item
+    ));
+  } catch (err) {
+    error.value = friendlyErrorMessage(err, "Chưa cập nhật được mức ưu tiên. Vui lòng thử lại.");
+  } finally {
+    conversationPrioritySaving.value = false;
+  }
 }
 
 function toggleConversationFavorite() {
@@ -9845,6 +10088,7 @@ function followupRecommendationLabel(item) {
                   aria-label="Đánh dấu ưu tiên"
                   :class="{ active: conversationPriorityActive }"
                   :aria-pressed="conversationPriorityActive"
+                  :disabled="conversationPrioritySaving"
                   @click="toggleConversationPriority"
                 >!</button>
                 <button
@@ -11503,6 +11747,7 @@ function followupRecommendationLabel(item) {
             <h2>Sản phẩm</h2>
             <p>Theo dõi danh mục sản phẩm và xử lý tồn kho của shop.</p>
           </div>
+          <button type="button" class="settings-refresh" @click="downloadCommerceCsv('/products/export.csv', 'products-inventory.csv', 'products')">{{ crmUiText('Xuất sản phẩm & tồn kho') }}</button>
         </div>
 
         <div
@@ -11722,7 +11967,7 @@ function followupRecommendationLabel(item) {
         <div v-if="ticketError" class="product-error" role="alert">{{ crmErrorText(ticketError) }}</div>
 
         <div v-if="slaNotifications.length" class="sla-alert">
-          Có {{ slaNotifications.length }} phiếu hỗ trợ đã quá hạn cần xử lý.
+          {{ firstResponseSlaBreachCount }} {{ t('phiếu quá hạn phản hồi') }} · {{ resolutionSlaBreachCount }} {{ t('phiếu quá hạn xử lý') }}
         </div>
 
         <div class="ticket-summary">
@@ -11784,7 +12029,7 @@ function followupRecommendationLabel(item) {
                 <td>{{ ticket.channel || '—' }}</td>
                 <td><span class="product-status" :class="ticket.priority">{{ ticketPriorityLabel(ticket.priority) }}</span></td>
                 <td><select class="inline-stage" :value="ticket.status" @change="changeTicketStatus(ticket, $event.target.value)"><option value="open">Đang mở</option><option value="pending">Đang chờ</option><option value="resolved">Đã xử lý</option><option value="closed">Đã đóng</option></select></td>
-                <td>{{ formatDateTime(ticket.sla_due_at) }}</td>
+                <td><span>{{ t('Phản hồi trước') }}: {{ formatDateTime(ticket.first_response_due_at) }}</span><small>{{ t('Xử lý trước') }}: {{ formatDateTime(ticket.sla_due_at) }}</small></td>
                 <td>
                   <select class="inline-stage" :value="ticket.assigned_user_id || ''" @change="assignTicket(ticket, $event.target.value)">
                     <option value="">Chưa phân công</option>
@@ -11826,6 +12071,7 @@ function followupRecommendationLabel(item) {
             <h2>Đơn bán</h2>
             <p>Theo dõi và xử lý đơn bán; doanh thu được gắn với kênh hội thoại.</p>
           </div>
+          <button v-if="canManageWorkspace" type="button" class="settings-refresh" @click="downloadCommerceCsv('/orders/export.csv', 'sales-orders.csv', 'orders')">{{ crmUiText('Xuất đơn hàng CSV') }}</button>
         </div>
 
         <div v-if="orderError" class="product-error">{{ orderError }}</div>
@@ -11846,6 +12092,25 @@ function followupRecommendationLabel(item) {
           <strong>Chế độ xử lý đơn bán</strong>
           <span>Đơn được tạo từ hộp thư hoặc luồng trợ lý. Màn hình này chỉ xử lý trạng thái, thanh toán, vận chuyển và lịch sử.</span>
         </div>
+
+        <details class="report-panel order-import-panel">
+          <summary>{{ crmUiText('Nhập CSV đơn hàng (tạo đơn nháp)') }}</summary>
+          <p>{{ crmUiText('CSV cần các cột order_number,customer_id,sku,quantity; conversation_id tùy chọn.') }} {{ crmUiText('Dùng giá hiện tại trong danh mục; đơn nhập luôn ở trạng thái nháp và phải xác nhận qua quy trình tồn kho.') }}</p>
+          <div class="order-import-actions">
+            <input ref="orderImportInput" type="file" accept=".csv,text/csv" aria-label="CSV order import file" @change="selectOrderImportFile" />
+            <button type="button" class="settings-refresh" :disabled="orderImportBusy || !orderImportFile" @click="previewOrderImport">{{ orderImportBusy ? crmUiText('Đang xử lý...') : crmUiText('Xem trước') }}</button>
+            <button type="button" class="settings-refresh" :disabled="orderImportBusy || !orderImportPreview || orderImportPreview.already_imported || orderImportPreview.errors?.length" @click="importDraftOrders">{{ crmUiText('Nhập các đơn nháp') }}</button>
+          </div>
+          <p v-if="orderImportPreview && !orderImportPreview.already_imported" class="order-import-summary" role="status">
+            {{ crmUiText('Đơn nháp trong tệp') }}: {{ orderImportPreview.orders || 0 }} · {{ crmUiText('Dòng sản phẩm') }}: {{ orderImportPreview.line_items || 0 }} · {{ crmUiText('Tổng theo giá hiện tại') }}: {{ formatMoney(orderImportPreview.total_amount || 0) }}
+          </p>
+          <ul v-if="orderImportPreview?.orders_preview?.length" class="order-import-preview-list" :aria-label="crmUiText('Đơn nháp trong tệp')">
+            <li v-for="item in orderImportPreview.orders_preview" :key="item.order_number"><strong>{{ item.order_number }}</strong> · {{ crmUiText('Khách hàng') }} #{{ item.customer_id }} · {{ item.line_items }} {{ crmUiText('Dòng sản phẩm') }} · {{ formatMoney(item.total_amount) }}</li>
+          </ul>
+          <small v-if="orderImportPreview?.preview_truncated" class="order-import-truncated">{{ crmUiText('Một trăm đơn đầu tiên được hiển thị.') }}</small>
+          <ul v-if="orderImportPreview?.errors?.length" class="order-import-errors" role="alert"><li v-for="error in orderImportPreview.errors" :key="error">{{ error }}</li></ul>
+          <p v-if="orderImportNotice" class="product-import-notice" role="status">{{ orderImportNotice }}</p>
+        </details>
 
         <div v-if="ordersLoading" class="products-empty">Đang tải đơn hàng...</div>
         <div v-else-if="!orders.length" class="products-empty">Chưa có đơn hàng nào.</div>
@@ -12506,6 +12771,28 @@ function followupRecommendationLabel(item) {
             <div class="report-card"><span>Phiếu đang mở</span><strong>{{ crmOverview.open_ticket_count }}</strong><small>{{ crmOverview.ticket_count }} phiếu tổng</small></div>
             <div class="report-card"><span>Đơn nhập hàng</span><strong>{{ crmOverview.purchase_order_count || 0 }}</strong><small>{{ crmUiText('Chi') }} {{ formatMoney(crmOverview.purchase_spend) }}</small></div>
           </div>
+          <div v-if="commerceReport" class="report-panel">
+            <div class="report-panel-header"><div><h3>{{ crmUiText('Đơn hàng, lịch hẹn, báo giá & hóa đơn') }}</h3><span>{{ crmUiText('Doanh thu tính từ đơn ở trạng thái đã xác nhận trở đi; Shopee không nằm trong phạm vi.') }}</span></div><span>{{ commerceReport.source_records?.length || 0 }} {{ crmUiText('bản ghi nguồn') }}</span></div>
+            <div class="report-cards">
+              <div class="report-card accent"><span>{{ crmUiText('Doanh thu đơn đã ghi nhận') }}</span><strong>{{ formatMoney(commerceReport.orders?.recognized_revenue || 0) }}</strong><small>{{ commerceReport.orders?.count || 0 }} {{ crmUiText('đơn trong bộ lọc') }}</small></div>
+              <div class="report-card"><span>{{ crmUiText('Lịch hẹn') }}</span><strong>{{ commerceReport.appointments?.count || 0 }}</strong><small>{{ Object.entries(commerceReport.appointments?.by_status || {}).map(([status, count]) => `${commerceStatusLabel(status)}: ${count}`).join(' · ') || crmUiText('Chưa có lịch') }}</small></div>
+              <div class="report-card"><span>{{ crmUiText('Báo giá được chấp thuận') }}</span><strong>{{ formatMoney(commerceReport.quotes?.accepted_value || 0) }}</strong><small>{{ commerceReport.quotes?.count || 0 }} {{ crmUiText('báo giá trong bộ lọc') }}</small></div>
+              <div class="report-card"><span>{{ crmUiText('Công nợ hóa đơn') }}</span><strong>{{ formatMoney(commerceReport.invoices?.outstanding || 0) }}</strong><small>{{ crmUiText('Đã thu') }} {{ formatMoney(commerceReport.invoices?.collected || 0) }}</small></div>
+            </div>
+            <div v-if="!commerceReport.source_records?.length" class="products-empty">{{ crmUiText('Chưa có bản ghi thương mại trong phạm vi lọc.') }}</div>
+            <div v-else class="products-table-wrap">
+              <table class="products-table reports-table">
+                <thead><tr><th>{{ crmUiText('Loại') }}</th><th>{{ crmUiText('Mã / nội dung') }}</th><th>{{ crmUiText('Khách hàng') }}</th><th>{{ crmUiText('Trạng thái') }}</th><th>{{ crmUiText('Kênh') }}</th><th>{{ crmUiText('Số tiền') }}</th><th>{{ crmUiText('Mở nguồn') }}</th></tr></thead>
+                <tbody><tr v-for="record in commerceReport.source_records" :key="`${record.kind}-${record.id}`">
+                  <td>{{ crmUiText(({ order: 'Đơn hàng', appointment: 'Lịch hẹn', quote: 'Báo giá', invoice: 'Hóa đơn' })[record.kind] || record.kind) }}</td>
+                  <td><strong>{{ record.label }}</strong><small>#{{ record.id }} · {{ record.created_at ? formatDateTime(record.created_at) : '—' }}</small></td>
+                  <td>{{ record.customer || '—' }}</td><td>{{ commerceStatusLabel(record.status) }}</td><td>{{ record.channel || '—' }}</td>
+                  <td>{{ record.amount == null ? '—' : formatMoney(record.amount) }}</td>
+                  <td><button v-if="['order', 'appointment', 'quote', 'invoice'].includes(record.kind)" type="button" class="table-action-btn" @click="openCommerceReportRecord(record)">{{ crmUiText('Mở bản ghi') }}</button><span v-else>—</span></td>
+                </tr></tbody>
+              </table>
+            </div>
+          </div>
           <div class="report-panel quality-ops-panel">
             <div class="report-panel-header">
               <div><h3>Vận hành nền tảng</h3><span>Lượt dùng, kênh kết nối, chi phí trợ lý và thời hạn trong {{ qualityDashboard.period_days || 30 }} ngày gần nhất</span></div>
@@ -12612,9 +12899,13 @@ function followupRecommendationLabel(item) {
 
       <section v-if="currentTab === 'sla_rules'" class="settings-layout sla-rules-layout">
         <div class="settings-card">
-          <div class="settings-card-header"><div><span class="card-eyebrow">QUY TẮC PHỤC VỤ</span><h2>Quy tắc thời hạn</h2><p>Đặt thời gian phản hồi và xử lý để đội ngũ biết việc nào cần ưu tiên.</p></div></div>
-          <div class="sla-rules-grid"><label>Phản hồi trong (giờ)<input v-model.number="slaRulesForm.firstResponseHours" type="number" min="1" max="168" /></label><label>Hoàn tất trong (giờ)<input v-model.number="slaRulesForm.resolutionHours" type="number" min="1" max="720" /></label></div>
-          <p class="settings-muted">Phiếu quá hạn sẽ được đánh dấu trong mục Phiếu hỗ trợ và gửi thông báo cho người phụ trách.</p><div v-if="slaRulesNotice" class="settings-notice" role="status">{{ slaRulesNotice }}</div><button type="button" class="primary-btn" @click="saveSlaRules">Lưu quy tắc</button>
+          <div class="settings-card-header"><div><span class="card-eyebrow">{{ t('QUY TẮC PHỤC VỤ') }}</span><h2>{{ t('Quy tắc thời hạn') }}</h2><p>{{ t('Đặt thời gian phản hồi và xử lý để đội ngũ biết việc nào cần ưu tiên.') }}</p></div></div>
+          <div v-if="slaRulesLoading" class="settings-muted" role="status">{{ t('Đang tải quy tắc thời hạn…') }}</div>
+          <div class="sla-rules-grid"><label>{{ t('Phản hồi trong (giờ)') }}<input v-model.number="slaRulesForm.firstResponseHours" type="number" min="1" max="168" :disabled="!canManageWorkspace || slaRulesLoading || slaRulesSaving" /></label><label>{{ t('Hoàn tất trong (giờ)') }}<input v-model.number="slaRulesForm.resolutionHours" type="number" min="1" max="720" :disabled="!canManageWorkspace || slaRulesLoading || slaRulesSaving" /></label></div>
+          <p class="settings-muted">{{ t('Phiếu quá hạn sẽ được đánh dấu trong mục Phiếu hỗ trợ và gửi thông báo cho người phụ trách.') }} {{ t('Quy tắc chỉ áp dụng cho phiếu mới; phiếu hiện có giữ nguyên hạn đã giao.') }}</p>
+          <div v-if="slaRulesError" class="product-error" role="alert">{{ crmErrorText(slaRulesError) }}</div><div v-if="slaRulesNotice" class="settings-notice" role="status">{{ t(slaRulesNotice) }}</div>
+          <p v-if="!canManageWorkspace" class="settings-muted">{{ t('Chỉ chủ shop hoặc quản lý được thay đổi quy tắc này.') }}</p>
+          <button v-if="canManageWorkspace" type="button" class="primary-btn" :disabled="slaRulesLoading || slaRulesSaving" @click="saveSlaRules">{{ slaRulesSaving ? t('Đang lưu…') : t('Lưu quy tắc') }}</button>
         </div>
       </section>
 

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 import pytest
 from fastapi import HTTPException
 
-from app.api.appointments import AppointmentCreate, ServiceCreate, _ensure_no_conflict, create_appointment, create_service, list_appointments
+from app.api.appointments import AppointmentCreate, AppointmentUpdate, ServiceCreate, _ensure_no_conflict, create_appointment, create_service, list_appointments, update_appointment
 from app.api.commercial import (
     InvoiceCreate,
     InvoicePaymentCreate,
@@ -34,6 +34,7 @@ from app.models.industry_modules import (
     Appointment,
     AppointmentService,
     CommercialInvoice,
+    CommercialInvoicePayment,
     CommercialProject,
     CommercialQuote,
 )
@@ -124,6 +125,11 @@ def test_appointments_remind_once_and_quote_to_project_to_paid_invoice(monkeypat
             })
             assert sent_emails[-1]["recipient_email"] == "customer@example.com"
             assert "lịch" in sent_emails[-1]["body"].lower()
+            cancelled = update_appointment(email_appointment_row.id, AppointmentUpdate(status="cancelled"), db, db, tenant)
+            assert cancelled["status"] == "cancelled"
+            with pytest.raises(HTTPException) as reopened_appointment:
+                update_appointment(email_appointment_row.id, AppointmentUpdate(status="confirmed"), db, db, tenant)
+            assert reopened_appointment.value.status_code == 409
 
             quote = create_quote(
                 QuoteCreate(
@@ -151,8 +157,15 @@ def test_appointments_remind_once_and_quote_to_project_to_paid_invoice(monkeypat
                 send_quote_email(quote["id"], db, tenant)
             assert duplicate_quote_email.value.status_code == 409
             update_quote(quote["id"], QuoteUpdate(status="accepted"), db, tenant)
+            with pytest.raises(HTTPException) as terminal_quote:
+                update_quote(quote["id"], QuoteUpdate(status="rejected"), db, tenant)
+            assert terminal_quote.value.status_code == 409
             project = convert_quote_to_project(quote["id"], db, tenant)
             assert convert_quote_to_project(quote["id"], db, tenant)["id"] == project["id"]
+            update_project(project["id"], ProjectUpdate(status="completed"), db, db, tenant)
+            with pytest.raises(HTTPException) as terminal_project:
+                update_project(project["id"], ProjectUpdate(status="active"), db, db, tenant)
+            assert terminal_project.value.status_code == 409
             invoice = create_invoice(
                 InvoiceCreate(
                     customer_id=customer.id,
@@ -168,13 +181,23 @@ def test_appointments_remind_once_and_quote_to_project_to_paid_invoice(monkeypat
             emailed_invoice = send_invoice_email(invoice["id"], db, tenant)
             assert emailed_invoice["email_sent_at"] is not None
             assert "Hóa đơn" in sent_emails[-1]["title"]
-            record_invoice_payment(invoice["id"], InvoicePaymentCreate(amount=Decimal("1000000")), db, tenant)
-            paid = record_invoice_payment(invoice["id"], InvoicePaymentCreate(amount=Decimal("1200000")), db, tenant)
+            with pytest.raises(HTTPException) as invalid_invoice_transition:
+                update_invoice(invoice["id"], InvoiceUpdate(status="draft"), db, tenant)
+            assert invalid_invoice_transition.value.status_code == 409
+            first_payment_payload = InvoicePaymentCreate(amount=Decimal("1000000"), idempotency_key="invoice-pay-first-001")
+            first_payment = record_invoice_payment(invoice["id"], first_payment_payload, db, tenant)
+            first_payment_replay = record_invoice_payment(invoice["id"], first_payment_payload, db, tenant)
+            assert first_payment_replay["paid_amount"] == first_payment["paid_amount"] == Decimal("1000000.00")
+            assert len(first_payment_replay["payments"]) == 1
+            with pytest.raises(HTTPException) as reused_payment_key:
+                record_invoice_payment(invoice["id"], InvoicePaymentCreate(amount=Decimal("500000"), idempotency_key="invoice-pay-first-001"), db, tenant)
+            assert reused_payment_key.value.status_code == 409
+            paid = record_invoice_payment(invoice["id"], InvoicePaymentCreate(amount=Decimal("1200000"), idempotency_key="invoice-pay-second-002"), db, tenant)
             assert paid["status"] == "paid"
             assert len(paid["payments"]) == 2
             assert db.query(CommercialInvoice).filter_by(id=invoice["id"]).one().paid_amount == Decimal("2200000.00")
             with pytest.raises(HTTPException) as overpayment:
-                record_invoice_payment(invoice["id"], InvoicePaymentCreate(amount=Decimal("1")), db, tenant)
+                record_invoice_payment(invoice["id"], InvoicePaymentCreate(amount=Decimal("1"), idempotency_key="invoice-pay-over-003"), db, tenant)
             assert overpayment.value.status_code == 422
             with pytest.raises(HTTPException) as void_paid:
                 update_invoice(invoice["id"], InvoiceUpdate(status="void"), db, tenant)
@@ -238,7 +261,7 @@ def test_appointment_and_b2b_reads_and_writes_are_tenant_scoped():
             with pytest.raises(HTTPException) as invoice_access:
                 update_invoice(foreign_invoice.id, InvoiceUpdate(description="Cross-shop edit"), db, one)
             with pytest.raises(HTTPException) as payment_access:
-                record_invoice_payment(foreign_invoice.id, InvoicePaymentCreate(amount=Decimal("1")), db, one)
+                record_invoice_payment(foreign_invoice.id, InvoicePaymentCreate(amount=Decimal("1"), idempotency_key="invoice-pay-foreign-001"), db, one)
             assert [error.value.status_code for error in (quote_access, project_access, invoice_access, payment_access)] == [404] * 4
     finally:
         engine.dispose()

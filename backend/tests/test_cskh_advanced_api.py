@@ -42,6 +42,7 @@ class CskhAdvancedApiTests(unittest.TestCase):
                 business_id=one.id,
                 full_name="Agent A",
                 email="agent-a@cskh.test",
+                password_hash=hash_password("agent-password"),
                 is_active=True,
             )
             agent_b = User(
@@ -195,6 +196,52 @@ class CskhAdvancedApiTests(unittest.TestCase):
             conversation = db.get(Conversation, self.conversation_a)
             self.assertEqual(self.agent_a, conversation.assigned_user_id)
             self.assertEqual(1, len(conversation.assignments))
+
+    def test_conversation_priority_is_persisted_and_tenant_scoped(self):
+        headers = {"X-Business-Id": str(self.business_a)}
+        updated = self.client.patch(
+            f"/api/conversations/{self.conversation_a}/priority",
+            headers=headers,
+            json={"is_priority": True},
+        )
+        self.assertEqual(200, updated.status_code, updated.text)
+        self.assertEqual("high", updated.json()["priority"])
+
+        inbox = self.client.get("/api/conversations", headers=headers)
+        self.assertEqual(200, inbox.status_code, inbox.text)
+        self.assertEqual("high", inbox.json()["items"][0]["priority"])
+
+        cleared = self.client.patch(
+            f"/api/conversations/{self.conversation_a}/priority",
+            headers=headers,
+            json={"is_priority": False},
+        )
+        self.assertEqual(200, cleared.status_code, cleared.text)
+        self.assertEqual("normal", cleared.json()["priority"])
+
+        cross_tenant = self.client.patch(
+            f"/api/conversations/{self.conversation_a}/priority",
+            headers={"X-Business-Id": str(self.business_b)},
+            json={"is_priority": True},
+        )
+        self.assertEqual(404, cross_tenant.status_code)
+
+    def test_agent_cannot_change_shop_sla_rules(self):
+        login = self.client.post(
+            "/api/auth/login",
+            headers={"X-Business-Id": str(self.business_a)},
+            json={"email": "agent-a@cskh.test", "password": "agent-password"},
+        )
+        self.assertEqual(200, login.status_code, login.text)
+        response = self.client.put(
+            "/api/tickets/sla/rules",
+            headers={
+                "Authorization": f"Bearer {login.json()['access_token']}",
+                "X-Business-Id": str(self.business_a),
+            },
+            json={"first_response_hours": 4, "resolution_hours": 48},
+        )
+        self.assertEqual(403, response.status_code, response.text)
 
     def test_authenticated_handling_history_keeps_actor_attribution(self):
         login = self.client.post(

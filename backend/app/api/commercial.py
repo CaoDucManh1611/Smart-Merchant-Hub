@@ -6,6 +6,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
@@ -28,6 +29,18 @@ QuoteStatus = Literal["draft", "sent", "accepted", "rejected", "expired"]
 ProjectStatus = Literal["planned", "active", "on_hold", "completed", "cancelled"]
 InvoiceStatus = Literal["draft", "issued", "void"]
 CENT = Decimal("0.01")
+QUOTE_TRANSITIONS = {
+    "draft": {"sent", "accepted", "rejected", "expired"},
+    "sent": {"accepted", "rejected", "expired"},
+    "accepted": set(), "rejected": set(), "expired": set(),
+}
+PROJECT_TRANSITIONS = {
+    "planned": {"active", "on_hold", "completed", "cancelled"},
+    "active": {"on_hold", "completed", "cancelled"},
+    "on_hold": {"active", "completed", "cancelled"},
+    "completed": set(), "cancelled": set(),
+}
+INVOICE_TRANSITIONS = {"draft": {"issued", "void"}, "issued": {"void"}, "void": set()}
 
 
 class QuoteLine(BaseModel):
@@ -104,12 +117,18 @@ class InvoicePaymentCreate(BaseModel):
     amount: Decimal = Field(gt=0, le=9999999999)
     paid_on: date = Field(default_factory=date.today)
     method: Literal["bank_transfer", "cash", "card", "other"] = "bank_transfer"
+    idempotency_key: str = Field(min_length=8, max_length=160)
     reference: str | None = Field(default=None, max_length=120)
     notes: str | None = Field(default=None, max_length=2000)
 
 
 def _money(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def _validate_status_transition(entity: str, current: str, target: str, transitions: dict[str, set[str]]) -> None:
+    if target != current and target not in transitions.get(current, set()):
+        raise HTTPException(status_code=409, detail=f"Không thể chuyển {entity} từ {current} sang {target}.")
 
 
 def _customer(db: Session, customer_id: int, tenant: TenantContext) -> Customer:
@@ -199,7 +218,11 @@ def _invoice_out(db: Session, row: CommercialInvoice) -> dict:
         "total_amount": row.total_amount, "paid_amount": row.paid_amount, "balance_due": _money(row.total_amount - row.paid_amount),
         "status": _invoice_status(row), "issued_on": row.issued_on, "due_on": row.due_on,
         "email_sent_at": row.email_sent_at,
-        "payments": payments,
+        "payments": [{
+            "id": payment.id, "amount": payment.amount, "paid_on": payment.paid_on,
+            "method": payment.method, "reference": payment.reference,
+            "notes": payment.notes, "created_at": payment.created_at,
+        } for payment in payments],
         "notes": row.notes, "created_at": row.created_at,
     }
 
@@ -240,13 +263,15 @@ def create_quote(payload: QuoteCreate, db: Session = Depends(get_tenant_db), ten
 
 @router.patch("/quotes/{quote_id}", dependencies=[Depends(require_write_access)])
 def update_quote(quote_id: int, payload: QuoteUpdate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context), platform_db: Session = Depends(get_platform_db)):
-    row = db.query(CommercialQuote).filter(CommercialQuote.id == quote_id, CommercialQuote.business_id == tenant.business_id).first()
+    row = db.query(CommercialQuote).filter(CommercialQuote.id == quote_id, CommercialQuote.business_id == tenant.business_id).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Báo giá không tồn tại.")
     previous_status = row.status
     changes = payload.model_dump(exclude_unset=True)
     if any(key in changes and changes[key] is None for key in ("customer_id", "title", "status", "tax_rate")):
         raise HTTPException(status_code=422, detail="Khách hàng, tiêu đề, trạng thái và thuế không được để trống.")
+    if changes.get("status") is not None:
+        _validate_status_transition("báo giá", row.status, changes["status"], QUOTE_TRANSITIONS)
     if "customer_id" in changes and changes["customer_id"] is not None:
         _customer(db, changes["customer_id"], tenant)
     if "title" in changes and changes["title"] is not None:
@@ -379,13 +404,15 @@ def create_project(
 def update_project(
     project_id: int, payload: ProjectUpdate, db: Session = Depends(get_tenant_db), user_db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context), platform_db: Session = Depends(get_platform_db),
 ):
-    row = db.query(CommercialProject).filter(CommercialProject.id == project_id, CommercialProject.business_id == tenant.business_id).first()
+    row = db.query(CommercialProject).filter(CommercialProject.id == project_id, CommercialProject.business_id == tenant.business_id).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Dự án không tồn tại.")
     previous_status = row.status
     changes = payload.model_dump(exclude_unset=True)
     if any(key in changes and changes[key] is None for key in ("title", "status", "budget")):
         raise HTTPException(status_code=422, detail="Tên, trạng thái và ngân sách không được để trống.")
+    if changes.get("status") is not None:
+        _validate_status_transition("dự án", row.status, changes["status"], PROJECT_TRANSITIONS)
     start = changes.get("starts_on", row.starts_on)
     due = changes.get("due_on", row.due_on)
     if start and due and due < start:
@@ -463,7 +490,7 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_tenant_db),
 
 @router.patch("/invoices/{invoice_id}", dependencies=[Depends(require_write_access)])
 def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context), platform_db: Session = Depends(get_platform_db)):
-    row = db.query(CommercialInvoice).filter(CommercialInvoice.id == invoice_id, CommercialInvoice.business_id == tenant.business_id).first()
+    row = db.query(CommercialInvoice).filter(CommercialInvoice.id == invoice_id, CommercialInvoice.business_id == tenant.business_id).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Hóa đơn không tồn tại.")
     previous_status = _invoice_status(row)
@@ -478,6 +505,8 @@ def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: Session = Depend
         raise HTTPException(status_code=422, detail="Hạn thanh toán không thể trước ngày phát hành.")
     if paid_amount > total_amount:
         raise HTTPException(status_code=409, detail="Không thể giảm tổng hóa đơn xuống dưới số tiền đã thu.")
+    if changes.get("status") is not None:
+        _validate_status_transition("hóa đơn", row.status, changes["status"], INVOICE_TRANSITIONS)
     if changes.get("status") == "void" and paid_amount > 0:
         raise HTTPException(status_code=409, detail="Hóa đơn đã có thanh toán; cần xử lý khoản hoàn trước khi hủy.")
     for key, value in changes.items():
@@ -540,10 +569,31 @@ def record_invoice_payment(
     ).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Hóa đơn không tồn tại.")
+    key = payload.idempotency_key.strip()
+    if len(key) < 8:
+        raise HTTPException(status_code=422, detail="Mã idempotency phải có ít nhất 8 ký tự.")
+    amount = _money(payload.amount)
+    reference = payload.reference.strip() if payload.reference else None
+    notes = payload.notes.strip() if payload.notes else None
+    existing = db.query(CommercialInvoicePayment).filter(
+        CommercialInvoicePayment.business_id == tenant.business_id,
+        CommercialInvoicePayment.idempotency_key == key,
+    ).first()
+    if existing is not None:
+        same_request = (
+            existing.invoice_id == row.id
+            and _money(existing.amount) == amount
+            and existing.paid_on == payload.paid_on
+            and existing.method == payload.method
+            and existing.reference == reference
+            and existing.notes == notes
+        )
+        if not same_request:
+            raise HTTPException(status_code=409, detail="Mã yêu cầu thanh toán đã được dùng cho dữ liệu khác.")
+        return _invoice_out(db, row)
     if row.status != "issued":
         raise HTTPException(status_code=409, detail="Chỉ ghi nhận thanh toán cho hóa đơn đã phát hành.")
     previous_status = _invoice_status(row)
-    amount = _money(payload.amount)
     if amount <= 0 or amount > _money(row.total_amount - row.paid_amount):
         raise HTTPException(status_code=422, detail="Khoản thu phải lớn hơn 0 và không vượt số dư còn lại.")
     db.add(CommercialInvoicePayment(
@@ -552,11 +602,28 @@ def record_invoice_payment(
         amount=amount,
         paid_on=payload.paid_on,
         method=payload.method,
-        reference=payload.reference.strip() if payload.reference else None,
-        notes=payload.notes.strip() if payload.notes else None,
+        reference=reference,
+        notes=notes,
+        idempotency_key=key,
     ))
     row.paid_amount = _money(row.paid_amount + amount)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        existing = db.query(CommercialInvoicePayment).filter(
+            CommercialInvoicePayment.business_id == tenant.business_id,
+            CommercialInvoicePayment.idempotency_key == key,
+        ).first()
+        if existing is None:
+            raise HTTPException(status_code=409, detail="Thanh toán bị trùng; hãy tải lại hóa đơn trước khi thử lại.") from exc
+        if existing.invoice_id != invoice_id or _money(existing.amount) != amount or existing.paid_on != payload.paid_on or existing.method != payload.method or existing.reference != reference or existing.notes != notes:
+            raise HTTPException(status_code=409, detail="Mã yêu cầu thanh toán đã được dùng cho dữ liệu khác.") from exc
+        replay_invoice = db.query(CommercialInvoice).filter(
+            CommercialInvoice.id == invoice_id,
+            CommercialInvoice.business_id == tenant.business_id,
+        ).first()
+        return _invoice_out(db, replay_invoice)
     db.refresh(row)
     emit_workflow_event(db, tenant, "invoice.payment_recorded", f"invoice:{row.id}:payment:{row.paid_amount}", {"invoice_id": row.id, "customer_id": row.customer_id, "amount": float(amount), "paid_amount": float(row.paid_amount), "status": _invoice_status(row)}, platform_db=platform_db)
     if _invoice_status(row) != previous_status:

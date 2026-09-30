@@ -13,7 +13,7 @@ from app.main import app
 from app.models.business import Business
 from app.models.conversation import Conversation
 from app.models.customer import Customer
-from app.models.sales import Product
+from app.models.sales import Order, OrderItem, Product
 
 
 class ProductOrderApiTests(unittest.TestCase):
@@ -112,7 +112,6 @@ class ProductOrderApiTests(unittest.TestCase):
         content = (
             "Mã sản phẩm,Tên sản phẩm,Giá,Tồn kho,Trạng thái\n"
             "IMPORT-EXISTING,Existing import product,100000,5,Đang bán\n"
-            "IMPORT-EXISTING,Existing import product,100000,2,Đang bán\n"
             "IMPORT-NEW,New import product,250000,7,Đang bán\n"
         ).encode("utf-8")
         response = self.client.post(
@@ -123,15 +122,98 @@ class ProductOrderApiTests(unittest.TestCase):
         self.assertEqual(200, response.status_code, response.text)
         body = response.json()
         self.assertEqual(1, body["imported"])
-        self.assertEqual(2, body["restocked"])
-        self.assertEqual(7, body["restocked_quantity"])
-        self.assertEqual(2, body["updated"])
+        self.assertEqual(1, body["restocked"])
+        self.assertEqual(5, body["restocked_quantity"])
+        self.assertEqual(1, body["updated"])
         self.assertEqual(0, body["skipped"])
 
         with Session(self.engine) as db:
-            self.assertEqual(17, db.get(Product, existing_id).stock_quantity)
+            self.assertEqual(15, db.get(Product, existing_id).stock_quantity)
             created = db.query(Product).filter(Product.business_id == 1, Product.sku == "IMPORT-NEW").one()
             self.assertEqual(7, created.stock_quantity)
+
+    def test_product_import_duplicate_sku_is_a_preview_error_and_never_writes(self):
+        content = b"sku,name,price,stock_quantity\nDUPLICATE-01,One,100,2\nDUPLICATE-01,One,100,3\n"
+        preview = self.client.post(
+            "/api/products/import?preview=true",
+            headers={"X-Business-Id": "1"},
+            files={"file": ("duplicates.csv", content, "text/csv")},
+        )
+        self.assertEqual(200, preview.status_code, preview.text)
+        self.assertEqual(1, preview.json()["skipped"])
+        self.assertIn("bị lặp", preview.json()["errors"][0])
+        applied = self.client.post(
+            "/api/products/import",
+            headers={"X-Business-Id": "1"},
+            files={"file": ("duplicates.csv", content, "text/csv")},
+        )
+        self.assertEqual(422, applied.status_code, applied.text)
+        with Session(self.engine) as db:
+            self.assertIsNone(db.query(Product).filter_by(business_id=1, sku="DUPLICATE-01").first())
+
+    def test_product_inventory_export_is_tenant_scoped_and_not_a_receipt_template(self):
+        response = self.client.get("/api/products/export.csv", headers={"X-Business-Id": "1"})
+        self.assertEqual(200, response.status_code)
+        csv_text = response.content.decode("utf-8-sig")
+        self.assertIn("sku_snapshot", csv_text.splitlines()[0])
+        self.assertIn("SERUM-01", csv_text)
+        self.assertNotIn("OTHER-01", csv_text)
+        replay = self.client.post(
+            "/api/products/import",
+            headers={"X-Business-Id": "1"},
+            files={"file": ("export.csv", response.content, "text/csv")},
+        )
+        self.assertEqual(400, replay.status_code)
+
+    def test_order_import_preview_is_tenant_scoped_atomic_and_idempotent(self):
+        content = (
+            f"order_number;customer_id;sku;quantity;conversation_id\n"
+            f"CSV-IMPORT-01;{self.customer_id};SERUM-01;1;{self.conversation_id}\n"
+            f"CSV-IMPORT-01;{self.customer_id};SERUM-01;2;{self.conversation_id}\n"
+        ).encode()
+        def upload(suffix):
+            return self.client.post(
+                f"/api/orders/import{suffix}",
+                headers={"X-Business-Id": "1"},
+                files={"file": ("orders.csv", content, "text/csv")},
+            )
+
+        preview = upload("?preview=true")
+        self.assertEqual(200, preview.status_code, preview.text)
+        self.assertEqual(1, preview.json()["orders"])
+        self.assertEqual(1260000, float(preview.json()["total_amount"]))
+        self.assertEqual("CSV-IMPORT-01", preview.json()["orders_preview"][0]["order_number"])
+        with Session(self.engine) as db:
+            self.assertIsNone(db.query(Order).filter_by(business_id=1, order_number="CSV-IMPORT-01").first())
+
+        imported = upload("")
+        self.assertEqual(1, imported.json()["imported"])
+        replay = upload("")
+        self.assertTrue(replay.json()["already_imported"])
+        with Session(self.engine) as db:
+            order = db.query(Order).filter_by(business_id=1, order_number="CSV-IMPORT-01").one()
+            item = db.query(OrderItem).filter_by(order_id=order.id).one()
+            self.assertEqual("draft", order.status)
+            self.assertEqual(3, item.quantity)
+            self.assertEqual(10, db.get(Product, self.product_id).stock_quantity)
+
+    def test_order_import_preview_reports_cross_tenant_rows_before_any_write(self):
+        content = f"order_number,customer_id,sku,quantity\nCSV-FOREIGN-01,{self.other_customer_id},SERUM-01,1\n".encode()
+        preview = self.client.post(
+            "/api/orders/import?preview=true",
+            headers={"X-Business-Id": "1"},
+            files={"file": ("foreign.csv", content, "text/csv")},
+        )
+        self.assertEqual(200, preview.status_code, preview.text)
+        self.assertTrue(any("khách hàng" in error for error in preview.json()["errors"]))
+        applied = self.client.post(
+            "/api/orders/import",
+            headers={"X-Business-Id": "1"},
+            files={"file": ("foreign.csv", content, "text/csv")},
+        )
+        self.assertEqual(422, applied.status_code)
+        with Session(self.engine) as db:
+            self.assertIsNone(db.query(Order).filter_by(business_id=1, order_number="CSV-FOREIGN-01").first())
 
     def test_product_import_preview_and_replay_do_not_double_stock(self):
         content = b"sku,name,price,stock_quantity\nIDEMPOTENT-01,Fixture product,10000,5\n"
@@ -347,6 +429,20 @@ class ProductOrderApiTests(unittest.TestCase):
         self.assertEqual(200, other_tenant.status_code)
         self.assertEqual([], other_tenant.json()["items"])
         self.assertEqual(0, float(other_tenant.json()["total_revenue"]))
+
+    def test_revenue_by_channel_excludes_shopee(self):
+        with Session(self.engine) as db:
+            shopee = Conversation(business_id=1, customer_id=self.customer_id, channel="shopee")
+            db.add(shopee)
+            db.flush()
+            db.add(Order(
+                business_id=1, customer_id=self.customer_id, conversation_id=shopee.id,
+                order_number="ORD-SHOPEE-EXCLUDED", status="paid", total_amount=Decimal("999999"),
+            ))
+            db.commit()
+        response = self.client.get("/api/reports/revenue-by-channel", headers={"X-Business-Id": "1"})
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertNotIn("shopee", {item["channel"].lower() for item in response.json()["items"]})
 
 
 if __name__ == "__main__":

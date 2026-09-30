@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete
+from sqlalchemy import delete, func, or_
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
@@ -32,6 +32,8 @@ def _touchpoint(db: Session, touchpoint_id: int, tenant: TenantContext) -> Reven
 
 @router.post("/revenue/touchpoints", response_model=TouchpointOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_touchpoint(payload: TouchpointCreate, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
+    if payload.channel and payload.channel.strip().lower() == "shopee":
+        raise HTTPException(status_code=422, detail="Kênh Shopee nằm ngoài phạm vi báo cáo này.")
     if payload.customer_id is not None and db.query(Customer.id).filter(Customer.id == payload.customer_id, Customer.business_id == tenant.business_id).first() is None:
         raise HTTPException(status_code=404, detail="Customer không thuộc business này.")
     if payload.conversation_id is not None:
@@ -93,10 +95,11 @@ def recalculate_attribution(
     touchpoints = db.query(RevenueTouchpoint).filter(
         RevenueTouchpoint.business_id == tenant.business_id,
         RevenueTouchpoint.customer_id == order.customer_id,
+        or_(RevenueTouchpoint.channel.is_(None), func.lower(RevenueTouchpoint.channel) != "shopee"),
     ).order_by(RevenueTouchpoint.occurred_at.asc(), RevenueTouchpoint.id.asc()).all()
     if not touchpoints and order.conversation_id is not None:
         conversation = db.query(Conversation).filter(Conversation.id == order.conversation_id, Conversation.business_id == tenant.business_id).first()
-        if conversation is not None:
+        if conversation is not None and (conversation.channel or "").strip().lower() != "shopee":
             touchpoints = [RevenueTouchpoint(
                 business_id=tenant.business_id,
                 customer_id=order.customer_id,
@@ -169,7 +172,11 @@ def revenue_attribution_report(
     query = db.query(RevenueTouchpoint.channel, RevenueTouchpoint.source, RevenueTouchpoint.campaign, RevenueAttribution.amount).join(
         RevenueAttribution,
         (RevenueAttribution.touchpoint_id == RevenueTouchpoint.id) & (RevenueAttribution.business_id == tenant.business_id),
-    ).filter(RevenueTouchpoint.business_id == tenant.business_id, RevenueAttribution.model == model)
+    ).filter(
+        RevenueTouchpoint.business_id == tenant.business_id,
+        RevenueAttribution.model == model,
+        or_(RevenueTouchpoint.channel.is_(None), func.lower(RevenueTouchpoint.channel) != "shopee"),
+    )
     if start_at is not None:
         query = query.filter(RevenueTouchpoint.occurred_at >= start_at)
     if end_at is not None:

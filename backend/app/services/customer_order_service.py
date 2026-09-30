@@ -23,6 +23,7 @@ from app.models.sales import Order
 from app.models.ticket import Ticket, TicketEvent
 from app.services.audit_service import record_audit
 from app.services.order_service import SalesOrderOperationError, transition_sales_order
+from app.services.ticket_sla import enqueue_ticket_sla_jobs, ticket_deadlines
 
 
 ORDER_STATUS_LABELS = {
@@ -493,6 +494,7 @@ def _staff_ticket(
             return ticket
 
     assignee = _assignee(platform_db, business_id)
+    first_response_due_at, resolution_due_at = ticket_deadlines(db, business_id, priority="high")
     ticket = Ticket(
         business_id=business_id,
         customer_id=conversation.customer_id,
@@ -505,7 +507,8 @@ def _staff_ticket(
         status="open",
         priority="high",
         assigned_user_id=assignee.id if assignee else None,
-        sla_due_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=8),
+        first_response_due_at=first_response_due_at,
+        sla_due_at=resolution_due_at,
     )
     conversation.bot_mode = "human"
     if assignee:
@@ -517,6 +520,7 @@ def _staff_ticket(
         ))
     db.add(ticket)
     db.flush()
+    enqueue_ticket_sla_jobs(db, ticket)
     db.add(TicketEvent(
         business_id=business_id,
         ticket_id=ticket.id,

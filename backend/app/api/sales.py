@@ -6,9 +6,9 @@ import io
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.tenancy.crm_session import get_tenant_db
@@ -38,7 +38,7 @@ from app.schemas.sales import (
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.services.workflow_engine import emit_workflow_event
-from app.auth.dependencies import require_write_access
+from app.auth.dependencies import require_admin_access, require_write_access
 from app.services.audit_service import record_audit
 from app.services.order_service import SalesOrderOperationError, SALES_TRANSITIONS as ORDER_TRANSITIONS, transition_sales_order
 from app.tenancy.workspace_modules import require_module_enabled
@@ -99,6 +99,20 @@ _PRODUCT_IMPORT_FIELDS = {
     "tu_khoa": "keywords",
     "từ_khóa": "keywords",
 }
+_ORDER_IMPORT_FIELDS = {
+    "order_number": "order_number", "order_no": "order_number", "ma_don": "order_number", "mã_đơn": "order_number",
+    "customer_id": "customer_id", "ma_khach_hang": "customer_id", "mã_khách_hàng": "customer_id",
+    "conversation_id": "conversation_id", "ma_hoi_thoai": "conversation_id", "mã_hội_thoại": "conversation_id",
+    "sku": "sku", "ma_san_pham": "sku", "mã_sản_phẩm": "sku",
+    "quantity": "quantity", "so_luong": "quantity", "số_lượng": "quantity",
+}
+
+
+def _csv_safe(value):
+    text_value = str(value or "")
+    if text_value.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + text_value
+    return text_value
 
 
 def _normalise_import_key(value: str) -> str:
@@ -148,6 +162,51 @@ def _import_product_attributes(values: dict[str, str]) -> dict[str, list[str]]:
         parts = [" ".join(part.strip().split()) for part in raw.replace(";", ",").split(",")]
         attributes[key] = list(dict.fromkeys(part for part in parts if part))
     return attributes
+
+
+def _parse_order_import(content: str, *, delimiter: str = ","):
+    reader = csv.DictReader(io.StringIO(content), delimiter=delimiter)
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV cần hàng tiêu đề: order_number,customer_id,sku,quantity.")
+    headers = {
+        header: _ORDER_IMPORT_FIELDS.get(_normalise_import_key(header))
+        for header in reader.fieldnames if header
+    }
+    if not {"order_number", "customer_id", "sku", "quantity"}.issubset(set(headers.values())):
+        raise HTTPException(status_code=400, detail="CSV cần các cột order_number, customer_id, sku, quantity; conversation_id tùy chọn.")
+    groups: dict[str, dict] = {}
+    errors: list[str] = []
+    line_items = 0
+    for row_number, row in enumerate(reader, start=2):
+        values = {target: str(row.get(source) or "").strip() for source, target in headers.items() if target}
+        if not any(values.values()):
+            continue
+        order_number, sku = values.get("order_number", ""), values.get("sku", "")
+        try:
+            customer_id = int(values.get("customer_id", ""))
+            conversation_id = int(values["conversation_id"]) if values.get("conversation_id") else None
+            quantity = int(values.get("quantity", ""))
+            if customer_id < 1 or (conversation_id is not None and conversation_id < 1) or quantity < 1 or quantity > 100000:
+                raise ValueError
+        except ValueError:
+            errors.append(f"Dòng {row_number}: customer_id, conversation_id phải là số nguyên hợp lệ; quantity phải từ 1 đến 100000.")
+            continue
+        if not order_number or len(order_number) > 60 or not sku or len(sku) > 80:
+            errors.append(f"Dòng {row_number}: mã đơn bắt buộc (tối đa 60 ký tự), SKU bắt buộc (tối đa 80 ký tự).")
+            continue
+        group = groups.setdefault(order_number, {"customer_id": customer_id, "conversation_id": conversation_id, "items": {}, "row": row_number})
+        if group["customer_id"] != customer_id or group["conversation_id"] != conversation_id:
+            errors.append(f"Dòng {row_number}: các dòng của đơn {order_number} phải cùng khách hàng và hội thoại.")
+            continue
+        group["items"][sku] = group["items"].get(sku, 0) + quantity
+        if group["items"][sku] > 100000:
+            errors.append(f"Dòng {row_number}: tổng quantity của SKU {sku} trong một đơn không được vượt 100000.")
+            group["items"][sku] -= quantity
+            continue
+        line_items += 1
+    if not groups and not errors:
+        errors.append("CSV không có dòng đơn hàng hợp lệ.")
+    return groups, errors, line_items
 
 
 def _generated_order_number(db: Session, business_id: int) -> str:
@@ -239,6 +298,53 @@ def list_products(
     total = query.count()
     products = query.order_by(Product.name.asc(), Product.id.asc()).offset(offset).limit(limit).all()
     return ProductListOut(items=[ProductOut.model_validate(product) for product in products], total=total)
+
+
+@router.get("/products/export.csv")
+def export_products_csv(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    # Snapshot headers intentionally do not match the receipt-import template;
+    # re-uploading this report must never restock inventory by accident.
+    writer.writerow(["sku_snapshot", "name_snapshot", "description_snapshot", "unit_price_snapshot", "on_hand_snapshot", "reserved_snapshot", "available_snapshot", "status_snapshot"])
+    products = db.query(Product).filter(Product.business_id == tenant.business_id).order_by(Product.sku.asc(), Product.id.asc()).all()
+    for product in products:
+        stock = int(product.stock_quantity or 0)
+        reserved = int(product.reserved_quantity or 0)
+        writer.writerow([_csv_safe(product.sku), _csv_safe(product.name), _csv_safe(product.description), product.price, stock, reserved, max(0, stock - reserved), product.status])
+    return Response(
+        content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="products-inventory.csv"'},
+    )
+
+
+@router.get("/orders/export.csv", dependencies=[Depends(require_admin_access)])
+def export_orders_csv(db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["order_id", "order_number", "customer_id", "conversation_id", "channel", "status", "payment_status", "total_amount", "paid_amount", "refunded_amount", "sku", "product_name", "quantity", "unit_price", "line_total", "created_at"])
+    orders = db.query(Order).options(
+        joinedload(Order.items).joinedload(OrderItem.product), joinedload(Order.conversation),
+    ).outerjoin(
+        Conversation,
+        (Conversation.id == Order.conversation_id) & (Conversation.business_id == tenant.business_id),
+    ).filter(
+        Order.business_id == tenant.business_id,
+        or_(Conversation.channel.is_(None), func.lower(Conversation.channel) != "shopee"),
+    ).order_by(Order.created_at.asc(), Order.id.asc()).all()
+    for order in orders:
+        for item in order.items:
+            writer.writerow([
+                order.id, _csv_safe(order.order_number), order.customer_id, order.conversation_id,
+                _csv_safe(order.conversation.channel if order.conversation else ""), order.status,
+                order.payment_status, order.total_amount, order.paid_amount, order.refunded_amount,
+                _csv_safe(item.sku_snapshot or item.product.sku), _csv_safe(item.product_name_snapshot or item.product.name),
+                item.quantity, item.unit_price, item.line_total, order.created_at,
+            ])
+    return Response(
+        content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="sales-orders.csv"'},
+    )
 
 
 @router.post(
@@ -334,6 +440,7 @@ async def import_products(
     restocked_quantity = 0
     skipped = 0
     errors: list[str] = []
+    seen_skus: set[str] = set()
     for row_number, row in enumerate(reader, start=2):
         values: dict[str, str] = {}
         for source_key, target_key in mapped_headers.items():
@@ -351,6 +458,11 @@ async def import_products(
             skipped += 1
             errors.append(f"Dòng {row_number}: mã tối đa 80 ký tự, tên tối đa 255 ký tự.")
             continue
+        if sku in seen_skus:
+            skipped += 1
+            errors.append(f"Dòng {row_number}: SKU {sku} bị lặp trong cùng tệp; gộp các dòng trước khi nhập.")
+            continue
+        seen_skus.add(sku)
         try:
             price = _parse_import_decimal(values.get("price", ""), row_number=row_number)
             stock = _parse_import_stock(values.get("stock_quantity", ""), row_number=row_number)
@@ -619,6 +731,7 @@ def revenue_by_channel(
         )
         .filter(Order.business_id == tenant.business_id)
         .filter(Order.status.in_(REVENUE_ORDER_STATUSES))
+        .filter(or_(Conversation.channel.is_(None), func.lower(Conversation.channel) != "shopee"))
         .group_by(channel_expr)
         .order_by(channel_expr.asc())
         .all()
@@ -632,6 +745,141 @@ def revenue_by_channel(
         items=items,
         total_revenue=sum((item.revenue for item in items), Decimal("0")),
     )
+
+
+@router.post("/orders/import", dependencies=[Depends(require_write_access)])
+async def import_orders_csv(
+    file: UploadFile = File(...),
+    preview: bool = Query(default=False),
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    """Import orders as drafts; confirmation still uses the stock/payment lifecycle."""
+    filename = (file.filename or "").strip()
+    if not filename or filename.rsplit(".", 1)[-1].lower() != "csv":
+        raise HTTPException(status_code=400, detail="Chỉ nhận tệp CSV.")
+    file_bytes = await file.read()
+    if not file_bytes or len(file_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Tệp rỗng hoặc quá lớn (giới hạn 20MB).")
+    try:
+        content = file_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            content = file_bytes.decode("cp1258")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Không đọc được tệp. Hãy lưu CSV ở dạng UTF-8.") from exc
+    try:
+        sample = content[:4096]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        groups, errors, line_items = _parse_order_import(content, delimiter=dialect.delimiter)
+    except csv.Error as exc:
+        raise HTTPException(status_code=400, detail="CSV không hợp lệ.") from exc
+
+    business_id = tenant.business_id
+    import_key = "orders-csv:" + hashlib.sha256(file_bytes).hexdigest()
+    if len(groups) > 500:
+        errors.append("Tệp vượt giới hạn 500 đơn mỗi lần nhập.")
+    if not preview and db.get_bind().dialect.name == "postgresql":
+        lock_id = int.from_bytes(hashlib.sha256(f"sales-order-import:{business_id}".encode()).digest()[:8], "big", signed=True)
+        db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
+    existing_import = db.query(AuditLog.id).filter(
+        AuditLog.business_id == business_id,
+        AuditLog.resource_type == "sales_orders",
+        AuditLog.action == "import",
+        AuditLog.correlation_id == import_key,
+    ).first()
+    if existing_import is not None:
+        db.rollback()
+        return {"filename": filename, "imported": 0, "orders": 0, "line_items": 0, "errors": [], "already_imported": True}
+
+    order_numbers = list(groups)
+    if order_numbers:
+        existing_numbers = {row[0] for row in db.query(Order.order_number).filter(
+            Order.business_id == business_id, Order.order_number.in_(order_numbers),
+        ).all()}
+        errors.extend(f"Đơn {number} đã tồn tại trong shop." for number in sorted(existing_numbers))
+    customer_ids = {group["customer_id"] for group in groups.values()}
+    customers = {row.id: row for row in db.query(Customer).filter(
+        Customer.business_id == business_id, Customer.id.in_(customer_ids or {-1}),
+    ).all()}
+    conversation_ids = {group["conversation_id"] for group in groups.values() if group["conversation_id"] is not None}
+    conversations = {row.id: row for row in db.query(Conversation).filter(
+        Conversation.business_id == business_id, Conversation.id.in_(conversation_ids or {-1}),
+    ).all()}
+    sku_values = {sku for group in groups.values() for sku in group["items"]}
+    products = {row.sku: row for row in db.query(Product).filter(
+        Product.business_id == business_id, Product.sku.in_(sku_values or {""}), Product.status == "active",
+    ).all()}
+    totals: dict[str, Decimal] = {}
+    for order_number, group in groups.items():
+        if group["customer_id"] not in customers:
+            errors.append(f"Dòng {group['row']}: khách hàng không tồn tại trong shop này.")
+        if group["conversation_id"] is not None:
+            conversation = conversations.get(group["conversation_id"])
+            if conversation is None or conversation.customer_id != group["customer_id"]:
+                errors.append(f"Dòng {group['row']}: hội thoại không thuộc khách hàng/shop này.")
+        total = Decimal("0.00")
+        for sku, quantity in group["items"].items():
+            product = products.get(sku)
+            if product is None:
+                errors.append(f"Dòng {group['row']}: SKU {sku} không tồn tại hoặc không còn bán trong shop này.")
+                continue
+            total += Decimal(product.price) * quantity
+        if total > Decimal("9999999999.99"):
+            errors.append(f"Đơn {order_number}: tổng tiền vượt giới hạn lưu trữ.")
+        totals[order_number] = total.quantize(Decimal("0.01"))
+    if len(errors) > 25:
+        errors = errors[:25]
+    if preview:
+        db.rollback()
+        order_previews = [
+            {"order_number": number, "customer_id": group["customer_id"], "line_items": len(group["items"]), "total_amount": totals[number]}
+            for number, group in list(groups.items())[:100]
+        ]
+        return {"filename": filename, "preview": True, "orders": len(groups), "line_items": line_items, "total_amount": sum(totals.values(), Decimal("0.00")), "orders_preview": order_previews, "preview_truncated": len(groups) > len(order_previews), "errors": errors}
+    if errors:
+        db.rollback()
+        raise HTTPException(status_code=422, detail={"message": "CSV có lỗi; hãy xem trước và sửa trước khi nhập.", "errors": errors})
+
+    try:
+        for order_number, group in groups.items():
+            order = Order(
+                business_id=business_id,
+                customer_id=group["customer_id"],
+                conversation_id=group["conversation_id"],
+                order_number=order_number,
+                status="draft",
+                total_amount=totals[order_number],
+                metadata_={"import_source": "csv"},
+            )
+            db.add(order)
+            db.flush()
+            for sku, quantity in group["items"].items():
+                product = products[sku]
+                db.add(OrderItem(
+                    order_id=order.id, product_id=product.id, quantity=quantity,
+                    unit_price=Decimal(product.price), line_total=Decimal(product.price) * quantity,
+                    product_name_snapshot=product.name, sku_snapshot=product.sku,
+                ))
+            db.add(OrderEvent(
+                business_id=business_id, order_type="sales_order", order_id=order.id,
+                event_type="imported_as_draft", to_status="draft", actor_id=actor.id if actor else None,
+                metadata_={"import_key": import_key[-16:]},
+            ))
+        record_audit(
+            db, business_id=business_id, user_id=actor.id if actor else None,
+            action="import", resource_type="sales_orders", resource_id="batch",
+            correlation_id=import_key, metadata={"orders": len(groups), "line_items": line_items},
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Mã đơn bị trùng; không có đơn nào được nhập.") from exc
+    return {"filename": filename, "imported": len(groups), "orders": len(groups), "line_items": line_items, "total_amount": sum(totals.values(), Decimal("0.00")), "already_imported": False}
 
 
 @router.post("/orders", response_model=OrderOut, status_code=201, dependencies=[Depends(require_write_access)])

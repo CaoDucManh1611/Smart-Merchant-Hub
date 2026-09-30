@@ -6,6 +6,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
@@ -26,6 +27,11 @@ from app.tenancy.workspace_modules import require_module_enabled
 
 router = APIRouter(prefix="/appointments", dependencies=[Depends(require_module_enabled("appointments"))])
 AppointmentStatus = Literal["scheduled", "confirmed", "completed", "cancelled", "no_show"]
+APPOINTMENT_TRANSITIONS = {
+    "scheduled": {"confirmed", "completed", "cancelled", "no_show"},
+    "confirmed": {"completed", "cancelled", "no_show"},
+    "completed": set(), "cancelled": set(), "no_show": set(),
+}
 
 
 class ServiceCreate(BaseModel):
@@ -72,6 +78,11 @@ def _naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
+def _validate_status_transition(current: str, target: str) -> None:
+    if target != current and target not in APPOINTMENT_TRANSITIONS.get(current, set()):
+        raise HTTPException(status_code=409, detail=f"Không thể chuyển lịch hẹn từ {current} sang {target}.")
+
+
 def _aware_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -116,6 +127,11 @@ def _ensure_no_conflict(
 ) -> None:
     if assigned_user_id is None:
         return
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {"lock_key": f"appointment:{tenant.business_id}:{assigned_user_id}"},
+        )
     query = db.query(Appointment.id).filter(
         Appointment.business_id == tenant.business_id,
         Appointment.assigned_user_id == assigned_user_id,
@@ -277,13 +293,22 @@ def update_appointment(
     appointment_id: int, payload: AppointmentUpdate, db: Session = Depends(get_tenant_db),
     user_db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context), platform_db: Session = Depends(get_platform_db),
 ):
-    row = db.query(Appointment).filter(Appointment.id == appointment_id, Appointment.business_id == tenant.business_id).first()
+    row = db.query(Appointment).filter(Appointment.id == appointment_id, Appointment.business_id == tenant.business_id).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Lịch hẹn không tồn tại.")
     previous_status = row.status
     changes = payload.model_dump(exclude_unset=True)
     if any(key in changes and changes[key] is None for key in ("customer_id", "service_id", "status", "reminder_minutes_before", "starts_at")):
         raise HTTPException(status_code=422, detail="Trạng thái, giờ hẹn và thời gian nhắc không được để trống.")
+    if changes.get("status") is not None:
+        _validate_status_transition(row.status, changes["status"])
+        schedule_fields = {"customer_id", "service_id", "starts_at", "assigned_user_id", "reminder_minutes_before"}
+        if schedule_fields.intersection(changes):
+            raise HTTPException(status_code=422, detail="Hãy cập nhật trạng thái hoặc thông tin lịch hẹn trong các thao tác riêng.")
+    elif row.status in {"completed", "cancelled", "no_show"} and {
+        "customer_id", "service_id", "starts_at", "assigned_user_id", "reminder_minutes_before",
+    }.intersection(changes):
+        raise HTTPException(status_code=409, detail="Lịch hẹn đã kết thúc; không thể đổi lại thời gian hoặc người phụ trách.")
     if "customer_id" in changes and changes["customer_id"] is not None:
         _customer(db, changes["customer_id"], tenant)
     if "service_id" in changes and changes["service_id"] is not None:

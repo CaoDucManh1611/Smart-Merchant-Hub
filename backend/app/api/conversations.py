@@ -69,8 +69,10 @@ from app.integrations.telegram import TelegramAdapter
 from app.models.channel import Channel
 from app.models.business import User
 from app.models.conversation import Conversation
+from app.models.ticket import Ticket, TicketEvent
 from app.models.crm_extended import ConversationAssignment, ConversationTag, CustomerTag, Tag
 from app.services.channel_credentials import decrypt_token
+from app.services.ticket_sla import record_first_response
 from app.auth.dependencies import require_write_access
 
 
@@ -224,6 +226,10 @@ class BulkConversationTagUpdate(BaseModel):
 
 class ConversationOutcomeRequest(BaseModel):
     outcome: Literal["resolved", "needs_human", "customer_unanswered"] | None
+
+
+class ConversationPriorityRequest(BaseModel):
+    is_priority: bool
 
 
 # =========================================================
@@ -1214,12 +1220,29 @@ def save_outbound_message(
     # statement cursor active until it is read, which otherwise causes
     # ``cannot commit transaction - SQL statements in progress``.
     row = result.mappings().first()
-    db.commit()
+
+    def mark_first_response() -> None:
+        if sender_type != "staff":
+            return
+        business_id = db.query(Conversation.business_id).filter(
+            Conversation.id == conversation_id,
+        ).scalar()
+        if business_id is not None:
+            record_first_response(
+                db,
+                conversation_id,
+                int(business_id),
+                datetime.now(timezone.utc).replace(tzinfo=None),
+            )
 
     if row:
+        mark_first_response()
+        db.commit()
         return dict(
             row
         )
+
+    db.commit()
 
     existing = db.execute(
         text("""
@@ -1249,6 +1272,8 @@ def save_outbound_message(
     ).mappings().first()
 
     if existing:
+        mark_first_response()
+        db.commit()
         return dict(
             existing
         )
@@ -1602,6 +1627,7 @@ def get_conversations(
             cv.status,
             cv.bot_mode,
             cv.resolution_outcome,
+            COALESCE(cv.priority, 'normal') AS priority,
             cv.assigned_user_id,
             cv.created_at,
             cv.updated_at,
@@ -1867,6 +1893,39 @@ def set_conversation_outcome(
         db.commit()
 
     return {"conversation_id": conversation.id, "resolution_outcome": conversation.resolution_outcome}
+
+
+@router.patch("/{conversation_id}/priority", dependencies=[Depends(require_write_access)])
+def set_conversation_priority(
+    conversation_id: int,
+    payload: ConversationPriorityRequest,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == tenant.business_id,
+    ).first()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation không tồn tại.")
+
+    next_priority = "high" if payload.is_priority else "normal"
+    previous_priority = conversation.priority or "normal"
+    if previous_priority != next_priority:
+        conversation.priority = next_priority
+        conversation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        record_audit(
+            db,
+            business_id=tenant.business_id,
+            user_id=actor.id if actor else None,
+            action="conversation_priority_changed",
+            resource_type="conversation",
+            resource_id=conversation.id,
+            metadata={"from": previous_priority, "to": next_priority},
+        )
+        db.commit()
+    return {"conversation_id": conversation.id, "priority": conversation.priority or "normal"}
 
 
 @router.patch("/{conversation_id}/assignment", dependencies=[Depends(require_write_access)])
