@@ -18,10 +18,13 @@ def _sandbox() -> Path:
 
 
 def _write_command(directory: Path, name: str, exit_code: int) -> None:
-    (directory / f"{name}.cmd").write_text(
-        f"@echo off\r\nexit /b {exit_code}\r\n",
-        encoding="ascii",
-    )
+    if os.name == "nt":
+        command = directory / f"{name}.cmd"
+        command.write_text(f"@echo off\r\nexit /b {exit_code}\r\n", encoding="ascii")
+    else:
+        command = directory / name
+        command.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="ascii")
+        command.chmod(command.stat().st_mode | 0o111)
 
 
 def _run(directory: Path, *arguments: str, database_url: str | None = None):

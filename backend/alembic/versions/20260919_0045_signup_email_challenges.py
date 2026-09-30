@@ -11,6 +11,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if "signup_email_challenges" in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.create_table(
         "signup_email_challenges",
         sa.Column("id", sa.Integer(), primary_key=True),

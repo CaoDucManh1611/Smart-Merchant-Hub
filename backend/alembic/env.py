@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
+from app.database.bases import TenantBase
 from app.database.session import Base
 import app.models  # noqa: F401 - register every model in Base.metadata
 
@@ -13,7 +14,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
-target_metadata = Base.metadata
+target_metadata = (Base.metadata, TenantBase.metadata)
 
 
 def run_migrations_offline() -> None:

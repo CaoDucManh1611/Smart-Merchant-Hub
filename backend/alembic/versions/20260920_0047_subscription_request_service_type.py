@@ -11,6 +11,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    columns = {
+        column["name"]
+        for column in sa.inspect(op.get_bind()).get_columns("subscriptions")
+    }
+    if "service_type" in columns:
+        return
     op.add_column(
         "subscriptions",
         sa.Column(
