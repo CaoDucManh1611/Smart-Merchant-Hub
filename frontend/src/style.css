@@ -15001,6 +15001,11 @@ body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer::-webkit-s
 .customer-consent-row small { color: var(--muted, #5a7183); }
 .customer-consent-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .followup-status-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-block: 10px; }
+.segment-campaign-form { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(220px, 1.5fr) minmax(180px, .8fr) auto; align-items: end; gap: 10px; margin-block: 12px; padding: 12px; border: 1px solid var(--line, #c9dce3); border-radius: 12px; }
+.segment-campaign-form label { display: grid; gap: 5px; min-width: 0; }
+.segment-campaign-form select, .segment-campaign-form input, .segment-campaign-form textarea { width: 100%; min-width: 0; }
+.segment-campaign-form textarea { resize: vertical; }
+@media (max-width: 900px) { .segment-campaign-form { grid-template-columns: 1fr; align-items: stretch; } }
 .customer-import-file { display: grid; gap: 6px; margin-block: 10px; }
 .customer-import-file input { max-width: 100%; }
 .customer-import-preview { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line, #c9dce3); border-radius: 10px; margin-top: 10px; }

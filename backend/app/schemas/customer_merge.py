@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class CustomerMergeRequest(BaseModel):
@@ -85,3 +85,27 @@ class CustomerSegmentOut(BaseModel):
     customer_count: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class CustomerSegmentFollowUpCreate(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    run_at: datetime
+    limit: int = Field(default=500, ge=1, le=500)
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Nội dung chăm sóc không được rỗng.")
+        return normalized
+
+
+class CustomerSegmentFollowUpOut(BaseModel):
+    segment_id: int
+    matched: int
+    scheduled: int
+    consent_required: int
+    bot_paused: int
+    not_found: int
+    followup_ids: list[int] = Field(default_factory=list)

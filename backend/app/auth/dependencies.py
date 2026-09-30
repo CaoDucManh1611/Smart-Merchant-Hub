@@ -240,7 +240,11 @@ def require_write_access(
         _ensure_business_active(db, _active_business_id(request, user, x_business_id))
         return None
     _ensure_business_active(db, _active_business_id(request, user, x_business_id))
-    if (user.role or "").lower() not in {"owner", "admin", "agent"}:
+    if (user.role or "").lower() not in {
+        "owner", "admin", "agent", "sales", "support",
+        "business_agent", "shop_agent", "sales_agent", "sales_staff",
+        "customer_support", "support_agent", "cskh",
+    }:
         raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này.")
     return user
 

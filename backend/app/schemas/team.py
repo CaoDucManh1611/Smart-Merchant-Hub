@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.auth.passwords import validate_signup_password
 
 
-TEAM_ROLES = ("owner", "admin", "agent", "viewer", "business_agent")
-TeamRole = Literal["owner", "admin", "agent", "viewer", "business_agent"]
+TEAM_ROLES = ("owner", "admin", "sales", "support", "agent", "viewer", "business_agent")
+TeamRole = Literal["owner", "admin", "sales", "support", "agent", "viewer", "business_agent"]
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # Older installs used ``business_agent`` (and the platform database used
@@ -22,12 +22,20 @@ ROLE_ALIASES = {
     "shop_agent": "agent",
     "business_admin": "admin",
     "shop_admin": "admin",
+    "sales_agent": "sales",
+    "sales_staff": "sales",
+    "customer_support": "support",
+    "support_agent": "support",
+    "cskh": "support",
 }
 
 
 def normalize_team_role(role: str | None) -> str:
     value = str(role or "agent").strip().lower()
-    return ROLE_ALIASES.get(value, value if value in {"owner", "admin", "agent", "viewer"} else "agent")
+    return ROLE_ALIASES.get(
+        value,
+        value if value in {"owner", "admin", "sales", "support", "agent", "viewer"} else "agent",
+    )
 
 
 class TeamUserCreate(BaseModel):

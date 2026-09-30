@@ -312,6 +312,8 @@ const segmentSaving = ref(false);
 const segmentError = ref("");
 const segmentEditingId = ref("");
 const segmentForm = ref({ name: "", description: "", tag_ids: [], match_mode: "all" });
+const segmentCampaignForm = ref({ segment_id: "", message: "", run_at: "" });
+const segmentCampaignSaving = ref(false);
 const customerTagDraft = ref("");
 const customerTagSaving = ref(false);
 const customerTagError = ref("");
@@ -2734,6 +2736,13 @@ function roleLabel(role) {
     agent: "Nhân viên",
     business_agent: "Nhân viên",
     shop_agent: "Nhân viên",
+    sales: "Nhân viên bán hàng",
+    sales_agent: "Nhân viên bán hàng",
+    sales_staff: "Nhân viên bán hàng",
+    support: "Nhân viên CSKH",
+    customer_support: "Nhân viên CSKH",
+    support_agent: "Nhân viên CSKH",
+    cskh: "Nhân viên CSKH",
     viewer: "Chỉ xem",
   };
   return t(labels[role] || role || "Chưa rõ");
@@ -9089,6 +9098,41 @@ async function fetchFollowups() {
   }
 }
 
+async function scheduleSegmentCampaign() {
+  const form = segmentCampaignForm.value;
+  if (!form.segment_id || !form.message.trim() || !form.run_at) {
+    followupError.value = uiLocale.value === "en"
+      ? "Choose a customer group, message, and send time."
+      : "Hãy chọn nhóm khách, nội dung và thời gian gửi.";
+    return;
+  }
+  segmentCampaignSaving.value = true;
+  followupError.value = "";
+  followupNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/segments/${segmentCampaignForm.value.segment_id}/followups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: form.message.trim(),
+        run_at: new Date(form.run_at).toISOString(),
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    followupNotice.value = uiLocale.value === "en"
+      ? `Scheduled ${result.scheduled || 0}/${result.matched || 0} customers. ${result.consent_required || 0} need consent.`
+      : `Đã lên lịch ${result.scheduled || 0}/${result.matched || 0} khách; ${result.consent_required || 0} khách chưa đủ đồng ý nhận tin.`;
+    segmentCampaignForm.value = { segment_id: form.segment_id, message: "", run_at: "" };
+    followupStatusFilter.value = "scheduled";
+    await fetchFollowups();
+  } catch (err) {
+    followupError.value = friendlyErrorMessage(err, "Chưa thể lên lịch chăm sóc theo nhóm. Vui lòng thử lại.");
+  } finally {
+    segmentCampaignSaving.value = false;
+  }
+}
+
 async function dispatchFollowups() {
   if (followupDispatching.value) return;
   followupDispatching.value = true;
@@ -13445,6 +13489,26 @@ function followupRecommendationLabel(item) {
           </div>
           <div v-if="followupNotice" class="settings-notice" role="status" aria-live="polite">{{ followupNotice }}</div>
           <div v-if="followupError" class="settings-notice team-error" role="alert">{{ followupError }}</div>
+          <form class="segment-campaign-form" @submit.prevent="scheduleSegmentCampaign">
+            <label>
+              <span>{{ uiLocale === 'en' ? 'Customer group' : 'Nhóm khách hàng' }}</span>
+              <select v-model="segmentCampaignForm.segment_id" required>
+                <option value="">{{ uiLocale === 'en' ? 'Choose a saved group' : 'Chọn nhóm đã lưu' }}</option>
+                <option v-for="segment in savedSegments" :key="segment.id" :value="segment.id">{{ segment.name }} ({{ segment.customer_count }})</option>
+              </select>
+            </label>
+            <label>
+              <span>{{ uiLocale === 'en' ? 'Message' : 'Nội dung chăm sóc' }}</span>
+              <textarea v-model="segmentCampaignForm.message" required maxlength="4000" rows="2" :placeholder="uiLocale === 'en' ? 'Message sent after consent checks' : 'Nội dung chỉ gửi sau khi kiểm tra quyền nhận tin'"></textarea>
+            </label>
+            <label>
+              <span>{{ uiLocale === 'en' ? 'Send time' : 'Thời gian gửi' }}</span>
+              <input v-model="segmentCampaignForm.run_at" required type="datetime-local" />
+            </label>
+            <button class="primary-btn" type="submit" :disabled="segmentCampaignSaving || !savedSegments.length">
+              {{ segmentCampaignSaving ? (uiLocale === 'en' ? 'Scheduling…' : 'Đang lên lịch...') : (uiLocale === 'en' ? 'Schedule group care' : 'Lên lịch chăm sóc nhóm') }}
+            </button>
+          </form>
           <label class="followup-status-filter">
             <span>{{ uiLocale === 'en' ? 'Delivery status' : 'Trạng thái gửi' }}</span>
             <select v-model="followupStatusFilter" @change="fetchFollowups">
@@ -13537,6 +13601,8 @@ function followupRecommendationLabel(item) {
             </div>
             <select v-model="teamForm.role" @change="invalidateTeamOtp" aria-label="Vai trò nhân viên">
               <option value="admin">Quản trị viên</option>
+              <option value="sales">Nhân viên bán hàng</option>
+              <option value="support">Nhân viên CSKH</option>
               <option value="agent">Nhân viên</option>
               <option value="viewer">Chỉ xem</option>
             </select>
@@ -13600,6 +13666,8 @@ function followupRecommendationLabel(item) {
                   <option value="">Không chọn vai trò</option>
                   <option value="owner">Chủ shop</option>
                   <option value="admin">Quản trị viên</option>
+                  <option value="sales">Nhân viên bán hàng</option>
+                  <option value="support">Nhân viên CSKH</option>
                   <option value="agent">Nhân viên</option>
                   <option value="viewer">Chỉ xem</option>
                 </select>

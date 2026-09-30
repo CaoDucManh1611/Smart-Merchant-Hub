@@ -28,6 +28,15 @@ test("customer CSV and consent flows require preview and evidence before saving"
   assert.match(templateSource, /item\.status === 'scheduled'/);
 });
 
+test("team roles and segment campaigns are available in the operations UI", () => {
+  assert.match(appSource, /sales: "Nhân viên bán hàng"/);
+  assert.match(appSource, /support: "Nhân viên CSKH"/);
+  assert.match(templateSource, /value="sales">Nhân viên bán hàng/);
+  assert.match(templateSource, /value="support">Nhân viên CSKH/);
+  assert.match(appSource, /customers\/segments\/\$\{segmentCampaignForm\.value\.segment_id\}\/followups/);
+  assert.match(templateSource, /@submit\.prevent="scheduleSegmentCampaign"/);
+});
+
 function openingButtonTags(source) {
   const start = source.indexOf("<template>");
   const end = source.lastIndexOf("</template>");

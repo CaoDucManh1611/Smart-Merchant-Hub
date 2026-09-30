@@ -11,6 +11,11 @@ ROLE_ALIASES = {
     "shop_agent": "agent",
     "business_admin": "admin",
     "shop_admin": "admin",
+    "sales_agent": "sales",
+    "sales_staff": "sales",
+    "customer_support": "support",
+    "support_agent": "support",
+    "cskh": "support",
 }
 
 
@@ -19,7 +24,7 @@ def role_allows(role: str | None, action: str, resource: str) -> bool:
     action = action.lower()
     if role in {"owner", "admin"}:
         return True
-    if role == "agent":
+    if role in {"agent", "sales", "support"}:
         return action == "read" or (action == "write" and resource not in {"team", "audit", "permissions"})
     if role == "viewer":
         return action == "read"
