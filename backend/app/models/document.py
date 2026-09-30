@@ -17,6 +17,14 @@ from app.core.config import settings
 
 class Document(TenantBase):
     __tablename__ = "documents"
+    __table_args__ = (
+        Index(
+            "uq_documents_business_content_hash",
+            "business_id",
+            "content_hash",
+            unique=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         Integer,
@@ -62,6 +70,9 @@ Integer,
         Text,
         nullable=True,
     )
+
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     embedding_status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="pending", server_default="pending", index=True

@@ -19,6 +19,10 @@ from app.services.tenant_data_migration import (
 from app.tenancy.schema import schema_name_for, validate_schema_name
 
 
+# New operational state has no legacy shared-database rows to backfill.
+TENANT_LOCAL_ONLY_TABLES = ("channel_outbound_attempts",)
+
+
 DEFAULT_TABLE_ORDER = (
     "customers",
     "customer_identities",
@@ -500,6 +504,7 @@ def rollback_cutover(
 
 __all__ = [
     "DEFAULT_TABLE_ORDER",
+    "TENANT_LOCAL_ONLY_TABLES",
     "begin_cutover",
     "complete_cutover",
     "mark_cutover_verified",

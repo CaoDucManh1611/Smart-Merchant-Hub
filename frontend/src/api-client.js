@@ -1,4 +1,6 @@
-import { readAuthToken } from "./auth-context.js";
+import { clearAuthToken, readAuthToken } from "./auth-context.js";
+
+export const AUTH_EXPIRED_EVENT = "smh:auth-expired";
 
 /** Keep browser/network implementation details out of the shop-facing UI. */
 function normalizeFetchError(error) {
@@ -14,15 +16,22 @@ function normalizeFetchError(error) {
 }
 
 /** Attach only bearer auth; the server resolves tenant identity. */
-export function apiFetch(input, init = {}) {
+export async function apiFetch(input, init = {}) {
   const headers = new Headers(init.headers || {});
   const token = readAuthToken();
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  return fetch(input, { ...init, headers }).catch((error) => {
+  try {
+    const response = await fetch(input, { ...init, headers });
+    if (response.status === 401 && token) {
+      clearAuthToken();
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+    }
+    return response;
+  } catch (error) {
     throw normalizeFetchError(error);
-  });
+  }
 }
 
 /** Injectable variant retained for tests and non-browser consumers. */

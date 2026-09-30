@@ -2,21 +2,65 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.contracts.channel_event import NormalizedChannelEvent, bind_event_to_channel
-from app.core.logging import redact_secrets
+from app.integrations import get_channel_adapter
 from app.models.channel import Channel, ChannelEvent
 
 
 _RETRYABLE_EVENT_STATUSES = {"failed", "received"}
+_PROCESSING_LEASE = timedelta(minutes=5)
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def normalize_stored_channel_event(
+    channel: Channel,
+    stored_event: ChannelEvent,
+) -> NormalizedChannelEvent:
+    """Re-parse a failed inbox event and verify its stable provider identity."""
+    provider = str(channel.channel_type or "").strip().lower()
+    if provider not in {"facebook", "instagram", "telegram", "zalo"}:
+        raise ValueError("Channel provider does not support inbox replay")
+    payload = stored_event.payload
+    if not isinstance(payload, dict):
+        raise ValueError("Stored provider payload is invalid")
+
+    adapter = get_channel_adapter(provider)
+    if provider in {"facebook", "instagram"}:
+        # Meta event rows retain the individual messaging event, not the full
+        # webhook envelope; rebuild only the minimum account wrapper required
+        # by the existing adapter.
+        events = adapter.parse_events({
+            "entry": [{
+                "id": channel.external_account_id,
+                "messaging": [payload],
+            }]
+        })
+    else:
+        events = adapter.parse_events(
+            payload,
+            external_account_id=channel.external_account_id,
+        )
+
+    matching = [
+        event
+        for event in events
+        if event.external_event_id == stored_event.external_event_id
+    ]
+    if len(matching) != 1:
+        raise ValueError("Stored payload does not match the failed event identity")
+    return bind_event_to_channel(
+        matching[0],
+        channel_id=int(channel.id),
+        business_id=int(channel.business_id),
+    )
 
 
 def ingest_normalized_events(
@@ -61,13 +105,38 @@ def ingest_normalized_events(
             if existing is not None:
                 # A previous delivery may have reached the database but
                 # failed before the CRM message was saved.  Only those failed
-                # (or legacy ``received``) events are safe to process again;
-                # completed and in-flight events remain idempotent.
-                if existing.status not in _RETRYABLE_EVENT_STATUSES:
+                # (or legacy ``received``) events are safe to process again.
+                # A worker crash can strand ``processing`` forever, so reclaim
+                # it after a bounded lease; message IDs remain the final
+                # idempotency guard if the old worker was only slow.
+                stale_processing = (
+                    existing.status == "processing"
+                    and (
+                        existing.received_at is None
+                        or existing.received_at <= _utcnow() - _PROCESSING_LEASE
+                    )
+                )
+                if existing.status not in _RETRYABLE_EVENT_STATUSES and not stale_processing:
                     continue
-                existing.status = "processing"
-                existing.error_message = None
-                existing.processed_at = None
+                claim = db.query(ChannelEvent).filter(
+                    ChannelEvent.id == existing.id,
+                    ChannelEvent.status == existing.status,
+                )
+                if stale_processing:
+                    claim = claim.filter(
+                        ChannelEvent.received_at <= _utcnow() - _PROCESSING_LEASE
+                    )
+                claimed = claim.update(
+                    {
+                        ChannelEvent.status: "processing",
+                        ChannelEvent.received_at: _utcnow(),
+                        ChannelEvent.error_message: None,
+                        ChannelEvent.processed_at: None,
+                    },
+                    synchronize_session=False,
+                )
+                if claimed != 1:
+                    continue
                 accepted.append(
                     bind_event_to_channel(
                         event,
@@ -134,9 +203,22 @@ def mark_channel_event_failed(
     """Keep a redacted, retryable failure state for a provider delivery."""
     if event.channel_id is None:
         return
-    # Never persist a full provider payload or request headers in an error
-    # field.  They can contain customer content or credentials.
-    reason = redact_secrets(" ".join(str(error).split()))[:500] or type(error).__name__
+    # Exception text may include SQL parameters, signed URLs, or provider
+    # payload fragments. Persist only a compact diagnostic code, never it.
+    if isinstance(error, Exception):
+        parts = [type(error).__name__]
+        provider = str(getattr(error, "channel", "") or "").lower()
+        if provider in {"facebook", "instagram", "telegram", "zalo", "tiktok"}:
+            parts.append(provider)
+        stage = str(getattr(error, "stage", "") or "").lower()
+        if stage and stage.replace("_", "").replace("-", "").isalnum():
+            parts.append(stage)
+        status = getattr(error, "meta_status", None)
+        if isinstance(status, int) and 100 <= status <= 599:
+            parts.append(str(status))
+        reason = ":".join(parts)[:160]
+    else:
+        reason = "processing_failed"
     db.query(ChannelEvent).filter(
         ChannelEvent.channel_id == event.channel_id,
         ChannelEvent.external_event_id == event.external_event_id,

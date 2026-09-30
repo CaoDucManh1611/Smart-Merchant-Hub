@@ -6950,6 +6950,18 @@ body,
   line-height: 1.4;
 }
 
+.chat-composer .composer-delivery-warning {
+  order: 1;
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border: 1px solid #a8d9d8;
+  border-radius: 8px;
+  color: #155d64;
+  background: #eef9f8;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .chat-composer .composer-access-notice.is-read-only {
   padding: 7px 9px;
   border: 1px solid #efd2cb;
@@ -11373,6 +11385,7 @@ body.crm-dark .conversation-assignment select,
 body.crm-dark .chat-tools button { color: #e5eaec !important; background: #252a2d !important; border-color: #4a555a !important; }
 body.crm-dark .conversation-outcome-error { color: #ffaaa2 !important; }
 body.crm-dark .composer-tabs { border-color: #394145 !important; }
+body.crm-dark .chat-composer .composer-delivery-warning { color: #b9e9e6; border-color: #35686a; background: #193638; }
 body.crm-dark .composer-tabs button { color: #b6c0c5 !important; }
 body.crm-dark .composer-tabs button.active { color: #8bd8d7 !important; border-bottom-color: #39a7ad !important; }
 body.crm-dark .composer textarea { color: #f3f5f6 !important; }
@@ -14829,3 +14842,16 @@ body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer::-webkit-s
     justify-content: flex-end;
   }
 }
+/* Consent and delivery controls stay legible inside the narrow CRM panels. */
+.customer-consent-section { display: grid; gap: 10px; }
+.customer-consent-evidence { display: grid; gap: 5px; min-width: 0; }
+.customer-consent-evidence input { width: 100%; min-width: 0; }
+.customer-consent-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--line, #c9dce3); border-radius: 10px; }
+.customer-consent-row > div:first-child { display: grid; gap: 3px; }
+.customer-consent-row small { color: var(--muted, #5a7183); }
+.customer-consent-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.followup-status-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-block: 10px; }
+.customer-import-file { display: grid; gap: 6px; margin-block: 10px; }
+.customer-import-file input { max-width: 100%; }
+.customer-import-preview { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line, #c9dce3); border-radius: 10px; margin-top: 10px; }
+.customer-import-preview ul { margin: 0; padding-inline-start: 20px; }

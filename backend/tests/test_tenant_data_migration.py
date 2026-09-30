@@ -6,7 +6,7 @@ from app.services.tenant_data_migration import (
     copy_rows,
 )
 from app.services.tenant_cutover_service import migrate_business
-from app.services.tenant_cutover_service import DEFAULT_TABLE_ORDER
+from app.services.tenant_cutover_service import DEFAULT_TABLE_ORDER, TENANT_LOCAL_ONLY_TABLES
 from app.services import tenant_cutover_service as cutover
 from app.database.bases import PlatformBase, TenantBase
 from app.models import platform_control
@@ -88,7 +88,7 @@ def test_migration_cli_exposes_explicit_non_destructive_rollback():
 def test_migration_order_covers_every_tenant_table():
     import app.models  # noqa: F401 - register all tenant models
 
-    assert set(TenantBase.metadata.tables).issubset(set(DEFAULT_TABLE_ORDER))
+    assert set(TenantBase.metadata.tables).issubset(set(DEFAULT_TABLE_ORDER) | set(TENANT_LOCAL_ONLY_TABLES))
 
 
 def test_migrate_business_filters_webhook_and_assignment_children():

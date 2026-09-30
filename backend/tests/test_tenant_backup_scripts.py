@@ -36,6 +36,8 @@ def test_tenant_restore_is_non_destructive_by_default_and_validates_manifest():
     assert "checksum" in script.lower()
     assert "Manifest does not match" in script or "manifest.business_id" in script
     assert "--exit-on-error" in script
+    assert "CREATE SCHEMA IF NOT EXISTS" in script
+    assert script.index("CREATE SCHEMA IF NOT EXISTS") < script.index('Invoke-NativeChecked -Command "pg_restore"')
     assert "ManifestFile is required" in script
     assert "server_major_version" in script
     assert "alembic_revision" in script

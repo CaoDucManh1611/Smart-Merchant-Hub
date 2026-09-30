@@ -1,5 +1,11 @@
 # CRM completion checklist
 
+> Historical, broader CRM backlog. The branch-specific status and current
+> acceptance gates are tracked in
+> [`CRM_END_TO_END_COMPLETION_PLAN.md`](CRM_END_TO_END_COMPLETION_PLAN.md);
+> the old test counts and unchecked boxes below are not a current release
+> verdict.
+
 Mục tiêu: kiểm thử và hoàn thiện toàn bộ luồng từ nhận tin nhắn đến chăm sóc
 khách hàng, tạo đơn, vận hành và bảo mật tenant.
 

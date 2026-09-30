@@ -95,7 +95,7 @@ class MediaUploadApiTests(unittest.TestCase):
                 f"/api/conversations/{self.conversation_id}/media/upload-generic",
                 headers={"X-Business-Id": "1"},
                 files={"file": ("voice.ogg", b"audio-bytes", "audio/ogg")},
-                data={"media_type": "audio", "caption": "Nghe thử"},
+                data={"media_type": "audio", "caption": "Nghe thử", "client_id": "media-audio-1"},
             )
 
         self.assertEqual(200, response.status_code, response.text)
@@ -123,7 +123,7 @@ class MediaUploadApiTests(unittest.TestCase):
                 f"/api/conversations/{self.zalo_conversation_id}/media/upload-generic",
                 headers={"X-Business-Id": "1"},
                 files={"file": ("voice.webm", b"webm-audio", "audio/webm")},
-                data={"media_type": "audio"},
+                data={"media_type": "audio", "client_id": "media-audio-2"},
             )
 
         self.assertEqual(200, response.status_code, response.text)
@@ -160,6 +160,7 @@ class MediaUploadApiTests(unittest.TestCase):
                 f"/api/conversations/{self.zalo_conversation_id}/send",
                 headers={"X-Business-Id": "1"},
                 files={"file": ("image.jpg", b"not-used", "image/jpeg")},
+                data={"client_id": "zalo-image-1"},
             )
 
         self.assertEqual(200, response.status_code, response.text)

@@ -1,13 +1,17 @@
 """Customer 360 and unified timeline endpoints."""
 
+import csv
+import hashlib
+import io
 from datetime import date, datetime, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from cryptography.fernet import InvalidToken
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database.platform_session import get_platform_db
@@ -83,13 +87,175 @@ from app.services.customer_merge_service import (
 )
 from app.services.customer_avatar import refresh_customer_avatar_url
 from app.services.customer_collection import decrypt_contact
-from app.auth.dependencies import require_write_access
+from app.auth.dependencies import require_admin_access, require_write_access
 from app.models.business import User
 from app.services.audit_service import record_audit
 from app.services.crm_workspace_config import get_crm_workspace_config, validate_customer_custom_fields
+from app.services.customer_profile import normalize_email, normalize_name, normalize_phone
 
 
 router = APIRouter()
+MAX_CUSTOMER_IMPORT_BYTES = 2 * 1024 * 1024
+MAX_CUSTOMER_IMPORT_ROWS = 5000
+
+
+def _parse_customer_import(payload: bytes) -> tuple[list[dict], list[dict]]:
+    if len(payload) > MAX_CUSTOMER_IMPORT_BYTES:
+        raise HTTPException(413, "Tệp CSV vượt quá 2 MB.")
+    try:
+        text_value = payload.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(422, "Tệp CSV phải dùng mã hóa UTF-8.") from exc
+    try:
+        reader = csv.DictReader(io.StringIO(text_value, newline=""))
+        fields = set(reader.fieldnames or [])
+        if not fields or not fields.intersection({"external_id", "email", "phone"}):
+            raise HTTPException(422, "CSV cần ít nhất một cột external_id, email hoặc phone.")
+        rows: list[dict] = []
+        errors: list[dict] = []
+        seen_keys: set[str] = set()
+        seen_ids: set[str] = set()
+        for line, values in enumerate(reader, start=2):
+            if line > MAX_CUSTOMER_IMPORT_ROWS + 1:
+                raise HTTPException(413, "CSV vượt quá 5.000 dòng.")
+            if None in values:
+                errors.append({"row": line, "code": "column_count"})
+                continue
+            raw = {key: str(values.get(key) or "").strip() for key in fields}
+            email = normalize_email(raw.get("email"))
+            phone = normalize_phone(raw.get("phone"))
+            if raw.get("email") and not email:
+                errors.append({"row": line, "code": "invalid_email"})
+                continue
+            if raw.get("phone") and not phone:
+                errors.append({"row": line, "code": "invalid_phone"})
+                continue
+            external_id = raw.get("external_id") or ""
+            if not (external_id or email or phone):
+                errors.append({"row": line, "code": "missing_identity"})
+                continue
+            crm_id = raw.get("crm_id") or ""
+            if crm_id and (not crm_id.isdecimal() or int(crm_id) <= 0):
+                errors.append({"row": line, "code": "invalid_crm_id"})
+                continue
+            identity = f"{raw.get('channel') or 'import'}:{external_id}" if external_id else f"contact:{email or phone}"
+            key = "csv:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            if key in seen_keys or (crm_id and crm_id in seen_ids):
+                errors.append({"row": line, "code": "duplicate_in_file"})
+                continue
+            seen_keys.add(key)
+            if crm_id:
+                seen_ids.add(crm_id)
+            name = raw.get("name") or ""
+            address = raw.get("address") or ""
+            if len(name) > 255 or len(address) > 2000:
+                errors.append({"row": line, "code": "field_too_long"})
+                continue
+            rows.append({
+                "row": line, "crm_id": int(crm_id) if crm_id else None,
+                "channel": raw.get("channel") or "import", "external_id": external_id,
+                "key": key, "name": normalize_name(name),
+                "email": email, "phone": phone, "address": address or None,
+            })
+        return rows, errors
+    except csv.Error as exc:
+        raise HTTPException(422, "Cấu trúc CSV không hợp lệ.") from exc
+
+
+def _customer_import_actions(db: Session, business_id: int, rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    crm_ids = [row["crm_id"] for row in rows if row["crm_id"]]
+    keys = [row["key"] for row in rows]
+    by_id = {
+        row.id: row for row in db.query(Customer).filter(
+            Customer.business_id == business_id, Customer.id.in_(crm_ids),
+        ).all()
+    } if crm_ids else {}
+    by_key = {
+        row.external_user_id: row for row in db.query(Customer).filter(
+            Customer.business_id == business_id, Customer.channel == "import",
+            Customer.external_user_id.in_(keys),
+        ).all()
+    } if keys else {}
+    actions = []
+    errors = []
+    for row in rows:
+        existing = by_id.get(row["crm_id"]) if row["crm_id"] else None
+        if existing is not None and (
+            existing.channel != row["channel"]
+            or existing.external_user_id != row["external_id"]
+        ):
+            errors.append({"row": row["row"], "code": "crm_id_mismatch"})
+            continue
+        action = "skip" if existing or row["key"] in by_key else "create"
+        actions.append({
+            "row": row["row"], "action": action,
+            "name": row["name"], "email": row["email"], "phone": row["phone"],
+            "customer_id": existing.id if existing else by_key[row["key"]].id if action == "skip" else None,
+        })
+    return actions, errors
+
+
+@router.post("/import/preview", dependencies=[Depends(require_admin_access)])
+async def preview_customer_import(
+    file: UploadFile = File(...), db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    rows, errors = _parse_customer_import(await file.read(MAX_CUSTOMER_IMPORT_BYTES + 1))
+    actions, identity_errors = _customer_import_actions(db, tenant.business_id, rows)
+    return {"rows": actions, "errors": errors + identity_errors, "total": len(actions) + len(errors) + len(identity_errors)}
+
+
+@router.post("/import")
+async def import_customers(
+    file: UploadFile = File(...), db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    rows, errors = _parse_customer_import(await file.read(MAX_CUSTOMER_IMPORT_BYTES + 1))
+    actions, identity_errors = _customer_import_actions(db, tenant.business_id, rows)
+    if errors or identity_errors:
+        raise HTTPException(422, detail={"code": "invalid_customer_import", "errors": errors + identity_errors})
+    for row, action in zip(rows, actions):
+        if action["action"] != "create":
+            continue
+        db.add(Customer(
+            business_id=tenant.business_id, channel="import", external_user_id=row["key"],
+            name=row["name"], email=row["email"], phone=row["phone"], address=row["address"],
+        ))
+    created = sum(action["action"] == "create" for action in actions)
+    record_audit(
+        db, business_id=tenant.business_id, user_id=actor.id if actor else None,
+        action="customer_csv_import", resource_type="customer",
+        metadata={"created": created, "skipped": len(actions) - created},
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "Dữ liệu đã thay đổi trong lúc nhập; hãy xem trước rồi thử lại.") from exc
+    return {"created": created, "skipped": len(actions) - created, "total": len(actions)}
+
+
+@router.get("/export.csv", dependencies=[Depends(require_admin_access)])
+def export_customers_csv(
+    db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context),
+):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(("crm_id", "channel", "external_id", "name", "email", "phone", "address"))
+    for row in db.query(Customer).filter(
+        Customer.business_id == tenant.business_id, Customer.status != "merged",
+    ).order_by(Customer.id).all():
+        # CSV may be opened in Excel; neutralize formula prefixes in editable fields.
+        safe = lambda value: "'" + value if value and value.lstrip().startswith(("=", "+", "-", "@")) else value or ""
+        writer.writerow((
+            row.id, safe(row.channel), safe(row.external_user_id),
+            safe(row.name), safe(row.email), safe(row.phone), safe(row.address),
+        ))
+    return Response(
+        content=output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="customers.csv"'},
+    )
 
 
 class BulkCustomerTagUpdate(BaseModel):

@@ -10,6 +10,24 @@ const apiClientSource = fs.readFileSync(new URL("../src/api-client.js", import.m
 const authContextSource = fs.readFileSync(new URL("../src/auth-context.js", import.meta.url), "utf8");
 const templateSource = appSource.slice(appSource.indexOf("<template>"), appSource.lastIndexOf("</template>"));
 
+test("RAG assistant displays cited document chunks and handoff state", () => {
+  assert.match(appSource, /answerStatus: null/);
+  assert.match(appSource, /assistantMsg\.handoffRequired = Boolean\(data\.handoff_required\)/);
+  assert.match(templateSource, /class="rag-msg-sources"/);
+  assert.match(templateSource, /source\.citation_id/);
+  assert.match(templateSource, /source\.filename/);
+  assert.match(templateSource, /class="rag-handoff-notice"/);
+});
+
+test("customer CSV and consent flows require preview and evidence before saving", () => {
+  assert.match(appSource, /customers\/import\/preview/);
+  assert.match(appSource, /preview\.errors\?\.length/);
+  assert.match(templateSource, /customerImportPreview\.errors\?\.length/);
+  assert.match(appSource, /consentEvidenceMessageId\.value/);
+  assert.match(appSource, /evidence_message_id: status === "granted" \? evidenceId : null/);
+  assert.match(templateSource, /item\.status === 'scheduled'/);
+});
+
 function openingButtonTags(source) {
   const start = source.indexOf("<template>");
   const end = source.lastIndexOf("</template>");
@@ -1016,6 +1034,14 @@ test("chat composer keeps non-JPEG images on the generic media upload path", () 
   assert.match(appSource, /mediaType !== "image" \|\| !canUseNormalizedImagePath/);
 });
 
+test("chat retries preserve the original outbound idempotency key", () => {
+  assert.match(appSource, /async function sendUnifiedReply\(retryClientId = null\)/);
+  assert.match(appSource, /await sendUnifiedReply\(message\.client_id\)/);
+  assert.match(appSource, /formData\.append\("client_id", textClientId\)/);
+  assert.match(appSource, /formData\.append\("media_client_id", mediaClientId\)/);
+  assert.match(appSource, /crypto\.randomUUID\(\)/);
+});
+
 test("chat composer replaces the search control with a voice recorder", () => {
   assert.match(appSource, /navigator\.mediaDevices\?\.getUserMedia/);
   assert.match(appSource, /new (?:window\.)?MediaRecorder/);
@@ -1025,4 +1051,9 @@ test("chat composer replaces the search control with a voice recorder", () => {
   assert.match(appSource, /:title="voiceRecording \? 'Dừng ghi âm' : 'Ghi âm'"/);
   assert.doesNotMatch(appSource, /title="Đặt con trỏ vào ô nhập"/);
   assert.match(appSource, /async function selectConversation\(id\) \{[\s\S]*?discardVoiceRecording\(\);/);
+});
+
+test("expired-session copy follows the current interface language", () => {
+  assert.match(appSource, /authError\.value = "Phiên đăng nhập đã hết hạn\. Vui lòng đăng nhập lại\."/);
+  assert.match(appSource, /class="login-alert" role="alert">\{\{ t\(authError\) \}\}/);
 });

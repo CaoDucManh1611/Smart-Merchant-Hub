@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -177,13 +178,22 @@ class RecommendationApiTests(unittest.TestCase):
     @patch("app.api.chat.call_llm", return_value="catalog answer")
     @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
     @patch("app.api.chat.retrieve", return_value=[])
-    def test_rag_question_with_customer_is_recorded_as_recommendation_signal(self, *_mocks):
+    def test_rag_question_without_sources_uses_safe_fallback_and_records_minimal_signal(
+        self, retrieve, reserve_budget, call_llm
+    ):
         response = self.client.post(
             "/api/chat",
             headers={**self.headers(), "X-Idempotency-Key": "rag-question-test-1"},
             json={"customer_id": self.customer_id, "query": "product three gift"},
         )
         self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual("no_context", response.json()["answer_status"])
+        self.assertTrue(response.json()["handoff_required"])
+        self.assertEqual([], response.json()["sources"])
+        self.assertIn("nguồn đủ tin cậy", response.json()["answer"].lower())
+        retrieve.assert_called_once()
+        reserve_budget.assert_not_called()
+        call_llm.assert_not_called()
         with Session(self.engine) as db:
             event = db.query(CustomerProductInteraction).filter(
                 CustomerProductInteraction.business_id == self.business_id,
@@ -191,7 +201,158 @@ class RecommendationApiTests(unittest.TestCase):
             ).one()
             self.assertEqual("ask", event.event_type)
             self.assertEqual("rag", event.source)
-            self.assertEqual("product three gift", event.query_text)
+            self.assertIsNone(event.query_text)
+            self.assertEqual(len("product three gift"), event.event_metadata["query_chars"])
+            self.assertNotIn("query_hash", event.event_metadata)
+
+    @patch("app.api.chat.stream_llm")
+    @patch("app.api.chat.reserve_ai_budget")
+    @patch("app.api.chat.retrieve", return_value=[])
+    def test_stream_without_sources_emits_handoff_without_calling_llm(self, retrieve, reserve_budget, stream_llm):
+        response = self.client.post(
+            "/api/chat/stream",
+            headers=self.headers(),
+            json={"query": "Câu hỏi không có trong tài liệu"},
+        )
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertIn('"type": "sources"', response.text)
+        self.assertIn('"answer_status": "no_context"', response.text)
+        self.assertIn('"handoff_required": true', response.text)
+        self.assertIn("nhân viên xác minh", response.text)
+        retrieve.assert_called_once()
+        reserve_budget.assert_not_called()
+        stream_llm.assert_not_called()
+
+    @patch("app.api.chat.stream_llm")
+    @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
+    @patch("app.api.chat.retrieve")
+    def test_stream_provider_failure_replaces_partial_answer_with_safe_handoff(
+        self, retrieve, _reserve_budget, stream_llm
+    ):
+        retrieve.return_value = [SimpleNamespace(
+            chunk_id=12,
+            document_id=7,
+            content="Nội dung nguồn.",
+            similarity=0.91,
+            metadata={},
+            filename="nguon.txt",
+            chunk_index=0,
+        )]
+
+        async def partial_then_fail(_messages):
+            yield "Câu trả lời chưa hoàn tất"
+            raise RuntimeError("provider unavailable")
+
+        stream_llm.side_effect = partial_then_fail
+        response = self.client.post(
+            "/api/chat/stream",
+            headers=self.headers(),
+            json={"query": "Hỏi nội dung tài liệu"},
+        )
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertIn('"code": "service_unavailable"', response.text)
+        self.assertIn('"replace": true', response.text)
+        self.assertIn("Trợ lý đang gặp sự cố", response.text)
+
+    @patch("app.api.chat.call_llm", return_value="Giá là 10.000 đồng [Nguồn 1].")
+    @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
+    @patch("app.api.chat.retrieve")
+    def test_chat_citations_include_document_and_chunk_identity(self, retrieve, *_mocks):
+        retrieve.return_value = [SimpleNamespace(
+            chunk_id=12,
+            document_id=7,
+            content="Giá sản phẩm là 10.000 đồng.",
+            similarity=0.91,
+            metadata={"topic": "pricing"},
+            filename="bang-gia.txt",
+            chunk_index=2,
+        )]
+        response = self.client.post(
+            "/api/chat",
+            headers=self.headers(),
+            json={"query": "Giá sản phẩm là bao nhiêu?"},
+        )
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual("answered", response.json()["answer_status"])
+        self.assertFalse(response.json()["handoff_required"])
+        self.assertEqual(
+            {
+                "document_id": 7,
+                "content": "Giá sản phẩm là 10.000 đồng.",
+                "similarity": 0.91,
+                "metadata": {"topic": "pricing"},
+                "citation_id": 1,
+                "chunk_id": 12,
+                "filename": "bang-gia.txt",
+                "chunk_index": 2,
+            },
+            response.json()["sources"][0],
+        )
+
+    @patch("app.api.chat.call_llm", return_value="Giá là 10.000 đồng.")
+    @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
+    @patch("app.api.chat.retrieve")
+    def test_chat_rejects_uncited_llm_answer(self, retrieve, *_mocks):
+        retrieve.return_value = [SimpleNamespace(
+            chunk_id=12, document_id=7, content="Giá sản phẩm là 10.000 đồng.",
+            similarity=0.91, metadata={}, filename="bang-gia.txt", chunk_index=0,
+        )]
+        response = self.client.post(
+            "/api/chat", headers=self.headers(), json={"query": "Giá sản phẩm?"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual("no_context", response.json()["answer_status"])
+        self.assertTrue(response.json()["handoff_required"])
+        self.assertNotIn("Giá là 10.000 đồng.", response.text)
+
+    @patch("app.api.chat.stream_llm")
+    @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
+    @patch("app.api.chat.retrieve")
+    def test_stream_does_not_emit_uncited_partial_answer(self, retrieve, _reserve, stream_llm):
+        retrieve.return_value = [SimpleNamespace(
+            chunk_id=12, document_id=7, content="Giá sản phẩm là 10.000 đồng.",
+            similarity=0.91, metadata={}, filename="bang-gia.txt", chunk_index=0,
+        )]
+
+        async def uncited(_messages):
+            yield "Giá là "
+            yield "10.000 đồng."
+
+        stream_llm.side_effect = uncited
+        response = self.client.post(
+            "/api/chat/stream", headers=self.headers(), json={"query": "Giá sản phẩm?"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertIn('"answer_status": "no_context"', response.text)
+        self.assertNotIn("Giá là 10.000 đồng.", response.text)
+
+    @patch("app.api.chat.call_llm", side_effect=RuntimeError("provider unavailable; token=secret"))
+    @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
+    @patch("app.api.chat.retrieve")
+    def test_provider_failure_returns_safe_handoff_fallback(self, retrieve, *_mocks):
+        retrieve.return_value = [SimpleNamespace(
+            chunk_id=12,
+            document_id=7,
+            content="Nội dung nguồn.",
+            similarity=0.91,
+            metadata={},
+            filename="nguon.txt",
+            chunk_index=0,
+        )]
+        response = self.client.post(
+            "/api/chat",
+            headers=self.headers(),
+            json={"query": "Hỏi nội dung tài liệu"},
+        )
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual("service_error", response.json()["answer_status"])
+        self.assertTrue(response.json()["handoff_required"])
+        self.assertIn("sự cố", response.json()["answer"].lower())
+        self.assertNotIn("secret", response.text)
 
     def test_completed_order_creates_idempotent_purchase_interactions(self):
         with Session(self.engine) as db:

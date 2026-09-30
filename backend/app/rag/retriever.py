@@ -36,6 +36,8 @@ class RetrievedChunk:
     content: str
     similarity: float
     metadata: dict | None
+    filename: str | None = None
+    chunk_index: int | None = None
 
 
 def retrieve(
@@ -77,6 +79,7 @@ def retrieve(
         max(top_k * 3, top_k),
         business_id=business_id,
         query_topic=query_topic,
+        similarity_threshold=similarity_threshold,
     )
     vector_results: list[RetrievedChunk] = []
 
@@ -92,7 +95,10 @@ def retrieve(
     try:
         query_vector = embed_query(query)
     except Exception as error:
-        logger.warning("Vector query unavailable; using lexical retrieval: %s", error)
+        logger.warning(
+            "Vector query unavailable; using lexical retrieval: error_type=%s",
+            type(error).__name__,
+        )
         logger.info(
             "RAG retrieval complete: topic=%s lexical=%d vector=0 returned=%d duration_ms=%.2f",
             query_topic,
@@ -111,6 +117,8 @@ def retrieve(
             dc.document_id,
             dc.content,
             dc.metadata AS chunk_metadata,
+            d.filename AS source_filename,
+            dc.chunk_index,
             1 - (dc.embedding <=> CAST(:query_vector AS vector)) AS similarity
         FROM document_chunks dc
         JOIN documents d ON d.id = dc.document_id
@@ -134,8 +142,8 @@ def retrieve(
         ).fetchall()
     except Exception as error:
         logger.warning(
-            "pgvector search unavailable; using lexical retrieval: %s",
-            error,
+            "pgvector search unavailable; using lexical retrieval: error_type=%s",
+            type(error).__name__,
         )
         logger.info(
             "RAG retrieval complete: topic=%s lexical=%d vector=0 returned=%d duration_ms=%.2f",
@@ -156,6 +164,8 @@ def retrieve(
                 content=row_data["content"],
                 similarity=float(row_data["similarity"]),
                 metadata=row_data["chunk_metadata"],
+                filename=row_data["source_filename"],
+                chunk_index=row_data["chunk_index"],
             )
         )
 
@@ -213,6 +223,7 @@ def _retrieve_lexical(
     top_k: int,
     business_id: int,
     query_topic: str | None = None,
+    similarity_threshold: float | None = None,
 ) -> list[RetrievedChunk]:
     """Tìm kiếm từ khóa trong toàn bộ chunks, kể cả chunk không có vector."""
     identifiers = list(
@@ -261,7 +272,8 @@ def _retrieve_lexical(
     rows = db.execute(
         sa_text(
             f"""
-            SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata
+            SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
+                   d.filename AS source_filename, dc.chunk_index
             FROM document_chunks dc
             JOIN documents d ON d.id = dc.document_id
             WHERE d.status = 'ready'
@@ -279,7 +291,8 @@ def _retrieve_lexical(
         row_data = row._mapping
         content = row_data["content"]
         content_lower = content.lower()
-        matched = sum(token in content_lower for token in tokens)
+        content_tokens = set(re.findall(r"[\wÀ-ỹ]+", content_lower, flags=re.UNICODE))
+        matched = sum(token in content_tokens for token in tokens)
         coverage = matched / len(tokens) if tokens else 0
         exact_identifier = any(
             identifier in content_lower
@@ -287,10 +300,9 @@ def _retrieve_lexical(
         )
         phrase_bonus = 0.12 if " ".join(tokens[:2]) in content_lower else 0
         identifier_bonus = 0.35 if exact_identifier else 0
-        score = min(
-            0.99,
-            0.45 + coverage * 0.25 + phrase_bonus + identifier_bonus,
-        )
+        score = min(0.99, coverage * 0.7 + phrase_bonus + identifier_bonus)
+        if similarity_threshold is not None and score < similarity_threshold:
+            continue
         topic_bonus = 0.15 if topic_matches(row_data["chunk_metadata"], query_topic) else 0
         scored.append((score + topic_bonus, RetrievedChunk(
                 chunk_id=row_data["id"],
@@ -298,6 +310,8 @@ def _retrieve_lexical(
                 content=content,
                 similarity=score,
                 metadata=row_data["chunk_metadata"],
+                filename=row_data["source_filename"],
+                chunk_index=row_data["chunk_index"],
             )))
 
     scored.sort(key=lambda item: item[0], reverse=True)

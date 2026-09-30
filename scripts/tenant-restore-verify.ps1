@@ -66,6 +66,14 @@ if ($LASTEXITCODE -ne 0 -or -not ($serverVersionNum.Trim() -match '^\d+$')) { th
 $serverMajor = [int][Math]::Floor(([int]$serverVersionNum.Trim()) / 10000)
 if ($serverMajor -ne [int]$manifest.server_major_version) { throw "Verification server major version does not match the backup manifest." }
 
+# pg_restore's --schema filter may omit the schema TOC entry. Create only the
+# validated tenant schema so a fresh scratch database can receive its tables.
+$quotedSchema = '"' + $schema.Replace('"', '""') + '"'
+Invoke-NativeChecked -Command "psql" -Arguments @(
+  "--dbname=$VerificationDatabaseUrl",
+  "--command=CREATE SCHEMA IF NOT EXISTS $quotedSchema;"
+)
+
 $restoreArgs = @(
   "--exit-on-error",
   "--dbname=$VerificationDatabaseUrl",

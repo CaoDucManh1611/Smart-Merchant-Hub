@@ -80,7 +80,7 @@ class InstagramOutboundApiTests(unittest.TestCase):
             response = self.client.post(
                 f"/api/conversations/{self.conversation_id}/send",
                 headers={"X-Business-Id": "1"},
-                data={"text": "Xin chào Instagram"},
+                data={"text": "Xin chào Instagram", "client_id": "instagram-text-1"},
             )
 
         self.assertEqual(200, response.status_code, response.text)
@@ -95,7 +95,7 @@ class InstagramOutboundApiTests(unittest.TestCase):
             response = self.client.post(
                 f"/api/conversations/{self.invalid_conversation_id}/send",
                 headers={"X-Business-Id": "1"},
-                data={"text": "Không gửi ID mẫu"},
+                data={"text": "Không gửi ID mẫu", "client_id": "instagram-text-2"},
             )
 
         self.assertEqual(422, response.status_code)

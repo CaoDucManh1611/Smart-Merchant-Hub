@@ -18,6 +18,7 @@ from app.models.customer import Customer
 from app.models.message import Message
 from app.models.message_attachment import MessageAttachment
 from app.services.channel_credentials import encrypt_token
+from app.services.meta_errors import MetaAPIError
 
 
 class TelegramOutboundApiTests(unittest.TestCase):
@@ -96,7 +97,7 @@ class TelegramOutboundApiTests(unittest.TestCase):
             response = self.client.post(
                 f"/api/conversations/{self.conversation_id}/send",
                 headers={"X-Business-Id": "1"},
-                data={"text": "Xin chào từ nhân viên"},
+                data={"text": "Xin chào từ nhân viên", "client_id": "telegram-text-1"},
             )
 
         self.assertEqual(200, response.status_code, response.text)
@@ -115,12 +116,53 @@ class TelegramOutboundApiTests(unittest.TestCase):
             self.assertEqual("telegram", saved.channel)
             self.assertEqual("Xin chào từ nhân viên", saved.content)
 
+    def test_safe_retry_and_sent_replay_use_one_delivery_key(self):
+        calls = []
+
+        def throttled_once(**kwargs):
+            calls.append(kwargs["text_content"])
+            if len(calls) == 1:
+                raise MetaAPIError(channel="telegram", stage="send", meta_status=429)
+            channel = kwargs["db"].scalar(select(Channel).where(Channel.business_id == 1))
+            return {"ok": True, "result": {"message_id": 909}}, channel
+
+        with patch("app.api.conversations.send_telegram_text", side_effect=throttled_once):
+            first = self.client.post(
+                f"/api/conversations/{self.conversation_id}/send",
+                headers={"X-Business-Id": "1"},
+                data={"text": "Retry once", "client_id": "telegram-retry-once"},
+            )
+            second = self.client.post(
+                f"/api/conversations/{self.conversation_id}/send",
+                headers={"X-Business-Id": "1"},
+                data={"text": "Retry once", "client_id": "telegram-retry-once"},
+            )
+            replay = self.client.post(
+                f"/api/conversations/{self.conversation_id}/send",
+                headers={"X-Business-Id": "1"},
+                data={"text": "Retry once", "client_id": "telegram-retry-once"},
+            )
+
+        self.assertEqual(400, first.status_code)
+        self.assertEqual(200, second.status_code, second.text)
+        self.assertEqual(200, replay.status_code, replay.text)
+        self.assertEqual(["Retry once", "Retry once"], calls)
+        self.assertEqual(second.json()["message_ids"], replay.json()["message_ids"])
+        status = self.client.get(
+            f"/api/conversations/{self.conversation_id}/delivery-attempts",
+            headers={"X-Business-Id": "1"},
+        )
+        self.assertEqual(200, status.status_code)
+        attempt = next(item for item in status.json()["items"] if item["client_id"] == "telegram-retry-once")
+        self.assertEqual("sent", attempt["status"])
+        self.assertNotIn("content", attempt)
+
     def test_cross_tenant_conversation_cannot_send(self):
         with patch.object(TelegramAdapter, "send_message") as send:
             response = self.client.post(
                 f"/api/conversations/{self.other_conversation_id}/send",
                 headers={"X-Business-Id": "1"},
-                data={"text": "Không được gửi"},
+                data={"text": "Không được gửi", "client_id": "telegram-text-2"},
             )
         self.assertEqual(404, response.status_code)
         send.assert_not_called()
@@ -148,7 +190,7 @@ class TelegramOutboundApiTests(unittest.TestCase):
             response = self.client.post(
                 f"/api/conversations/{conversation_id}/send",
                 headers={"X-Business-Id": "1"},
-                data={"text": "Không fallback token global"},
+                data={"text": "Không fallback token global", "client_id": "telegram-text-3"},
             )
         self.assertEqual(409, response.status_code)
         send.assert_not_called()
@@ -165,6 +207,7 @@ class TelegramOutboundApiTests(unittest.TestCase):
                     "media_type": "audio",
                     "media_url": "https://cdn.example/audio.ogg",
                     "caption": "Nghe thử",
+                    "client_id": "telegram-media-1",
                 },
             )
 
@@ -194,6 +237,7 @@ class TelegramOutboundApiTests(unittest.TestCase):
                 f"/api/conversations/{self.conversation_id}/send",
                 headers={"X-Business-Id": "1"},
                 files={"file": ("image.jpg", b"not-used", "image/jpeg")},
+                data={"client_id": "telegram-image-1"},
             )
 
         self.assertEqual(200, response.status_code, response.text)

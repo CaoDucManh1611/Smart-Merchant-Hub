@@ -1,13 +1,14 @@
 """Tenant-scoped product catalog and order APIs."""
 
 import csv
+import hashlib
 import io
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.tenancy.crm_session import get_tenant_db
@@ -17,6 +18,7 @@ from app.models.customer import Customer
 from app.models.inventory import StockMovement
 from app.models.sales import Order, OrderItem, Product
 from app.models.order_event import OrderEvent
+from app.models.audit_log import AuditLog
 from app.models.business import User
 from app.schemas.sales import (
     OrderCreate,
@@ -246,6 +248,8 @@ def list_products(
 )
 async def import_products(
     file: UploadFile = File(...),
+    preview: bool = Query(default=False),
+    allow_repeat: bool = Query(default=False),
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
@@ -256,8 +260,8 @@ async def import_products(
     shop can export a spreadsheet as CSV without learning an internal API.
     A new SKU creates a product.  A SKU that already exists is treated as a
     stock receipt: the imported quantity is added to the existing stock and
-    recorded in the inventory ledger.  This makes re-importing a delivery file
-    safe and avoids silently replacing the current stock balance.
+    recorded in the inventory ledger. Replaying the same file is skipped unless
+    the operator explicitly confirms a second receipt with allow_repeat.
     """
     filename = (file.filename or "").strip()
     if not filename:
@@ -271,6 +275,28 @@ async def import_products(
         raise HTTPException(status_code=400, detail="Tệp đang rỗng.")
     if len(file_bytes) > 20 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Tệp quá lớn. Giới hạn là 20MB.")
+    import_key = "csv:" + hashlib.sha256(file_bytes).hexdigest()
+    if not preview:
+        # Serialize same-shop imports before checking the committed audit key,
+        # so two workers cannot both add stock for the same CSV.
+        if db.get_bind().dialect.name == "postgresql":
+            lock_id = int.from_bytes(
+                hashlib.sha256(f"product-import:{tenant.business_id}".encode()).digest()[:8],
+                "big", signed=True,
+            )
+            db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
+        existing_import = db.query(AuditLog.id).filter(
+            AuditLog.business_id == tenant.business_id,
+            AuditLog.resource_type == "product_catalog",
+            AuditLog.action == "import",
+            AuditLog.correlation_id == import_key,
+        ).first()
+        if existing_import is not None and not allow_repeat:
+            return {
+                "filename": filename, "imported": 0, "restocked": 0,
+                "restocked_quantity": 0, "updated": 0, "skipped": 0,
+                "errors": [], "already_imported": True,
+            }
     try:
         content = file_bytes.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -400,23 +426,34 @@ async def import_products(
             restocked += 1
             restocked_quantity += stock
 
+    result = {
+        "filename": filename,
+        "imported": imported,
+        "restocked": restocked,
+        "restocked_quantity": restocked_quantity,
+        "updated": restocked,
+        "skipped": skipped,
+        "errors": errors[:25],
+    }
+    if preview:
+        db.rollback()
+        return {**result, "preview": True}
+    if errors:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="CSV có dòng lỗi; hãy xem trước và sửa trước khi nhập. " + " ".join(errors[:3]))
     if imported == 0 and restocked == 0:
         db.rollback()
         detail = "Không có sản phẩm hợp lệ để nhập."
         if errors:
             detail += " " + " ".join(errors[:3])
         raise HTTPException(status_code=400, detail=detail)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Có mã sản phẩm trùng. Hãy kiểm tra lại tệp rồi nhập lại.") from exc
     record_audit(
         db,
         business_id=tenant.business_id,
         user_id=actor.id if actor else None,
         action="import",
         resource_type="product_catalog",
+        correlation_id=import_key,
         metadata={
             "filename": filename,
             "imported": imported,
@@ -425,17 +462,12 @@ async def import_products(
             "skipped": skipped,
         },
     )
-    db.commit()
-    return {
-        "filename": filename,
-        "imported": imported,
-        "restocked": restocked,
-        "restocked_quantity": restocked_quantity,
-        # Preserve the old field for API clients that still read it.
-        "updated": restocked,
-        "skipped": skipped,
-        "errors": errors[:25],
-    }
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Có mã sản phẩm trùng. Hãy kiểm tra lại tệp rồi nhập lại.") from exc
+    return result
 
 
 @router.post("/products", response_model=ProductOut, status_code=201, dependencies=[Depends(require_write_access)])

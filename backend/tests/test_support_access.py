@@ -38,7 +38,7 @@ def test_support_grant_is_scoped_and_revocation_is_immediate(db):
         granted_by_user_id=10,
         support_user_id=20,
         reason="Kiểm tra lỗi webhook",
-        scopes=["channels:diagnose", "jobs:retry"],
+        scopes=["channels:diagnose", "channels:retry", "jobs:retry"],
         expires_at=_expiry(),
     )
     db.commit()
@@ -53,7 +53,7 @@ def test_support_grant_is_scoped_and_revocation_is_immediate(db):
         scope="channels:diagnose",
     )
     assert session.grant_id == grant.id
-    assert session.scopes == ("channels:diagnose", "jobs:retry")
+    assert session.scopes == ("channels:diagnose", "channels:retry", "jobs:retry")
 
     with pytest.raises(PermissionError, match="phạm vi"):
         validate_support_access(db, token=token, business_id=7, scope="customer:read")

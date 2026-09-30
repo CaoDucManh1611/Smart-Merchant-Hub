@@ -27,7 +27,12 @@ from app.models.message import Message
 from app.models.sales import Product
 
 from app.rag.retriever import retrieve
-from app.rag.prompt_builder import build_prompt
+from app.rag.answer_guard import has_valid_citations
+from app.rag.prompt_builder import (
+    NO_CONTEXT_FALLBACK,
+    SERVICE_ERROR_FALLBACK,
+    build_prompt,
+)
 from app.rag.llm_caller import call_llm
 from app.rag.run_logger import RagRunLog, query_metadata
 from app.rag.topics import infer_query_topic
@@ -132,6 +137,7 @@ def _notify_rag_handoff_required(
     conversation: Conversation,
     business_id: int,
     query_text: str,
+    reason: str = "no_rag_context",
 ) -> None:
     """Persist an urgent, owner-scoped alert when AI has no safe answer.
 
@@ -152,13 +158,16 @@ def _notify_rag_handoff_required(
         user_id=user_id,
         kind="rag_handoff_required",
         title="AI cần nhân viên hỗ trợ hội thoại",
-        body=("AI chưa có đủ dữ liệu để trả lời: " + " ".join(str(query_text or "").split())[:280]),
+        body="AI chưa có đủ căn cứ để trả lời chính xác. Hội thoại cần nhân viên kiểm tra.",
         metadata={
             "conversation_id": int(conversation.id),
             "customer_id": int(conversation.customer_id),
-            "reason": "no_rag_context",
+            "reason": reason,
         },
     )
+    conversation.bot_mode = "human"
+    conversation.resolution_outcome = "needs_human"
+    conversation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
 
 
@@ -998,8 +1007,10 @@ def process_rag_auto_reply(
         else 0.3
     )
     bandit_choice: ChatbotBanditChoice | None = None
+    external_reply_sent = False
 
     def send_reply(text_value: str) -> dict:
+        nonlocal external_reply_sent
         kwargs = {
             "db": db,
             "conversation_id": conversation_id,
@@ -1011,7 +1022,27 @@ def process_rag_auto_reply(
             kwargs["auto_reply_key"] = auto_reply_key
         if bandit_choice is not None:
             kwargs["extra_metadata"] = bandit_choice.message_metadata()
-        return send_text_reply(**kwargs)
+        result = send_text_reply(**kwargs)
+        external_reply_sent = True
+        return result
+
+    def send_handoff_reply(text_value: str, *, reason: str) -> None:
+        if conversation is not None:
+            try:
+                _notify_rag_handoff_required(
+                    db,
+                    conversation=conversation,
+                    business_id=business_id,
+                    query_text=query_text,
+                    reason=reason,
+                )
+            except Exception as error:
+                db.rollback()
+                logger.warning(
+                    "Could not persist RAG handoff: error_type=%s",
+                    type(error).__name__,
+                )
+        send_reply(text_value)
 
     with RagRunLog(
         "auto_reply",
@@ -1149,7 +1180,7 @@ def process_rag_auto_reply(
         )
         if policy_kind and chunks and not _chunk_supports_policy(chunks, policy_kind):
             reply_text = NO_DELIVERY_POLICY_REPLY if policy_kind == "delivery" else NO_RETURN_POLICY_REPLY
-            send_reply(reply_text)
+            send_handoff_reply(reply_text, reason="no_matching_policy_source")
             run.finish(
                 f"{policy_kind}_policy_missing",
                 phase="complete",
@@ -1172,7 +1203,7 @@ def process_rag_auto_reply(
                 any(term in _fold_text(getattr(chunk, "content", "")) for term in query_terms)
                 for chunk in chunks
             ):
-                send_reply(NO_RECOMMENDATION_REPLY)
+                send_handoff_reply(NO_RECOMMENDATION_REPLY, reason="no_matching_recommendation_source")
                 run.finish(
                     "recommendation_missing",
                     phase="complete",
@@ -1183,7 +1214,7 @@ def process_rag_auto_reply(
         if not chunks:
             if policy_kind:
                 reply_text = NO_DELIVERY_POLICY_REPLY if policy_kind == "delivery" else NO_RETURN_POLICY_REPLY
-                send_reply(reply_text)
+                send_handoff_reply(reply_text, reason="no_rag_context")
                 run.finish(
                     f"{policy_kind}_policy_missing",
                     phase="complete",
@@ -1192,7 +1223,7 @@ def process_rag_auto_reply(
                 )
                 return True
             if recommendation_question:
-                send_reply(NO_RECOMMENDATION_REPLY)
+                send_handoff_reply(NO_RECOMMENDATION_REPLY, reason="no_rag_context")
                 run.finish(
                     "recommendation_missing",
                     phase="complete",
@@ -1215,19 +1246,10 @@ def process_rag_auto_reply(
                     answer_chars=len(catalog_reply),
                 )
                 return True
-            logger.warning(
-                "Auto-reply skipped: no relevant RAG chunks for conversation %d, query=%r",
-                conversation_id,
-                query_text[:100],
-            )
-            _notify_rag_handoff_required(
-                db,
-                conversation=conversation,
-                business_id=business_id,
-                query_text=query_text,
-            )
-            run.finish("no_context", phase="complete", chunks_found=0)
-            return False
+            logger.info("Auto-reply has no relevant source for conversation %d; handing off", conversation_id)
+            send_handoff_reply(NO_CONTEXT_FALLBACK, reason="no_rag_context")
+            run.finish("no_context", phase="complete", chunks_found=0, answer_chars=len(NO_CONTEXT_FALLBACK), handoff_required=True)
+            return True
 
         # Live experimentation is explicitly opt-in. Only an active policy
         # bound to chatbot_auto_reply with reviewed arm controls can create a
@@ -1311,13 +1333,25 @@ def process_rag_auto_reply(
                 conversation_id,
                 exc.resource,
             )
-            run.finish("quota_exceeded", phase="complete", quota=exc.detail)
-            return False
-        answer = call_llm(messages)
+            send_handoff_reply(SERVICE_ERROR_FALLBACK, reason="ai_quota_exceeded")
+            run.finish("quota_exceeded", phase="complete", quota=exc.detail, handoff_required=True)
+            return True
+        try:
+            answer = call_llm(messages)
+        except Exception as error:
+            logger.warning("RAG reply generation unavailable: error_type=%s", type(error).__name__)
+            send_handoff_reply(SERVICE_ERROR_FALLBACK, reason="llm_unavailable")
+            run.finish("service_error", phase="complete", error_type=type(error).__name__, handoff_required=True)
+            return True
         if not answer or not answer.strip():
-            logger.warning("Empty LLM answer for RAG auto-reply")
-            run.finish("error", phase="complete", reason="empty_llm_answer", answer_chars=0)
-            return False
+            logger.warning("RAG reply generation returned an empty answer")
+            send_handoff_reply(SERVICE_ERROR_FALLBACK, reason="empty_llm_answer")
+            run.finish("service_error", phase="complete", reason="empty_llm_answer", answer_chars=0, handoff_required=True)
+            return True
+        if not has_valid_citations(answer, [chunk.content for chunk in chunks]):
+            send_handoff_reply(NO_CONTEXT_FALLBACK, reason="missing_or_invalid_citation")
+            run.finish("no_context", phase="complete", reason="missing_or_invalid_citation", handoff_required=True)
+            return True
 
         # 4. Resolve the platform recipient and send the reply.
         stored_channel, recipient_id = _get_conversation_recipient(
@@ -1353,6 +1387,7 @@ def process_rag_auto_reply(
                 text=answer,
                 business_id=business_id,
             )
+            external_reply_sent = True
         except Exception as error:
             if auto_reply_key:
                 _mark_auto_reply_failed(db, auto_reply_key, error)
@@ -1387,14 +1422,20 @@ def process_rag_auto_reply(
         return True
 
       except Exception as e:
-          logger.exception("RAG auto-reply error: %s", str(e))
+          logger.warning("RAG auto-reply failed: error_type=%s", type(e).__name__)
+          if not external_reply_sent and conversation is not None:
+              try:
+                  send_handoff_reply(SERVICE_ERROR_FALLBACK, reason="rag_service_error")
+              except Exception as handoff_error:
+                  logger.error("RAG service-error handoff failed: error_type=%s", type(handoff_error).__name__)
           run.finish(
               "error",
               phase="complete",
               error_type=type(e).__name__,
-              error=str(e)[:1000],
+              error_code="rag_service_error",
+              handoff_required=True,
           )
-          return False
+          return external_reply_sent
 
     return False
 

@@ -70,6 +70,30 @@ class RagTenantIsolationTests(unittest.TestCase):
 
             self.assertEqual([first.id], [result.document_id for result in results])
 
+    def test_lexical_retrieval_drops_weak_single_token_overlap(self):
+        engine = create_engine("sqlite://")
+        Business.metadata.create_all(engine)
+        TenantBase.metadata.create_all(engine)
+        with Session(engine) as db:
+            business = Business(name="Threshold", slug="threshold")
+            db.add(business)
+            db.flush()
+            document = Document(business_id=business.id, filename="policy.txt", file_type="txt", status="ready")
+            db.add(document)
+            db.flush()
+            db.add(DocumentChunk(document_id=document.id, content="gift card available", chunk_index=0))
+            db.commit()
+
+            results = _retrieve_lexical(
+                "gift customer returns delivery",
+                db,
+                5,
+                business_id=business.id,
+                similarity_threshold=0.3,
+            )
+
+            self.assertEqual([], results)
+
 
 if __name__ == "__main__":
     unittest.main()

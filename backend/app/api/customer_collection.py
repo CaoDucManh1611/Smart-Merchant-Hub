@@ -365,6 +365,9 @@ def create_consent(
     actor: User | None = Depends(require_write_access),
 ):
     _customer(db, customer_id, tenant)
+    needs_evidence = payload.status == "granted" and payload.purpose in {"marketing", "proactive_messages"}
+    if needs_evidence and payload.evidence_message_id is None:
+        raise HTTPException(status_code=422, detail="Cần tin nhắn khách đồng ý trước khi bật nhận tin.")
     if payload.evidence_message_id is not None:
         message = db.query(Message).join(Message.conversation).filter(
             Message.id == payload.evidence_message_id,
@@ -372,6 +375,8 @@ def create_consent(
         ).first()
         if message is None:
             raise HTTPException(status_code=422, detail="Message bằng chứng không thuộc customer/business này.")
+        if needs_evidence and (message.direction != "inbound" or message.sender_type != "customer" or not (message.content or "").strip()):
+            raise HTTPException(status_code=422, detail="Bằng chứng phải là tin nhắn văn bản do khách gửi.")
     now = _now()
     row = CustomerConsent(
         business_id=tenant.business_id,

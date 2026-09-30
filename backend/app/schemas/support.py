@@ -6,14 +6,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-SupportScope = Literal["settings:read", "channels:diagnose", "jobs:retry"]
-_ALLOWED_SCOPES = {"settings:read", "channels:diagnose", "jobs:retry"}
+SupportScope = Literal["settings:read", "channels:diagnose", "channels:retry", "jobs:retry"]
+_ALLOWED_SCOPES = {"settings:read", "channels:diagnose", "channels:retry", "jobs:retry"}
 
 
 class SupportGrantCreate(BaseModel):
     support_user_id: int = Field(..., gt=0)
     reason: str = Field(..., min_length=8, max_length=500)
-    scopes: list[SupportScope] = Field(..., min_length=1, max_length=3)
+    scopes: list[SupportScope] = Field(..., min_length=1, max_length=4)
     expires_at: datetime
 
     @field_validator("reason")

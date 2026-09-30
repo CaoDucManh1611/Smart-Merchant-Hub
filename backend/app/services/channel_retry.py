@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 _provider_breaker = ProviderCircuitBreaker()
 
-# Retry only errors where the provider explicitly rejected the request before
-# delivery (429/5xx) or the client could not establish a connection.  A read
-# timeout is deliberately not retried automatically: the provider may already
-# have delivered the message, and blind retries could duplicate it.
-_RETRYABLE_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+# Retry only responses that explicitly mean the request was not processed
+# (early-data rejection or rate limit), plus connection failures before a
+# request could be delivered. A 408/5xx/read timeout can be ambiguous and
+# blindly retrying a send can create a duplicate message.
+_RETRYABLE_HTTP_STATUSES = {425, 429}
 _RETRYABLE_TRANSPORT_ERRORS = (
     httpx.ConnectError,
     httpx.ConnectTimeout,

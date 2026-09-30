@@ -133,6 +133,47 @@ class ProductOrderApiTests(unittest.TestCase):
             created = db.query(Product).filter(Product.business_id == 1, Product.sku == "IMPORT-NEW").one()
             self.assertEqual(7, created.stock_quantity)
 
+    def test_product_import_preview_and_replay_do_not_double_stock(self):
+        content = b"sku,name,price,stock_quantity\nIDEMPOTENT-01,Fixture product,10000,5\n"
+        def upload(suffix=""):
+            return self.client.post(
+                f"/api/products/import{suffix}",
+                headers={"X-Business-Id": "1"},
+                files={"file": ("receipt.csv", content, "text/csv")},
+            )
+
+        preview = upload("?preview=true")
+        self.assertEqual(200, preview.status_code, preview.text)
+        self.assertTrue(preview.json()["preview"])
+        with Session(self.engine) as db:
+            self.assertIsNone(db.query(Product).filter_by(sku="IDEMPOTENT-01").first())
+        first = upload()
+        self.assertEqual(200, first.status_code, first.text)
+        repeated = upload()
+        self.assertEqual(200, repeated.status_code, repeated.text)
+        self.assertTrue(repeated.json()["already_imported"])
+        with Session(self.engine) as db:
+            self.assertEqual(5, db.query(Product).filter_by(sku="IDEMPOTENT-01").one().stock_quantity)
+        explicit = upload("?allow_repeat=true")
+        self.assertEqual(200, explicit.status_code, explicit.text)
+        with Session(self.engine) as db:
+            self.assertEqual(10, db.query(Product).filter_by(sku="IDEMPOTENT-01").one().stock_quantity)
+
+    def test_product_import_rejects_partial_file_without_writing_valid_rows(self):
+        content = (
+            "sku,name,price,stock_quantity\n"
+            "VALID-ATOMIC-01,Valid,10000,1\n"
+            "BROKEN-ATOMIC-01,Broken,not-a-price,1\n"
+        ).encode()
+        response = self.client.post(
+            "/api/products/import",
+            headers={"X-Business-Id": "1"},
+            files={"file": ("broken.csv", content, "text/csv")},
+        )
+        self.assertEqual(422, response.status_code, response.text)
+        with Session(self.engine) as db:
+            self.assertIsNone(db.query(Product).filter_by(sku="VALID-ATOMIC-01").first())
+
     def test_order_uses_database_product_price_and_calculates_total(self):
         response = self.client.post(
             "/api/orders",

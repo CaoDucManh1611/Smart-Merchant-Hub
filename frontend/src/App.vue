@@ -18,7 +18,7 @@ import { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxVi
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
 import { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
-import { apiFetch } from "./api-client.js";
+import { apiFetch, AUTH_EXPIRED_EVENT } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
 import { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";
 import IndustryModules from "./IndustryModules.vue";
@@ -56,6 +56,8 @@ function friendlyErrorMessage(error, fallback = "Chưa thể hoàn tất yêu c�
 const crmEnglishCopy = {
   "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.": "Could not complete the request. Please try again later.",
   "Xin chào! Tôi là trợ lý tra cứu của shop. Bạn có thể hỏi về sản phẩm, đơn hàng và chính sách trong kho thông tin.": "Hello! I'm your shop's knowledge assistant. Ask me about products, orders, and policies in the knowledge base.",
+  "Chưa tìm thấy nguồn đủ tin cậy trong kho kiến thức. Cần nhân viên xác minh trước khi phản hồi.": "No reliable source was found in the knowledge base. A staff member should verify before replying.",
+  "Trợ lý đang gặp sự cố; hãy thử lại hoặc chuyển câu hỏi cho nhân viên.": "The assistant is temporarily unavailable. Try again or ask a staff member.",
   "Chưa tải được tài liệu của shop. Vui lòng thử lại sau.": "Could not load this shop's documents. Please try again later.",
   "Chưa thể nhập tài liệu. Vui lòng kiểm tra tệp rồi thử lại.": "Could not upload the document. Check the file and try again.",
   "Chưa thể xóa tài liệu. Vui lòng thử lại sau.": "Could not delete the document. Please try again later.",
@@ -87,6 +89,11 @@ const crmEnglishCopy = {
   "Chọn một khách hàng trùng khác để gộp.": "Choose another duplicate customer to merge.",
   "Nhập khóa và giá trị tri thức trước khi lưu.": "Enter a knowledge key and value before saving.",
   "Chưa tải được tin nhắn. Vui lòng thử lại sau.": "Could not load messages. Please try again later.",
+  "Có tin nhắn chưa rõ đã gửi hay chưa. Hãy kiểm tra hộp thư trên kênh trước khi gửi lại.": "A message's delivery status is unclear. Check the channel inbox before retrying.",
+  "Có tin nhắn bị từ chối. Bạn có thể thử lại từ tin nhắn đang mở.": "A message was rejected. You can retry it from the open message.",
+  "Chưa thể gửi lại an toàn. Hãy kiểm tra trạng thái trên kênh trước.": "This message cannot be safely retried yet. Check its status in the channel first.",
+  "Tin nhắn đang được xử lý hoặc khóa gửi bị trùng.": "This message is already processing or its delivery key conflicts.",
+  "Tin nhắn đã được gửi trước đó.": "This message was already sent.",
   "Chưa thể phân công hội thoại. Vui lòng thử lại sau.": "Could not assign the conversation. Please try again later.",
   "Chỉ có thể phân công tối đa 100 hội thoại cùng lúc.": "You can assign up to 100 conversations at once.",
   "Chưa thể phân công hàng loạt. Vui lòng thử lại sau.": "Could not assign conversations. Please try again later.",
@@ -124,9 +131,30 @@ const inboxConversationScroll = ref(null);
 const inboxLegacyPageCache = ref([]);
 const inboxUsesLocalPaging = ref(false);
 const messages = ref([]);
+const deliveryAttempts = ref([]);
+const outboundDeliveryNotice = computed(() => {
+  if (deliveryAttempts.value.some((attempt) => ["processing", "unknown"].includes(attempt.status))) {
+    return "Có tin nhắn chưa rõ đã gửi hay chưa. Hãy kiểm tra hộp thư trên kênh trước khi gửi lại.";
+  }
+  if (deliveryAttempts.value.some((attempt) => attempt.status === "retryable_failed")) {
+    return "Có tin nhắn bị từ chối. Bạn có thể thử lại từ tin nhắn đang mở.";
+  }
+  return "";
+});
 const customer360 = ref(null);
 const customer360Loading = ref(false);
 const customer360Error = ref("");
+const customerConsents = ref([]);
+const customerConsentsLoading = ref(false);
+const customerConsentsError = ref("");
+const customerConsentSaving = ref(false);
+const consentEvidenceMessageId = ref("");
+const latestCustomerConsent = (purpose) => customerConsents.value.find((item) => item.purpose === purpose);
+const customerCsvFile = ref(null);
+const customerImportPreview = ref(null);
+const customerImportBusy = ref(false);
+const customerImportError = ref("");
+const customerImportNotice = ref("");
 const customer360OverflowOpen = ref(false);
 const customerCustomFieldsDraft = ref({});
 const customerCustomFieldsSaving = ref(false);
@@ -990,6 +1018,7 @@ const cannedResponseSaving = ref(false);
 const cannedResponseError = ref("");
 const botModes = ref({});
 const followups = ref([]);
+const followupStatusFilter = ref("scheduled");
 const followupsLoading = ref(false);
 const followupDispatching = ref(false);
 const followupNotice = ref("");
@@ -2123,6 +2152,8 @@ async function sendRagQuery(presetText = null) {
     role: "assistant",
     content: "",
     sources: [],
+    answerStatus: null,
+    handoffRequired: false,
     loading: true,
   };
   ragMessages.value.push(assistantMsg);
@@ -2172,8 +2203,15 @@ async function sendRagQuery(presetText = null) {
             } else if (data.type === "chunk") {
               assistantMsg.content += data.content || "";
               scrollRagChatToBottom();
+            } else if (data.type === "done") {
+              assistantMsg.answerStatus = data.answer_status || "answered";
+              assistantMsg.handoffRequired = Boolean(data.handoff_required);
+              assistantMsg.localize = assistantMsg.answerStatus !== "answered";
             } else if (data.type === "error") {
-              assistantMsg.content = "Chưa thể trả lời lúc này. Vui lòng thử lại sau.";
+              assistantMsg.content = data.content || "Chưa thể trả lời lúc này. Vui lòng thử lại sau.";
+              assistantMsg.answerStatus = data.answer_status || "service_error";
+              assistantMsg.handoffRequired = Boolean(data.handoff_required);
+              assistantMsg.sources = [];
               assistantMsg.localize = true;
             }
           } catch (e) {
@@ -3174,11 +3212,7 @@ function normalizeMessage(message) {
 
 
 function makeClientId() {
-
-  return `client-${Date.now()}-${Math.random()
-    .toString(16)
-    .slice(2)}`;
-
+  return `client-${crypto.randomUUID()}`;
 }
 
 
@@ -4130,6 +4164,8 @@ async function loadMessages(
     const data =
       await response.json();
 
+    await loadOutboundDeliveryAttempts(conversationId);
+
 
     const rawMessages =
       Array.isArray(data)
@@ -4212,6 +4248,24 @@ async function loadMessages(
 
   }
 
+}
+
+
+async function loadOutboundDeliveryAttempts(conversationId) {
+  if (!conversationId) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/conversations/${conversationId}/delivery-attempts`);
+    if (!response.ok) {
+      if (selectedId.value === conversationId) deliveryAttempts.value = [];
+      return;
+    }
+    const data = await response.json();
+    if (selectedId.value === conversationId) {
+      deliveryAttempts.value = Array.isArray(data.items) ? data.items : [];
+    }
+  } catch {
+    // Delivery status is supplemental; a failed status lookup must not hide messages.
+  }
 }
 
 
@@ -4353,29 +4407,63 @@ async function uploadProductFile(file) {
   try {
     const formData = new FormData();
     formData.append("file", file);
+    const previewResponse = await apiFetch(`${API_BASE}/products/import?preview=true`, {
+      method: "POST",
+      body: formData,
+    });
+    const preview = await previewResponse.json().catch(() => ({}));
+    if (!previewResponse.ok) throw new Error(preview.detail || `HTTP ${previewResponse.status}`);
+    if (Array.isArray(preview.errors) && preview.errors.length) {
+      productError.value = uiLocale.value === "en"
+        ? `The file has ${preview.errors.length} invalid row(s). Fix them before importing. ${preview.errors.slice(0, 2).join(" ")}`
+        : `Tệp có ${preview.errors.length} dòng lỗi. Hãy sửa trước khi nhập. ${preview.errors.slice(0, 2).join(" ")}`;
+      return;
+    }
+    if (!Number(preview.imported || 0) && !Number(preview.restocked || 0)) {
+      productUploadNotice.value = uiLocale.value === "en" ? "No changes in this file." : "Không có thay đổi nào trong tệp.";
+      return;
+    }
+    const summary = uiLocale.value === "en"
+      ? `Create ${preview.imported || 0} products and add stock to ${preview.restocked || 0} existing products?`
+      : `Tạo ${preview.imported || 0} sản phẩm và cộng tồn kho cho ${preview.restocked || 0} mã đã có?`;
+    const confirmed = await requestConfirmation(summary, {
+      title: uiLocale.value === "en" ? "Confirm product import" : "Xác nhận nhập sản phẩm",
+      confirmLabel: uiLocale.value === "en" ? "Import" : "Nhập sản phẩm",
+      cancelLabel: uiLocale.value === "en" ? "Cancel" : "Hủy",
+    });
+    if (!confirmed) return;
     const response = await apiFetch(`${API_BASE}/products/import`, {
       method: "POST",
       body: formData,
     });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    if (detail.already_imported) {
+      productUploadNotice.value = uiLocale.value === "en"
+        ? "This file was already imported. Stock was not added again."
+        : "Tệp này đã được nhập trước đó. Tồn kho không bị cộng lại.";
+      return;
+    }
     const imported = Number(detail.imported || 0);
     const restocked = Number(detail.restocked ?? detail.updated ?? 0);
     const restockedQuantity = Number(detail.restocked_quantity || 0);
     const skipped = Number(detail.skipped || 0);
     const messages = [];
-    if (imported) messages.push(`tạo ${imported} sản phẩm mới`);
-    if (restocked) messages.push(`cộng thêm ${restockedQuantity} tồn kho cho ${restocked} mã đã có`);
-    if (skipped) messages.push(`bỏ qua ${skipped} dòng`);
+    if (imported) messages.push(uiLocale.value === "en" ? `created ${imported} products` : `tạo ${imported} sản phẩm mới`);
+    if (restocked) messages.push(uiLocale.value === "en" ? `added ${restockedQuantity} units across ${restocked} products` : `cộng thêm ${restockedQuantity} tồn kho cho ${restocked} mã đã có`);
+    if (skipped) messages.push(uiLocale.value === "en" ? `skipped ${skipped} rows` : `bỏ qua ${skipped} dòng`);
     productUploadNotice.value = messages.length
-      ? `Đã ${messages.join(", ")}.`
-      : "Không có thay đổi nào trong tệp.";
+      ? `${uiLocale.value === "en" ? "Imported: " : "Đã "}${messages.join(", ")}.`
+      : (uiLocale.value === "en" ? "No changes in this file." : "Không có thay đổi nào trong tệp.");
     if (Array.isArray(detail.errors) && detail.errors.length) {
       productUploadNotice.value += ` ${detail.errors.slice(0, 2).join(" ")}`;
     }
     await fetchProducts();
   } catch (error) {
-    productError.value = friendlyErrorMessage(error, "Chưa thể nhập danh mục sản phẩm. Vui lòng kiểm tra tệp rồi thử lại.");
+    productError.value = crmErrorText(
+      friendlyErrorMessage(error, "Chưa thể nhập danh mục sản phẩm. Vui lòng kiểm tra tệp rồi thử lại."),
+      "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.",
+    );
   } finally {
     productUploading.value = false;
     if (productFileInput.value) productFileInput.value.value = "";
@@ -5223,6 +5311,15 @@ async function logout() {
   mfaVerifyCode.value = "";
   mfaVerifyPending.value = false;
   privacyResult.value = null;
+}
+
+function handleAuthExpired() {
+  stopTenantProvisioningPolling();
+  stopTenantWorkspace();
+  authToken.value = "";
+  authUser.value = null;
+  currentTab.value = "settings";
+  authError.value = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
 }
 
 async function fetchSecuritySettings() {
@@ -7030,10 +7127,165 @@ async function loadCustomerOrderHistory(customerId) {
   }
 }
 
+async function fetchCustomerConsents(customerId) {
+  customerConsentsLoading.value = true;
+  customerConsentsError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/consents`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (Number(customer360.value?.id) === Number(customerId)) customerConsents.value = data.items || [];
+  } catch (err) {
+    if (Number(customer360.value?.id) === Number(customerId)) {
+      customerConsentsError.value = "Không tải được trạng thái nhận tin. Hãy thử lại.";
+    }
+  } finally {
+    if (Number(customer360.value?.id) === Number(customerId)) customerConsentsLoading.value = false;
+  }
+}
+
+async function saveCustomerConsent(purpose, status) {
+  const customerId = customer360.value?.id;
+  if (!customerId || customerConsentSaving.value) return;
+  const evidenceId = Number(consentEvidenceMessageId.value);
+  if (status === "granted" && (!Number.isSafeInteger(evidenceId) || evidenceId < 1)) {
+    customerConsentsError.value = "Cần ID tin nhắn ghi nhận sự đồng ý của khách trước khi bật nhận tin.";
+    return;
+  }
+  const confirmed = await requestConfirmation(status === "granted"
+    ? "Bạn đã kiểm tra tin nhắn này có sự đồng ý rõ ràng của khách?"
+    : "Ghi nhận khách từ chối nhận tin?", {
+    title: status === "granted" ? "Xác nhận đồng ý" : "Xác nhận từ chối",
+    confirmLabel: status === "granted" ? "Ghi nhận đồng ý" : "Ghi nhận từ chối",
+  });
+  if (!confirmed) return;
+  customerConsentSaving.value = true;
+  customerConsentsError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/consents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ purpose, status, source_channel: "manual", evidence_message_id: status === "granted" ? evidenceId : null }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    consentEvidenceMessageId.value = "";
+    await fetchCustomerConsents(customerId);
+  } catch (err) {
+    customerConsentsError.value = "Chưa lưu được trạng thái nhận tin. Kiểm tra ID tin nhắn và quyền truy cập rồi thử lại.";
+  } finally {
+    customerConsentSaving.value = false;
+  }
+}
+
+function chooseCustomerCsv(event) {
+  const file = event.target.files?.[0] || null;
+  customerCsvFile.value = file;
+  customerImportPreview.value = null;
+  customerImportNotice.value = "";
+  customerImportError.value = file && (!/\.csv$/i.test(file.name) || file.size > 2 * 1024 * 1024)
+    ? (uiLocale.value === "en" ? "Choose a CSV file no larger than 2 MB." : "Chọn tệp CSV không quá 2 MB.")
+    : "";
+}
+
+function customerCsvErrorLabel(code) {
+  const labels = {
+    column_count: ["Sai số cột", "Wrong column count"],
+    invalid_email: ["Email không hợp lệ", "Invalid email"],
+    invalid_phone: ["Số điện thoại không hợp lệ", "Invalid phone"],
+    missing_identity: ["Thiếu mã, email hoặc điện thoại", "Missing ID, email or phone"],
+    invalid_crm_id: ["Mã hồ sơ không hợp lệ", "Invalid CRM ID"],
+    duplicate_in_file: ["Trùng trong tệp", "Duplicate in file"],
+    field_too_long: ["Trường quá dài", "Field too long"],
+    crm_id_mismatch: ["Mã hồ sơ không khớp", "CRM ID mismatch"],
+  };
+  return labels[code]?.[uiLocale.value === "en" ? 1 : 0] || code;
+}
+
+async function previewCustomerCsv() {
+  if (!customerCsvFile.value || customerImportError.value || customerImportBusy.value) return;
+  customerImportBusy.value = true;
+  customerImportPreview.value = null;
+  customerImportError.value = "";
+  try {
+    const body = new FormData();
+    body.append("file", customerCsvFile.value);
+    const response = await apiFetch(`${API_BASE}/customers/import/preview`, { method: "POST", body });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    customerImportPreview.value = await response.json();
+  } catch (err) {
+    customerImportError.value = uiLocale.value === "en"
+      ? "Could not preview this file. Check the format and your permissions."
+      : "Không xem trước được tệp. Kiểm tra định dạng và quyền truy cập.";
+  } finally {
+    customerImportBusy.value = false;
+  }
+}
+
+async function importCustomerCsv() {
+  const preview = customerImportPreview.value;
+  if (!customerCsvFile.value || !preview || preview.errors?.length || customerImportBusy.value) return;
+  const createCount = preview.rows?.filter((row) => row.action === "create").length || 0;
+  if (!createCount) return;
+  const confirmed = await requestConfirmation(uiLocale.value === "en"
+    ? `Create ${createCount} new customer records? Existing records will be skipped.`
+    : `Tạo ${createCount} hồ sơ khách hàng mới? Hồ sơ đã có sẽ được bỏ qua.`, {
+    title: uiLocale.value === "en" ? "Confirm customer import" : "Xác nhận nhập khách hàng",
+    confirmLabel: uiLocale.value === "en" ? "Import" : "Nhập khách hàng",
+  });
+  if (!confirmed) return;
+  customerImportBusy.value = true;
+  customerImportError.value = "";
+  try {
+    const body = new FormData();
+    body.append("file", customerCsvFile.value);
+    const response = await apiFetch(`${API_BASE}/customers/import`, { method: "POST", body });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    customerImportNotice.value = uiLocale.value === "en"
+      ? `Created ${result.created} customers; skipped ${result.skipped} existing records.`
+      : `Đã tạo ${result.created} khách hàng; bỏ qua ${result.skipped} hồ sơ đã có.`;
+    customerImportPreview.value = null;
+    await fetchOrderCustomers();
+  } catch (err) {
+    customerImportError.value = uiLocale.value === "en"
+      ? "Import failed. Preview the file again; no partial rows were saved."
+      : "Nhập thất bại. Xem trước lại tệp; hệ thống không lưu dở từng dòng.";
+  } finally {
+    customerImportBusy.value = false;
+  }
+}
+
+async function exportCustomerCsv() {
+  if (customerImportBusy.value) return;
+  customerImportBusy.value = true;
+  customerImportError.value = "";
+  let objectUrl = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/export.csv`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = "customers.csv";
+    anchor.hidden = true;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } catch (err) {
+    customerImportError.value = uiLocale.value === "en"
+      ? "Could not export customers. Check your permissions and try again."
+      : "Không xuất được khách hàng. Kiểm tra quyền rồi thử lại.";
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    customerImportBusy.value = false;
+  }
+}
+
 async function loadCustomer360(customerId) {
   if (!customerId) {
     customer360.value = null;
     customer360Error.value = "";
+    customerConsents.value = [];
     customerMessageSearchOpen.value = false;
     resetCustomerMessageSearch();
     return;
@@ -7081,6 +7333,9 @@ async function loadCustomer360(customerId) {
       timelineOffset: 0,
       timelineHasMore: false,
     };
+    customerConsents.value = [];
+    consentEvidenceMessageId.value = "";
+    void fetchCustomerConsents(customerId);
     customerCustomFieldsDraft.value = { ...(profile.custom_fields || {}) };
     customerCustomFieldsError.value = "";
     customerCustomFieldsNotice.value = "";
@@ -7438,6 +7693,7 @@ async function selectConversation(id) {
   const compactNavigation = window.matchMedia?.("(max-width: 860px)")?.matches;
   discardVoiceRecording();
   selectedId.value = id;
+  deliveryAttempts.value = [];
   mobileInboxOpen.value = false;
   mobileCustomerOpen.value = false;
   conversationActionsOpen.value = false;
@@ -7540,6 +7796,7 @@ async function sendImageMessage() {
     const formData =
       new FormData();
 
+    formData.append("client_id", makeClientId());
 
     formData.append(
       "file",
@@ -7606,7 +7863,7 @@ async function sendReply() {
 }
 
 
-async function sendUnifiedReply() {
+async function sendUnifiedReply(retryClientId = null) {
 
   if (
     !selectedId.value
@@ -7625,10 +7882,10 @@ async function sendUnifiedReply() {
 
   const clientId = makeClientId();
   const optimisticIds = [];
-  const textClientId = `${clientId}-text`;
+  const textClientId = retryClientId || `${clientId}-text`;
 
   mediaQueue.forEach((media, index) => {
-    const mediaClientId = `${clientId}-media-${index + 1}`;
+    const mediaClientId = retryClientId || `${clientId}-media-${index + 1}`;
     optimisticIds.push(mediaClientId);
     upsertMessage({
       client_id: mediaClientId,
@@ -7643,6 +7900,7 @@ async function sendUnifiedReply() {
       retry_file: media.file,
       retry_preview: media.preview,
       retry_media_type: media.mediaType,
+      retry_text: hasText && media.mediaType !== "image" && index === 0 ? text : null,
     });
   });
 
@@ -7681,6 +7939,7 @@ async function sendUnifiedReply() {
 
     const sendMedia = async (media, index) => {
       const mediaType = media.mediaType || "image";
+      const mediaClientId = retryClientId || `${clientId}-media-${index + 1}`;
       // JPEG/PNG images keep the Meta-compatible normalization path. Other
       // image formats (WebP/GIF) must use the generic route so their original
       // bytes and MIME type reach providers instead of being rejected by the
@@ -7691,14 +7950,18 @@ async function sendUnifiedReply() {
       );
       const hasGenericMedia = mediaType !== "image" || !canUseNormalizedImagePath;
       const formData = new FormData();
-      formData.append("client_id", `${clientId}-${index + 1}`);
+      formData.append("client_id", mediaClientId);
       formData.append("file", media.file);
 
       if (hasGenericMedia) {
         formData.append("media_type", mediaType);
         if (hasText && index === 0) formData.append("caption", text);
-      } else if (hasText && index === 0) {
-        formData.append("text", text);
+      } else {
+        formData.append("media_client_id", mediaClientId);
+        if (hasText && index === 0) {
+          formData.append("text", text);
+          formData.append("text_client_id", textClientId);
+        }
       }
 
       const sendPath = hasGenericMedia
@@ -7719,7 +7982,7 @@ async function sendUnifiedReply() {
       }
 
       const data = await response.json();
-      removeOptimistic(`${clientId}-media-${index + 1}`);
+      removeOptimistic(mediaClientId);
       if (index === 0 && hasText && !hasGenericMedia) removeOptimistic(textClientId);
       applyResponse(data);
       removePendingMedia(media.id);
@@ -7731,13 +7994,23 @@ async function sendUnifiedReply() {
       }
     } else {
       const formData = new FormData();
-      formData.append("client_id", clientId);
+      formData.append("client_id", textClientId);
       formData.append("text", text);
       const response = await apiFetch(`${API_BASE}/conversations/${selectedId.value}/send`, {
         method: "POST",
         body: formData,
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) {
+        const responseText = await response.text();
+        let detail = responseText;
+        try {
+          const payload = JSON.parse(responseText);
+          detail = payload?.detail?.message || payload?.detail || responseText;
+        } catch {
+          // Keep the backend's plain-text error.
+        }
+        throw new Error(typeof detail === "string" ? detail : `HTTP ${response.status}`);
+      }
       removeOptimistic(textClientId);
       applyResponse(await response.json());
     }
@@ -7748,6 +8021,7 @@ async function sendUnifiedReply() {
     await loadConversations(
       false
     );
+    await loadOutboundDeliveryAttempts(selectedId.value);
 
   } catch (err) {
     console.error(err);
@@ -7761,6 +8035,7 @@ async function sendUnifiedReply() {
           "failed"
         )
     );
+    await loadOutboundDeliveryAttempts(selectedId.value);
 
   } finally {
     sending.value = false;
@@ -7775,10 +8050,7 @@ async function retryMessage(message) {
     return;
   }
 
-  if (message.retry_text) {
-    draft.value =
-      message.retry_text;
-  }
+  draft.value = message.retry_text || "";
 
   if (message.retry_file) {
     clearImage();
@@ -7795,7 +8067,7 @@ async function retryMessage(message) {
         !== message.client_id
     );
 
-  await sendUnifiedReply();
+  await sendUnifiedReply(message.client_id);
 
 }
 
@@ -8269,6 +8541,7 @@ async function initializeTenantWorkspace() {
 onMounted(async () => {
 
   window.addEventListener("keydown", handleGlobalKeydown);
+  window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   window.addEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);
   if (!platformRequestPollingTimer) {
     platformRequestPollingTimer = window.setInterval(() => {
@@ -8454,7 +8727,7 @@ async function fetchFollowups() {
   followupsLoading.value = true;
   followupError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/chatbot/followups?status=scheduled`);
+    const response = await apiFetch(`${API_BASE}/chatbot/followups?status=${encodeURIComponent(followupStatusFilter.value)}`);
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
@@ -8532,6 +8805,7 @@ async function fetchCsat() {
 onUnmounted(() => {
 
   window.removeEventListener("keydown", handleGlobalKeydown);
+  window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   window.removeEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);
   stopTenantProvisioningPolling();
   stopTenantWorkspace();
@@ -9969,6 +10243,14 @@ function followupRecommendationLabel(item) {
 
               </div>
 
+              <p
+                v-if="composerMode === 'reply' && outboundDeliveryNotice"
+                class="composer-delivery-warning"
+                role="status"
+              >
+                {{ crmUiText(outboundDeliveryNotice) }}
+              </p>
+
 
               <!-- TEXTAREA -->
 
@@ -10645,6 +10927,30 @@ function followupRecommendationLabel(item) {
                       <strong>Lịch sử</strong>
                       <span>{{ [address.address_line1, address.ward, address.district, address.province].filter(Boolean).join(', ') }}</span>
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section customer-consent-section">
+                <div class="section-head"><h4>{{ uiLocale === 'en' ? 'Contact permissions' : 'Quyền nhận tin' }}</h4></div>
+                <p class="settings-muted">{{ uiLocale === 'en' ? 'Marketing needs explicit customer consent. A refusal also stops proactive follow-ups.' : 'Tin tiếp thị cần khách đồng ý rõ ràng. Khi khách từ chối, hệ thống dừng chăm sóc chủ động.' }}</p>
+                <div v-if="customerConsentsLoading" role="status">{{ uiLocale === 'en' ? 'Loading permissions…' : 'Đang tải quyền nhận tin...' }}</div>
+                <div v-if="customerConsentsError" class="customer-360-error" role="alert">
+                  <span>{{ crmErrorText(customerConsentsError) }}</span>
+                  <button type="button" class="table-action-btn" @click="fetchCustomerConsents(customer360.id)">{{ uiLocale === 'en' ? 'Retry' : 'Thử lại' }}</button>
+                </div>
+                <label class="customer-consent-evidence">
+                  <span>{{ uiLocale === 'en' ? 'Customer consent message ID (required to grant)' : 'ID tin nhắn khách đồng ý (bắt buộc khi bật)' }}</span>
+                  <input v-model="consentEvidenceMessageId" type="number" min="1" inputmode="numeric" :placeholder="uiLocale === 'en' ? 'Inbound message ID' : 'ID tin đến của khách'" />
+                </label>
+                <div v-for="purpose in ['marketing', 'proactive_messages']" :key="purpose" class="customer-consent-row">
+                  <div>
+                    <strong>{{ purpose === 'marketing' ? (uiLocale === 'en' ? 'Marketing' : 'Tiếp thị') : (uiLocale === 'en' ? 'Proactive messages' : 'Chăm sóc chủ động') }}</strong>
+                    <small>{{ latestCustomerConsent(purpose)?.status === 'granted' ? (uiLocale === 'en' ? 'Consented' : 'Đã đồng ý') : latestCustomerConsent(purpose)?.status === 'revoked' ? (uiLocale === 'en' ? 'Opted out' : 'Đã từ chối') : (uiLocale === 'en' ? 'No consent recorded' : 'Chưa ghi nhận đồng ý') }}</small>
+                  </div>
+                  <div class="customer-consent-actions">
+                    <button v-if="latestCustomerConsent(purpose)?.status !== 'granted'" type="button" class="table-action-btn" :disabled="customerConsentSaving || customerConsentsLoading" @click="saveCustomerConsent(purpose, 'granted')">{{ uiLocale === 'en' ? 'Record consent' : 'Ghi nhận đồng ý' }}</button>
+                    <button v-if="latestCustomerConsent(purpose)?.status !== 'revoked'" type="button" class="table-action-btn" :disabled="customerConsentSaving || customerConsentsLoading" @click="saveCustomerConsent(purpose, 'revoked')">{{ uiLocale === 'en' ? 'Opt out' : 'Từ chối' }}</button>
                   </div>
                 </div>
               </div>
@@ -12129,6 +12435,15 @@ function followupRecommendationLabel(item) {
                 <div class="rag-msg-text" v-if="m.content">
                   {{ m.localize ? crmUiText(m.content) : m.content }}
                 </div>
+                <p v-if="m.handoffRequired" class="rag-handoff-notice" role="status">{{ t('Cần nhân viên hỗ trợ câu hỏi này.') }}</p>
+                <details v-if="m.role === 'assistant' && m.sources?.length" class="rag-msg-sources">
+                  <summary>{{ t('Nguồn tham khảo') }} ({{ m.sources.length }})</summary>
+                  <article v-for="(source, sourceIndex) in m.sources" :key="source.chunk_id || `${source.document_id}-${sourceIndex}`" class="rag-msg-source">
+                    <strong>[{{ t('Nguồn') }} {{ source.citation_id || sourceIndex + 1 }}] {{ source.filename || `${t('Tài liệu')} #${source.document_id}` }}</strong>
+                    <small>{{ t('Đoạn') }} {{ Number(source.chunk_index ?? 0) + 1 }} · {{ Math.round(Number(source.similarity || 0) * 100) }}%</small>
+                    <p>{{ source.content }}</p>
+                  </article>
+                </details>
                 <div class="rag-msg-loading" v-if="m.loading">
                   <span class="dot-pulse">●</span> Đang tra cứu kho thông tin...
                 </div>
@@ -12438,7 +12753,7 @@ function followupRecommendationLabel(item) {
             <span><strong>{{ authUser.full_name }}</strong> · {{ roleLabel(authUser.role) }} · {{ authUser.email }}</span>
             <button type="button" class="settings-refresh" @click="logout">Đăng xuất</button>
           </div>
-          <div v-if="authError" class="settings-notice team-error">{{ authError }}</div>
+          <div v-if="authError" class="settings-notice team-error">{{ t(authError) }}</div>
         </div>
 
         <div v-if="authUser" class="settings-card quota-card">
@@ -12616,6 +12931,35 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
+        <div v-if="authUser && ['owner', 'admin'].includes(authUser.role)" class="settings-card customer-import-card">
+          <div class="settings-card-header">
+            <div>
+              <h2>{{ uiLocale === 'en' ? 'Customer CSV import & export' : 'Nhập / xuất khách hàng CSV' }}</h2>
+              <p>{{ uiLocale === 'en' ? 'Preview first. Only new records are created; reimporting the same file skips existing records.' : 'Xem trước khi nhập. Chỉ tạo hồ sơ mới; nhập lại cùng tệp sẽ bỏ qua hồ sơ đã có.' }}</p>
+            </div>
+            <button type="button" class="settings-refresh" :disabled="customerImportBusy" @click="exportCustomerCsv">{{ uiLocale === 'en' ? 'Export CSV' : 'Xuất CSV' }}</button>
+          </div>
+          <label class="customer-import-file">
+            <span>{{ uiLocale === 'en' ? 'UTF-8 CSV, up to 2 MB and 5,000 rows' : 'CSV UTF-8, tối đa 2 MB và 5.000 dòng' }}</span>
+            <input type="file" accept=".csv,text/csv" :disabled="customerImportBusy" @change="chooseCustomerCsv" />
+          </label>
+          <small class="settings-muted">{{ uiLocale === 'en' ? 'Columns: external_id, email or phone; optional name, address, channel, crm_id.' : 'Cột cần có: external_id, email hoặc phone; tùy chọn name, address, channel, crm_id.' }}</small>
+          <div class="settings-actions">
+            <button type="button" class="settings-refresh" :disabled="!customerCsvFile || customerImportBusy || !!customerImportError" @click="previewCustomerCsv">{{ uiLocale === 'en' ? 'Preview' : 'Xem trước' }}</button>
+            <button type="button" class="primary-btn" :disabled="!customerImportPreview || !!customerImportPreview.errors?.length || !customerImportPreview.rows?.some((row) => row.action === 'create') || customerImportBusy" @click="importCustomerCsv">{{ uiLocale === 'en' ? 'Import' : 'Nhập khách hàng' }}</button>
+          </div>
+          <div v-if="customerImportBusy" role="status">{{ uiLocale === 'en' ? 'Processing file…' : 'Đang xử lý tệp...' }}</div>
+          <div v-if="customerImportError" class="settings-notice team-error" role="alert">{{ customerImportError }}</div>
+          <div v-if="customerImportNotice" class="settings-notice" role="status">{{ customerImportNotice }}</div>
+          <div v-if="customerImportPreview" class="customer-import-preview" role="status">
+            <strong>{{ uiLocale === 'en' ? 'Preview' : 'Kết quả xem trước' }}</strong>
+            <span>{{ uiLocale === 'en' ? 'Create' : 'Tạo mới' }}: {{ customerImportPreview.rows?.filter((row) => row.action === 'create').length || 0 }} · {{ uiLocale === 'en' ? 'Skip' : 'Bỏ qua' }}: {{ customerImportPreview.rows?.filter((row) => row.action === 'skip').length || 0 }} · {{ uiLocale === 'en' ? 'Errors' : 'Lỗi' }}: {{ customerImportPreview.errors?.length || 0 }}</span>
+            <ul v-if="customerImportPreview.errors?.length">
+              <li v-for="error in customerImportPreview.errors.slice(0, 5)" :key="`${error.row}-${error.code}`">{{ uiLocale === 'en' ? 'Row' : 'Dòng' }} {{ error.row }}: {{ customerCsvErrorLabel(error.code) }}</li>
+            </ul>
+          </div>
+        </div>
+
         <div v-if="authUser" class="settings-card chatbot-runtime-card">
           <div class="settings-card-header">
             <div>
@@ -12663,13 +13007,25 @@ function followupRecommendationLabel(item) {
           </div>
           <div v-if="followupNotice" class="settings-notice" role="status" aria-live="polite">{{ followupNotice }}</div>
           <div v-if="followupError" class="settings-notice team-error" role="alert">{{ followupError }}</div>
-          <div v-if="followupsLoading" class="settings-empty">Đang tải lịch chăm sóc...</div>
-          <div v-else-if="!followups.length" class="settings-empty">Chưa có lịch nhắc chăm sóc đang chờ.</div>
+          <label class="followup-status-filter">
+            <span>{{ uiLocale === 'en' ? 'Delivery status' : 'Trạng thái gửi' }}</span>
+            <select v-model="followupStatusFilter" @change="fetchFollowups">
+              <option value="scheduled">{{ uiLocale === 'en' ? 'Scheduled' : 'Đang chờ' }}</option>
+              <option value="failed">{{ uiLocale === 'en' ? 'Failed' : 'Thất bại' }}</option>
+              <option value="delivery_unknown">{{ uiLocale === 'en' ? 'Delivery unclear' : 'Chưa rõ đã gửi' }}</option>
+              <option value="sent">{{ uiLocale === 'en' ? 'Sent' : 'Đã gửi' }}</option>
+            </select>
+          </label>
+          <div v-if="followupStatusFilter === 'delivery_unknown'" class="settings-notice team-error" role="alert">
+            {{ uiLocale === 'en' ? 'Check the channel before any manual resend; these items are never retried automatically.' : 'Kiểm tra trực tiếp trên kênh trước khi gửi lại thủ công; hệ thống không tự gửi lại các mục này.' }}
+          </div>
+          <div v-if="followupsLoading" class="settings-empty">{{ uiLocale === 'en' ? 'Loading follow-ups…' : 'Đang tải lịch chăm sóc...' }}</div>
+          <div v-else-if="!followups.length" class="settings-empty">{{ uiLocale === 'en' ? 'No follow-ups in this status.' : 'Không có lịch chăm sóc ở trạng thái này.' }}</div>
           <ul v-else class="followup-list">
             <li v-for="item in followups" :key="item.id">
               <div><strong>{{ followupProductLabel(item) }}</strong><small>{{ formatDateTime(item.run_at) }}</small></div>
               <span>{{ item.message }}<small v-if="followupRecommendationLabel(item)" class="followup-recommendation">Gợi ý mua thêm: {{ followupRecommendationLabel(item) }}</small></span>
-              <button type="button" class="history-btn" @click="cancelFollowup(item)">Hủy</button>
+              <button v-if="item.status === 'scheduled'" type="button" class="history-btn" @click="cancelFollowup(item)">{{ uiLocale === 'en' ? 'Cancel' : 'Hủy' }}</button>
             </li>
           </ul>
         </div>
@@ -12991,7 +13347,7 @@ function followupRecommendationLabel(item) {
               <span class="login-submit-arrow" aria-hidden="true">→</span>
             </button>
           </form>
-          <div v-if="authError" class="login-alert" role="alert">{{ authError }}</div>
+          <div v-if="authError" class="login-alert" role="alert">{{ t(authError) }}</div>
           <div v-if="authRateLimitSeconds > 0" class="login-rate-limit" role="status">
             <span class="login-rate-limit-icon" aria-hidden="true">⏱</span>
             <span>{{ t('Quá nhiều lần thử. Thử lại sau') }} <strong>{{ formatRateLimitDuration(authRateLimitSeconds) }}</strong>.</span>
@@ -13714,6 +14070,47 @@ function followupRecommendationLabel(item) {
   line-height: 1.5;
   color: #2d3748;
 }
+
+.rag-msg-sources {
+  margin-top: 10px;
+  border-top: 1px solid #dbe5ed;
+  color: #31556f;
+  font-size: 12px;
+}
+
+.rag-msg-sources summary {
+  padding: 8px 0 2px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.rag-msg-source {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #dce8ef;
+  border-radius: 8px;
+  background: #f7fbfd;
+}
+
+.rag-msg-source strong,
+.rag-msg-source small { display: block; }
+.rag-msg-source small { margin-top: 3px; color: #647d8f; }
+.rag-msg-source p { margin: 6px 0 0; white-space: pre-wrap; }
+
+.rag-handoff-notice {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border-left: 3px solid #168d91;
+  border-radius: 4px;
+  background: #e9f7f6;
+  color: #176f73;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+body.crm-dark .rag-msg-source { background: #20282b; border-color: #3d5359; color: #e5eaec; }
+body.crm-dark .rag-msg-sources { color: #c1dfe2; border-color: #3d5359; }
+body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 
 .user .rag-msg-bubble {
   background: #3182ce;

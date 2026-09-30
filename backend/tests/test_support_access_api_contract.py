@@ -9,6 +9,7 @@ def test_support_api_exposes_owner_grant_revoke_and_session_routes():
     assert '"/support/grants"' in source
     assert '"/support/grants/{grant_id}/revoke"' in source
     assert '"/platform/support-sessions"' in source
+    assert '"/support/channel-events/{event_id}/retry"' in source
     assert "get_current_user" in source
     assert "get_platform_db" in source
     assert "mfa_required" in source

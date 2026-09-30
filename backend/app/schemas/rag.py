@@ -3,6 +3,7 @@ Pydantic schemas cho RAG APIs: Document upload, chat.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,7 @@ class DocumentOut(BaseModel):
     status: str
     chunk_count: int
     error_message: str | None = None
+    error_code: str | None = None
     uploaded_at: datetime
     processed_at: datetime | None = None
     embedding_status: str = "pending"
@@ -55,6 +57,7 @@ class RagRunOut(BaseModel):
     progress_percent: int = 0
     attempts: int = 0
     error_message: str | None = None
+    error_code: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
 
@@ -97,9 +100,15 @@ class SourceChunk(BaseModel):
     content: str
     similarity: float
     metadata: dict | None = None
+    citation_id: int | None = None
+    chunk_id: int | None = None
+    filename: str | None = None
+    chunk_index: int | None = None
 
 
 class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceChunk]
     chunks_found: int
+    answer_status: Literal["answered", "no_context", "service_error"] = "answered"
+    handoff_required: bool = False

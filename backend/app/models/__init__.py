@@ -35,6 +35,7 @@ from app.models.document import Document, DocumentChunk
 from app.models.setting import AppSetting
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.channel import Channel, ChannelEvent
+from app.models.channel_outbound_attempt import ChannelOutboundAttempt
 from app.models.crm_extended import ConversationAssignment, ConversationTag, CustomerTag, Tag
 from app.models.sales import Order, OrderItem, Product
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
@@ -105,6 +106,7 @@ __all__ = [
     "Payment",
     "Channel",
     "ChannelEvent",
+    "ChannelOutboundAttempt",
     "ConversationAssignment",
     "Tag",
     "ConversationTag",

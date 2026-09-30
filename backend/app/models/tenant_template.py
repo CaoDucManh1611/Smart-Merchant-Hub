@@ -30,6 +30,7 @@ from app.models.audit_log import AuditLog  # noqa: F401,E402
 from app.models.business_setting import BusinessSetting  # noqa: F401,E402
 from app.models.crm_workspace_config import CrmWorkspaceConfig  # noqa: F401,E402
 from app.models.channel import Channel, ChannelEvent  # noqa: F401,E402
+from app.models.channel_outbound_attempt import ChannelOutboundAttempt  # noqa: F401,E402
 from app.models.conversation import Conversation  # noqa: F401,E402
 from app.models.message import Message  # noqa: F401,E402
 from app.models.message_attachment import MessageAttachment  # noqa: F401,E402
@@ -98,6 +99,7 @@ TENANT_TABLE_NAMES = (
     "customer_addresses",
     "customer_facts",
     "conversations",
+    "channel_outbound_attempts",
     "messages",
     "message_attachments",
     "documents",

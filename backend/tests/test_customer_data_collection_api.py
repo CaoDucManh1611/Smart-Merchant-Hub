@@ -11,7 +11,9 @@ from app.main import app
 from app.models.audit_log import AuditLog
 from app.models.business import Business
 from app.models.customer import Customer
+from app.models.conversation import Conversation
 from app.models.customer_collection import CustomerVerificationChallenge
+from app.models.message import Message
 from app.services.customer_collection import hash_verification_code
 from app.services.customer_identity import resolve_customer
 
@@ -149,6 +151,33 @@ class CustomerDataCollectionApiTests(unittest.TestCase):
         )
         self.assertEqual(201, consent.status_code)
         self.assertEqual("granted", consent.json()["status"])
+
+    def test_marketing_consent_requires_customer_message_evidence(self):
+        url = f"/api/customers/{self.customer_id}/consents"
+        without_evidence = self.client.post(
+            url, headers=self.headers(), json={"purpose": "marketing", "status": "granted"},
+        )
+        self.assertEqual(422, without_evidence.status_code)
+
+        with Session(self.engine) as db:
+            conversation = Conversation(business_id=self.business_id, customer_id=self.customer_id, channel="facebook")
+            db.add(conversation)
+            db.flush()
+            outgoing = Message(conversation_id=conversation.id, channel="facebook", direction="outbound", sender_type="staff", content="Đồng ý?")
+            incoming = Message(conversation_id=conversation.id, channel="facebook", direction="inbound", sender_type="customer", content="Tôi đồng ý nhận tin tiếp thị")
+            db.add_all([outgoing, incoming])
+            db.commit()
+            outgoing_id, incoming_id = outgoing.id, incoming.id
+
+        wrong_direction = self.client.post(
+            url, headers=self.headers(), json={"purpose": "marketing", "status": "granted", "evidence_message_id": outgoing_id},
+        )
+        self.assertEqual(422, wrong_direction.status_code)
+        accepted = self.client.post(
+            url, headers=self.headers(), json={"purpose": "marketing", "status": "granted", "evidence_message_id": incoming_id},
+        )
+        self.assertEqual(201, accepted.status_code)
+        self.assertEqual(incoming_id, accepted.json()["evidence_message_id"])
 
     def test_verification_challenge_stores_only_hash_and_can_verify(self):
         contact = self.client.post(

@@ -66,6 +66,7 @@ def dispatch_rag_job(
     run.completed_chunks = 0
     run.progress_percent = 0
     run.error_message = None
+    run.error_code = None
     db.commit()
 
     def report_progress(
@@ -106,6 +107,7 @@ def dispatch_rag_job(
             failed.status = "failed"
             failed.phase = "complete"
             failed.error_message = _safe_error(exc)
+            failed.error_code = "document_processing_failed"
             failed.completed_at = _utcnow()
             db.commit()
         raise
@@ -134,6 +136,7 @@ def dispatch_rag_job(
                 db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete(synchronize_session=False)
                 doc.status = "error"
                 doc.embedding_status = "error"
+                doc.error_code = "chunk_quota_exceeded"
                 doc.chunk_count = 0
                 doc.error_message = "Đã vượt quota chunks RAG của gói dịch vụ."
                 if prior_chunk_count:
@@ -144,6 +147,7 @@ def dispatch_rag_job(
                 run.completed_chunks = 0
                 run.progress_percent = 100
                 run.error_message = doc.error_message
+                run.error_code = doc.error_code
                 run.completed_at = _utcnow()
                 db.commit()
                 logger.warning(
@@ -164,5 +168,6 @@ def dispatch_rag_job(
     # to the 100% terminal progress instead of looking stuck.
     run.progress_percent = 100 if doc.status in {"ready", "error"} else int(run.progress_percent or 0)
     run.error_message = doc.error_message
+    run.error_code = doc.error_code
     run.completed_at = _utcnow()
     db.commit()

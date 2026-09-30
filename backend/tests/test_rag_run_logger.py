@@ -33,7 +33,7 @@ def test_rag_run_log_records_exception(tmp_path, monkeypatch):
     record = json.loads(log_path.read_text(encoding="utf-8").strip())
     assert record["status"] == "error"
     assert record["error_type"] == "RuntimeError"
-    assert record["error"] == "embedding unavailable"
+    assert "error" not in record
 
 
 def test_rag_run_log_does_not_persist_customer_query(tmp_path, monkeypatch):
@@ -51,7 +51,7 @@ def test_rag_run_log_does_not_persist_customer_query(tmp_path, monkeypatch):
     assert len(record["query_hash"]) == 16
 
 
-def test_rag_run_log_redacts_identifiers_in_errors(tmp_path, monkeypatch):
+def test_rag_run_log_drops_error_details(tmp_path, monkeypatch):
     log_path = tmp_path / "rag_runs.jsonl"
     monkeypatch.setattr("app.rag.run_logger.settings.RAG_LOG_FILE", str(log_path))
 
@@ -62,6 +62,7 @@ def test_rag_run_log_redacts_identifiers_in_errors(tmp_path, monkeypatch):
         )
 
     record = json.loads(log_path.read_text(encoding="utf-8").strip())
-    assert "thienshinn47@gmail.com" not in record["error"]
-    assert "0912345678" not in record["error"]
-    assert "secret" not in record["error"]
+    assert "error" not in record
+    assert "thienshinn47@gmail.com" not in log_path.read_text(encoding="utf-8")
+    assert "0912345678" not in log_path.read_text(encoding="utf-8")
+    assert "secret" not in log_path.read_text(encoding="utf-8")

@@ -54,6 +54,12 @@ from app.services.instagram_service import send_instagram_media
 from app.services.telegram_service import send_telegram_media
 from app.services.zalo_service import send_zalo_media, send_zalo_message
 from app.services.channel_retry import run_with_provider_retry
+from app.services.channel_delivery import (
+    claim_outbound_attempt,
+    mark_outbound_attempt_failed,
+    mark_outbound_attempt_sent,
+    validate_client_id,
+)
 from app.services.zalo_media import normalize_zalo_audio_upload
 from app.services.media_resolver import build_media_url
 from app.services.audit_service import record_audit
@@ -189,6 +195,7 @@ class SendMessageRequest(
     BaseModel
 ):
     text: str
+    client_id: str | None = None
 
 
 class SendMediaRequest(
@@ -197,6 +204,7 @@ class SendMediaRequest(
     media_url: str
     media_type: str = "image"
     caption: str | None = None
+    client_id: str | None = None
 
 
 class ConversationAssignmentRequest(BaseModel):
@@ -425,19 +433,14 @@ def check_public_image_url(
             timeout=15,
         )
     except httpx.RequestError as exc:
-        print(
-            "[PUBLIC URL CHECK] "
-            f"request_error={exc}"
-        )
+        logger.warning("Public media URL check failed: error_type=%s", type(exc).__name__)
         raise HTTPException(
             status_code=400,
             detail={
                 "stage":
                     "public_url_check",
                 "message":
-                    str(exc),
-                "image_url":
-                    image_url,
+                    "Public image URL could not be reached",
             },
         )
 
@@ -457,13 +460,7 @@ def check_public_image_url(
         )
     )
 
-    print(
-        "[PUBLIC URL CHECK] "
-        f"status={response.status_code} | "
-        f"content_type={content_type} | "
-        f"content_length={content_length} | "
-        f"final_url={response.url}"
-    )
+    logger.info("Public media URL checked: status=%s content_type=%s", response.status_code, content_type)
 
     if (
         response.status_code != 200
@@ -526,19 +523,14 @@ async def check_public_image_url_async(
                 image_url
             )
     except httpx.RequestError as exc:
-        print(
-            "[PUBLIC URL CHECK] "
-            f"request_error={exc}"
-        )
+        logger.warning("Public media URL check failed: error_type=%s", type(exc).__name__)
         raise HTTPException(
             status_code=400,
             detail={
                 "stage":
                     "public_url_check",
                 "message":
-                    str(exc),
-                "image_url":
-                    image_url,
+                    "Public image URL could not be reached",
             },
         )
 
@@ -558,13 +550,7 @@ async def check_public_image_url_async(
         )
     )
 
-    print(
-        "[PUBLIC URL CHECK] "
-        f"status={response.status_code} | "
-        f"content_type={content_type} | "
-        f"content_length={content_length} | "
-        f"final_url={response.url}"
-    )
+    logger.info("Public media URL checked: status=%s content_type=%s", response.status_code, content_type)
 
     if (
         response.status_code != 200
@@ -650,12 +636,7 @@ async def prepare_uploaded_image(
             detail="Anh qua lon. Toi da 8MB",
         )
 
-    print(
-        "[UI FILE RECEIVED] "
-        f"filename={file.filename!r} | "
-        f"content_type={upload_content_type!r} | "
-        f"size={len(file_bytes)}"
-    )
+    logger.info("Inbound media upload received: content_type=%s size_bytes=%s", upload_content_type, len(file_bytes))
 
     original_content_type, _ = detect_image_type(
         file_bytes
@@ -700,10 +681,7 @@ async def prepare_uploaded_image(
                 normalized_bytes
             )
     except Exception as exc:
-        print(
-            "SAVE UPLOAD ERROR:",
-            str(exc),
-        )
+        logger.error("Media upload persistence failed: error_type=%s", type(exc).__name__)
         raise HTTPException(
             status_code=500,
             detail="Khong the luu file upload",
@@ -715,26 +693,7 @@ async def prepare_uploaded_image(
         f"/uploads/{filename}"
     )
 
-    print(
-        "[IMAGE NORMALIZE] "
-        f"original_format={normalize_info['original_format']} | "
-        f"original_mode={normalize_info['original_mode']} | "
-        f"original_size={normalize_info['original_size']} | "
-        "normalized_format=JPEG | "
-        "normalized_mode=RGB | "
-        f"normalized_path={file_path} | "
-        f"normalized_size={len(normalized_bytes)}"
-    )
-
-    print(
-        "[IMAGE UPLOAD] "
-        f"conversation_id={conversation_id} | "
-        f"filename={filename} | "
-        "content_type=image/jpeg | "
-        f"size={len(normalized_bytes)} | "
-        f"saved_path={file_path} | "
-        f"public_url={media_url}"
-    )
+    logger.info("Media upload normalized: format=%s size_bytes=%s", normalize_info["original_format"], len(normalized_bytes))
 
     await check_public_image_url_async(
         media_url
@@ -842,14 +801,11 @@ def log_instagram_recipient_audit(
         or ""
     ).strip()
 
-    print(
-        "[RECIPIENT AUDIT] "
-        f"db_external_user_id={db_external_user_id!r} | "
-        f"webhook_sender_id={webhook_sender_id!r} | "
-        f"graph_from_id={graph_from_id!r} | "
-        f"conversation_participant_id={selected_recipient_id!r} | "
-        f"selected_recipient_id={selected_recipient_id!r} | "
-        "recipient_id_type='IGSID_FROM_PAGE_CONVERSATIONS_API'"
+    logger.info(
+        "Instagram recipient audit: webhook_identity_present=%s "
+        "conversation_identity_matches_webhook=%s",
+        bool(webhook_sender_id or graph_from_id),
+        bool(selected_recipient_id and selected_recipient_id in {webhook_sender_id, graph_from_id}),
     )
 
 
@@ -1323,6 +1279,110 @@ async def broadcast_message_created(
     )
 
 
+def _claim_outbound_delivery(
+    db: Session,
+    *,
+    client_id: str | None,
+    channel_id: int | None,
+    business_id: int,
+    conversation_id: int,
+) -> tuple[int, dict | None]:
+    key = validate_client_id(client_id)
+    state, attempt = claim_outbound_attempt(
+        db,
+        channel_id=channel_id,
+        business_id=business_id,
+        conversation_id=conversation_id,
+        client_id=key,
+    )
+    if state == "sent":
+        message = None
+        if attempt.message_id is not None:
+            message = db.execute(
+                text("""
+                    SELECT id AS message_id, conversation_id, channel, external_user_id,
+                           external_message_id, direction, content, media_type, media_url,
+                           raw_payload, received_at
+                    FROM messages WHERE id = :message_id LIMIT 1
+                """),
+                {"message_id": attempt.message_id},
+            ).mappings().first()
+        if message:
+            return attempt.id, dict(message)
+        state = "sent_without_message"
+    if state != "claimed":
+        detail = {
+            "code": f"delivery_{state}",
+            "message": (
+                "Tin nhắn đã được gửi trước đó."
+                if state == "sent_without_message"
+                else "Chưa thể gửi lại an toàn. Hãy kiểm tra trạng thái trên kênh trước."
+                if state == "unknown"
+                else "Tin nhắn đang được xử lý hoặc khóa gửi bị trùng."
+            ),
+        }
+        raise HTTPException(status_code=409, detail=detail)
+    return attempt.id, None
+
+
+async def send_idempotent_outbound(
+    db: Session,
+    *,
+    client_id: str | None,
+    channel_id: int | None,
+    business_id: int,
+    conversation_id: int,
+    channel: str,
+    recipient_id: str,
+    text_content: str | None = None,
+    image_url: str | None = None,
+    sender_user_id: int | None = None,
+) -> dict:
+    attempt_id, replay = _claim_outbound_delivery(
+        db,
+        client_id=client_id,
+        channel_id=channel_id,
+        business_id=business_id,
+        conversation_id=conversation_id,
+    )
+    if replay:
+        return {
+            "success": True,
+            "message_id": replay.get("external_message_id"),
+            "message": replay,
+            "meta_response": {"idempotent_replay": True},
+        }
+    try:
+        result = await send_and_save_outbound(
+            db=db,
+            conversation_id=conversation_id,
+            channel=channel,
+            recipient_id=recipient_id,
+            text_content=text_content,
+            image_url=image_url,
+            business_id=business_id,
+            sender_user_id=sender_user_id,
+        )
+    except Exception as exc:
+        try:
+            mark_outbound_attempt_failed(db, attempt_id, exc)
+        except Exception:
+            db.rollback()
+            logger.error("Could not persist outbound delivery state: error_type=%s", type(exc).__name__)
+        raise
+    if not result.get("message"):
+        mark_outbound_attempt_failed(
+            db, attempt_id, HTTPException(status_code=502, detail="Message persistence failed after provider send")
+        )
+        raise HTTPException(status_code=502, detail="Không xác nhận được trạng thái lưu tin nhắn; vui lòng kiểm tra kênh trước khi gửi lại.")
+    mark_outbound_attempt_sent(
+        db,
+        attempt_id,
+        message_id=result["message"].get("message_id"),
+    )
+    return result
+
+
 async def send_and_save_outbound(
     db: Session,
     conversation_id: int,
@@ -1334,12 +1394,7 @@ async def send_and_save_outbound(
     sender_user_id: int | None = None,
 ) -> dict:
     if image_url:
-        print(
-            "[UI CALL SERVICE] "
-            f"service=send_{channel}_image | "
-            f"recipient_id={recipient_id} | "
-            f"media_url={image_url}"
-        )
+        logger.info("Outbound channel send started: channel=%s operation=image", channel)
 
         if channel == "facebook":
             result = await run_in_threadpool(
@@ -1408,11 +1463,7 @@ async def send_and_save_outbound(
         )
 
     else:
-        print(
-            "[UI CALL SERVICE] "
-            f"service=send_{channel}_message | "
-            f"recipient_id={recipient_id}"
-        )
+        logger.info("Outbound channel send started: channel=%s operation=text", channel)
 
         if channel == "facebook":
             result = await run_in_threadpool(
@@ -1499,11 +1550,7 @@ async def send_and_save_outbound(
             sender_user_id=sender_user_id,
         )
 
-    print(
-        "[UI SERVICE RESULT] "
-        "status=success | "
-        f"message_id={external_message_id}"
-    )
+    logger.info("Outbound channel send succeeded: channel=%s", channel)
 
     await broadcast_message_created(
         saved_message,
@@ -2197,6 +2244,33 @@ def get_conversation_messages(
     }
 
 
+@router.get("/{conversation_id}/delivery-attempts")
+def get_outbound_delivery_attempts(
+    conversation_id: int,
+    limit: int = Query(default=30, ge=1, le=100),
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    """Expose redacted delivery state; never include message bodies or provider data."""
+    conversation = db.execute(
+        text("SELECT id FROM conversations WHERE id=:conversation_id AND business_id=:business_id LIMIT 1"),
+        {"conversation_id": conversation_id, "business_id": tenant.business_id},
+    ).first()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    rows = db.execute(
+        text("""
+            SELECT client_id, status, error_code, message_id, created_at, updated_at
+            FROM channel_outbound_attempts
+            WHERE conversation_id=:conversation_id AND business_id=:business_id
+            ORDER BY id DESC
+            LIMIT :limit
+        """),
+        {"conversation_id": conversation_id, "business_id": tenant.business_id, "limit": limit},
+    ).mappings().all()
+    return {"conversation_id": conversation_id, "items": [dict(row) for row in rows]}
+
+
 # =========================================================
 # SEND TEXT
 # =========================================================
@@ -2205,12 +2279,48 @@ def get_conversation_messages(
     "/{conversation_id}/messages",
     dependencies=[Depends(require_write_access)],
 )
-def send_message(
+async def send_message(
     conversation_id: int,
     body: SendMessageRequest,
     db: Session = Depends(
         get_tenant_db
     ),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    text_content = str(body.text or "").strip()
+    if not text_content:
+        raise HTTPException(status_code=400, detail="Nội dung tin nhắn không được để trống")
+    conversation = get_conversation_target(db, conversation_id, tenant.business_id)
+    require_responsible_staff(conversation, actor)
+    client_id = validate_client_id(body.client_id)
+    sent = await send_idempotent_outbound(
+        db,
+        client_id=client_id,
+        channel_id=conversation.get("channel_id"),
+        business_id=tenant.business_id,
+        conversation_id=conversation_id,
+        channel=str(conversation["channel"]),
+        recipient_id=str(conversation["external_user_id"]),
+        text_content=text_content,
+        sender_user_id=actor.id if actor else None,
+    )
+    return {
+        "success": True,
+        "status": "sent",
+        "channel": conversation["channel"],
+        "message_type": "text",
+        "conversation_id": conversation_id,
+        "external_message_id": sent.get("message_id"),
+        "message": sent.get("message"),
+        "idempotent_replay": bool((sent.get("meta_response") or {}).get("idempotent_replay")),
+    }
+
+
+def _legacy_send_message(
+    conversation_id: int,
+    body: SendMessageRequest,
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -2254,12 +2364,7 @@ def send_message(
         ]
     )
 
-    print(
-        "[UI MEDIA ROUTE START] "
-        f"conversation_id={conversation_id} | "
-        f"channel={channel} | "
-        f"recipient_id={recipient_id}"
-    )
+    logger.info("Outbound channel send started: channel=%s operation=text", channel)
 
 
     # =====================================================
@@ -2324,29 +2429,7 @@ def send_message(
                 "TEXT SAVED"
             )
 
-            print(
-                "[UI SERVICE RESULT] "
-                "status=success | "
-                f"message_id={external_message_id}"
-            )
-
-            print(
-                "[UI MEDIA ROUTE END] "
-                f"conversation_id={conversation_id} | "
-                "success=True"
-            )
-
-            print(
-                "[UI SERVICE RESULT] "
-                "status=success | "
-                f"message_id={external_message_id}"
-            )
-
-            print(
-                "[UI MEDIA ROUTE END] "
-                f"conversation_id={conversation_id} | "
-                "success=True"
-            )
+            logger.info("Outbound channel message saved: provider=facebook")
 
             return {
                 "success":
@@ -2386,10 +2469,7 @@ def send_message(
 
             db.rollback()
 
-            print(
-                "❌ FACEBOOK SEND ERROR:",
-                str(exc),
-            )
+            logger.error("Outbound channel send failed: provider=facebook operation=text error_type=%s", type(exc).__name__)
 
             raise HTTPException(
                 status_code=500,
@@ -2469,17 +2549,7 @@ def send_message(
                 "TEXT SAVED"
             )
 
-            print(
-                "[UI SERVICE RESULT] "
-                "status=success | "
-                f"message_id={external_message_id}"
-            )
-
-            print(
-                "[UI MEDIA ROUTE END] "
-                f"conversation_id={conversation_id} | "
-                "success=True"
-            )
+            logger.info("Outbound channel message saved: provider=instagram")
 
             return {
                 "success":
@@ -2523,10 +2593,7 @@ def send_message(
 
             db.rollback()
 
-            print(
-                "❌ INSTAGRAM SEND ERROR:",
-                str(exc),
-            )
+            logger.error("Outbound channel send failed: provider=instagram operation=text error_type=%s", type(exc).__name__)
 
             raise HTTPException(
                 status_code=500,
@@ -2578,7 +2645,7 @@ def send_message(
             raise
         except Exception as exc:
             db.rollback()
-            print("❌ TELEGRAM SEND ERROR:", str(exc))
+            logger.error("Outbound channel send failed: provider=telegram operation=text error_type=%s", type(exc).__name__)
             raise HTTPException(
                 status_code=502,
                 detail="Không thể gửi Telegram message",
@@ -2624,7 +2691,7 @@ def send_message(
             raise
         except Exception as exc:
             db.rollback()
-            print("❌ TIKTOK SEND ERROR:", str(exc))
+            logger.error("Outbound channel send failed: provider=tiktok operation=text error_type=%s", type(exc).__name__)
             raise HTTPException(
                 status_code=502,
                 detail="Không thể gửi TikTok message",
@@ -2658,6 +2725,8 @@ async def unified_send(
     client_id: str | None = Form(
         None,
     ),
+    media_client_id: str | None = Form(None),
+    text_client_id: str | None = Form(None),
     file: UploadFile | None = File(
         None
     ),
@@ -2695,6 +2764,15 @@ async def unified_send(
     )
     require_responsible_staff(conversation, actor)
 
+    media_key = None
+    text_key = None
+    if has_file:
+        media_key = validate_client_id(media_client_id or client_id)
+        if message_text:
+            text_key = validate_client_id(text_client_id or (f"{client_id}-text" if client_id else None))
+    else:
+        text_key = validate_client_id(text_client_id or client_id)
+
     channel = conversation[
         "channel"
     ]
@@ -2705,45 +2783,45 @@ async def unified_send(
         ]
     )
 
-    print(
-        "[UI MEDIA ROUTE START] "
-        f"conversation_id={conversation_id} | "
-        f"channel={channel} | "
-        f"recipient_id={recipient_id} | "
-        f"client_id={client_id!r}"
-    )
+    logger.info("Outbound channel send started: channel=%s operation=compose", channel)
 
     results: list[dict] = []
     media_url = None
+    media_path = None
 
     try:
         if has_file and file is not None:
-            media_url, _ = await prepare_uploaded_image(
+            media_url, media_path = await prepare_uploaded_image(
                 file=file,
                 conversation_id=conversation_id,
             )
 
-            results.append(
-                await send_and_save_outbound(
-                    db=db,
-                    conversation_id=conversation_id,
-                    channel=channel,
-                    recipient_id=recipient_id,
-                    image_url=media_url,
-                    business_id=tenant.business_id,
-                    sender_user_id=actor.id if actor else None,
-                )
+            sent_media = await send_idempotent_outbound(
+                db=db,
+                client_id=media_key,
+                channel_id=conversation.get("channel_id"),
+                business_id=tenant.business_id,
+                conversation_id=conversation_id,
+                channel=channel,
+                recipient_id=recipient_id,
+                image_url=media_url,
+                sender_user_id=actor.id if actor else None,
             )
+            if (sent_media.get("meta_response") or {}).get("idempotent_replay"):
+                media_path.unlink(missing_ok=True)
+            results.append(sent_media)
 
         if message_text:
             results.append(
-                await send_and_save_outbound(
+                await send_idempotent_outbound(
                     db=db,
+                    client_id=text_key,
+                    channel_id=conversation.get("channel_id"),
+                    business_id=tenant.business_id,
                     conversation_id=conversation_id,
                     channel=channel,
                     recipient_id=recipient_id,
                     text_content=message_text,
-                    business_id=tenant.business_id,
                     sender_user_id=actor.id if actor else None,
                 )
             )
@@ -2772,7 +2850,7 @@ async def unified_send(
         "success":
             True,
         "client_id":
-            client_id,
+            client_id or media_key or text_key,
         "conversation_id":
             conversation_id,
         "media_type":
@@ -2822,15 +2900,35 @@ async def send_media_message(
     media_url = str(body.media_url or "").strip()
     if not media_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=422, detail="media_url phải là URL http/https")
-
+    if media_type == "image":
+        check_public_image_url(media_url)
     conversation = get_conversation_target(
         db=db,
         conversation_id=conversation_id,
         business_id=tenant.business_id,
     )
     require_responsible_staff(conversation, actor)
+    client_id = validate_client_id(body.client_id)
     channel = str(conversation["channel"] or "").strip().lower()
     recipient_id = str(conversation["external_user_id"])
+    attempt_id, replay = _claim_outbound_delivery(
+        db,
+        client_id=client_id,
+        channel_id=conversation.get("channel_id"),
+        business_id=tenant.business_id,
+        conversation_id=conversation_id,
+    )
+    if replay:
+        return {
+            "success": True,
+            "status": "sent",
+            "channel": channel,
+            "message_type": media_type,
+            "conversation_id": conversation_id,
+            "external_message_id": replay.get("external_message_id"),
+            "message": replay,
+            "idempotent_replay": True,
+        }
 
     try:
         if channel == "facebook":
@@ -2877,17 +2975,15 @@ async def send_media_message(
             )
         else:
             raise HTTPException(status_code=422, detail=f"Kênh {channel} chưa hỗ trợ gửi media")
-    except HTTPException:
-        db.rollback()
-        raise
-    except (ValueError, LookupError) as exc:
-        db.rollback()
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except MetaAPIError as exc:
-        db.rollback()
-        raise HTTPException(status_code=meta_error_status_code(exc), detail=exc.to_detail()) from exc
     except Exception as exc:
         db.rollback()
+        mark_outbound_attempt_failed(db, attempt_id, exc)
+        if isinstance(exc, HTTPException):
+            raise
+        if isinstance(exc, (ValueError, LookupError)):
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if isinstance(exc, MetaAPIError):
+            raise HTTPException(status_code=meta_error_status_code(exc), detail=exc.to_detail()) from exc
         raise HTTPException(status_code=502, detail=f"Không thể gửi media qua {channel}") from exc
 
     external_message_id = result.get("message_id") or (result.get("result") or {}).get("message_id")
@@ -2904,6 +3000,12 @@ async def send_media_message(
         sender_type="staff",
         sender_user_id=actor.id if actor else None,
     )
+    if not saved:
+        mark_outbound_attempt_failed(
+            db, attempt_id, HTTPException(status_code=502, detail="Outbound message was not persisted")
+        )
+        raise HTTPException(status_code=502, detail="Không xác nhận được trạng thái lưu tin nhắn; vui lòng kiểm tra kênh trước khi gửi lại.")
+    mark_outbound_attempt_sent(db, attempt_id, message_id=saved.get("message_id"))
     if saved and conversation.get("channel_id"):
         try:
             from app.services.media_service import save_message_attachments
@@ -2942,13 +3044,24 @@ async def send_media_message(
     "/{conversation_id}/media",
     dependencies=[Depends(require_write_access)],
 )
-
-def send_media(
+async def send_media(
     conversation_id: int,
     body: SendMediaRequest,
     db: Session = Depends(
         get_tenant_db
     ),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    if str(body.media_type or "image").strip().lower() != "image":
+        raise HTTPException(status_code=422, detail="/media chỉ nhận image; dùng /send-media cho media khác")
+    return await send_media_message(conversation_id, body, db, tenant, actor)
+
+
+def _legacy_send_media(
+    conversation_id: int,
+    body: SendMediaRequest,
+    db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
@@ -3034,12 +3147,7 @@ def send_media(
         ]
     )
 
-    print(
-        "[UI MEDIA ROUTE START] "
-        f"conversation_id={conversation_id} | "
-        f"channel={channel} | "
-        f"recipient_id={recipient_id}"
-    )
+    logger.info("Outbound channel send started: channel=%s operation=image", channel)
 
 
     # =====================================================
@@ -3050,12 +3158,7 @@ def send_media(
 
         try:
 
-            print(
-                "[UI CALL SERVICE] "
-                "service=send_facebook_image | "
-                f"recipient_id={recipient_id} | "
-                f"media_url={media_url}"
-            )
+            logger.debug("Outbound media provider request started: provider=facebook media_type=image")
 
             result = (
                 send_facebook_image(
@@ -3112,17 +3215,7 @@ def send_media(
             )
 
 
-            print(
-                "[UI SERVICE RESULT] "
-                "status=success | "
-                f"message_id={external_message_id}"
-            )
-
-            print(
-                "[UI MEDIA ROUTE END] "
-                f"conversation_id={conversation_id} | "
-                "success=True"
-            )
+            logger.info("Outbound media message saved: provider=facebook")
 
             return {
                 "success":
@@ -3166,10 +3259,7 @@ def send_media(
 
             db.rollback()
 
-            print(
-                "❌ FACEBOOK IMAGE ERROR:",
-                str(exc),
-            )
+            logger.error("Outbound channel send failed: provider=facebook operation=image error_type=%s", type(exc).__name__)
 
             raise HTTPException(
                 status_code=500,
@@ -3295,10 +3385,7 @@ def send_media(
 
             db.rollback()
 
-            print(
-                "❌ INSTAGRAM IMAGE ERROR:",
-                str(exc),
-            )
+            logger.error("Outbound channel send failed: provider=instagram operation=image error_type=%s", type(exc).__name__)
 
             raise HTTPException(
                 status_code=500,
@@ -3387,6 +3474,33 @@ def get_uploaded_media(filename: str):
 )
 async def upload_and_send_image(
     conversation_id: int,
+    file: UploadFile = File(...),
+    client_id: str = Form(...),
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    conversation = get_conversation_target(db, conversation_id, tenant.business_id)
+    require_responsible_staff(conversation, actor)
+    media_url, file_path = await prepare_uploaded_image(file, conversation_id)
+    try:
+        result = await send_media_message(
+            conversation_id,
+            SendMediaRequest(media_type="image", media_url=media_url, client_id=client_id),
+            db,
+            tenant,
+            actor,
+        )
+        if result.get("idempotent_replay"):
+            file_path.unlink(missing_ok=True)
+        return result
+    except Exception:
+        file_path.unlink(missing_ok=True)
+        raise
+
+
+async def _legacy_upload_and_send_image(
+    conversation_id: int,
 
     file: UploadFile = File(
         ...
@@ -3419,10 +3533,7 @@ async def upload_and_send_image(
     )
     require_responsible_staff(conversation, actor)
 
-    print(
-        "[UI MEDIA ROUTE START] "
-        f"conversation_id={conversation_id}"
-    )
+    logger.info("Outbound channel image upload started: business_id=%s", tenant.business_id)
 
 
     # =====================================================
@@ -3481,12 +3592,7 @@ async def upload_and_send_image(
             ),
         )
 
-    print(
-        "[UI FILE RECEIVED] "
-        f"filename={file.filename!r} | "
-        f"content_type={upload_content_type!r} | "
-        f"size={len(file_bytes)}"
-    )
+    logger.info("Inbound image upload received: content_type=%s size_bytes=%s", upload_content_type, len(file_bytes))
 
 
     # =====================================================
@@ -3557,11 +3663,7 @@ async def upload_and_send_image(
 
 
     except Exception as exc:
-
-        print(
-            "❌ SAVE UPLOAD ERROR:",
-            str(exc),
-        )
+        logger.error("Media upload persistence failed: error_type=%s", type(exc).__name__)
 
         raise HTTPException(
             status_code=500,
@@ -3589,26 +3691,7 @@ async def upload_and_send_image(
     )
 
 
-    print(
-        "[IMAGE NORMALIZE] "
-        f"original_format={normalize_info['original_format']} | "
-        f"original_mode={normalize_info['original_mode']} | "
-        f"original_size={normalize_info['original_size']} | "
-        f"normalized_format=JPEG | "
-        f"normalized_mode=RGB | "
-        f"normalized_path={file_path} | "
-        f"normalized_size={len(normalized_bytes)}"
-    )
-
-    print(
-        "[IMAGE UPLOAD] "
-        f"conversation_id={conversation_id} | "
-        f"filename={filename} | "
-        f"content_type={content_type} | "
-        f"size={len(normalized_bytes)} | "
-        f"saved_path={file_path} | "
-        f"public_url={media_url}"
-    )
+    logger.info("Media upload normalized: format=%s size_bytes=%s", normalize_info["original_format"], len(normalized_bytes))
 
     await check_public_image_url_async(
         media_url
@@ -3643,12 +3726,7 @@ async def upload_and_send_image(
         ]
     )
 
-    print(
-        "[UI MEDIA ROUTE START] "
-        f"conversation_id={conversation_id} | "
-        f"channel={channel} | "
-        f"recipient_id={recipient_id}"
-    )
+    logger.info("Outbound channel send started: channel=%s operation=uploaded_image", channel)
 
 
     # =====================================================
@@ -3659,12 +3737,7 @@ async def upload_and_send_image(
 
         try:
 
-            print(
-                "[UI CALL SERVICE] "
-                "service=send_facebook_image | "
-                f"recipient_id={recipient_id} | "
-                f"media_url={media_url}"
-            )
+            logger.debug("Outbound media provider request started: provider=facebook media_type=image")
 
             result = await run_in_threadpool(
                 send_facebook_image,
@@ -3771,11 +3844,7 @@ async def upload_and_send_image(
 
             db.rollback()
 
-            print(
-                "❌ FACEBOOK UPLOAD "
-                "IMAGE ERROR:",
-                str(exc),
-            )
+            logger.error("Outbound channel send failed: provider=facebook operation=uploaded_image error_type=%s", type(exc).__name__)
 
 
             try:
@@ -3806,12 +3875,7 @@ async def upload_and_send_image(
 
         try:
 
-            print(
-                "[UI CALL SERVICE] "
-                "service=send_instagram_image | "
-                f"recipient_id={recipient_id} | "
-                f"media_url={media_url}"
-            )
+            logger.debug("Outbound media provider request started: provider=instagram media_type=image")
 
             result = await run_in_threadpool(
                 send_instagram_image,
@@ -3920,11 +3984,7 @@ async def upload_and_send_image(
 
             db.rollback()
 
-            print(
-                "❌ INSTAGRAM UPLOAD "
-                "IMAGE ERROR:",
-                str(exc),
-            )
+            logger.error("Outbound channel send failed: provider=instagram operation=uploaded_image error_type=%s", type(exc).__name__)
 
 
             try:
@@ -3975,6 +4035,7 @@ async def upload_and_send_image(
 async def upload_and_send_generic_media(
     conversation_id: int,
     file: UploadFile = File(...),
+    client_id: str = Form(...),
     media_type: str = Form("file"),
     caption: str | None = Form(None),
     db: Session = Depends(get_tenant_db),
@@ -4040,11 +4101,16 @@ async def upload_and_send_generic_media(
         media_url = f"{get_public_base_url()}/api/conversations/media-uploads/{upload_path.name}"
         result = await send_media_message(
             conversation_id,
-            SendMediaRequest(media_type=normalized_type, media_url=media_url, caption=caption),
+            SendMediaRequest(media_type=normalized_type, media_url=media_url, caption=caption, client_id=client_id),
             db,
             tenant,
             actor,
         )
+        if result.get("idempotent_replay"):
+            file_path.unlink(missing_ok=True)
+            if upload_path != file_path:
+                upload_path.unlink(missing_ok=True)
+            return result
         result["upload"] = {
             "filename": file.filename,
             "content_type": upload_content_type,

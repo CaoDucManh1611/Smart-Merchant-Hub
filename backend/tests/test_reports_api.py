@@ -144,6 +144,7 @@ class ReportsApiTests(unittest.TestCase):
         self.assertEqual(200, other.status_code)
         self.assertEqual(1, other.json()["lead_count"])
         self.assertEqual(0, other.json()["order_count"])
+        self.assertEqual("0.00", other.json()["total_revenue"])
 
     def test_agent_performance_is_tenant_scoped(self):
         response = self.client.get("/api/reports/agent-performance", headers={"X-Business-Id": "1"})

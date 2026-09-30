@@ -82,8 +82,8 @@ async def receive_zalo_webhook(
         if channel.access_token_encrypted:
             try:
                 access_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
-            except (ValueError, TypeError):
-                logger.warning("Unable to decrypt Zalo profile token", exc_info=True)
+            except (ValueError, TypeError) as exc:
+                logger.warning("Unable to decrypt Zalo profile token: error_type=%s", type(exc).__name__)
         events = adapter.parse_events(payload, external_account_id=channel.external_account_id)
         accepted_events = ingest_normalized_events(db, events)
         processed = 0
@@ -95,8 +95,8 @@ async def receive_zalo_webhook(
                     if not profile.get("avatar_url") and access_token:
                         try:
                             profile = {**profile, **adapter.fetch_user_profile(user_id=item.sender_external_id, access_token=access_token)}
-                        except Exception:
-                            logger.info("Zalo profile enrichment unavailable", exc_info=True)
+                        except Exception as exc:
+                            logger.info("Zalo profile enrichment unavailable: error_type=%s", type(exc).__name__)
                     saved = process_and_save_message(
                         db=db,
                         message={

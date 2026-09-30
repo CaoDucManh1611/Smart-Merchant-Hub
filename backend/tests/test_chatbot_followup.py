@@ -11,6 +11,7 @@ from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.sales import Order
 from app.models.conversation import Conversation
 from app.models.customer import Customer
+from app.models.customer_collection import CustomerConsent
 from app.services.chatbot_followup import (
     dispatch_due_followups,
     schedule_abandoned_checkout_followup,
@@ -94,6 +95,10 @@ class ChatbotFollowUpTests(unittest.TestCase):
     def test_inactive_prior_buyer_gets_one_monthly_winback(self):
         current = datetime.now(timezone.utc).replace(tzinfo=None)
         with Session(self.engine) as db:
+            db.add(CustomerConsent(
+                business_id=self.business_id, customer_id=self.customer_id,
+                purpose="marketing", status="granted",
+            ))
             db.add(Order(
                 business_id=self.business_id,
                 customer_id=self.customer_id,
@@ -123,3 +128,138 @@ class ChatbotFollowUpTests(unittest.TestCase):
             self.assertEqual(1, first["scheduled"])
             self.assertEqual(0, second["scheduled"])
             self.assertEqual(1, db.query(ChatbotFollowUp).filter(ChatbotFollowUp.kind == "customer_winback").count())
+
+    def test_winback_requires_consent_and_revocation_blocks_due_send(self):
+        current = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id, channel="telegram",
+                external_user_id="followup-consent-fixture",
+            )
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id, customer_id=customer.id, channel="telegram",
+            )
+            db.add(conversation)
+            db.flush()
+            with self.assertRaisesRegex(ValueError, "followup_consent_required"):
+                schedule_followup(
+                    db, self.business_id, conversation.id, "Winback",
+                    current - timedelta(minutes=1), kind="customer_winback",
+                )
+            db.add(CustomerConsent(
+                business_id=self.business_id, customer_id=customer.id,
+                purpose="marketing", status="granted",
+            ))
+            db.flush()
+            row = schedule_followup(
+                db, self.business_id, conversation.id, "Winback",
+                current - timedelta(minutes=1), kind="customer_winback",
+            )
+            db.add(CustomerConsent(
+                business_id=self.business_id, customer_id=customer.id,
+                purpose="marketing", status="revoked",
+            ))
+            db.commit()
+            with patch("app.services.auto_reply_service._send_channel_reply") as send:
+                result = dispatch_due_followups(
+                    db, self.business_id, now=current, followup_id=row.id,
+                )
+            self.assertEqual(0, result["sent"])
+            self.assertEqual(1, result["skipped"])
+            self.assertEqual("cancelled", row.status)
+            send.assert_not_called()
+
+    def test_followup_frequency_cap_defers_next_customer_message(self):
+        current = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id, channel="telegram",
+                external_user_id="followup-frequency-fixture",
+            )
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id, customer_id=customer.id, channel="telegram",
+            )
+            db.add(conversation)
+            db.flush()
+            first = schedule_followup(
+                db, self.business_id, conversation.id, "First",
+                current - timedelta(minutes=1), kind="post_delivery",
+            )
+            db.commit()
+            with patch("app.services.chatbot_followup._send_followup"):
+                self.assertEqual(
+                    1, dispatch_due_followups(db, self.business_id, now=current, followup_id=first.id)["sent"],
+                )
+            second = schedule_followup(
+                db, self.business_id, conversation.id, "Second",
+                current, kind="post_delivery",
+            )
+            self.assertGreaterEqual(second.run_at, current + timedelta(hours=24))
+
+    def test_ambiguous_provider_failure_never_resends_followup(self):
+        current = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id, channel="telegram",
+                external_user_id="followup-ambiguous-fixture",
+            )
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id, customer_id=customer.id, channel="telegram",
+            )
+            db.add(conversation)
+            db.flush()
+            row = schedule_followup(
+                db, self.business_id, conversation.id, "Care message",
+                current - timedelta(minutes=1), kind="post_delivery",
+            )
+            db.commit()
+            with patch(
+                "app.services.auto_reply_service._get_conversation_recipient",
+                return_value=("telegram", "fixture-customer"),
+            ), patch(
+                "app.services.auto_reply_service._send_channel_reply",
+                side_effect=TimeoutError("provider response was lost"),
+            ) as send:
+                first = dispatch_due_followups(db, self.business_id, now=current, followup_id=row.id)
+                again = dispatch_due_followups(db, self.business_id, now=current, followup_id=row.id)
+            db.refresh(row)
+            self.assertEqual("delivery_unknown", row.status)
+            self.assertEqual(0, first["sent"])
+            self.assertEqual(0, again["sent"])
+            send.assert_called_once()
+
+    def test_stale_sending_followup_requires_reconciliation_not_resend(self):
+        current = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id, channel="telegram",
+                external_user_id="followup-stale-fixture",
+            )
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id, customer_id=customer.id, channel="telegram",
+            )
+            db.add(conversation)
+            db.flush()
+            row = ChatbotFollowUp(
+                business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation.id, kind="post_delivery",
+                message="Care message", status="sending",
+                run_at=current - timedelta(minutes=10),
+                idempotency_key="stale-followup-fixture",
+            )
+            db.add(row)
+            db.commit()
+            with patch("app.services.chatbot_followup._send_followup") as send:
+                result = dispatch_due_followups(db, self.business_id, now=current, followup_id=row.id)
+            db.refresh(row)
+            self.assertEqual(0, result["sent"])
+            self.assertEqual("delivery_unknown", row.status)
+            send.assert_not_called()

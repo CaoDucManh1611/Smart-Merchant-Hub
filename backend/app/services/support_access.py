@@ -24,7 +24,7 @@ from app.models.platform_control import PlatformAudit, PlatformBusiness, Platfor
 
 
 MAX_GRANT_MINUTES = 60
-ALLOWED_SCOPES = frozenset({"settings:read", "channels:diagnose", "jobs:retry"})
+ALLOWED_SCOPES = frozenset({"settings:read", "channels:diagnose", "channels:retry", "jobs:retry"})
 DENIED_CONTENT_SCOPES = frozenset({"conversation:read", "customer:read", "order:read", "*"})
 
 

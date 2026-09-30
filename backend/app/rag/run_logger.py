@@ -25,6 +25,7 @@ _SENSITIVE_ERROR = re.compile(
 _EMAIL = re.compile(r"(?i)\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b")
 _PHONE = re.compile(r"(?<!\d)(?:\+?\d[\d .()-]{7,}\d)(?!\d)")
 _PRIVATE_FIELDS = {
+    "filename",
     "query_preview",
     "prompt",
     "answer",
@@ -32,6 +33,7 @@ _PRIVATE_FIELDS = {
     "raw_payload",
     "message_body",
     "customer_text",
+    "error",
 }
 
 
@@ -71,9 +73,6 @@ def _safe_fields(fields: dict[str, Any]) -> dict[str, Any]:
         if key in _PRIVATE_FIELDS:
             if key == "query_preview":
                 safe.update(query_metadata(value))
-            continue
-        if key == "error":
-            safe[key] = safe_error_message(value, limit=500)
             continue
         safe[key] = value
     return safe
@@ -144,7 +143,6 @@ class RagRunLog:
             self.finish(
                 "error",
                 error_type=exc_type.__name__ if exc_type else "Exception",
-                error=safe_error_message(exc_value),
             )
         elif not self._finished:
             self.finish()

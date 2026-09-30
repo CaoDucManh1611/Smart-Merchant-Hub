@@ -2,7 +2,24 @@
 
 Branch: `feat/crm-ui-completion`
 Repository: `C:\Users\DUC_STRONG\Smart-Merchant-Hub-full-stack-ready`
-Reviewed: 2026-09-29
+Reviewed: 2026-09-30
+
+## Current verification — 2026-09-30
+
+- Frontend: `npm run test` — 191 passed, 0 failed. Production Vite build
+  succeeded; its current minified JavaScript bundle is about 681 kB and still
+  triggers Vite's chunk-size advisory.
+- Browser: the app loaded to its sign-in screen. At 375×812, 768×900 and
+  1440×900, the document had no horizontal overflow. The 1440 px console had
+  zero errors. No sign-in form was submitted.
+- Runtime: frontend, backend, worker, Redis and database containers all
+  reported healthy after the verification run.
+- This pass did not have an authenticated CRM session. It verifies only the
+  sign-in page at these sizes; it does not supersede the earlier authenticated
+  CRM screenshots/observations below or prove every latest CRM setting screen
+  visually at all breakpoints.
+- No new screenshot was saved as a PNG artifact. Existing in-app captures are
+  session-only. Live offline and HTTP 403 scenarios were not induced.
 
 ## Screen inventory
 
@@ -129,3 +146,40 @@ Date: 2026-09-29
 - The visual capture was reviewed in-session but is not saved as a PNG artifact in the repository. Offline/403 scenarios also remain unverified.
 
 Updated verdict: **partial, not complete**. The requested palette and conversation wrapping are live; saved screenshot files and safe live network/permission error simulations remain open QA items.
+
+## Channel/RAG reliability continuation
+
+Date: 2026-09-30
+
+- Added Customer 360 contact-permission controls. Recording marketing or
+  proactive consent requires an inbound textual customer-message ID; opt-out is
+  recorded without inventing evidence. Vietnamese/English labels were checked
+  in the in-app browser.
+- Added proactive follow-up filters for scheduled, failed, delivery-unknown and
+  sent records. Delivery-unknown rows cannot be cancelled/retried from this
+  screen and show an explicit instruction to check the provider first.
+- Added admin-only customer CSV preview/import/export UI. The preview reports
+  create/skip/error counts and the commit button remains disabled while row
+  errors exist. The server import is atomic and repeat-safe.
+- Console review found an expired bearer token causing repeated 401 polling.
+  The shared API client now clears the token, emits one session-expired event,
+  stops tenant polling and returns to the sign-in gate. Live reload displayed
+  the localized expired-session message instead of continuing requests.
+- Exact 375/768/1440 checks for the core CRM screens were completed in the prior
+  responsive sweep. The current browser provider did not expose viewport
+  override, so the newly added Settings/consent controls were visually checked
+  only at the current embedded width. Their layout uses wrapping/native controls
+  and the production build succeeds, but exact breakpoint screenshots for these
+  new controls remain unclaimed.
+- Backend: **682 passed, 5 skipped**. Frontend: **191 passed, 0 failed**.
+- Switching the login gate after an expired session now retranslates the
+  session notice with the active interface language; the live browser was
+  reloaded in Vietnamese and no authenticated polling resumed.
+  Production build passes; the existing large JavaScript chunk warning remains.
+
+Verdict: **ship with environment gates**. Mock/fixture flows and local UI are
+ready; live Facebook/Instagram callback, token refresh and outbound delivery,
+plus a rehearsal on the exact production PostgreSQL major version, remain
+required before production release. A synthetic PostgreSQL 17 dump/restore
+rehearsal passed in an isolated disposable container. No real provider message
+or active-database migration was performed in this work.

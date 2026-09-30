@@ -225,7 +225,7 @@ class UnifiedInboxActionTests(unittest.TestCase):
             response = self.client.post(
                 f"/api/conversations/{self.conversation_id}/send",
                 headers=self.headers(),
-                data={"text": "Phản hồi qua Zalo"},
+                data={"text": "Phản hồi qua Zalo", "client_id": "zalo-text-action-1"},
             )
 
         self.assertEqual(200, response.status_code, response.text)

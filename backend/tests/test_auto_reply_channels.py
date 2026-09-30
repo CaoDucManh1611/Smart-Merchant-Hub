@@ -137,8 +137,14 @@ def test_product_question_falls_back_to_tenant_catalog_when_rag_has_no_chunks():
     )
 
 
-def test_rag_without_context_creates_an_urgent_handoff_notification():
-    conversation = Mock(id=4, customer_id=8, assigned_user_id=None, bot_mode="auto")
+def test_rag_without_context_sends_fallback_and_creates_privacy_safe_handoff():
+    conversation = Mock(
+        id=4,
+        customer_id=8,
+        assigned_user_id=None,
+        bot_mode="auto",
+        resolution_outcome=None,
+    )
     db = Mock()
     db.query().filter().first.side_effect = [None, conversation]
     with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
@@ -146,7 +152,8 @@ def test_rag_without_context_creates_an_urgent_handoff_notification():
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
         patch("app.services.auto_reply_service.retrieve", return_value=[]), \
-        patch("app.services.auto_reply_service.create_notification") as create_notification:
+        patch("app.services.auto_reply_service.create_notification") as create_notification, \
+        patch("app.services.auto_reply_service.send_text_reply") as send:
         result = process_rag_auto_reply(
             db=db,
             conversation_id=4,
@@ -155,10 +162,14 @@ def test_rag_without_context_creates_an_urgent_handoff_notification():
             business_id=1,
         )
 
-    assert result is False
+    assert result is True
+    assert conversation.bot_mode == "human"
+    assert conversation.resolution_outcome == "needs_human"
     create_notification.assert_called_once()
     assert create_notification.call_args.kwargs["kind"] == "rag_handoff_required"
     assert create_notification.call_args.kwargs["metadata"]["conversation_id"] == 4
+    assert "Câu hỏi ngoài dữ liệu" not in create_notification.call_args.kwargs["body"]
+    assert "chưa có đủ thông tin" in send.call_args.kwargs["text"].lower()
 
 
 def test_order_status_reply_bypasses_rag_and_uses_customer_scoped_flow():
@@ -288,7 +299,7 @@ def test_rag_auto_reply_reserves_ai_cost_before_calling_llm():
         patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
         patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "q"}]), \
         patch("app.services.auto_reply_service.record_quota_usage", side_effect=reserve), \
-        patch("app.services.auto_reply_service.call_llm", return_value="answer") as call_llm, \
+        patch("app.services.auto_reply_service.call_llm", return_value="answer [Nguồn 1]") as call_llm, \
         patch("app.services.auto_reply_service._get_conversation_recipient", return_value=("telegram", "customer-1")), \
         patch("app.services.auto_reply_service._send_channel_reply", return_value={"message_id": "out-1"}), \
         patch("app.services.auto_reply_service._save_auto_reply_outbound"):
@@ -305,3 +316,28 @@ def test_rag_auto_reply_reserves_ai_cost_before_calling_llm():
     assert quota_calls[1][1] > 0
     assert str(quota_calls[1][2]).startswith("rag-cost:")
     call_llm.assert_called_once()
+
+
+def test_uncited_rag_auto_reply_hands_off_without_sending_generated_text():
+    db = Mock()
+    chunk = Mock(document_id=3, similarity=0.9)
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+        patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
+        patch("app.services.auto_reply_service.retrieve", return_value=[chunk]), \
+        patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
+        patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "q"}]), \
+        patch("app.services.auto_reply_service.record_quota_usage"), \
+        patch("app.services.auto_reply_service.call_llm", return_value="Giá bịa 100.000 đồng."), \
+        patch("app.services.auto_reply_service._notify_rag_handoff_required") as handoff, \
+        patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "safe-1"}) as send:
+        result = process_rag_auto_reply(
+            db=db, conversation_id=4, channel="telegram",
+            query_text="Quy định hội viên ra sao?", business_id=1,
+        )
+
+    assert result is True
+    assert "Giá bịa" not in send.call_args.kwargs["text"]
+    assert "chưa có đủ thông tin" in send.call_args.kwargs["text"].lower()
+    handoff.assert_called_once()

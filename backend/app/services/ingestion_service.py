@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.document import Document, DocumentChunk
-from app.rag.loader import load_document, detect_file_type
+from app.rag.loader import DocumentValidationError, load_document, detect_file_type
 from app.rag.chunker import chunk_text
 from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog, safe_error_message
@@ -51,8 +51,8 @@ def embed_chunks_or_fallback(
         if on_error is not None:
             on_error(error)
         logger.warning(
-            "Embedding unavailable; storing lexical-only chunks: %s",
-            error,
+            "Embedding unavailable; storing lexical-only chunks: error_type=%s",
+            type(error).__name__,
         )
         return [None] * len(chunk_contents), False
 
@@ -103,13 +103,13 @@ def ingest_document(
             # Cập nhật trạng thái
             doc.status = "processing"
             doc.embedding_status = "processing"
+            doc.error_code = None
             doc.reindex_count = (doc.reindex_count or 0) + 1
             db.commit()
             report(0, "load")
 
             logger.info(
-                "Starting ingestion for: %s (id=%d)",
-                filename,
+                "Starting ingestion for document id=%d",
                 document_id,
             )
 
@@ -119,25 +119,11 @@ def ingest_document(
             # -------------------------------------------------
             raw_text = load_document(file_bytes, filename)
             logger.info(
-                "Loaded %d characters from %s",
+                "Loaded %d characters from document id=%d",
                 len(raw_text),
-                filename,
+                document_id,
             )
             report(10, "load")
-            if doc.business_id is not None:
-                synced_products = sync_catalog_products(
-                    db,
-                    business_id=doc.business_id,
-                    source_document_id=doc.id,
-                    text=raw_text,
-                )
-                if synced_products:
-                    logger.info(
-                        "Synchronized %d structured products from %s",
-                        len(synced_products),
-                        filename,
-                    )
-
             run.update(phase="chunk", characters_loaded=len(raw_text))
             # -------------------------------------------------
             # Bước 2: Chunk text
@@ -157,6 +143,7 @@ def ingest_document(
             if not chunks:
                 doc.status = "error"
                 doc.embedding_status = "error"
+                doc.error_code = "empty_document"
                 doc.error_message = "Không tạo được chunks từ tài liệu."
                 db.commit()
                 run.finish(
@@ -186,6 +173,7 @@ def ingest_document(
                         format_number = lambda value: f"{int(value):,}".replace(",", ".")
                         doc.status = "error"
                         doc.embedding_status = "error"
+                        doc.error_code = "chunk_quota_exceeded"
                         doc.retry_after = None
                         doc.error_message = (
                             f"Tài liệu tạo ra {format_number(len(chunks))} đoạn, "
@@ -231,6 +219,7 @@ def ingest_document(
                     except QuotaExceededError as exc:
                         doc.status = "error"
                         doc.embedding_status = "error"
+                        doc.error_code = "ai_quota_exceeded"
                         doc.error_message = "Đã vượt quota AI của gói dịch vụ."
                         doc.retry_after = None
                         db.commit()
@@ -278,8 +267,8 @@ def ingest_document(
                 embeddings_used = False
                 doc.embedding_status = "lexical_only"
                 logger.info(
-                    "Fast ingestion enabled for %s: storing %d chunks without remote embeddings",
-                    filename,
+                    "Fast ingestion enabled for document id=%d: storing %d chunks without remote embeddings",
+                    document_id,
                     len(chunks),
                 )
 
@@ -316,35 +305,68 @@ def ingest_document(
             doc.chunk_count = len(chunks)
             doc.processed_at = _utcnow()
             doc.error_message = None
-            doc.retry_after = None
+            doc.error_code = None
+            if doc.embedding_status == "ready":
+                doc.retry_after = None
+            # Keep catalogue projections and the index in one transaction.
+            # A failed quota check or embedding must not publish products
+            # from a document that cannot be searched.
+            if doc.business_id is not None:
+                synced_products = sync_catalog_products(
+                    db,
+                    business_id=doc.business_id,
+                    source_document_id=doc.id,
+                    text=raw_text,
+                )
+                if synced_products:
+                    logger.info(
+                        "Synchronized %d structured products from document id=%d",
+                        len(synced_products),
+                        document_id,
+                    )
             db.commit()
             report(100, "complete", len(chunks), len(chunks))
 
             logger.info(
-                "Ingestion complete: %s → %d chunks stored",
-                filename,
+                "Ingestion complete: document id=%d → %d chunks stored",
+                document_id,
                 len(chunks),
             )
             run.finish("success", phase="complete", chunks_stored=len(chunks))
 
         except Exception as e:
-            logger.exception(
-                "Ingestion failed for document %d: %s",
+            logger.warning(
+                "Ingestion failed for document %d: error_type=%s",
                 document_id,
-                str(e),
+                type(e).__name__,
             )
             db.rollback()
-            failed_doc = db.get(Document, document_id)
+            failed_query = db.query(Document).filter(Document.id == document_id)
+            if business_id is not None:
+                failed_query = failed_query.filter(Document.business_id == business_id)
+            failed_doc = failed_query.first()
             if failed_doc is not None:
                 failed_doc.status = "error"
-                failed_doc.error_message = safe_error_message(e)
+                failed_doc.error_code = (
+                    e.code
+                    if isinstance(e, DocumentValidationError)
+                    else "document_processing_failed"
+                )
+                failed_doc.error_message = (
+                    safe_error_message(e)
+                    if isinstance(e, DocumentValidationError)
+                    else "Không thể xử lý tài liệu; vui lòng thử lại hoặc liên hệ quản trị viên."
+                )
                 failed_doc.embedding_status = "error"
                 db.commit()
             run.finish(
                 "error",
                 phase="complete",
                 error_type=type(e).__name__,
-                error=safe_error_message(e),
+                error_code=(
+                    e.code if isinstance(e, DocumentValidationError)
+                    else "document_processing_failed"
+                ),
             )
 
 
@@ -358,6 +380,4 @@ def delete_document(document_id: int, db: Session, business_id: int | None = Non
         return False
 
     db.delete(doc)
-    db.commit()
-    logger.info("Deleted document %d", document_id)
     return True

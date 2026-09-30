@@ -113,10 +113,10 @@ def test_default_tenant_migration_commits_before_activating_shop(monkeypatch):
 
     def migrate(_connection, _schema):
         events.append("migrate")
-        return "20260926_0007"
+        return "20260930_0009"
 
     monkeypatch.setattr(provisioning, "upgrade_tenant_schema", migrate)
-    monkeypatch.setattr(provisioning, "current_tenant_revision", lambda _connection, _schema: "20260926_0007")
+    monkeypatch.setattr(provisioning, "current_tenant_revision", lambda _connection, _schema: "20260930_0009")
     with Session(engine) as db:
         db.add(PlatformBusiness(id=12, name="Transaction", slug="shop-12"))
         db.commit()
@@ -124,7 +124,7 @@ def test_default_tenant_migration_commits_before_activating_shop(monkeypatch):
 
         assert events == ["begin", "migrate", "commit"]
         assert registry.state == "active"
-        assert registry.tenant_revision == "20260926_0007"
+        assert registry.tenant_revision == "20260930_0009"
 
 
 def test_provisioning_rejects_invalid_identity_and_cross_shop_idempotency_reuse(monkeypatch):

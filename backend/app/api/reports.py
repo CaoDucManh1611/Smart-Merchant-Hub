@@ -312,11 +312,11 @@ def crm_overview(
     won_lead_count = lead_query.filter(Lead.stage == "won").count()
     order_count = order_query.count()
     revenue_order_query = order_query.filter(Order.status.in_(REVENUE_ORDER_STATUSES))
-    total_revenue = Decimal("0")
+    total_revenue = Decimal("0.00")
     if revenue_order_query.count():
-        total_revenue = db.query(func.coalesce(func.sum(Order.total_amount), Decimal("0"))).filter(
+        total_revenue = db.query(func.coalesce(func.sum(Order.total_amount), Decimal("0.00"))).filter(
             Order.id.in_(revenue_order_query.with_entities(Order.id))
-        ).scalar() or Decimal("0")
+        ).scalar() or Decimal("0.00")
 
     # Keep the summary endpoint useful for dashboards without forcing each
     # client to run a second aggregation query.  All rows are already
@@ -324,7 +324,7 @@ def crm_overview(
     breakdown_rows = db.query(
         func.coalesce(Conversation.channel, "unknown").label("channel"),
         func.count(Order.id).label("order_count"),
-        func.coalesce(func.sum(Order.total_amount), Decimal("0")).label("revenue"),
+        func.coalesce(func.sum(Order.total_amount), Decimal("0.00")).label("revenue"),
     ).outerjoin(
         Conversation,
         (Conversation.id == Order.conversation_id)
@@ -336,16 +336,16 @@ def crm_overview(
         Conversation.channel
     ).order_by(Conversation.channel).all() if revenue_order_query.count() else []
     channel_breakdown = [
-        {"channel": str(row.channel), "order_count": int(row.order_count), "revenue": Decimal(row.revenue or 0)}
+        {"channel": str(row.channel), "order_count": int(row.order_count), "revenue": Decimal(row.revenue or 0).quantize(Decimal("0.01"))}
         for row in breakdown_rows
     ]
     series_map: dict[str, dict] = {}
     for conversation in conversation_query.all():
         key = conversation.created_at.date().isoformat() if conversation.created_at else "unknown"
-        series_map.setdefault(key, {"date": key, "conversations": 0, "orders": 0, "revenue": Decimal("0")})["conversations"] += 1
+        series_map.setdefault(key, {"date": key, "conversations": 0, "orders": 0, "revenue": Decimal("0.00")})["conversations"] += 1
     for order in order_query.all():
         key = order.created_at.date().isoformat() if order.created_at else "unknown"
-        bucket = series_map.setdefault(key, {"date": key, "conversations": 0, "orders": 0, "revenue": Decimal("0")})
+        bucket = series_map.setdefault(key, {"date": key, "conversations": 0, "orders": 0, "revenue": Decimal("0.00")})
         bucket["orders"] += 1
         if order.status in REVENUE_ORDER_STATUSES:
             bucket["revenue"] += Decimal(order.total_amount or 0)
@@ -358,7 +358,7 @@ def crm_overview(
     if status:
         purchase_query = purchase_query.filter(PurchaseOrder.status == status.strip().lower())
     purchase_order_count = purchase_query.count()
-    purchase_spend = purchase_query.with_entities(func.coalesce(func.sum(PurchaseOrder.total_spend), Decimal("0"))).scalar() or Decimal("0")
+    purchase_spend = purchase_query.with_entities(func.coalesce(func.sum(PurchaseOrder.total_spend), Decimal("0.00"))).scalar() or Decimal("0.00")
 
     conversion_rate = round((won_lead_count / lead_count) * 100, 2) if lead_count else 0.0
     conversation_to_order_rate = round((order_count / conversation_count) * 100, 2) if conversation_count else 0.0
@@ -370,13 +370,13 @@ def crm_overview(
         lead_count=lead_count,
         won_lead_count=won_lead_count,
         order_count=order_count,
-        total_revenue=Decimal(total_revenue),
+        total_revenue=Decimal(total_revenue).quantize(Decimal("0.01")),
         conversion_rate=conversion_rate,
         conversation_to_order_rate=conversation_to_order_rate,
         channel_breakdown=channel_breakdown,
         time_series=time_series,
         purchase_order_count=purchase_order_count,
-        purchase_spend=Decimal(purchase_spend),
+        purchase_spend=Decimal(purchase_spend).quantize(Decimal("0.01")),
     )
 
 

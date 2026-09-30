@@ -3,6 +3,7 @@ Document Management API – upload, list, delete tài liệu.
 """
 
 import logging
+import hashlib
 
 from fastapi import (
     APIRouter,
@@ -11,13 +12,14 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.tenancy.crm_session import get_tenant_db
 from app.models.document import Document, DocumentChunk
 from app.models.crm_job import CrmJob
 from app.models.rag_run import RagRun
-from app.rag.loader import detect_file_type, LOADERS
+from app.rag.loader import DocumentValidationError, detect_file_type, LOADERS, validate_document_bytes
 from app.schemas.rag import DocumentChunkOut, DocumentListOut, DocumentOut, RagRunListOut, RagRunOut
 from app.services.ingestion_service import (
     delete_document,
@@ -31,6 +33,7 @@ from app.services.job_service import dispatch_due_jobs, enqueue_job
 from app.services.quota_service import QuotaExceededError, release_quota, reserve_quota
 
 logger = logging.getLogger(__name__)
+MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 
 router = APIRouter()
 
@@ -86,6 +89,7 @@ def _run_out(row: RagRun) -> dict:
         "progress_percent": row.progress_percent,
         "attempts": row.attempts,
         "error_message": row.error_message,
+        "error_code": row.error_code,
         "created_at": row.created_at,
         "completed_at": row.completed_at,
     }
@@ -129,19 +133,33 @@ async def upload_document(
             400,
             f"Không hỗ trợ file '.{file_type}'. "
             f"Các loại hỗ trợ: {supported}",
+            headers={"X-Error-Code": "unsupported_file_type"},
         )
 
-    # Đọc file bytes
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(400, "File rỗng.")
-
-    # Giới hạn kích thước (20MB)
-    max_size = 20 * 1024 * 1024
-    if len(file_bytes) > max_size:
+    # Read only one byte over the limit; a very large upload is not copied
+    # into application memory in full before it can be rejected.
+    file_bytes = await file.read(MAX_DOCUMENT_BYTES + 1)
+    if len(file_bytes) > MAX_DOCUMENT_BYTES:
         raise HTTPException(
             400,
-            f"File quá lớn. Giới hạn: {max_size // (1024*1024)}MB",
+            f"File quá lớn. Giới hạn: {MAX_DOCUMENT_BYTES // (1024*1024)}MB",
+            headers={"X-Error-Code": "file_too_large"},
+        )
+    try:
+        validate_document_bytes(file_bytes, file.filename)
+    except DocumentValidationError as exc:
+        raise HTTPException(400, str(exc), headers={"X-Error-Code": exc.code}) from exc
+
+    content_hash = hashlib.sha256(file_bytes).hexdigest()
+    existing = db.query(Document).filter(
+        Document.business_id == tenant.business_id,
+        Document.content_hash == content_hash,
+    ).first()
+    if existing is not None:
+        raise HTTPException(
+            409,
+            f"Tài liệu này đã có trong kho (mã tài liệu: {existing.id}).",
+            headers={"X-Error-Code": "duplicate_document"},
         )
 
     # Only consume the document slot after cheap validation succeeds; an
@@ -159,6 +177,7 @@ async def upload_document(
             filename=file.filename,
             file_type=file_type,
             file_size=len(file_bytes),
+            content_hash=content_hash,
             status="pending",
             source_bytes=file_bytes,
         )
@@ -167,6 +186,31 @@ async def upload_document(
         _queue_ingestion(db, doc, kind="ingestion")
         db.commit()
         db.refresh(doc)
+    except IntegrityError as exc:
+        db.rollback()
+        existing = db.query(Document).filter(
+            Document.business_id == tenant.business_id,
+            Document.content_hash == content_hash,
+        ).first()
+        if existing is not None:
+            try:
+                release_quota(db, tenant.business_id, "documents")
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("Could not release duplicate document quota reservation")
+            raise HTTPException(
+                409,
+                f"Tài liệu này đã có trong kho (mã tài liệu: {existing.id}).",
+                headers={"X-Error-Code": "duplicate_document"},
+            ) from exc
+        try:
+            release_quota(db, tenant.business_id, "documents")
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Could not release document quota after database conflict")
+        raise HTTPException(503, "Chưa thể xếp hàng xử lý tài liệu. Vui lòng thử lại.") from exc
     except Exception as exc:
         db.rollback()
         try:
@@ -207,6 +251,7 @@ async def reindex_document(
     doc.status = "pending"
     doc.embedding_status = "pending"
     doc.error_message = None
+    doc.error_code = None
     _queue_ingestion(db, doc, kind="reindex")
     db.commit()
     db.refresh(doc)
@@ -252,6 +297,7 @@ async def retry_failed_run(
     doc.status = "pending"
     doc.embedding_status = "pending"
     doc.error_message = None
+    doc.error_code = None
     run = _queue_ingestion(db, doc, kind="retry")
     db.commit()
     db.refresh(run)
@@ -370,6 +416,10 @@ async def remove_document(
         Document.business_id == tenant.business_id,
     ).first()
     prior_chunks = int(doc.chunk_count or 0) if doc else 0
+    if doc is not None and _has_active_ingestion(
+        db, business_id=tenant.business_id, document_id=document_id,
+    ):
+        raise HTTPException(409, "Tài liệu đang được xử lý; hãy thử xóa sau khi hoàn tất.")
     deleted = delete_document(document_id, db, business_id=tenant.business_id)
     if not deleted:
         raise HTTPException(404, "Tài liệu không tồn tại.")
@@ -377,4 +427,5 @@ async def remove_document(
     if prior_chunks:
         release_quota(db, tenant.business_id, "rag_chunks", prior_chunks)
     db.commit()
+    logger.info("Deleted document %d for business %d", document_id, tenant.business_id)
     return None
