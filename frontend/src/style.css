@@ -3584,6 +3584,73 @@ button:hover {
   box-shadow: 0 5px 18px rgba(161, 62, 62, 0.08);
 }
 
+.product-adjustment-details {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+  border: 1px solid #f1c7bd;
+  border-radius: 0.65rem;
+  padding: 0.75rem;
+  background: #fffdfc;
+}
+
+.product-stock-adjustment-title {
+  display: block;
+  margin-top: 0.9rem;
+  color: #6e2828;
+}
+
+.product-adjustment-details > strong,
+.product-adjustment-actions {
+  grid-column: 1 / -1;
+}
+
+.product-adjustment-details > strong,
+.product-adjustment-details label {
+  color: #6e2828;
+}
+
+.product-adjustment-details label {
+  display: grid;
+  min-width: 0;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+}
+
+.product-adjustment-details input,
+.product-adjustment-details textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #efc8c0;
+  border-radius: 0.45rem;
+  padding: 0.5rem;
+  color: #51322e;
+  background: #fffaf8;
+  font: inherit;
+}
+
+.product-adjustment-description {
+  grid-column: span 2;
+}
+
+.product-adjustment-details textarea {
+  resize: vertical;
+}
+
+.product-adjustment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.product-adjustment-actions small {
+  margin-right: auto;
+  color: #26725f;
+}
+
 .inventory-adjustment-heading,
 .adjustment-actions {
   display: flex;
@@ -3682,6 +3749,14 @@ button:hover {
 }
 
 @media (max-width: 760px) {
+  .product-adjustment-details {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .product-adjustment-description {
+    grid-column: 1 / -1;
+  }
+
   .adjustment-fields {
     grid-template-columns: 1fr 1fr;
   }
@@ -12504,6 +12579,26 @@ body.crm-dark .inventory-adjustment-current > span:nth-child(2) b {
 }
 body.crm-dark .inventory-adjustment-heading {
   color: #f3f5f6 !important;
+}
+body.crm-dark .product-adjustment-details {
+  background: #1a1e20 !important;
+  border-color: #394145 !important;
+}
+body.crm-dark .product-adjustment-details > strong,
+body.crm-dark .product-adjustment-details label {
+  color: #e5eaec !important;
+}
+body.crm-dark .product-stock-adjustment-title {
+  color: #f3f5f6 !important;
+}
+body.crm-dark .product-adjustment-details input,
+body.crm-dark .product-adjustment-details textarea {
+  color: #f3f5f6 !important;
+  background: #1c2022 !important;
+  border-color: #4a555a !important;
+}
+body.crm-dark .product-adjustment-actions small {
+  color: #b7ead8 !important;
 }
 body.crm-dark .adjustment-preview {
   color: #d8ffff !important;

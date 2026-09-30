@@ -190,7 +190,7 @@ class RecommendationApiTests(unittest.TestCase):
         self.assertEqual("no_context", response.json()["answer_status"])
         self.assertTrue(response.json()["handoff_required"])
         self.assertEqual([], response.json()["sources"])
-        self.assertIn("nguồn đủ tin cậy", response.json()["answer"].lower())
+        self.assertIn("reliable source", response.json()["answer"].lower())
         retrieve.assert_called_once()
         reserve_budget.assert_not_called()
         call_llm.assert_not_called()

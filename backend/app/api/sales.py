@@ -62,6 +62,12 @@ _PRODUCT_IMPORT_FIELDS = {
     "tên": "name",
     "ten_san_pham": "name",
     "tên_sản_phẩm": "name",
+    "name_en": "name_en",
+    "english_name": "name_en",
+    "product_name_en": "name_en",
+    "ten_tieng_anh": "name_en",
+    "tên_tiếng_anh": "name_en",
+    "tên_sản_phẩm_tiếng_anh": "name_en",
     "description": "description",
     "mo_ta": "description",
     "mô_tả": "description",
@@ -341,13 +347,14 @@ async def import_products(
                 values[target_key] = str(row.get(source_key) or "").strip()
         sku = values.get("sku", "").strip()
         name = values.get("name", "").strip()
+        name_en = values.get("name_en", "").strip()
         if not sku and not name and not any(str(value or "").strip() for value in row.values()):
             continue
         if not sku or not name:
             skipped += 1
             errors.append(f"Dòng {row_number}: cần có mã sản phẩm và tên sản phẩm.")
             continue
-        if len(sku) > 80 or len(name) > 255:
+        if len(sku) > 80 or len(name) > 255 or len(name_en) > 255:
             skipped += 1
             errors.append(f"Dòng {row_number}: mã tối đa 80 ký tự, tên tối đa 255 ký tự.")
             continue
@@ -380,7 +387,10 @@ async def import_products(
                 price=price,
                 stock_quantity=stock,
                 status=status,
-                metadata_={"attributes": imported_attributes} if imported_attributes else {},
+                metadata_={
+                    **({"attributes": imported_attributes} if imported_attributes else {}),
+                    **({"display_names": {"en": name_en}} if name_en else {}),
+                },
             )
             db.add(product)
             db.flush()
@@ -409,6 +419,18 @@ async def import_products(
             if imported_attributes:
                 metadata = dict(product.metadata_ or {})
                 metadata["attributes"] = imported_attributes
+                product.metadata_ = metadata
+            if "name_en" in values:
+                metadata = dict(product.metadata_ or {})
+                display_names = dict(metadata.get("display_names") or {})
+                if name_en:
+                    display_names["en"] = name_en
+                else:
+                    display_names.pop("en", None)
+                if display_names:
+                    metadata["display_names"] = display_names
+                else:
+                    metadata.pop("display_names", None)
                 product.metadata_ = metadata
             if stock > 0:
                 db.add(StockMovement(

@@ -38,7 +38,10 @@ ORDER_STATUS_LABELS = {
 }
 
 ORDER_NUMBER_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\b", re.IGNORECASE)
-STATUS_TERMS = ("trạng thái đơn", "kiểm tra đơn", "tra cứu đơn", "đơn hàng của tôi", "đơn của tôi", "theo dõi đơn")
+STATUS_TERMS = (
+    "trạng thái đơn", "kiểm tra đơn", "tra cứu đơn", "đơn hàng của tôi",
+    "đơn của tôi", "theo dõi đơn", "giao tới đâu", "đang ở đâu",
+)
 DRAFT_STATUS_TERMS = ("đơn nháp", "đơn hàng nháp", "đơn draft", "draft order")
 CANCEL_TERMS = ("hủy đơn", "huỷ đơn", "hủy hàng", "huỷ hàng", "cancel đơn")
 REFUND_TERMS = ("hoàn tiền", "hoàn hàng", "đổi trả", "trả hàng", "hàng lỗi", "hàng bị lỗi")
@@ -90,7 +93,9 @@ def detect_customer_order_intent(text: str | None) -> str | None:
         return None
     if any(term in normalized for term in REFUND_TERMS):
         return "refund"
-    if any(term in normalized for term in CANCEL_TERMS):
+    if any(term in normalized for term in CANCEL_TERMS) or re.search(
+        r"\bcancel\b.*\border\b", folded
+    ):
         return "cancel"
     if any(term in normalized for term in DRAFT_STATUS_TERMS):
         return "draft_status"
@@ -100,6 +105,10 @@ def detect_customer_order_intent(text: str | None) -> str | None:
     if any(term in normalized for term in ("tôi có đơn hàng nào", "có đơn hàng nào", "đơn hàng nào")):
         return "status"
     if any(term in normalized for term in STATUS_TERMS):
+        return "status"
+    if re.search(r"\b(?:where is|track|status of|check)\b.*\border\b", folded) or re.search(
+        r"\border\b.*\b(?:status|where is|tracking|shipped|delivered)\b", folded
+    ):
         return "status"
     # Natural phrasing often puts the order number before the status phrase:
     # ``Đơn CHAT-25 đang ở trạng thái nào?``.  The older exact-term check only

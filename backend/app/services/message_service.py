@@ -1914,7 +1914,7 @@ def process_and_save_message(
         if collection_result is None:
             try:
                 from app.services.customer_collection_flow import (
-                    GREETING_REPLY,
+                    greeting_reply,
                     is_greeting,
                 )
 
@@ -1924,7 +1924,7 @@ def process_and_save_message(
                     send_text_reply_background(
                         conversation_id=conversation_id,
                         channel=channel,
-                        text=GREETING_REPLY,
+                        text=greeting_reply(message.get("content")),
                         business_id=int(business_id),
                         auto_reply_key=(
                             f"{auto_reply_base_key}:greeting"

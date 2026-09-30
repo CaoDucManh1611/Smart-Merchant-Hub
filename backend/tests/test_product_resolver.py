@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.models.business import Business
 from app.models.message import Message
 from app.models.sales import Product
-from app.services.product_resolver import resolve_product
+from app.services.product_resolver import resolve_product, resolve_product_mentions
 
 
 class ProductResolverTests(unittest.TestCase):
@@ -77,6 +77,70 @@ class ProductResolverTests(unittest.TestCase):
 
             self.assertIsNotNone(product)
             self.assertEqual("COMBO-01", product.sku)
+
+    def test_quantity_number_does_not_override_an_explicit_numbered_product_name(self):
+        with Session(self.engine) as db:
+            appliance = Product(
+                business_id=self.business_id,
+                sku="HOME-01",
+                name="Điện gia dụng mẫu 01",
+                price=Decimal("349000"),
+                stock_quantity=230,
+                status="active",
+            )
+            db.add_all([
+                appliance,
+                Product(
+                    business_id=self.business_id,
+                    sku="FASHION-20",
+                    name="Thời trang mẫu 20",
+                    price=Decimal("289000"),
+                    stock_quantity=100,
+                    status="active",
+                ),
+            ])
+            db.flush()
+
+            products = resolve_product_mentions(
+                db,
+                business_id=self.business_id,
+                text="tôi muốn mua 20 cái điện gia dụng mẫu 01",
+            )
+
+            self.assertEqual([appliance.id], [product.id for product in products])
+
+    def test_exact_product_name_beats_weak_keyword_match_in_english_query(self):
+        with Session(self.engine) as db:
+            appliance = Product(
+                business_id=self.business_id,
+                sku="HOME-01",
+                name="Điện gia dụng mẫu 01",
+                price=Decimal("349000"),
+                stock_quantity=230,
+                status="active",
+            )
+            unrelated = Product(
+                business_id=self.business_id,
+                sku="SPORT-01",
+                name="Thể thao mẫu 01",
+                price=Decimal("89000"),
+                stock_quantity=450,
+                metadata_={"keywords": ["how much"]},
+                status="active",
+            )
+            db.add_all([appliance, unrelated])
+            db.flush()
+
+            products = resolve_product_mentions(
+                db,
+                business_id=self.business_id,
+                text="How much would it cost to buy 10 units of the Điện gia dụng mẫu 01?",
+            )
+
+            self.assertEqual([appliance.id], [product.id for product in products])
+            db.delete(appliance)
+            db.delete(unrelated)
+            db.commit()
 
 
 if __name__ == "__main__":

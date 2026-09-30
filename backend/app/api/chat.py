@@ -25,6 +25,7 @@ from app.rag.prompt_builder import (
     NO_CONTEXT_CHAT_FALLBACK,
     SERVICE_ERROR_CHAT_FALLBACK,
     build_prompt,
+    localize_rag_fallback,
 )
 from app.rag.llm_caller import call_llm, stream_llm
 from app.rag.run_logger import RagRunLog
@@ -126,9 +127,14 @@ async def chat(
         )
 
         if not chunks:
-            run.finish("no_context", phase="complete", answer_chars=len(NO_CONTEXT_CHAT_FALLBACK), handoff_required=True)
+            fallback = localize_rag_fallback(
+                NO_CONTEXT_CHAT_FALLBACK,
+                query=request.query,
+                conversation_history=request.conversation_history,
+            )
+            run.finish("no_context", phase="complete", answer_chars=len(fallback), handoff_required=True)
             return ChatResponse(
-                answer=NO_CONTEXT_CHAT_FALLBACK,
+                answer=fallback,
                 sources=[],
                 chunks_found=0,
                 answer_status="no_context",
@@ -165,9 +171,14 @@ async def chat(
                 raise RuntimeError("empty_llm_answer")
         except Exception as exc:
             logger.warning("RAG answer generation unavailable: error_type=%s", type(exc).__name__)
+            fallback = localize_rag_fallback(
+                SERVICE_ERROR_CHAT_FALLBACK,
+                query=request.query,
+                conversation_history=request.conversation_history,
+            )
             run.finish("service_error", phase="complete", error_type=type(exc).__name__, handoff_required=True)
             return ChatResponse(
-                answer=SERVICE_ERROR_CHAT_FALLBACK,
+                answer=fallback,
                 sources=[],
                 chunks_found=len(chunks),
                 answer_status="service_error",
@@ -176,7 +187,11 @@ async def chat(
         if not has_valid_citations(answer, [chunk.content for chunk in chunks]):
             run.finish("no_context", phase="complete", reason="missing_or_invalid_citation", handoff_required=True)
             return ChatResponse(
-                answer=NO_CONTEXT_CHAT_FALLBACK,
+                answer=localize_rag_fallback(
+                    NO_CONTEXT_CHAT_FALLBACK,
+                    query=request.query,
+                    conversation_history=request.conversation_history,
+                ),
                 sources=[],
                 chunks_found=len(chunks),
                 answer_status="no_context",
@@ -289,8 +304,13 @@ async def chat_stream(
             yield f"data: {json.dumps({'type': 'sources', 'sources': sources, 'chunks_found': len(chunks)}, ensure_ascii=False)}\n\n"
 
             if not chunks:
-                run.finish("no_context", phase="complete", answer_chars=len(NO_CONTEXT_CHAT_FALLBACK), handoff_required=True)
-                yield f"data: {json.dumps({'type': 'chunk', 'content': NO_CONTEXT_CHAT_FALLBACK}, ensure_ascii=False)}\n\n"
+                fallback = localize_rag_fallback(
+                    NO_CONTEXT_CHAT_FALLBACK,
+                    query=request.query,
+                    conversation_history=request.conversation_history,
+                )
+                run.finish("no_context", phase="complete", answer_chars=len(fallback), handoff_required=True)
+                yield f"data: {json.dumps({'type': 'chunk', 'content': fallback}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'answer_status': 'no_context', 'handoff_required': True})}\n\n"
                 return
 
@@ -329,7 +349,12 @@ async def chat_stream(
             answer = "".join(answer_parts)
             if not has_valid_citations(answer, [chunk.content for chunk in chunks]):
                 run.finish("no_context", phase="complete", reason="missing_or_invalid_citation", handoff_required=True)
-                yield f"data: {json.dumps({'type': 'chunk', 'content': NO_CONTEXT_CHAT_FALLBACK}, ensure_ascii=False)}\n\n"
+                fallback = localize_rag_fallback(
+                    NO_CONTEXT_CHAT_FALLBACK,
+                    query=request.query,
+                    conversation_history=request.conversation_history,
+                )
+                yield f"data: {json.dumps({'type': 'chunk', 'content': fallback}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'answer_status': 'no_context', 'handoff_required': True})}\n\n"
                 return
 

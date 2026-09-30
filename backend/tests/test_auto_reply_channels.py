@@ -137,6 +137,33 @@ def test_product_question_falls_back_to_tenant_catalog_when_rag_has_no_chunks():
     )
 
 
+def test_english_product_discovery_uses_live_catalog_in_english_before_rag():
+    db = Mock()
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+        patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
+        patch("app.services.auto_reply_service._deterministic_customer_reply", return_value=None), \
+        patch("app.services.auto_reply_service.retrieve") as retrieve, \
+        patch(
+            "app.services.auto_reply_service.build_product_catalog_reply",
+            return_value="Here are the shop's products:\n- Serum — ₫200,000 (8 available)",
+        ) as catalog, \
+        patch("app.services.auto_reply_service.send_text_reply") as send:
+        result = process_rag_auto_reply(
+            db=db,
+            conversation_id=4,
+            channel="telegram",
+            query_text="I want to buy product",
+            business_id=1,
+        )
+
+    assert result is True
+    retrieve.assert_not_called()
+    catalog.assert_called_once_with(db, 1, language="en")
+    assert "Here are the shop's products" in send.call_args.kwargs["text"]
+
+
 def test_rag_without_context_sends_fallback_and_creates_privacy_safe_handoff():
     conversation = Mock(
         id=4,
@@ -249,6 +276,14 @@ def test_product_catalog_reply_formats_price_and_stock():
 
     assert "Serum Vitamin C — 420.000 đồng (còn 6)" in reply
     assert "Kem chống nắng — 289.000 đồng (hết hàng)" in reply
+
+    english_reply = format_product_catalog_reply([
+        Product("Serum Vitamin C", 420000, 8, 2),
+        Product("Kem chống nắng", 289000, 0),
+    ], language="en")
+    assert "Here are the shop's products:" in english_reply
+    assert "₫420,000 (6 available)" in english_reply
+    assert "₫289,000 (out of stock)" in english_reply
 
 
 def test_rag_auto_reply_checks_ai_quota_before_calling_llm():

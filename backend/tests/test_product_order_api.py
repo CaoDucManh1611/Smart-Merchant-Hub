@@ -133,6 +133,22 @@ class ProductOrderApiTests(unittest.TestCase):
             created = db.query(Product).filter(Product.business_id == 1, Product.sku == "IMPORT-NEW").one()
             self.assertEqual(7, created.stock_quantity)
 
+    def test_product_import_saves_english_display_name_without_changing_canonical_name(self):
+        content = (
+            "sku,name,name_en,price,stock_quantity\n"
+            "HOME-EN-01,Điện gia dụng mẫu 01,Household appliance model 01,349000,230\n"
+        ).encode("utf-8")
+        response = self.client.post(
+            "/api/products/import",
+            headers={"X-Business-Id": "1"},
+            files={"file": ("products.csv", content, "text/csv")},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        with Session(self.engine) as db:
+            product = db.query(Product).filter_by(business_id=1, sku="HOME-EN-01").one()
+            self.assertEqual("Điện gia dụng mẫu 01", product.name)
+            self.assertEqual("Household appliance model 01", product.metadata_["display_names"]["en"])
+
     def test_product_import_preview_and_replay_do_not_double_stock(self):
         content = b"sku,name,price,stock_quantity\nIDEMPOTENT-01,Fixture product,10000,5\n"
         def upload(suffix=""):

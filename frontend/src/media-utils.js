@@ -1,5 +1,13 @@
 const ABSOLUTE_MEDIA_URL = /^(?:https?:|blob:|data:|file:)/i;
 
+export function displayMessageText(value, channel = "") {
+  const text = String(value ?? "");
+  if (String(channel).trim().toLowerCase() !== "tiktok") {
+    return text;
+  }
+  return text.replace(/^\[Khách gửi nội dung TikTok\]\s*/i, "").trim();
+}
+
 /**
  * Resolve attachment URLs returned by the API for use in the browser.
  *

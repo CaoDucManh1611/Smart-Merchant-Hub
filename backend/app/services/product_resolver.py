@@ -47,6 +47,31 @@ def product_aliases(product: Product) -> list[str]:
     return list(dict.fromkeys(alias.strip() for alias in aliases if alias and alias.strip()))
 
 
+def product_identity_aliases(product: Product) -> list[str]:
+    """Names/SKUs and curated aliases; search keywords are weaker evidence."""
+    metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+    aliases = metadata.get("aliases", [])
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    return list(dict.fromkeys(
+        value.strip()
+        for value in (product.name, product.sku, *aliases)
+        if isinstance(value, str) and value.strip()
+    ))
+
+
+def product_display_name(product: Product, language: str = "vi") -> str:
+    """Use a curated localized label without changing the catalog's canonical name."""
+    if language == "en":
+        raw_metadata = getattr(product, "metadata_", None)
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        names = metadata.get("display_names") if isinstance(metadata.get("display_names"), dict) else {}
+        translated = names.get("en") or metadata.get("display_name_en")
+        if isinstance(translated, str) and translated.strip():
+            return translated.strip()
+    return product.name
+
+
 # Keep the private name for callers that imported it before the public helper
 # was added.  New code should use ``product_aliases``.
 _product_aliases = product_aliases
@@ -107,10 +132,13 @@ def resolve_product_mentions(
     if not query:
         return []
 
-    candidates: list[tuple[int, int, int, Product]] = []
+    identity_candidates: list[tuple[int, int, int, Product]] = []
+    fallback_candidates: list[tuple[int, int, int, Product]] = []
     seen_candidates: set[tuple[int, int, int]] = set()
     for product in products:
+        identity_aliases = set(product_identity_aliases(product))
         for alias in product_aliases(product):
+            target_candidates = identity_candidates if alias in identity_aliases else fallback_candidates
             normalized_alias = normalize_product_text(alias)
             if len(normalized_alias) < 2:
                 continue
@@ -119,7 +147,7 @@ def resolve_product_mentions(
                 end = start + len(normalized_alias)
                 candidate_key = (start, end, product.id)
                 if candidate_key not in seen_candidates:
-                    candidates.append((start, -len(normalized_alias), product.id, product))
+                    target_candidates.append((start, -len(normalized_alias), product.id, product))
                     seen_candidates.add(candidate_key)
                 start = query.find(normalized_alias, start + 1)
 
@@ -134,7 +162,7 @@ def resolve_product_mentions(
             alias_tokens = [
                 token
                 for token in normalized_alias.split()
-                if token not in _STOP_WORDS and len(token) >= 2
+                if token not in _STOP_WORDS and len(token) >= 2 and not token.isdigit()
             ]
             if len(alias_tokens) < 2:
                 continue
@@ -157,9 +185,10 @@ def resolve_product_mentions(
             end = max(item[2] for item in matched_positions)
             candidate_key = (start, end, product.id)
             if candidate_key not in seen_candidates:
-                candidates.append((start, -(end - start), product.id, product))
+                fallback_candidates.append((start, -(end - start), product.id, product))
                 seen_candidates.add(candidate_key)
 
+    candidates = identity_candidates or fallback_candidates
     selected: list[Product] = []
     occupied: list[tuple[int, int]] = []
     for start, neg_length, _product_id, product in sorted(candidates, key=lambda item: (item[0], item[1], item[2])):

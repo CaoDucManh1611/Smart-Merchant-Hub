@@ -8,6 +8,7 @@ export const CHANNEL_LABELS = {
   // User-facing views can apply sentence-case styling where needed.
   zalo: "ZALO",
   tiktok: "TikTok",
+  shopee: "Shopee",
 };
 
 export function channelLabel(channel) {

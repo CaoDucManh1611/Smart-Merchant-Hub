@@ -1,5 +1,7 @@
 import unittest
+import json
 from decimal import Decimal
+from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -21,6 +23,7 @@ from app.services.customer_collection_flow import (
     _store_address,
     _store_contact,
     advance_customer_collection,
+    greeting_reply,
     is_browsing_request,
     is_greeting,
     is_order_intent,
@@ -288,6 +291,11 @@ class CustomerCollectionFlowTests(unittest.TestCase):
         self.assertTrue(is_greeting("hello"))
         self.assertFalse(is_greeting("alo, cho tôi xem sản phẩm"))
         self.assertFalse(is_greeting("tôi muốn mua Daily Shield"))
+        self.assertEqual(
+            "Hi! I can help you find a product or answer questions about an order today.",
+            greeting_reply("hello"),
+        )
+        self.assertIn("Chào bạn", greeting_reply("xin chào"))
 
     def test_greeting_does_not_resume_a_stale_collection_prompt(self):
         with Session(self.engine) as db:
@@ -369,6 +377,55 @@ class CustomerCollectionFlowTests(unittest.TestCase):
         self.assertTrue(is_browsing_request("Tôi muốn mua sản phẩm bạn có gì"))
         self.assertFalse(is_browsing_request("Mình chốt sản phẩm này"))
         self.assertFalse(is_browsing_request("Mình chốt sản phẩm nào"))
+        self.assertTrue(is_browsing_request("I want to buy product"))
+        self.assertTrue(is_browsing_request("What products do you have?"))
+        self.assertFalse(is_order_intent("I want to buy product"))
+
+    def test_recent_cancelled_quote_question_is_answered_without_starting_checkout(self):
+        with Session(self.engine) as db:
+            quote = CustomerCollectionSession(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=529,
+                purpose="order_confirmation",
+                required_fields=["confirmation"],
+                collected_fields={
+                    "items": [{
+                        "product_id": db.query(Product.id).filter_by(
+                            business_id=self.business_id,
+                            sku="SERUM-001",
+                        ).scalar(),
+                        "product_name": "Serum",
+                        "quantity": 2,
+                        "unit_price": "200000",
+                    }],
+                    "total_amount": "400000",
+                    "confirmation_status": "declined",
+                },
+                current_field=None,
+                source_channel="telegram",
+                status="abandoned",
+            )
+            db.add(quote)
+            db.commit()
+
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=529,
+                source_channel="telegram",
+                text="hỏi nãy tôi vừa mua gì",
+            )
+
+            self.assertEqual("history_answer", result.status)
+            self.assertIn("2 Serum", result.prompt)
+            self.assertIn("400.000 đồng", result.prompt)
+            self.assertIn("chưa có đơn hàng được xác nhận", result.prompt)
+            self.assertEqual(
+                1,
+                db.query(CustomerCollectionSession).filter_by(conversation_id=529).count(),
+            )
 
     def test_quantity_price_question_is_not_order_confirmation(self):
         self.assertTrue(is_price_quote_request("Tôi muốn mua bin 20 sản phẩm thì giá như nào"))
@@ -465,6 +522,144 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertEqual("order_confirmation", result.current_field)
             self.assertIn("mua 1 Serum", result.prompt)
             self.assertNotIn("mua 0 Serum", result.prompt)
+
+    def test_customer_can_change_the_quantity_of_a_single_pending_quote(self):
+        with Session(self.engine) as db:
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=590,
+                source_channel="telegram",
+                text="Mình muốn mua Kem chống nắng Daily Shield",
+            )
+            self.assertIn("mua 1 Kem chống nắng Daily Shield", quote.prompt)
+
+            revised = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=590,
+                source_channel="telegram",
+                text="tôi muốn mua 20 cái",
+            )
+
+            self.assertIn("mua 20 Kem chống nắng Daily Shield", revised.prompt)
+            self.assertIn("5.780.000 đồng", revised.prompt)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=590).one()
+            self.assertEqual(20, session.collected_fields["quantity"])
+
+    def test_commerce_corpus_dialogues_never_create_orders_before_checkout_verification(self):
+        corpus_path = Path(__file__).resolve().parents[2] / "docs" / "commerce-nlu-evaluation-set.json"
+        dialogues = [
+            case for case in json.loads(corpus_path.read_text(encoding="utf-8"))["cases"]
+            if case["type"] == "dialogue"
+        ]
+        with Session(self.engine) as db:
+            db.add_all([
+                Product(
+                    business_id=self.business_id,
+                    sku="EVAL-MODEL-01",
+                    name="Điện gia dụng mẫu 01",
+                    price=Decimal("349000"),
+                    stock_quantity=230,
+                    reserved_quantity=0,
+                    metadata_={"aliases": ["household appliance model 01", "model 01"]},
+                    status="active",
+                ),
+                Product(
+                    business_id=self.business_id,
+                    sku="EVAL-MODEL-02",
+                    name="Điện gia dụng mẫu 02",
+                    price=Decimal("169000"),
+                    stock_quantity=330,
+                    reserved_quantity=0,
+                    metadata_={"aliases": ["household appliance model 02", "model 02"]},
+                    status="active",
+                ),
+                Product(
+                    business_id=self.business_id,
+                    sku="EVAL-LONA-M-BLACK",
+                    name="Áo khoác Lona màu đen size M",
+                    price=Decimal("500000"),
+                    stock_quantity=12,
+                    reserved_quantity=0,
+                    metadata_={"aliases": ["Lona jacket black size M"]},
+                    status="active",
+                ),
+            ])
+            db.commit()
+
+            for index, dialogue in enumerate(dialogues, start=1):
+                conversation_id = 91000 + index
+                for turn in dialogue["turns"]:
+                    advance_customer_collection(
+                        db,
+                        business_id=self.business_id,
+                        customer_id=self.customer_id,
+                        conversation_id=conversation_id,
+                        source_channel="telegram",
+                        text=turn["user"],
+                    )
+                    self.assertEqual(
+                        0,
+                        db.query(Order).filter_by(
+                            business_id=self.business_id,
+                            conversation_id=conversation_id,
+                        ).count(),
+                        f"{dialogue['id']} created an order before checkout verification",
+                    )
+
+            conversation_ids = [91000 + index for index in range(1, len(dialogues) + 1)]
+            for followup in db.query(ChatbotFollowUp).filter(
+                ChatbotFollowUp.conversation_id.in_(conversation_ids)
+            ).all():
+                db.delete(followup)
+            for session in db.query(CustomerCollectionSession).filter(
+                CustomerCollectionSession.conversation_id.in_(conversation_ids)
+            ).all():
+                db.delete(session)
+            for product in db.query(Product).filter(
+                Product.business_id == self.business_id,
+                Product.sku.in_(("EVAL-MODEL-01", "EVAL-MODEL-02", "EVAL-LONA-M-BLACK")),
+            ).all():
+                db.delete(product)
+            db.commit()
+
+    def test_underspecified_purchase_asks_for_product_without_opening_checkout(self):
+        for conversation_id, text in (
+            (98001, "Tôi muốn mua hàng"),
+            (98002, "Lấy giúp mình 2 cái"),
+            (98003, "I want to buy something"),
+            (98004, "I'll take two, please"),
+        ):
+            with Session(self.engine) as db:
+                result = advance_customer_collection(
+                    db,
+                    business_id=self.business_id,
+                    customer_id=self.customer_id,
+                    conversation_id=conversation_id,
+                    source_channel="telegram",
+                    text=text,
+                )
+                self.assertIsNotNone(result)
+                self.assertEqual("needs_product", result.status)
+                self.assertEqual(0, result.session_id)
+                self.assertIsNone(result.current_field)
+                self.assertEqual(
+                    0,
+                    db.query(CustomerCollectionSession).filter_by(
+                        business_id=self.business_id,
+                        conversation_id=conversation_id,
+                    ).count(),
+                )
+                self.assertEqual(
+                    0,
+                    db.query(Order).filter_by(
+                        business_id=self.business_id,
+                        conversation_id=conversation_id,
+                    ).count(),
+                )
 
     def test_stock_question_reports_availability_before_collecting_customer_data(self):
         with Session(self.engine) as db:
@@ -696,6 +891,80 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertIn("Sữa rửa mặt dịu nhẹ", switched.prompt)
             self.assertIn("179.000 đồng", switched.prompt)
             self.assertNotIn("Combo chăm sóc da cơ bản", switched.prompt)
+
+    def test_english_quote_keeps_language_and_replaces_product_on_correction(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="telegram",
+                external_user_id="english-corrected-quote-user",
+            )
+            appliance = Product(
+                business_id=self.business_id,
+                sku="HOME-EN-01",
+                name="Điện gia dụng mẫu 01",
+                price=Decimal("349000"),
+                stock_quantity=230,
+                metadata_={"display_names": {"en": "Household appliance model 01"}},
+                status="active",
+            )
+            distractor = Product(
+                business_id=self.business_id,
+                sku="SPORT-EN-01",
+                name="Thể thao mẫu 01",
+                price=Decimal("89000"),
+                stock_quantity=450,
+                metadata_={"keywords": ["how much"]},
+                status="active",
+            )
+            db.add_all([customer, appliance, distractor])
+            db.flush()
+            customer_id = customer.id
+            conversation_id = 910_001
+            try:
+                quote = advance_customer_collection(
+                    db,
+                    business_id=self.business_id,
+                    customer_id=customer_id,
+                    conversation_id=conversation_id,
+                    source_channel="telegram",
+                    text="How much would it cost to buy 10 units of the Điện gia dụng mẫu 01?",
+                )
+                self.assertEqual("order_confirmation", quote.current_field)
+                self.assertIn("Household appliance model 01", quote.prompt)
+                self.assertIn("₫3,490,000", quote.prompt)
+                self.assertNotIn("Bạn muốn", quote.prompt)
+
+                corrected = advance_customer_collection(
+                    db,
+                    business_id=self.business_id,
+                    customer_id=customer_id,
+                    conversation_id=conversation_id,
+                    source_channel="telegram",
+                    text="no 10 điện gia dụng",
+                )
+                self.assertEqual("order_confirmation", corrected.current_field)
+                self.assertIn("Household appliance model 01", corrected.prompt)
+                self.assertNotIn("Thể thao mẫu 01", corrected.prompt)
+                self.assertNotIn("Bạn muốn", corrected.prompt)
+
+                approved = advance_customer_collection(
+                    db,
+                    business_id=self.business_id,
+                    customer_id=customer_id,
+                    conversation_id=conversation_id,
+                    source_channel="telegram",
+                    text="yes",
+                )
+                self.assertEqual("name", approved.current_field)
+                self.assertIn("What name", approved.prompt)
+                self.assertNotIn("xin", approved.prompt)
+            finally:
+                db.query(CustomerCollectionSession).filter_by(conversation_id=conversation_id).delete(synchronize_session=False)
+                db.delete(appliance)
+                db.delete(distractor)
+                db.delete(customer)
+                db.commit()
 
     def test_multi_product_quote_merges_follow_up_and_creates_multi_item_draft(self):
         with Session(self.engine) as db:

@@ -8,6 +8,7 @@ test("inbox channel list includes all supported platforms and counts conversatio
     { channel: "telegram" },
     { channel: "zalo" },
     { channel: "zalo" },
+    { channel: "shopee" },
   ]);
 
   assert.deepEqual(channels, [
@@ -15,6 +16,8 @@ test("inbox channel list includes all supported platforms and counts conversatio
     { value: "instagram", label: "Instagram", count: 0 },
     { value: "telegram", label: "Telegram", count: 1 },
     { value: "zalo", label: "ZALO", count: 2 },
+    { value: "tiktok", label: "TikTok", count: 0 },
+    { value: "shopee", label: "Shopee", count: 1 },
   ]);
 });
 

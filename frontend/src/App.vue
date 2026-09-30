@@ -12,7 +12,7 @@ import "./style.css";
 import { channelLabel } from "./channel-utils.js";
 import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";
 import { filterConversationsForCustomer } from "./ticket-utils.js";
-import { displayAttachments, resolveMediaUrl } from "./media-utils.js";
+import { displayAttachments, displayMessageText, resolveMediaUrl } from "./media-utils.js";
 import { getInboxChannels } from "./inbox-utils.js";
 import { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxViews } from "./inbox-view-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
@@ -103,6 +103,11 @@ const crmEnglishCopy = {
   "Chi": "Spent",
   "Đã lưu thông tin bổ sung.": "Additional customer information saved.",
   "Đã nhận tài liệu. Hệ thống đang xử lý ở nền; bạn có thể tiếp tục làm việc.": "Document received. Processing will continue in the background while you work.",
+  "Mã chỉ dùng một lần và hết hạn sau 10 phút. Nhập mã trong ứng dụng trên máy của shop.": "This code can be used once and expires in 10 minutes. Enter it in the app on the shop computer.",
+  "Đã sao chép pairing code.": "Pairing code copied.",
+  "Không thể sao chép tự động. Hãy bôi đen và sao chép mã.": "Could not copy automatically. Select and copy the code instead.",
+  "Chưa thể tạo pairing code. Vui lòng thử lại sau.": "Could not create a pairing code. Please try again later.",
+  "Chưa tải được ứng dụng connector. Vui lòng thử lại.": "Could not download the connector app. Please try again.",
 };
 
 function crmUiText(message) {
@@ -378,6 +383,9 @@ const productUploadNotice = ref("");
 const productFileInput = ref(null);
 const productAdjustmentDrafts = ref({});
 const productAdjustmentSaving = ref({});
+const productDetailsDrafts = ref({});
+const productDetailsSaving = ref({});
+const productDetailsNotice = ref({});
 const productStatusSaving = ref({});
 const productStatusNotice = ref("");
 const inventoryAdjustmentOpen = ref(null);
@@ -933,6 +941,7 @@ const slaRulesForm = ref({ firstResponseHours: 2, resolutionHours: 24 });
 const slaRulesNotice = ref("");
 const channelModalOpen = ref(false);
 const channelModalTab = ref("meta");
+const tiktokSetupTab = ref("guide");
 const textImportOpen = ref(false);
 const textImportDraft = ref("");
 const textImportTitle = ref("");
@@ -1048,17 +1057,16 @@ const botConnectionError = ref("");
 const botConnectionNotice = ref("");
 const botTokenVisible = ref(false);
 const botConnectionForm = ref({ channel_type: "telegram", access_token: "" });
-const tiktokBridgeSecret = ref("");
-const tiktokBridgeEndpoint = ref("");
-const tiktokBridgeBackendUrl = ref("");
-const tiktokBridgeShopSlug = ref("");
-const tiktokBridgeDownloadUrl = ref("");
-const tiktokBridgeLoading = ref(false);
-const tiktokBridgeError = ref("");
-const tiktokBridgeNotice = ref("");
+const localConnectorPairingCode = ref("");
+const localConnectorLoading = ref(false);
+const localConnectorDownloading = ref(false);
+const localConnectorError = ref("");
+const localConnectorNotice = ref("");
 const notificationError = ref("");
 const activeBotConnections = computed(() => botConnections.value.filter((item) => ["connected", "active"].includes(String(item.status || "").toLowerCase())));
 const activeTikTokConnection = computed(() => activeBotConnections.value.find((item) => item.channel_type === "tiktok"));
+const tiktokChannelConnection = computed(() => botConnections.value.find((item) => item.channel_type === "tiktok"));
+const shopeeChannelConnection = computed(() => botConnections.value.find((item) => item.channel_type === "shopee"));
 const channelCapacity = computed(() => channelCapacityState(quotaSnapshot.value));
 const demoChannelsLocked = computed(() => channelCapacity.value.blocked);
 
@@ -1129,6 +1137,12 @@ function botConnectionStateLabel(state) {
   return connectionStateMeta(state).label;
 }
 
+function localConnectorStatus(connection) {
+  if (connection?.connector_paired) return t("ĐÃ GHÉP NỐI");
+  if (["verifying", "pending_pairing"].includes(String(connection?.status || "").toLowerCase())) return t("CHỜ GHÉP NỐI");
+  return t("CHƯA KẾT NỐI");
+}
+
 function botConnectionErrorMessage(payload, fallback) {
   const detail = payload?.detail;
   if (detail && typeof detail === "object") return detail.message || fallback;
@@ -1159,7 +1173,7 @@ async function fetchBotConnections() {
     const detail = await response.json().catch(() => []);
     if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
     botConnections.value = Array.isArray(detail)
-      ? detail.filter((item) => ["telegram", "zalo", "tiktok"].includes(item.channel_type))
+      ? detail.filter((item) => ["telegram", "zalo", "tiktok", "shopee"].includes(item.channel_type))
       : [];
   } catch (err) {
     const status = Number(err?.status);
@@ -1258,7 +1272,7 @@ function openChannelModal(tab = "meta") {
   // accepted for bookmarks/tests, but immediately resolves to Telegram so a
   // shop never submits a token for the wrong provider.
   const normalized = tab === "bots" ? "telegram" : tab;
-  channelModalTab.value = ["meta", "facebook", "instagram", "telegram", "zalo", "tiktok"].includes(normalized) ? normalized : "meta";
+  channelModalTab.value = ["meta", "facebook", "instagram", "telegram", "zalo", "tiktok", "shopee"].includes(normalized) ? normalized : "meta";
   if (["telegram", "zalo"].includes(channelModalTab.value)) {
     botConnectionForm.value.channel_type = channelModalTab.value;
     botConnectionForm.value.access_token = "";
@@ -1266,16 +1280,26 @@ function openChannelModal(tab = "meta") {
     botConnectionNotice.value = "";
     botConnectionError.value = "";
   }
-  if (channelModalTab.value === "tiktok") {
-    tiktokBridgeError.value = "";
-    tiktokBridgeNotice.value = "";
+  if (["tiktok", "shopee"].includes(channelModalTab.value)) {
+    localConnectorPairingCode.value = "";
+    localConnectorError.value = "";
+    localConnectorNotice.value = "";
   }
+  if (channelModalTab.value === "tiktok") tiktokSetupTab.value = "guide";
   channelModalOpen.value = true;
   if (authUser.value) void fetchQuotaUsage();
 }
 
+function moveTikTokSetupTab(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  tiktokSetupTab.value = event.key === "ArrowLeft" || event.key === "Home" ? "guide" : "cookie";
+  document.getElementById(`tiktok-${tiktokSetupTab.value === "guide" ? "guide" : "cookie"}-tab`)?.focus();
+}
+
 function closeChannelModal() {
   channelModalOpen.value = false;
+  localConnectorPairingCode.value = "";
 }
 
 function openServicePageFromChannelLimit() {
@@ -2969,8 +2993,9 @@ function formatTime(value) {
 
 function conversationPreview(item) {
 
-  if (item?.last_message) {
-    return item.last_message;
+  const lastMessage = displayMessageText(item?.last_message, item?.channel);
+  if (lastMessage) {
+    return lastMessage;
   }
 
   if (
@@ -4375,10 +4400,20 @@ async function fetchProducts() {
     const data = await response.json();
     products.value = data.items || [];
     const drafts = { ...productAdjustmentDrafts.value };
+    const detailsDrafts = {};
     for (const product of products.value) {
       if (!drafts[product.id]) drafts[product.id] = { quantity: 1, direction: 1, reason: "" };
+      const metadata = product.metadata || product.metadata_ || {};
+      detailsDrafts[product.id] = {
+        sku: product.sku || "",
+        name: product.name || "",
+        name_en: metadata.display_names?.en || metadata.display_name_en || "",
+        description: product.description || "",
+        price: Number(product.price || 0),
+      };
     }
     productAdjustmentDrafts.value = drafts;
+    productDetailsDrafts.value = detailsDrafts;
   } catch (err) {
     console.error("Fetch products error:", err);
     productError.value = "Chưa tải được danh sách sản phẩm. Vui lòng thử lại sau.";
@@ -4662,6 +4697,58 @@ async function adjustProductInventory(product) {
     const nextSaving = { ...productAdjustmentSaving.value };
     delete nextSaving[product.id];
     productAdjustmentSaving.value = nextSaving;
+  }
+}
+
+async function saveProductDetails(product) {
+  const draft = productDetailsDrafts.value[product.id] || {};
+  const sku = String(draft.sku || "").trim();
+  const name = String(draft.name || "").trim();
+  const price = Number(draft.price);
+  if (!sku || !name || !Number.isFinite(price) || price < 0) {
+    productError.value = crmUiText("Nhập SKU, tên sản phẩm và giá hợp lệ.");
+    return;
+  }
+
+  const metadata = { ...(product.metadata || product.metadata_ || {}) };
+  const displayNames = metadata.display_names && typeof metadata.display_names === "object" && !Array.isArray(metadata.display_names)
+    ? { ...metadata.display_names }
+    : {};
+  const nameEn = String(draft.name_en || "").trim();
+  delete metadata.display_name_en;
+  if (nameEn) displayNames.en = nameEn;
+  else delete displayNames.en;
+  if (Object.keys(displayNames).length) metadata.display_names = displayNames;
+  else delete metadata.display_names;
+
+  productDetailsSaving.value = { ...productDetailsSaving.value, [product.id]: true };
+  productError.value = "";
+  productDetailsNotice.value = { ...productDetailsNotice.value, [product.id]: false };
+  try {
+    const response = await apiFetch(`${API_BASE}/products/${product.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sku,
+        name,
+        description: String(draft.description || "").trim() || null,
+        price,
+        metadata,
+      }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    Object.assign(product, detail);
+    productDetailsNotice.value = { ...productDetailsNotice.value, [product.id]: true };
+  } catch (error) {
+    productError.value = crmErrorText(
+      friendlyErrorMessage(error, "Chưa thể lưu thông tin sản phẩm. Vui lòng thử lại sau."),
+      "Chưa thể lưu thông tin sản phẩm. Vui lòng thử lại sau.",
+    );
+  } finally {
+    const saving = { ...productDetailsSaving.value };
+    delete saving[product.id];
+    productDetailsSaving.value = saving;
   }
 }
 
@@ -6821,49 +6908,65 @@ async function toggleTeamMember(member) {
   }
 }
 
-async function connectTikTokBridge() {
-  if (demoChannelsLocked.value) {
-    tiktokBridgeError.value = channelCapacity.value.reason;
+async function createLocalConnectorPairingCode() {
+  const channelType = channelModalTab.value;
+  const alreadyConnected = activeBotConnections.value.some((item) => item.channel_type === channelType);
+  if (demoChannelsLocked.value && !alreadyConnected) {
+    localConnectorError.value = channelCapacity.value.reason;
     return;
   }
-  tiktokBridgeLoading.value = true;
-  tiktokBridgeError.value = "";
-  tiktokBridgeNotice.value = "";
-  tiktokBridgeDownloadUrl.value = "";
+  localConnectorLoading.value = true;
+  localConnectorError.value = "";
+  localConnectorNotice.value = "";
+  localConnectorPairingCode.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels/tiktok/bridge`, { method: "POST" });
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels/${channelType}/pairing-code`, { method: "POST" });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
-    tiktokBridgeSecret.value = String(detail.bridge_secret || "");
-    tiktokBridgeEndpoint.value = String(detail.webhook_url || `${window.location.origin}${API_BASE}/channels/tiktok/incoming`);
-    tiktokBridgeBackendUrl.value = new URL(tiktokBridgeEndpoint.value, window.location.origin).origin;
-    tiktokBridgeShopSlug.value = String(detail.shop_slug || "");
-    const downloadResponse = await apiFetch(`${API_BASE}/channels/tiktok/bot-file`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        business_id: requireBusinessId(authUser.value),
-        shop_slug: tiktokBridgeShopSlug.value,
-        bridge_secret: tiktokBridgeSecret.value,
-        backend_url: tiktokBridgeBackendUrl.value,
-        format: "exe",
-        delivery: "url",
-      }),
-    });
-    const downloadDetail = await downloadResponse.json().catch(() => ({}));
-    if (!downloadResponse.ok) throw new Error(downloadDetail.detail || `HTTP ${downloadResponse.status}`);
-    const downloadUrl = String(downloadDetail.download_url || "").trim();
-    if (!downloadUrl) throw new Error("Chưa tạo được liên kết tải file ZIP TikTok");
-    const parsedDownloadUrl = new URL(downloadUrl, window.location.origin);
-    if (parsedDownloadUrl.origin !== window.location.origin) throw new Error("Liên kết tải file ZIP TikTok không hợp lệ");
-    tiktokBridgeDownloadUrl.value = parsedDownloadUrl.toString();
-    tiktokBridgeNotice.value = "Đã tạo cấu hình TikTok. Bây giờ hãy bấm tải ZIP để nhận file.";
+    localConnectorPairingCode.value = String(detail.pairing_code || "");
+    if (!localConnectorPairingCode.value) throw new Error("Máy chủ chưa trả pairing code.");
+    localConnectorNotice.value = crmUiText("Mã chỉ dùng một lần và hết hạn sau 10 phút. Nhập mã trong ứng dụng trên máy của shop.");
     await fetchBotConnections();
-    return detail;
   } catch (err) {
-    tiktokBridgeError.value = botConnectionErrorMessage(err?.payload, "Chưa thể tạo kết nối TikTok bridge. Vui lòng thử lại sau.");
+    localConnectorError.value = crmErrorText(botConnectionErrorMessage(err?.payload, ""), "Chưa thể tạo pairing code. Vui lòng thử lại sau.");
   } finally {
-    tiktokBridgeLoading.value = false;
+    localConnectorLoading.value = false;
+  }
+}
+
+async function downloadLocalConnectorApp() {
+  const channelType = channelModalTab.value;
+  localConnectorDownloading.value = true;
+  localConnectorError.value = "";
+  try {
+    const url = `${API_BASE}/channels/${channelType}/connector-app`;
+    const response = await apiFetch(url);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw apiResponseError(response, detail, `HTTP ${response.status}`);
+    }
+    const app = await response.blob();
+    if (app.size < 1024 * 1024) throw new Error("File ứng dụng tải về không đầy đủ. Vui lòng thử lại.");
+    const objectUrl = URL.createObjectURL(app);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `SmartMerchant${channelType === "tiktok" ? "TikTok" : "Shopee"}.exe`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    localConnectorNotice.value = crmUiText("Đã tải ứng dụng. Tạo mã ghép nối rồi mở file .exe để nhập mã.");
+  } catch (err) {
+    localConnectorError.value = crmErrorText(botConnectionErrorMessage(err?.payload, ""), "Chưa tải được ứng dụng connector. Vui lòng thử lại.");
+  } finally {
+    localConnectorDownloading.value = false;
+  }
+}
+
+async function copyLocalConnectorPairingCode() {
+  try {
+    await navigator.clipboard.writeText(localConnectorPairingCode.value);
+    localConnectorNotice.value = crmUiText("Đã sao chép pairing code.");
+  } catch {
+    localConnectorError.value = crmUiText("Không thể sao chép tự động. Hãy bôi đen và sao chép mã.");
   }
 }
 
@@ -10110,7 +10213,7 @@ function followupRecommendationLabel(item) {
 
                   <p
                     v-if="
-                      message.content
+                      displayMessageText(message.content, selected?.channel)
                     "
 
                     class="
@@ -10119,7 +10222,7 @@ function followupRecommendationLabel(item) {
                   >
 
                     {{
-                      message.content
+                      displayMessageText(message.content, selected?.channel)
                     }}
 
                   </p>
@@ -11487,7 +11590,7 @@ function followupRecommendationLabel(item) {
           </section>
 
           <section class="platform-admin-panel">
-            <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">CHANNEL HEALTH</span><h3>Kết nối &amp; cảnh báo</h3><p>Theo dõi lỗi Facebook, Instagram, Telegram, Zalo và các kênh sẽ bổ sung như TikTok, Shopee.</p></div></div>
+            <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">CHANNEL HEALTH</span><h3>Kết nối &amp; cảnh báo</h3><p>Theo dõi trạng thái và cảnh báo kết nối của các kênh bán hàng.</p></div></div>
             <p v-if="!platformProviderErrors.length" class="settings-empty">Chưa có cảnh báo kết nối.</p>
             <ul v-else class="audit-list platform-alert-list">
               <li v-for="errorItem in platformProviderErrors.slice(0, 10)" :key="errorItem.id"><strong>{{ channelLabel(errorItem.channel_type) }}</strong><span> · {{ workflowEventLabel(errorItem.event_type) }} · {{ errorItem.error_type || 'Lỗi kết nối' }}</span><small>{{ errorItem.received_at ? formatDateTime(errorItem.received_at) : '' }}</small></li>
@@ -11531,7 +11634,7 @@ function followupRecommendationLabel(item) {
           <div v-if="!productUploading" class="dropzone-content">
             <span class="upload-icon" aria-hidden="true">NHẬP DANH MỤC</span>
             <strong>Nhập tệp sản phẩm để cập nhật nhanh danh mục</strong>
-            <small>CSV hoặc TXT · Tối đa 20MB · Cột cần có: Mã sản phẩm, Tên sản phẩm, Giá, Tồn kho · SKU trùng sẽ cộng thêm tồn</small>
+            <small>CSV hoặc TXT · Tối đa 20MB · Cột cần có: Mã sản phẩm, Tên sản phẩm, Giá, Tồn kho · Có thể thêm cột “Tên tiếng Anh” để chatbot hiển thị tên dịch · Với SKU có sẵn, giữ tên/giá hiện tại và đặt Tồn kho = 0 để không cộng tồn</small>
             <button type="button" class="secondary-btn import-choice" @click.stop="openProductFilePicker">Nhập tệp</button>
           </div>
           <div v-else class="dropzone-content" role="status" aria-live="polite">
@@ -11546,7 +11649,7 @@ function followupRecommendationLabel(item) {
 
         <div class="operation-mode-banner" data-testid="products-processing-only">
           <strong>Chế độ xử lý sản phẩm</strong>
-          <span>Danh mục sản phẩm được đồng bộ từ nguồn dữ liệu shop. Tại đây chỉ xử lý tồn kho, trạng thái và lưu trữ.</span>
+          <span>Danh mục sản phẩm được đồng bộ từ nguồn dữ liệu shop. Tại đây có thể chỉnh thông tin, giá bán, trạng thái và tồn kho.</span>
         </div>
 
         <div v-if="productsLoading" class="products-empty">Đang tải sản phẩm...</div>
@@ -11600,7 +11703,7 @@ function followupRecommendationLabel(item) {
                     <div class="inventory-adjustment-panel">
                       <div class="inventory-adjustment-heading">
                         <div>
-                          <strong>Điều chỉnh tồn kho · {{ product.name }}</strong>
+                          <strong>{{ t("Điều chỉnh sản phẩm") }} · {{ product.name }}</strong>
                           <div class="inventory-adjustment-current">
                             <span><small>Tồn hiện tại</small><b>{{ product.stock_quantity }}</b></span>
                             <span><small>Khả dụng</small><b>{{ Math.max(0, Number(product.stock_quantity || 0) - Number(product.reserved_quantity || 0)) }}</b></span>
@@ -11609,6 +11712,19 @@ function followupRecommendationLabel(item) {
                         </div>
                         <button type="button" class="panel-close-btn" @click="closeInventoryAdjustment">×</button>
                       </div>
+                      <div class="product-adjustment-details">
+                        <strong>{{ t("Thông tin sản phẩm") }}</strong>
+                        <label>{{ t("Mã sản phẩm") }}<input v-model="productDetailsDrafts[product.id].sku" maxlength="80" required /></label>
+                        <label>{{ t("Tên sản phẩm") }}<input v-model="productDetailsDrafts[product.id].name" maxlength="255" required /></label>
+                        <label>{{ t("Tên hiển thị tiếng Anh") }}<input v-model="productDetailsDrafts[product.id].name_en" maxlength="255" :placeholder="t('Không bắt buộc')" /></label>
+                        <label>{{ t("Giá bán") }}<input v-model.number="productDetailsDrafts[product.id].price" type="number" min="0" step="1000" required /></label>
+                        <label class="product-adjustment-description">{{ t("Mô tả sản phẩm") }}<textarea v-model="productDetailsDrafts[product.id].description" rows="2" maxlength="5000"></textarea></label>
+                        <div class="product-adjustment-actions">
+                          <small v-if="productDetailsNotice[product.id]" role="status">{{ t("Đã lưu thông tin sản phẩm.") }}</small>
+                          <button type="button" class="table-action-btn" :disabled="productDetailsSaving[product.id]" @click="saveProductDetails(product)">{{ productDetailsSaving[product.id] ? t("Đang lưu...") : t("Lưu thông tin") }}</button>
+                        </div>
+                      </div>
+                      <strong class="product-stock-adjustment-title">{{ t("Điều chỉnh tồn kho") }}</strong>
                       <div class="adjustment-direction" role="group" aria-label="Loại điều chỉnh">
                         <button type="button" :class="{ active: Number(productAdjustmentDrafts[product.id].direction) > 0 }" @click="openInventoryAdjustment(product, 1)">Nhập thêm (+)</button>
                         <button type="button" :class="{ active: Number(productAdjustmentDrafts[product.id].direction) < 0 }" @click="openInventoryAdjustment(product, -1)">Ghi giảm (−)</button>
@@ -12024,7 +12140,7 @@ function followupRecommendationLabel(item) {
           <div class="product-form-grid">
             <label>Tên quy trình<input v-model="workflowForm.name" required maxlength="160" placeholder="Ví dụ: Gắn nhãn khách Telegram" /></label>
             <label>Sự kiện<select v-model="workflowForm.event_type"><option value="message.created">Tin nhắn mới</option><option value="ticket.created">Phiếu hỗ trợ được tạo</option><option value="ticket.status_changed">Phiếu hỗ trợ đổi trạng thái</option><option value="lead.stage_changed">Cơ hội đổi giai đoạn</option><option value="order.created">Đơn hàng được tạo</option><option value="appointment.created">Tạo lịch hẹn</option><option value="appointment.status_changed">Lịch hẹn đổi trạng thái</option><option value="quote.created">Tạo báo giá</option><option value="quote.status_changed">Báo giá đổi trạng thái</option><option value="project.created">Tạo dự án</option><option value="project.status_changed">Dự án đổi trạng thái</option><option value="invoice.created">Tạo hóa đơn</option><option value="invoice.status_changed">Hóa đơn đổi trạng thái</option><option value="invoice.payment_recorded">Ghi nhận thanh toán hóa đơn</option></select></label>
-          <label>Điều kiện kênh<select v-model="workflowForm.condition_channel"><option value="">Mọi kênh</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="telegram">Telegram</option><option value="zalo">Zalo</option><option value="tiktok">TikTok</option></select></label>
+          <label>Điều kiện kênh<select v-model="workflowForm.condition_channel"><option value="">Mọi kênh</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="telegram">Telegram</option><option value="zalo">Zalo</option><option value="tiktok">TikTok</option><option value="shopee">Shopee</option></select></label>
             <label>Hành động<select v-model="workflowForm.action_type"><option value="create_ticket">Tạo phiếu hỗ trợ</option><option value="add_tag">Gắn nhãn</option><option value="assign_user">Chuyển người hỗ trợ và gửi email</option></select></label>
             <label v-if="workflowForm.action_type === 'create_ticket'">Tiêu đề phiếu hỗ trợ<input v-model="workflowForm.action_title" maxlength="255" placeholder="Nhắc chăm sóc khách" /></label>
             <label v-if="workflowForm.action_type === 'create_ticket'">Ưu tiên<select v-model="workflowForm.action_priority"><option value="low">Thấp</option><option value="normal">Bình thường</option><option value="high">Cao</option><option value="urgent">Khẩn cấp</option></select></label>
@@ -12495,7 +12611,7 @@ function followupRecommendationLabel(item) {
         <form class="report-filters" @submit.prevent="fetchReports">
           <label>Từ ngày<input v-model="reportFilters.start_at" type="date" /></label>
           <label>Đến ngày<input v-model="reportFilters.end_at" type="date" /></label>
-          <label>Kênh<select v-model="reportFilters.channel"><option value="">Tất cả kênh</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="telegram">Telegram</option><option value="zalo">Zalo</option><option value="tiktok">TikTok</option></select></label>
+          <label>Kênh<select v-model="reportFilters.channel"><option value="">Tất cả kênh</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="telegram">Telegram</option><option value="zalo">Zalo</option><option value="tiktok">TikTok</option><option value="shopee">Shopee</option></select></label>
           <label>Nguồn ghi nhận<input v-model.trim="reportFilters.source" placeholder="VD: quảng cáo mạng xã hội" /></label>
           <label>Trạng thái<select v-model="reportFilters.status"><option value="">Tất cả</option><option value="open">Đang mở</option><option value="pending">Đang chờ</option><option value="qualified">Đã đủ điều kiện</option><option value="won">Đã thắng</option><option value="resolved">Đã xử lý</option><option value="closed">Đã đóng</option></select></label>
           <label>Nhân viên<select v-model="reportFilters.assigned_user_id"><option value="">Tất cả nhân viên</option><option v-for="member in teamUsers" :key="member.id" :value="member.id">{{ member.full_name }}</option></select></label>
@@ -12669,21 +12785,21 @@ function followupRecommendationLabel(item) {
             <div class="channel-summary-actions"><button type="button" class="secondary-btn" @click="openChannelModal('zalo')">{{ activeBotConnections.some((item) => item.channel_type === 'zalo') ? 'Quản lý Zalo' : 'Kết nối Zalo' }}</button></div>
           </article>
           <article class="settings-card channel-summary-card">
-            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon tiktok-channel-icon" aria-hidden="true"><svg class="tiktok-logo" viewBox="0 0 24 24"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 1 0-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><span>TikTok</span></h2><p>Kết nối bằng TikTok bridge trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: activeTikTokConnection }">{{ activeTikTokConnection ? 'ĐÃ BẬT BRIDGE' : 'CHƯA CẤU HÌNH' }}</span></div>
-            <p class="settings-muted">Tải file ZIP TikTok đã cấu hình sẵn để nhận tin vào đúng không gian shop.</p>
+            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon tiktok-channel-icon" aria-hidden="true"><svg class="tiktok-logo" viewBox="0 0 24 24"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 1 0-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><span>TikTok</span></h2><p>Kết nối bằng TikTok connector chạy trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: tiktokChannelConnection?.connector_paired }">{{ localConnectorStatus(tiktokChannelConnection) }}</span></div>
+            <p class="settings-muted">Ghép nối bằng mã tạm thời; phiên TikTok được giữ trên máy chạy connector.</p>
             <div class="channel-summary-actions"><button type="button" class="secondary-btn" @click="openChannelModal('tiktok')">{{ activeTikTokConnection ? 'Quản lý TikTok' : 'Thiết lập TikTok' }}</button></div>
           </article>
-          <article class="settings-card channel-summary-card channel-summary-card-planned">
-            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon shopee-channel-icon" aria-hidden="true">S</span><span>Shopee</span></h2><p>Kênh đơn hàng và chăm sóc khách hàng Shopee.</p></div><span class="connection-badge channel-status-planned">ĐANG HOÀN THIỆN</span></div>
-            <p class="settings-muted">Shopee đã nằm trong hạn mức gói CRM. Kết nối Open Platform sẽ được bật sau khi kiểm thử webhook và quyền chat.</p>
-            <div class="channel-summary-actions"><button type="button" class="secondary-btn" disabled>Sắp ra mắt</button></div>
+          <article class="settings-card channel-summary-card">
+            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon shopee-channel-icon" aria-hidden="true">S</span><span>Shopee</span></h2><p>Kênh Seller Chat và chăm sóc khách hàng Shopee.</p></div><span class="connection-badge" :class="{ connected: shopeeChannelConnection?.connector_paired }">{{ localConnectorStatus(shopeeChannelConnection) }}</span></div>
+            <p class="settings-muted">Nhận tin Seller Chat qua Edge cục bộ; đăng nhập Shopee trên máy chạy connector.</p>
+            <div class="channel-summary-actions"><button type="button" class="secondary-btn" @click="openChannelModal('shopee')">{{ shopeeChannelConnection?.connector_paired ? 'Quản lý Shopee' : 'Thiết lập Shopee' }}</button></div>
           </article>
         </div>
         <div v-if="authUser" class="settings-card channel-connect-card" aria-hidden="true"></div>
 
         <div v-if="channelModalOpen" class="app-dialog-backdrop channel-modal-backdrop" @click.self="closeChannelModal">
           <section class="channel-modal app-dialog" role="dialog" aria-modal="true" aria-label="Kết nối kênh bán hàng" tabindex="-1" @keydown.esc="closeChannelModal">
-            <div class="settings-card-header"><div><span class="card-eyebrow">KÊNH CỦA SHOP</span><h2>{{ ['meta', 'facebook', 'instagram'].includes(channelModalTab) ? 'Kết nối Facebook & Instagram' : `Kết nối ${channelModalTab === 'zalo' ? 'Zalo' : channelModalTab === 'tiktok' ? 'TikTok' : 'Telegram'}` }}</h2><p>Mã kết nối chỉ dùng cho shop này và không chia sẻ giữa các không gian.</p></div><button type="button" class="quick-action-close" aria-label="Đóng" @click="closeChannelModal">×</button></div>
+            <div class="settings-card-header"><div><span class="card-eyebrow">KÊNH CỦA SHOP</span><h2>{{ ['meta', 'facebook', 'instagram'].includes(channelModalTab) ? 'Kết nối Facebook & Instagram' : `Kết nối ${channelModalTab === 'zalo' ? 'Zalo' : channelModalTab === 'tiktok' ? 'TikTok' : channelModalTab === 'shopee' ? 'Shopee' : 'Telegram'}` }}</h2><p>{{ ['tiktok', 'shopee'].includes(channelModalTab) ? 'Pairing code chỉ dùng một lần, thuộc về shop này và hết hạn sau 10 phút.' : 'Mã kết nối chỉ dùng cho shop này và không chia sẻ giữa các không gian.' }}</p></div><button type="button" class="quick-action-close" aria-label="Đóng" @click="closeChannelModal">×</button></div>
             <span class="visually-hidden">Kết nối Telegram/Zalo · Quét QR để tạo bot · BotFather · Zalo Bot Manager</span>
             <template v-if="['meta', 'facebook', 'instagram'].includes(channelModalTab)">
               <div v-if="metaNotice" class="settings-notice team-error">{{ metaNotice }}</div>
@@ -12695,15 +12811,36 @@ function followupRecommendationLabel(item) {
               <p class="settings-muted meta-oauth-note">Facebook và Instagram dùng chung một lần cấp quyền; CRM vẫn tách riêng dữ liệu và trạng thái hiển thị cho từng kênh.</p>
               <div v-if="metaStatus.connected" class="settings-actions"><button class="btn-meta-disconnect" type="button" :disabled="metaLoading" @click="disconnectMeta">Ngắt kết nối Facebook/Instagram</button></div>
             </template>
-            <template v-else-if="channelModalTab === 'tiktok'">
-              <div v-if="tiktokBridgeError" class="settings-notice team-error">{{ tiktokBridgeError }}</div>
-              <div v-if="tiktokBridgeNotice" class="settings-notice">{{ tiktokBridgeNotice }}</div>
+            <template v-else-if="['tiktok', 'shopee'].includes(channelModalTab)">
+              <div v-if="localConnectorError" class="settings-notice team-error" role="alert">{{ localConnectorError }}</div>
+              <div v-if="localConnectorNotice" class="settings-notice" role="status">{{ localConnectorNotice }}</div>
+              <template v-if="channelModalTab === 'tiktok'">
               <div class="bot-provider-heading"><span class="channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><div><h3>TikTok Bridge</h3><p>Nhận tin TikTok qua tệp bridge đang chạy trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: activeTikTokConnection }">{{ activeTikTokConnection ? 'ĐÃ BẬT BRIDGE' : 'CHƯA CẤU HÌNH' }}</span></div>
-              <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 1 0-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></div><div><ol><li>Tải file ZIP TikTok đã cấu hình sẵn cho shop.</li><li>Giải nén rồi mở <code>SmartMerchantTikTok.exe</code>.</li><li>Ứng dụng tự lấy phiên TikTok và chuyển tin về CRM.</li></ol><p class="bot-connect-note">Cookie chỉ được đọc trên máy chạy ứng dụng và không gửi lên CRM. Không cần sao chép mã kết nối.</p></div></div>
-              <div class="tiktok-bridge-actions"><a v-if="tiktokBridgeDownloadUrl && !demoChannelsLocked" class="primary-btn bot-connect-submit" :href="tiktokBridgeDownloadUrl" download="SmartMerchantTikTok.zip">Tải file ZIP TikTok</a><button v-else class="primary-btn bot-connect-submit" type="button" :disabled="true">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : 'Tạo cấu hình trước' }}</button><button class="secondary-btn" type="button" :disabled="tiktokBridgeLoading || demoChannelsLocked" @click="connectTikTokBridge">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : tiktokBridgeLoading ? 'Đang tạo...' : activeTikTokConnection ? 'Cấp lại cấu hình' : 'Tạo cấu hình' }}</button></div>
-              <div v-if="tiktokBridgeSecret" class="settings-notice tiktok-bridge-secret"><strong>Cấu hình TikTok đã sẵn sàng.</strong><small>File ZIP đã gắn sẵn cấu hình; bridge chỉ bắt đầu hoạt động sau khi bạn giải nén và mở SmartMerchantTikTok.exe.</small></div>
+              <div class="tiktok-setup-tabs" role="tablist" :aria-label="crmUiText('Chuẩn bị kết nối TikTok')">
+                <button id="tiktok-guide-tab" type="button" role="tab" :aria-selected="tiktokSetupTab === 'guide'" aria-controls="tiktok-guide-panel" :tabindex="tiktokSetupTab === 'guide' ? 0 : -1" @click="tiktokSetupTab = 'guide'" @keydown="moveTikTokSetupTab">{{ crmUiText('Hướng dẫn') }}</button>
+                <button id="tiktok-cookie-tab" type="button" role="tab" :aria-selected="tiktokSetupTab === 'cookie'" aria-controls="tiktok-cookie-panel" :tabindex="tiktokSetupTab === 'cookie' ? 0 : -1" @click="tiktokSetupTab = 'cookie'" @keydown="moveTikTokSetupTab">{{ crmUiText('Nhập cookie') }}</button>
+              </div>
+              <section v-if="tiktokSetupTab === 'guide'" id="tiktok-guide-panel" class="tiktok-setup-panel" role="tabpanel" aria-labelledby="tiktok-guide-tab" tabindex="0">
+                <h4>{{ crmUiText('Chuẩn bị kết nối TikTok') }}</h4>
+                <ol><li>{{ crmUiText('Tải ứng dụng TikTok về máy đang đăng nhập tài khoản cần kết nối.') }}</li><li>{{ crmUiText('Tạo mã ghép nối trong CRM, mở ứng dụng và nhập mã đó.') }}</li><li>{{ crmUiText('Ứng dụng sẽ thử lấy phiên từ trình duyệt. Nếu không được, hãy chuyển sang tab Nhập cookie trong ứng dụng.') }}</li></ol>
+              </section>
+              <section v-else id="tiktok-cookie-panel" class="tiktok-setup-panel tiktok-cookie-panel" role="tabpanel" aria-labelledby="tiktok-cookie-tab" tabindex="0">
+                <h4>{{ crmUiText('Nhập cookie') }}</h4>
+                <p>{{ crmUiText('Không dán cookie vào CRM. Hãy nhập trực tiếp trong SmartMerchantTikTok.exe trên máy của bạn.') }}</p>
+                <ol><li>{{ crmUiText('Trong ứng dụng, mở tab Nhập cookie, dán Cookie header hoặc chọn tệp JSON rồi bấm Nhập & tiếp tục.') }}</li><li>{{ crmUiText('Cookie giống như mật khẩu. Ứng dụng xử lý và lưu phiên ngay trên máy; CRM không nhận cookie.') }}</li></ol>
+              </section>
+              <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ crmUiText(localConnectorDownloading ? 'Đang tải ứng dụng...' : 'Tải ứng dụng TikTok (.exe)') }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeTikTokConnection)" @click="createLocalConnectorPairingCode">{{ crmUiText(localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối') }}</button></div>
+              <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>{{ crmUiText('Pairing code') }}<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">{{ crmUiText('Sao chép mã') }}</button></div>
               <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === 'tiktok').length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'tiktok')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>TikTok bridge · {{ botConnectionStateLabel(connection.status) }}</small></div><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul>
-              <div v-else class="settings-empty">Chưa có TikTok bridge nào.</div>
+              <div v-else class="settings-empty">Chưa có TikTok connector nào.</div>
+              </template>
+              <template v-else>
+                <div class="bot-provider-heading"><span class="channel-card-icon shopee-channel-icon">S</span><div><h3>Shopee Seller Chat</h3><p>Nhận tin realtime từ Seller Chat trong Edge cục bộ.</p></div><span class="connection-badge" :class="{ connected: shopeeChannelConnection?.connector_paired }">{{ localConnectorStatus(shopeeChannelConnection) }}</span></div>
+                <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon shopee-channel-icon">S</div><div><ol><li>Tải ứng dụng Shopee (.exe) về máy dùng Seller Chat.</li><li>Khi sẵn sàng, tạo mã ghép nối bên dưới.</li><li>Mở file, nhập mã rồi đăng nhập Shopee trong Edge hiện ra.</li></ol><p class="bot-connect-note">Ứng dụng chỉ chuyển tin nhắn; cookie và phiên Edge không rời khỏi máy này.</p></div></div>
+                <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ localConnectorDownloading ? 'Đang tải ứng dụng...' : 'Tải ứng dụng Shopee (.exe)' }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeBotConnections.some((item) => item.channel_type === 'shopee'))" @click="createLocalConnectorPairingCode">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối' }}</button></div>
+                <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>Pairing code<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">Sao chép mã</button></div>
+                <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.some((item) => item.channel_type === 'shopee')" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'shopee')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ connection.connector_paired ? 'Đã ghép nối' : botConnectionStateLabel(connection.status) }}</small></div><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có Shopee connector nào.</div>
+              </template>
             </template>
             <template v-else>
               <span class="visually-hidden">Sao chép token · Zalo Bot Manager</span>
@@ -12731,7 +12868,7 @@ function followupRecommendationLabel(item) {
           <div class="webhook-grid">
             <article class="webhook-item"><div><strong>Facebook</strong><span class="webhook-status" :class="{ connected: metaStatus.connected && metaStatus.subscription_status }">{{ metaStatus.connected ? (metaStatus.subscription_status || 'Đã kết nối') : 'Chưa kết nối' }}</span></div><small>Nhận tin tự động từ Trang Facebook của shop.</small></article>
             <article class="webhook-item"><div><strong>Instagram</strong><span class="webhook-status" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.instagram_account_id ? 'Đã kết nối' : 'Chưa kết nối' }}</span></div><small>Nhận tin Instagram riêng, dùng cùng lần cấp quyền Facebook.</small></article>
-            <article v-for="connection in botConnections" :key="`webhook-${connection.id}`" class="webhook-item"><div><strong>{{ connection.channel_type === 'zalo' ? 'Zalo' : connection.channel_type === 'tiktok' ? 'TikTok' : 'Telegram' }}</strong><span class="webhook-status" :class="{ connected: connection.webhook_status === 'connected' }">{{ connection.webhook_status === 'connected' ? 'Đang hoạt động' : connection.webhook_status === 'disconnected' ? 'Đã ngắt' : 'Cần kiểm tra' }}</span></div><small>{{ connection.name }} · nhận tin riêng cho shop.</small></article>
+            <article v-for="connection in botConnections" :key="`webhook-${connection.id}`" class="webhook-item"><div><strong>{{ connection.channel_type === 'zalo' ? 'Zalo' : connection.channel_type === 'tiktok' ? 'TikTok' : connection.channel_type === 'shopee' ? 'Shopee' : 'Telegram' }}</strong><span class="webhook-status" :class="{ connected: connection.webhook_status === 'connected' }">{{ connection.webhook_status === 'connected' ? 'Đang hoạt động' : connection.webhook_status === 'disconnected' ? 'Đã ngắt' : 'Cần kiểm tra' }}</span></div><small>{{ connection.name }} · nhận tin riêng cho shop.</small></article>
           </div>
           <div v-if="!botConnections.length && !metaStatus.connected" class="settings-empty">Chưa có điểm nhận sự kiện nào được đăng ký.</div>
         </div>
@@ -15317,9 +15454,22 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 .bot-connect-guide-single > div:last-child { min-width: 0; flex: 1 1 250px; }
 .bot-connect-guide-single ol { margin: 0 0 8px; padding-left: 20px; color: var(--owly-muted); line-height: 1.55; }
 .bot-connect-guide-single .bot-guide-link { display: inline-flex; }
+.tiktok-setup-tabs { display: flex; gap: 6px; margin: 0 0 10px; padding: 4px; border: 1px solid var(--owly-border); border-radius: 12px; background: var(--owly-surface-soft); }
+.tiktok-setup-tabs button { flex: 1; min-height: 40px; padding: 8px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--owly-muted); font: inherit; font-weight: 750; cursor: pointer; }
+.tiktok-setup-tabs button[aria-selected="true"] { background: var(--owly-surface); color: var(--salon-accent-strong); box-shadow: 0 1px 4px #172b3a1a; }
+.tiktok-setup-tabs button:focus-visible { outline: 2px solid var(--salon-accent); outline-offset: 2px; }
+.tiktok-setup-panel { padding: 16px 18px; border: 1px solid var(--owly-border); border-radius: 14px; background: var(--owly-surface-soft); color: var(--owly-ink); }
+.tiktok-setup-panel h4 { margin: 0 0 8px; color: var(--owly-ink); }
+.tiktok-setup-panel p { margin: 0 0 8px; color: var(--owly-muted); line-height: 1.5; }
+.tiktok-setup-panel ol { margin: 0; padding-left: 22px; color: var(--owly-muted); line-height: 1.55; }
+.tiktok-cookie-panel { border-color: color-mix(in srgb, var(--salon-accent) 38%, var(--owly-border)); }
 .tiktok-bridge-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 12px; }
 .tiktok-bridge-actions button, .tiktok-bridge-actions a { width: 100%; margin-top: 0; }
 .tiktok-bridge-actions a { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.local-connector-pairing { display: flex; align-items: end; gap: 10px; margin-top: 12px; }
+.local-connector-pairing label { display: grid; flex: 1; gap: 6px; min-width: 0; color: var(--owly-muted); font-size: .86rem; font-weight: 700; }
+.local-connector-pairing input { width: 100%; min-width: 0; min-height: 42px; padding: 9px 12px; border: 1px solid var(--owly-border); border-radius: 10px; background: var(--owly-surface); color: var(--owly-ink); font: 600 .92rem ui-monospace, SFMono-Regular, Consolas, monospace; }
+.local-connector-pairing button { flex: 0 0 auto; }
 .business-days-fieldset { margin: 8px 0 18px; padding: 12px 14px 14px; border: 1px solid var(--owly-border); border-radius: 12px; }
 .business-days-fieldset legend { padding: 0 6px; color: var(--owly-ink); font-weight: 800; }
 .business-day-options { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
@@ -15460,6 +15610,14 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 .crm-dark .meta-channel-card > div:first-child p,
 .crm-dark .bot-provider-heading p,
 .crm-dark .bot-connect-guide-single ol,
+.crm-dark .tiktok-setup-panel ol,
+.crm-dark .tiktok-setup-panel p { color: #e1e8eb !important; }
+.crm-dark .tiktok-setup-tabs { background: #1a1e20; border-color: #394145; }
+.crm-dark .tiktok-setup-tabs button { color: #b6c0c5; }
+.crm-dark .tiktok-setup-tabs button[aria-selected="true"] { background: #2a3438; color: #baf7f2; }
+.crm-dark .tiktok-setup-panel { background: #202427; border-color: #394145; color: #f3f5f6; }
+.crm-dark .tiktok-setup-panel h4 { color: #f3f5f6; }
+.crm-dark .local-connector-pairing input { color: #f3f5f6 !important; background: #191d1f !important; border-color: #465156 !important; }
 .crm-dark .business-days-fieldset .field-hint,
 .crm-dark .webhook-item small { color: #b6c0c5 !important; }
 .crm-dark .meta-connection-details { background: #252a2d !important; border-color: #394145 !important; color: #e5eaec !important; }
@@ -15676,6 +15834,7 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
   .meta-channel-grid { grid-template-columns: 1fr; }
   .bot-connect-guide-single { align-items: flex-start; }
   .tiktok-bridge-actions { grid-template-columns: 1fr; }
+  .local-connector-pairing { align-items: stretch; flex-direction: column; }
   .business-day-options { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .dark-mode-toggle { width: 38px; height: 38px; }
 }
