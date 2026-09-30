@@ -57,15 +57,83 @@ Mở:
 Tạo file môi trường trước:
 
 ```bash
+copy .env.example .env
 cd backend
 copy .env.example .env
 cd ..
 docker compose up --build
 ```
 
-Backend sẽ tự khởi tạo pgvector, các bảng dữ liệu và vector index khi bắt đầu.
+Trước khi chạy, thay các giá trị `CHANGE_ME` trong `.env` bằng thông tin
+riêng. Compose dùng `DATABASE_URL` ở file `.env` gốc để kết nối tới service
+`db`; tuyệt đối không commit file `.env`.
 
-Schema được tạo tự động từ `backend/app/database/init_db.py`. File SQL trong `docs/` chỉ dùng để kiểm tra hoặc chạy thủ công trên DBeaver khi cần.
+Backend sẽ tự khởi tạo pgvector và các bảng dữ liệu khi bắt đầu. Sau mỗi lần
+cập nhật tính năng, áp dụng migration mới bằng:
+
+```powershell
+docker compose exec backend python -m alembic upgrade head
+```
+
+## Chatbot runtime
+
+Các tính năng chatbot nâng cao được quản lý theo từng `X-Business-Id`:
+
+- `GET/PUT /api/chatbot/config`: bật/tắt bot, Top-K/ngưỡng RAG và giờ hoạt động.
+- `GET/POST/PATCH/DELETE /api/chatbot/canned-responses`: mẫu trả lời nhanh như `/cod`.
+- `POST /api/chatbot/conversations/{id}/pause|resume`: nhân viên tiếp quản hoặc trả hội thoại về bot.
+- `GET /api/chatbot/conversations/{id}/memory` và `POST /api/chatbot/conversations/{id}/tools/execute`: memory và allow-list tool có kiểm tra tenant.
+- `GET/POST /api/chatbot/followups`, `POST /api/chatbot/followups/dispatch`: nhắc lại đơn nháp/bỏ giỏ và chăm sóc chủ động. Báo giá bỏ dở được nhắc sau 2 giờ; đơn chuyển `delivered` được nhắc chăm sóc sau 24 giờ; khách xác nhận hoặc hủy thì nhắc bỏ giỏ được hủy.
+- `GET /api/chatbot/csat`: danh sách phản hồi CSAT và điểm trung bình theo shop. Khi ticket chuyển sang `resolved` hoặc `closed`, hệ thống tự gửi khảo sát 1–5 sao sau follow-up.
+- Provider LLM/embedding có thể nhận danh sách key phân tách bằng dấu phẩy qua `GROQ_API_KEYS`, `LLM_API_KEYS` và `EMBEDDING_API_KEYS`. Hệ thống xoay vòng theo lượt, tạm ngưng key khi gặp lỗi quota/rate-limit/auth và không ghi raw key vào log.
+
+Worker CRM hiện có thể xử lý job `chatbot.followup`; môi trường development có thể gọi
+endpoint dispatch theo lịch (ví dụ mỗi phút). Outbound webhook và setup wizard
+không nằm trong phạm vi bản này.
+
+Kiểm tra phiên bản schema:
+
+```powershell
+docker compose exec backend python -m alembic current
+```
+
+Schema được quản lý bằng Alembic trong `backend/alembic/`; không cần xóa DB
+hiện tại để cập nhật.
+
+## 3.1 Media đa kênh
+
+Ảnh, âm thanh, sticker, video và file được chuẩn hóa qua cùng contract rồi lưu
+tenant-scoped trong `message_attachments`. Sau khi cập nhật code, chạy:
+
+```powershell
+docker compose exec backend python -m alembic upgrade head
+```
+
+Inbox tải media qua `GET /api/media/{attachment_id}`; API tự kiểm tra tenant và
+không đưa channel token ra trình duyệt. Nhân viên gửi media bằng
+`POST /api/conversations/{conversation_id}/send-media`. Xem chi tiết endpoint,
+giới hạn provider và lệnh kiểm thử trong [`backend/README.md`](backend/README.md).
+
+## 3.2 Bàn giao cho người khác chạy từ Git
+
+Branch bàn giao gồm toàn bộ frontend, backend, Docker Compose, migration và seed
+dữ liệu mặc định. Database không được commit kèm mật khẩu hoặc dữ liệu shop thật;
+PostgreSQL sẽ tự tạo ba database (`crm_chatbot`, `crm_platform`, `crm_tenant`)
+và backend tự chạy migration khi khởi động.
+
+Sau khi clone:
+
+```powershell
+copy .env.example .env
+# Đổi POSTGRES_PASSWORD và DATABASE_URL trong .env cho cùng một mật khẩu.
+copy backend\.env.example backend\.env
+docker compose up --build
+```
+
+Mở frontend tại `http://localhost:5173`, API tại `http://localhost:8000/docs`.
+Không copy các file `.env` thật, token kênh, cookie TikTok hoặc database dump lên
+Git. Nếu cần chuyển dữ liệu thật, dùng file dump riêng và khôi phục vào PostgreSQL
+sau khi các container đã khởi động.
 
 ## 4. Facebook Webhook
 
@@ -75,10 +143,11 @@ Callback URL:
 https://TEN-MIEN-PUBLIC/api/webhooks/facebook
 ```
 
-Verify Token mặc định:
+Verify Token:
 
 ```text
-crm_chatbot_2026
+Giá trị riêng do bạn tạo và cấu hình trong `backend/.env` (`FACEBOOK_VERIFY_TOKEN`).
+Không còn giá trị mặc định dùng chung.
 ```
 
 Có thể đổi trong:
@@ -119,7 +188,7 @@ Không chạy `uvicorn main:app` vì file `main.py` nằm trong thư mục `app`
 
 ## 7. Thiết kế CSDL và Use Case
 
-Thiết kế 20 bảng, ma trận Use Case và các sơ đồ Mermaid nằm tại:
+Thiết kế dữ liệu nền, ma trận Use Case và các sơ đồ Mermaid nằm tại:
 
 - `docs/database-use-cases.md`
 - `docs/diagrams/erd.mmd`

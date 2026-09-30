@@ -8,10 +8,10 @@ from decimal import Decimal
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 
 
-class Product(Base):
+class Product(TenantBase):
     __tablename__ = "products"
     __table_args__ = (
         UniqueConstraint("business_id", "sku", name="uq_products_business_sku"),
@@ -19,7 +19,7 @@ class Product(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=False,
         index=True,
     )
@@ -28,6 +28,7 @@ class Product(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reserved_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -37,11 +38,10 @@ class Product(Base):
         onupdate=func.now(),
     )
 
-    business = relationship("Business", back_populates="products")
     order_items = relationship("OrderItem", back_populates="product")
 
 
-class Order(Base):
+class Order(TenantBase):
     __tablename__ = "orders"
     __table_args__ = (
         UniqueConstraint("business_id", "order_number", name="uq_orders_business_number"),
@@ -49,7 +49,7 @@ class Order(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     business_id: Mapped[int] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+        Integer,
         nullable=False,
         index=True,
     )
@@ -65,8 +65,19 @@ class Order(Base):
     order_number: Mapped[str] = mapped_column(String(60), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft")
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    reserved_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Draft orders hold inventory only for a short window.  The worker releases
+    # this reservation after the deadline while keeping the draft auditable.
+    reservation_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    payment_status: Mapped[str] = mapped_column(String(30), nullable=False, default="unpaid", server_default="unpaid")
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    refunded_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, server_default="0")
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     shipping_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     shipping_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    shipping_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    tracking_code: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    shipping_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -75,13 +86,13 @@ class Order(Base):
         onupdate=func.now(),
     )
 
-    business = relationship("Business", back_populates="orders")
     customer = relationship("Customer", back_populates="orders")
     conversation = relationship("Conversation", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    payments = relationship("OrderPayment", back_populates="order", cascade="all, delete-orphan")
 
 
-class OrderItem(Base):
+class OrderItem(TenantBase):
     __tablename__ = "order_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -97,6 +108,8 @@ class OrderItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    product_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     order = relationship("Order", back_populates="items")
     product = relationship("Product", back_populates="order_items")

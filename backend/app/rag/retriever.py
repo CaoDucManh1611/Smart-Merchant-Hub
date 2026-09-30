@@ -7,6 +7,7 @@ may not always be represented well by an embedding model.
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 
 from sqlalchemy import text as sa_text
@@ -14,6 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.rag.embedder import embed_query
+from app.rag.run_logger import query_metadata
+from app.rag.topics import infer_query_topic, topic_matches
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +36,14 @@ class RetrievedChunk:
     content: str
     similarity: float
     metadata: dict | None
+    filename: str | None = None
+    chunk_index: int | None = None
 
 
 def retrieve(
     query: str,
     db: Session,
+    business_id: int,
     top_k: int | None = None,
     similarity_threshold: float | None = None,
 ) -> list[RetrievedChunk]:
@@ -62,32 +68,62 @@ def retrieve(
     if similarity_threshold is None:
         similarity_threshold = settings.RAG_SIMILARITY_THRESHOLD
 
+    query_topic = infer_query_topic(query)
+    started = time.perf_counter()
+
     # Always collect lexical candidates.  They are especially important for
     # product names, SKU codes and documents ingested without embeddings.
-    lexical_results = _retrieve_lexical(query, db, max(top_k * 3, top_k))
+    lexical_results = _retrieve_lexical(
+        query,
+        db,
+        max(top_k * 3, top_k),
+        business_id=business_id,
+        query_topic=query_topic,
+        similarity_threshold=similarity_threshold,
+    )
     vector_results: list[RetrievedChunk] = []
 
     # Bước 1: Embed câu hỏi thành vector; nếu hết quota vẫn dùng từ khóa.
-    logger.info("Embedding query: %s", query[:100])
+    # Keep customer text out of logs; the short fingerprint is enough to
+    # correlate a retry without exposing the prompt or personal data.
+    query_meta = query_metadata(query)
+    logger.info(
+        "Embedding query: chars=%s hash=%s",
+        query_meta["query_chars"],
+        query_meta["query_hash"],
+    )
     try:
         query_vector = embed_query(query)
     except Exception as error:
-        logger.warning("Vector query unavailable; using lexical retrieval: %s", error)
+        logger.warning(
+            "Vector query unavailable; using lexical retrieval: error_type=%s",
+            type(error).__name__,
+        )
+        logger.info(
+            "RAG retrieval complete: topic=%s lexical=%d vector=0 returned=%d duration_ms=%.2f",
+            query_topic,
+            len(lexical_results),
+            min(len(lexical_results), top_k),
+            (time.perf_counter() - started) * 1000,
+        )
         return lexical_results[:top_k]
 
     # Search pgvector using a bound parameter.  Do not interpolate the vector
     # into SQL even though it currently comes from a trusted provider.
     vector_str = "[" + ",".join(f"{float(value):.10g}" for value in query_vector) + "]"
-    raw_sql = """
+    raw_sql = f"""
         SELECT
             dc.id,
             dc.document_id,
             dc.content,
             dc.metadata AS chunk_metadata,
+            d.filename AS source_filename,
+            dc.chunk_index,
             1 - (dc.embedding <=> CAST(:query_vector AS vector)) AS similarity
         FROM document_chunks dc
         JOIN documents d ON d.id = dc.document_id
         WHERE d.status = 'ready'
+          AND d.business_id = :business_id
           AND dc.embedding IS NOT NULL
           AND 1 - (dc.embedding <=> CAST(:query_vector AS vector)) >= :threshold
         ORDER BY dc.embedding <=> CAST(:query_vector AS vector)
@@ -99,14 +135,22 @@ def retrieve(
             sa_text(raw_sql),
             {
                 "query_vector": vector_str,
+                "business_id": business_id,
                 "threshold": similarity_threshold,
                 "top_k": max(top_k * 3, top_k),
             },
         ).fetchall()
     except Exception as error:
         logger.warning(
-            "pgvector search unavailable; using lexical retrieval: %s",
-            error,
+            "pgvector search unavailable; using lexical retrieval: error_type=%s",
+            type(error).__name__,
+        )
+        logger.info(
+            "RAG retrieval complete: topic=%s lexical=%d vector=0 returned=%d duration_ms=%.2f",
+            query_topic,
+            len(lexical_results),
+            min(len(lexical_results), top_k),
+            (time.perf_counter() - started) * 1000,
         )
         return lexical_results[:top_k]
 
@@ -120,16 +164,22 @@ def retrieve(
                 content=row_data["content"],
                 similarity=float(row_data["similarity"]),
                 metadata=row_data["chunk_metadata"],
+                filename=row_data["source_filename"],
+                chunk_index=row_data["chunk_index"],
             )
         )
 
-    results = _merge_hybrid_results(vector_results, lexical_results, top_k)
+    results = _merge_hybrid_results(vector_results, lexical_results, top_k, topic=query_topic)
 
     logger.info(
-        "Retrieved %d chunks (top_k=%d, threshold=%.2f)",
+        "Retrieved %d chunks (top_k=%d, threshold=%.2f, topic=%s, lexical=%d, vector=%d, duration_ms=%.2f)",
         len(results),
         top_k,
         similarity_threshold,
+        query_topic,
+        len(lexical_results),
+        len(vector_results),
+        (time.perf_counter() - started) * 1000,
     )
 
     return results
@@ -139,25 +189,28 @@ def _merge_hybrid_results(
     vector_results: list[RetrievedChunk],
     lexical_results: list[RetrievedChunk],
     top_k: int,
+    topic: str | None = None,
 ) -> list[RetrievedChunk]:
     """Merge semantic and lexical candidates without duplicate chunks."""
     merged: dict[int, tuple[RetrievedChunk, float]] = {}
 
     for item in vector_results:
         # Semantic search is the primary signal.
-        merged[item.chunk_id] = (item, 0.65 * item.similarity)
+        topic_bonus = 0.15 if topic_matches(item.metadata, topic) else 0
+        merged[item.chunk_id] = (item, 0.65 * item.similarity + topic_bonus)
 
     for item in lexical_results:
         existing = merged.get(item.chunk_id)
         if existing is None:
-            merged[item.chunk_id] = (item, 0.35 * item.similarity)
+            topic_bonus = 0.15 if topic_matches(item.metadata, topic) else 0
+            merged[item.chunk_id] = (item, 0.35 * item.similarity + topic_bonus)
             continue
 
         current_item, current_score = existing
         current_item.similarity = max(current_item.similarity, item.similarity)
         merged[item.chunk_id] = (
             current_item,
-            current_score + 0.35 * item.similarity,
+            current_score + 0.35 * item.similarity + (0.15 if topic_matches(item.metadata, topic) else 0),
         )
 
     ranked = sorted(merged.values(), key=lambda pair: pair[1], reverse=True)
@@ -168,6 +221,9 @@ def _retrieve_lexical(
     query: str,
     db: Session,
     top_k: int,
+    business_id: int,
+    query_topic: str | None = None,
+    similarity_threshold: float | None = None,
 ) -> list[RetrievedChunk]:
     """Tìm kiếm từ khóa trong toàn bộ chunks, kể cả chunk không có vector."""
     identifiers = list(
@@ -216,23 +272,27 @@ def _retrieve_lexical(
     rows = db.execute(
         sa_text(
             f"""
-            SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata
+            SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
+                   d.filename AS source_filename, dc.chunk_index
             FROM document_chunks dc
             JOIN documents d ON d.id = dc.document_id
-            WHERE d.status = 'ready' AND ({conditions})
+            WHERE d.status = 'ready'
+              AND d.business_id = :business_id
+              AND ({conditions})
             ORDER BY {exact_order}
             LIMIT :candidate_limit
             """
         ),
-        {**params, "candidate_limit": max(100, top_k * 40)},
+        {**params, "business_id": business_id, "candidate_limit": max(100, top_k * 40)},
     ).fetchall()
 
-    scored = []
+    scored: list[tuple[float, RetrievedChunk]] = []
     for row in rows:
         row_data = row._mapping
         content = row_data["content"]
         content_lower = content.lower()
-        matched = sum(token in content_lower for token in tokens)
+        content_tokens = set(re.findall(r"[\wÀ-ỹ]+", content_lower, flags=re.UNICODE))
+        matched = sum(token in content_tokens for token in tokens)
         coverage = matched / len(tokens) if tokens else 0
         exact_identifier = any(
             identifier in content_lower
@@ -240,19 +300,19 @@ def _retrieve_lexical(
         )
         phrase_bonus = 0.12 if " ".join(tokens[:2]) in content_lower else 0
         identifier_bonus = 0.35 if exact_identifier else 0
-        score = min(
-            0.99,
-            0.45 + coverage * 0.25 + phrase_bonus + identifier_bonus,
-        )
-        scored.append(
-            RetrievedChunk(
+        score = min(0.99, coverage * 0.7 + phrase_bonus + identifier_bonus)
+        if similarity_threshold is not None and score < similarity_threshold:
+            continue
+        topic_bonus = 0.15 if topic_matches(row_data["chunk_metadata"], query_topic) else 0
+        scored.append((score + topic_bonus, RetrievedChunk(
                 chunk_id=row_data["id"],
                 document_id=row_data["document_id"],
                 content=content,
                 similarity=score,
                 metadata=row_data["chunk_metadata"],
-            )
-        )
+                filename=row_data["source_filename"],
+                chunk_index=row_data["chunk_index"],
+            )))
 
-    scored.sort(key=lambda item: item.similarity, reverse=True)
-    return scored[:top_k]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [item for _rank, item in scored[:top_k]]

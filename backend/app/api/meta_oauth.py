@@ -2,27 +2,59 @@
 
 from __future__ import annotations
 
-import secrets
-import time
-from datetime import datetime, timezone
+import asyncio
+import logging
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
+from app.database.platform_session import PlatformSessionLocal, get_platform_db
+from app.database.tenant_session import tenant_session
 
 from app.core.config import settings
-from app.services.meta_config_service import (
-    META_KEYS,
-    clear_meta_config,
-    get_meta_config,
-    get_setting_value,
-    save_meta_config,
-    save_settings,
-)
+from app.models.channel import Channel
+from app.auth.dependencies import require_admin_access
+from app.tenancy.context import TenantContext
+from app.tenancy.dependencies import get_tenant_context
+from app.tenancy.oauth import consume_oauth_state, issue_oauth_state, register_oauth_state, verify_oauth_state
+from app.tenancy.schema import schema_name_for
+from app.tenancy.registry import register_webhook_route, deactivate_route_for_channel
+from app.services.channel_service import channel_credential_status, upsert_channel_connection
+from app.services.quota_service import QuotaExceededError, release_quota, reserve_quota
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# Kept as a narrow compatibility seam for older integration tests and local
+# scripts that injected a single-database ``SessionLocal``.  Runtime requests
+# use ``tenant_session`` below, so this value is intentionally unset in normal
+# operation and cannot bypass tenant schema routing accidentally.
+SessionLocal = None
+
+
+@contextmanager
+def _tenant_db(business_id: int):
+    """Open the tenant session, honoring an explicit legacy test injection."""
+    if SessionLocal is None:
+        with tenant_session(schema_name_for(int(business_id))) as db:
+            yield db
+        return
+
+    resource = SessionLocal()
+    if hasattr(resource, "__enter__"):
+        with resource as db:
+            yield db
+        return
+    try:
+        yield resource
+    finally:
+        close = getattr(resource, "close", None)
+        if callable(close):
+            close()
 
 
 def _redirect_uri() -> str:
@@ -64,6 +96,57 @@ def _graph_url(path: str) -> str:
     return f"https://graph.facebook.com/{version}/{path.lstrip('/')}"
 
 
+def _token_expiry_from_payload(token_data: dict) -> str | None:
+    """Store only a derived expiry, never the provider token itself."""
+    try:
+        lifetime = int(token_data.get("expires_in") or 0)
+    except (TypeError, ValueError):
+        return None
+    if lifetime <= 0:
+        return None
+    return (datetime.now(timezone.utc) + timedelta(seconds=lifetime)).isoformat()
+
+
+async def _subscribe_page_messages(
+    client: httpx.AsyncClient,
+    *,
+    page_id: str,
+    access_token: str,
+) -> str:
+    """Register Meta message delivery with bounded retries for 429/5xx."""
+    for attempt in range(1, 4):
+        try:
+            response = await client.post(
+                _graph_url(f"{page_id}/subscribed_apps"),
+                params={"access_token": access_token, "subscribed_fields": "messages"},
+                timeout=30,
+            )
+        except httpx.RequestError as exc:
+            retryable = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+            logger.warning(
+                "Meta webhook registration failed: provider=meta attempt=%s/3 retryable=%s error_type=%s",
+                attempt,
+                retryable,
+                type(exc).__name__,
+            )
+            if not retryable or attempt == 3:
+                return "subscription_failed"
+        else:
+            if response.status_code < 400:
+                return "subscribed_messages"
+            retryable = response.status_code in {408, 425, 429, 500, 502, 503, 504}
+            logger.warning(
+                "Meta webhook registration rejected: provider=meta attempt=%s/3 status=%s retryable=%s",
+                attempt,
+                response.status_code,
+                retryable,
+            )
+            if not retryable or attempt == 3:
+                return "subscription_failed"
+        await asyncio.sleep(0.25 * (2 ** (attempt - 1)))
+    return "subscription_failed"
+
+
 async def _graph_get(
     client: httpx.AsyncClient,
     path: str,
@@ -86,38 +169,60 @@ async def _graph_get(
 
 
 @router.get("/meta/status")
-async def meta_oauth_status() -> dict:
-    config = get_meta_config()
-    # Do not treat the legacy single-shop values from .env as an OAuth
-    # connection. OAuth is complete only after the callback persists the
-    # Meta user and connection timestamp in app_settings.
-    oauth_connected = bool(
-        config["facebook_page_access_token"]
-        and config["meta_user_id"]
-        and config["connected_at"]
+async def meta_oauth_status(
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict:
+    # Credential state is tenant-owned in ``channels``.  app_settings only
+    # retains non-secret display metadata during the transition from the old
+    # single-shop integration.
+    with _tenant_db(tenant.business_id) as db:
+        facebook = db.query(Channel).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.channel_type == "facebook",
+            Channel.status == "active",
+            Channel.access_token_encrypted.is_not(None),
+        ).first()
+        instagram = db.query(Channel).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.channel_type == "instagram",
+            Channel.status == "active",
+        ).first()
+
+    channel_config = facebook.config or {} if facebook else {}
+    connected_at = (
+        facebook.connected_at or facebook.created_at
+        if facebook else None
     )
     return {
-        "connected": oauth_connected,
-        "facebook_page_id": config["facebook_page_id"],
-        "facebook_page_name": config["facebook_page_name"],
-        "instagram_account_id": config["instagram_account_id"],
-        "instagram_account_name": config["instagram_account_name"],
-        "subscription_status": config["subscription_status"],
-        "connected_at": config["connected_at"],
+        "connected": facebook is not None,
+        "facebook_page_id": facebook.external_account_id if facebook else "",
+        "facebook_page_name": facebook.name if facebook else "",
+        "instagram_account_id": instagram.external_account_id if instagram else "",
+        "instagram_account_name": instagram.name if instagram else "",
+        "subscription_status": channel_config.get("subscription_status", "not_attempted"),
+        "credential": channel_credential_status(facebook),
+        "connected_at": connected_at.isoformat() if connected_at else "",
     }
 
 
-@router.get("/meta/start")
-async def start_meta_oauth() -> RedirectResponse:
-    app_id, _, redirect_uri = _require_oauth_settings()
-    state = secrets.token_urlsafe(32)
-    save_settings(
-        {
-            META_KEYS["oauth_state"]: state,
-            META_KEYS["oauth_state_created_at"]: str(time.time()),
-        }
-    )
-
+@router.get(
+    "/meta/start",
+    dependencies=[Depends(require_admin_access)],
+    # This endpoint returns either JSON (when the SPA requests the provider
+    # URL) or a redirect (for direct browser navigation).  FastAPI cannot
+    # derive a Pydantic response model from the union of those two types.
+    response_model=None,
+)
+async def start_meta_oauth(
+    tenant: TenantContext = Depends(get_tenant_context),
+    return_url: bool = Query(default=False),
+) -> RedirectResponse | dict:
+    app_id, app_secret, redirect_uri = _require_oauth_settings()
+    if not app_secret:
+        raise HTTPException(status_code=500, detail="META_APP_SECRET is required for signed OAuth state")
+    state = issue_oauth_state(tenant.business_id, app_secret)
+    with _tenant_db(tenant.business_id) as db:
+        register_oauth_state(db, state, app_secret)
     scope = (
         "pages_show_list,pages_read_engagement,pages_manage_metadata,"
         "pages_messaging,instagram_basic,instagram_manage_messages"
@@ -131,10 +236,15 @@ async def start_meta_oauth() -> RedirectResponse:
             "response_type": "code",
         }
     )
-    return RedirectResponse(
-        url=f"https://www.facebook.com/{settings.META_GRAPH_VERSION}/dialog/oauth?{query}",
-        status_code=307,
+    authorization_url = (
+        f"https://www.facebook.com/{settings.META_GRAPH_VERSION}/dialog/oauth?{query}"
     )
+    # A browser navigation cannot attach the CRM bearer token.  The SPA asks
+    # for this JSON form through its authenticated API helper, then navigates
+    # to Meta only after a tenant-scoped state has been issued.
+    if return_url:
+        return {"authorization_url": authorization_url}
+    return RedirectResponse(url=authorization_url, status_code=307)
 
 
 @router.get("/meta/callback")
@@ -147,15 +257,16 @@ async def meta_oauth_callback(
     if error:
         return _frontend_redirect("error", error_description or error)
 
-    expected_state = get_setting_value(META_KEYS["oauth_state"])
-    created_at = get_setting_value(META_KEYS["oauth_state_created_at"])
     try:
-        state_is_fresh = time.time() - float(created_at) < 600
-    except (TypeError, ValueError):
-        state_is_fresh = False
-
-    if not code or not state or state != expected_state or not state_is_fresh:
+        # Verify the signed state before selecting a tenant schema.  The
+        # business id is trusted only after the HMAC and expiry checks pass.
+        state_payload = verify_oauth_state(state or "", settings.META_APP_SECRET)
+        with _tenant_db(int(state_payload["business_id"])) as db:
+            state_payload = consume_oauth_state(db, state or "", settings.META_APP_SECRET)
+    except (PermissionError, ValueError, KeyError):
         return _frontend_redirect("error", "OAuth state không hợp lệ hoặc đã hết hạn.")
+    if not code:
+        return _frontend_redirect("error", "OAuth code không hợp lệ.")
 
     try:
         app_id, app_secret, redirect_uri = _require_oauth_settings()
@@ -179,6 +290,7 @@ async def meta_oauth_callback(
                 )
 
             user_token = token_data["access_token"]
+            token_expires_at = _token_expiry_from_payload(token_data)
             user = await _graph_get(
                 client,
                 "me",
@@ -215,41 +327,129 @@ async def meta_oauth_callback(
                 )
 
             instagram = page.get("instagram_business_account") or {}
-            subscription_status = "not_attempted"
-            subscription_response = await client.post(
-                _graph_url(f"{page['id']}/subscribed_apps"),
-                params={
-                    "access_token": page_token,
-                    "subscribed_fields": "messages",
-                },
-                timeout=30,
+            if not settings.CHANNEL_ENCRYPTION_KEY:
+                raise RuntimeError("CHANNEL_ENCRYPTION_KEY is required for channel credentials")
+            business_id = int(state_payload["business_id"])
+            schema_name = schema_name_for(business_id)
+            with PlatformSessionLocal() as platform_db:
+                with _tenant_db(business_id) as db:
+                    facebook_channel = upsert_channel_connection(
+                        db,
+                        business_id=business_id,
+                        channel_type="facebook",
+                        external_account_id=str(page["id"]),
+                        name=str(page.get("name") or page["id"]),
+                        access_token=str(page_token),
+                        config={
+                            "meta_user_id": str(user.get("id") or ""),
+                            **({"token_expires_at": token_expires_at} if token_expires_at else {}),
+                        },
+                        reserve_channel_slot=lambda: reserve_quota(
+                            platform_db, business_id, "connected_channels"
+                        ),
+                        commit=False,
+                    )
+                    instagram_channel = None
+                    if instagram.get("id"):
+                        instagram_channel = upsert_channel_connection(
+                            db,
+                            business_id=business_id,
+                            channel_type="instagram",
+                            external_account_id=str(instagram["id"]),
+                            name=str(instagram.get("username") or instagram["id"]),
+                            access_token=str(page_token),
+                            config={
+                                "facebook_page_id": str(page["id"]),
+                                **({"token_expires_at": token_expires_at} if token_expires_at else {}),
+                            },
+                            reserve_channel_slot=lambda: reserve_quota(
+                                platform_db, business_id, "connected_channels"
+                            ),
+                            commit=False,
+                        )
+                    # Meta deliveries use the Page/Instagram account id as the
+                    # opaque route key; only its HMAC is retained globally.
+                    register_webhook_route(
+                        platform_db,
+                        provider="facebook",
+                        external_account_id=str(page["id"]),
+                        webhook_secret=None,
+                        business_id=business_id,
+                        schema_name=schema_name,
+                        channel_id=facebook_channel.id,
+                    )
+                    if instagram_channel is not None:
+                        register_webhook_route(
+                            platform_db,
+                            provider="instagram",
+                            external_account_id=str(instagram["id"]),
+                            webhook_secret=None,
+                            business_id=business_id,
+                            schema_name=schema_name,
+                            channel_id=instagram_channel.id,
+                        )
+                platform_db.commit()
+            subscription_status = await _subscribe_page_messages(
+                client,
+                page_id=str(page["id"]),
+                access_token=str(page_token),
             )
-            if subscription_response.status_code < 400:
-                subscription_status = "subscribed_messages"
-            else:
-                subscription_status = "subscription_failed"
 
-            save_meta_config(
-                {
-                    "facebook_page_id": str(page["id"]),
-                    "facebook_page_name": str(page.get("name") or ""),
-                    "facebook_page_access_token": str(page_token),
-                    "instagram_account_id": str(instagram.get("id") or ""),
-                    "meta_user_id": str(user.get("id") or ""),
-                    "meta_user_name": str(user.get("name") or ""),
-                    "connected_at": datetime.now(timezone.utc).isoformat(),
-                    "subscription_status": subscription_status,
-                    "oauth_state": "",
-                    "oauth_state_created_at": "",
-                }
-            )
+            with _tenant_db(business_id) as db:
+                facebook_channel = db.query(Channel).filter(
+                    Channel.business_id == business_id,
+                    Channel.channel_type == "facebook",
+                    Channel.external_account_id == str(page["id"]),
+                ).first()
+                if facebook_channel is not None:
+                    facebook_channel.config = {
+                        **(facebook_channel.config or {}),
+                        "meta_user_id": str(user.get("id") or ""),
+                        "subscription_status": subscription_status,
+                    }
+                    db.commit()
 
             return _frontend_redirect("connected", subscription_status)
-    except Exception as exc:
-        return _frontend_redirect("error", str(exc))
+    except QuotaExceededError:
+        logger.warning("Meta OAuth channel quota exhausted for tenant")
+        return _frontend_redirect("quota_exceeded", "Shop đã đạt giới hạn số kênh của gói dịch vụ.")
+    except Exception:
+        # Provider errors can contain request or account data.  Keep detailed
+        # diagnostics only in the redacted server log and never reflect them
+        # into a browser URL.
+        logger.exception("Meta OAuth callback failed")
+        return _frontend_redirect("error", "Không thể hoàn tất kết nối Meta. Hãy thử lại.")
 
 
-@router.delete("/meta/disconnect")
-async def disconnect_meta() -> dict:
-    clear_meta_config()
+@router.delete("/meta/disconnect", dependencies=[Depends(require_admin_access)])
+async def disconnect_meta(
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict:
+    """Revoke only this tenant's stored Meta channel credentials."""
+    active_channel_ids: list[int] = []
+    with _tenant_db(tenant.business_id) as db:
+        channels = db.query(Channel).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.channel_type.in_(("facebook", "instagram")),
+        ).all()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for channel in channels:
+            if channel.status == "active":
+                active_channel_ids.append(int(channel.id))
+            channel.status = "inactive"
+            channel.access_token = None
+            channel.access_token_encrypted = None
+            channel.disconnected_at = now
+        # Credential revocation is the security-critical operation and must
+        # not be rolled back merely because control-plane accounting is down.
+        db.commit()
+
+    try:
+        with PlatformSessionLocal() as platform_db:
+            for channel_id in active_channel_ids:
+                release_quota(platform_db, tenant.business_id, "connected_channels")
+                deactivate_route_for_channel(platform_db, channel_id)
+            platform_db.commit()
+    except Exception as exc:  # noqa: BLE001 - credentials are already revoked
+        logger.warning("Meta disconnect platform reconciliation deferred (%s)", type(exc).__name__)
     return {"connected": False}

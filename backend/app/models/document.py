@@ -8,23 +8,23 @@ DocumentChunk – từng đoạn text đã được chunk + vector embedding.
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import (
-    DateTime,
-    ForeignKey,
-    Integer,
-    JSON,
-    String,
-    Text,
-    func,
-)
+from sqlalchemy import DateTime, ForeignKey, Integer, Index, LargeBinary, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.session import Base
+from app.database.bases import TenantBase
 from app.core.config import settings
 
 
-class Document(Base):
+class Document(TenantBase):
     __tablename__ = "documents"
+    __table_args__ = (
+        Index(
+            "uq_documents_business_content_hash",
+            "business_id",
+            "content_hash",
+            unique=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         Integer,
@@ -32,7 +32,7 @@ class Document(Base):
     )
 
     business_id: Mapped[int | None] = mapped_column(
-        ForeignKey("businesses.id", ondelete="CASCADE"),
+Integer,
         nullable=True,
         index=True,
     )
@@ -71,6 +71,16 @@ class Document(Base):
         nullable=True,
     )
 
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    embedding_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending", server_default="pending", index=True
+    )
+    reindex_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
@@ -87,11 +97,20 @@ class Document(Base):
         cascade="all, delete-orphan",
     )
 
-    business = relationship("Business", back_populates="documents")
-
-
-class DocumentChunk(Base):
+class DocumentChunk(TenantBase):
     __tablename__ = "document_chunks"
+    __table_args__ = (
+        (
+            Index(
+                "idx_document_chunks_embedding_hnsw",
+                "embedding",
+                postgresql_using="hnsw",
+                postgresql_ops={"embedding": "vector_cosine_ops"},
+            ),
+        )
+        if settings.EMBEDDING_DIMENSION <= 2000
+        else ()
+    )
 
     id: Mapped[int] = mapped_column(
         Integer,

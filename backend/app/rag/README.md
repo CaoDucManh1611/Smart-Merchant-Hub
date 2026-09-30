@@ -46,6 +46,57 @@ transaction để không tạo dữ liệu trùng.
 - `POST /api/chat` – Chat (non-streaming)
 - `POST /api/chat/stream` – Chat (SSE streaming)
 
+### Tải liệu: giới hạn, trạng thái và xử lý lỗi
+
+- Giới hạn upload là **20 MiB**. Chỉ nhận PDF, DOCX, TXT, CSV, Markdown và HTML;
+  chữ ký PDF, cấu trúc ZIP/DOCX, văn bản rỗng và payload nhị phân được kiểm tra
+  trước khi tạo bản ghi hoặc tiêu quota.
+- Cùng một nội dung SHA-256 chỉ được nạp một lần trong **mỗi shop**. Tải trùng trả
+  `409` với header `X-Error-Code: duplicate_document`; shop khác vẫn có thể nạp
+  cùng tệp.
+- `DocumentOut.status`: `pending` → `processing` → `ready` hoặc `error`.
+  `error_code` là mã ổn định cho giao diện; `error_message` là thông báo có thể
+  hiển thị. `RagRunOut.status`: `queued`, `processing`, `completed`, `failed`;
+  run lỗi có thể retry bằng `POST /api/documents/runs/{run_id}/retry`.
+- Các mã thường gặp: `unsupported_file_type`, `empty_file`,
+  `invalid_file_content`, `empty_extracted_text`, `empty_document`,
+  `document_processing_failed`, `chunk_quota_exceeded`, `ai_quota_exceeded`.
+  Lỗi từ upload cũng có `X-Error-Code`; upload lỗi định dạng trả `400`, tệp trùng
+  trả `409`, quá quota trả `429`; tệp quá 20 MiB trả `400` với
+  `X-Error-Code: file_too_large`.
+- Reindex thay chunks cũ trong cùng transaction; xóa tài liệu xóa chunks liên
+  quan nên truy xuất không thể tiếp tục trả nội dung đã xóa.
+
+### Hợp đồng trích dẫn và handoff
+
+`POST /api/chat` trả `answer_status` (`answered`, `no_context`, `service_error`)
+và `handoff_required`. Mỗi nguồn trong `sources` có `citation_id`, `document_id`,
+`chunk_id`, `filename`, `chunk_index`, `content`, `similarity` và `metadata`.
+Nhãn `[Nguồn N]` trong câu trả lời khớp `citation_id`.
+
+Nếu truy xuất không có đoạn vượt ngưỡng liên quan, hệ thống không gọi LLM và trả
+thông báo chưa đủ thông tin với `answer_status=no_context`. Nếu LLM lỗi, chỉ trả
+thông báo an toàn với `answer_status=service_error`; không trả một phần câu trả
+lời chưa hoàn tất.
+
+Câu trả lời sinh ra phải có ít nhất một `[Nguồn N]`/`[Source N]` hợp lệ. Hệ thống
+từ chối giá tiền không có trong các đoạn được trích dẫn, kể cả nhầm VND/USD.
+Đây là kiểm tra nguồn và số tiền, **không phải** chứng minh mọi mệnh đề đều đúng;
+nhân viên vẫn cần duyệt câu trả lời có tác động đến giá/chính sách. Nếu kiểm tra
+không đạt, API trả `no_context` và cờ bàn giao thay vì hiển thị câu chưa xác minh.
+
+`POST /api/chat/stream` giữ các event `sources`, `chunk`, `done`. Event `done`
+thêm `answer_status` và `handoff_required`; khi LLM hỏng giữa stream, event
+`error` mang mã `service_unavailable`, `replace=true` và nội dung thay thế an toàn
+để giao diện loại bỏ phần trả lời dở dang.
+
+Trong auto-reply theo kênh, thiếu nguồn hoặc dịch vụ LLM lỗi sẽ gửi thông báo
+phù hợp, tạo notification `rag_handoff_required`, chuyển `bot_mode=human`, và
+ghi `resolution_outcome=needs_human`. Notification chỉ lưu mã lý do và ID hội
+thoại/khách hàng để nhân viên mở đúng hồ sơ, không lưu câu hỏi. Endpoint chat nội bộ
+chỉ trả cờ `handoff_required`; UI không được hiểu cờ này là hội thoại đã tự động
+được chuyển cho một nhân viên cụ thể.
+
 ## Cấu hình (.env)
 
 ```env
@@ -74,8 +125,10 @@ RAG_AUTO_REPLY_ENABLED=true
 Mỗi lần ingestion, chat, streaming chat hoặc auto-reply kết thúc sẽ ghi một dòng
 JSON vào `backend/rag_runs.jsonl`. Log có `run_id`, thời gian bắt đầu/kết
 thúc, trạng thái, số chunks tìm được/lưu, model, thời lượng và lỗi nếu có.
-Query và câu trả lời chỉ được ghi ở dạng rút gọn hoặc số ký tự, không ghi toàn bộ
-prompt/answer.
+Log mới chỉ giữ độ dài/hash rút gọn của câu hỏi, số liệu xử lý và loại lỗi;
+không lưu nội dung câu hỏi, câu trả lời, prompt, tên tệp hay chuỗi lỗi thô.
+Các log cũ có thể cần được rà soát theo chính sách lưu giữ dữ liệu trước khi
+đưa hệ thống vào môi trường thật.
 
 Lưu ý: pgvector HNSW chỉ hỗ trợ tối đa 2.000 chiều. Với Gemini embedding 3.072
 chiều, hệ thống bỏ qua HNSW để backend vẫn khởi động và dùng exact vector scan.

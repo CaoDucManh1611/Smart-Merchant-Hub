@@ -1,0 +1,127 @@
+"""Test bootstrap for the repository's optional migration runtime."""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+
+# Never let a local test run inherit Docker's ``db`` hostname or the restored
+# CRM database.  The environment must be set before test modules import the
+# global application engine.
+_TEST_RUNTIME = Path(__file__).parents[1] / ".pytest_tmp"
+_TEST_RUNTIME.mkdir(parents=True, exist_ok=True)
+# Pytest resolves a relative ``--basetemp`` from the invocation directory,
+# which may be either the repository root or ``backend``.
+(Path.cwd() / ".pytest_tmp").mkdir(parents=True, exist_ok=True)
+_GLOBAL_TEST_DATABASE = _TEST_RUNTIME / "global.db"
+_RUN_POSTGRES_TESTS = os.environ.get("RUN_POSTGRES_TESTS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+if not _RUN_POSTGRES_TESTS:
+    os.environ["DATABASE_URL"] = "sqlite:///" + _GLOBAL_TEST_DATABASE.as_posix()
+    os.environ["PLATFORM_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "platform.db").as_posix()
+    os.environ["TENANT_DATABASE_URL"] = "sqlite:///" + (_TEST_RUNTIME / "tenant.db").as_posix()
+os.environ["ENVIRONMENT"] = "test"
+os.environ["ALLOW_LEGACY_TENANT_HEADER"] = "true"
+os.environ["RATE_LIMIT_ENABLED"] = "false"
+os.environ["RATE_LIMIT_BACKEND"] = "memory"
+os.environ["REDIS_URL"] = ""
+os.environ["AUTH_LOGIN_RATE_LIMIT_ENABLED"] = "true"
+os.environ["AUTH_LOGIN_RATE_LIMIT_REQUESTS"] = "5"
+os.environ["AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS"] = "180"
+os.environ["AUTH_LOGIN_RATE_LIMIT_BACKEND"] = "memory"
+os.environ["SECRET_MANAGER_MODE"] = "disabled"
+os.environ["OTP_DELIVERY_MODE"] = "disabled"
+os.environ["OTP_DELIVERY_FALLBACK"] = "disabled"
+os.environ["OTP_FROM_EMAIL"] = ""
+os.environ["OTP_SMTP_HOST"] = ""
+os.environ["OTP_SMTP_USERNAME"] = ""
+os.environ["OTP_SMTP_PASSWORD"] = ""
+os.environ["OTP_TWILIO_ACCOUNT_SID"] = ""
+os.environ["OTP_TWILIO_AUTH_TOKEN"] = ""
+os.environ["OTP_TWILIO_FROM_NUMBER"] = ""
+os.environ["CHANNEL_ENCRYPTION_KEY"] = "pytest-channel-encryption-key"
+os.environ["CHANNEL_ROUTE_SECRET"] = "test-channel-route-secret-0123456789"
+os.environ["RAG_AUTO_REPLY_ENABLED"] = "false"
+os.environ["RAG_AUTO_SEED_ENABLED"] = "false"
+
+
+def _ensure_migration_dependencies() -> None:
+    """Make direct ``pytest`` runs find the bundled Alembic runtime.
+
+    Application dependencies are normally installed from requirements.txt.
+    The lightweight local test image keeps migration-only packages under
+    ``.migrationdeps`` instead, so collection should add that path only when
+    Alembic is not already installed in the active interpreter.
+    """
+    # The repository's migration directory is itself named ``alembic`` but
+    # is only a namespace (it has no ``config`` module), so checking the
+    # submodule avoids treating that folder as the installed package.
+    if importlib.util.find_spec("alembic.config") is not None:
+        return
+    bundled = Path(__file__).parents[1] / ".migrationdeps"
+    if bundled.is_dir():
+        sys.path.insert(0, str(bundled))
+        # Pytest may have imported the repository's migration directory as an
+        # ``alembic`` namespace package before loading this conftest. Remove
+        # that placeholder so the real bundled package (with __version__) is
+        # imported for the chain test.
+        for module_name in list(sys.modules):
+            if module_name == "alembic" or module_name.startswith("alembic."):
+                del sys.modules[module_name]
+
+
+_ensure_migration_dependencies()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_global_application_database():
+    """Provide safe tables for code paths that start a background worker.
+
+    Most tests use their own in-memory database.  A few intentionally exercise
+    the real application wiring and may outlive the request thread, so their
+    global session must point to an isolated SQLite database rather than the
+    restored PostgreSQL instance.
+    """
+    if _RUN_POSTGRES_TESTS:
+        # PostgreSQL integration tests own their setup/cleanup and must not
+        # receive legacy Base tables as a side effect of the global fixture.
+        yield
+        return
+
+    import app.models  # noqa: F401 - register every model on Base.metadata
+    from app.database.bases import LegacyBase, PlatformBase, TenantBase
+    from app.database.session import Base, engine
+
+    # A large part of the legacy test suite still calls
+    # ``Business.metadata.create_all`` (the old single-database fixture). The
+    # production models now correctly live on two metadata boundaries, so
+    # keep those tests meaningful by making the legacy bootstrap create both
+    # sides when it is used in SQLite. This is test-only compatibility; the
+    # production migrations and engines remain separated.
+    if not getattr(LegacyBase.metadata, "_tenant_fixture_bootstrapped", False):
+        legacy_create_all = LegacyBase.metadata.create_all
+
+        def create_all_with_tenant_tables(bind, tables=None, checkfirst=True, **kwargs):
+            legacy_create_all(
+                bind,
+                tables=tables,
+                checkfirst=checkfirst,
+                **kwargs,
+            )
+            PlatformBase.metadata.create_all(bind, checkfirst=checkfirst, **kwargs)
+            TenantBase.metadata.create_all(bind, checkfirst=checkfirst, **kwargs)
+
+        LegacyBase.metadata.create_all = create_all_with_tenant_tables
+        LegacyBase.metadata._tenant_fixture_bootstrapped = True
+
+    Base.metadata.create_all(engine)
+    yield
+    engine.dispose()

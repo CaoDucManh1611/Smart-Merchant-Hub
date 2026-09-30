@@ -40,19 +40,7 @@ class Business(Base):
     )
 
     users = relationship("User", back_populates="business", cascade="all, delete-orphan")
-    channels = relationship("Channel", back_populates="business", cascade="all, delete-orphan")
-    customers = relationship("Customer", back_populates="business")
-    conversations = relationship("Conversation", back_populates="business")
-    documents = relationship("Document", back_populates="business")
-    products = relationship("Product", back_populates="business")
-    orders = relationship("Order", back_populates="business")
     subscriptions = relationship("Subscription", back_populates="business")
-    chatbot_config = relationship(
-        "ChatbotConfig",
-        back_populates="business",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
 
 
 class User(Base):
@@ -72,6 +60,9 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(40), nullable=False, default="business_agent")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mfa_status: Mapped[str] = mapped_column(String(20), nullable=False, default="disabled", server_default="disabled")
+    mfa_prepared_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -80,11 +71,6 @@ class User(Base):
     )
 
     business = relationship("Business", back_populates="users")
-    assignments = relationship(
-        "ConversationAssignment",
-        foreign_keys="ConversationAssignment.user_id",
-        back_populates="user",
-    )
 
 
 class ServicePlan(Base):
@@ -99,6 +85,9 @@ class ServicePlan(Base):
     max_users: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     max_channels: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     max_documents: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    max_rag_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
+    max_ai_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
+    max_ai_cost: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=100)
     features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -119,6 +108,10 @@ class Subscription(Base):
         ForeignKey("service_plans.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    # ``pending`` subscriptions are also the durable approval requests made
+    # by a shop.  Keep the requested service explicit so a platform admin can
+    # distinguish a CRM package from a managed chatbot rental before approval.
+    service_type: Mapped[str] = mapped_column(String(20), nullable=False, default="package", server_default="package")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
     starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

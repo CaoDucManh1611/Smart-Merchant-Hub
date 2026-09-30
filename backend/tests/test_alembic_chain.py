@@ -1,0 +1,36 @@
+import unittest
+from pathlib import Path
+
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+
+class AlembicChainTests(unittest.TestCase):
+    def test_baseline_and_default_business_migrations_form_single_head(self):
+        config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+        scripts = ScriptDirectory.from_config(config)
+
+        self.assertEqual(["20260922_0054"], scripts.get_heads())
+        self.assertEqual("20260919_0045", scripts.get_revision("20260919_0046").down_revision)
+        self.assertEqual("20260919_0044", scripts.get_revision("20260919_0045").down_revision)
+        self.assertEqual("20260919_0043", scripts.get_revision("20260919_0044").down_revision)
+        self.assertEqual("20260913_0042", scripts.get_revision("20260919_0043").down_revision)
+        self.assertEqual("20260911_0036", scripts.get_revision("20260911_0037").down_revision)
+        self.assertEqual("20260911_0037", scripts.get_revision("20260911_0038").down_revision)
+        self.assertEqual("20260911_0038", scripts.get_revision("20260912_0039").down_revision)
+        self.assertEqual("20260912_0039", scripts.get_revision("20260912_0040").down_revision)
+        self.assertEqual("20260912_0040", scripts.get_revision("20260912_0041").down_revision)
+        self.assertEqual("20260904_0013", scripts.get_revision("20260904_0014").down_revision)
+        self.assertEqual("20260904_0012", scripts.get_revision("20260904_0013").down_revision)
+        self.assertEqual("20260904_0011", scripts.get_revision("20260904_0012").down_revision)
+        self.assertEqual("20260904_0010", scripts.get_revision("20260904_0011").down_revision)
+        self.assertEqual("20260904_0009", scripts.get_revision("20260904_0010").down_revision)
+        self.assertEqual("20260903_0008", scripts.get_revision("20260904_0009").down_revision)
+        self.assertEqual("20260903_0007", scripts.get_revision("20260903_0008").down_revision)
+        self.assertEqual("20260903_0006", scripts.get_revision("20260903_0007").down_revision)
+        self.assertEqual("20260903_0001", scripts.get_revision("20260903_0002").down_revision)
+        self.assertIsNone(scripts.get_revision("20260903_0001").down_revision)
+
+
+if __name__ == "__main__":
+    unittest.main()

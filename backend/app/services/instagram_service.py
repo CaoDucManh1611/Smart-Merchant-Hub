@@ -1,10 +1,15 @@
+import logging
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
 from app.services.meta_errors import MetaAPIError
-from app.services.meta_config_service import get_meta_config
+from app.services.channel_service import get_single_active_channel
+from app.services.channel_credentials import decrypt_token
+from app.services.channel_retry import run_with_provider_retry
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
@@ -31,46 +36,36 @@ FACEBOOK_GRAPH_BASE_URL = (
 # HELPERS
 # =========================================================
 
-def get_instagram_access_token() -> str:
+def get_instagram_access_token(db=None, business_id: int | None = None) -> str:
     """
     Lấy Instagram access token
     dùng để gửi tin nhắn Instagram.
     """
 
-    access_token = str(
-        settings.INSTAGRAM_ACCESS_TOKEN
-        or ""
-    ).strip()
-
-    if not access_token:
-        raise ValueError(
-            "INSTAGRAM_ACCESS_TOKEN "
-            "chưa được cấu hình"
-        )
-
-    return access_token
+    if db is not None and business_id is not None:
+        channel = get_single_active_channel(db, business_id, "instagram")
+        if not channel.access_token_encrypted:
+            raise ValueError("Encrypted Instagram channel token is missing")
+        return decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+    raise PermissionError("Tenant context is required for Instagram outbound messaging")
 
 
-def get_instagram_account_id() -> str:
+def get_instagram_account_id(db=None, business_id: int | None = None) -> str:
     """
     Lấy Instagram Professional Account ID
     dùng cho Instagram Attachment Upload API.
     """
 
-    account_id = str(
-        get_meta_config()["instagram_account_id"] or ""
-    ).strip()
-
+    if db is None or business_id is None:
+        raise PermissionError("Tenant context is required for Instagram media uploads")
+    channel = get_single_active_channel(db, business_id, "instagram")
+    account_id = str(channel.external_account_id or "").strip()
     if not account_id:
-        raise ValueError(
-            "INSTAGRAM_ACCOUNT_ID "
-            "chưa được cấu hình"
-        )
-
+        raise ValueError("Instagram channel account id is missing")
     return account_id
 
 
-def get_instagram_page_messaging_config() -> tuple[
+def get_instagram_page_messaging_config(db=None, business_id: int | None = None) -> tuple[
     str,
     str,
 ]:
@@ -79,29 +74,14 @@ def get_instagram_page_messaging_config() -> tuple[
     nen outbound phai dung Page Send API voi platform=instagram.
     """
 
-    meta_config = get_meta_config()
-    page_id = str(meta_config["facebook_page_id"] or "").strip()
-
-    access_token = str(
-        meta_config["facebook_page_access_token"] or ""
-    ).strip()
-
-    if not page_id:
-        raise ValueError(
-            "FACEBOOK_PAGE_ID "
-            "chua duoc cau hinh"
+    if db is not None and business_id is not None:
+        channel = get_single_active_channel(db, business_id, "facebook")
+        if not channel.access_token_encrypted:
+            raise ValueError("Encrypted Facebook channel token is missing")
+        return channel.external_account_id, decrypt_token(
+            channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY
         )
-
-    if not access_token:
-        raise ValueError(
-            "FACEBOOK_PAGE_ACCESS_TOKEN "
-            "chua duoc cau hinh"
-        )
-
-    return (
-        page_id,
-        access_token,
-    )
+    raise PermissionError("Tenant context is required for Instagram outbound messaging")
 
 
 def parse_meta_response(
@@ -134,6 +114,15 @@ def validate_recipient(
             "bị rỗng"
         )
 
+    # Instagram Messaging API expects the Instagram-scoped user ID emitted by
+    # the webhook.  These IDs are numeric; placeholders such as USER_111 or
+    # a Facebook username otherwise reach Meta and fail with an opaque #100.
+    if not (recipient_id.isascii() and recipient_id.isdigit()):
+        raise ValueError(
+            "Instagram recipient_id phải là Instagram Scoped ID dạng số; "
+            "hãy nhận một tin nhắn Instagram thật trước khi trả lời"
+        )
+
     return recipient_id
 
 
@@ -145,20 +134,22 @@ def send_instagram_request(
     recipient_id: str,
     message_payload: dict[str, Any],
     stage: str = "send",
+    db=None,
+    business_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Hàm dùng chung để gửi message
     tới Instagram Messaging API.
     """
 
-    page_id, access_token = (
-        get_instagram_page_messaging_config()
-    )
-
     recipient_id = (
         validate_recipient(
             recipient_id
         )
+    )
+
+    page_id, access_token = (
+        get_instagram_page_messaging_config(db=db, business_id=business_id)
     )
 
     url = (
@@ -186,8 +177,7 @@ def send_instagram_request(
             "instagram",
     }
 
-    try:
-
+    def _request() -> dict[str, Any]:
         response = httpx.post(
             url,
             params=params,
@@ -195,15 +185,7 @@ def send_instagram_request(
             timeout=30,
         )
 
-        print(
-            "INSTAGRAM SEND STATUS:",
-            response.status_code,
-        )
-
-        print(
-            "INSTAGRAM SEND RESPONSE:",
-            response.text[:1500],
-        )
+        logger.info("Instagram provider response status=%s", response.status_code)
 
         if response.status_code >= 400:
             raise MetaAPIError(
@@ -217,18 +199,11 @@ def send_instagram_request(
 
         return response.json()
 
-    except MetaAPIError:
-
-        raise
-
-    except httpx.RequestError as exc:
-
-        print(
-            "❌ INSTAGRAM REQUEST ERROR:",
-            str(exc),
-        )
-
-        raise
+    return run_with_provider_retry(
+        provider="instagram",
+        operation=stage,
+        request=_request,
+    )
 
 
 # =========================================================
@@ -238,11 +213,17 @@ def send_instagram_request(
 def send_instagram_message(
     recipient_id: str,
     text: str,
+    db=None,
+    business_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Gửi text message
     từ CRM sang Instagram.
     """
+
+    # Validate before the request helper so callers/tests that replace the
+    # transport still cannot send a non-Instagram-scoped recipient ID.
+    recipient_id = validate_recipient(recipient_id)
 
     text = str(
         text
@@ -255,11 +236,7 @@ def send_instagram_message(
             "không được để trống"
         )
 
-    print(
-        "📤 INSTAGRAM SEND TEXT | "
-        f"recipient_id={recipient_id} | "
-        f"text={text!r}"
-    )
+    logger.info("Sending Instagram text message")
 
     result = (
         send_instagram_request(
@@ -271,14 +248,12 @@ def send_instagram_message(
                     text,
             },
             stage="text_send",
+            db=db,
+            business_id=business_id,
         )
     )
 
-    print(
-        "✅ INSTAGRAM TEXT SENT | "
-        f"message_id="
-        f"{result.get('message_id')}"
-    )
+    logger.info("Instagram text message sent")
 
     return result
 
@@ -289,6 +264,8 @@ def send_instagram_message(
 
 def upload_instagram_image_attachment(
     image_url: str,
+    db=None,
+    business_id: int | None = None,
 ) -> str:
     """
     Upload ảnh lên Instagram Attachment Upload API.
@@ -328,13 +305,9 @@ def upload_instagram_image_attachment(
         )
 
 
-    instagram_account_id = (
-        get_instagram_account_id()
-    )
+    instagram_account_id = get_instagram_account_id(db=db, business_id=business_id)
 
-    access_token = (
-        get_instagram_access_token()
-    )
+    access_token = get_instagram_access_token(db=db, business_id=business_id)
 
 
     url = (
@@ -368,11 +341,7 @@ def upload_instagram_image_attachment(
     }
 
 
-    print(
-        "[INSTAGRAM ATTACHMENT] "
-        f"endpoint={url} | "
-        f"image_url={image_url}"
-    )
+    logger.info("Uploading Instagram image attachment")
 
 
     try:
@@ -385,18 +354,7 @@ def upload_instagram_image_attachment(
         )
 
 
-        print(
-            "INSTAGRAM ATTACHMENT "
-            "UPLOAD STATUS:",
-            response.status_code,
-        )
-
-
-        print(
-            "INSTAGRAM ATTACHMENT "
-            "UPLOAD RESPONSE:",
-            response.text[:1500],
-        )
+        logger.info("Instagram attachment response status=%s", response.status_code)
 
 
         if response.status_code >= 400:
@@ -430,12 +388,7 @@ def upload_instagram_image_attachment(
             )
 
 
-        print(
-            "✅ INSTAGRAM ATTACHMENT "
-            "UPLOADED | "
-            f"attachment_id="
-            f"{attachment_id}"
-        )
+        logger.info("Instagram attachment uploaded")
 
 
         return str(
@@ -448,13 +401,8 @@ def upload_instagram_image_attachment(
         raise
 
 
-    except httpx.RequestError as exc:
-
-        print(
-            "❌ INSTAGRAM ATTACHMENT "
-            "REQUEST ERROR:",
-            str(exc),
-        )
+    except httpx.RequestError:
+        logger.warning("Instagram attachment upload failed")
 
         raise
 
@@ -466,6 +414,8 @@ def upload_instagram_image_attachment(
 def send_instagram_image(
     recipient_id: str,
     image_url: str,
+    db=None,
+    business_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Gửi ảnh từ CRM sang Instagram.
@@ -532,20 +482,7 @@ def send_instagram_image(
         )
 
 
-    print(
-        "[INSTAGRAM IMAGE CONFIG] "
-        "endpoint=https://graph.facebook.com/v22.0/{FACEBOOK_PAGE_ID}/messages | "
-        "platform=instagram | "
-        "recipient_id_type=IGSID_FROM_PAGE_CONVERSATIONS | "
-        "token_type=FACEBOOK_PAGE_ACCESS_TOKEN | "
-        "flow=direct_url"
-    )
-
-    print(
-        "[INSTAGRAM SEND] "
-        f"recipient_id={recipient_id} | "
-        f"image_url={image_url}"
-    )
+    logger.info("Sending Instagram image message")
 
     result = (
         send_instagram_request(
@@ -564,14 +501,43 @@ def send_instagram_image(
                 },
             },
             stage="image_send",
+            db=db,
+            business_id=business_id,
         )
     )
 
 
-    print(
-        "[INSTAGRAM SEND] "
-        f"message_id="
-        f"{result.get('message_id')}"
-    )
+    logger.info("Instagram image message sent")
 
     return result
+
+
+def send_instagram_media(
+    recipient_id: str,
+    media_type: str,
+    media_url: str,
+    caption: str | None = None,
+    db=None,
+    business_id: int | None = None,
+) -> dict[str, Any]:
+    """Send a URL attachment through Instagram's Page Send API."""
+    media_type = str(media_type or "").strip().lower()
+    if media_type == "sticker":
+        raise ValueError("Instagram sticker outbound không hỗ trợ URL sticker")
+    if media_type not in {"image", "audio", "video", "file"}:
+        raise ValueError(f"Instagram không hỗ trợ media_type: {media_type}")
+    media_url = str(media_url or "").strip()
+    if not media_url.startswith(("http://", "https://")):
+        raise ValueError("media_url phải là URL http/https")
+    payload: dict[str, Any] = {
+        "attachment": {"type": media_type, "payload": {"url": media_url}}
+    }
+    if caption:
+        payload["attachment"]["payload"]["caption"] = str(caption)[:2000]
+    return send_instagram_request(
+        recipient_id=recipient_id,
+        message_payload=payload,
+        stage=f"{media_type}_send",
+        db=db,
+        business_id=business_id,
+    )

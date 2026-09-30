@@ -1,0 +1,38 @@
+{
+  "object": "instagram",
+  "entry": [
+    {
+      "id": "IG_ACCOUNT_001",
+      "time": 1788439100,
+      "messaging": [
+        {
+          "sender": {"id": "IG_USER_001"},
+          "recipient": {"id": "IG_ACCOUNT_001"},
+          "timestamp": 1788439101000,
+          "message": {
+            "mid": "m_ig_text_001",
+            "text": "Mẫu này giá bao nhiêu?"
+          }
+        },
+        {
+          "sender": {"id": "IG_USER_001"},
+          "recipient": {"id": "IG_ACCOUNT_001"},
+          "timestamp": 1788439102000,
+          "message": {
+            "mid": "m_ig_media_001",
+            "attachments": [
+              {
+                "type": "image",
+                "payload": {"url": "https://cdn.example.test/instagram/image-1.jpg"}
+              },
+              {
+                "type": "video",
+                "payload": {"url": "https://cdn.example.test/instagram/video-1.mp4"}
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

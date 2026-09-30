@@ -25,3 +25,20 @@ Thumbs.db
 
 # Runtime artifacts
 rag_runs.json
+ngrok.exe
+/build/
+
+# Database backups are deployment artifacts, never source-controlled.
+backups/
+*.dump
+*.dump.list
+*.secrets.json
+backend/.pytest_tmp/
+.pytest_tmp/
+
+# Local QA scratch copies and downloaded test dependencies.
+/work/
+
+# TikTok local client and credentials are runtime-only; never commit them.
+/scripts/lttk/
+/scripts/data-runtime/

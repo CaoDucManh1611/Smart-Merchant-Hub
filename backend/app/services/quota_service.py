@@ -1,0 +1,734 @@
+"""Tenant subscription quota checks and idempotent usage reservations."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+import math
+from typing import Literal
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.channel import Channel
+from app.models.document import Document, DocumentChunk
+from app.models.saas import QuotaReservation, SaaSUsage
+from app.models.platform_control import (
+    PlatformBusiness,
+    PlatformQuotaReservation,
+    PlatformServicePlan,
+    PlatformSubscription,
+    PlatformUser,
+    PlatformUsage,
+)
+
+
+QuotaResource = Literal[
+    "staff_users",
+    "connected_channels",
+    "documents",
+    "rag_chunks",
+    "ai_calls",
+    "ai_cost",
+]
+
+PLAN_LIMIT_FIELDS: dict[str, str] = {
+    "staff_users": "max_users",
+    "connected_channels": "max_channels",
+    "documents": "max_documents",
+    "rag_chunks": "max_rag_chunks",
+    "ai_calls": "max_ai_calls",
+    "ai_cost": "max_ai_cost",
+}
+
+
+def _is_platform_control(db: Session) -> bool:
+    """Identify sessions bound to the new control-plane metadata."""
+
+    return bool(db.info.get("platform_control"))
+
+
+@dataclass(frozen=True)
+class QuotaDecision:
+    allowed: bool
+    resource: str
+    used: Decimal
+    limit: Decimal | None
+    requested: Decimal
+    period_start: datetime
+
+
+class QuotaExceededError(RuntimeError):
+    """Raised when a tenant would exceed its active plan quota."""
+
+    def __init__(self, decision: QuotaDecision):
+        self.resource = decision.resource
+        self.used = decision.used
+        self.limit = decision.limit
+        self.requested = decision.requested
+        self.period_start = decision.period_start
+        super().__init__(f"Quota exceeded for {decision.resource}")
+
+    @property
+    def detail(self) -> dict:
+        return {
+            "code": "quota_exceeded",
+            "resource": self.resource,
+            "used": _json_number(self.used),
+            "limit": _json_number(self.limit) if self.limit is not None else None,
+            "requested": _json_number(self.requested),
+            "period_start": self.period_start.isoformat(),
+        }
+
+
+def _json_number(value: Decimal | None):
+    if value is None:
+        return None
+    return int(value) if value == value.to_integral_value() else float(value)
+
+
+def _period_start(now: datetime | None = None) -> datetime:
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is not None:
+        current = current.astimezone(timezone.utc).replace(tzinfo=None)
+    return current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def quota_period_start(now: datetime | None = None) -> datetime:
+    """Return the UTC period used by quota and platform usage reports."""
+    return _period_start(now)
+
+
+def quota_snapshot(
+    db: Session,
+    business_id: int,
+    *,
+    now: datetime | None = None,
+    warning_percent: float | None = None,
+) -> dict:
+    """Return a read-only usage/entitlement snapshot for one tenant.
+
+    This function never creates or increments ledger rows.  ``near_limit``
+    is deliberately exposed per resource so both the shop UI and platform
+    operators can warn before a hard 429 rejection.
+    """
+    if db.info.get("tenant_schema") and not db.info.get("_quota_bridge"):
+        from app.database.platform_session import PlatformSessionLocal
+
+        with PlatformSessionLocal() as platform_db:
+            platform_db.info["_quota_bridge"] = True
+            return quota_snapshot(
+                platform_db,
+                business_id,
+                now=now,
+                warning_percent=warning_percent,
+            )
+
+    period_start = _period_start(now)
+    threshold = float(
+        settings.QUOTA_WARNING_PERCENT if warning_percent is None else warning_percent
+    )
+    threshold = min(1.0, max(0.0, threshold))
+    plan = _active_plan(db, business_id)
+    resources: dict[str, dict] = {}
+    for resource, field in PLAN_LIMIT_FIELDS.items():
+        _row, used = _used_value(db, business_id, resource, period_start)
+        limit = _plan_limit(db, plan, resource)
+        percent = None
+        if limit is not None and limit > 0:
+            percent = float((used / limit) * Decimal("100"))
+        elif limit == 0:
+            percent = 100.0 if used > 0 else 0.0
+        resources[resource] = {
+            "used": _json_number(used),
+            "limit": _json_number(limit),
+            "percent": percent,
+            "near_limit": bool(limit is not None and (used >= limit * Decimal(str(threshold)))),
+            "exceeded": bool(limit is not None and used > limit),
+        }
+    return {
+        "business_id": int(business_id),
+        "period_start": period_start,
+        "plan_code": plan.code if plan is not None else None,
+        "plan_name": plan.name if plan is not None else None,
+        "warning_percent": threshold,
+        "resources": resources,
+    }
+
+
+def _amount(value: int | float | Decimal | str) -> Decimal:
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise ValueError("Quota amount must be numeric") from exc
+    if result <= 0:
+        raise ValueError("Quota amount must be greater than zero")
+    return result
+
+
+def _plan_limit(db: Session, plan, resource: str) -> Decimal | None:
+    if plan is None:
+        return None
+    field = PLAN_LIMIT_FIELDS[resource]
+    if _is_platform_control(db):
+        quotas = plan.quotas if isinstance(getattr(plan, "quotas", None), dict) else {}
+        value = quotas.get(resource, quotas.get(field))
+    else:
+        value = getattr(plan, field, 0)
+    return Decimal(str(value or 0))
+
+
+def estimate_ai_cost(messages: list[dict], *, answer: str | None = None) -> Decimal:
+    """Estimate one LLM call's cost without persisting prompt or answer text.
+
+    Provider usage payloads are not uniform, so the platform uses a stable
+    conservative estimate for quota preflight.  The configured output budget
+    keeps streaming and non-streaming callers on the same accounting rule.
+    """
+    prompt_chars = sum(len(str(message.get("content") or "")) for message in messages)
+    answer_chars = len(str(answer or ""))
+    prompt_tokens = max(1, math.ceil(prompt_chars / 4))
+    output_tokens = max(
+        int(settings.AI_MAX_OUTPUT_TOKENS_ESTIMATE),
+        math.ceil(answer_chars / 4) if answer is not None else 0,
+    )
+    rate = Decimal(str(settings.AI_COST_PER_1K_TOKENS or 0))
+    if rate <= 0:
+        return Decimal("0")
+    return (rate * Decimal(prompt_tokens + output_tokens) / Decimal("1000")).quantize(Decimal("0.0001"))
+
+
+def _active_plan(db: Session, business_id: int) -> ServicePlan | None:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if _is_platform_control(db):
+        return db.scalar(
+            select(PlatformServicePlan)
+            .join(PlatformSubscription, PlatformSubscription.plan_id == PlatformServicePlan.id)
+            .where(
+                PlatformSubscription.business_id == business_id,
+                PlatformSubscription.status == "active",
+                (PlatformSubscription.starts_at.is_(None) | (PlatformSubscription.starts_at <= now)),
+                (PlatformSubscription.ends_at.is_(None) | (PlatformSubscription.ends_at > now)),
+            )
+            .order_by(PlatformSubscription.id.desc())
+        )
+    row = db.scalar(
+        select(ServicePlan)
+        .join(Subscription, Subscription.plan_id == ServicePlan.id)
+        .where(
+            Subscription.business_id == business_id,
+            Subscription.status == "active",
+            (Subscription.starts_at.is_(None) | (Subscription.starts_at <= now)),
+            (Subscription.ends_at.is_(None) | (Subscription.ends_at > now)),
+        )
+        .order_by(Subscription.id.desc())
+    )
+    return row
+
+
+def _limit_for(db: Session, business_id: int, resource: str) -> Decimal | None:
+    field = PLAN_LIMIT_FIELDS.get(resource)
+    if field is None:
+        raise ValueError(f"Unknown quota resource: {resource}")
+    plan = _active_plan(db, business_id)
+    if plan is None:
+        # Existing development fixtures predate subscriptions. Keep those
+        # fixtures and local demos functional while production fails closed.
+        if settings.ENVIRONMENT.strip().lower() != "production":
+            return None
+        return Decimal("0")
+    return _plan_limit(db, plan, resource)
+
+
+def _current_usage(db: Session, business_id: int, resource: str, period_start: datetime) -> SaaSUsage | None:
+    if _is_platform_control(db):
+        return db.scalar(
+            select(PlatformUsage).where(
+                PlatformUsage.business_id == business_id,
+                PlatformUsage.resource == resource,
+                PlatformUsage.period_start == period_start,
+            )
+        )
+    return db.scalar(
+        select(SaaSUsage).where(
+            SaaSUsage.business_id == business_id,
+            SaaSUsage.resource == resource,
+            SaaSUsage.period_start == period_start,
+        )
+    )
+
+
+def _locked_usage(db: Session, business_id: int, resource: str, period_start: datetime) -> SaaSUsage | None:
+    """Read a usage row with a row lock where the database supports it."""
+    if _is_platform_control(db):
+        return db.scalar(
+            select(PlatformUsage)
+            .where(
+                PlatformUsage.business_id == business_id,
+                PlatformUsage.resource == resource,
+                PlatformUsage.period_start == period_start,
+            )
+            .with_for_update()
+        )
+    return db.scalar(
+        select(SaaSUsage)
+        .where(
+            SaaSUsage.business_id == business_id,
+            SaaSUsage.resource == resource,
+            SaaSUsage.period_start == period_start,
+        )
+        .with_for_update()
+    )
+
+
+def _baseline_usage(db: Session, business_id: int, resource: str) -> Decimal:
+    """Reflect pre-quota records when a tenant is upgraded in place."""
+    if _is_platform_control(db):
+        if resource == "staff_users":
+            value = db.scalar(
+                select(func.count(PlatformUser.id)).where(
+                    PlatformUser.business_id == business_id,
+                    PlatformUser.is_active.is_(True),
+                )
+            )
+            return Decimal(str(value or 0))
+        # Tenant-owned counts are materialized by migration/reservation and
+        # must never be read from a platform-only session.
+        return Decimal("0")
+    # Tenant-owned rows live in shop schemas and are intentionally invisible
+    # from the control-plane session.  Their usage is materialized by the
+    # reservation path during migration/provisioning instead of cross-database
+    # queries here.
+    if resource in {"connected_channels", "documents", "rag_chunks"} and db.info.get("tenant_schema") is None:
+        return Decimal("0")
+    if resource == "staff_users":
+        value = db.scalar(
+            select(func.count(User.id)).where(
+                User.business_id == business_id,
+                User.is_active.is_(True),
+            )
+        )
+    elif resource == "connected_channels":
+        value = db.scalar(
+            select(func.count(Channel.id)).where(
+                Channel.business_id == business_id,
+                Channel.status == "active",
+            )
+        )
+    elif resource == "documents":
+        value = db.scalar(
+            select(func.count(Document.id)).where(
+                Document.business_id == business_id,
+                Document.status != "deleted",
+            )
+        )
+    elif resource == "rag_chunks":
+        value = db.scalar(
+            select(func.count(DocumentChunk.id))
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(Document.business_id == business_id)
+        )
+    else:
+        value = 0
+    return Decimal(str(value or 0))
+
+
+def _used_value(db: Session, business_id: int, resource: str, period_start: datetime) -> tuple[SaaSUsage | None, Decimal]:
+    usage = _current_usage(db, business_id, resource, period_start)
+    if usage is not None:
+        return usage, Decimal(str(usage.used or 0))
+    return None, _baseline_usage(db, business_id, resource)
+
+
+def prime_quota(
+    db: Session,
+    business_id: int,
+    resource: QuotaResource | str,
+    *,
+    now: datetime | None = None,
+) -> SaaSUsage | None:
+    """Materialize a baseline before a long-running mutation begins."""
+    if db.info.get("tenant_schema") and not db.info.get("_quota_bridge"):
+        from app.database.platform_session import PlatformSessionLocal
+
+        with PlatformSessionLocal() as platform_db:
+            platform_db.info["_quota_bridge"] = True
+            result = prime_quota(platform_db, business_id, resource, now=now)
+            platform_db.commit()
+            return result
+    period_start = _period_start(now)
+    if _limit_for(db, business_id, str(resource)) is None:
+        return None
+    usage = _current_usage(db, business_id, str(resource), period_start)
+    if usage is not None:
+        return usage
+    if _is_platform_control(db):
+        usage = PlatformUsage(
+            business_id=int(business_id),
+            resource=str(resource),
+            period_start=period_start,
+            used=_baseline_usage(db, business_id, str(resource)),
+        )
+        db.add(usage)
+        db.flush()
+        return usage
+    usage = SaaSUsage(
+        business_id=business_id,
+        resource=str(resource),
+        period_start=period_start,
+        used=_baseline_usage(db, business_id, str(resource)),
+    )
+    db.add(usage)
+    db.flush()
+    return usage
+
+
+def check_quota(
+    db: Session,
+    business_id: int,
+    resource: QuotaResource | str,
+    requested: int | float | Decimal | str = 1,
+    *,
+    now: datetime | None = None,
+) -> QuotaDecision:
+    if db.info.get("tenant_schema") and not db.info.get("_quota_bridge"):
+        from app.database.platform_session import PlatformSessionLocal
+
+        with PlatformSessionLocal() as platform_db:
+            platform_db.info["_quota_bridge"] = True
+            return check_quota(platform_db, business_id, resource, requested, now=now)
+    amount = _amount(requested)
+    period_start = _period_start(now)
+    _usage_row, used = _used_value(db, business_id, str(resource), period_start)
+    limit = _limit_for(db, business_id, str(resource))
+    return QuotaDecision(
+        allowed=limit is None or used + amount <= limit,
+        resource=str(resource),
+        used=used,
+        limit=limit,
+        requested=amount,
+        period_start=period_start,
+    )
+
+
+def reserve_quota(
+    db: Session,
+    business_id: int,
+    resource: QuotaResource | str,
+    requested: int | float | Decimal | str = 1,
+    *,
+    idempotency_key: str | None = None,
+    now: datetime | None = None,
+) -> QuotaDecision:
+    if db.info.get("tenant_schema") and not db.info.get("_quota_bridge"):
+        from app.database.platform_session import PlatformSessionLocal
+
+        with PlatformSessionLocal() as platform_db:
+            platform_db.info["_quota_bridge"] = True
+            result = reserve_quota(
+                platform_db,
+                business_id,
+                resource,
+                requested,
+                idempotency_key=idempotency_key,
+                now=now,
+            )
+            platform_db.commit()
+            return result
+    if _is_platform_control(db):
+        return _reserve_platform_quota(
+            db,
+            business_id,
+            resource,
+            requested,
+            idempotency_key=idempotency_key,
+            now=now,
+        )
+    amount = _amount(requested)
+    resource_name = str(resource)
+    period_start = _period_start(now)
+
+    # Serialize reservations per tenant before reading either the reservation
+    # or usage rows. A row lock on SaaSUsage alone cannot protect the first
+    # reservation because there is no row to lock yet.
+    db.execute(
+        select(Business.id)
+        .where(Business.id == business_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if idempotency_key:
+        existing = db.scalar(
+            select(QuotaReservation).where(
+                QuotaReservation.business_id == business_id,
+                QuotaReservation.idempotency_key == idempotency_key,
+            )
+        )
+        if existing is not None:
+            if existing.resource != resource_name or Decimal(str(existing.amount)) != amount:
+                raise ValueError("Idempotency key was already used for a different quota reservation")
+            usage = db.get(SaaSUsage, existing.usage_id)
+            return QuotaDecision(
+                allowed=True,
+                resource=existing.resource,
+                used=Decimal(str(usage.used or 0)) if usage is not None else Decimal("0"),
+                limit=_limit_for(db, business_id, existing.resource),
+                requested=Decimal(str(existing.amount)),
+                period_start=usage.period_start if usage is not None else period_start,
+            )
+
+    decision = check_quota(db, business_id, resource_name, amount, now=now)
+    if not decision.allowed:
+        raise QuotaExceededError(decision)
+    if decision.limit is None:
+        return decision
+
+    usage = _locked_usage(db, business_id, resource_name, period_start)
+    baseline = _baseline_usage(db, business_id, resource_name)
+    current_used = Decimal(str(usage.used or 0)) if usage is not None else baseline
+    if decision.limit is not None and current_used + amount > decision.limit:
+        raise QuotaExceededError(QuotaDecision(
+            allowed=False,
+            resource=resource_name,
+            used=current_used,
+            limit=decision.limit,
+            requested=amount,
+            period_start=period_start,
+        ))
+    if usage is None:
+        usage = SaaSUsage(
+            business_id=business_id,
+            resource=resource_name,
+            period_start=period_start,
+            used=baseline,
+        )
+        db.add(usage)
+        db.flush()
+    usage.used = current_used + amount
+    if idempotency_key:
+        db.add(
+            QuotaReservation(
+                usage_id=usage.id,
+                business_id=business_id,
+                resource=resource_name,
+                idempotency_key=idempotency_key,
+                amount=amount,
+            )
+        )
+    return QuotaDecision(
+        allowed=True,
+        resource=resource_name,
+        used=usage.used,
+        limit=decision.limit,
+        requested=amount,
+        period_start=period_start,
+    )
+
+
+def _reserve_platform_quota(
+    db: Session,
+    business_id: int,
+    resource: QuotaResource | str,
+    requested: int | float | Decimal | str,
+    *,
+    idempotency_key: str | None,
+    now: datetime | None,
+) -> QuotaDecision:
+    """Reserve usage in the new platform control-plane ledger."""
+
+    amount = _amount(requested)
+    resource_name = str(resource)
+    period_start = _period_start(now)
+    business_exists = db.scalar(
+        select(PlatformBusiness.id).where(PlatformBusiness.id == int(business_id)).with_for_update()
+    )
+    if business_exists is None:
+        raise LookupError("Shop không tồn tại trên control plane")
+    if idempotency_key:
+        existing = db.scalar(
+            select(PlatformQuotaReservation).where(
+                PlatformQuotaReservation.business_id == int(business_id),
+                PlatformQuotaReservation.idempotency_key == str(idempotency_key),
+            )
+        )
+        if existing is not None:
+            if existing.resource != resource_name or Decimal(str(existing.amount)) != amount:
+                raise ValueError("Idempotency key was already used for a different quota reservation")
+            usage = db.scalar(
+                select(PlatformUsage).where(
+                    PlatformUsage.business_id == int(business_id),
+                    PlatformUsage.resource == resource_name,
+                    PlatformUsage.period_start == period_start,
+                )
+            )
+            return QuotaDecision(
+                allowed=True,
+                resource=resource_name,
+                used=Decimal(str(usage.used or 0)) if usage is not None else Decimal("0"),
+                limit=_limit_for(db, business_id, resource_name),
+                requested=amount,
+                period_start=period_start,
+            )
+
+    decision = check_quota(db, business_id, resource_name, amount, now=now)
+    if not decision.allowed:
+        raise QuotaExceededError(decision)
+    if decision.limit is None:
+        return decision
+    usage = _locked_usage(db, business_id, resource_name, period_start)
+    current_used = Decimal(str(usage.used or 0)) if usage is not None else _baseline_usage(db, business_id, resource_name)
+    if current_used + amount > decision.limit:
+        raise QuotaExceededError(
+            QuotaDecision(False, resource_name, current_used, decision.limit, amount, period_start)
+        )
+    if usage is None:
+        usage = PlatformUsage(
+            business_id=int(business_id),
+            resource=resource_name,
+            period_start=period_start,
+            used=current_used,
+        )
+        db.add(usage)
+        db.flush()
+    usage.used = current_used + amount
+    if idempotency_key:
+        db.add(
+            PlatformQuotaReservation(
+                business_id=int(business_id),
+                resource=resource_name,
+                idempotency_key=str(idempotency_key),
+                amount=amount,
+            )
+        )
+    return QuotaDecision(True, resource_name, usage.used, decision.limit, amount, period_start)
+
+
+def record_quota_usage(
+    db: Session,
+    business_id: int,
+    resource: QuotaResource | str,
+    amount: int | float | Decimal | str = 1,
+    *,
+    idempotency_key: str | None = None,
+    now: datetime | None = None,
+) -> QuotaDecision:
+    """Record billable usage using the same guarded reservation path."""
+    return reserve_quota(
+        db,
+        business_id,
+        resource,
+        amount,
+        idempotency_key=idempotency_key,
+        now=now,
+    )
+
+
+def reserve_ai_budget(
+    db: Session,
+    business_id: int,
+    messages: list[dict],
+    *,
+    idempotency_key: str,
+    answer: str | None = None,
+) -> dict[str, QuotaDecision | Decimal]:
+    """Guard one LLM call with both call-count and cost quotas.
+
+    The two ledger rows use distinct derived keys because reservations are
+    unique per tenant/key.  Replaying the same request therefore returns the
+    original decisions and cannot consume quota twice.
+    """
+    key = str(idempotency_key or "").strip()
+    if not key:
+        raise ValueError("idempotency_key is required for AI quota reservations")
+    calls = record_quota_usage(
+        db,
+        business_id,
+        "ai_calls",
+        1,
+        idempotency_key=f"{key}:calls",
+    )
+    cost = estimate_ai_cost(messages, answer=answer)
+    if cost > 0:
+        record_quota_usage(
+            db,
+            business_id,
+            "ai_cost",
+            cost,
+            idempotency_key=f"{key}:cost",
+        )
+    return {"calls": calls, "cost": cost}
+
+
+def release_quota(
+    db: Session,
+    business_id: int,
+    resource: QuotaResource | str,
+    amount: int | float | Decimal | str = 1,
+    *,
+    now: datetime | None = None,
+) -> QuotaDecision:
+    """Release capacity for resources that represent current inventory.
+
+    AI calls remain cumulative and are never released. This helper is used
+    when a document or channel is removed so a tenant can use the freed slot
+    again during the same billing period.
+    """
+    if db.info.get("tenant_schema") and not db.info.get("_quota_bridge"):
+        from app.database.platform_session import PlatformSessionLocal
+
+        with PlatformSessionLocal() as platform_db:
+            platform_db.info["_quota_bridge"] = True
+            result = release_quota(
+                platform_db,
+                business_id,
+                resource,
+                amount,
+                now=now,
+            )
+            platform_db.commit()
+            return result
+    if _is_platform_control(db):
+        resource_name = str(resource)
+        if resource_name in {"ai_calls", "ai_cost"}:
+            raise ValueError(f"Cannot release cumulative quota resource: {resource_name}")
+        release_amount = _amount(amount)
+        period_start = _period_start(now)
+        usage = _current_usage(db, business_id, resource_name, period_start)
+        limit = _limit_for(db, business_id, resource_name)
+        if usage is None:
+            used = _baseline_usage(db, business_id, resource_name)
+        else:
+            used = max(Decimal("0"), Decimal(str(usage.used or 0)) - release_amount)
+            usage.used = used
+        return QuotaDecision(
+            allowed=True,
+            resource=resource_name,
+            used=used,
+            limit=limit,
+            requested=-release_amount,
+            period_start=period_start,
+        )
+
+    resource_name = str(resource)
+    if resource_name in {"ai_calls", "ai_cost"}:
+        raise ValueError(f"Cannot release cumulative quota resource: {resource_name}")
+    release_amount = _amount(amount)
+    period_start = _period_start(now)
+    usage = _current_usage(db, business_id, resource_name, period_start)
+    limit = _limit_for(db, business_id, resource_name)
+    if usage is None:
+        used = _baseline_usage(db, business_id, resource_name)
+    else:
+        used = max(Decimal("0"), Decimal(str(usage.used or 0)) - release_amount)
+        usage.used = used
+    return QuotaDecision(
+        allowed=True,
+        resource=resource_name,
+        used=used,
+        limit=limit,
+        requested=-release_amount,
+        period_start=period_start,
+    )

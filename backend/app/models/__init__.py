@@ -1,18 +1,101 @@
 from app.models.customer import Customer
+from app.models.customer_identity import CustomerIdentity
+from app.models.customer_note import CustomerNote
+from app.models.customer_fact import CustomerFact
+from app.models.customer_merge import CustomerMerge
+from app.models.customer_collection import (
+    CustomerContact,
+    CustomerAddress,
+    CustomerCollectionSession,
+    CustomerVerificationChallenge,
+    CustomerConsent,
+)
+from app.models.customer_360 import customer_merge_operations, customer_segments
+from app.models.audit_log import AuditLog
+from app.models.auth_session import AuthSession
+from app.models.notification import Notification
+from app.models.experimentation import (
+    RuleSuggestion, FeatureSnapshot, Experiment, ExperimentAssignment,
+    ExperimentExposure, ExperimentOutcome, ExperimentMetricAggregate,
+    ModelVersion, ModelTrainingRun, ModelEvaluationMetric,
+    BanditPolicy, BanditArmStat, BanditDecision,
+)
+from app.models.recommendation import (
+    CustomerProductInteraction, RecommendationRequest, RecommendationFeedback,
+    RecommendationCustomerProfile, RecommendationTrainingRun,
+)
+from app.models.business_setting import BusinessSetting
+from app.models.crm_workspace_config import CrmWorkspaceConfig
+from app.models.oauth_state import OAuthState
+from app.models.channel_migration import ChannelMigrationAudit
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.message_attachment import MessageAttachment
 from app.models.document import Document, DocumentChunk
 from app.models.setting import AppSetting
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.channel import Channel, ChannelEvent
-from app.models.crm_extended import ConversationAssignment, ConversationTag, Tag
+from app.models.channel_outbound_attempt import ChannelOutboundAttempt
+from app.models.crm_extended import ConversationAssignment, ConversationTag, CustomerTag, Tag
 from app.models.sales import Order, OrderItem, Product
+from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
+from app.models.supplier import Supplier
+from app.models.inventory import StockMovement, PurchaseReceipt, PurchaseReceiptItem
+from app.models.order_event import OrderEvent
+from app.models.order_payment import OrderPayment
+from app.models.lead import Lead
+from app.models.ticket import Ticket, TicketComment, TicketEvent
+from app.models.workflow import Workflow, WorkflowRun
 from app.models.chatbot import ChatbotConfig
+from app.models.canned_response import CannedResponse
+from app.models.chatbot_followup import ChatbotFollowUp
+from app.models.customer_feedback import CustomerFeedback
+from app.models.revenue import RevenueTouchpoint, RevenueAttribution, LeadActivity, LeadConversion
+from app.models.crm_job import CrmJob
+from app.models.rag_run import RagRun
+from app.models.permission import PermissionOverride
+from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry
+from app.models.platform_control import TenantRegistry, SupportGrant, ProvisioningOperation, TenantMigrationOperation, PlatformAudit, PlatformProviderIncident
+from app.models.channel_route import ChannelRoute
+from app.models.signup import SignupEmailChallenge
+from app.models.industry_modules import AppointmentService, Appointment, CommercialQuote, CommercialProject, CommercialInvoice, CommercialInvoicePayment
 
 __all__ = [
     "Customer",
+    "CustomerNote",
+    "CustomerFact",
+    "CustomerMerge",
+    "CustomerContact",
+    "CustomerAddress",
+    "CustomerCollectionSession",
+    "CustomerVerificationChallenge",
+    "CustomerConsent",
+    "customer_merge_operations",
+    "customer_segments",
+    "AuditLog",
+    "AuthSession",
+    "Notification",
+    "RuleSuggestion",
+    "FeatureSnapshot",
+    "Experiment",
+    "ExperimentAssignment",
+    "ExperimentExposure",
+    "ExperimentOutcome",
+    "ExperimentMetricAggregate",
+    "ModelVersion",
+    "ModelTrainingRun",
+    "ModelEvaluationMetric",
+    "BanditPolicy",
+    "BanditArmStat",
+    "BanditDecision",
+    "RecommendationRequest",
+    "RecommendationFeedback",
+    "CustomerProductInteraction",
+    "RecommendationCustomerProfile",
+    "RecommendationTrainingRun",
     "Conversation",
     "Message",
+    "MessageAttachment",
     "Document",
     "DocumentChunk",
     "AppSetting",
@@ -23,11 +106,57 @@ __all__ = [
     "Payment",
     "Channel",
     "ChannelEvent",
+    "ChannelOutboundAttempt",
     "ConversationAssignment",
     "Tag",
     "ConversationTag",
+    "CustomerTag",
     "Product",
     "Order",
     "OrderItem",
+    "PurchaseOrder",
+    "PurchaseOrderItem",
+    "Supplier",
+    "StockMovement",
+    "PurchaseReceipt",
+    "PurchaseReceiptItem",
+    "OrderEvent",
+    "OrderPayment",
+    "Lead",
+    "Ticket",
+    "TicketComment",
+    "TicketEvent",
+    "Workflow",
+    "WorkflowRun",
     "ChatbotConfig",
+    "CannedResponse",
+    "ChatbotFollowUp",
+    "CustomerFeedback",
+    "RevenueTouchpoint",
+    "RevenueAttribution",
+    "LeadActivity",
+    "LeadConversion",
+    "CrmJob",
+    "RagRun",
+    "PermissionOverride",
+    "SaaSUsage",
+    "QuotaReservation",
+    "PlatformMembership",
+    "DataLifecycleRequest",
+    "TenantSchemaRegistry",
+    "TenantRegistry",
+    "SupportGrant",
+    "ProvisioningOperation",
+    "TenantMigrationOperation",
+    "PlatformAudit",
+    "PlatformProviderIncident",
+    "ChannelRoute",
+    "SignupEmailChallenge",
+    "AppointmentService",
+    "Appointment",
+    "CommercialQuote",
+    "CommercialProject",
+    "CommercialInvoice",
+    "CommercialInvoicePayment",
+    "CrmWorkspaceConfig",
 ]

@@ -1,9 +1,19 @@
 from fastapi import APIRouter
-from app.api import conversations, documents, chat, meta_oauth
-from app.api import facebook, instagram, shopee, tiktok
+from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding, support, recommendations, workspace, appointments, commercial
+from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo, zalo_personal, webhooks
 
 
 api_router = APIRouter(prefix="/api")
+
+api_router.include_router(auth.router, tags=["Auth"])
+api_router.include_router(platform.router, tags=["Platform administration"])
+api_router.include_router(usage.router, tags=["Tenant usage"])
+api_router.include_router(workspace.router, tags=["Shop workspace"])
+api_router.include_router(appointments.router, tags=["Appointments"])
+api_router.include_router(commercial.router, tags=["Quotes and projects"])
+api_router.include_router(onboarding.router, tags=["Self-service onboarding"])
+api_router.include_router(support.router, tags=["Temporary support access"])
+api_router.include_router(privacy.router, tags=["Privacy"])
 
 api_router.include_router(
     meta_oauth.router,
@@ -27,6 +37,23 @@ api_router.include_router(
     tags=["Instagram"],
 )
 
+api_router.include_router(
+    telegram.router,
+    prefix="/webhooks/telegram",
+    tags=["Telegram"],
+)
+
+
+# Zalo Bot Creator
+api_router.include_router(
+    zalo.router,
+    prefix="/webhooks/zalo",
+    tags=["Zalo"],
+)
+
+# Zalo cá nhân dùng helper bridge (cookies/IMEI remain on the shop machine).
+api_router.include_router(zalo_personal.router)
+
 
 # Shopee
 api_router.include_router(
@@ -42,6 +69,15 @@ api_router.include_router(
     prefix="/webhooks/tiktok",
     tags=["TikTok"],
 )
+api_router.include_router(
+    tiktok.bridge_router,
+    prefix="/channels/tiktok",
+    tags=["TikTok bridge"],
+)
+
+# New shop-scoped webhook URL. Register it after every provider-specific route
+# so a slug such as "tiktok" cannot shadow the existing TikTok endpoint.
+api_router.include_router(webhooks.router, tags=["Shop webhooks"])
 
 api_router.include_router(
     conversations.router,
@@ -63,4 +99,104 @@ api_router.include_router(
     chat.router,
     prefix="/chat",
     tags=["Chat"],
+)
+
+api_router.include_router(
+    chatbot.router,
+    prefix="/chatbot",
+    tags=["Chatbot runtime"],
+)
+
+api_router.include_router(
+    customer_avatar.router,
+    prefix="/customers",
+    tags=["Customers"],
+)
+
+api_router.include_router(
+    customers.router,
+    prefix="/customers",
+    tags=["Customers"],
+)
+
+api_router.include_router(
+    customer_collection.router,
+    prefix="/customers",
+    tags=["Customer Data Collection"],
+)
+
+api_router.include_router(
+    sales.router,
+    tags=["Sales"],
+)
+
+api_router.include_router(
+    purchase_orders.router,
+    tags=["Purchase Orders"],
+)
+
+api_router.include_router(
+    suppliers.router,
+    tags=["Suppliers"],
+)
+
+api_router.include_router(
+    inventory.router,
+    tags=["Inventory"],
+)
+
+api_router.include_router(
+    payments.router,
+    tags=["Payments"],
+)
+
+api_router.include_router(
+    leads.router,
+    tags=["Leads"],
+)
+
+api_router.include_router(
+    tickets.router,
+    tags=["Tickets"],
+)
+
+api_router.include_router(
+    team.router,
+    tags=["Team"],
+)
+
+api_router.include_router(
+    workflows.router,
+    tags=["Workflows"],
+)
+
+api_router.include_router(
+    notifications.router,
+    tags=["Notifications"],
+)
+
+api_router.include_router(
+    experimentation.router,
+    tags=["Experimentation"],
+)
+
+api_router.include_router(
+    recommendations.router,
+    tags=["Recommendations"],
+)
+
+api_router.include_router(
+    reports.router,
+    tags=["Reports"],
+)
+
+api_router.include_router(
+    revenue.router,
+    tags=["Revenue Attribution"],
+)
+
+api_router.include_router(
+    media.router,
+    prefix="/media",
+    tags=["Media"],
 )

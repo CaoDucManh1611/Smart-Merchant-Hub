@@ -2,8 +2,10 @@ import logging
 import re
 import time
 from functools import lru_cache
+from collections.abc import Callable
 
 from app.core.config import settings
+from app.services.api_key_pool import ApiKeyPool, ApiKeyPoolUnavailable, call_with_key_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +22,43 @@ def _gemini_retry_delay(error: Exception) -> int:
     return 60
 
 
+def embedding_retry_delay(error: Exception) -> int | None:
+    """Return a safe retry delay for temporary provider throttling.
+
+    Providers do not use one consistent error shape: Gemini commonly returns
+    HTTP 429/``RESOURCE_EXHAUSTED`` with a ``retry_delay`` field, while other
+    clients only include a quota/rate-limit phrase.  Persisting this signal on
+    the document lets the UI tell an operator when a lexical-only index can be
+    retried.  Non-transient failures return ``None``.
+    """
+    message = str(error).lower()
+    transient_markers = (
+        "429",
+        "quota",
+        "rate limit",
+        "rate_limit",
+        "resource_exhausted",
+        "too many requests",
+    )
+    if not any(marker in message for marker in transient_markers):
+        return None
+    return _gemini_retry_delay(error)
+
+
 def _embedding_api_key() -> str:
-    """Use a dedicated embedding key, with legacy LLM_API_KEY fallback."""
-    api_key = settings.EMBEDDING_API_KEY or settings.LLM_API_KEY
-    if not api_key:
-        raise ValueError(
-            "EMBEDDING_API_KEY chưa được cấu hình trong backend/.env."
-        )
-    return api_key
+    """Return one embedding key, preserving the legacy single-key fallback."""
+    try:
+        return _embedding_pool().next_key()
+    except ApiKeyPoolUnavailable as error:
+        raise ValueError("EMBEDDING_API_KEY chưa được cấu hình trong backend/.env.") from error
+
+
+@lru_cache(maxsize=4)
+def _embedding_pool(keys: tuple[str, ...] | None = None, cooldown_seconds: int | None = None) -> ApiKeyPool:
+    return ApiKeyPool(
+        list(keys if keys is not None else settings.embedding_api_keys),
+        cooldown_seconds=cooldown_seconds or settings.API_KEY_COOLDOWN_SECONDS,
+    )
 
 
 def _validate_vectors(
@@ -55,44 +86,59 @@ def _validate_vectors(
 def _embed_with_gemini(
     texts: list[str],
     model: str,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> list[list[float]]:
     """Embed texts bằng Google Gemini API."""
-    import google.generativeai as genai
-
-    genai.configure(api_key=_embedding_api_key())
+    from google import genai
+    from google.genai import types
 
     embeddings = []
     # Gemini hỗ trợ batch nhưng giới hạn ~100 texts/request
     batch_size = 100
+    total_batches = max(1, (len(texts) + batch_size - 1) // batch_size)
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        for attempt in range(5):
+        # A quota response must not keep an API request alive for hours. The
+        # worker makes this operation durable; after two short attempts the
+        # ingestion service can store a lexical-only index and expose a clear
+        # retry time instead of blocking the API process.
+        for attempt in range(2):
             try:
-                result = genai.embed_content(
-                    model=f"models/{model}",
-                    content=batch,
-                    task_type="retrieval_document",
+                result = call_with_key_rotation(
+                    _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
+                    lambda key: _gemini_embed_batch_once(genai, types, key, batch, model),
                 )
                 break
             except Exception as error:
-                if "429" not in str(error) or attempt == 4:
+                if "429" not in str(error) or attempt == 1:
                     raise
-                delay = _gemini_retry_delay(error)
+                delay = min(_gemini_retry_delay(error), 10)
                 logger.warning(
-                    "Gemini embedding quota reached; retrying batch %d/%d in %ds (attempt %d/5)",
+                    "Gemini embedding quota reached; retrying batch %d/%d in %ds (attempt %d/2)",
                     i // batch_size + 1,
-                    (len(texts) + batch_size - 1) // batch_size,
+                    total_batches,
                     delay,
                     attempt + 1,
                 )
                 time.sleep(delay)
-        # result["embedding"] là list[list[float]] khi input là list
-        if isinstance(result["embedding"][0], list):
-            embeddings.extend(result["embedding"])
-        else:
-            embeddings.append(result["embedding"])
+        embeddings.extend(result)
+        if progress_callback is not None:
+            progress_callback(min(1.0, (i + len(batch)) / len(texts)))
 
     return embeddings
+
+
+def _gemini_embed_batch_once(genai, types, api_key: str, batch: list[str], model: str) -> list[list[float]]:
+    with genai.Client(api_key=api_key) as client:
+        response = client.models.embed_content(
+            model=model.removeprefix("models/"),
+            contents=batch,
+            config=types.EmbedContentConfig(
+                task_type="RETRIEVAL_DOCUMENT",
+                output_dimensionality=settings.EMBEDDING_DIMENSION,
+            ),
+        )
+    return [list(item.values) for item in response.embeddings or []]
 
 
 def _embed_query_with_gemini(
@@ -100,21 +146,35 @@ def _embed_query_with_gemini(
     model: str,
 ) -> list[float]:
     """Embed 1 query duy nhất bằng Gemini (dùng task_type khác)."""
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
-    genai.configure(api_key=_embedding_api_key())
-
-    result = genai.embed_content(
-        model=f"models/{model}",
-        content=text,
-        task_type="retrieval_query",
+    result = call_with_key_rotation(
+        _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
+        lambda key: _gemini_embed_query_once(genai, types, key, text, model),
     )
-    return result["embedding"]
+    return result
+
+
+def _gemini_embed_query_once(genai, types, api_key: str, text: str, model: str) -> list[float]:
+    with genai.Client(api_key=api_key) as client:
+        response = client.models.embed_content(
+            model=model.removeprefix("models/"),
+            contents=text,
+            config=types.EmbedContentConfig(
+                task_type="RETRIEVAL_QUERY",
+                output_dimensionality=settings.EMBEDDING_DIMENSION,
+            ),
+        )
+    if not response.embeddings:
+        raise ValueError("Gemini embedding provider returned no query vector.")
+    return list(response.embeddings[0].values)
 
 
 def _embed_with_local(
     texts: list[str],
     model: str,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> list[list[float]]:
     """Embed bằng mô hình Sentence-Transformers chạy local."""
     encoder = _get_local_encoder(model)
@@ -125,6 +185,8 @@ def _embed_with_local(
         convert_to_numpy=True,
         show_progress_bar=False,
     )
+    if progress_callback is not None:
+        progress_callback(1.0)
     return vectors.tolist()
 
 
@@ -153,22 +215,26 @@ def _embed_query_with_local(
 def _embed_with_openai(
     texts: list[str],
     model: str,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> list[list[float]]:
     """Embed texts bằng OpenAI API."""
     from openai import OpenAI
-
-    client = OpenAI(api_key=_embedding_api_key())
 
     embeddings = []
     batch_size = 2048
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        response = client.embeddings.create(
-            model=model,
-            input=batch,
+        response = call_with_key_rotation(
+            _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
+            lambda key: OpenAI(api_key=key).embeddings.create(
+                model=model,
+                input=batch,
+            ),
         )
         for item in response.data:
             embeddings.append(item.embedding)
+        if progress_callback is not None:
+            progress_callback(min(1.0, (i + len(batch)) / len(texts)))
 
     return embeddings
 
@@ -178,7 +244,10 @@ def _embed_with_openai(
 # =========================================================
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+def embed_texts(
+    texts: list[str],
+    progress_callback: Callable[[float], None] | None = None,
+) -> list[list[float]]:
     """
     Embed danh sách texts thành vectors.
     Dùng cho document ingestion (batch).
@@ -200,11 +269,11 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     )
 
     if provider == "local":
-        vectors = _embed_with_local(texts, model)
+        vectors = _embed_with_local(texts, model, progress_callback=progress_callback)
     elif provider == "gemini":
-        vectors = _embed_with_gemini(texts, model)
+        vectors = _embed_with_gemini(texts, model, progress_callback=progress_callback)
     elif provider == "openai":
-        vectors = _embed_with_openai(texts, model)
+        vectors = _embed_with_openai(texts, model, progress_callback=progress_callback)
     else:
         raise ValueError(
             f"Unknown embedding provider: {provider}. "

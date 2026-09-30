@@ -1,0 +1,80 @@
+import pytest
+from secrets import randbelow
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import inspect, text
+
+from app.database.tenant_session import tenant_engine
+from app.models.tenant_template import TENANT_TABLE_NAMES
+from app.tenancy.migration_runner import (
+    ALEMBIC_CONFIG_PATH,
+    current_tenant_revision,
+    upgrade_tenant_schema,
+)
+from app.tenancy.schema import schema_name_for, validate_schema_name
+
+
+def test_schema_name_is_server_generated_and_strict():
+    assert schema_name_for(42) == "shop_42"
+    for invalid in ("shop_0", "tenant_42", "shop_1;drop schema public", "shop_-1", "public"):
+        with pytest.raises(ValueError):
+            validate_schema_name(invalid)
+
+
+@pytest.mark.skipif(
+    tenant_engine.dialect.name != "postgresql",
+    reason="tenant schema migrations require PostgreSQL",
+)
+def test_two_tenant_schemas_upgrade_independently_and_idempotently():
+    suffix = randbelow(90_000_000) + 10_000_000
+    schemas = (f"shop_91{suffix}1", f"shop_91{suffix}2")
+    with tenant_engine.connect() as connection:
+        if connection.dialect.name != "postgresql":
+            pytest.skip("tenant schema migration requires PostgreSQL schemas")
+        try:
+            for schema in schemas:
+                connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            connection.commit()
+
+            first_revision = upgrade_tenant_schema(connection, schemas[0])
+            connection.commit()
+            second_revision = upgrade_tenant_schema(connection, schemas[1])
+            connection.commit()
+            repeated_revision = upgrade_tenant_schema(connection, schemas[0])
+            connection.commit()
+
+            assert first_revision == second_revision == repeated_revision == "20260930_0009"
+            assert current_tenant_revision(connection, schemas[0]) == "20260930_0009"
+            assert current_tenant_revision(connection, schemas[1]) == "20260930_0009"
+
+            inspector = inspect(connection)
+            expected = set(TENANT_TABLE_NAMES) | {"alembic_version"}
+            expected |= {"appointment_services", "appointments", "commercial_quotes", "commercial_projects", "commercial_invoices", "commercial_invoice_payments"}
+            expected |= {"crm_workspace_configs"}
+            assert expected <= set(inspector.get_table_names(schema=schemas[0]))
+            assert expected <= set(inspector.get_table_names(schema=schemas[1]))
+            for schema in schemas:
+                customer_columns = {column["name"] for column in inspector.get_columns("customers", schema=schema)}
+                assert "custom_fields" in customer_columns
+                conversation_columns = {column["name"] for column in inspector.get_columns("conversations", schema=schema)}
+                assert "resolution_outcome" in conversation_columns
+                document_columns = {column["name"] for column in inspector.get_columns("documents", schema=schema)}
+                assert {"content_hash", "error_code"} <= document_columns
+                run_columns = {column["name"] for column in inspector.get_columns("rag_runs", schema=schema)}
+                assert "error_code" in run_columns
+
+            migration = Config(str(ALEMBIC_CONFIG_PATH))
+            migration.attributes["connection"] = connection
+            migration.attributes["tenant_schema"] = schemas[0]
+            command.downgrade(migration, "20260926_0007")
+            connection.commit()
+            assert current_tenant_revision(connection, schemas[0]) == "20260926_0007"
+
+            assert upgrade_tenant_schema(connection, schemas[0]) == "20260930_0009"
+            connection.commit()
+            assert current_tenant_revision(connection, schemas[0]) == "20260930_0009"
+        finally:
+            connection.rollback()
+            for schema in schemas:
+                connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            connection.commit()

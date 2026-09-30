@@ -1,13 +1,25 @@
 import logging
 import time
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.core.config import settings
-from app.database.session import Base, engine
+from app.database.bootstrap import ensure_default_business, ensure_default_plans
+from app.database.session import Base, SessionLocal, engine
+from app.database.bases import PlatformBase
+from app.database.platform_session import PlatformSessionLocal, platform_engine
+from app.database.tenant_session import tenant_engine
 from app.models.customer import Customer
+from app.models.customer_merge import CustomerMerge
+from app.models.audit_log import AuditLog
+from app.models.auth_session import AuthSession
+from app.models.notification import Notification
+from app.models.experimentation import RuleSuggestion, FeatureSnapshot, Experiment, ExperimentAssignment, ExperimentOutcome, BanditDecision
+from app.models.customer_fact import CustomerFact
+from app.models.business_setting import BusinessSetting
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.message_attachment import MessageAttachment
 from app.models.document import Document, DocumentChunk
 from app.models.setting import AppSetting
 # Import all target models before create_all() so SQLAlchemy registers the
@@ -15,10 +27,150 @@ from app.models.setting import AppSetting
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.channel import Channel, ChannelEvent
 from app.models.crm_extended import ConversationAssignment, ConversationTag, Tag
+from app.models.ticket import TicketEvent
 from app.models.sales import Order, OrderItem, Product
+from app.models.purchase_order import PurchaseOrder, PurchaseOrderItem
 from app.models.chatbot import ChatbotConfig
+from app.models.canned_response import CannedResponse
+from app.models.chatbot_followup import ChatbotFollowUp
+from app.models.customer_feedback import CustomerFeedback
+from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, DataLifecycleRequest, TenantSchemaRegistry, SupportGrant
+from app.models.platform_control import PlatformBusiness, TenantRegistry
+import app.models.channel_route  # noqa: F401 - register platform webhook routes
+from app.tenancy.provisioning import provision_shop
+from app.tenancy.migration_runner import current_tenant_revision
+from app.tenancy.schema import schema_name_for
+from app.database.release_readiness import TENANT_HEAD
 
 logger = logging.getLogger(__name__)
+
+
+def _bootstrap_development_saas() -> None:
+    """Keep local Docker/demo installs usable after the two-database cutover.
+
+    Older development databases were initialized only through ``init_db`` and
+    therefore have the legacy CRM tables but no platform registry or tenant
+    schema yet.  Authenticated tenant routes (including the inbox and channel
+    connection screen) quite correctly require that registry.  Provisioning
+    the existing shops here makes a restart self-healing while production
+    continues to use the explicit platform/tenant migration runbook.
+    """
+
+    if settings.ENVIRONMENT.strip().lower() == "production":
+        return
+
+    try:
+        # The platform database is deliberately separate from the legacy CRM
+        # database.  ``create_all`` is only a development compatibility path;
+        # production never mutates schema at application startup.
+        PlatformBase.metadata.create_all(bind=platform_engine)
+
+        with SessionLocal() as legacy_db:
+            legacy_businesses = [
+                (int(row.id), str(row.name), str(row.slug), str(row.status or "active"))
+                for row in legacy_db.query(Business).order_by(Business.id.asc()).all()
+                if str(row.status or "active").lower() == "active"
+            ]
+
+        with PlatformSessionLocal() as platform_db:
+            # Include shops created directly by self-service onboarding. They
+            # may not exist in the legacy CRM database yet, but their active
+            # platform registry still requires a usable tenant schema.
+            businesses_by_id = {
+                int(row.id): (int(row.id), str(row.name), str(row.slug), str(row.status or "active"))
+                for row in platform_db.query(PlatformBusiness).filter(PlatformBusiness.status == "active").all()
+            }
+            businesses_by_id.update({item[0]: item for item in legacy_businesses})
+            businesses = sorted(businesses_by_id.values(), key=lambda item: item[0])
+            if not businesses:
+                return
+
+            # Mirror legacy shop identities into the control plane first so
+            # the idempotent provisioning saga can safely create each schema.
+            for business_id, name, slug, status in businesses:
+                row = platform_db.get(PlatformBusiness, business_id)
+                if row is None:
+                    platform_db.add(
+                        PlatformBusiness(
+                            id=business_id,
+                            name=name,
+                            slug=slug,
+                            status=status,
+                        )
+                    )
+                else:
+                    row.name = name
+                    row.status = status
+            platform_db.commit()
+
+            for business_id, _name, _slug, _status in businesses:
+                registry = platform_db.scalar(
+                    select(TenantRegistry).where(
+                        TenantRegistry.business_id == business_id,
+                    )
+                )
+                repair_key = None
+                if registry is not None:
+                    # The schema marker is the source of truth during a
+                    # restart.  A previous interrupted bootstrap can leave
+                    # the registry flagged as ``provisioning`` even though
+                    # the tenant migration already reached the current head.
+                    # Restore the usable state without asking the shop to
+                    # purchase/approve its package again.
+                    try:
+                        with tenant_engine.connect() as tenant_connection:
+                            tenant_revision = current_tenant_revision(
+                                tenant_connection,
+                                schema_name_for(business_id),
+                            )
+                    except Exception:
+                        tenant_revision = None
+                    if tenant_revision == TENANT_HEAD:
+                        if (
+                            registry.state != "active"
+                            or registry.feature_enabled is not True
+                            or registry.migration_error
+                        ):
+                            registry.state = "active"
+                            registry.feature_enabled = True
+                            registry.tenant_revision = TENANT_HEAD
+                            registry.migration_error = None
+                            platform_db.commit()
+                        continue
+                    # A previous development run could mark provisioning as
+                    # successful before the tenant database was recreated.
+                    # Use a fresh repair key so a stale successful operation
+                    # cannot short-circuit the migration retry.
+                    registry.state = "provisioning"
+                    registry.feature_enabled = False
+                    registry.migration_error = None
+                    platform_db.commit()
+                    repair_key = f"dev-bootstrap-repair-{TENANT_HEAD}-{business_id}"
+                try:
+                    provision_shop(
+                        platform_db,
+                        business_id=business_id,
+                        # Provisioning operations are terminal after success.
+                        # Scope the key to the required tenant head so a later
+                        # release can repair/re-enable an existing schema
+                        # instead of replaying an older successful operation.
+                        idempotency_key=repair_key or f"dev-bootstrap-{TENANT_HEAD}-{business_id}",
+                    )
+                except Exception:
+                    # Isolate one malformed shop from the rest of the local
+                    # install; the next restart or explicit retry can recover
+                    # it without preventing the API from starting.
+                    logger.warning(
+                        "Development tenant provisioning deferred: business_id=%s schema=%s",
+                        business_id,
+                        schema_name_for(business_id),
+                        exc_info=True,
+                    )
+    except Exception:
+        # Keep the legacy demo available if a developer has not created the
+        # optional platform/tenant databases yet.  The tenant endpoint will
+        # return its normal readiness message instead of exposing internals.
+        logger.warning("Development SaaS bootstrap deferred", exc_info=True)
 
 
 def _wait_for_database(max_attempts: int = 15, delay_seconds: int = 2) -> None:
@@ -91,7 +243,7 @@ def init_db() -> None:
         conn.execute(
             text(
                 "ALTER TABLE customers "
-                "ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()"
+                "ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
             )
         )
         conn.execute(
@@ -142,6 +294,11 @@ def init_db() -> None:
                 "ADD COLUMN IF NOT EXISTS assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
             )
         )
+        conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_provider VARCHAR(80)"))
+        conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_code VARCHAR(160)"))
+        conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_status VARCHAR(30)"))
+        conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS reservation_expires_at TIMESTAMP"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_reservation_expires_at ON orders (reservation_expires_at)"))
         conn.execute(
             text(
                 "ALTER TABLE conversations "
@@ -152,6 +309,18 @@ def init_db() -> None:
             text(
                 "ALTER TABLE conversations "
                 "ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(20) NOT NULL DEFAULT 'auto'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE chatbot_configs "
+                "ADD COLUMN IF NOT EXISTS business_hours JSON"
             )
         )
         conn.execute(
@@ -186,6 +355,18 @@ def init_db() -> None:
         )
         conn.execute(
             text(
+                "ALTER TABLE messages "
+                "ADD COLUMN IF NOT EXISTS auto_reply_key VARCHAR(255)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_auto_reply_key "
+                "ON messages (auto_reply_key)"
+            )
+        )
+        conn.execute(
+            text(
                 "ALTER TABLE documents "
                 "ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES businesses(id) ON DELETE CASCADE"
             )
@@ -194,6 +375,19 @@ def init_db() -> None:
             text(
                 "ALTER TABLE customers "
                 "ADD COLUMN IF NOT EXISTS avatar_url VARCHAR"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE customers "
+                "ADD COLUMN IF NOT EXISTS merged_into_customer_id INTEGER "
+                "REFERENCES customers(id) ON DELETE SET NULL"
             )
         )
         conn.execute(
@@ -215,6 +409,89 @@ def init_db() -> None:
                 "ADD COLUMN IF NOT EXISTS media_url TEXT"
             )
         )
+        # Compatibility columns for local databases that are started directly
+        # with uvicorn instead of running the Alembic container entrypoint.
+        # New SaaS tables are created by Base.metadata.create_all() above;
+        # these ALTERs only fill the columns that create_all cannot add to an
+        # already-existing table.
+        conn.execute(
+            text(
+                "ALTER TABLE service_plans "
+                "ADD COLUMN IF NOT EXISTS max_rag_chunks INTEGER NOT NULL DEFAULT 500"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE service_plans "
+                "ADD COLUMN IF NOT EXISTS max_ai_calls INTEGER NOT NULL DEFAULT 1000"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE service_plans "
+                "ADD COLUMN IF NOT EXISTS max_ai_cost NUMERIC(14,2) NOT NULL DEFAULT 100"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS mfa_secret_encrypted TEXT"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS mfa_status VARCHAR(20) NOT NULL DEFAULT 'disabled'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS mfa_prepared_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS device_label VARCHAR(120)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS user_agent_hash VARCHAR(64)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS ip_hash VARCHAR(64)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE auth_sessions "
+                "ADD COLUMN IF NOT EXISTS mfa_verified BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        # Unified Timeline reads audit rows directly.  Older development
+        # databases may have been started with create_all() before the
+        # platform-quality event contract existed, so add these columns
+        # idempotently instead of making Customer 360 fail closed.
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_id VARCHAR(64)"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_type VARCHAR(20) NOT NULL DEFAULT 'system'"))
+        conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(120)"))
+        conn.execute(text("UPDATE audit_logs SET event_id = md5('legacy-' || id::text) WHERE event_id IS NULL"))
+        conn.execute(text("ALTER TABLE audit_logs ALTER COLUMN event_id SET NOT NULL"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs(event_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_actor_type ON audit_logs(actor_type)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_correlation_id ON audit_logs(correlation_id)"))
 
     # pgvector HNSW indexes support at most 2,000 dimensions for vector.
     # Gemini's 3,072-dimension embeddings still work, but use an exact scan
@@ -235,6 +512,24 @@ def init_db() -> None:
             "Skipping pgvector HNSW index: embedding dimension %d exceeds the 2,000-dimension limit",
             settings.EMBEDDING_DIMENSION,
         )
+
+    # Keep the built-in tenant available for the initial single-business
+    # deployment. The Alembic seed migration performs the same operation for
+    # fresh environments; this call also makes legacy create_all databases
+    # safe to upgrade without a manual data step.
+    with SessionLocal() as db:
+        ensure_default_business(db)
+        # Keep the service catalogue available immediately after a fresh
+        # startup.  The API also calls this helper defensively, but seeding at
+        # bootstrap makes the platform-admin dashboard and onboarding page
+        # useful before either endpoint has been opened once.
+        ensure_default_plans(db)
+        db.commit()
+
+    # Existing local installs may predate the platform/tenant databases. Make
+    # the first restart provision their shop schema so the inbox and channel
+    # settings do not fail with a generic "server not ready" message.
+    _bootstrap_development_saas()
 
     logger.info("Database schema and pgvector index are ready")
 

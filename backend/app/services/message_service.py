@@ -1,11 +1,30 @@
+import logging
 from typing import Any
 
 import httpx
 from sqlalchemy import text
+from app.core.config import settings
+from app.contracts.channel_event import ChannelProvider
+from app.integrations._meta import parse_meta_events
+from app.integrations.telegram import TelegramAdapter
+from app.services.customer_identity import get_existing_name_priority, resolve_customer
+from app.services.audit_service import record_audit
+from app.services.customer_profile import merge_profile, profile_change_metadata
+from app.services.channel_service import get_active_channel
+from app.models.channel import Channel
+from app.services.channel_credentials import decrypt_token
+from app.services.workflow_engine import emit_workflow_event
+from app.services.notification_service import create_notification
+from app.services.realtime import manager
 from sqlalchemy.orm import Session
 
 from app.db.message_repository import save_message
 from app.services.meta_config_service import get_meta_config
+from app.services.media_resolver import build_media_url
+from app.services.customer_avatar import build_customer_avatar_url
+from app.tenancy.context import TenantContext
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
@@ -41,8 +60,28 @@ def empty_normalized_message(
         "content": None,
         "media_type": None,
         "media_url": None,
+        "attachments": [],
         "raw_payload": payload,
     }
+
+
+def extract_normalized_attachments(
+    payload: dict[str, Any],
+    provider: ChannelProvider,
+    message_id: str | None,
+) -> list[dict[str, Any]]:
+    """Use the canonical Meta adapter even on the legacy development path."""
+    if not message_id:
+        return []
+    try:
+        events = parse_meta_events(payload, provider)
+    except Exception:
+        return []
+    for event in events:
+        for message in event.messages:
+            if message.external_message_id == str(message_id):
+                return [item.model_dump(mode="json") for item in message.attachments]
+    return []
 
 
 # =========================================================
@@ -229,7 +268,7 @@ def normalize_facebook_message(
     # Facebook echoes Page-sent messages back to the webhook. Do not treat
     # those echoes as new customer questions or trigger another RAG reply.
     if message.get("is_echo"):
-        print("🔁 FACEBOOK OUTBOUND ECHO IGNORED")
+        logger.info("Facebook outbound echo ignored")
         return empty_normalized_message(
             channel="facebook",
             payload=payload,
@@ -238,10 +277,20 @@ def normalize_facebook_message(
     attachment = extract_attachment(
         message
     )
+    normalized_attachments = extract_normalized_attachments(
+        payload,
+        ChannelProvider.FACEBOOK,
+        message.get("mid"),
+    )
 
     return {
         "channel":
             "facebook",
+
+        "external_account_id":
+            event.get("recipient", {}).get("id")
+            or event.get("page_id")
+            or next(iter(payload.get("entry") or []), {}).get("id"),
 
         "external_user_id":
             event.get(
@@ -269,6 +318,8 @@ def normalize_facebook_message(
                 "media_url"
             ),
 
+        "attachments": normalized_attachments,
+
         "raw_payload":
             payload,
     }
@@ -280,18 +331,16 @@ def normalize_facebook_message(
 
 def fetch_facebook_customer_profile(
     external_user_id: str,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
 
-    access_token = str(
-        get_meta_config()["facebook_page_access_token"] or ""
-    ).strip()
+    # Profile enrichment is tenant-owned.  A missing tenant session must not
+    # fall back to a process-wide Page token, even in development.
+    access_token = str(access_token or "").strip()
 
     if not access_token:
 
-        print(
-            "⚠️ FACEBOOK PROFILE SKIPPED | "
-            "FACEBOOK_PAGE_ACCESS_TOKEN chưa có"
-        )
+        logger.info("Facebook profile enrichment skipped: credentials unavailable")
 
         return {
             "name": None,
@@ -320,10 +369,7 @@ def fetch_facebook_customer_profile(
 
     try:
 
-        print(
-            "🔎 FETCH FACEBOOK PROFILE | "
-            f"user_id={external_user_id}"
-        )
+        logger.info("Fetching Facebook customer profile")
 
         response = httpx.get(
             url,
@@ -331,17 +377,11 @@ def fetch_facebook_customer_profile(
             timeout=10,
         )
 
-        print(
-            "FACEBOOK PROFILE STATUS:",
-            response.status_code,
-        )
+        logger.info("Facebook profile response status=%s", response.status_code)
 
         if response.status_code != 200:
 
-            print(
-                "⚠️ FACEBOOK PROFILE ERROR:",
-                response.text[:500],
-            )
+            logger.warning("Facebook profile request was rejected")
 
             return {
                 "name": None,
@@ -358,22 +398,15 @@ def fetch_facebook_customer_profile(
             "profile_pic"
         )
 
-        print(
-            "✅ FACEBOOK PROFILE RECEIVED | "
-            f"name={name!r}"
-        )
+        logger.info("Facebook customer profile received")
 
         return {
             "name": name,
             "avatar_url": avatar_url,
         }
 
-    except Exception as exc:
-
-        print(
-            "⚠️ FACEBOOK PROFILE EXCEPTION:",
-            exc,
-        )
+    except Exception:
+        logger.warning("Facebook customer profile lookup failed")
 
         return {
             "name": None,
@@ -387,18 +420,16 @@ def fetch_facebook_customer_profile(
 
 def fetch_instagram_customer_profile(
     external_user_id: str,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
 
-    access_token = str(
-        get_meta_config()["facebook_page_access_token"] or ""
-    ).strip()
+    # Profile enrichment is tenant-owned.  A missing tenant session must not
+    # fall back to a process-wide Page token, even in development.
+    access_token = str(access_token or "").strip()
 
     if not access_token:
 
-        print(
-            "⚠️ INSTAGRAM PROFILE SKIPPED | "
-            "FACEBOOK_PAGE_ACCESS_TOKEN chưa có"
-        )
+        logger.info("Instagram profile enrichment skipped: credentials unavailable")
 
         return {
             "name": None,
@@ -429,10 +460,7 @@ def fetch_instagram_customer_profile(
 
     try:
 
-        print(
-            "🔎 FETCH INSTAGRAM PROFILE | "
-            f"user_id={external_user_id}"
-        )
+        logger.info("Fetching Instagram customer profile")
 
         response = httpx.get(
             url,
@@ -440,17 +468,11 @@ def fetch_instagram_customer_profile(
             timeout=10,
         )
 
-        print(
-            "INSTAGRAM PROFILE STATUS:",
-            response.status_code,
-        )
+        logger.info("Instagram profile response status=%s", response.status_code)
 
         if response.status_code != 200:
 
-            print(
-                "⚠️ INSTAGRAM PROFILE ERROR:",
-                response.text[:500],
-            )
+            logger.warning("Instagram profile request was rejected")
 
             return {
                 "name": None,
@@ -481,11 +503,7 @@ def fetch_instagram_customer_profile(
             )
         )
 
-        print(
-            "✅ INSTAGRAM PROFILE RECEIVED | "
-            f"name={display_name!r} | "
-            f"username={username!r}"
-        )
+        logger.info("Instagram customer profile received")
 
         return {
             "name":
@@ -498,12 +516,8 @@ def fetch_instagram_customer_profile(
                 avatar_url,
         }
 
-    except Exception as exc:
-
-        print(
-            "⚠️ INSTAGRAM PROFILE EXCEPTION:",
-            exc,
-        )
+    except Exception:
+        logger.warning("Instagram customer profile lookup failed")
 
         return {
             "name": None,
@@ -532,10 +546,7 @@ def fetch_instagram_message_data(
 
     if not access_token:
 
-        print(
-            "[WARN] FACEBOOK_PAGE_ACCESS_TOKEN "
-            "chưa được set trong .env"
-        )
+        logger.info("Instagram message detail lookup skipped: credentials unavailable")
 
         return {
             "content": None,
@@ -547,9 +558,7 @@ def fetch_instagram_message_data(
 
     if not mid:
 
-        print(
-            "[WARN] Instagram message mid rỗng"
-        )
+        logger.warning("Instagram message detail lookup skipped: missing message ID")
 
         return {
             "content": None,
@@ -575,11 +584,7 @@ def fetch_instagram_message_data(
 
     try:
 
-        print(
-            "[INFO] Gọi Graph API "
-            "(fields=message,from,attachments): "
-            f"{url}"
-        )
+        logger.info("Fetching Instagram message details")
 
         response = httpx.get(
             url,
@@ -587,11 +592,7 @@ def fetch_instagram_message_data(
             timeout=10,
         )
 
-        print(
-            "[INFO] Graph API status: "
-            f"{response.status_code}, "
-            f"body: {response.text[:1000]}"
-        )
+        logger.info("Instagram message detail response status=%s", response.status_code)
 
 
         if response.status_code != 200:
@@ -676,11 +677,7 @@ def fetch_instagram_message_data(
                 )
 
 
-        print(
-            "📎 INSTAGRAM MEDIA PARSED | "
-            f"media_type={media_type!r} | "
-            f"media_url={media_url!r}"
-        )
+        logger.info("Instagram message media parsed: media_type=%s", media_type)
 
 
         return {
@@ -705,13 +702,8 @@ def fetch_instagram_message_data(
         }
 
 
-    except Exception as exc:
-
-        print(
-            "[WARN] "
-            "fetch_instagram_message_data "
-            f"exception: {exc}"
-        )
+    except Exception:
+        logger.warning("Instagram message detail lookup failed")
 
 
     return {
@@ -968,7 +960,7 @@ def normalize_instagram_message(
     # Meta emits message_edit events after delivery. They are not new
     # customer messages and must not trigger another RAG reply.
     if event.get("message_edit"):
-        print("🔁 INSTAGRAM MESSAGE_EDIT IGNORED")
+        logger.info("Instagram message edit ignored")
         return empty_normalized_message(
             channel="instagram",
             payload=payload,
@@ -991,7 +983,7 @@ def normalize_instagram_message(
         # Meta echoes messages sent by the Instagram account back to the
         # webhook. Do not save them as inbound messages or auto-reply to them.
         if message.get("is_echo"):
-            print("🔁 INSTAGRAM OUTBOUND ECHO IGNORED")
+            logger.info("Instagram outbound echo ignored")
             return empty_normalized_message(
                 channel="instagram",
                 payload=payload,
@@ -1002,10 +994,19 @@ def normalize_instagram_message(
                 message
             )
         )
+        normalized_attachments = extract_normalized_attachments(
+            payload,
+            ChannelProvider.INSTAGRAM,
+            message.get("mid"),
+        )
 
         result = {
             "channel":
                 "instagram",
+
+            "external_account_id":
+                event.get("recipient", {}).get("id")
+                or next(iter(payload.get("entry") or []), {}).get("id"),
 
             "external_user_id":
                 event.get(
@@ -1035,16 +1036,17 @@ def normalize_instagram_message(
                     "media_url"
                 ),
 
+            "attachments": normalized_attachments,
+
             "raw_payload":
                 payload,
         }
 
 
-        print(
-            "📥 INSTAGRAM NORMALIZED MESSAGE | "
-            f"content={result.get('content')!r} | "
-            f"media_type={result.get('media_type')!r} | "
-            f"media_url={result.get('media_url')!r}"
+        logger.info(
+            "Instagram message normalized: is_text=%s has_media=%s",
+            bool(result.get("content")),
+            bool(result.get("media_type")),
         )
 
 
@@ -1077,10 +1079,7 @@ def normalize_instagram_message(
         access_token = get_meta_config()["facebook_page_access_token"]
 
 
-        print(
-            "[INFO] Instagram đang sử dụng "
-            "FACEBOOK_PAGE_ACCESS_TOKEN"
-        )
+        logger.info("Fetching Instagram message-edit details")
 
 
         result = (
@@ -1117,13 +1116,10 @@ def normalize_instagram_message(
         )
 
 
-        print(
-            "[INFO] "
-            "message_edit(num_edit=0) | "
-            f"content={content!r} | "
-            f"sender_id={sender_id!r} | "
-            f"media_type={media_type!r} | "
-            f"media_url={media_url!r}"
+        logger.info(
+            "Instagram message edit normalized: is_text=%s has_media=%s",
+            bool(content),
+            bool(media_type),
         )
 
 
@@ -1180,39 +1176,6 @@ def process_and_save_message(
 
 
     # =====================================================
-    # 0. INSTAGRAM OUTBOUND ECHO
-    # =====================================================
-
-    if channel == "instagram":
-
-        instagram_account_id = str(
-            get_meta_config()["instagram_account_id"] or ""
-        ).strip()
-
-        sender_id = (
-            str(
-                external_user_id
-            ).strip()
-            if external_user_id is not None
-            else ""
-        )
-
-        if (
-            instagram_account_id
-            and sender_id
-            == instagram_account_id
-        ):
-
-            print(
-                "🔁 INSTAGRAM OUTBOUND "
-                "ECHO IGNORED | "
-                f"sender_id={sender_id}"
-            )
-
-            return False
-
-
-    # =====================================================
     # 1. VALIDATE
     # =====================================================
 
@@ -1221,21 +1184,14 @@ def process_and_save_message(
         or not external_user_id
     ):
 
-        print(
-            "⚠️ Bỏ qua webhook: "
-            "không có channel "
-            "hoặc external_user_id"
-        )
+        logger.warning("Inbound message ignored: missing channel or external user ID")
 
         return False
 
 
     if not external_message_id:
 
-        print(
-            "⚠️ Bỏ qua webhook: "
-            "không có external_message_id"
-        )
+        logger.warning("Inbound message ignored: missing external message ID")
 
         return False
 
@@ -1244,28 +1200,76 @@ def process_and_save_message(
     # 2. TÌM CUSTOMER
     # =====================================================
 
-    customer = db.execute(
-        text("""
-            SELECT
-                id,
-                name,
-                avatar_url
+    # The caller has already resolved the shop and bound this session to its
+    # schema. Never query the platform database through a tenant session.
+    business_id = message.get("business_id")
 
-            FROM customers
+    # A message without a resolved tenant must never create a legacy/global
+    # conversation.  In production this is a rejected webhook; keeping the
+    # guard here also protects direct callers of this service.
+    if business_id is None:
+        logger.warning("Inbound message ignored: tenant could not be resolved")
+        return False
+    if db.info.get("business_id") is not None and int(db.info["business_id"]) != int(business_id):
+        logger.warning("Inbound message ignored: resolved business differs from routed session")
+        return False
 
-            WHERE channel = :channel
-              AND external_user_id = :external_user_id
+    channel_row = None
+    if message.get("channel_id") is not None:
+        channel_row = db.get(Channel, int(message["channel_id"]))
+        if (
+            channel_row is None or channel_row.business_id != int(business_id)
+            or channel_row.channel_type != channel or channel_row.status != "active"
+            or (message.get("external_account_id") is not None
+                and channel_row.external_account_id != message["external_account_id"])
+        ):
+            logger.warning("Inbound message ignored: channel does not match routed shop")
+            return False
+    elif message.get("external_account_id"):
+        channel_row = get_active_channel(db, int(business_id), channel, message["external_account_id"])
+        if channel_row is None:
+            return False
+        message["channel_id"] = channel_row.id
+    elif settings.ENVIRONMENT.strip().lower() == "production":
+        logger.warning("Inbound message ignored: resolved channel is required")
+        return False
 
-            LIMIT 1
-        """),
-        {
-            "channel":
-                channel,
+    if business_id is not None:
+        customer = resolve_customer(
+            db,
+            business_id=int(business_id),
+            channel=channel,
+            external_user_id=str(external_user_id),
+            external_account_id=message.get("external_account_id"),
+            name=message.get("name"),
+            display_name=message.get("display_name"),
+            username=message.get("username"),
+            avatar_url=message.get("avatar_url"),
+        )
+    else:
+        customer = db.execute(
+            text("""
+                SELECT id, name, avatar_url
+                FROM customers
+                WHERE channel = :channel
+                  AND external_user_id = :external_user_id
+                LIMIT 1
+            """),
+            {"channel": channel, "external_user_id": external_user_id},
+        ).first()
 
-            "external_user_id":
-                external_user_id,
-        },
-    ).first()
+    profile_access_token = None
+    if channel_row is not None and channel in {"facebook", "instagram", "telegram"}:
+        try:
+            if channel_row.access_token_encrypted:
+                profile_access_token = decrypt_token(
+                    channel_row.access_token_encrypted,
+                    settings.CHANNEL_ENCRYPTION_KEY,
+                )
+        except (LookupError, ValueError):
+            # A missing/invalid credential skips enrichment. Never select a
+            # different account's token just because the provider is the same.
+            profile_access_token = None
 
 
     # =====================================================
@@ -1296,7 +1300,8 @@ def process_and_save_message(
             fetch_facebook_customer_profile(
                 str(
                     external_user_id
-                )
+                ),
+                access_token=profile_access_token,
             )
         )
 
@@ -1322,7 +1327,8 @@ def process_and_save_message(
             fetch_instagram_customer_profile(
                 str(
                     external_user_id
-                )
+                ),
+                access_token=profile_access_token,
             )
         )
 
@@ -1334,6 +1340,30 @@ def process_and_save_message(
             "avatar_url"
         )
 
+    # =====================================================
+    # TELEGRAM PROFILE PHOTO
+    # =====================================================
+
+    elif (
+        channel == "telegram"
+        and should_fetch_profile
+        and profile_access_token
+    ):
+        try:
+            file_path = TelegramAdapter().fetch_profile_avatar_file_path(
+                user_id=str(external_user_id),
+                access_token=profile_access_token,
+            )
+            if file_path and business_id is not None:
+                avatar_url = build_customer_avatar_url(
+                    customer_id=customer.id,
+                    business_id=int(business_id),
+                )
+        except Exception:
+            # Avatar enrichment is optional; never reject an otherwise valid
+            # inbound Telegram message because the profile endpoint is down.
+            logger.warning("Telegram customer avatar lookup failed", exc_info=True)
+
 
     # =====================================================
     # 4. CREATE CUSTOMER
@@ -1344,12 +1374,14 @@ def process_and_save_message(
         customer = db.execute(
             text("""
                 INSERT INTO customers (
+                    business_id,
                     channel,
                     external_user_id,
                     name,
                     avatar_url
                 )
                 VALUES (
+                    :business_id,
                     :channel,
                     :external_user_id,
                     :name,
@@ -1361,6 +1393,7 @@ def process_and_save_message(
                     avatar_url
             """),
             {
+                "business_id": int(business_id),
                 "channel":
                     channel,
 
@@ -1379,11 +1412,7 @@ def process_and_save_message(
         db.commit()
 
 
-        print(
-            "✅ CREATED CUSTOMER | "
-            f"id={customer.id} | "
-            f"name={customer.name!r}"
-        )
+        logger.info("Customer record created from inbound message")
 
 
     # =====================================================
@@ -1394,6 +1423,9 @@ def process_and_save_message(
         channel in (
             "facebook",
             "instagram",
+            "telegram",
+            "zalo",
+            "tiktok",
         )
         and (
             customer_name
@@ -1401,45 +1433,25 @@ def process_and_save_message(
         )
     ):
 
-        db.execute(
-            text("""
-                UPDATE customers
-
-                SET
-                    name = COALESCE(
-                        :name,
-                        name
-                    ),
-
-                    avatar_url = COALESCE(
-                        :avatar_url,
-                        avatar_url
-                    )
-
-                WHERE id = :customer_id
-            """),
-            {
-                "name":
-                    customer_name,
-
-                "avatar_url":
-                    avatar_url,
-
-                "customer_id":
-                    customer.id,
-            },
+        changes = merge_profile(
+            customer,
+            existing_name_priority=get_existing_name_priority(db, customer),
+            name=customer_name,
+            avatar_url=avatar_url,
         )
-
-
+        if changes and business_id is not None:
+            record_audit(
+                db,
+                business_id=int(business_id),
+                action="profile_update",
+                resource_type="customer",
+                resource_id=customer.id,
+                metadata=profile_change_metadata(changes),
+            )
         db.commit()
 
 
-        print(
-            "✅ UPDATED CUSTOMER PROFILE | "
-            f"channel={channel} | "
-            f"customer_id={customer.id} | "
-            f"name={customer_name!r}"
-        )
+        logger.info("Customer profile enriched from an inbound message")
 
 
     customer_id = (
@@ -1451,6 +1463,10 @@ def process_and_save_message(
     # 6. TÌM CONVERSATION
     # =====================================================
 
+    # Conversations are tenant-owned resources.  The webhook has already
+    # resolved ``business_id`` from the trusted Channel record above; carry
+    # that value into both the lookup and insert so a customer/account from
+    # another tenant can never be reused accidentally.
     conversation = db.execute(
         text("""
             SELECT id
@@ -1459,6 +1475,7 @@ def process_and_save_message(
 
             WHERE customer_id = :customer_id
               AND channel = :channel
+              AND business_id = :business_id
               AND status = 'open'
 
             ORDER BY id DESC
@@ -1471,6 +1488,9 @@ def process_and_save_message(
 
             "channel":
                 channel,
+
+            "business_id":
+                int(business_id),
         },
     ).first()
 
@@ -1485,19 +1505,31 @@ def process_and_save_message(
             text("""
                 INSERT INTO conversations (
                     customer_id,
+                    business_id,
+                    channel_id,
                     channel,
-                    status
+                    status,
+                    bot_mode
                 )
                 VALUES (
                     :customer_id,
+                    :business_id,
+                    :channel_id,
                     :channel,
-                    'open'
+                    'open',
+                    'auto'
                 )
                 RETURNING id
             """),
             {
                 "customer_id":
                     customer_id,
+
+                "business_id":
+                    int(business_id),
+
+                "channel_id":
+                    message.get("channel_id"),
 
                 "channel":
                     channel,
@@ -1508,10 +1540,7 @@ def process_and_save_message(
         db.commit()
 
 
-        print(
-            "✅ CREATED CONVERSATION | "
-            f"id={conversation.id}"
-        )
+        logger.info("Conversation created from inbound message")
 
 
     conversation_id = (
@@ -1542,6 +1571,44 @@ def process_and_save_message(
         message=message,
     )
 
+    # Provider redelivery can happen after the first request commits the CRM
+    # message but before it returns a 2xx acknowledgement.  The database
+    # correctly returns the existing row; stop here so that a duplicate never
+    # emits a second workflow, profile extraction or bot reply.
+    if saved_message is not None and not saved_message.get("_created", True):
+        logger.info("Inbound provider delivery already persisted")
+        return saved_message
+
+    # Every outbound workflow spawned by this inbound event receives a
+    # deterministic idempotency namespace.  Provider retries can therefore
+    # safely re-enter the webhook without producing duplicate bot messages.
+    auto_reply_base_key = None
+    if saved_message and saved_message.get("message_id"):
+        auto_reply_base_key = (
+            f"inbound:{int(business_id)}:{int(conversation_id)}:"
+            f"{int(saved_message['message_id'])}"
+        )
+
+    # Keep the legacy media columns as a compatibility mirror while storing
+    # the complete canonical attachment list in the tenant-owned table.
+    persisted_attachments = []
+    if saved_message and message.get("attachments") and message.get("channel_id"):
+        try:
+            from app.services.media_service import save_message_attachments
+
+            persisted_attachments = save_message_attachments(
+                db,
+                message_id=int(saved_message["message_id"]),
+                business_id=int(business_id),
+                channel_id=int(message["channel_id"]),
+                attachments=message.get("attachments") or [],
+            )
+        except Exception:
+            # A malformed provider attachment must not make the already
+            # accepted text message disappear; keep the error visible for
+            # operators and continue with the compatibility path.
+            logger.warning("Message attachment persistence failed")
+
     # Keep the CRM list ordered by the latest interaction and make the
     # database change visible even when the message is later handled by the
     # background auto-reply worker.
@@ -1549,8 +1616,8 @@ def process_and_save_message(
         text(
             """
             UPDATE conversations
-            SET updated_at = NOW(),
-                last_message_at = NOW()
+            SET updated_at = CURRENT_TIMESTAMP,
+                last_message_at = CURRENT_TIMESTAMP
             WHERE id = :conversation_id
             """
         ),
@@ -1560,7 +1627,7 @@ def process_and_save_message(
         text(
             """
             UPDATE customers
-            SET updated_at = NOW()
+            SET updated_at = CURRENT_TIMESTAMP
             WHERE id = :customer_id
             """
         ),
@@ -1568,29 +1635,319 @@ def process_and_save_message(
     )
     db.commit()
 
+    # Every new inbound message is visible in the shared shop inbox. When a
+    # responsible staff member is actively working in CRM, only that person
+    # receives the bell notification. If they leave the CRM session (or the
+    # conversation is unassigned), notify the shop so the customer is not
+    # left waiting.
+    # The notification is intentionally persisted after the message commit so
+    # a legacy notification table can never make the provider retry the chat.
+    if saved_message and saved_message.get("message_id"):
+        try:
+            assignment = db.execute(
+                text(
+                    """
+                    SELECT assigned_user_id
+                    FROM conversations
+                    WHERE id = :conversation_id AND business_id = :business_id
+                    """
+                ),
+                {"conversation_id": int(conversation_id), "business_id": int(business_id)},
+            ).first()
+            assigned_user_id = getattr(assignment, "assigned_user_id", None) if assignment else None
+            notification_user_id = (
+                int(assigned_user_id)
+                if assigned_user_id is not None
+                and manager.is_user_connected(
+                    business_id=int(business_id),
+                    user_id=int(assigned_user_id),
+                )
+                else None
+            )
+            preview = " ".join(str(message.get("content") or "").split())[:280]
+            customer_name = str(getattr(customer, "name", "") or "Khách hàng").strip()
+            create_notification(
+                db,
+                business_id=int(business_id),
+                user_id=notification_user_id,
+                kind="new_message",
+                title=f"Tin nhắn mới từ {customer_name[:120] or 'khách hàng'}",
+                body=preview or "Khách vừa gửi một tệp hoặc nội dung mới.",
+                metadata={
+                    "conversation_id": int(conversation_id),
+                    "customer_id": int(customer_id),
+                    "message_id": int(saved_message["message_id"]),
+                    "channel": str(channel),
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning("Inbound notification could not be recorded")
 
-    print(
-        "✅ MESSAGE SAVED | "
-        f"customer_id={customer_id} | "
-        f"conversation_id={conversation_id} | "
-        f"direction=inbound | "
-        f"media_type={message.get('media_type')!r} | "
-        f"media_url={message.get('media_url')!r} | "
-        f"external_message_id="
-        f"{external_message_id}"
+    # Keep the inbound side of the unified event chain auditable without
+    # copying message content or provider payloads into the audit stream.
+    if saved_message and business_id is not None and saved_message.get("message_id"):
+        try:
+            record_audit(
+                db,
+                business_id=int(business_id),
+                actor_type="customer",
+                action="message_received",
+                resource_type="message",
+                resource_id=int(saved_message["message_id"]),
+                correlation_id=auto_reply_base_key,
+                metadata={
+                    "conversation_id": int(conversation_id),
+                    "customer_id": int(customer_id),
+                    "channel": str(channel),
+                },
+            )
+            db.commit()
+        except Exception:
+            # Audit is additive; accepting an inbound provider event must not
+            # fail because a legacy database has not created the audit table.
+            db.rollback()
+            logger.warning("Inbound audit event could not be recorded")
+
+    if saved_message is not None and persisted_attachments:
+        saved_message["attachments"] = [
+            {
+                "id": row.id,
+                "media_type": row.media_type,
+                "mime_type": row.mime_type,
+                "file_name": row.file_name,
+                "duration_ms": row.duration_ms,
+                "external_attachment_id": row.external_attachment_id,
+                # WebSocket consumers receive this payload before their next
+                # messages refresh; expose the same tenant-safe proxy URL as
+                # GET /conversations/{id}/messages instead of leaving
+                # provider file_ids without a browser-loadable URL.
+                "media_url": build_media_url(
+                    attachment_id=row.id,
+                    business_id=int(business_id),
+                ),
+                "source_url": row.source_url,
+                "storage_key": row.storage_key,
+                "metadata": row.metadata_,
+            }
+            for row in persisted_attachments
+        ]
+
+    # Fan out the committed inbound message to enabled, tenant-scoped
+    # workflows. Duplicate webhook deliveries do not emit a second event.
+    if saved_message and business_id is not None:
+        try:
+            emit_workflow_event(
+                db,
+                TenantContext(int(business_id), "channel_account"),
+                "message.created",
+                f"message:{saved_message.get('message_id')}",
+                {
+                    "message_id": saved_message.get("message_id"),
+                    "conversation_id": conversation_id,
+                    "customer_id": customer_id,
+                    "channel": channel,
+                    "content": message.get("content"),
+                },
+            )
+        except Exception:
+            logger.warning("Message workflow trigger failed")
+
+
+    logger.info(
+        "Inbound message saved: channel=%s has_media=%s",
+        channel,
+        bool(message.get("media_type")),
     )
 
-    # RAG Auto-reply check
-    if message.get("content"):
+    # Keep routing flags initialized before any branch uses them.  Media-only
+    # messages skip all text handlers, but still pass through this function.
+    escalation_triggered = False
+    csat_recorded = False
+
+    # A pending CSAT survey consumes an explicit 1–5 answer before the
+    # regular commerce/RAG router can mistake it for a product quantity.
+    if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded:
         try:
-            from app.services.auto_reply_service import process_rag_auto_reply_background
-            process_rag_auto_reply_background(
-                conversation_id=conversation_id,
-                channel=channel,
-                query_text=message.get("content"),
+            from app.services.csat_service import CSAT_THANK_YOU, consume_csat_response
+
+            csat_recorded = consume_csat_response(
+                db,
+                business_id=int(business_id),
+                conversation_id=int(conversation_id),
+                text=str(message.get("content")),
             )
-        except Exception as exc:
-            print("Auto-reply trigger error:", str(exc))
+            if csat_recorded:
+                from app.services.auto_reply_service import send_text_reply_background
+
+                send_text_reply_background(
+                    conversation_id=int(conversation_id),
+                    channel=str(channel),
+                    text=CSAT_THANK_YOU,
+                    business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:csat"
+                        if auto_reply_base_key
+                        else None
+                    ),
+                )
+        except Exception:
+            logger.warning("CSAT response trigger failed", exc_info=True)
+
+    # Complaint and explicit human requests are routed before the normal
+    # collection/RAG flow. This prevents the bot from continuing after a
+    # human takeover and creates one auditable support ticket.
+    if message.get("content") and business_id is not None:
+        try:
+            from app.services.chatbot_agent import route_escalation
+            from app.services.auto_reply_service import send_text_reply_background
+
+            ticket = route_escalation(
+                db,
+                int(business_id),
+                int(conversation_id),
+                str(message.get("content")),
+            )
+            if ticket is not None:
+                db.commit()
+                escalation_triggered = True
+                send_text_reply_background(
+                    conversation_id=int(conversation_id),
+                    channel=str(channel),
+                    text="Mình đã chuyển yêu cầu cho nhân viên hỗ trợ. Nhân viên sẽ liên hệ bạn sớm nhất nhé.",
+                    business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:escalation"
+                        if auto_reply_base_key
+                        else None
+                    ),
+                )
+        except Exception:
+            logger.warning("Chatbot escalation trigger failed", exc_info=True)
+
+    # Transactional order intents must win over an in-progress profile
+    # collection session. Otherwise a message such as "hủy đơn" can be
+    # mistaken for a customer name/phone and the bot will continue checkout.
+    transactional_reply = None
+    if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded:
+        try:
+            from app.services.customer_order_service import customer_order_reply
+            transactional_reply = customer_order_reply(
+                db,
+                int(business_id),
+                int(conversation_id),
+                str(message.get("content")),
+            )
+            if transactional_reply:
+                db.commit()
+                from app.services.auto_reply_service import send_text_reply_background
+
+                send_text_reply_background(
+                    conversation_id=int(conversation_id),
+                    channel=str(channel),
+                    text=transactional_reply,
+                    business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:transactional"
+                        if auto_reply_base_key
+                        else None
+                    ),
+                )
+        except Exception:
+            db.rollback()
+            logger.warning("Transactional order trigger failed", exc_info=True)
+
+    # Progressive customer-profile collection runs before RAG. Once a buyer
+    # starts checkout, each inbound answer advances the session and the next
+    # prompt is sent back through the same channel. This prevents the generic
+    # knowledge-base reply from competing with the order data-collection flow.
+    collection_result = None
+    if escalation_triggered or csat_recorded or transactional_reply:
+        collection_result = True
+    if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded and not transactional_reply:
+        if saved_message and saved_message.get("message_id"):
+            try:
+                from app.services.customer_fact_extractor import (
+                    process_customer_fact_extraction_background,
+                )
+
+                process_customer_fact_extraction_background(
+                    business_id=int(business_id),
+                    customer_id=int(customer_id),
+                    source_message_id=int(saved_message["message_id"]),
+                    content=str(message.get("content")),
+                )
+            except Exception:
+                logger.warning("Customer fact extraction trigger failed")
+        try:
+            from app.services.customer_collection_flow import (
+                advance_customer_collection,
+                send_collection_prompt_background,
+            )
+
+            collection_result = advance_customer_collection(
+                db,
+                business_id=int(business_id),
+                customer_id=int(customer_id),
+                conversation_id=int(conversation_id),
+                source_channel=str(channel),
+                text=str(message.get("content")),
+            )
+            if collection_result is not None:
+                send_collection_prompt_background(
+                    result=collection_result,
+                    conversation_id=int(conversation_id),
+                    channel=str(channel),
+                    business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:collection"
+                        if auto_reply_base_key
+                        else None
+                    ),
+                )
+        except Exception:
+            # Collection is an enhancement on top of the accepted inbound
+            # message; a malformed session must not make the webhook fail.
+            logger.warning("Customer collection trigger failed", exc_info=True)
+
+        if collection_result is None:
+            try:
+                from app.services.customer_collection_flow import (
+                    GREETING_REPLY,
+                    is_greeting,
+                )
+
+                if is_greeting(message.get("content")):
+                    from app.services.auto_reply_service import send_text_reply_background
+
+                    send_text_reply_background(
+                        conversation_id=conversation_id,
+                        channel=channel,
+                        text=GREETING_REPLY,
+                        business_id=int(business_id),
+                        auto_reply_key=(
+                            f"{auto_reply_base_key}:greeting"
+                            if auto_reply_base_key
+                            else None
+                        ),
+                    )
+                else:
+                    from app.services.auto_reply_service import process_rag_auto_reply_background
+
+                    process_rag_auto_reply_background(
+                        conversation_id=conversation_id,
+                        channel=channel,
+                        query_text=message.get("content"),
+                        business_id=int(business_id),
+                        auto_reply_key=(
+                            f"{auto_reply_base_key}:rag"
+                            if auto_reply_base_key
+                            else None
+                        ),
+                    )
+            except Exception:
+                logger.warning("Auto-reply trigger failed")
 
 
 

@@ -8,9 +8,18 @@ Output: raw text string.
 import csv
 import io
 import logging
+import zipfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class DocumentValidationError(ValueError):
+    """A stable, user-safe validation failure for an uploaded document."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def load_pdf(file_bytes: bytes) -> str:
@@ -31,8 +40,16 @@ def load_docx(file_bytes: bytes) -> str:
     from docx import Document
 
     doc = Document(io.BytesIO(file_bytes))
-    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-    return "\n\n".join(paragraphs)
+    parts = []
+    for block in doc.iter_inner_content():
+        if hasattr(block, "rows"):
+            for row in block.rows:
+                line = " | ".join(cell.text.strip() for cell in row.cells)
+                if line.strip(" |"):
+                    parts.append(line)
+        elif block.text.strip():
+            parts.append(block.text)
+    return "\n\n".join(parts)
 
 
 def load_txt(file_bytes: bytes) -> str:
@@ -90,33 +107,100 @@ def detect_file_type(filename: str) -> str:
     return ext
 
 
+def validate_document_bytes(file_bytes: bytes, filename: str) -> None:
+    """Validate format signatures and bound archive/text payloads before parsing."""
+    file_type = detect_file_type(filename)
+    if file_type not in LOADERS:
+        supported = ", ".join(sorted(LOADERS.keys()))
+        raise DocumentValidationError(
+            "unsupported_file_type",
+            f"Không hỗ trợ file type '.{file_type}'. Các loại được hỗ trợ: {supported}",
+        )
+    if not file_bytes:
+        raise DocumentValidationError("empty_file", "File rỗng.")
+
+    if file_type == "pdf":
+        if b"%PDF-" not in file_bytes[:1024]:
+            raise DocumentValidationError(
+                "invalid_file_content",
+                "Nội dung tệp không đúng định dạng PDF.",
+            )
+        return
+
+    if file_type == "docx":
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+                entries = archive.infolist()
+                uncompressed_size = sum(entry.file_size for entry in entries)
+                if (
+                    len(entries) > 4096
+                    or uncompressed_size > 100 * 1024 * 1024
+                    or "word/document.xml" not in archive.namelist()
+                ):
+                    raise DocumentValidationError(
+                        "invalid_file_content",
+                        "Tệp DOCX không hợp lệ hoặc vượt giới hạn giải nén.",
+                    )
+        except (OSError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
+            raise DocumentValidationError(
+                "invalid_file_content",
+                "Nội dung tệp không đúng định dạng DOCX.",
+            ) from exc
+        return
+
+    text = load_txt(file_bytes)
+    if not text.strip():
+        raise DocumentValidationError(
+            "empty_extracted_text",
+            "Tệp không có nội dung văn bản để lập chỉ mục.",
+        )
+    if "\x00" in text:
+        raise DocumentValidationError(
+            "invalid_file_content",
+            "Tệp văn bản chứa dữ liệu không hợp lệ.",
+        )
+    control_count = sum(
+        ord(character) < 32 and character not in "\t\n\r\f"
+        or ord(character) == 127
+        for character in text
+    )
+    if text and control_count / len(text) > 0.01:
+        raise DocumentValidationError(
+            "invalid_file_content",
+            "Tệp văn bản chứa dữ liệu không hợp lệ.",
+        )
+
+
 def load_document(file_bytes: bytes, filename: str) -> str:
     """
     Load document từ bytes + filename.
 
     Raises ValueError nếu file type không được hỗ trợ.
     """
+    validate_document_bytes(file_bytes, filename)
     file_type = detect_file_type(filename)
 
     loader = LOADERS.get(file_type)
     if loader is None:
         supported = ", ".join(sorted(LOADERS.keys()))
-        raise ValueError(
+        raise DocumentValidationError(
+            "unsupported_file_type",
             f"Không hỗ trợ file type '.{file_type}'. "
             f"Các loại được hỗ trợ: {supported}"
         )
 
-    logger.info("Loading document: %s (type=%s)", filename, file_type)
+    logger.info("Loading document type=%s bytes=%d", file_type, len(file_bytes))
     text = loader(file_bytes)
 
     if not text or not text.strip():
-        raise ValueError(
-            f"File '{filename}' không có nội dung text."
+        raise DocumentValidationError(
+            "empty_extracted_text",
+            "Tài liệu không có nội dung văn bản để lập chỉ mục.",
         )
 
     logger.info(
-        "Loaded %d characters from %s",
+        "Loaded %d characters from document type=%s",
         len(text),
-        filename,
+        file_type,
     )
     return text

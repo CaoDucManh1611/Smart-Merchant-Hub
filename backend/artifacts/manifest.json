@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "scope": "public_uci_demo_only",
+  "purpose": "Offline recommendation-model checkpoints imported from the Colab experiments.",
+  "artifacts": [
+    {
+      "path": "unsupervised/uci_customer_segmentation.joblib",
+      "algorithm": "KMeans customer segmentation",
+      "sha256": "9de5170f4f8dcf9c83ff17ba0bea667f1d33ea8d857f02fbf8265519b641bd27",
+      "feature_contract": [
+        "recency_days",
+        "frequency",
+        "monetary",
+        "total_items",
+        "distinct_products",
+        "avg_order_value"
+      ],
+      "requires_exact_id_mapping": false
+    },
+    {
+      "path": "reinforcement/linucb_bandit_state.joblib",
+      "algorithm": "Disjoint LinUCB contextual bandit",
+      "sha256": "825702f9a81b7a18feaad49f13c21bb9c294b7739393dee235300732306a39ab",
+      "feature_contract": [
+        "bias",
+        "recency_inverse",
+        "log_frequency",
+        "log_monetary",
+        "log_distinct_products",
+        "log_avg_order_value",
+        "segment_one_hot"
+      ],
+      "requires_exact_id_mapping": true
+    },
+    {
+      "path": "deep_learning/ncf_best.pt",
+      "algorithm": "Neural collaborative filtering with BPR loss",
+      "sha256": "216ca9d52345a39420d3e213cb2c4db2a7556d5dfaa58395c96d3801ab7afeff",
+      "requires_exact_id_mapping": true
+    }
+  ]
+}

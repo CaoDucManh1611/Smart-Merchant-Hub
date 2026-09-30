@@ -25,10 +25,21 @@ Quy tắc:
 3. Nếu không tìm thấy thông tin liên quan hoặc không đủ chắc chắn, nói rõ là chưa có thông tin và đề nghị khách liên hệ nhân viên.
 4. Không tự suy đoán giá, tồn kho, chính sách hoặc thông tin sản phẩm.
 5. Trả lời ngắn gọn, thân thiện, chuyên nghiệp bằng ngôn ngữ của khách hàng.
-6. Nếu khách hàng hỏi về giá, luôn kèm theo đơn vị tiền tệ."""
+6. Nếu khách hàng hỏi về giá, luôn kèm theo đơn vị tiền tệ.
+7. Chỉ dùng nguồn thực sự liên quan đến câu hỏi. Không lấy danh sách sản phẩm
+   để trả lời câu hỏi giao hàng, đổi trả, bảo hành hoặc câu hỏi về một mã sản
+   phẩm không xuất hiện trong nguồn.
+8. Nếu nguồn không có đúng thông tin cần hỏi, nói rõ chưa có thông tin và mời
+   khách để lại câu hỏi cho nhân viên; không đoán và không lặp lại toàn bộ danh sách.
+9. Gắn nhãn [Nguồn N] vào câu trả lời có sử dụng thông tin từ từng đoạn tham khảo;
+   chỉ trích dẫn nguồn thực sự hỗ trợ cho nội dung đó.
+10. Khi khách hỏi tiếp về "sản phẩm lúc nãy", ưu tiên sản phẩm được nhắc trong
+   lịch sử của chính khách hàng."""
 
-NO_CONTEXT_FALLBACK = """Xin lỗi, tôi chưa có thông tin về vấn đề này trong hệ thống.
-Bạn có thể liên hệ trực tiếp với cửa hàng để được hỗ trợ chi tiết hơn."""
+NO_CONTEXT_FALLBACK = "Xin lỗi, shop chưa có đủ thông tin để trả lời chính xác. Nhân viên sẽ hỗ trợ bạn."
+SERVICE_ERROR_FALLBACK = "Trợ lý đang gặp sự cố. Nhân viên của shop sẽ hỗ trợ bạn."
+NO_CONTEXT_CHAT_FALLBACK = "Chưa tìm thấy nguồn đủ tin cậy trong kho kiến thức. Cần nhân viên xác minh trước khi phản hồi."
+SERVICE_ERROR_CHAT_FALLBACK = "Trợ lý đang gặp sự cố; hãy thử lại hoặc chuyển câu hỏi cho nhân viên."
 
 
 def build_context_text(chunks: list[RetrievedChunk]) -> str:
@@ -72,6 +83,9 @@ def build_prompt(
     """
     if system_prompt is None:
         system_prompt = DEFAULT_SYSTEM_PROMPT
+    else:
+        # Shop-specific tone may extend, but never replace, grounding rules.
+        system_prompt = f"{system_prompt}\n\n{DEFAULT_SYSTEM_PROMPT}"
 
     messages = []
 

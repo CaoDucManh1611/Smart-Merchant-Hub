@@ -1,0 +1,32 @@
+LUNARI FOOD & BEAUTY - TÀI LIỆU KIẾN THỨC MẪU
+
+Mục đích: dùng file này để kiểm tra upload tài liệu, lập chỉ mục và tìm kiếm RAG.
+
+1. SẢN PHẨM VÀ GIÁ BÁN
+
+- Serum Vitamin C Lunari (SKU SERUM-01): giá 420.000 đồng/chai 30 ml. Tồn kho thử nghiệm: 10 sản phẩm. Công dụng: hỗ trợ làm sáng da và cải thiện vẻ ngoài không đều màu. Cách dùng: dùng 2-3 giọt sau bước làm sạch, trước kem dưỡng.
+- Kem chống nắng Daily Shield (SKU SUN-01): giá 289.000 đồng/tuýp 50 ml. Tồn kho thử nghiệm: 25 sản phẩm. Chỉ số SPF 50 PA++++. Nên thoa lại sau mỗi 2-3 giờ khi ở ngoài trời.
+- Sữa rửa mặt dịu nhẹ (SKU CLEANSER-01): giá 179.000 đồng/chai 150 ml. Tồn kho thử nghiệm: 18 sản phẩm. Phù hợp với da thường và da nhạy cảm.
+- Combo chăm sóc da cơ bản (SKU COMBO-01): gồm Sữa rửa mặt dịu nhẹ, Serum Vitamin C và Kem chống nắng Daily Shield. Giá niêm yết 888.000 đồng; giá combo 799.000 đồng. Tồn kho combo thử nghiệm: 6 bộ.
+
+2. TƯ VẤN SẢN PHẨM
+
+Khách có ngân sách dưới 500.000 đồng có thể chọn Serum Vitamin C giá 420.000 đồng hoặc Kem chống nắng Daily Shield giá 289.000 đồng. Nếu khách muốn một quy trình cơ bản đầy đủ thì nên chọn Combo chăm sóc da cơ bản, nhưng combo có giá 799.000 đồng.
+
+Khách mới nên bắt đầu với Sữa rửa mặt dịu nhẹ. Sau đó có thể dùng Serum Vitamin C vào buổi tối và Kem chống nắng Daily Shield vào ban ngày. Người có làn da nhạy cảm nên thử sản phẩm trên vùng da nhỏ trước khi sử dụng toàn mặt.
+
+3. GIAO HÀNG VÀ THANH TOÁN
+
+Lunari hỗ trợ thanh toán khi nhận hàng (COD) và chuyển khoản ngân hàng. Đơn hàng nội thành được giao dự kiến trong 1-2 ngày làm việc. Đơn hàng tỉnh được giao dự kiến trong 3-5 ngày làm việc. Phí giao hàng được hiển thị trước khi xác nhận đơn.
+
+4. ĐỔI TRẢ VÀ HỖ TRỢ
+
+Khách có thể yêu cầu đổi sản phẩm bị giao sai hoặc bị hư hỏng trong vòng 7 ngày kể từ khi nhận hàng. Sản phẩm đổi trả phải còn nguyên tem, chưa qua sử dụng và có video hoặc hình ảnh khi mở kiện. Liên hệ CSKH kèm mã đơn hàng để được hỗ trợ.
+
+5. CÂU TRẢ LỜI KIỂM TRA RAG
+
+- Hỏi: Serum Vitamin C giá bao nhiêu? Trả lời mong đợi: 420.000 đồng/chai 30 ml.
+- Hỏi: Sản phẩm nào dưới 300.000 đồng? Trả lời mong đợi: Kem chống nắng Daily Shield 289.000 đồng và Sữa rửa mặt dịu nhẹ 179.000 đồng.
+- Hỏi: Combo cơ bản gồm những gì? Trả lời mong đợi: sữa rửa mặt, serum Vitamin C và kem chống nắng; giá combo 799.000 đồng.
+- Hỏi: Tỉnh giao hàng mất bao lâu? Trả lời mong đợi: khoảng 3-5 ngày làm việc.
+- Hỏi: Đổi sản phẩm hỏng trong bao lâu? Trả lời mong đợi: yêu cầu trong vòng 7 ngày và cung cấp hình ảnh/video khi mở kiện.

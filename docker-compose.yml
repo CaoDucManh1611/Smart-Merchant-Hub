@@ -2,19 +2,47 @@ services:
   db:
     image: pgvector/pgvector:pg16
     container_name: crm_chatbot_db
+    shm_size: 512mb
     environment:
-      POSTGRES_DB: crm_chatbot
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-crm_chatbot}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-multi-db.sh:/docker-entrypoint-initdb.d/10-multi-db.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d crm_chatbot"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: crm_chatbot_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  db-init:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      PGHOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./docker/postgres/init-multi-db.sh:/opt/init-multi-db.sh:ro
+    entrypoint: ["/bin/sh", "/opt/init-multi-db.sh"]
+    restart: "no"
 
   backend:
     build:
@@ -25,26 +53,83 @@ services:
     environment:
       # Trong Docker, PostgreSQL được truy cập qua tên service `db`,
       # không phải localhost/127.0.0.1.
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/crm_chatbot
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in backend/.env or compose environment}
+      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_platform}
+      TENANT_DATABASE_URL: ${TENANT_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_tenant}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8000:8000"
     depends_on:
-      db:
+      db-init:
+        condition: service_completed_successfully
+      redis:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      # Uploaded media must be visible to both the Docker backend and any
+      # host FastAPI process used by the public tunnel.
+      - ./backend/uploads:/app/uploads
+      # Expose the local TikTok bridge script for the authenticated download
+      # button in the CRM settings screen.
+      - ./scripts:/app/root-scripts:ro
+      # Keep the running container's migration directory aligned with the
+      # checkout so a restart applies additive P1 revisions immediately.
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic_platform:/app/alembic_platform
+      - ./backend/alembic_tenant:/app/alembic_tenant
+      - ./backend/alembic-platform.ini:/app/alembic-platform.ini:ro
+      - ./backend/alembic-tenant.ini:/app/alembic-tenant.ini:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; from sqlalchemy import text; from app.database.platform_session import PlatformSessionLocal; from app.database.tenant_session import TenantSessionLocal; p=PlatformSessionLocal(); t=TenantSessionLocal(); p.execute(text('SELECT 1')); t.execute(text('SELECT 1')); p.close(); t.close(); response=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); raise SystemExit(0 if response.status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   frontend:
     build:
       context: ./frontend
+      target: development
     container_name: crm_chatbot_frontend
     ports:
       - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(response => process.exit(response.status === 200 ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  worker:
+    build:
+      context: ./backend
+    container_name: crm_chatbot_worker
+    command: ["python", "-m", "app.scripts.crm_job_worker"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in backend/.env or compose environment}
+      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_platform}
+      TENANT_DATABASE_URL: ${TENANT_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_tenant}
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "from sqlalchemy import text; from app.database.platform_session import PlatformSessionLocal; from app.database.tenant_session import TenantSessionLocal; p=PlatformSessionLocal(); t=TenantSessionLocal(); p.execute(text('SELECT 1')); t.execute(text('SELECT 1')); p.close(); t.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
 
 volumes:
   postgres_data:
+  redis_data:

@@ -1,0 +1,442 @@
+"""Scheduling and delivery for proactive customer care messages."""
+
+from __future__ import annotations
+
+import hashlib
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.models.chatbot_followup import ChatbotFollowUp
+from app.models.conversation import Conversation
+from app.models.customer_collection import CustomerConsent
+from app.models.message import Message
+from app.models.sales import Order
+from app.services.channel_retry import is_retryable_provider_error
+
+
+ABANDONED_CHECKOUT_MESSAGE = "Shop nhắc bạn: sản phẩm bạn vừa hỏi vẫn còn sẵn. Nếu muốn đặt, bạn xác nhận để shop hỗ trợ lên đơn nhé."
+POST_DELIVERY_MESSAGE = "Shop muốn hỏi thăm: bạn đã nhận được hàng chưa? Nếu cần hỗ trợ hoặc muốn mua thêm, cứ nhắn shop nhé."
+INACTIVE_CUSTOMER_MESSAGE = "Đã lâu bạn chưa ghé shop. Nếu cần tư vấn sản phẩm mới hoặc mua lại món trước đây, shop luôn sẵn sàng hỗ trợ nhé."
+REVENUE_ORDER_STATUSES = {"confirmed", "processing", "shipped", "delivered", "completed", "paid"}
+SERVICE_FOLLOWUP_KINDS = {"cart_abandoned", "post_delivery", "csat", "appointment_reminder"}
+MIN_FOLLOWUP_GAP = timedelta(hours=24)
+STALE_SEND_AFTER = timedelta(minutes=5)
+
+
+class FollowupDeliveryUnknown(RuntimeError):
+    """The provider may have accepted the message; never auto-resend."""
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _key(business_id: int, conversation_id: int, kind: str, run_at: datetime, message: str) -> str:
+    raw = f"{business_id}:{conversation_id}:{kind}:{run_at.isoformat()}:{message}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _latest_consent_status(db: Session, business_id: int, customer_id: int, purpose: str) -> str | None:
+    row = db.query(CustomerConsent.status).filter(
+        CustomerConsent.business_id == business_id,
+        CustomerConsent.customer_id == customer_id,
+        CustomerConsent.purpose == purpose,
+    ).order_by(CustomerConsent.id.desc()).first()
+    return row[0] if row else None
+
+
+def _followup_allowed(db: Session, business_id: int, customer_id: int, kind: str) -> bool:
+    if _latest_consent_status(db, business_id, customer_id, "proactive_messages") == "revoked":
+        return False
+    if kind not in SERVICE_FOLLOWUP_KINDS:
+        return _latest_consent_status(db, business_id, customer_id, "marketing") == "granted"
+    return True
+
+
+def _last_sent_at(db: Session, business_id: int, customer_id: int) -> datetime | None:
+    return db.query(ChatbotFollowUp.sent_at).filter(
+        ChatbotFollowUp.business_id == business_id,
+        ChatbotFollowUp.customer_id == customer_id,
+        ChatbotFollowUp.status == "sent",
+        ChatbotFollowUp.sent_at.is_not(None),
+    ).order_by(ChatbotFollowUp.sent_at.desc()).limit(1).scalar()
+
+
+def schedule_followup(
+    db: Session,
+    business_id: int,
+    conversation_id: int,
+    message: str,
+    run_at: datetime,
+    *,
+    kind: str = "custom",
+    metadata: dict | None = None,
+) -> ChatbotFollowUp:
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == business_id,
+    ).first()
+    if conversation is None:
+        raise ValueError("conversation_not_found")
+    if not _followup_allowed(db, business_id, conversation.customer_id, kind):
+        raise ValueError("followup_consent_required")
+    message = str(message or "").strip()
+    if not message:
+        raise ValueError("message_required")
+    if run_at.tzinfo is not None:
+        run_at = run_at.astimezone(timezone.utc).replace(tzinfo=None)
+    last_sent = _last_sent_at(db, business_id, conversation.customer_id)
+    if last_sent is not None:
+        run_at = max(run_at, last_sent + MIN_FOLLOWUP_GAP)
+    key = _key(business_id, conversation_id, kind, run_at, message)
+    existing = db.query(ChatbotFollowUp).filter(
+        ChatbotFollowUp.business_id == business_id,
+        ChatbotFollowUp.idempotency_key == key,
+    ).first()
+    if existing is not None:
+        return existing
+    row = ChatbotFollowUp(
+        business_id=business_id,
+        conversation_id=conversation_id,
+        customer_id=conversation.customer_id,
+        kind=kind,
+        message=message,
+        run_at=run_at,
+        idempotency_key=key,
+        metadata_=metadata or {},
+    )
+    db.add(row)
+    db.flush()
+    # Reuse the existing durable CRM job worker; the API endpoint remains
+    # available for development and manual replay.
+    from app.services.job_service import enqueue_job
+
+    enqueue_job(
+        db,
+        business_id=business_id,
+        kind="chatbot.followup",
+        payload={"followup_id": row.id},
+        idempotency_key=f"chatbot-followup:{key}",
+        run_at=run_at,
+    )
+    return row
+
+
+def _find_event_followup(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int,
+    kind: str,
+    metadata_key: str,
+    metadata_value: object,
+) -> ChatbotFollowUp | None:
+    """Find a follow-up already attached to one durable business event."""
+    rows = db.query(ChatbotFollowUp).filter(
+        ChatbotFollowUp.business_id == business_id,
+        ChatbotFollowUp.conversation_id == conversation_id,
+        ChatbotFollowUp.kind == kind,
+    ).order_by(ChatbotFollowUp.id.asc()).all()
+    for row in rows:
+        if (row.metadata_ or {}).get(metadata_key) == metadata_value:
+            return row
+    return None
+
+
+def schedule_abandoned_checkout_followup(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int,
+    session_id: int,
+    run_at: datetime,
+) -> ChatbotFollowUp:
+    """Schedule one reminder for a quote/checkout that the customer left pending."""
+    existing = _find_event_followup(
+        db,
+        business_id=business_id,
+        conversation_id=conversation_id,
+        kind="cart_abandoned",
+        metadata_key="collection_session_id",
+        metadata_value=session_id,
+    )
+    if existing is not None:
+        return existing
+    return schedule_followup(
+        db,
+        business_id,
+        conversation_id,
+        ABANDONED_CHECKOUT_MESSAGE,
+        run_at,
+        kind="cart_abandoned",
+        metadata={"collection_session_id": session_id},
+    )
+
+
+def schedule_post_delivery_followup(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int,
+    order_id: int,
+    run_at: datetime,
+) -> ChatbotFollowUp:
+    """Schedule one care message after a sales order reaches delivered."""
+    existing = _find_event_followup(
+        db,
+        business_id=business_id,
+        conversation_id=conversation_id,
+        kind="post_delivery",
+        metadata_key="order_id",
+        metadata_value=order_id,
+    )
+    if existing is not None:
+        return existing
+    return schedule_followup(
+        db,
+        business_id,
+        conversation_id,
+        POST_DELIVERY_MESSAGE,
+        run_at,
+        kind="post_delivery",
+        metadata={"order_id": order_id},
+    )
+
+
+def schedule_inactive_customer_followups(
+    db: Session,
+    *,
+    business_id: int,
+    inactive_days: int = 30,
+    run_at: datetime | None = None,
+    now: datetime | None = None,
+    limit: int = 100,
+) -> dict:
+    """Schedule one monthly win-back for each inactive prior buyer."""
+    current = now or _now()
+    if current.tzinfo is not None:
+        current = current.astimezone(timezone.utc).replace(tzinfo=None)
+    inactive_days = max(7, min(int(inactive_days), 3650))
+    cutoff = current - timedelta(days=inactive_days)
+    scheduled_for = run_at or (current + timedelta(minutes=5))
+    campaign_period = current.strftime("%Y-%m")
+    last_order_at = func.max(func.coalesce(Order.updated_at, Order.created_at)).label("last_order_at")
+    candidates = db.query(Order.customer_id, last_order_at).filter(
+        Order.business_id == business_id,
+        Order.status.in_(REVENUE_ORDER_STATUSES),
+    ).group_by(Order.customer_id).having(last_order_at <= cutoff).order_by(last_order_at.asc()).limit(limit).all()
+
+    scheduled_ids: list[int] = []
+    skipped = 0
+    for customer_id, last_purchase in candidates:
+        conversation = db.query(Conversation).filter(
+            Conversation.business_id == business_id,
+            Conversation.customer_id == customer_id,
+        ).order_by(Conversation.last_message_at.desc(), Conversation.updated_at.desc(), Conversation.id.desc()).first()
+        if conversation is None or conversation.bot_mode == "human":
+            skipped += 1
+            continue
+        if not _followup_allowed(db, business_id, customer_id, "customer_winback"):
+            skipped += 1
+            continue
+        existing_rows = db.query(ChatbotFollowUp).filter(
+            ChatbotFollowUp.business_id == business_id,
+            ChatbotFollowUp.customer_id == customer_id,
+            ChatbotFollowUp.kind == "customer_winback",
+        ).all()
+        if any((row.metadata_ or {}).get("campaign_period") == campaign_period for row in existing_rows):
+            skipped += 1
+            continue
+        row = schedule_followup(
+            db,
+            business_id,
+            conversation.id,
+            INACTIVE_CUSTOMER_MESSAGE,
+            scheduled_for,
+            kind="customer_winback",
+            metadata={
+                "customer_id": customer_id,
+                "last_order_at": last_purchase.isoformat() if last_purchase else None,
+                "inactive_days": inactive_days,
+                "campaign_period": campaign_period,
+            },
+        )
+        scheduled_ids.append(row.id)
+    return {"scheduled": len(scheduled_ids), "skipped": skipped, "followup_ids": scheduled_ids}
+
+
+def cancel_event_followup(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int,
+    kind: str,
+    metadata_key: str,
+    metadata_value: object,
+) -> int:
+    """Cancel pending event reminders once the customer continues the flow."""
+    rows = db.query(ChatbotFollowUp).filter(
+        ChatbotFollowUp.business_id == business_id,
+        ChatbotFollowUp.conversation_id == conversation_id,
+        ChatbotFollowUp.kind == kind,
+        ChatbotFollowUp.status == "scheduled",
+    ).all()
+    cancelled = 0
+    for row in rows:
+        if (row.metadata_ or {}).get(metadata_key) != metadata_value:
+            continue
+        row.status = "cancelled"
+        cancelled += 1
+    return cancelled
+
+
+def _send_followup(db: Session, row: ChatbotFollowUp) -> dict:
+    from app.services.auto_reply_service import (
+        _get_conversation_recipient,
+        _save_auto_reply_outbound,
+        _send_channel_reply,
+    )
+
+    conversation = db.query(Conversation).filter(
+        Conversation.id == row.conversation_id,
+        Conversation.business_id == row.business_id,
+    ).first()
+    if conversation is None:
+        raise ValueError("conversation_not_found")
+    if conversation.bot_mode == "human":
+        raise ValueError("human_takeover")
+    if not _followup_allowed(db, row.business_id, row.customer_id, row.kind):
+        raise ValueError("followup_consent_revoked")
+    channel, recipient_id = _get_conversation_recipient(db, row.conversation_id, row.business_id)
+    try:
+        response = _send_channel_reply(
+            db=db,
+            conversation_id=row.conversation_id,
+            channel=channel,
+            recipient_id=recipient_id,
+            text=row.message,
+            business_id=row.business_id,
+        )
+    except Exception as exc:
+        if is_retryable_provider_error(exc):
+            raise
+        raise FollowupDeliveryUnknown("delivery_unknown") from None
+    try:
+        _save_auto_reply_outbound(
+            db=db,
+            conversation_id=row.conversation_id,
+            channel=channel,
+            recipient_id=recipient_id,
+            external_message_id=response.get("message_id"),
+            content=row.message,
+            meta_response=response,
+            source_document_ids=[],
+            auto_reply_key=f"followup:{row.id}",
+        )
+    except Exception:
+        raise FollowupDeliveryUnknown("delivery_unknown") from None
+    if row.kind == "csat" and (row.metadata_ or {}).get("feedback_id"):
+        from app.services.csat_service import mark_csat_sent
+
+        mark_csat_sent(
+            db,
+            int(row.metadata_["feedback_id"]),
+            row.business_id,
+        )
+        db.commit()
+    return response
+
+
+def dispatch_due_followups(db: Session, business_id: int, *, limit: int = 50, now: datetime | None = None, followup_id: int | None = None) -> dict:
+    current = now or _now()
+    stale = db.query(ChatbotFollowUp).filter(
+        ChatbotFollowUp.business_id == business_id,
+        ChatbotFollowUp.status == "sending",
+        ChatbotFollowUp.run_at <= current - STALE_SEND_AFTER,
+    )
+    if followup_id is not None:
+        stale = stale.filter(ChatbotFollowUp.id == followup_id)
+    for interrupted in stale.limit(limit).all():
+        saved = db.query(Message).filter(
+            Message.conversation_id == interrupted.conversation_id,
+            Message.auto_reply_key == f"followup:{interrupted.id}",
+        ).first()
+        interrupted.status = "sent" if saved is not None else "delivery_unknown"
+        interrupted.sent_at = saved.sent_at or current if saved is not None else None
+        interrupted.last_error = None if saved is not None else "delivery_unknown"
+    db.commit()
+    rows = db.query(ChatbotFollowUp).filter(
+        ChatbotFollowUp.business_id == business_id,
+        ChatbotFollowUp.status == "scheduled",
+        ChatbotFollowUp.run_at <= current,
+    )
+    if followup_id is not None:
+        rows = rows.filter(ChatbotFollowUp.id == followup_id)
+    rows = rows.order_by(ChatbotFollowUp.run_at.asc(), ChatbotFollowUp.id.asc()).limit(limit).all()
+    sent = 0
+    failed = 0
+    skipped = 0
+    for row in rows:
+        last_sent = _last_sent_at(db, business_id, row.customer_id)
+        if last_sent is not None and last_sent + MIN_FOLLOWUP_GAP > current:
+            row.run_at = last_sent + MIN_FOLLOWUP_GAP
+            from app.services.job_service import enqueue_job
+
+            enqueue_job(
+                db,
+                business_id=business_id,
+                kind="chatbot.followup",
+                payload={"followup_id": row.id},
+                idempotency_key=f"chatbot-followup:{row.id}:deferred:{row.run_at.isoformat()}",
+                run_at=row.run_at,
+            )
+            skipped += 1
+            continue
+        claimed = db.query(ChatbotFollowUp).filter(
+            ChatbotFollowUp.id == row.id,
+            ChatbotFollowUp.business_id == business_id,
+            ChatbotFollowUp.status == "scheduled",
+        ).update({
+            ChatbotFollowUp.status: "sending",
+            ChatbotFollowUp.attempts: ChatbotFollowUp.attempts + 1,
+        }, synchronize_session=False)
+        db.commit()
+        if claimed != 1:
+            skipped += 1
+            continue
+        db.refresh(row)
+        try:
+            _send_followup(db, row)
+            row.status = "sent"
+            row.sent_at = current
+            row.last_error = None
+            sent += 1
+        except ValueError as exc:
+            if str(exc) in {"human_takeover", "followup_consent_revoked"}:
+                row.status = "cancelled"
+                skipped += 1
+            else:
+                row.status = "failed"
+                row.last_error = "followup_invalid"
+                failed += 1
+        except FollowupDeliveryUnknown:
+            db.rollback()
+            row = db.get(ChatbotFollowUp, row.id)
+            row.status = "delivery_unknown"
+            row.last_error = "delivery_unknown"
+            skipped += 1
+        except Exception as exc:
+            db.rollback()
+            row = db.get(ChatbotFollowUp, row.id)
+            if is_retryable_provider_error(exc) and row.attempts < 3:
+                row.status = "scheduled"
+                row.last_error = "provider_retryable"
+                failed += 1
+            else:
+                row.status = "delivery_unknown"
+                row.last_error = "delivery_unknown"
+                skipped += 1
+    db.commit()
+    return {"sent": sent, "failed": failed, "skipped": skipped, "total": len(rows)}

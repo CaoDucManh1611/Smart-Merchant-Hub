@@ -1,14 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+"""Instagram messaging webhook routed through the platform route registry."""
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.dependencies import get_db
-from app.services.message_service import (
-    normalize_message,
-    process_and_save_message,
-)
-from app.services.realtime import manager
+from app.database.platform_session import get_platform_db
+from app.api.facebook import _receive_meta_webhook
+
 
 router = APIRouter()
 
@@ -19,84 +18,18 @@ async def verify_instagram_webhook(
     hub_verify_token: str = Query(..., alias="hub.verify_token"),
     hub_challenge: str = Query(..., alias="hub.challenge"),
 ):
-    """
-    Meta dùng endpoint GET này để verify webhook Instagram.
-    """
-
-    if (
-        hub_mode == "subscribe"
-        and hub_verify_token == settings.FACEBOOK_VERIFY_TOKEN
-    ):
-        print("✅ INSTAGRAM WEBHOOK VERIFIED")
-
-        return PlainTextResponse(
-            content=hub_challenge,
-            status_code=200,
-        )
-
-    raise HTTPException(
-        status_code=403,
-        detail="Invalid Instagram verify token",
-    )
+    if hub_mode == "subscribe" and hub_verify_token == settings.FACEBOOK_VERIFY_TOKEN:
+        return PlainTextResponse(content=hub_challenge, status_code=200)
+    raise HTTPException(status_code=403, detail="Invalid Instagram verify token")
 
 
 @router.post("")
 async def receive_instagram_webhook(
     payload: dict,
-    db: Session = Depends(get_db),
+    request: Request,
+    platform_db: Session = Depends(get_platform_db),
+    x_hub_signature_256: str | None = Header(default=None),
 ):
-    """
-    Nhận webhook Instagram,
-    normalize message,
-    tạo customer/conversation nếu cần,
-    rồi lưu message vào PostgreSQL.
-    """
-
-    print("INSTAGRAM RAW:", payload)
-
-    normalized = normalize_message(
-        channel="instagram",
-        payload=payload,
+    return await _receive_meta_webhook(
+        "instagram", payload, request, platform_db, x_hub_signature_256
     )
-
-    print("INSTAGRAM NORMALIZED:", normalized)
-
-    # Chỉ xử lý khi thật sự có message
-    if normalized.get("external_message_id"):
-
-        saved_message = process_and_save_message(
-            db=db,
-            message=normalized,
-        )
-
-        if isinstance(
-            saved_message,
-            dict,
-        ):
-            await manager.broadcast(
-                {
-                    "type":
-                        "message_created",
-                    "conversation_id":
-                        saved_message.get(
-                            "conversation_id"
-                        ),
-                    "message":
-                        saved_message,
-                }
-            )
-
-        print(
-            "✅ INSTAGRAM MESSAGE PROCESSED "
-            "AND SAVED TO POSTGRESQL"
-        )
-
-    else:
-        print(
-            "⚠️ INSTAGRAM EVENT IGNORED "
-            "- NO MESSAGE ID"
-        )
-
-    return {
-        "status": "received",
-    }
