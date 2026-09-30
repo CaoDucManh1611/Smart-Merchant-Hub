@@ -3989,6 +3989,9 @@ function orderEventSummary(event) {
     const status = metadata.shipping_status || "pending";
     return `${provider} · ${shippingStatusLabel(status)}`;
   }
+  if (event?.event_type === "order_created") {
+    return t("Khởi tạo đơn ở trạng thái draft");
+  }
   const metadata = event?.metadata || event?.metadata_ || {};
   const amount = Number(metadata.amount || 0);
   if (amount > 0) return formatMoney(amount);
@@ -9293,6 +9296,13 @@ function followupRecommendationLabel(item) {
                 <button type="button" :class="{ active: inboxQuickFilter === 'unread' }" :aria-selected="inboxQuickFilter === 'unread'" @click="inboxQuickFilter = 'unread'">Chưa đọc <i>{{ unreadConversationCount }}</i></button>
                 <button type="button" :class="{ active: inboxQuickFilter === 'important' }" :aria-selected="inboxQuickFilter === 'important'" @click="inboxQuickFilter = 'important'">Quan trọng <i>{{ importantConversationCount }}</i></button>
               </div>
+              <label class="inbox-channel-select">
+                <span class="visually-hidden">Lọc theo kênh</span>
+                <select v-model="activeFilter" aria-label="Lọc theo kênh hội thoại">
+                  <option value="all">Tất cả kênh</option>
+                  <option v-for="channel in inboxChannels" :key="channel.value" :value="channel.value">{{ channel.label }} ({{ channel.count }})</option>
+                </select>
+              </label>
             </div>
 
             <div class="inbox-search-row">

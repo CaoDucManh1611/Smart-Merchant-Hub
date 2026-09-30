@@ -54,6 +54,7 @@ const english = Object.freeze({
   "Vận hành": "Operations",
   "Sản phẩm": "Products",
   "Đơn bán": "Sales orders",
+  "Khởi tạo đơn ở trạng thái draft": "Order created in draft status",
   "Giờ làm việc": "Business hours",
   "Quy tắc thời hạn": "SLA rules",
   "Kiến thức & tự động hóa": "Knowledge & automation",
