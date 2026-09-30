@@ -10,70 +10,50 @@ Kiến trúc ban đầu:
 - Docker Compose
 - GitHub Actions CI
 
-## 1. Chạy backend không dùng Docker
+## Chạy ứng dụng trên Windows PowerShell
 
-Nếu muốn chạy FastAPI bằng Python nhưng vẫn tự bật PostgreSQL/pgvector, dùng script ở thư mục gốc:
-
-```powershell
-.\start_dev.ps1
-```
-
-Script sẽ tự gọi Docker cho service `db`, chờ database sẵn sàng, sau đó backend tự tạo/cập nhật schema. Không cần mở DBeaver để chạy SQL.
-
-Nếu database đang có các bảng cũ và cần đưa về đúng 20 bảng để vẽ ERD, chạy một lần:
+Cần mở Docker Desktop trước. Các lệnh dưới đây chạy tại thư mục gốc dự án
+(thư mục chứa `docker-compose.yml`), ví dụ trên máy hiện tại:
 
 ```powershell
-.\reset_database.ps1
+Set-Location 'C:\Users\DUC_STRONG\Smart-Merchant-Hub-full-stack-ready'
+docker info
+if (-not (Test-Path 'backend\.env')) { Copy-Item 'backend\.env.example' 'backend\.env' }
 ```
 
-Script sẽ hỏi nhập `RESET`, xóa toàn bộ bảng trong schema `public`, rồi tạo lại đúng 20 bảng hiện tại. Lệnh này xóa dữ liệu cũ.
+Nếu vừa tạo `backend\.env`, mở file đó và thêm/sửa các dòng sau. Dùng cùng một
+mật khẩu cho PostgreSQL và các URL; với Docker, host là `db`/`redis`, không phải
+`localhost`. Không ghi mật khẩu thật vào Git:
 
-```bash
-cd backend
-copy .env.example .env
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+```dotenv
+POSTGRES_DB=crm_chatbot
+POSTGRES_USER=crm_app
+POSTGRES_PASSWORD=YOUR_LOCAL_PASSWORD
+DATABASE_URL=postgresql+psycopg://crm_app:YOUR_LOCAL_PASSWORD@db:5432/crm_chatbot
+PLATFORM_DATABASE_URL=postgresql+psycopg://crm_app:YOUR_LOCAL_PASSWORD@db:5432/crm_platform
+TENANT_DATABASE_URL=postgresql+psycopg://crm_app:YOUR_LOCAL_PASSWORD@db:5432/crm_tenant
+REDIS_URL=redis://redis:6379/0
 ```
 
-Mở:
-
-- API: http://127.0.0.1:8000
-- Swagger: http://127.0.0.1:8000/docs
-
-## 2. Chạy frontend không dùng Docker
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Mở:
-
-- http://127.0.0.1:5173
-
-## 3. Chạy toàn bộ bằng Docker
-
-Tạo file môi trường trước:
-
-```bash
-copy .env.example .env
-cd backend
-copy .env.example .env
-cd ..
-docker compose up --build
-```
-
-Trước khi chạy, thay các giá trị `CHANGE_ME` trong `.env` bằng thông tin
-riêng. Compose dùng `DATABASE_URL` ở file `.env` gốc để kết nối tới service
-`db`; tuyệt đối không commit file `.env`.
-
-Backend sẽ tự khởi tạo pgvector và các bảng dữ liệu khi bắt đầu. Sau mỗi lần
-cập nhật tính năng, áp dụng migration mới bằng:
+Với dữ liệu Docker đã có, giữ nguyên mật khẩu và tên project Compose đang dùng.
+Trong hướng dẫn này, tên project là `smart-merchant-hub-runtime`:
 
 ```powershell
-docker compose exec backend python -m alembic upgrade head
+docker compose --env-file backend/.env -p smart-merchant-hub-runtime up -d --build
+docker compose --env-file backend/.env -p smart-merchant-hub-runtime ps -a
+Start-Process 'http://127.0.0.1:5173/'
 ```
+
+Giao diện ở <http://127.0.0.1:5173/>, tài liệu API ở
+<http://127.0.0.1:8000/docs>. Lần chạy đầu, backend tự áp dụng Alembic
+migration và có thể mất vài phút. Nếu container chưa lên, xem log:
+
+```powershell
+docker compose --env-file backend/.env -p smart-merchant-hub-runtime logs --tail 100 db backend frontend worker
+```
+
+Không dùng `docker compose down -v` khi muốn giữ dữ liệu PostgreSQL. Nếu cần
+tạo tài khoản chủ shop trên database mới, xem [hướng dẫn backend](backend/README.md#crm-operations).
 
 ## Chatbot runtime
 
@@ -94,43 +74,32 @@ không nằm trong phạm vi bản này.
 Kiểm tra phiên bản schema:
 
 ```powershell
-docker compose exec backend python -m alembic current
+docker compose --env-file backend/.env -p smart-merchant-hub-runtime exec backend python -m alembic current
 ```
 
 Schema được quản lý bằng Alembic trong `backend/alembic/`; không cần xóa DB
 hiện tại để cập nhật.
 
-## 3.1 Media đa kênh
+## Media đa kênh
 
 Ảnh, âm thanh, sticker, video và file được chuẩn hóa qua cùng contract rồi lưu
-tenant-scoped trong `message_attachments`. Sau khi cập nhật code, chạy:
-
-```powershell
-docker compose exec backend python -m alembic upgrade head
-```
+tenant-scoped trong `message_attachments`. Backend tự chạy migration khi khởi động.
 
 Inbox tải media qua `GET /api/media/{attachment_id}`; API tự kiểm tra tenant và
 không đưa channel token ra trình duyệt. Nhân viên gửi media bằng
 `POST /api/conversations/{conversation_id}/send-media`. Xem chi tiết endpoint,
 giới hạn provider và lệnh kiểm thử trong [`backend/README.md`](backend/README.md).
 
-## 3.2 Bàn giao cho người khác chạy từ Git
+## Bàn giao cho người khác chạy từ Git
 
 Branch bàn giao gồm toàn bộ frontend, backend, Docker Compose, migration và seed
 dữ liệu mặc định. Database không được commit kèm mật khẩu hoặc dữ liệu shop thật;
 PostgreSQL sẽ tự tạo ba database (`crm_chatbot`, `crm_platform`, `crm_tenant`)
 và backend tự chạy migration khi khởi động.
 
-Sau khi clone:
-
-```powershell
-copy .env.example .env
-# Đổi POSTGRES_PASSWORD và DATABASE_URL trong .env cho cùng một mật khẩu.
-copy backend\.env.example backend\.env
-docker compose up --build
-```
-
-Mở frontend tại `http://localhost:5173`, API tại `http://localhost:8000/docs`.
+Sau khi clone, làm theo mục [Chạy ứng dụng trên Windows PowerShell](#chạy-ứng-dụng-trên-windows-powershell)
+và thay đường dẫn thư mục trong ví dụ bằng nơi vừa clone. Mở frontend tại
+<http://localhost:5173/>, API tại <http://localhost:8000/docs>.
 Không copy các file `.env` thật, token kênh, cookie TikTok hoặc database dump lên
 Git. Nếu cần chuyển dữ liệu thật, dùng file dump riêng và khôi phục vào PostgreSQL
 sau khi các container đã khởi động.
