@@ -1,11 +1,36 @@
 import unittest
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
 class AlembicChainTests(unittest.TestCase):
+    def test_baseline_bootstraps_legacy_and_tenant_tables(self):
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260903_0001_baseline.py"
+        )
+        spec = spec_from_file_location("baseline_migration", migration_path)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        bind = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
+        with (
+            patch.object(module.op, "get_bind", return_value=bind),
+            patch.object(module.Base.metadata, "create_all") as create_legacy,
+            patch.object(module.TenantBase.metadata, "create_all") as create_tenant,
+        ):
+            module.upgrade()
+
+        create_legacy.assert_called_once_with(bind=bind)
+        create_tenant.assert_called_once_with(bind=bind)
+
     def test_baseline_and_default_business_migrations_form_single_head(self):
         config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
         scripts = ScriptDirectory.from_config(config)

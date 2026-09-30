@@ -11,31 +11,45 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "signup_email_challenges",
-        sa.Column("purpose", sa.String(length=30), nullable=True, server_default="signup"),
-    )
-    op.add_column(
-        "signup_email_challenges",
-        sa.Column("business_id", sa.Integer(), nullable=True),
-    )
-    op.add_column(
-        "signup_email_challenges",
-        sa.Column("role", sa.String(length=30), nullable=True),
-    )
+    inspector = sa.inspect(op.get_bind())
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("signup_email_challenges")
+    }
+    if "purpose" not in columns:
+        op.add_column(
+            "signup_email_challenges",
+            sa.Column("purpose", sa.String(length=30), nullable=True, server_default="signup"),
+        )
+    if "business_id" not in columns:
+        op.add_column(
+            "signup_email_challenges",
+            sa.Column("business_id", sa.Integer(), nullable=True),
+        )
+    if "role" not in columns:
+        op.add_column(
+            "signup_email_challenges",
+            sa.Column("role", sa.String(length=30), nullable=True),
+        )
     op.execute(
         "UPDATE signup_email_challenges SET purpose = 'signup' WHERE purpose IS NULL"
     )
-    op.create_index(
-        "ix_signup_email_challenges_purpose",
-        "signup_email_challenges",
-        ["purpose"],
-    )
-    op.create_index(
-        "ix_signup_email_challenges_business_id",
-        "signup_email_challenges",
-        ["business_id"],
-    )
+    indexes = {
+        index["name"]
+        for index in sa.inspect(op.get_bind()).get_indexes("signup_email_challenges")
+    }
+    if "ix_signup_email_challenges_purpose" not in indexes:
+        op.create_index(
+            "ix_signup_email_challenges_purpose",
+            "signup_email_challenges",
+            ["purpose"],
+        )
+    if "ix_signup_email_challenges_business_id" not in indexes:
+        op.create_index(
+            "ix_signup_email_challenges_business_id",
+            "signup_email_challenges",
+            ["business_id"],
+        )
 
 
 def downgrade() -> None:

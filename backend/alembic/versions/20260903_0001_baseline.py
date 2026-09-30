@@ -7,6 +7,7 @@ explicit Alembic revisions and must not edit this file.
 from alembic import op
 from sqlalchemy import text
 
+from app.database.bases import TenantBase
 from app.database.session import Base
 import app.models  # noqa: F401
 
@@ -22,6 +23,7 @@ def upgrade() -> None:
     if bind.dialect.name == "postgresql":
         bind.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(bind=bind)
+    TenantBase.metadata.create_all(bind=bind)
 
 
 def downgrade() -> None:
