@@ -242,6 +242,48 @@ class UnifiedInboxActionTests(unittest.TestCase):
             self.assertEqual("outbound", saved.direction)
             self.assertEqual("Phản hồi qua Zalo", saved.content)
 
+    def test_unified_send_dispatches_shopee_text(self):
+        with Session(self.engine) as db:
+            channel = Channel(
+                business_id=self.business_id,
+                channel_type="shopee",
+                name="Shopee inbox",
+                external_account_id="shopee-inbox-1",
+                status="active",
+            )
+            customer = Customer(
+                business_id=self.business_id,
+                channel="shopee",
+                external_user_id="shopee-customer-1",
+                name="Shopee Buyer",
+            )
+            db.add_all([channel, customer])
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                channel_id=channel.id,
+                channel="shopee",
+            )
+            db.add(conversation)
+            db.commit()
+            conversation_id = conversation.id
+
+        with patch(
+            "app.api.conversations.send_shopee_text",
+            return_value=({"status": "sent", "message_id": "shopee-ui:thread-1:123"}, object()),
+        ) as send:
+            response = self.client.post(
+                f"/api/conversations/{conversation_id}/send",
+                headers=self.headers(),
+                data={"text": "Phản hồi Shopee", "client_id": "shopee-text-action-1"},
+            )
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(["shopee-ui:thread-1:123"], response.json()["message_ids"])
+        self.assertEqual("Phản hồi Shopee", response.json()["messages"][0]["content"])
+        self.assertEqual(1, send.call_count)
+
 
 if __name__ == "__main__":
     unittest.main()

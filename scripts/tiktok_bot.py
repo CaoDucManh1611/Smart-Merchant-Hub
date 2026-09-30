@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio, importlib, json, os, shutil, subprocess, sys
 from pathlib import Path
+from connector_pairing import configure_local_connector
 try:
     sys.stdout.reconfigure(encoding="utf-8",errors="replace")
     sys.stderr.reconfigure(encoding="utf-8",errors="replace")
@@ -20,13 +21,19 @@ if CONFIG_FILE.exists():
         pass
 
 _frozen_root=Path(getattr(sys,"_MEIPASS",str(BASE)))
+PACKAGE_DIR=_frozen_root if IS_FROZEN else BASE
 _user_root=Path(os.getenv("LOCALAPPDATA",str(Path.home())))/"SmartMerchantTikTok"
 if IS_FROZEN:
     LTTK=Path(os.getenv("TIKTOK_LTTK_DIR",str(_user_root/"lttk"))).resolve()
     _bundled_lttk=_frozen_root/"lttk"
-    if _bundled_lttk.is_dir() and not LTTK.exists():
+    if _bundled_lttk.is_dir():
         LTTK.parent.mkdir(parents=True,exist_ok=True)
-        shutil.copytree(_bundled_lttk,LTTK)
+        shutil.copytree(
+            _bundled_lttk,
+            LTTK,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("sesion", "__pycache__", ".git", ".uid_cache.json", "messages.db"),
+        )
     RUNTIME=Path(os.getenv("TIKTOK_RUNTIME_DIR",str(_user_root/"data-runtime"))).resolve()
 else:
     LTTK=Path(os.getenv("TIKTOK_LTTK_DIR",str(BASE/"lttk"))).resolve()
@@ -36,52 +43,6 @@ BROWSER=os.getenv("TIKTOK_BROWSER","").strip().lower()
 PLUGIN=LTTK/"plugins"/"smart_merchant_bridge.py"
 SESSION=LTTK/"sesion"
 REPO="https://github.com/Linkmail16/ReLttk-TikTok-Client-Bot.git"
-
-BROWSER_IMPORT_CODE=r'''
-import importlib, os
-from pathlib import Path
-
-pkg=Path.cwd().name
-browser=os.environ.get("TIKTOK_BROWSER", "chrome").lower()
-bc=importlib.import_module(pkg+".browsercookies")
-qr=importlib.import_module(pkg+".qrlogin")
-
-roots={
-    "chrome": Path(os.environ.get("LOCALAPPDATA", ""))/"Google/Chrome/User Data",
-    "edge": Path(os.environ.get("LOCALAPPDATA", ""))/"Microsoft/Edge/User Data",
-    "brave": Path(os.environ.get("LOCALAPPDATA", ""))/"BraveSoftware/Brave-Browser/User Data",
-}
-root=roots.get(browser)
-profiles=[]
-selected=os.environ.get("TIKTOK_BROWSER_PROFILE", "").strip()
-if selected:
-    profiles=[selected]
-elif root and root.exists():
-    profiles=["Default"]+sorted(p.name for p in root.glob("Profile *") if p.is_dir())
-
-if browser == "firefox":
-    cookies=bc.get_tiktok_cookies(browser)
-    qr._write_cookies(cookies)
-    print("[browser] imported firefox cookies")
-    raise SystemExit(0)
-
-for profile in profiles:
-    cookie_path=root/profile/"Network"/"Cookies"
-    if not cookie_path.exists():
-        continue
-    bc._CHROMIUM_PATHS[browser]=str(cookie_path)
-    try:
-        cookies=bc.get_tiktok_cookies(browser)
-    except Exception as exc:
-        print(f"[browser] {profile}: {exc}")
-        continue
-    qr._write_cookies(cookies)
-    print(f"[browser] imported {browser}/{profile} cookies")
-    raise SystemExit(0)
-
-print(f"[browser] no sessionid found in {browser} profiles")
-raise SystemExit(1)
-'''
 
 SESSION_CHECK_CODE=r'''
 import urllib.request
@@ -133,7 +94,8 @@ class _TikTokControlHandler(BaseHTTPRequestHandler):
             self._reply(404, {"detail":"TikTok bridge route not found"})
             return
         provided=self.headers.get("X-TikTok-Bridge-Secret", "")
-        if not BRIDGE_SECRET or not _hmac.compare_digest(str(provided), str(BRIDGE_SECRET)):
+        bridge_secret=(os.getenv("TIKTOK_BRIDGE_SECRET") or os.getenv("TIKTOK_CONNECTOR_TOKEN") or "").strip()
+        if not bridge_secret or not _hmac.compare_digest(str(provided), bridge_secret):
             self._reply(401, {"detail":"TikTok bridge secret không đúng"})
             return
         try:
@@ -177,7 +139,8 @@ def start_control_server(bot):
     CONTROL_BOT=bot
     if CONTROL_SERVER is not None:
         return
-    host=os.getenv("TIKTOK_BRIDGE_CONTROL_HOST", "127.0.0.1")
+    # Docker reaches the host via host.docker.internal; every request still requires the shop secret.
+    host=os.getenv("TIKTOK_BRIDGE_CONTROL_HOST", "0.0.0.0")
     try:
         port=int(os.getenv("TIKTOK_BRIDGE_CONTROL_PORT", "8091"))
         CONTROL_SERVER=ThreadingHTTPServer((host, port), _TikTokControlHandler)
@@ -316,22 +279,27 @@ def patch_api():
         p.write_text(s,encoding="utf-8")
         log("🔧 Fix thiếu hashlib trong core/api.py")
 
-def install_plugin():
-    PLUGIN.parent.mkdir(parents=True,exist_ok=True)
+def install_plugin(path: Path = PLUGIN):
+    path.parent.mkdir(parents=True,exist_ok=True)
     # Keep the imported bridge compatible with this CRM's tenant-scoped API.
     # The source plugin is embedded above so ReLttk can still run standalone.
     code=PLUGIN_CODE
     code=code.replace(
         'BACKEND=(os.getenv("SALONDESK_APP_URL") or os.getenv("NEXT_PUBLIC_APP_URL") or "http://127.0.0.1:3000").rstrip("/")',
-        'BACKEND=(os.getenv("TIKTOK_BACKEND_URL") or os.getenv("SALONDESK_APP_URL") or os.getenv("NEXT_PUBLIC_APP_URL") or "http://127.0.0.1:8000").rstrip("/")\nSHOP_SLUG=os.getenv("TIKTOK_SHOP_SLUG","").strip()\nBRIDGE_SECRET=os.getenv("TIKTOK_BRIDGE_SECRET","").strip()',
+        'BACKEND=(os.getenv("TIKTOK_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")\nCONNECTOR_TOKEN=os.getenv("TIKTOK_CONNECTOR_TOKEN","").strip()',
     )
     code=code.replace(
         'headers={"Content-Type":"application/json; charset=utf-8","Accept":"application/json"}',
-        'headers={"Content-Type":"application/json; charset=utf-8","Accept":"application/json","X-TikTok-Shop-Slug":SHOP_SLUG,"X-TikTok-Bridge-Secret":BRIDGE_SECRET}',
+        'headers={"Content-Type":"application/json; charset=utf-8","Accept":"application/json","Authorization":"Bearer "+CONNECTOR_TOKEN}',
     )
     code=code.replace(
         'return (s(reply).strip(),None) if reply else (None,"Backend không có response/reply/message/text")',
         'return (s(reply).strip(),None) if reply else (None,None)',
+    )
+    code=code.replace('AUTO_REPLY=os.getenv("TIKTOK_AUTO_REPLY","0")=="1"\n', "")
+    code=code.replace(
+        'log("🤖 Auto reply: "+("ON" if AUTO_REPLY else "OFF"))',
+        'log("🤖 RAG auto reply: CRM xử lý và gửi qua bridge theo cấu hình shop")',
     )
     code=code.replace('seen={}\n', CONTROL_CODE+'\nseen={}\n', 1)
     code=code.replace(
@@ -340,8 +308,8 @@ def install_plugin():
         1,
     )
     code=code.replace(
-        '        log("🤖 AI response: "+reply)\n\n        if not AUTO_REPLY:',
-        '        if reply:\n            log("🤖 AI response: "+reply)\n        else:\n            log("✅ Backend đã lưu tin TikTok.")\n\n        if not AUTO_REPLY or not reply:',
+        '        log("🤖 AI response: "+reply)\n\n        if not AUTO_REPLY:\n            log("🚫 Không gửi reply về TikTok vì TIKTOK_AUTO_REPLY=0")\n            return\n\n        try:\n            await bot.send_message(text=reply,msg=msg)\n            log("✅ Đã gửi TikTok reply: "+reply)\n        except Exception as e:\n            log(f"❌ send_message: {type(e).__name__}: {e}")\n            traceback.print_exc()',
+        '        if reply:\n            log("🤖 AI response: "+reply)\n        else:\n            log("✅ Backend đã lưu tin TikTok; CRM xử lý RAG và gửi trả lời qua bridge nếu bot đang bật.")',
     )
     # Forward the profile photo returned by ReLttk when available. TikTok
     # does not guarantee this field, so the CRM keeps initials as fallback.
@@ -415,11 +383,11 @@ def install_plugin():
     code=code.replace(
         '        effective=text or f"[TikTok event awe_type={awe}]"\n',
         '        media_type, media_url, media_text, media_attachments = await resolve_tiktok_media(bot, msg)\n'
-        '        effective=text or media_text or "[Khách gửi nội dung TikTok]"\n',
+        '        effective=text or media_text or ""\n',
         1,
     )
-    compile(code,str(PLUGIN),"exec")
-    PLUGIN.write_text(code,encoding="utf-8")
+    compile(code,str(path),"exec")
+    path.write_text(code,encoding="utf-8")
     log("✅ TikTok realtime bridge OK")
 
 def sessions():
@@ -434,21 +402,126 @@ def _cookie_file_is_usable():
     except (OSError,ValueError,TypeError):
         return False
 
-def _save_imported_cookie():
-    source=SESSION/"_temp.json"
-    if not source.exists():
-        return False
-    try:
-        data=json.loads(source.read_text(encoding="utf-8"))
-        if not isinstance(data,dict) or not data.get("sessionid"):
-            return False
-        COOKIE.parent.mkdir(parents=True,exist_ok=True)
-        COOKIE.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
-        log(f"🍪 Đã tạo cookie mới: {COOKIE}")
-        return True
-    except (OSError,ValueError,TypeError) as e:
-        log(f"⚠️ Không lưu được tiktok_cookies.json: {e}")
-        return False
+def _parse_cookie_input(raw):
+    raw=raw.strip()
+    if not raw:
+        raise ValueError("Hãy dán Cookie header hoặc nội dung JSON.")
+    cookies={}
+    if raw[0] in "[{":
+        try:
+            data=json.loads(raw)
+        except ValueError as exc:
+            raise ValueError("JSON cookie không hợp lệ.") from exc
+        if isinstance(data,dict) and isinstance(data.get("cookies"),list):
+            data=data["cookies"]
+        if isinstance(data,list):
+            for item in data:
+                if not isinstance(item,dict) or not item.get("name") or item.get("value") is None:
+                    continue
+                domain=str(item.get("domain") or "").lower()
+                if not domain or "tiktok.com" in domain:
+                    cookies[str(item["name"])]=str(item["value"])
+        elif isinstance(data,dict):
+            cookies={str(key):str(value) for key,value in data.items() if value is not None}
+        else:
+            raise ValueError("JSON cần là danh sách cookie hoặc object tên/giá trị.")
+    else:
+        if raw.lower().startswith("cookie:"):
+            raw=raw.split(":",1)[1].strip()
+        for part in raw.split(";"):
+            name,separator,value=part.strip().partition("=")
+            if separator and name.strip():
+                cookies[name.strip()]=value.strip()
+    if not cookies.get("sessionid"):
+        raise ValueError("Không tìm thấy cookie sessionid của TikTok.")
+    return cookies
+
+def _show_cookie_setup_ui(error=""):
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+
+    root=tk.Tk()
+    root.title("Smart Merchant — Kết nối TikTok")
+    root.geometry("760x590")
+    root.minsize(650,520)
+    root.configure(bg="#f3f7f8")
+    style=ttk.Style(root)
+    style.configure("Title.TLabel",font=("Segoe UI",18,"bold"),foreground="#17354a")
+    style.configure("Body.TLabel",font=("Segoe UI",10),foreground="#38566b")
+    style.configure("Accent.TButton",font=("Segoe UI",10,"bold"),padding=(14,9))
+    outer=ttk.Frame(root,padding=22)
+    outer.pack(fill="both",expand=True)
+    ttk.Label(outer,text="Kết nối TikTok",style="Title.TLabel").pack(anchor="w")
+    ttk.Label(outer,text="Chọn cách lấy phiên đăng nhập để bật TikTok Bridge.",style="Body.TLabel").pack(anchor="w",pady=(4,14))
+    tabs=ttk.Notebook(outer)
+    tabs.pack(fill="both",expand=True)
+
+    guide=ttk.Frame(tabs,padding=20)
+    tabs.add(guide,text="Hướng dẫn lấy cookie")
+    guide_text=(
+        "Lấy Cookie header từ đúng hồ sơ Edge đang đăng nhập TikTok:\n\n"
+        "1. Mở TikTok trong hồ sơ Edge muốn kết nối.\n"
+        "2. Nhấn F12, chọn Network (Mạng), rồi tải lại trang TikTok.\n"
+        "3. Chọn một yêu cầu tới tiktok.com, mở Headers (Tiêu đề).\n"
+        "4. Trong Request Headers, tìm Cookie và sao chép phần giá trị.\n"
+        "5. Mở tab Nhập cookie, dán vào ô hoặc chọn file JSON, rồi bấm Nhập & tiếp tục.\n\n"
+        "Cookie giống mật khẩu: chỉ dán vào ứng dụng trên máy của bạn. Ứng dụng lưu phiên cục bộ; không gửi cookie lên CRM."
+    )
+    ttk.Label(guide,text=guide_text,style="Body.TLabel",justify="left",wraplength=660).pack(anchor="nw",fill="x")
+    if error:
+        ttk.Label(guide,text=error,foreground="#a33030",wraplength=660,justify="left").pack(anchor="w",pady=(18,0))
+
+    importer=ttk.Frame(tabs,padding=20)
+    tabs.add(importer,text="Nhập cookie")
+    ttk.Label(importer,text="Dán Cookie header hoặc JSON cookie TikTok:",style="Body.TLabel").pack(anchor="w")
+    field_wrap=ttk.Frame(importer)
+    field_wrap.pack(fill="both",expand=True,pady=(8,10))
+    field=tk.Text(field_wrap,height=14,wrap="word",font=("Consolas",10),undo=True)
+    scroll=ttk.Scrollbar(field_wrap,orient="vertical",command=field.yview)
+    field.configure(yscrollcommand=scroll.set)
+    field.pack(side="left",fill="both",expand=True)
+    scroll.pack(side="right",fill="y")
+    show_value=tk.BooleanVar(value=False)
+    field.tag_configure("secret",elide=True)
+    def update_mask(_event=None):
+        field.tag_configure("secret",elide=not show_value.get())
+        field.tag_add("secret","1.0","end-1c")
+        if show_value.get():
+            field.tag_remove("secret","1.0","end-1c")
+        field.edit_modified(False)
+    field.bind("<<Modified>>",update_mask)
+    ttk.Checkbutton(importer,text="Hiện nội dung cookie",variable=show_value,command=update_mask).pack(anchor="w")
+    ttk.Label(importer,text="Cookie chỉ được xử lý trên máy này, không gửi lên CRM.",style="Body.TLabel",wraplength=660).pack(anchor="w",pady=(8,0))
+    result={"ready":False}
+    def choose_file():
+        path=filedialog.askopenfilename(parent=root,title="Chọn file JSON cookie",filetypes=[("JSON","*.json"),("Tất cả file","*.*")])
+        if not path:
+            return
+        try:
+            contents=Path(path).read_text(encoding="utf-8-sig")
+        except OSError as exc:
+            messagebox.showerror("Không đọc được file",str(exc),parent=root)
+            return
+        field.delete("1.0","end")
+        field.insert("1.0",contents)
+        update_mask()
+        tabs.select(importer)
+    def import_and_continue():
+        try:
+            cookies=_parse_cookie_input(field.get("1.0","end-1c"))
+            _lttk_module("qrlogin")._write_cookies(cookies)
+        except (ValueError,OSError,ImportError,AttributeError) as exc:
+            messagebox.showerror("Cookie chưa hợp lệ",str(exc),parent=root)
+            return
+        result["ready"]=True
+        root.destroy()
+    actions=ttk.Frame(importer)
+    actions.pack(fill="x",pady=(12,0))
+    ttk.Button(actions,text="Chọn file JSON",command=choose_file).pack(side="left")
+    ttk.Button(actions,text="Nhập & tiếp tục",style="Accent.TButton",command=import_and_continue).pack(side="right")
+    ttk.Button(outer,text="Hủy",command=root.destroy).pack(anchor="e",pady=(12,0))
+    root.mainloop()
+    return result["ready"]
 
 def _import_cookie_file():
     if not COOKIE.exists() or not _cookie_file_is_usable():
@@ -477,27 +550,36 @@ def _import_browser_cookie():
     if any(browser not in supported for browser in browsers):
         log(f"⚠️ TIKTOK_BROWSER không hợp lệ: {BROWSER}. Dùng chrome/edge/brave/firefox.")
         return False
-    child_env=os.environ.copy()
-    child_env["PYTHONPATH"]=str(LTTK.parent)+(os.pathsep+child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else "")
+    bc=_lttk_module("browsercookies")
+    qr=_lttk_module("qrlogin")
+    found=[]
+    browser_names={"chrome":"Chrome", "edge":"Microsoft Edge", "brave":"Brave", "firefox":"Firefox"}
     for browser in browsers:
         log(f"🌐 Lấy phiên TikTok trực tiếp từ {browser}; không dùng QR/2FA.")
-        if IS_FROZEN:
-            try:
-                bc=_lttk_module("browsercookies")
-                qr=_lttk_module("qrlogin")
-                cookies=bc.get_tiktok_cookies(browser)
-                qr._write_cookies(cookies)
-                if _save_imported_cookie():
-                    return True
-            except Exception as exc:
-                log(f"[browser] {browser}: {exc}")
-            continue
-        child_env["TIKTOK_BROWSER"]=browser
-        ok=run([sys.executable,"-c",BROWSER_IMPORT_CODE],LTTK,check=False,env=child_env)==0
-        if ok and _save_imported_cookie():
-            return True
-    log("ℹ️ Không đọc được cookie trình duyệt. Nếu Chrome/Edge bật mã hóa App-Bound, hãy dùng tiktok_cookies.json xuất thủ công.")
-    return False
+        try:
+            found.extend((browser, profile, cookies) for profile, cookies in bc.get_tiktok_cookie_profiles(browser))
+        except Exception as exc:
+            log(f"[browser] {browser}: {exc}")
+    if not found:
+        log("ℹ️ Không tìm thấy phiên TikTok đã đăng nhập trong các hồ sơ trình duyệt.")
+        return False
+    if len(found) == 1:
+        browser, profile, cookies = found[0]
+    else:
+        print("\nTìm thấy phiên TikTok ở nhiều hồ sơ. Chọn hồ sơ muốn liên kết:")
+        for index, (browser, profile, _) in enumerate(found, 1):
+            print(f"{index}. {browser_names[browser]} — {profile}")
+        try:
+            choice = int(input("Nhập số hồ sơ: ").strip())
+            browser, profile, cookies = found[choice - 1] if 1 <= choice <= len(found) else (None, None, None)
+        except (ValueError, EOFError):
+            browser = profile = cookies = None
+        if not cookies:
+            log("Chưa chọn hồ sơ TikTok hợp lệ.")
+            return False
+    qr._write_cookies(cookies)
+    log(f"✅ Đã dùng phiên TikTok từ {browser_names[browser]} — {profile}.")
+    return True
 
 def verify_session():
     if IS_FROZEN:
@@ -536,11 +618,12 @@ def ensure_session():
     if _import_browser_cookie():
         log("✅ Đã sẵn sàng phiên TikTok từ cookie.")
         return True
-    log("⚠️ Chưa lấy được phiên TikTok. Hãy đăng nhập TikTok trên trình duyệt, đóng trình duyệt rồi chạy lại.")
+    log("⚠️ Chưa lấy được phiên từ file hoặc hồ sơ trình duyệt.")
     return False
 
 def main():
     RUNTIME.mkdir(parents=True,exist_ok=True)
+    configure_local_connector("tiktok", RUNTIME, PACKAGE_DIR)
     log("="*72)
     log("🚀 SMART MERCHANT - ONE FILE TIKTOK BOT")
     log("="*72)
@@ -550,14 +633,15 @@ def main():
     install_plugin()
     if "--import-browser-cookie" in sys.argv:
         raise SystemExit(0 if _import_browser_cookie() else 1)
-    if not ensure_session():
-        log("❌ Dừng bot để không rơi vào vòng QR/2FA. Hãy đăng nhập TikTok trên trình duyệt, đóng trình duyệt rồi chạy lại.")
+    if not ensure_session() and not _show_cookie_setup_ui():
+        log("❌ Chưa có phiên TikTok. Mở lại ứng dụng để nhập cookie hoặc thử tự đọc hồ sơ trình duyệt.")
         raise SystemExit(1)
     if not verify_session():
-        log("❌ Cookie TikTok không còn hợp lệ. Hãy xuất lại tiktok_cookies.json rồi chạy lại.")
-        raise SystemExit(1)
+        # TikTok may redirect this lightweight web check even while ReLttk's
+        # realtime session is still valid. Let the actual client decide.
+        log("⚠️ Không xác minh được phiên qua web; đang thử kết nối realtime bằng phiên đã lưu.")
     log("🧪 Echo="+os.getenv("TIKTOK_ECHO_TEST","0"))
-    log("🤖 AutoReply="+os.getenv("TIKTOK_AUTO_REPLY","0"))
+    log("🤖 RAG auto reply do CRM quản lý; không gửi reply trực tiếp từ plugin.")
     log("👉 Gửi DM từ account TikTok khác để test. Ctrl+C để dừng.\n")
     try:
         if IS_FROZEN:
@@ -566,5 +650,23 @@ def main():
     except KeyboardInterrupt:
         log("\n👋 Stop")
 
+def self_test():
+    import sqlite3
+    import tkinter
+    from tkinter import ttk
+    if not (LTTK/"main.py").is_file():
+        raise SystemExit("Thiếu TikTok runtime trong ứng dụng.")
+    browsercookies=_lttk_module("browsercookies")
+    if not hasattr(browsercookies,"get_tiktok_cookie_profiles"):
+        raise SystemExit("TikTok runtime bị cũ; hãy tải lại ứng dụng.")
+    _lttk_module("qrlogin")
+    sqlite3.connect(":memory:").close()
+    if not hasattr(ttk,"Notebook"):
+        raise SystemExit("Thiếu giao diện thiết lập cookie.")
+    print("Smart Merchant TikTok: ứng dụng và thư viện đã sẵn sàng.")
+
 if __name__=="__main__":
-    main()
+    if "--self-test" in sys.argv:
+        self_test()
+    else:
+        main()

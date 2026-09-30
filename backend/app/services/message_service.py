@@ -1913,39 +1913,19 @@ def process_and_save_message(
 
         if collection_result is None:
             try:
-                from app.services.customer_collection_flow import (
-                    GREETING_REPLY,
-                    is_greeting,
+                from app.services.auto_reply_service import process_rag_auto_reply_background
+
+                process_rag_auto_reply_background(
+                    conversation_id=conversation_id,
+                    channel=channel,
+                    query_text=message.get("content"),
+                    business_id=int(business_id),
+                    auto_reply_key=(
+                        f"{auto_reply_base_key}:rag"
+                        if auto_reply_base_key
+                        else None
+                    ),
                 )
-
-                if is_greeting(message.get("content")):
-                    from app.services.auto_reply_service import send_text_reply_background
-
-                    send_text_reply_background(
-                        conversation_id=conversation_id,
-                        channel=channel,
-                        text=GREETING_REPLY,
-                        business_id=int(business_id),
-                        auto_reply_key=(
-                            f"{auto_reply_base_key}:greeting"
-                            if auto_reply_base_key
-                            else None
-                        ),
-                    )
-                else:
-                    from app.services.auto_reply_service import process_rag_auto_reply_background
-
-                    process_rag_auto_reply_background(
-                        conversation_id=conversation_id,
-                        channel=channel,
-                        query_text=message.get("content"),
-                        business_id=int(business_id),
-                        auto_reply_key=(
-                            f"{auto_reply_base_key}:rag"
-                            if auto_reply_base_key
-                            else None
-                        ),
-                    )
             except Exception:
                 logger.warning("Auto-reply trigger failed")
 

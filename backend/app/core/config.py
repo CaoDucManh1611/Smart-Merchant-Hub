@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # Docker Desktop deployments can override this with
     # http://host.docker.internal:8091.
     TIKTOK_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8091"
+    SHOPEE_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8092"
 
     # =========================================================
     # RAG SETTINGS

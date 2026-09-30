@@ -89,6 +89,17 @@ test("CRM inventory adjustment uses an expandable, signed quantity control", () 
   assert.match(appSource, /inventory-adjustment-panel/);
 });
 
+test("product adjustment panel can edit product details and the chatbot English name", () => {
+  assert.match(appSource, /product-adjustment-details/);
+  assert.match(appSource, /async function saveProductDetails\(product\)/);
+  assert.match(appSource, /v-model="productDetailsDrafts\[product\.id\]\.sku"/);
+  assert.match(appSource, /v-model="productDetailsDrafts\[product\.id\]\.name_en"/);
+  assert.match(appSource, /v-model\.number="productDetailsDrafts\[product\.id\]\.price"/);
+  assert.match(appSource, /displayNames\.en = nameEn/);
+  assert.match(appSource, /method: "PATCH"/);
+  assert.match(styleSource, /\.product-adjustment-details/);
+});
+
 test("CRM reports UI renders inventory and received purchase costs", () => {
   assert.match(appSource, /\/reports\/inventory/);
   assert.match(appSource, /\/reports\/purchase-costs/);

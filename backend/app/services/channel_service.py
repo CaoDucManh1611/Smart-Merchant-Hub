@@ -22,7 +22,7 @@ def normalized_connection_state(channel: Channel | None) -> str:
     status = str(channel.status or "").strip().lower()
     if status in {"disconnected", "inactive"}:
         return "disconnected"
-    if status in {"verifying", "error", "reconnect_required"}:
+    if status in {"verifying", "pending_pairing", "error", "reconnect_required"}:
         return status
     credential = channel_credential_status(channel)
     if credential["state"] in {"expired", "invalid_expiry"}:

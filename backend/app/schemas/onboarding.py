@@ -243,6 +243,7 @@ class OnboardingChannelStatusOut(BaseModel):
     provider_account: dict | None = None
     webhook_url: str | None = None
     webhook_status: str = "unknown"
+    connector_paired: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

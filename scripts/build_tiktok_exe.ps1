@@ -1,5 +1,6 @@
 param(
-  [string]$Python = "python"
+  [string]$Python = "python",
+  [string]$BackendUrl = "http://127.0.0.1:8000"
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +10,12 @@ $lttk = Join-Path $PSScriptRoot "lttk"
 $dist = Join-Path $PSScriptRoot "dist\tiktok-bridge"
 $work = Join-Path $root "build\tiktok-bridge"
 $bundle = Join-Path $work "lttk"
+$defaults = Join-Path $work "connector_defaults.json"
+
+$backendUri = $null
+if (-not [Uri]::TryCreate($BackendUrl, [UriKind]::Absolute, [ref]$backendUri) -or $backendUri.Scheme -notin @("http", "https")) {
+  throw "BackendUrl phải là một địa chỉ HTTP hoặc HTTPS hợp lệ."
+}
 
 if (-not (Test-Path (Join-Path $lttk "main.py"))) {
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -23,6 +30,7 @@ if ($LASTEXITCODE -ne 0) { throw "Không cài được thư viện TikTok runtim
 if ($LASTEXITCODE -ne 0) { throw "Không cài được PyInstaller." }
 
 New-Item -ItemType Directory -Force -Path $work | Out-Null
+@{ backend_url = $BackendUrl.TrimEnd("/") } | ConvertTo-Json -Compress | Set-Content -LiteralPath $defaults -Encoding Ascii
 if (Test-Path $bundle) {
   [System.IO.Directory]::Delete($bundle, $true)
 }
@@ -30,7 +38,8 @@ New-Item -ItemType Directory -Force -Path $bundle | Out-Null
 
 # Never ship local sessions, message caches, git metadata, or Python bytecode.
 Get-ChildItem $lttk -Recurse -File | Where-Object {
-  $_.FullName -notmatch "\\(sesion|__pycache__|\.git)(\\|$)" -and $_.Name -ne "messages.db"
+  $_.FullName -notmatch "\\(sesion|__pycache__|\.git)(\\|$)" -and
+  $_.Name -notin @("messages.db", ".uid_cache.json", "client.py.smartmerchant.bak")
 } | ForEach-Object {
   $relative = $_.FullName.Substring($lttk.Length).TrimStart("\\")
   $destination = Join-Path $bundle $relative
@@ -48,6 +57,7 @@ Get-ChildItem $lttk -Recurse -File | Where-Object {
   --workpath $work `
   --specpath $work `
   --add-data "$bundle;lttk" `
+  --add-data "$defaults;." `
   --hidden-import sqlite3 `
   --hidden-import _sqlite3 `
   --collect-submodules lttk `

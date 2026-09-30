@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { displayAttachments, resolveMediaUrl } from "../src/media-utils.js";
+import { displayAttachments, displayMessageText, resolveMediaUrl } from "../src/media-utils.js";
 
 const appVue = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
 const stylesheet = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
@@ -38,6 +38,14 @@ test("turns legacy audio and sticker messages into displayable attachments", () 
     ),
     [{ media_type: "sticker", media_url: "https://cdn.example/sticker.webp" }],
   );
+});
+
+test("hides the legacy TikTok media prefix but keeps the customer message", () => {
+  assert.equal(
+    displayMessageText("[Khách gửi nội dung TikTok] Khách gửi một sticker trên TikTok.", "tiktok"),
+    "Khách gửi một sticker trên TikTok.",
+  );
+  assert.equal(displayMessageText("[Khách gửi nội dung TikTok] hello", "telegram"), "[Khách gửi nội dung TikTok] hello");
 });
 
 test("audio message bubbles reserve room for a seek bar", () => {

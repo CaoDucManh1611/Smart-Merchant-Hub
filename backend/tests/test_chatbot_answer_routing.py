@@ -83,6 +83,28 @@ def test_known_product_price_and_stock_are_read_from_live_catalogue():
     assert reply == ("Điện gia dụng mẫu 01 hiện có giá 349.000 đồng và còn 46 sản phẩm.", "product_fact")
 
 
+def test_variant_stock_lookup_does_not_substitute_base_product():
+    base = SimpleNamespace(
+        id=1, name="Lona jacket", sku="LONA", price=500000,
+        stock_quantity=99, reserved_quantity=0, status="active", metadata_={},
+    )
+    variant = SimpleNamespace(
+        id=2, name="Áo khoác Lona màu đen size M", sku="LONA-BLK-M", price=500000,
+        stock_quantity=12, reserved_quantity=0, status="active",
+        metadata_={"aliases": ["Lona jacket black size M"], "display_names": {"en": "Black Lona Jacket, Size M"}},
+    )
+    query = "Is the Lona jacket in black, size M, available?"
+    reply = _deterministic_customer_reply(
+        _DB([base, variant]), business_id=1, conversation_id=1, query_text=query
+    )
+    assert reply == ("Black Lona Jacket, Size M has 12 units in stock.", "product_fact")
+
+    unmatched = _deterministic_customer_reply(
+        _DB([base]), business_id=1, conversation_id=1, query_text=query
+    )
+    assert unmatched is not None and unmatched[1] == "product_not_found"
+
+
 def test_ambiguous_total_price_requests_product_name():
     reply = _deterministic_customer_reply(
         _db(), business_id=1, conversation_id=1, query_text="Tôi muốn mua 2 sản phẩm, tổng tiền bao nhiêu?"

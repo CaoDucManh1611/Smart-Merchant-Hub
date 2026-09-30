@@ -57,6 +57,8 @@ AGENT_TOOLS = {
 ESCALATION_TERMS = (
     "gặp nhân viên", "nhân viên", "khiếu nại", "hoàn tiền", "đổi trả",
     "hàng lỗi", "hàng bị lỗi", "bị hỏng", "không nhận được", "hỗ trợ gấp",
+    "speak to a person", "talk to a person", "speak to someone", "talk to someone",
+    "human agent", "live agent", "customer support", "customer service", "representative",
 )
 
 
@@ -309,7 +311,12 @@ def route_escalation(
         pass
     _record_handoff(
         db, business_id, conversation_id,
-        reason_code="customer_requested_staff" if "nhân viên" in text.casefold() else "support_needed",
+        reason_code="customer_requested_staff" if any(
+            term in text.casefold() for term in (
+                "nhân viên", "speak to a person", "talk to a person", "speak to someone",
+                "talk to someone", "human agent", "live agent", "representative",
+            )
+        ) else "support_needed",
         reason=text, ticket_id=ticket.id, source="automatic_escalation",
     )
     record_audit(db, business_id=business_id, action="chatbot_escalated", resource_type="ticket", resource_id=ticket.id, metadata={"conversation_id": conversation_id, "reason": text[:500]})

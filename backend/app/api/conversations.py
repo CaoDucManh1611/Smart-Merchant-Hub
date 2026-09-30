@@ -979,19 +979,19 @@ def send_telegram_text(
     return result, channel
 
 
-def _tiktok_thread_id(db: Session, conversation_id: int) -> str:
-    """Recover the ReLttk conversation id saved on the inbound event."""
+def _local_connector_thread_id(db: Session, conversation_id: int, channel: str) -> str:
+    """Recover the platform conversation id saved by a local connector."""
     row = db.execute(
         text("""
             SELECT raw_payload
             FROM messages
             WHERE conversation_id = :conversation_id
-              AND channel = 'tiktok'
+              AND channel = :channel
               AND direction = 'inbound'
             ORDER BY id DESC
             LIMIT 1
         """),
-        {"conversation_id": conversation_id},
+        {"conversation_id": conversation_id, "channel": channel},
     ).first()
     raw = row[0] if row else None
     if isinstance(raw, str):
@@ -1042,7 +1042,7 @@ def send_tiktok_text(
     if not bridge_secret:
         raise HTTPException(status_code=503, detail="TikTok bridge credentials are not configured")
 
-    thread_id = _tiktok_thread_id(db, int(conversation["id"]))
+    thread_id = _local_connector_thread_id(db, int(conversation["id"]), "tiktok")
     if not thread_id:
         raise HTTPException(status_code=409, detail="TikTok conversation chưa có thread_id để gửi tin")
 
@@ -1087,6 +1087,60 @@ def send_tiktok_text(
     if not isinstance(payload, dict):
         payload = {"status": "sent", "message_id": f"tiktok-bridge:{thread_id}"}
     return payload, channel
+
+
+def send_shopee_text(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    text_content: str,
+    business_id: int,
+) -> tuple[dict, Channel]:
+    """Send via the Shopee connector attached to the shop's local Edge session."""
+    channel_id = conversation.get("channel_id")
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(channel_id or 0),
+            Channel.business_id == business_id,
+            Channel.channel_type == "shopee",
+            Channel.status == "active",
+        )
+    )
+    if channel is None or not channel.access_token_encrypted:
+        raise HTTPException(status_code=503, detail="Shopee connector chưa được ghép nối.")
+
+    thread_id = _local_connector_thread_id(db, int(conversation["id"]), "shopee")
+    if not thread_id:
+        raise HTTPException(status_code=409, detail="Shopee conversation chưa có thread_id để gửi tin")
+    try:
+        connector_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Shopee connector credentials could not be decrypted") from exc
+
+    control_url = str(settings.SHOPEE_BRIDGE_CONTROL_URL or "").strip().rstrip("/")
+    if not control_url:
+        raise HTTPException(status_code=503, detail="Shopee outbound connector chưa được cấu hình")
+    try:
+        response = httpx.post(
+            f"{control_url}/send",
+            json={"threadId": thread_id, "message": text_content or "", "recipientId": str(recipient_id or "")},
+            headers={"X-Shopee-Bridge-Secret": connector_token},
+            timeout=30,
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Không thể kết nối Shopee connector. Hãy mở SmartMerchantShopee trên máy đang đăng nhập Shopee.",
+        ) from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code >= 400:
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        raise HTTPException(status_code=response.status_code, detail=detail or "Shopee connector từ chối gửi tin")
+    return payload if isinstance(payload, dict) else {"status": "sent"}, channel
 
 
 def telegram_external_message_id(result: dict, channel: Channel) -> str | None:
@@ -1535,6 +1589,22 @@ async def send_and_save_outbound(
                 send_tiktok_text,
                 db=db,
                 conversation=tiktok_conversation,
+                recipient_id=recipient_id,
+                text_content=text_content or "",
+                business_id=business_id,
+            )
+        elif channel == "shopee":
+            if business_id is None:
+                raise HTTPException(status_code=400, detail="Tenant context is required")
+            shopee_conversation = get_conversation_target(
+                db=db,
+                conversation_id=conversation_id,
+                business_id=business_id,
+            )
+            result, _ = await run_in_threadpool(
+                send_shopee_text,
+                db=db,
+                conversation=shopee_conversation,
                 recipient_id=recipient_id,
                 text_content=text_content or "",
                 business_id=business_id,
