@@ -26,6 +26,7 @@ from app.services.channel_credentials import decrypt_token, encrypt_token
 from app.auth.dependencies import require_admin_access
 from app.tenancy.schema import schema_name_for, validate_schema_name
 from app.tenancy.webhook import verify_tiktok_webhook_signature
+from app.api.local_connectors import receive_local_connector_message
 
 router = APIRouter(tags=["TikTok"])
 bridge_router = APIRouter(tags=["TikTok bridge"])
@@ -300,6 +301,7 @@ def _bridge_message_id(payload: dict) -> str:
 async def receive_tiktok_bridge_message(
     payload: dict,
     platform_db: Session = Depends(get_platform_db),
+    authorization: str | None = Header(default=None, alias="Authorization"),
     x_tiktok_shop_slug: str | None = Header(default=None, alias="X-TikTok-Shop-Slug"),
     x_tiktok_bridge_secret: str | None = Header(default=None, alias="X-TikTok-Bridge-Secret"),
 ):
@@ -309,6 +311,9 @@ async def receive_tiktok_bridge_message(
     Shop API webhook format.  A per-shop secret and slug still keep the event
     tenant-scoped and prevent a bridge from writing into another shop.
     """
+
+    if str(authorization or "").lower().startswith("bearer conn.tiktok."):
+        return await receive_local_connector_message("tiktok", payload, authorization, platform_db)
 
     slug = str(x_tiktok_shop_slug or "").strip().lower()
     provided_secret = str(x_tiktok_bridge_secret or "").strip()

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding, support, recommendations, workspace, appointments, commercial
-from app.api import customer_avatar, facebook, instagram, shopee, tiktok, telegram, zalo, zalo_personal, webhooks
+from app.api import customer_avatar, facebook, instagram, local_connectors, shopee, tiktok, telegram, zalo, zalo_personal, webhooks
 
 
 api_router = APIRouter(prefix="/api")
@@ -12,6 +12,7 @@ api_router.include_router(workspace.router, tags=["Shop workspace"])
 api_router.include_router(appointments.router, tags=["Appointments"])
 api_router.include_router(commercial.router, tags=["Quotes and projects"])
 api_router.include_router(onboarding.router, tags=["Self-service onboarding"])
+api_router.include_router(local_connectors.router)
 api_router.include_router(support.router, tags=["Temporary support access"])
 api_router.include_router(privacy.router, tags=["Privacy"])
 

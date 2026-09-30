@@ -12,13 +12,10 @@ from app.models.customer import Customer
 from app.models.ticket import Ticket, TicketEvent
 from app.models.workflow import Workflow, WorkflowRun
 from app.services.job_service import enqueue_job
+from app.services.ticket_sla import enqueue_ticket_sla_jobs, ticket_deadlines
 from app.services.notification_service import create_notification, deliver_notification_email
 from app.rag.run_logger import safe_error_message
-from app.core.config import settings
 from app.tenancy.context import TenantContext
-
-
-SLA_HOURS = {"low": 72, "normal": 24, "high": 8, "urgent": 4}
 
 
 def _utcnow() -> datetime:
@@ -84,6 +81,7 @@ def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext,
                 raise ValueError("Conversation không thuộc customer của workflow.")
         priority = action.get("priority", "normal")
         now = _utcnow()
+        first_response_due_at, resolution_due_at = ticket_deadlines(db, tenant.business_id, now, priority=priority)
         ticket = Ticket(
             business_id=tenant.business_id,
             customer_id=customer.id,
@@ -91,32 +89,12 @@ def _run_action(db: Session, action: dict, payload: dict, tenant: TenantContext,
             title=(action.get("title") or "Workflow follow-up").strip(),
             status="open",
             priority=priority,
-            sla_due_at=now + timedelta(hours=SLA_HOURS[priority]),
+            first_response_due_at=first_response_due_at,
+            sla_due_at=resolution_due_at,
         )
         db.add(ticket)
         db.flush()
-        expected_due_at = ticket.sla_due_at.isoformat()
-        warning_at = max(
-            now,
-            ticket.sla_due_at - timedelta(minutes=max(1, int(settings.TICKET_SLA_WARNING_MINUTES))),
-        )
-        if warning_at < ticket.sla_due_at:
-            enqueue_job(
-                db,
-                business_id=tenant.business_id,
-                kind="ticket.sla_warning",
-                payload={"ticket_id": ticket.id, "sla_due_at": expected_due_at},
-                idempotency_key=f"ticket:{ticket.id}:sla-warning:{expected_due_at}",
-                run_at=warning_at,
-            )
-        enqueue_job(
-            db,
-            business_id=tenant.business_id,
-            kind="ticket.sla_check",
-            payload={"ticket_id": ticket.id, "sla_due_at": expected_due_at},
-            idempotency_key=f"ticket:{ticket.id}:sla:{expected_due_at}",
-            run_at=ticket.sla_due_at,
-        )
+        enqueue_ticket_sla_jobs(db, ticket)
         db.add(TicketEvent(
             business_id=tenant.business_id,
             ticket_id=ticket.id,

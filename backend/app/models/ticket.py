@@ -22,6 +22,8 @@ class Ticket(TenantBase):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="open", index=True)
     priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal", index=True)
     assigned_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    first_response_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    first_response_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     sla_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

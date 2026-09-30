@@ -35,6 +35,7 @@ from app.services.customer_order_service import (
 )
 from app.services.order_service import SalesOrderOperationError, reserve_draft_order_inventory
 from app.services.job_service import enqueue_job
+from app.services.ticket_sla import enqueue_ticket_sla_jobs, ticket_deadlines
 
 
 AGENT_TOOLS = {
@@ -56,6 +57,8 @@ AGENT_TOOLS = {
 ESCALATION_TERMS = (
     "gặp nhân viên", "nhân viên", "khiếu nại", "hoàn tiền", "đổi trả",
     "hàng lỗi", "hàng bị lỗi", "bị hỏng", "không nhận được", "hỗ trợ gấp",
+    "speak to a person", "talk to a person", "speak to someone", "talk to someone",
+    "human agent", "live agent", "customer support", "customer service", "representative",
 )
 
 
@@ -242,6 +245,7 @@ def route_escalation(
         conversation.bot_mode = "human"
         return existing
     assignee = _find_assignee(db, business_id, platform_db=platform_db)
+    first_response_due_at, resolution_due_at = ticket_deadlines(db, business_id, priority="high")
     ticket = Ticket(
         business_id=business_id,
         customer_id=conversation.customer_id,
@@ -251,7 +255,8 @@ def route_escalation(
         status="open",
         priority="high",
         assigned_user_id=assignee.id if assignee else None,
-        sla_due_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=8),
+        first_response_due_at=first_response_due_at,
+        sla_due_at=resolution_due_at,
     )
     conversation.bot_mode = "human"
     if assignee:
@@ -259,6 +264,7 @@ def route_escalation(
         db.add(ConversationAssignment(conversation_id=conversation.id, user_id=assignee.id, assignment_type="bot_escalation"))
     db.add(ticket)
     db.flush()
+    enqueue_ticket_sla_jobs(db, ticket)
     db.add(TicketEvent(business_id=business_id, ticket_id=ticket.id, event_type="created", to_value="high"))
     # Keep an auditable notification in the shop inbox.  A configured email
     # worker can deliver this same event externally without exposing customer
@@ -305,7 +311,12 @@ def route_escalation(
         pass
     _record_handoff(
         db, business_id, conversation_id,
-        reason_code="customer_requested_staff" if "nhân viên" in text.casefold() else "support_needed",
+        reason_code="customer_requested_staff" if any(
+            term in text.casefold() for term in (
+                "nhân viên", "speak to a person", "talk to a person", "speak to someone",
+                "talk to someone", "human agent", "live agent", "representative",
+            )
+        ) else "support_needed",
         reason=text, ticket_id=ticket.id, source="automatic_escalation",
     )
     record_audit(db, business_id=business_id, action="chatbot_escalated", resource_type="ticket", resource_id=ticket.id, metadata={"conversation_id": conversation_id, "reason": text[:500]})
@@ -415,11 +426,15 @@ def execute_chatbot_tool(
         if ticket is None:
             conversation = _conversation(db, business_id, conversation_id)
             assignee = _find_assignee(db, business_id, platform_db=platform_db)
+            priority = str(args.get("priority") or "normal")
+            first_response_due_at, resolution_due_at = ticket_deadlines(db, business_id, priority=priority)
             ticket = Ticket(
                 business_id=business_id, customer_id=conversation.customer_id, conversation_id=conversation_id,
                 title=str(args.get("title") or "Yêu cầu hỗ trợ"), description=str(args.get("description") or ""),
-                priority=str(args.get("priority") or "normal"), status="open",
+                priority=priority, status="open",
                 assigned_user_id=assignee.id if assignee else None,
+                first_response_due_at=first_response_due_at,
+                sla_due_at=resolution_due_at,
             )
             was_auto = conversation.bot_mode != "human"
             conversation.bot_mode = "human"
@@ -428,6 +443,7 @@ def execute_chatbot_tool(
                 db.add(ConversationAssignment(conversation_id=conversation.id, user_id=assignee.id, assignment_type="bot_tool"))
             db.add(ticket)
             db.flush()
+            enqueue_ticket_sla_jobs(db, ticket)
             db.add(TicketEvent(business_id=business_id, ticket_id=ticket.id, event_type="created", to_value=ticket.priority))
             if was_auto:
                 _record_handoff(db, business_id, conversation_id, reason_code="ticket_created", reason=args.get("reason") or "tao_ticket", ticket_id=ticket.id, source="chatbot_tool")

@@ -71,25 +71,43 @@ def deliver_notification_email(*, recipient_email: str | None, title: str, body:
     return True
 
 
-def create_sla_notification(db: Session, *, business_id: int, ticket_id: int, user_id: int | None, title: str, due_at: str | None = None) -> Notification:
+def create_sla_notification(
+    db: Session,
+    *,
+    business_id: int,
+    ticket_id: int,
+    user_id: int | None,
+    title: str,
+    due_at: str | None = None,
+    stage: str = "resolution",
+) -> Notification:
     return create_notification(
         db,
         business_id=business_id,
         user_id=user_id,
         kind="sla",
         title=title,
-        body="Ticket cần được xử lý trước hạn SLA.",
-        metadata={"ticket_id": ticket_id, "sla_due_at": due_at},
+        body="Ticket cần được xử lý trước hạn SLA." if stage == "resolution" else "Ticket chưa được nhân viên phản hồi trong thời hạn SLA.",
+        metadata={"ticket_id": ticket_id, "sla_due_at": due_at, "sla_stage": stage},
     )
 
 
-def create_sla_warning_notification(db: Session, *, business_id: int, ticket_id: int, user_id: int | None, title: str, due_at: str | None = None) -> Notification:
+def create_sla_warning_notification(
+    db: Session,
+    *,
+    business_id: int,
+    ticket_id: int,
+    user_id: int | None,
+    title: str,
+    due_at: str | None = None,
+    stage: str = "resolution",
+) -> Notification:
     return create_notification(
         db,
         business_id=business_id,
         user_id=user_id,
         kind="sla_warning",
         title=title,
-        body="Ticket sắp chạm hạn SLA và cần được ưu tiên xử lý.",
-        metadata={"ticket_id": ticket_id, "sla_due_at": due_at},
+        body="Ticket sắp chạm hạn SLA và cần được ưu tiên xử lý." if stage == "resolution" else "Ticket sắp hết thời hạn phản hồi đầu tiên.",
+        metadata={"ticket_id": ticket_id, "sla_due_at": due_at, "sla_stage": stage},
     )

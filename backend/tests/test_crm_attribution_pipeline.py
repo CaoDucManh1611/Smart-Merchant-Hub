@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, Conversation, Customer, Lead, Order, Product, OrderItem
+from app.models.revenue import RevenueTouchpoint
 
 
 class CrmAttributionPipelineTests(unittest.TestCase):
@@ -240,6 +241,35 @@ class CrmAttributionPipelineTests(unittest.TestCase):
         ticket_report = self.client.get("/api/reports/tickets?channel=telegram&status=open", headers=headers)
         self.assertEqual(200, ticket_report.status_code, ticket_report.text)
         self.assertEqual(1, ticket_report.json()["total_tickets"])
+
+    def test_shopee_is_excluded_from_attribution_ingestion_calculation_and_reports(self):
+        headers = {"X-Business-Id": str(self.business_id)}
+        rejected = self.client.post(
+            "/api/revenue/touchpoints",
+            headers=headers,
+            json={"customer_id": self.customer_id, "channel": " Shopee ", "source": "marketplace"},
+        )
+        self.assertEqual(422, rejected.status_code, rejected.text)
+
+        with Session(self.engine) as db:
+            db.add(RevenueTouchpoint(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                channel="shopee",
+                source="legacy-marketplace",
+            ))
+            db.commit()
+
+        attributed = self.client.post(
+            f"/api/orders/{self.order_id}/attribution",
+            headers=headers,
+            json={"model": "first_touch"},
+        )
+        self.assertEqual(200, attributed.status_code, attributed.text)
+        self.assertNotIn("shopee", {item["channel"] for item in attributed.json()["items"]})
+        report = self.client.get("/api/reports/revenue-attribution?model=first_touch", headers=headers)
+        self.assertEqual(200, report.status_code, report.text)
+        self.assertNotIn("shopee", {item["channel"] for item in report.json()["items"]})
 
 
 if __name__ == "__main__":

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 import hmac
+import hashlib
 import re
+import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -1098,7 +1101,7 @@ def list_connected_channels(
                     channel_type=channel.channel_type,
                     external_account_id=channel.external_account_id,
                     name=channel.name,
-                    status=normalized_connection_state(channel),
+                    status=("verifying" if channel.status == "pending_pairing" else normalized_connection_state(channel)),
                     connected_at=channel.connected_at,
                     provider_account=provider_account if isinstance(provider_account, dict) else None,
                     webhook_url=str(config.get("webhook_url") or "") or None,
@@ -1106,12 +1109,110 @@ def list_connected_channels(
                         "disconnected"
                         if normalized_connection_state(channel) == "disconnected"
                         else "connected"
-                        if config.get("webhook_url")
+                        if channel.status == "active" and (config.get("connector_paired_at") or config.get("webhook_url"))
                         else "unknown"
+                    ),
+                    connector_paired=channel.status == "active" and bool(
+                        config.get("connector_paired_at")
+                        or config.get("webhook_secret")
+                        or config.get("webhook_secret_encrypted")
                     ),
                 )
             )
         return output
+
+
+@router.post("/shops/{business_id}/channels/{channel_type}/pairing-code")
+def create_local_connector_pairing_code(
+    business_id: int,
+    channel_type: str,
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Create a short-lived, single-use code for a local TikTok/Shopee connector."""
+
+    _require_shop_admin(db, business_id, actor)
+    channel_type = str(channel_type or "").strip().lower()
+    if channel_type not in {"tiktok", "shopee"}:
+        raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
+
+    external_account_id = (
+        f"tiktok-bridge-{business_id}"
+        if channel_type == "tiktok"
+        else f"shopee-connector-{business_id}"
+    )
+    connector_name = "TikTok Connector" if channel_type == "tiktok" else "Shopee Connector"
+    endpoint = f"/api/channels/{channel_type}/incoming"
+    expires_at = int(time.time()) + 600
+
+    try:
+        with tenant_session(schema_name_for(business_id)) as tenant_db:
+            channel = tenant_db.scalar(
+                select(Channel)
+                .where(
+                    Channel.channel_type == channel_type,
+                    Channel.external_account_id == external_account_id,
+                )
+                .with_for_update()
+            )
+            if channel is not None and channel.business_id != business_id:
+                raise HTTPException(status_code=409, detail="Kênh này đã thuộc shop khác.")
+            if channel is None:
+                channel = Channel(
+                    business_id=business_id,
+                    channel_type=channel_type,
+                    external_account_id=external_account_id,
+                    name=connector_name,
+                    status="pending_pairing",
+                )
+                tenant_db.add(channel)
+                tenant_db.flush()
+            was_active = channel.status == "active"
+            pairing_code = f"PAIR.{channel_type}.{business_id}.{channel.id}.{secrets.token_urlsafe(12)}"
+            connector_token = f"CONN.{channel_type}.{business_id}.{channel.id}.{secrets.token_urlsafe(32)}"
+            channel.name = connector_name
+            channel.status = "active" if was_active else "pending_pairing"
+            if not was_active:
+                channel.access_token_encrypted = None
+                channel.access_token = None
+            config = dict(channel.config) if isinstance(channel.config, dict) else {}
+            config.update(
+                {
+                    "provider": f"{channel_type}_local_connector",
+                    "webhook_url": None,
+                    "provider_account": {"id": external_account_id, "name": connector_name},
+                    "pairing_code_hash": hashlib.sha256(pairing_code.encode("utf-8")).hexdigest(),
+                    "pairing_code_expires_at": expires_at,
+                    "pending_connector_token_encrypted": encrypt_token(connector_token, settings.CHANNEL_ENCRYPTION_KEY),
+                    "connector_paired_at": config.get("connector_paired_at") if was_active else None,
+                }
+            )
+            channel.config = config
+            tenant_db.flush()
+            channel_id = int(channel.id)
+            if was_active:
+                channel.connected_at = channel.connected_at or datetime.now(timezone.utc).replace(tzinfo=None)
+        platform_db.commit()
+    except HTTPException:
+        platform_db.rollback()
+        raise
+    except (ValueError, RuntimeError) as exc:
+        platform_db.rollback()
+        raise HTTPException(status_code=503, detail="Chưa thể tạo pairing code vì secret manager chưa sẵn sàng.") from exc
+    except Exception:
+        platform_db.rollback()
+        raise
+
+    configured_url = str(settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
+    return {
+        "channel_id": channel_id,
+        "channel_type": channel_type,
+        "pairing_code": pairing_code,
+        "expires_at": expires_at,
+        "backend_url": configured_url or "http://127.0.0.1:8000",
+        "incoming_endpoint": endpoint,
+    }
 
 
 @router.post("/shops/{business_id}/channels/tiktok/bridge")
@@ -1198,14 +1299,16 @@ def disconnect_bot_channel(
     _require_shop_admin(db, business_id, actor)
     with tenant_session(schema_name_for(business_id)) as tenant_db:
         channel = tenant_db.get(Channel, channel_id)
-        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo", "tiktok"}:
+        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo", "tiktok", "shopee"}:
             raise HTTPException(status_code=404, detail="Kênh bot không tồn tại.")
         config = channel.config if isinstance(channel.config, dict) else {}
-        if channel.status == "active":
+        if channel.status in {"active", "pending_pairing"}:
+            was_active = channel.status == "active"
             channel.status = "disconnected"
             channel.disconnected_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            release_quota(platform_db, business_id, "connected_channels")
-            deactivate_route_for_channel(platform_db, channel.id)
+            if was_active:
+                release_quota(platform_db, business_id, "connected_channels")
+                deactivate_route_for_channel(platform_db, channel.id)
         channel_id = channel.id
         channel_type = channel.channel_type
         external_account_id = channel.external_account_id

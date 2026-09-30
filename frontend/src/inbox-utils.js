@@ -5,6 +5,8 @@ export const DEFAULT_INBOX_CHANNELS = Object.freeze([
   "instagram",
   "telegram",
   "zalo",
+  "tiktok",
+  "shopee",
 ]);
 
 export function getInboxChannels(conversations = [], supportedChannels = DEFAULT_INBOX_CHANNELS) {

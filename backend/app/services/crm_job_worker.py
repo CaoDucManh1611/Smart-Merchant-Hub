@@ -111,6 +111,47 @@ def _dispatch_ticket_sla_warning_job(db: Session, business_id: int, payload: dic
     )
 
 
+def _dispatch_ticket_first_response_sla_job(db: Session, business_id: int, payload: dict, *, warning: bool) -> None:
+    ticket = db.query(Ticket).filter(
+        Ticket.id == int(payload.get("ticket_id") or 0),
+        Ticket.business_id == business_id,
+    ).first()
+    expected_due_at = str(payload.get("sla_due_at") or "")
+    if (
+        ticket is None
+        or ticket.status in {"resolved", "closed"}
+        or ticket.first_response_at is not None
+        or ticket.first_response_due_at is None
+        or (expected_due_at and ticket.first_response_due_at.isoformat() != expected_due_at)
+    ):
+        return
+    now = _now()
+    if warning:
+        if ticket.first_response_due_at <= now:
+            return
+        create_sla_warning_notification(
+            db,
+            business_id=business_id,
+            ticket_id=ticket.id,
+            user_id=ticket.assigned_user_id,
+            title=f"SLA phản hồi sắp đến hạn: {ticket.title}",
+            due_at=ticket.first_response_due_at.isoformat(),
+            stage="first_response",
+        )
+    else:
+        if ticket.first_response_due_at > now:
+            return
+        create_sla_notification(
+            db,
+            business_id=business_id,
+            ticket_id=ticket.id,
+            user_id=ticket.assigned_user_id,
+            title=f"SLA phản hồi quá hạn: {ticket.title}",
+            due_at=ticket.first_response_due_at.isoformat(),
+            stage="first_response",
+        )
+
+
 def _dispatch_workflow_run_job(db: Session, business_id: int, payload: dict, *, platform_db: Session | None = None) -> None:
     workflow_id = int(payload.get("workflow_id") or 0)
     workflow = db.query(Workflow).filter(
@@ -246,6 +287,8 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         "rag.ingest": lambda payload: dispatch_rag_job(db, payload, business_id),
         "ticket.sla_warning": lambda payload: _dispatch_ticket_sla_warning_job(db, business_id, payload),
         "ticket.sla_check": lambda payload: _dispatch_ticket_sla_job(db, business_id, payload),
+        "ticket.first_response.sla_warning": lambda payload: _dispatch_ticket_first_response_sla_job(db, business_id, payload, warning=True),
+        "ticket.first_response.sla_check": lambda payload: _dispatch_ticket_first_response_sla_job(db, business_id, payload, warning=False),
         "workflow.run": lambda payload: _dispatch_workflow_run_job(db, business_id, payload, platform_db=platform_db),
         "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),
         "notification.email": lambda payload: _dispatch_notification_email_job(db, business_id, payload),

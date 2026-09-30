@@ -7,13 +7,14 @@ from io import StringIO
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.tenancy.crm_session import get_tenant_db
 from app.database.platform_session import get_platform_db
 from app.db.dependencies import get_db
 from app.models.business import User
+from app.models.industry_modules import Appointment, AppointmentService, CommercialInvoice, CommercialProject, CommercialQuote
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.lead import Lead
@@ -243,12 +244,213 @@ def _parse_date(value: str | None, name: str, *, end_of_day: bool = False) -> da
         return None
     try:
         normalized = value.strip()
-        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00")).replace(tzinfo=None)
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
         if end_of_day and len(normalized) == 10:
             return datetime.combine(parsed.date(), time.max)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
         return parsed
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"{name} không hợp lệ; dùng ISO-8601.") from exc
+
+
+@router.get("/reports/commerce")
+def commerce_report(
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    start_at: str | None = Query(default=None),
+    end_at: str | None = Query(default=None),
+    channel: str | None = Query(default=None, max_length=30),
+    status: str | None = Query(default=None, max_length=30),
+    assigned_user_id: int | None = Query(default=None, ge=1),
+):
+    """Tenant-scoped commerce KPIs and recent source records for drill-through."""
+    business_id = tenant.business_id
+    start = _parse_date(start_at, "start_at")
+    end = _parse_date(end_at, "end_at", end_of_day=True)
+    if start and end and start > end:
+        raise HTTPException(status_code=422, detail="start_at phải trước end_at.")
+    channel = channel.strip().lower() if channel else None
+    if channel == "shopee":
+        raise HTTPException(status_code=422, detail="Kênh Shopee nằm ngoài phạm vi báo cáo này.")
+
+    order_query = db.query(Order).outerjoin(
+        Conversation,
+        (Conversation.id == Order.conversation_id) & (Conversation.business_id == business_id),
+    ).filter(
+        Order.business_id == business_id,
+        or_(Conversation.channel.is_(None), func.lower(Conversation.channel) != "shopee"),
+    )
+    if start:
+        order_query = order_query.filter(Order.created_at >= start)
+    if end:
+        order_query = order_query.filter(Order.created_at <= end)
+    if channel:
+        order_query = order_query.filter(Conversation.channel == channel)
+    if assigned_user_id is not None:
+        order_query = order_query.filter(Conversation.assigned_user_id == assigned_user_id)
+    if status:
+        order_query = order_query.filter(Order.status == status.strip().lower())
+    order_ids = order_query.with_entities(Order.id).statement
+    order_status_rows = db.query(Order.status, func.count(Order.id)).filter(Order.id.in_(order_ids)).group_by(Order.status).all()
+    revenue = db.query(func.coalesce(func.sum(Order.total_amount), Decimal("0.00"))).filter(
+        Order.id.in_(order_ids), Order.status.in_(REVENUE_ORDER_STATUSES),
+    ).scalar() or Decimal("0.00")
+    order_sources = db.query(Order, Customer.name, Conversation.channel).join(
+        Customer, (Customer.id == Order.customer_id) & (Customer.business_id == business_id),
+    ).outerjoin(
+        Conversation,
+        (Conversation.id == Order.conversation_id) & (Conversation.business_id == business_id),
+    ).filter(Order.id.in_(order_ids)).order_by(Order.created_at.desc(), Order.id.desc()).limit(30).all()
+
+    appointment_query = db.query(Appointment).filter(Appointment.business_id == business_id)
+    if start:
+        appointment_query = appointment_query.filter(Appointment.starts_at >= start)
+    if end:
+        appointment_query = appointment_query.filter(Appointment.starts_at <= end)
+    if assigned_user_id is not None:
+        appointment_query = appointment_query.filter(Appointment.assigned_user_id == assigned_user_id)
+    if channel:
+        appointment_query = appointment_query.filter(db.query(Conversation.id).filter(
+            Conversation.business_id == business_id,
+            Conversation.customer_id == Appointment.customer_id,
+            Conversation.channel == channel,
+        ).exists())
+    if status:
+        appointment_query = appointment_query.filter(Appointment.status == status.strip().lower())
+    appointment_ids = appointment_query.with_entities(Appointment.id).statement
+    appointment_status_rows = db.query(Appointment.status, func.count(Appointment.id)).filter(
+        Appointment.id.in_(appointment_ids),
+    ).group_by(Appointment.status).all()
+    appointment_channel = db.query(Conversation.channel).filter(
+        Conversation.business_id == business_id,
+        Conversation.customer_id == Appointment.customer_id,
+        func.lower(Conversation.channel) != "shopee",
+    ).order_by(Conversation.id.desc()).limit(1).scalar_subquery()
+    appointment_sources = db.query(Appointment, Customer.name, AppointmentService.name, appointment_channel).join(
+        Customer, (Customer.id == Appointment.customer_id) & (Customer.business_id == business_id),
+    ).join(
+        AppointmentService,
+        (AppointmentService.id == Appointment.service_id) & (AppointmentService.business_id == business_id),
+    ).filter(Appointment.id.in_(appointment_ids)).order_by(
+        Appointment.starts_at.desc(), Appointment.id.desc(),
+    ).limit(30).all()
+
+    quote_query = db.query(CommercialQuote).filter(CommercialQuote.business_id == business_id)
+    if start:
+        quote_query = quote_query.filter(CommercialQuote.created_at >= start)
+    if end:
+        quote_query = quote_query.filter(CommercialQuote.created_at <= end)
+    if channel:
+        quote_query = quote_query.filter(db.query(Conversation.id).filter(
+            Conversation.business_id == business_id,
+            Conversation.customer_id == CommercialQuote.customer_id,
+            Conversation.channel == channel,
+        ).exists())
+    if assigned_user_id is not None:
+        quote_query = quote_query.filter(db.query(CommercialProject.id).filter(
+            CommercialProject.business_id == business_id,
+            CommercialProject.quote_id == CommercialQuote.id,
+            CommercialProject.assigned_user_id == assigned_user_id,
+        ).exists())
+    if status:
+        quote_query = quote_query.filter(CommercialQuote.status == status.strip().lower())
+    quote_ids = quote_query.with_entities(CommercialQuote.id).statement
+    quote_status_rows = db.query(CommercialQuote.status, func.count(CommercialQuote.id)).filter(
+        CommercialQuote.id.in_(quote_ids),
+    ).group_by(CommercialQuote.status).all()
+    accepted_quote_value = db.query(func.coalesce(func.sum(CommercialQuote.total_amount), Decimal("0.00"))).filter(
+        CommercialQuote.id.in_(quote_ids), CommercialQuote.status == "accepted",
+    ).scalar() or Decimal("0.00")
+    quote_channel = db.query(Conversation.channel).filter(
+        Conversation.business_id == business_id,
+        Conversation.customer_id == CommercialQuote.customer_id,
+        func.lower(Conversation.channel) != "shopee",
+    ).order_by(Conversation.id.desc()).limit(1).scalar_subquery()
+    quote_sources = db.query(CommercialQuote, Customer.name, quote_channel).join(
+        Customer, (Customer.id == CommercialQuote.customer_id) & (Customer.business_id == business_id),
+    ).filter(CommercialQuote.id.in_(quote_ids)).order_by(
+        CommercialQuote.created_at.desc(), CommercialQuote.id.desc(),
+    ).limit(30).all()
+
+    project_query = db.query(CommercialProject).filter(CommercialProject.business_id == business_id)
+    if start:
+        project_query = project_query.filter(CommercialProject.created_at >= start)
+    if end:
+        project_query = project_query.filter(CommercialProject.created_at <= end)
+    if assigned_user_id is not None:
+        project_query = project_query.filter(CommercialProject.assigned_user_id == assigned_user_id)
+    if status:
+        project_query = project_query.filter(CommercialProject.status == status.strip().lower())
+    project_ids = project_query.with_entities(CommercialProject.id).statement
+    project_status_rows = db.query(CommercialProject.status, func.count(CommercialProject.id)).filter(
+        CommercialProject.id.in_(project_ids),
+    ).group_by(CommercialProject.status).all()
+
+    invoice_query = db.query(CommercialInvoice).filter(CommercialInvoice.business_id == business_id)
+    if start:
+        invoice_query = invoice_query.filter(CommercialInvoice.created_at >= start)
+    if end:
+        invoice_query = invoice_query.filter(CommercialInvoice.created_at <= end)
+    if channel:
+        invoice_query = invoice_query.filter(db.query(Conversation.id).filter(
+            Conversation.business_id == business_id,
+            Conversation.customer_id == CommercialInvoice.customer_id,
+            Conversation.channel == channel,
+        ).exists())
+    if assigned_user_id is not None:
+        invoice_query = invoice_query.filter(db.query(CommercialProject.id).filter(
+            CommercialProject.business_id == business_id,
+            CommercialProject.id == CommercialInvoice.project_id,
+            CommercialProject.assigned_user_id == assigned_user_id,
+        ).exists())
+    if status == "paid":
+        invoice_query = invoice_query.filter(CommercialInvoice.paid_amount >= CommercialInvoice.total_amount)
+    elif status == "overdue":
+        invoice_query = invoice_query.filter(CommercialInvoice.status == "issued", CommercialInvoice.due_on < datetime.now(timezone.utc).date(), CommercialInvoice.paid_amount < CommercialInvoice.total_amount)
+    elif status:
+        invoice_query = invoice_query.filter(CommercialInvoice.status == status.strip().lower())
+    invoice_ids = invoice_query.with_entities(CommercialInvoice.id).statement
+    invoice_count = invoice_query.count()
+    invoiced = db.query(func.coalesce(func.sum(CommercialInvoice.total_amount), Decimal("0.00"))).filter(
+        CommercialInvoice.id.in_(invoice_ids), CommercialInvoice.status == "issued",
+    ).scalar() or Decimal("0.00")
+    collected = db.query(func.coalesce(func.sum(CommercialInvoice.paid_amount), Decimal("0.00"))).filter(
+        CommercialInvoice.id.in_(invoice_ids), CommercialInvoice.status == "issued",
+    ).scalar() or Decimal("0.00")
+    invoice_channel = db.query(Conversation.channel).filter(
+        Conversation.business_id == business_id,
+        Conversation.customer_id == CommercialInvoice.customer_id,
+        func.lower(Conversation.channel) != "shopee",
+    ).order_by(Conversation.id.desc()).limit(1).scalar_subquery()
+    invoice_sources = db.query(CommercialInvoice, Customer.name, invoice_channel).join(
+        Customer, (Customer.id == CommercialInvoice.customer_id) & (Customer.business_id == business_id),
+    ).filter(CommercialInvoice.id.in_(invoice_ids)).order_by(
+        CommercialInvoice.created_at.desc(), CommercialInvoice.id.desc(),
+    ).limit(30).all()
+
+    sources = [
+        {"kind": "order", "id": row.id, "label": row.order_number, "customer": name, "status": row.status, "amount": row.total_amount, "created_at": row.created_at, "channel": source_channel}
+        for row, name, source_channel in order_sources
+    ] + [
+        {"kind": "appointment", "id": row.id, "label": f"{service_name} · {row.starts_at.isoformat()}", "customer": name, "status": row.status, "amount": None, "created_at": row.starts_at, "channel": source_channel}
+        for row, name, service_name, source_channel in appointment_sources
+    ] + [
+        {"kind": "quote", "id": row.id, "label": row.quote_number, "customer": name, "status": row.status, "amount": row.total_amount, "created_at": row.created_at, "channel": source_channel}
+        for row, name, source_channel in quote_sources
+    ] + [
+        {"kind": "invoice", "id": row.id, "label": row.invoice_number, "customer": name, "status": "void" if row.status == "void" else "paid" if row.paid_amount >= row.total_amount else "overdue" if row.status == "issued" and row.due_on is not None and row.due_on < datetime.now(timezone.utc).date() else row.status, "amount": row.total_amount, "created_at": row.created_at, "channel": source_channel}
+        for row, name, source_channel in invoice_sources
+    ]
+    return {
+        "definitions": {"revenue_statuses": list(REVENUE_ORDER_STATUSES), "orders_revenue": "sum of order totals in recognized sales states", "quote_value": "accepted quotes only", "invoice_outstanding": "issued invoice totals less recorded payments"},
+        "orders": {"count": sum(int(count) for _, count in order_status_rows), "recognized_revenue": Decimal(revenue).quantize(Decimal("0.01")), "average_order_value": (Decimal(revenue) / sum(int(count) for stage, count in order_status_rows if stage in REVENUE_ORDER_STATUSES)).quantize(Decimal("0.01")) if sum(int(count) for stage, count in order_status_rows if stage in REVENUE_ORDER_STATUSES) else Decimal("0.00"), "by_status": {str(stage): int(count) for stage, count in order_status_rows}},
+        "appointments": {"count": sum(int(count) for _, count in appointment_status_rows), "by_status": {str(stage): int(count) for stage, count in appointment_status_rows}},
+        "quotes": {"count": sum(int(count) for _, count in quote_status_rows), "accepted_value": Decimal(accepted_quote_value).quantize(Decimal("0.01")), "by_status": {str(stage): int(count) for stage, count in quote_status_rows}},
+        "projects": {"count": sum(int(count) for _, count in project_status_rows), "by_status": {str(stage): int(count) for stage, count in project_status_rows}},
+        "invoices": {"count": invoice_count, "issued_total": Decimal(invoiced).quantize(Decimal("0.01")), "collected": Decimal(collected).quantize(Decimal("0.01")), "outstanding": Decimal(invoiced - collected).quantize(Decimal("0.01"))},
+        "source_records": sources[:100],
+    }
 
 
 @router.get("/reports/overview", response_model=CrmOverviewOut)
@@ -288,7 +490,13 @@ def crm_overview(
 
     ticket_query = db.query(Ticket).filter(Ticket.business_id == business_id)
     lead_query = db.query(Lead).filter(Lead.business_id == business_id)
-    order_query = db.query(Order).filter(Order.business_id == business_id)
+    order_query = db.query(Order).outerjoin(
+        Conversation,
+        (Conversation.id == Order.conversation_id) & (Conversation.business_id == business_id),
+    ).filter(
+        Order.business_id == business_id,
+        or_(Conversation.channel.is_(None), func.lower(Conversation.channel) != "shopee"),
+    )
     if start:
         ticket_query = ticket_query.filter(Ticket.created_at >= start)
         lead_query = lead_query.filter(Lead.created_at >= start)
@@ -305,7 +513,7 @@ def crm_overview(
         lead_query = lead_query.filter(Lead.assigned_user_id == assigned_user_id)
     if channel:
         lead_query = lead_query.filter(Lead.source_channel == channel.strip().lower())
-        order_query = order_query.join(Conversation, Conversation.id == Order.conversation_id).filter(Conversation.channel == channel.strip().lower())
+        order_query = order_query.filter(Conversation.channel == channel.strip().lower())
     ticket_count = ticket_query.count()
     open_ticket_count = ticket_query.filter(Ticket.status.not_in(("resolved", "closed"))).count()
     lead_count = lead_query.count()

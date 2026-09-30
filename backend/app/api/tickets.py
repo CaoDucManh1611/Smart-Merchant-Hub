@@ -1,6 +1,6 @@
 """Tenant-scoped customer support tickets, comments and SLA reporting."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
@@ -24,26 +24,24 @@ from app.schemas.ticket import (
     TicketHistoryOut,
     SlaNotificationListOut,
     SlaNotificationOut,
+    SlaRules,
     TicketStatusItem,
     TicketUpdate,
 )
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.services.workflow_engine import emit_workflow_event
-from app.auth.dependencies import require_write_access
+from app.auth.dependencies import require_admin_access, require_write_access
 from app.services.notification_service import create_notification
 from app.services.audit_service import record_audit
-from app.services.job_service import dispatch_due_jobs, enqueue_job
+from app.services.job_service import dispatch_due_jobs
 from app.services.notification_service import create_sla_notification
-from app.core.config import settings
+from app.services.ticket_sla import enqueue_ticket_sla_jobs, get_sla_rules, save_sla_rules, ticket_deadlines
 
 
 router = APIRouter()
 VALID_STATUSES = ("open", "pending", "resolved", "closed")
 VALID_PRIORITIES = ("low", "normal", "high", "urgent")
-SLA_HOURS = {"low": 72, "normal": 24, "high": 8, "urgent": 4}
-
-
 def _utcnow() -> datetime:
     """Return a naive UTC datetime matching the existing DateTime columns."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -126,6 +124,8 @@ def _out(ticket: Ticket) -> TicketOut:
         status=ticket.status,
         priority=ticket.priority,
         assigned_user_id=ticket.assigned_user_id,
+        first_response_due_at=ticket.first_response_due_at,
+        first_response_at=ticket.first_response_at,
         sla_due_at=ticket.sla_due_at,
         resolved_at=ticket.resolved_at,
         channel=ticket.conversation.channel if ticket.conversation else None,
@@ -137,30 +137,7 @@ def _out(ticket: Ticket) -> TicketOut:
 
 
 def _enqueue_sla_job(db: Session, ticket: Ticket) -> None:
-    if ticket.sla_due_at is None or ticket.status in ("resolved", "closed"):
-        return
-    expected_due_at = ticket.sla_due_at.isoformat()
-    warning_at = max(
-        _utcnow(),
-        ticket.sla_due_at - timedelta(minutes=max(1, int(settings.TICKET_SLA_WARNING_MINUTES))),
-    )
-    if warning_at < ticket.sla_due_at:
-        enqueue_job(
-            db,
-            business_id=ticket.business_id,
-            kind="ticket.sla_warning",
-            payload={"ticket_id": ticket.id, "sla_due_at": expected_due_at},
-            idempotency_key=f"ticket:{ticket.id}:sla-warning:{expected_due_at}",
-            run_at=warning_at,
-        )
-    enqueue_job(
-        db,
-        business_id=ticket.business_id,
-        kind="ticket.sla_check",
-        payload={"ticket_id": ticket.id, "sla_due_at": expected_due_at},
-        idempotency_key=f"ticket:{ticket.id}:sla:{expected_due_at}",
-        run_at=ticket.sla_due_at,
-    )
+    enqueue_ticket_sla_jobs(db, ticket)
 
 
 @router.get("/tickets", response_model=TicketListOut)
@@ -187,6 +164,35 @@ def list_tickets(
     return TicketListOut(items=[_out(ticket) for ticket in tickets], total=total)
 
 
+@router.get("/tickets/sla/rules", response_model=SlaRules)
+def get_ticket_sla_rules(
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    return get_sla_rules(db, tenant.business_id)
+
+
+@router.put("/tickets/sla/rules", response_model=SlaRules, dependencies=[Depends(require_admin_access)])
+def update_ticket_sla_rules(
+    payload: SlaRules,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    rules = save_sla_rules(db, tenant.business_id, payload.model_dump())
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="ticket_sla_rules_updated",
+        resource_type="business_setting",
+        resource_id=None,
+        metadata=rules,
+    )
+    db.commit()
+    return rules
+
+
 @router.post("/tickets", response_model=TicketOut, status_code=201, dependencies=[Depends(require_write_access)])
 def create_ticket(
     payload: TicketCreate,
@@ -204,7 +210,13 @@ def create_ticket(
     _assignee(user_db, payload.assigned_user_id, tenant)
     now = _utcnow()
     resolved_at = now if payload.status in ("resolved", "closed") else None
-    due_at = payload.sla_due_at or (now + timedelta(hours=SLA_HOURS[payload.priority]))
+    first_response_due_at, default_resolution_due_at = ticket_deadlines(
+        db,
+        tenant.business_id,
+        now,
+        priority=payload.priority,
+    )
+    due_at = payload.sla_due_at or default_resolution_due_at
     ticket = Ticket(
         business_id=tenant.business_id,
         customer_id=customer.id,
@@ -214,6 +226,7 @@ def create_ticket(
         status=payload.status,
         priority=payload.priority,
         assigned_user_id=payload.assigned_user_id,
+        first_response_due_at=first_response_due_at if payload.status not in ("resolved", "closed") else None,
         sla_due_at=due_at,
         resolved_at=resolved_at,
     )
@@ -432,6 +445,31 @@ def sla_notifications(
             due_at=ticket.sla_due_at.isoformat(),
         )
 
+    def handle_first_response_sla(payload: dict) -> None:
+        ticket = db.query(Ticket).filter(
+            Ticket.id == int(payload["ticket_id"]),
+            Ticket.business_id == tenant.business_id,
+        ).first()
+        expected_due_at = str(payload.get("sla_due_at") or "")
+        if (
+            ticket is None
+            or ticket.status in ("resolved", "closed")
+            or ticket.first_response_at is not None
+            or ticket.first_response_due_at is None
+            or (expected_due_at and ticket.first_response_due_at.isoformat() != expected_due_at)
+            or ticket.first_response_due_at > _utcnow()
+        ):
+            return
+        create_sla_notification(
+            db,
+            business_id=tenant.business_id,
+            ticket_id=ticket.id,
+            user_id=ticket.assigned_user_id,
+            title=f"SLA phản hồi quá hạn: {ticket.title}",
+            due_at=ticket.first_response_due_at.isoformat(),
+            stage="first_response",
+        )
+
     overdue_candidates = db.query(Ticket).filter(
         Ticket.business_id == tenant.business_id,
         Ticket.sla_due_at.is_not(None),
@@ -440,12 +478,24 @@ def sla_notifications(
     ).all()
     for ticket in overdue_candidates:
         _enqueue_sla_job(db, ticket)
+    first_response_candidates = db.query(Ticket).filter(
+        Ticket.business_id == tenant.business_id,
+        Ticket.first_response_due_at.is_not(None),
+        Ticket.first_response_due_at <= now,
+        Ticket.first_response_at.is_(None),
+        Ticket.status.not_in(("resolved", "closed")),
+    ).all()
+    for ticket in first_response_candidates:
+        _enqueue_sla_job(db, ticket)
     db.commit()
     dispatch_due_jobs(
         db,
         business_id=tenant.business_id,
-        handlers={"ticket.sla_check": handle_sla},
-        kinds={"ticket.sla_check"},
+        handlers={
+            "ticket.sla_check": handle_sla,
+            "ticket.first_response.sla_check": handle_first_response_sla,
+        },
+        kinds={"ticket.sla_check", "ticket.first_response.sla_check"},
     )
     tickets = db.query(Ticket).filter(
         Ticket.business_id == tenant.business_id,
@@ -463,11 +513,30 @@ def sla_notifications(
             priority=ticket.priority,
             status=ticket.status,
             assigned_user_id=ticket.assigned_user_id,
+            sla_stage="resolution",
             sla_due_at=ticket.sla_due_at,
             overdue_seconds=max(0, int((now - ticket.sla_due_at).total_seconds())),
         )
         for ticket in tickets
     ]
+    items.extend(
+        SlaNotificationOut(
+            ticket_id=ticket.id,
+            business_id=ticket.business_id,
+            customer_id=ticket.customer_id,
+            conversation_id=ticket.conversation_id,
+            title=ticket.title,
+            priority=ticket.priority,
+            status=ticket.status,
+            assigned_user_id=ticket.assigned_user_id,
+            sla_stage="first_response",
+            sla_due_at=ticket.first_response_due_at,
+            overdue_seconds=max(0, int((now - ticket.first_response_due_at).total_seconds())),
+        )
+        for ticket in first_response_candidates
+        if ticket.first_response_due_at is not None and ticket.first_response_at is None
+    )
+    items.sort(key=lambda item: (item.sla_due_at, item.ticket_id, item.sla_stage))
     return SlaNotificationListOut(items=items, total=len(items))
 
 

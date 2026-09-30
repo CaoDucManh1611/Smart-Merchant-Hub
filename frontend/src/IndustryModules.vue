@@ -32,6 +32,7 @@ const editingQuoteId = ref(null);
 const editingProjectId = ref(null);
 const paymentAmounts = reactive({});
 const paymentMethods = reactive({});
+const paymentAttempts = reactive({});
 const showPaymentHistoryId = ref(null);
 const paymentSavingId = ref(null);
 const serviceForm = reactive({ name: "", description: "", duration_minutes: 60, price: 0 });
@@ -77,17 +78,20 @@ const hasRequestedRecord = () => {
   if (!id) return true;
   if (kind === "appointment") return appointments.value.some((item) => String(item.id) === id);
   if (kind === "quote") return quotes.value.some((item) => String(item.id) === id);
+  if (kind === "invoice") return invoices.value.some((item) => String(item.id) === id);
   return true;
 };
 async function focusRecordArticle() {
   const { kind, id } = props.focusRecord || {};
-  if (id == null || !["appointment", "quote"].includes(kind)) return;
-  if ((kind === "appointment" && props.module !== "appointments") || (kind === "quote" && props.module === "appointments")) return;
-  activeTab.value = kind === "appointment" ? "appointments" : "quotes";
+  if (id == null || !["appointment", "quote", "invoice"].includes(kind)) return;
+  if ((props.module === "appointments") !== (kind === "appointment")) return;
+  activeTab.value = kind === "appointment" ? "appointments" : kind === "quote" ? "quotes" : "invoices";
   await nextTick();
   if (requestedRecordId(kind) !== String(id)) return;
-  const article = [...(workspace.value?.querySelectorAll("[data-record-kind]") || [])]
-    .find((element) => element.dataset.recordKind === kind && element.dataset.recordId === String(id));
+  const article = kind === "invoice"
+    ? [...(workspace.value?.querySelectorAll(".industry-row.industry-record") || [])][invoices.value.findIndex((item) => String(item.id) === String(id))]
+    : [...(workspace.value?.querySelectorAll("[data-record-kind]") || [])]
+      .find((element) => element.dataset.recordKind === kind && element.dataset.recordId === String(id));
   article?.scrollIntoView?.({ block: "center" });
   article?.focus({ preventScroll: true });
 }
@@ -161,13 +165,16 @@ async function load() {
       const [quoteData, projectData, invoiceData] = await Promise.all([
         request("/commercial/quotes?limit=200"), request("/commercial/projects?limit=200"), request("/commercial/invoices?limit=200"),
       ]);
-      const quoteItems = await includeRequestedRecord(quoteData, "/commercial/quotes?limit=200", "quote");
+      const [quoteItems, invoiceItems] = await Promise.all([
+        includeRequestedRecord(quoteData, "/commercial/quotes?limit=200", "quote"),
+        includeRequestedRecord(invoiceData, "/commercial/invoices?limit=200", "invoice"),
+      ]);
       if (version !== loadVersion) return false;
       customers.value = customerData.items || [];
       staff.value = staffData.items || [];
       quotes.value = quoteItems;
       projects.value = projectData.items || [];
-      invoices.value = invoiceData.items || [];
+      invoices.value = invoiceItems;
     }
     loaded.value = true;
     await focusRecordArticle();
@@ -298,9 +305,23 @@ async function recordPayment(invoice) {
   if (paymentSavingId.value === invoice.id) return;
   const amount = Number(paymentAmounts[invoice.id] ?? invoice.balance_due);
   if (!(amount > 0) || amount > Number(invoice.balance_due)) { error.value = tr("Khoản thu phải lớn hơn 0 và không vượt số dư.", "Payment must be greater than zero and no more than the balance due."); return; }
+  const method = paymentMethods[invoice.id] || "bank_transfer";
+  const signature = `${amount}|${method}`;
+  if (paymentAttempts[invoice.id]?.signature !== signature) {
+    paymentAttempts[invoice.id] = {
+      signature,
+      key: globalThis.crypto?.randomUUID?.() || `invoice-${invoice.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      paid_on: new Date().toISOString().slice(0, 10),
+    };
+  }
+  const attempt = paymentAttempts[invoice.id];
   paymentSavingId.value = invoice.id;
   try {
-    await run(() => request(`/commercial/invoices/${invoice.id}/payments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount, method: paymentMethods[invoice.id] || "bank_transfer" }) }), "Đã ghi nhận khoản thanh toán.");
+    const saved = await run(() => request(`/commercial/invoices/${invoice.id}/payments`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount, method, idempotency_key: attempt.key, paid_on: attempt.paid_on }),
+    }), "Đã ghi nhận khoản thanh toán.");
+    if (saved) delete paymentAttempts[invoice.id];
   } finally {
     paymentSavingId.value = null;
   }
