@@ -440,13 +440,6 @@ const sidebarCollapsed = ref(false);
 const customerPanelCollapsed = ref(false);
 const mobileInboxOpen = ref(false);
 const mobileCustomerOpen = ref(false);
-const workspaceGreeting = computed(() => {
-  const hour = new Date().getHours();
-  if (hour < 12) return "Chào buổi sáng!";
-  if (hour < 18) return "Chào buổi chiều!";
-  return "Chào buổi tối!";
-});
-
 const products = ref([]);
 const productsLoading = ref(false);
 const productSaving = ref(false);
@@ -9462,16 +9455,6 @@ function followupRecommendationLabel(item) {
       <!-- TOP -->
 
       <header v-if="authUser && !inPlatformAdminWorkspace" class="top">
-
-        <div class="welcome">
-
-          <strong>
-            {{ t(workspaceGreeting) }} <span aria-hidden="true">👋</span>
-          </strong>
-
-        </div>
-
-
         <div class="top-actions">
 
           <label class="top-search" role="search">
@@ -9479,7 +9462,7 @@ function followupRecommendationLabel(item) {
               class="top-search-input"
               v-model="search"
               type="search"
-              :placeholder="t('Tìm kiếm khách hàng, tin nhắn, đơn hàng...')"
+              :placeholder="t('Tìm nhanh khách hàng, tin nhắn...')"
               :aria-label="t('Tìm kiếm khách hàng, tin nhắn, đơn hàng')"
               :disabled="!tenantReady"
               @keydown.enter="runGlobalSearch"
@@ -9565,18 +9548,7 @@ function followupRecommendationLabel(item) {
             <div class="team-avatar">
               SM
             </div>
-
-            <div>
-
-              <b>
-                {{ t('Không gian quản lý shop') }}
-              </b>
-
-              <small>
-                {{ t('Quản trị viên') }}
-              </small>
-
-            </div>
+            <span>{{ t('Cài đặt') }}</span>
 
           </button>
 
@@ -9686,13 +9658,6 @@ function followupRecommendationLabel(item) {
                 <button type="button" :class="{ active: inboxQuickFilter === 'unread' }" :aria-selected="inboxQuickFilter === 'unread'" @click="inboxQuickFilter = 'unread'">Chưa đọc <i>{{ unreadConversationCount }}</i></button>
                 <button type="button" :class="{ active: inboxQuickFilter === 'important' }" :aria-selected="inboxQuickFilter === 'important'" @click="inboxQuickFilter = 'important'">Quan trọng <i>{{ importantConversationCount }}</i></button>
               </div>
-              <label class="inbox-channel-select">
-                <span class="visually-hidden">Lọc theo kênh</span>
-                <select v-model="activeFilter" aria-label="Lọc theo kênh hội thoại">
-                  <option value="all">Tất cả kênh</option>
-                  <option v-for="channel in inboxChannels" :key="channel.value" :value="channel.value">{{ channel.label }} ({{ channel.count }})</option>
-                </select>
-              </label>
             </div>
 
             <div class="inbox-search-row">
@@ -10049,7 +10014,7 @@ function followupRecommendationLabel(item) {
                 </div>
 
 
-                <div>
+                <div class="chat-person-copy">
 
 
                   <h2 ref="chatHeading" tabindex="-1">
@@ -10168,6 +10133,8 @@ function followupRecommendationLabel(item) {
 
               <div class="chat-tools">
 
+                <div class="chat-tool-primary">
+
                 <button
                   type="button"
                   class="linked-customer-toggle"
@@ -10204,6 +10171,10 @@ function followupRecommendationLabel(item) {
                   {{ selectedBotMode === 'human' ? 'Bật bot' : 'Tắt bot' }}
                 </button>
 
+                </div>
+
+                <div class="chat-tool-fields" :class="{ 'has-outcome': selectedHasAiActivity }">
+
                 <label class="conversation-assignment" title="Gán hội thoại">
                   <span>Phụ trách</span>
                   <select
@@ -10232,6 +10203,10 @@ function followupRecommendationLabel(item) {
                   <small v-if="conversationOutcomeError" class="conversation-outcome-error" role="alert">{{ $t(conversationOutcomeError) }}</small>
                 </label>
 
+                </div>
+
+                <div class="chat-tool-actions">
+
                 <button
                   type="button"
                   title="Thao tác hội thoại"
@@ -10256,6 +10231,8 @@ function followupRecommendationLabel(item) {
                   :aria-pressed="conversationFavoriteActive"
                   @click="toggleConversationFavorite"
                 >♡</button>
+
+                </div>
 
                 <div v-if="conversationActionsOpen" class="conversation-actions-popover" role="menu">
                   <button type="button" role="menuitem" @click="refreshSelectedConversation">Làm mới hội thoại</button>
@@ -11252,11 +11229,11 @@ function followupRecommendationLabel(item) {
             </div>
 
             <div v-else-if="customer360" class="customer-360-data">
-              <div class="section customer-identities-section">
-                <div class="section-head">
+              <details class="section customer-section-accordion customer-identities-section" name="customer-profile-sections">
+                <summary class="customer-section-toggle">
                   <h4>Danh tính đa kênh</h4>
                   <span>{{ customer360.identities.length }}</span>
-                </div>
+                </summary>
                 <div class="customer-identities">
                   <div
                     v-for="identity in customer360.identities"
@@ -11268,13 +11245,13 @@ function followupRecommendationLabel(item) {
                     <small>{{ identity.external_user_id }}</small>
                   </div>
                 </div>
-              </div>
+              </details>
 
-              <div class="section customer-contact-section">
-                <div class="section-head">
+              <details class="section customer-section-accordion customer-contact-section" name="customer-profile-sections">
+                <summary class="customer-section-toggle">
                   <h4>Thông tin nhận hàng</h4>
                   <span>{{ customer360PrimaryContacts.length + customer360VisibleAddresses.length }}</span>
-                </div>
+                </summary>
                 <div class="customer-contact-grid">
                   <div class="customer-contact-card customer-profile-contact-card">
                     <small>Thông tin khách hàng</small>
@@ -11330,10 +11307,8 @@ function followupRecommendationLabel(item) {
                     </div>
                   </div>
                 </div>
-              </div>
-
-              <div class="section customer-consent-section">
-                <div class="section-head"><h4>{{ uiLocale === 'en' ? 'Contact permissions' : 'Quyền nhận tin' }}</h4></div>
+                <details class="customer-consent-section customer-contact-consent">
+                <summary class="customer-section-toggle"><h4>{{ uiLocale === 'en' ? 'Contact permissions' : 'Quyền nhận tin' }}</h4></summary>
                 <p class="settings-muted">{{ uiLocale === 'en' ? 'Marketing needs explicit customer consent. A refusal also stops proactive follow-ups.' : 'Tin tiếp thị cần khách đồng ý rõ ràng. Khi khách từ chối, hệ thống dừng chăm sóc chủ động.' }}</p>
                 <div v-if="customerConsentsLoading" role="status">{{ uiLocale === 'en' ? 'Loading permissions…' : 'Đang tải quyền nhận tin...' }}</div>
                 <div v-if="customerConsentsError" class="customer-360-error" role="alert">
@@ -11354,10 +11329,11 @@ function followupRecommendationLabel(item) {
                     <button v-if="latestCustomerConsent(purpose)?.status !== 'revoked'" type="button" class="table-action-btn" :disabled="customerConsentSaving || customerConsentsLoading" @click="saveCustomerConsent(purpose, 'revoked')">{{ uiLocale === 'en' ? 'Opt out' : 'Từ chối' }}</button>
                   </div>
                 </div>
-              </div>
+                </details>
+              </details>
 
-              <div v-if="crmConfig.customer_fields.length" class="section customer-custom-fields-section">
-                <div class="section-head"><h4>Thông tin riêng của shop</h4><span>{{ crmConfig.customer_fields.length }}</span></div>
+              <details v-if="crmConfig.customer_fields.length" class="section customer-section-accordion customer-custom-fields-section" name="customer-profile-sections">
+                <summary class="customer-section-toggle"><h4>Thông tin riêng của shop</h4><span>{{ crmConfig.customer_fields.length }}</span></summary>
                 <div class="customer-profile-fields customer-custom-fields-grid">
                   <label v-for="field in crmConfig.customer_fields" :key="field.key" class="customer-custom-field">
                     <span>{{ field.label }}</span>
@@ -11373,13 +11349,13 @@ function followupRecommendationLabel(item) {
                 <div v-if="customerCustomFieldsError" class="facts-error" role="alert">{{ crmErrorText(customerCustomFieldsError) }}</div>
                 <div v-if="customerCustomFieldsNotice" class="settings-notice" role="status">{{ crmUiText(customerCustomFieldsNotice) }}</div>
                 <button type="button" class="table-action-btn" :disabled="customerCustomFieldsSaving" @click="saveCustomerCustomFields">{{ customerCustomFieldsSaving ? 'Đang lưu...' : 'Lưu thông tin' }}</button>
-              </div>
+              </details>
 
-              <div class="section customer-timeline-section">
-                <div class="section-head">
+              <details class="section customer-section-accordion customer-timeline-section" name="customer-profile-sections">
+                <summary class="customer-section-toggle">
                   <h4>Lịch sử tương tác</h4>
                   <span v-if="customerTimelineFilterApplied">{{ customer360.timeline.length }} / {{ customer360.timelineTotal }}</span>
-                </div>
+                </summary>
                 <p class="customer-section-hint">
                   Chỉ tra cứu hoạt động khi cần; toàn bộ nội dung tin nhắn vẫn được xem trong khung hội thoại chính.
                 </p>
@@ -11478,13 +11454,13 @@ function followupRecommendationLabel(item) {
                 >
                   {{ customerTimelineLoading ? 'Đang tải...' : 'Tải thêm lịch sử' }}
                 </button>
-              </div>
+              </details>
 
-              <div class="section customer-orders-section">
-                <div class="section-head">
+              <details class="section customer-section-accordion customer-orders-section" name="customer-profile-sections">
+                <summary class="customer-section-toggle">
                   <h4>Đơn hàng &amp; sản phẩm đã mua</h4>
                   <span>{{ customerOrderHistory.length }}</span>
-                </div>
+                </summary>
                 <p class="customer-section-hint">Hóa đơn trước đây và các sản phẩm khách đã mua.</p>
                 <div v-if="customerPendingApprovalOrders.length" class="customer-order-approval" role="status">
                   <div class="customer-order-approval-head"><strong>{{ customerPendingApprovalOrders.length }} đơn chờ xác nhận</strong><span>Khách đã duyệt hóa đơn</span></div>
@@ -11516,13 +11492,13 @@ function followupRecommendationLabel(item) {
                     {{ customerOrderHistoryExpanded ? 'Thu gọn đơn hàng' : `Xem thêm ${customerOrderHistory.length - 5} đơn hàng` }}
                   </button>
                 </div>
-              </div>
+              </details>
 
-              <div class="section customer-facts-section">
-                <div class="section-head">
+              <details class="section customer-section-accordion customer-facts-section" name="customer-profile-sections">
+                <summary class="customer-section-toggle">
                   <h4>Thông tin đã ghi nhận</h4>
                   <span>{{ customer360.facts?.length || 0 }}</span>
-                </div>
+                </summary>
                 <form class="customer-fact-form" @submit.prevent="addCustomerFact">
                   <input v-model="customerFactDraft.fact_key" maxlength="120" placeholder="Khóa (vd: budget_max)" />
                   <input v-model="customerFactDraft.fact_value" maxlength="500" placeholder="Giá trị (vd: 500000)" />
@@ -11555,21 +11531,19 @@ function followupRecommendationLabel(item) {
                 <div v-else class="facts-empty">
                   Chưa có tri thức đã ghi nhận
                 </div>
-              </div>
+              </details>
             </div>
 
 
             <!-- TAGS -->
 
-            <div class="section">
-
-              <div class="section-head">
-
+            <details class="section customer-section-accordion customer-tags-section" name="customer-profile-sections">
+              <summary class="customer-section-toggle">
                 <h4>
                   Nhãn khách hàng
                 </h4>
-
-              </div>
+                <span>{{ customerTagNames(customer360).length }}</span>
+              </summary>
 
               <div v-if="customerTagNames(customer360).length" class="tags">
                 <span v-for="tag in customerTagNames(customer360)" :key="tag" class="tag-chip">
@@ -11586,12 +11560,13 @@ function followupRecommendationLabel(item) {
               </form>
               <div v-if="customerTagError" class="facts-error" role="alert">{{ crmErrorText(customerTagError) }}</div>
 
-            </div>
+            </details>
 
-            <div class="section customer-merge-section">
-              <div class="section-head">
+            <details class="section customer-section-accordion customer-merge-section" name="customer-profile-sections">
+              <summary class="customer-section-toggle">
                 <h4>Gộp hồ sơ khách hàng trùng</h4>
-              </div>
+                <span>{{ duplicateSuggestions.length }}</span>
+              </summary>
               <p class="field-hint">Đề xuất trùng và xem điểm tin cậy trước khi chuyển dữ liệu sang khách hiện tại.</p>
               <form class="customer-tag-form" @submit.prevent="mergeSelectedCustomer">
                 <select v-model="customerMergeSourceId" aria-label="Hồ sơ nguồn để gộp">
@@ -11619,13 +11594,13 @@ function followupRecommendationLabel(item) {
                   <button v-if="merge.can_undo" type="button" @click="undoCustomerMerge(merge)">Tách / hoàn tác</button>
                 </div>
               </div>
-            </div>
+            </details>
 
-            <div class="section customer-segment-section">
-              <div class="section-head">
+            <details class="section customer-section-accordion customer-segment-section" name="customer-profile-sections">
+              <summary class="customer-section-toggle">
                 <h4>Nhóm khách hàng theo nhãn</h4>
                 <span>{{ savedSegments.length }}</span>
-              </div>
+              </summary>
               <form class="segment-form" @submit.prevent="createSavedSegment">
                 <input v-model="segmentForm.name" maxlength="160" placeholder="Tên nhóm khách hàng" />
                 <input v-model="segmentForm.description" maxlength="2000" placeholder="Mô tả (không bắt buộc)" />
@@ -11647,20 +11622,17 @@ function followupRecommendationLabel(item) {
                 </div>
               </div>
               <div v-if="segmentError" class="facts-error" role="alert">{{ crmErrorText(segmentError) }}</div>
-            </div>
+            </details>
 
 
             <!-- STATS -->
 
-            <div class="section">
-
-              <div class="section-head">
-
+            <details class="section customer-section-accordion customer-stats-section" name="customer-profile-sections">
+              <summary class="customer-section-toggle">
                 <h4>
                   Thống kê hội thoại
                 </h4>
-
-              </div>
+              </summary>
 
 
               <div class="stats">
@@ -11705,7 +11677,7 @@ function followupRecommendationLabel(item) {
 
               </div>
 
-            </div>
+            </details>
 
 
           </template>

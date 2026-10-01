@@ -143,6 +143,7 @@ const english = Object.freeze({
   "Chào buổi sáng!": "Good morning!",
   "Chào buổi chiều!": "Good afternoon!",
   "Chào buổi tối!": "Good evening!",
+  "Tìm nhanh khách hàng, tin nhắn...": "Search customers or messages...",
   "Tìm kiếm khách hàng, tin nhắn, đơn hàng...": "Search customers, messages, and orders...",
   "Tìm kiếm khách hàng, tin nhắn, đơn hàng": "Search customers, messages, and orders",
   "Thao tác nhanh": "Quick actions",

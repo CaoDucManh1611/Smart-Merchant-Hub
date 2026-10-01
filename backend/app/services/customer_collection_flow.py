@@ -54,6 +54,7 @@ from app.tenancy.schema import schema_name_for
 
 
 REQUIRED_FIELDS = ("name", "phone", "email", "address", "payment_method")
+SHOPEE_REQUIRED_FIELDS = ("name", "email", "address", "payment_method")
 PROMPTS = {
     "name": "Để lên đơn, bạn cho mình xin tên người nhận nhé.",
     "phone": "Bạn cho mình xin số điện thoại nhận hàng nhé.",
@@ -68,6 +69,14 @@ PROMPTS_EN = {
     "address": "What is the full delivery address?",
     "payment_method": "Would you like to pay by cash on delivery or bank transfer?",
 }
+
+
+def _required_fields_for_channel(source_channel: str | None) -> tuple[str, ...]:
+    if str(source_channel or "").strip().lower() == "shopee":
+        return SHOPEE_REQUIRED_FIELDS
+    return REQUIRED_FIELDS
+
+
 PAYMENT_METHODS = {
     "cod": {"cod", "thu tien khi nhan", "thanh toan khi nhan", "nhan hang moi tra"},
     "bank_transfer": {"chuyen khoan", "chuyen khoan ngan hang", "ck", "qr"},
@@ -977,17 +986,28 @@ def _cancel_checkout_reminder(
         pass
 
 
-def _ensure_email_field(session: CustomerCollectionSession) -> bool:
-    """Upgrade an older pending session without changing completed sessions."""
+def _ensure_channel_fields(session: CustomerCollectionSession) -> bool:
+    """Upgrade active sessions created while checkout used one generic contact field."""
     fields = list(session.required_fields or [])
-    if "email" in fields:
+    is_shopee = str(session.source_channel or "").strip().lower() == "shopee"
+    if "contact" not in fields and not (is_shopee and "phone" in fields):
         return False
-    insert_at = fields.index("phone") + 1 if "phone" in fields else len(fields)
-    fields.insert(insert_at, "email")
-    session.required_fields = fields
+
     collected = dict(session.collected_fields or {})
-    if not collected.get("email") and session.current_field in {None, "address", "payment_method"}:
-        session.current_field = "email"
+    # Older builds retained the chosen value under its typed key as well.
+    collected.pop("contact", None)
+    fields = list(_required_fields_for_channel(session.source_channel))
+    session.required_fields = fields
+    session.collected_fields = collected
+
+    current_field = session.current_field
+    missing = next((field for field in fields if not collected.get(field)), None)
+    if current_field not in fields or collected.get(current_field):
+        current_field = missing
+    elif missing is not None and fields.index(missing) < fields.index(current_field):
+        current_field = missing
+    if current_field != session.current_field:
+        session.current_field = current_field
         session.status = "partial"
     return True
 
@@ -1164,7 +1184,15 @@ def _create_checkout_otp_challenges(
     if delivery_mode == "smtp":
         challenge_channels = (("email", "email"),)
     elif delivery_mode == "twilio":
-        challenge_channels = (("phone", "sms"),)
+        if collected.get("phone"):
+            challenge_channels = (("phone", "sms"),)
+        elif collected.get("email"):
+            # Shopee checkout intentionally collects email only.  Queueing the
+            # unsupported delivery keeps verification pending instead of
+            # silently treating the absence of an SMS destination as success.
+            challenge_channels = (("email", "email"),)
+        else:
+            challenge_channels = ()
     else:
         # disabled/in_chat are local demo modes; retain both channels so the
         # full verification state machine remains testable without a provider.
@@ -1737,9 +1765,9 @@ def advance_customer_collection(
             customer_id=customer_id,
             conversation_id=conversation_id,
             purpose="order",
-            required_fields=list(REQUIRED_FIELDS),
+            required_fields=list(_required_fields_for_channel(source_channel)),
             collected_fields={"reply_language": detect_reply_language(text)},
-            current_field=REQUIRED_FIELDS[0],
+            current_field=_required_fields_for_channel(source_channel)[0],
             source_channel=source_channel,
             status="pending",
         )
@@ -2109,8 +2137,9 @@ def advance_customer_collection(
                 prompt=_format_quote_prompt(items, language=reply_language),
             )
         session.purpose = "order"
-        session.required_fields = list(REQUIRED_FIELDS)
-        session.current_field = REQUIRED_FIELDS[0]
+        required_fields = _required_fields_for_channel(session.source_channel or source_channel)
+        session.required_fields = list(required_fields)
+        session.current_field = required_fields[0]
         session.status = "partial"
         session.last_activity_at = _now()
         _cancel_checkout_reminder(
@@ -2127,7 +2156,7 @@ def advance_customer_collection(
             prompt=_collection_prompt(session.current_field, reply_language),
         )
 
-    if _ensure_email_field(session):
+    if _ensure_channel_fields(session):
         db.commit()
 
     field = session.current_field

@@ -2,6 +2,7 @@ import unittest
 import json
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from app.models.customer_collection import (
     CustomerAddress,
     CustomerCollectionSession,
     CustomerContact,
+    CustomerVerificationChallenge,
 )
 from app.models.message import Message
 from app.models.notification import Notification
@@ -156,6 +158,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 text="Nguyễn Văn A",
             )
             self.assertEqual("phone", second.current_field)
+            self.assertIn("số điện thoại", second.prompt)
 
             third = advance_customer_collection(
                 db,
@@ -201,6 +204,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             session = db.query(CustomerCollectionSession).filter_by(conversation_id=11).one()
             self.assertEqual("completed", session.status)
             self.assertEqual("Nguyễn Văn A", session.collected_fields["name"])
+            self.assertEqual("+84901234567", session.collected_fields["phone"])
             self.assertEqual("nguyen.van.a@example.com", session.collected_fields["email"])
             self.assertEqual("cod", session.collected_fields["payment_method"])
             customer = db.get(Customer, self.customer_id)
@@ -244,6 +248,138 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             )
             self.assertEqual("phone", resumed.current_field)
             self.assertEqual(1, db.query(CustomerCollectionSession).filter_by(conversation_id=21).count())
+
+    def test_shopee_checkout_asks_for_email_without_phone(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="shopee",
+                external_user_id="email-only-checkout-user",
+            )
+            db.add(customer)
+            db.flush()
+            conversation_id = 22
+
+            self.assertEqual("name", advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="Chốt đơn giúp mình",
+            ).current_field)
+            contact = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="Lê Mai",
+            )
+            self.assertEqual("email", contact.current_field)
+            self.assertIn("email", contact.prompt)
+            self.assertNotIn("số điện thoại", contact.prompt)
+
+            invalid_phone = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="0901234567",
+            )
+            self.assertEqual("email", invalid_phone.current_field)
+
+            address = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="mai.checkout@example.com",
+            )
+            self.assertEqual("address", address.current_field)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=conversation_id).one()
+            self.assertEqual(["name", "email", "address", "payment_method"], session.required_fields)
+            self.assertEqual("mai.checkout@example.com", customer.email)
+            self.assertIsNone(customer.phone)
+
+    def test_legacy_shopee_contact_session_is_upgraded_to_email_only(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="shopee",
+                external_user_id="legacy-phone-checkout-user",
+            )
+            db.add(customer)
+            db.flush()
+            session = CustomerCollectionSession(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                conversation_id=23,
+                purpose="order",
+                required_fields=["name", "contact", "address", "payment_method"],
+                collected_fields={"name": "An", "phone": "0901234567", "contact": "phone", "reply_language": "vi"},
+                current_field="address",
+                source_channel="shopee",
+                status="partial",
+            )
+            db.add(session)
+            db.flush()
+
+            result = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=23, source_channel="shopee",
+                text="an@example.com",
+            )
+
+            self.assertEqual("address", result.current_field)
+            self.assertEqual(["name", "email", "address", "payment_method"], session.required_fields)
+            self.assertEqual("0901234567", session.collected_fields["phone"])
+            self.assertEqual("an@example.com", session.collected_fields["email"])
+
+    def test_shopee_email_checkout_stays_pending_when_only_sms_otp_is_configured(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="shopee",
+                external_user_id="shopee-sms-only-otp-user",
+            )
+            db.add(customer)
+            db.flush()
+            conversation_id = 24
+            quote = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="giá của 1 Serum hết bao nhiêu",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+            self.assertEqual("name", advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="Đồng ý đặt hàng",
+            ).current_field)
+            advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="Trần An",
+            )
+            self.assertEqual("address", advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="an.shopee@example.com",
+            ).current_field)
+            self.assertEqual("payment_method", advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation_id, source_channel="shopee",
+                text="12 Nguyễn Huệ, Quận 1",
+            ).current_field)
+
+            with patch("app.services.customer_collection_flow.settings.OTP_DELIVERY_MODE", "twilio"):
+                result = advance_customer_collection(
+                    db, business_id=self.business_id, customer_id=customer.id,
+                    conversation_id=conversation_id, source_channel="shopee",
+                    text="COD",
+                )
+
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=conversation_id).one()
+            order = db.query(Order).filter_by(conversation_id=conversation_id).one()
+            challenge = db.query(CustomerVerificationChallenge).filter_by(customer_id=customer.id).one()
+            self.assertIn("chưa gửi OTP thành công", result.prompt)
+            self.assertTrue(session.collected_fields["otp_pending"])
+            self.assertTrue(session.collected_fields["otp_delivery_pending"])
+            self.assertFalse(session.collected_fields["awaiting_customer_confirmation"])
+            self.assertEqual("email", challenge.channel)
+            self.assertEqual("queued", challenge.status)
+            self.assertTrue(order.metadata_["contact_verification_pending"])
 
     def test_collection_waits_until_customer_confirms_a_specific_product(self):
         self.assertFalse(is_order_intent("Tôi cần mua hàng"))

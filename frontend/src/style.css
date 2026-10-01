@@ -15010,3 +15010,560 @@ body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer::-webkit-s
 .customer-import-file input { max-width: 100%; }
 .customer-import-preview { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line, #c9dce3); border-radius: 10px; margin-top: 10px; }
 .customer-import-preview ul { margin: 0; padding-inline-start: 20px; }
+/* Keep the conversation identity and its complete control set calm and scannable. */
+.chat-shell .chat-tool-primary,
+.chat-shell .chat-tool-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.chat-shell .chat-tool-fields {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.chat-shell .chat-tools button {
+  display: inline-grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  color: var(--owly-muted);
+  background: var(--owly-surface);
+  border: 1px solid var(--owly-border);
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.chat-shell .chat-tool-primary .linked-customer-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.chat-shell .chat-tool-primary .mobile-customer-trigger {
+  flex-basis: 36px;
+  width: 36px;
+  min-width: 36px;
+  height: 32px;
+  color: var(--workspace-primary-dark);
+  background: #f2f9fa;
+  border-color: #cfe3e7;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.chat-shell .chat-tool-primary .bot-mode-button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 62px;
+  height: 32px;
+  padding: 0 8px;
+  color: var(--workspace-primary-dark);
+  background: #eef8f7;
+  border-color: #c8e2df;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.chat-shell .chat-tool-primary .bot-mode-button.human {
+  color: #fff;
+  background: var(--workspace-primary-dark);
+  border-color: var(--workspace-primary-dark);
+}
+
+.chat-shell .chat-tool-fields > .conversation-assignment {
+  flex: 1 1 120px;
+  min-width: 0;
+  gap: 3px;
+  color: var(--owly-muted);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.chat-shell .chat-tool-fields .conversation-assignment select {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  max-width: none;
+  overflow: hidden;
+  padding: 0 20px 0 8px;
+  color: var(--owly-ink);
+  background: var(--owly-surface);
+  border: 1px solid var(--owly-border);
+  border-radius: 8px;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-shell .chat-tool-fields .conversation-outcome-error {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 9px;
+}
+
+.chat-shell .chat-tools button:hover {
+  color: var(--workspace-primary-dark);
+  background: #f1f8f8;
+  border-color: #b8d9d9;
+}
+
+.chat-shell .chat-tools button.active {
+  color: #fff;
+  background: var(--workspace-primary-dark);
+  border-color: var(--workspace-primary-dark);
+}
+
+.chat-shell .chat-tools button:focus-visible {
+  outline-offset: 2px;
+}
+
+.chat-shell .chat-head .chat-person-copy {
+  min-width: 0;
+}
+
+@container (max-width: 620px) {
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-head {
+    min-height: 0;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person {
+    flex: 0 1 auto;
+    width: 100%;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person .avatar-lg {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    font-size: 14px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 720;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person p {
+    gap: 4px;
+    margin: 2px 0 0;
+    font-size: 10px;
+    line-height: 1.2;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tools {
+    display: grid;
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "primary fields actions";
+    align-items: center;
+    gap: 6px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-primary {
+    grid-area: primary;
+    gap: 4px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-fields {
+    display: grid;
+    grid-area: fields;
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+    gap: 5px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-fields:not(.has-outcome) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-fields > .conversation-assignment {
+    min-width: 0;
+    gap: 3px;
+    font-size: 9px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .conversation-assignment > span {
+    position: static;
+    display: block;
+    overflow: hidden;
+    padding: 0;
+    color: var(--owly-muted);
+    background: transparent;
+    font-size: 9px;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-fields .conversation-assignment select {
+    min-height: 28px;
+    padding: 0 18px 0 7px;
+    font-size: 10px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-primary > button,
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-actions > button {
+    flex-basis: 28px;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-primary > .mobile-customer-trigger {
+    flex-basis: 34px;
+    width: 34px;
+    min-width: 34px;
+    height: 28px;
+    font-size: 9px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-primary > .bot-mode-button {
+    flex: 0 0 auto;
+    min-width: 54px;
+    height: 28px;
+    padding: 0 6px;
+    font-size: 10px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-actions {
+    grid-area: actions;
+    gap: 3px;
+  }
+}
+
+@container (max-width: 410px) {
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tools {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "primary actions"
+      "fields fields";
+    row-gap: 6px;
+  }
+}
+
+@media (max-width: 560px) {
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-head {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-areas:
+      "back person"
+      "tools tools";
+    align-items: center;
+    gap: 7px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .mobile-inbox-trigger {
+    grid-area: back;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-person {
+    grid-area: person;
+    width: auto;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tools {
+    grid-area: tools;
+    padding-left: 0;
+  }
+}
+
+/* Compact operational toolbar and one-at-a-time Customer 360 sections. */
+.crm-app:not(.platform-admin-workspace) .top {
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.crm-app:not(.platform-admin-workspace) .top-actions {
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.crm-app:not(.platform-admin-workspace) .top-search {
+  flex: 1 1 280px;
+  width: auto;
+  min-width: 180px;
+  max-width: none;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+.crm-app:not(.platform-admin-workspace) .team {
+  width: auto;
+  min-width: 0;
+  min-height: 40px;
+  padding: 4px 9px 4px 5px;
+  gap: 7px;
+  border-color: var(--owly-border);
+  border-radius: 10px;
+  background: var(--owly-surface);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.crm-app:not(.platform-admin-workspace) .team > span {
+  white-space: nowrap;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer .customer-profile {
+  margin-bottom: 16px;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer .customer-section-accordion {
+  margin: 0 0 10px !important;
+  padding: 0;
+  overflow: clip;
+  border: 0 !important;
+  background: transparent;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-toggle {
+  display: flex;
+  box-sizing: border-box;
+  min-height: 46px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  color: var(--workspace-primary-dark);
+  background: #eaf6f6;
+  border: 1px solid #c4e3e3;
+  border-radius: 10px;
+  cursor: pointer;
+  list-style: none;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-toggle::after {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  margin-left: auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-toggle h4 {
+  min-width: 0;
+  margin: 0;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-toggle > span {
+  display: inline-grid;
+  min-width: 22px;
+  min-height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0 6px;
+  color: var(--workspace-primary-dark);
+  background: #fff;
+  border: 1px solid #d2e8e8;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-toggle:hover {
+  background: #dff0f0;
+  border-color: #9acccc;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-toggle:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--workspace-primary) 32%, transparent);
+  outline-offset: 2px;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-accordion[open] {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--owly-border) !important;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-accordion[open] > .customer-section-toggle {
+  margin-bottom: 10px;
+  color: #fff;
+  background: var(--workspace-primary-dark);
+  border-color: var(--workspace-primary-dark);
+}
+
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .customer-section-accordion[open] > .customer-section-toggle h4 {
+  color: #fff;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-accordion[open] > .customer-section-toggle::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.crm-app:not(.platform-admin-workspace) .customer-section-accordion[open] > .customer-section-toggle > span {
+  color: var(--workspace-primary-dark);
+}
+
+body.crm-dark .crm-app:not(.platform-admin-workspace) .customer-section-toggle {
+  color: #bce9e6;
+  background: #1f3437;
+  border-color: #345b5e;
+}
+
+body.crm-dark .crm-app:not(.platform-admin-workspace) .customer-section-toggle > span {
+  color: #bce9e6;
+  background: #263639;
+  border-color: #3b5e61;
+}
+
+body.crm-dark .crm-app:not(.platform-admin-workspace) .customer-section-accordion[open] > .customer-section-toggle {
+  color: #fff;
+  background: #167d80;
+  border-color: #167d80;
+}
+
+body.crm-dark .crm-app:not(.platform-admin-workspace) .customer .customer-section-accordion[open] > .customer-section-toggle h4 {
+  color: #fff;
+}
+
+@media (max-width: 1180px) {
+  .crm-app:not(.platform-admin-workspace) .top-actions {
+    flex-wrap: wrap;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-search {
+    flex: 1 1 240px;
+    width: auto;
+    min-width: 180px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .team {
+    width: 42px;
+    min-width: 42px;
+    justify-content: center;
+    padding: 4px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .team > span,
+  .crm-app:not(.platform-admin-workspace) .top-logout > span {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .crm-app:not(.platform-admin-workspace) .top-actions {
+    justify-content: flex-start;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-search {
+    display: flex;
+    flex: 1 1 100%;
+    order: -1;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .quick-action-trigger > span {
+    display: none;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .quick-action-trigger {
+    min-width: 42px;
+    justify-content: center;
+    padding-inline: 8px;
+  }
+}
+
+@media (max-width: 600px) {
+  .crm-app:not(.platform-admin-workspace) .top {
+    align-items: center;
+    gap: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-actions {
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .top-search {
+    margin-bottom: 2px;
+  }
+}
+
+@container (max-width: 620px) {
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tools {
+    align-items: end;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-primary,
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-actions {
+    align-self: end;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-primary > button,
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-actions > button {
+    flex-basis: 32px;
+    width: 32px;
+    height: 32px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-primary > .mobile-customer-trigger {
+    flex-basis: 36px;
+    width: 36px;
+    min-width: 36px;
+    height: 32px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-primary > .bot-mode-button {
+    min-width: 62px;
+    height: 32px;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-fields .conversation-assignment select {
+    min-height: 32px;
+  }
+}
+
+/* Contact permissions remain available without adding another top-level card. */
+.crm-app:not(.platform-admin-workspace) .customer .customer-contact-consent {
+  display: block;
+  margin-top: 10px;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer .customer-contact-consent > .customer-section-toggle {
+  min-height: 36px;
+}
+
+.crm-app:not(.platform-admin-workspace) .customer .customer-contact-consent > :not(summary) {
+  margin-block: 10px 0;
+}
