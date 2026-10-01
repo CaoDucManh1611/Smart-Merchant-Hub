@@ -28,6 +28,15 @@ test("customer CSV and consent flows require preview and evidence before saving"
   assert.match(templateSource, /item\.status === 'scheduled'/);
 });
 
+test("team roles and segment campaigns are available in the operations UI", () => {
+  assert.match(appSource, /sales: "Nhân viên bán hàng"/);
+  assert.match(appSource, /support: "Nhân viên CSKH"/);
+  assert.match(templateSource, /value="sales">Nhân viên bán hàng/);
+  assert.match(templateSource, /value="support">Nhân viên CSKH/);
+  assert.match(appSource, /customers\/segments\/\$\{segmentCampaignForm\.value\.segment_id\}\/followups/);
+  assert.match(templateSource, /@submit\.prevent="scheduleSegmentCampaign"/);
+});
+
 function openingButtonTags(source) {
   const start = source.indexOf("<template>");
   const end = source.lastIndexOf("</template>");
@@ -723,24 +732,30 @@ test("collapsed sidebar hides navigation text instead of clipping it", () => {
   assert.match(styleSource, /@media \(max-width: 1100px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.side \.menu-item\s*>\s*:\s*not\(\.nav-icon\)[\s\S]*?display:\s*none\s*!important/);
 });
 
-test("CRM workspace header exposes logout independently of tenant readiness", () => {
+test("CRM workspace header keeps core actions without redundant copy", () => {
   const headerStart = templateSource.indexOf('<header v-if="authUser && !inPlatformAdminWorkspace" class="top">');
   const headerEnd = templateSource.indexOf("</header>", headerStart);
   assert.notEqual(headerStart, -1);
   assert.notEqual(headerEnd, -1);
   const crmHeader = templateSource.slice(headerStart, headerEnd);
-  assert.match(crmHeader, /t\(workspaceGreeting\)/);
+  assert.doesNotMatch(crmHeader, /workspaceGreeting|class="welcome"/);
   assert.doesNotMatch(crmHeader, /Theo dõi khách hàng, hội thoại và vận hành trong một không gian/);
+  assert.match(crmHeader, /t\('Tìm nhanh khách hàng, tin nhắn\.\.\.'\)/);
+  assert.match(crmHeader, /class="quick-action-trigger"/);
+  assert.match(crmHeader, /class="notification-menu"/);
+  assert.match(crmHeader, /class="dark-mode-toggle"/);
+  assert.match(crmHeader, /class="ui-language-control"/);
+  assert.match(crmHeader, /<span>\{\{ t\('Cài đặt'\) \}\}<\/span>/);
   assert.match(crmHeader, /class="top-logout"/);
   assert.match(crmHeader, /:aria-label="t\('Đăng xuất'\)"/);
   assert.match(crmHeader, /@click="logout"/);
 });
 
-test("compact CRM header keeps logout visible without squeezing the greeting", () => {
-  assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.top > \.welcome[\s\S]*?min-width:\s*160px/);
-  assert.match(styleSource, /@media \(max-width: 1180px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top-search[\s\S]*?width:\s*clamp\(190px,\s*25vw,\s*300px\)/);
-  assert.match(styleSource, /@media \(max-width: 1180px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top-logout > span[\s\S]*?display:\s*none/);
-  assert.match(styleSource, /@media \(max-width: 860px\)[\s\S]*?\.crm-app:not\(\.platform-admin-workspace\) \.top-search[\s\S]*?display:\s*none/);
+test("compact CRM header preserves search and wraps controls at narrow widths", () => {
+  const compactHeader = styleSource.slice(styleSource.lastIndexOf("/* Compact operational toolbar"));
+  assert.match(compactHeader, /\.top-actions\s*\{[^}]*flex:\s*1 1 100%[^}]*flex-wrap:\s*nowrap/);
+  assert.match(compactHeader, /@media \(max-width: 1180px\)[\s\S]*?\.top-actions\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(compactHeader, /@media \(max-width: 860px\)[\s\S]*?\.top-search\s*\{[^}]*display:\s*flex[^}]*order:\s*-1/);
 });
 
 test("workspace avatar stays circular when the header becomes compact", () => {
@@ -753,6 +768,20 @@ test("collapsing Customer 360 frees chat width and keeps a right-side reopen con
   assert.match(appSource, /customerPanelCollapsed\s*\?\s*'‹'\s*:\s*'›'/);
   assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.layout\.customer-panel-collapsed\s*\{[^}]*grid-template-columns:\s*minmax\(280px,\s*348px\)\s+minmax\(0,\s*1fr\)\s+60px/);
   assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.customer\.customer-collapsed \.customer-title-actions > button:not\(:last-child\)\s*\{\s*display:\s*none/);
+});
+
+test("Customer 360 sections keep their actions behind keyboard-operable disclosures", () => {
+  const details = appSource.match(/<details\b[^>]*customer-section-accordion[^>]*>/g) || [];
+  assert.equal(details.length, 10);
+  assert.doesNotMatch(details.join("\n"), /\bopen(?:\s|=|>)/);
+  assert.match(appSource, /<summary class="customer-section-toggle">[\s\S]*?Danh tính đa kênh/);
+  const contact = appSource.slice(appSource.indexOf('customer-contact-section" name="customer-profile-sections"'), appSource.indexOf('customer-custom-fields-section" name="customer-profile-sections"'));
+  assert.match(contact, /customer-contact-consent[\s\S]*?saveCustomerConsent[\s\S]*?<\/details>\s*<\/details>/);
+  assert.match(appSource, /customer-timeline-section[\s\S]*?applyCustomerTimelineFilters/);
+  assert.match(appSource, /customer-orders-section[\s\S]*?confirmCustomerOrder/);
+  assert.match(styleSource, /\.customer-section-toggle:focus-visible\s*\{[^}]*outline:/);
+  assert.match(styleSource, /\.customer \.customer-profile\s*\{[^}]*margin-bottom:\s*16px/);
+  assert.match(styleSource, /\.customer \.customer-section-accordion\s*\{[^}]*margin:\s*0 0 10px !important/);
 });
 
 test("compact inbox workspace keeps every new UI control actionable", () => {
@@ -776,6 +805,7 @@ test("inbox search and channel filters share a compact row without removing filt
   assert.match(toolbar, /class="inbox-search-row"/);
   assert.match(toolbar, /class="search-box inbox-search-box"/);
   assert.match(toolbar, /class="inbox-channel-select"/);
+  assert.equal((toolbar.match(/class="inbox-channel-select"/g) || []).length, 1);
   assert.match(toolbar, /class="inbox-filter-disclosure"/);
   assert.match(appSource, /class="inbox-bulk-toolbar"/);
   assert.match(styleSource, /\.crm-app:not\(\.platform-admin-workspace\) \.inbox-search-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+clamp\(92px,\s*36%,\s*112px\)/);
@@ -966,17 +996,21 @@ test("conversation header can limit the inbox to accounts linked to its customer
 test("chat bot toggle stays on one line in the compact header", () => {
   assert.match(
     styleSource,
-    /\.chat-shell \.chat-tools\s*>\s*\.bot-mode-button\s*\{[\s\S]*?flex:\s*0\s+0\s+auto[\s\S]*?white-space:\s*nowrap/
+    /\.chat-shell \.chat-tool-primary \.bot-mode-button\s*\{[\s\S]*?flex:\s*0\s+0\s+auto[\s\S]*?white-space:\s*nowrap/
   );
 });
 
 test("embedded conversation keeps its controls while compacting the header and composer", () => {
-  const compactStyles = styleSource.slice(styleSource.lastIndexOf("/* Reclaim transcript space in the embedded inbox"));
-  assert.match(compactStyles, /\.chat-head\s*\{[^}]*padding:\s*7px 10px/);
-  assert.match(compactStyles, /\.chat-tools\s*\{[^}]*flex-wrap:\s*wrap/);
-  assert.match(compactStyles, /\.conversation-assignment > span\s*\{[^}]*position:\s*absolute/);
-  assert.match(compactStyles, /\.chat-composer textarea\s*\{[^}]*height:\s*46px/);
-  assert.match(compactStyles, /\.composer-tabs button\s*\{[^}]*min-height:\s*28px/);
+  const compactStyles = styleSource.slice(styleSource.lastIndexOf("/* Keep the conversation identity"));
+  assert.match(compactStyles, /\.chat-head\s*\{[^}]*padding:\s*8px 10px/);
+  assert.match(compactStyles, /\.chat-tools\s*\{[^}]*grid-template-areas:\s*"primary fields actions"/);
+  assert.match(compactStyles, /\.chat-shell \.conversation-assignment > span\s*\{[^}]*position:\s*static/);
+  assert.match(compactStyles, /@container \(max-width:\s*410px\)[\s\S]*?grid-template-areas:[\s\S]*?"fields fields"/);
+  assert.match(styleSource, /\.chat-composer textarea\s*\{[^}]*height:\s*46px/);
+  assert.match(styleSource, /\.composer-tabs button\s*\{[^}]*min-height:\s*28px/);
+  assert.match(appSource, /class="chat-tool-primary"[\s\S]*?class="linked-customer-toggle"[\s\S]*?class="bot-mode-button"/);
+  assert.match(appSource, /class="chat-tool-fields" :class="\{ 'has-outcome': selectedHasAiActivity \}"[\s\S]*?class="conversation-assignment"[\s\S]*?conversation-outcome-control/);
+  assert.match(appSource, /class="chat-tool-actions"[\s\S]*?toggleConversationActions[\s\S]*?toggleConversationPriority[\s\S]*?toggleConversationFavorite/);
   assert.match(appSource, /class="conversation-assignment conversation-outcome-control"/);
   assert.match(appSource, /class="composer-access-notice"/);
   assert.match(appSource, /class="composer-bottom"/);

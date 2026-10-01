@@ -477,7 +477,11 @@ def _assignee(db: Session, business_id: int, *, platform_db: Session | None = No
     return platform_db.query(User).filter(
         User.business_id == business_id,
         User.is_active.is_(True),
-        User.role.in_(("agent", "business_agent", "admin", "business_admin", "owner")),
+        User.role.in_((
+            "sales", "sales_agent", "sales_staff", "agent", "business_agent",
+            "support", "customer_support", "support_agent", "cskh",
+            "admin", "business_admin", "owner",
+        )),
     ).order_by(User.id.asc()).first()
 
 

@@ -67,6 +67,8 @@ from app.schemas.customer_merge import (
     CustomerMergeRequest,
     CustomerMergeUndoRequest,
     CustomerSegmentCreate,
+    CustomerSegmentFollowUpCreate,
+    CustomerSegmentFollowUpOut,
     CustomerSegmentOut,
     CustomerSegmentUpdate,
 )
@@ -92,6 +94,7 @@ from app.models.business import User
 from app.services.audit_service import record_audit
 from app.services.crm_workspace_config import get_crm_workspace_config, validate_customer_custom_fields
 from app.services.customer_profile import normalize_email, normalize_name, normalize_phone
+from app.services.chatbot_followup import schedule_segment_followups
 
 
 router = APIRouter()
@@ -671,6 +674,48 @@ def list_segment_customers(
         offset=offset,
         limit=limit,
     )
+
+
+@router.post(
+    "/segments/{segment_id}/followups",
+    response_model=CustomerSegmentFollowUpOut,
+    dependencies=[Depends(require_write_access)],
+)
+def create_segment_followups(
+    segment_id: int,
+    payload: CustomerSegmentFollowUpCreate,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    segment = _get_segment(db, segment_id, tenant)
+    customer_ids = [
+        customer_id
+        for (customer_id,) in _segment_customer_query(db, segment)
+        .with_entities(Customer.id)
+        .order_by(Customer.id.asc())
+        .limit(payload.limit)
+        .all()
+    ]
+    result = schedule_segment_followups(
+        db,
+        business_id=tenant.business_id,
+        segment_id=segment_id,
+        customer_ids=customer_ids,
+        message=payload.message.strip(),
+        run_at=payload.run_at,
+    )
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="segment_followups_scheduled",
+        resource_type="customer_segment",
+        resource_id=segment_id,
+        metadata={key: result[key] for key in ("matched", "scheduled", "consent_required", "bot_paused", "not_found")},
+    )
+    db.commit()
+    return CustomerSegmentFollowUpOut(segment_id=segment_id, **result)
 
 
 @router.get("", response_model=CustomerListOut)

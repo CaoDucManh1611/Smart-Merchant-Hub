@@ -209,7 +209,11 @@ def _find_assignee(db: Session, business_id: int, *, platform_db: Session | None
         return platform_db.query(PlatformUser).filter(
             PlatformUser.business_id == business_id,
             PlatformUser.is_active.is_(True),
-            PlatformUser.role.in_(("agent", "shop_agent", "admin", "shop_admin", "owner")),
+            PlatformUser.role.in_((
+                "support", "customer_support", "support_agent", "cskh",
+                "agent", "shop_agent", "sales", "sales_agent", "sales_staff",
+                "admin", "shop_admin", "owner",
+            )),
         ).order_by(PlatformUser.id.asc()).first()
     except Exception:
         # Legacy deployments may still keep staff identities in the shared
@@ -217,7 +221,11 @@ def _find_assignee(db: Session, business_id: int, *, platform_db: Session | None
         return platform_db.query(User).filter(
             User.business_id == business_id,
             User.is_active.is_(True),
-            User.role.in_(("agent", "business_agent", "admin", "business_admin", "owner")),
+            User.role.in_((
+                "support", "customer_support", "support_agent", "cskh",
+                "agent", "business_agent", "sales", "sales_agent", "sales_staff",
+                "admin", "business_admin", "owner",
+            )),
         ).order_by(User.id.asc()).first()
 
 

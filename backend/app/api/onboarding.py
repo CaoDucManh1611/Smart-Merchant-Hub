@@ -310,7 +310,11 @@ def _require_shop_member_for_purchase(db: Session, business_id: int, actor: User
     role = (actor.role or "").strip().lower()
     if (
         actor.business_id != business_id
-        or role not in {"owner", "admin", "agent", "business_agent", "business_admin", "shop_admin", "shop_agent"}
+        or role not in {
+            "owner", "admin", "agent", "sales", "support",
+            "business_agent", "business_admin", "shop_admin", "shop_agent",
+            "sales_agent", "sales_staff", "customer_support", "support_agent", "cskh",
+        }
     ):
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     business = db.get(Business, business_id)

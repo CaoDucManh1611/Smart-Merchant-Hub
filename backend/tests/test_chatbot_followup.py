@@ -18,6 +18,7 @@ from app.services.chatbot_followup import (
     schedule_post_delivery_followup,
     schedule_followup,
     schedule_inactive_customer_followups,
+    schedule_segment_followups,
 )
 
 
@@ -263,3 +264,64 @@ class ChatbotFollowUpTests(unittest.TestCase):
             self.assertEqual(0, result["sent"])
             self.assertEqual("delivery_unknown", row.status)
             send.assert_not_called()
+
+    def test_segment_followups_are_consent_aware_tenant_scoped_and_idempotent(self):
+        current = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            allowed = Customer(
+                business_id=self.business_id, channel="telegram",
+                external_user_id="segment-allowed",
+            )
+            blocked = Customer(
+                business_id=self.business_id, channel="telegram",
+                external_user_id="segment-blocked",
+            )
+            other_business = Business(name="Other followup shop", slug="other-followup-shop")
+            db.add_all([allowed, blocked, other_business])
+            db.flush()
+            other_customer = Customer(
+                business_id=other_business.id, channel="telegram",
+                external_user_id="segment-other-tenant",
+            )
+            db.add(other_customer)
+            db.flush()
+            db.add_all([
+                Conversation(business_id=self.business_id, customer_id=allowed.id, channel="telegram"),
+                Conversation(business_id=self.business_id, customer_id=blocked.id, channel="telegram"),
+                Conversation(business_id=other_business.id, customer_id=other_customer.id, channel="telegram"),
+                CustomerConsent(
+                    business_id=self.business_id, customer_id=allowed.id,
+                    purpose="marketing", status="granted",
+                ),
+            ])
+            db.commit()
+
+            first = schedule_segment_followups(
+                db,
+                business_id=self.business_id,
+                segment_id=91,
+                customer_ids=[allowed.id, blocked.id, other_customer.id],
+                message="Ưu đãi dành cho nhóm VIP",
+                run_at=current + timedelta(hours=1),
+            )
+            db.commit()
+            second = schedule_segment_followups(
+                db,
+                business_id=self.business_id,
+                segment_id=91,
+                customer_ids=[allowed.id, blocked.id, other_customer.id],
+                message="Ưu đãi dành cho nhóm VIP",
+                run_at=current + timedelta(hours=1),
+            )
+            db.commit()
+
+            rows = db.query(ChatbotFollowUp).filter(
+                ChatbotFollowUp.business_id == self.business_id,
+                ChatbotFollowUp.kind == "segment_campaign",
+            ).all()
+            self.assertEqual(1, first["scheduled"])
+            self.assertEqual(1, first["consent_required"])
+            self.assertEqual(1, first["not_found"])
+            self.assertEqual(first["followup_ids"], second["followup_ids"])
+            self.assertEqual(1, len(rows))
+            self.assertEqual(91, rows[0].metadata_["segment_id"])

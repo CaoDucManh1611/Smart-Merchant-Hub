@@ -9,6 +9,8 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, User
 from app.models.audit_log import AuditLog
+from app.schemas.team import normalize_team_role
+from app.services.permission_service import role_allows
 
 
 class PermissionsApiTests(unittest.TestCase):
@@ -87,6 +89,16 @@ class PermissionsApiTests(unittest.TestCase):
                 AuditLog.action == "delete",
             ).first()
             self.assertIsNotNone(audit)
+
+    def test_sales_and_support_roles_have_operational_but_not_admin_access(self):
+        for role in ("sales", "support"):
+            self.assertTrue(role_allows(role, "read", "customers"))
+            self.assertTrue(role_allows(role, "write", "customers"))
+            self.assertFalse(role_allows(role, "write", "team"))
+            self.assertFalse(role_allows(role, "write", "permissions"))
+
+        self.assertEqual("sales", normalize_team_role("sales_agent"))
+        self.assertEqual("support", normalize_team_role("cskh"))
 
 
 if __name__ == "__main__":

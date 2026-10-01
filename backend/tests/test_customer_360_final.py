@@ -14,6 +14,8 @@ from app.models.customer import Customer
 from app.models.crm_extended import CustomerTag, Tag
 from app.models.audit_log import AuditLog
 from app.models.customer_identity import CustomerIdentity
+from app.models.customer_collection import CustomerConsent
+from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.message import Message
 from app.services.customer_merge_service import duplicate_evidence
 
@@ -361,6 +363,56 @@ class Customer360FinalApiTests(unittest.TestCase):
             json={"name": "Không hợp lệ", "tag_ids": [999999], "match_mode": "all"},
         )
         self.assertEqual(422, response.status_code)
+
+    def test_segment_campaign_is_repeat_safe_and_cannot_cross_tenants(self):
+        with Session(self.engine) as db:
+            db.add(Conversation(
+                business_id=self.business_id,
+                customer_id=self.survivor_id,
+                channel="telegram",
+            ))
+            db.add(CustomerConsent(
+                business_id=self.business_id,
+                customer_id=self.survivor_id,
+                purpose="marketing",
+                status="granted",
+            ))
+            db.commit()
+
+        segment = self.client.post(
+            "/api/customers/segments",
+            headers=self.headers(),
+            json={"name": "VIP campaign", "tag_ids": [self.vip_id, self.paid_id]},
+        ).json()
+        payload = {
+            "message": "Ưu đãi dành cho khách VIP",
+            "run_at": "2030-01-01T09:00:00+07:00",
+        }
+        first = self.client.post(
+            f"/api/customers/segments/{segment['id']}/followups",
+            headers=self.headers(),
+            json=payload,
+        )
+        second = self.client.post(
+            f"/api/customers/segments/{segment['id']}/followups",
+            headers=self.headers(),
+            json=payload,
+        )
+        hidden = self.client.post(
+            f"/api/customers/segments/{segment['id']}/followups",
+            headers=self.headers(self.other_business_id),
+            json=payload,
+        )
+
+        self.assertEqual(200, first.status_code, first.text)
+        self.assertEqual(first.json()["followup_ids"], second.json()["followup_ids"])
+        self.assertEqual(404, hidden.status_code)
+        with Session(self.engine) as db:
+            rows = db.query(ChatbotFollowUp).filter(
+                ChatbotFollowUp.business_id == self.business_id,
+                ChatbotFollowUp.kind == "segment_campaign",
+            ).all()
+            self.assertEqual(1, len(rows))
 
     def test_customer_fact_and_segment_writes_are_audited_without_sensitive_values(self):
         fact = self.client.post(

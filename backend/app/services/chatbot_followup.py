@@ -267,6 +267,62 @@ def schedule_inactive_customer_followups(
     return {"scheduled": len(scheduled_ids), "skipped": skipped, "followup_ids": scheduled_ids}
 
 
+def schedule_segment_followups(
+    db: Session,
+    *,
+    business_id: int,
+    segment_id: int,
+    customer_ids: list[int],
+    message: str,
+    run_at: datetime,
+) -> dict:
+    """Schedule one consent-aware, repeat-safe campaign for segment members."""
+    normalized_customer_ids = list(dict.fromkeys(int(value) for value in customer_ids))
+    followup_ids: list[int] = []
+    consent_required = 0
+    bot_paused = 0
+    not_found = 0
+    for customer_id in normalized_customer_ids:
+        conversation = db.query(Conversation).filter(
+            Conversation.business_id == business_id,
+            Conversation.customer_id == customer_id,
+        ).order_by(
+            Conversation.last_message_at.desc(),
+            Conversation.updated_at.desc(),
+            Conversation.id.desc(),
+        ).first()
+        if conversation is None:
+            not_found += 1
+            continue
+        if conversation.bot_mode == "human":
+            bot_paused += 1
+            continue
+        try:
+            row = schedule_followup(
+                db,
+                business_id,
+                conversation.id,
+                message,
+                run_at,
+                kind="segment_campaign",
+                metadata={"segment_id": segment_id, "customer_id": customer_id},
+            )
+        except ValueError as exc:
+            if str(exc) == "followup_consent_required":
+                consent_required += 1
+                continue
+            raise
+        followup_ids.append(row.id)
+    return {
+        "matched": len(normalized_customer_ids),
+        "scheduled": len(followup_ids),
+        "consent_required": consent_required,
+        "bot_paused": bot_paused,
+        "not_found": not_found,
+        "followup_ids": followup_ids,
+    }
+
+
 def cancel_event_followup(
     db: Session,
     *,
