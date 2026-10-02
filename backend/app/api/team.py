@@ -23,6 +23,7 @@ from app.services.audit_service import record_audit
 from app.services.quota_service import QuotaExceededError, release_quota, reserve_quota
 from app.services.customer_collection import generate_verification_code, hash_verification_code
 from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, deliver_otp
+from app.services.shop_otp_email import get_shop_otp_smtp_config
 
 
 router = APIRouter()
@@ -92,6 +93,7 @@ def _require_team_admin(actor: User | None, tenant: TenantContext) -> int:
 def request_team_otp(
     payload: TeamOtpRequest,
     db: Session = Depends(get_db),
+    smtp_settings_db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_admin_access),
 ):
@@ -130,7 +132,12 @@ def request_team_otp(
     db.add(challenge)
     db.flush()
     try:
-        delivery = deliver_otp(channel="email", destination=email, code=code)
+        delivery = deliver_otp(
+            channel="email",
+            destination=email,
+            code=code,
+            smtp_config=get_shop_otp_smtp_config(smtp_settings_db, business_id),
+        )
         if not delivery.delivered:
             db.rollback()
             raise HTTPException(status_code=503, detail="Chưa thể gửi mã OTP email. Vui lòng thử lại sau.")
@@ -377,8 +384,7 @@ def update_team_member(
     was_active = bool(user.is_active)
     data = payload.model_dump(exclude_unset=True)
     if "email" in data:
-        data["email"] = _normalize_email(data["email"])
-        _ensure_unique_email(db, data["email"], tenant, exclude_id=user.id)
+        raise HTTPException(status_code=409, detail="Đổi email cần xác minh OTP tại mục Cài đặt tài khoản.")
     if "full_name" in data:
         data["full_name"] = data["full_name"].strip()
     if "role" in data:

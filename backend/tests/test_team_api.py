@@ -84,6 +84,21 @@ class TeamApiTests(unittest.TestCase):
         self.assertEqual("viewer", updated.json()["role"])
         self.assertFalse(updated.json()["is_active"])
 
+    def test_team_email_change_requires_verified_account_flow(self):
+        created = self.client.post(
+            "/api/team",
+            headers={**self.owner_headers, "X-Business-Id": str(self.business_one)},
+            json={"full_name": "Email Guard Agent", "email": "email-guard@example.test", "role": "agent"},
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        response = self.client.patch(
+            f"/api/team/{created.json()['id']}",
+            headers={**self.owner_headers, "X-Business-Id": str(self.business_one)},
+            json={"email": "unverified@example.test"},
+        )
+        self.assertEqual(409, response.status_code, response.text)
+        self.assertIn("xác minh OTP", response.json()["detail"])
+
     def test_create_team_member_requires_authenticated_shop_admin(self):
         response = self.client.post(
             "/api/team",

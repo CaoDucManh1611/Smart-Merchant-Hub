@@ -13,6 +13,7 @@ from app.models.lead import Lead
 from app.schemas.crm_config import CrmWorkspaceConfigUpdate
 from app.services.audit_service import record_audit
 from app.services.crm_workspace_config import get_crm_workspace_config, validate_customer_custom_fields
+from app.services.shop_otp_email import read_shop_otp_email, save_shop_otp_email
 from app.models.business import User
 from app.tenancy.context import TenantContext
 from app.tenancy.crm_session import get_tenant_db
@@ -26,6 +27,50 @@ router = APIRouter(prefix="/workspace")
 class WorkspaceModulesUpdate(BaseModel):
     business_type: Literal["retail", "services", "b2b", "mixed"]
     enabled_modules: list[Literal["retail", "appointments", "projects"]] = Field(max_length=3)
+
+
+class ShopOtpEmailUpdate(BaseModel):
+    enabled: bool = False
+    host: str = Field(default="smtp.gmail.com", max_length=255)
+    port: int = Field(default=587, ge=1, le=65535)
+    security: Literal["starttls", "ssl"] = "starttls"
+    username: str = Field(default="", max_length=255)
+    password: str = Field(default="", max_length=200)
+    from_email: str = Field(default="", max_length=255)
+    from_name: str = Field(default="", max_length=120)
+
+
+@router.get("/otp-email")
+def read_otp_email_settings(
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    _actor: User | None = Depends(require_admin_access),
+):
+    return read_shop_otp_email(db, tenant.business_id)
+
+
+@router.put("/otp-email")
+def update_otp_email_settings(
+    payload: ShopOtpEmailUpdate,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    try:
+        result = save_shop_otp_email(db, tenant.business_id, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="shop_otp_email_updated",
+        resource_type="business_setting",
+        resource_id="otp.smtp",
+        metadata={"enabled": bool(result["enabled"]), "from_email": result["from_email"]},
+    )
+    db.commit()
+    return result
 
 
 @router.get("/modules")

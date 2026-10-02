@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from email.message import EmailMessage
+from email.utils import formataddr
 import logging
+import ssl
 import smtplib
 from typing import Literal
 
@@ -38,33 +40,50 @@ class OtpDeliveryResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class OtpSmtpConfig:
+    host: str
+    port: int
+    username: str
+    password: str
+    from_email: str
+    from_name: str = ""
+    security: str = "starttls"
+
+
 def _message(code: str) -> str:
     # Keep the content deliberately generic; never include customer data.
     return f"Mã xác thực Smart Merchant Hub của bạn là {code}. Mã có hiệu lực trong 10 phút."
 
 
-def _send_smtp(*, destination: str, code: str) -> None:
-    host = settings.OTP_SMTP_HOST.strip()
-    sender = settings.OTP_FROM_EMAIL.strip()
+def _send_smtp(*, destination: str, code: str, smtp_config: OtpSmtpConfig | None = None) -> None:
+    host = (smtp_config.host if smtp_config else settings.OTP_SMTP_HOST).strip()
+    sender = (smtp_config.from_email if smtp_config else settings.OTP_FROM_EMAIL).strip()
     if not host or not sender:
         raise OtpDeliveryNotConfigured("OTP_SMTP_HOST và OTP_FROM_EMAIL là bắt buộc.")
-    username = settings.OTP_SMTP_USERNAME.strip()
+    username = (smtp_config.username if smtp_config else settings.OTP_SMTP_USERNAME).strip()
     # Google displays App Passwords as four-character groups (for example
     # ``abcd efgh ijkl mnop``).  SMTP expects the underlying 16-character
     # secret, so ignore display whitespace while preserving every other byte.
-    password = "".join(str(settings.OTP_SMTP_PASSWORD).split())
+    password = "".join(str(smtp_config.password if smtp_config else settings.OTP_SMTP_PASSWORD).split())
     if not username or not password:
         raise OtpDeliveryNotConfigured(
             "OTP_SMTP_USERNAME và OTP_SMTP_PASSWORD (App Password của tài khoản gửi) là bắt buộc."
         )
     message = EmailMessage()
-    message["From"] = sender
+    message["From"] = formataddr((smtp_config.from_name, sender)) if smtp_config and smtp_config.from_name else sender
     message["To"] = destination
     message["Subject"] = "Mã xác thực Smart Merchant Hub"
     message.set_content(_message(code))
-    with smtplib.SMTP(host, int(settings.OTP_SMTP_PORT), timeout=10) as client:
-        if settings.OTP_SMTP_USE_TLS:
-            client.starttls()
+    port = int(smtp_config.port if smtp_config else settings.OTP_SMTP_PORT)
+    security = smtp_config.security if smtp_config else ("starttls" if settings.OTP_SMTP_USE_TLS else "none")
+    if security == "ssl":
+        client_factory = lambda: smtplib.SMTP_SSL(host, port, timeout=10, context=ssl.create_default_context())
+    else:
+        client_factory = lambda: smtplib.SMTP(host, port, timeout=10)
+    with client_factory() as client:
+        if security == "starttls":
+            client.starttls(context=ssl.create_default_context())
         client.login(username, password)
         client.send_message(message)
 
@@ -92,7 +111,13 @@ def _send_twilio(*, destination: str, code: str) -> None:
         raise OtpDeliveryError("Nhà cung cấp SMS từ chối gửi OTP.") from error
 
 
-def deliver_otp(*, channel: OtpChannel, destination: str, code: str) -> OtpDeliveryResult:
+def deliver_otp(
+    *,
+    channel: OtpChannel,
+    destination: str,
+    code: str,
+    smtp_config: OtpSmtpConfig | None = None,
+) -> OtpDeliveryResult:
     """Deliver an OTP using the configured provider.
 
     ``disabled`` is intentionally accepted for local development.  It lets
@@ -103,7 +128,7 @@ def deliver_otp(*, channel: OtpChannel, destination: str, code: str) -> OtpDeliv
     ``twilio`` for SMS.
     """
 
-    mode = settings.OTP_DELIVERY_MODE.strip().lower()
+    mode = "smtp" if channel == "email" and smtp_config is not None else settings.OTP_DELIVERY_MODE.strip().lower()
     if mode in {"", "disabled", "none"}:
         return OtpDeliveryResult(provider="disabled", delivered=False, reason="disabled")
     if mode == "in_chat":
@@ -114,7 +139,7 @@ def deliver_otp(*, channel: OtpChannel, destination: str, code: str) -> OtpDeliv
         if channel != "email":
             raise OtpDeliveryNotConfigured("SMTP chỉ dùng cho OTP email.")
         try:
-            _send_smtp(destination=destination, code=code)
+            _send_smtp(destination=destination, code=code, smtp_config=smtp_config)
         except (OtpDeliveryNotConfigured, OtpDeliveryError) as error:
             if settings.OTP_DELIVERY_FALLBACK.strip().lower() == "in_chat":
                 logger.warning("OTP email delivery fell back to in-chat demo: error_type=%s", type(error).__name__)

@@ -15,7 +15,7 @@ from threading import Lock, Thread
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from connector_pairing import configure_local_connector
+from connector_pairing import configure_local_connector, report_connector_status
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -685,3 +685,6 @@ elif __name__ == "__main__":
         asyncio.run(run())
     except KeyboardInterrupt:
         print("Đã dừng Shopee connector.", flush=True)
+    except Exception as exc:
+        report_connector_status("shopee", BACKEND_URL, CONNECTOR_TOKEN, state="error", error_code=type(exc).__name__.lower())
+        raise

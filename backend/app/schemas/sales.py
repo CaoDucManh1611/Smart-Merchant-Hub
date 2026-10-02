@@ -2,28 +2,53 @@
 
 from datetime import datetime
 from decimal import Decimal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _validated_product_url(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    if len(value) > 2048:
+        raise ValueError("Product URL must be at most 2048 characters")
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            raise ValueError
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError
+        parsed.port  # force validation of malformed/out-of-range ports
+    except ValueError as exc:
+        raise ValueError("Product URL must be a valid HTTP(S) URL without credentials") from exc
+    return value
 
 
 class ProductCreate(BaseModel):
     sku: str = Field(..., min_length=1, max_length=80)
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
+    product_url: str | None = Field(default=None, max_length=2048)
     price: Decimal = Field(default=Decimal("0"), ge=0)
     stock_quantity: int = Field(default=0, ge=0)
     status: str = Field(default="active", min_length=1, max_length=30)
     metadata: dict | None = None
+
+    _validate_product_url = field_validator("product_url")(_validated_product_url)
 
 
 class ProductUpdate(BaseModel):
     sku: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
+    product_url: str | None = Field(default=None, max_length=2048)
     price: Decimal | None = Field(default=None, ge=0)
     stock_quantity: int | None = Field(default=None, ge=0)
     status: str | None = Field(default=None, min_length=1, max_length=30)
     metadata: dict | None = None
+
+    _validate_product_url = field_validator("product_url")(_validated_product_url)
 
 
 class ProductOut(BaseModel):
@@ -32,6 +57,7 @@ class ProductOut(BaseModel):
     sku: str
     name: str
     description: str | None = None
+    product_url: str | None = None
     price: Decimal
     stock_quantity: int
     reserved_quantity: int = 0

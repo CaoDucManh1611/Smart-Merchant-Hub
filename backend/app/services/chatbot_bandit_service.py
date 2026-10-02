@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -24,6 +25,8 @@ from app.models.experimentation import (
     Experiment,
 )
 from app.models.message import Message
+from app.models.conversation import Conversation
+from app.models.recommendation import RecommendationCustomerProfile
 
 
 RUNTIME_BINDING = "chatbot_auto_reply"
@@ -152,20 +155,25 @@ def select_chatbot_reply_choice(
             **arm_config,
         )
 
+    rfm_segment = (
+        db.query(RecommendationCustomerProfile.segment_label)
+        .join(Conversation, Conversation.customer_id == RecommendationCustomerProfile.customer_id)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.business_id == business_id,
+            RecommendationCustomerProfile.business_id == business_id,
+        )
+        .scalar()
+    ) or "unclassified"
     context = {
         "channel": str(channel or "unknown"),
         "query_topic": str(query_topic or "general"),
+        "rfm_segment": rfm_segment,
         "runtime_binding": RUNTIME_BINDING,
     }
     context_hash = _context_hash(context)
     arms = sorted(approved)
-    seed = int(
-        hashlib.sha256(
-            f"{conversation_id}:{context_hash}:{policy.version}".encode("utf-8")
-        ).hexdigest(),
-        16,
-    )
-    explore = (seed % 1_000_000) / 1_000_000 < float(policy.epsilon)
+    explore = random.random() < float(policy.epsilon)
     stats = {
         arm: db.query(BanditArmStat)
         .filter(
@@ -178,7 +186,7 @@ def select_chatbot_reply_choice(
         for arm in arms
     }
     if explore or not any(item and item.pulls for item in stats.values()):
-        arm = arms[seed % len(arms)]
+        arm = random.choice(arms)
         reason = "exploration"
     else:
         arm = max(

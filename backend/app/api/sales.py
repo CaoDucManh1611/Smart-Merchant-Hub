@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
@@ -68,6 +69,12 @@ _PRODUCT_IMPORT_FIELDS = {
     "ten_tieng_anh": "name_en",
     "tên_tiếng_anh": "name_en",
     "tên_sản_phẩm_tiếng_anh": "name_en",
+    "product_url": "product_url",
+    "product_link": "product_url",
+    "link_san_pham": "product_url",
+    "link_sản_phẩm": "product_url",
+    "url_san_pham": "product_url",
+    "url_sản_phẩm": "product_url",
     "description": "description",
     "mo_ta": "description",
     "mô_tả": "description",
@@ -455,6 +462,7 @@ async def import_products(
         sku = values.get("sku", "").strip()
         name = values.get("name", "").strip()
         name_en = values.get("name_en", "").strip()
+        product_url = values.get("product_url", "").strip() or None
         if not sku and not name and not any(str(value or "").strip() for value in row.values()):
             continue
         if not sku or not name:
@@ -464,6 +472,12 @@ async def import_products(
         if len(sku) > 80 or len(name) > 255 or len(name_en) > 255:
             skipped += 1
             errors.append(f"Dòng {row_number}: mã tối đa 80 ký tự, tên tối đa 255 ký tự.")
+            continue
+        try:
+            product_url = ProductCreate(sku=sku, name=name, product_url=product_url).product_url
+        except ValidationError:
+            skipped += 1
+            errors.append(f"Dòng {row_number}: link sản phẩm không hợp lệ; chỉ dùng URL HTTP/HTTPS, không chứa thông tin đăng nhập.")
             continue
         if sku in seen_skus:
             skipped += 1
@@ -496,6 +510,7 @@ async def import_products(
                 sku=sku,
                 name=name,
                 description=values.get("description") or None,
+                product_url=product_url,
                 price=price,
                 stock_quantity=stock,
                 status=status,
@@ -525,6 +540,8 @@ async def import_products(
             after = before + stock
             product.name = name
             product.description = values.get("description") or None
+            if product_url:
+                product.product_url = product_url
             product.price = price
             product.status = status
             product.stock_quantity = after
@@ -616,6 +633,7 @@ def create_product(
         sku=payload.sku.strip(),
         name=payload.name.strip(),
         description=payload.description,
+        product_url=payload.product_url,
         price=payload.price,
         stock_quantity=payload.stock_quantity,
         status=payload.status,
@@ -676,7 +694,7 @@ def update_product(
                 detail="Không sửa tồn trực tiếp; dùng endpoint inventory adjustment để ghi ledger.",
             )
     for field, value in values.items():
-        setattr(product, "metadata_" if field == "metadata" else field, value.strip() if isinstance(value, str) else value)
+        setattr(product, "metadata_" if field == "metadata" else field, value.strip() if isinstance(value, str) and field != "product_url" else value)
     try:
         db.commit()
     except IntegrityError as exc:
