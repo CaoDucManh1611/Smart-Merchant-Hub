@@ -43,9 +43,9 @@ def test_two_tenant_schemas_upgrade_independently_and_idempotently():
             repeated_revision = upgrade_tenant_schema(connection, schemas[0])
             connection.commit()
 
-            assert first_revision == second_revision == repeated_revision == "20261001_0011"
-            assert current_tenant_revision(connection, schemas[0]) == "20261001_0011"
-            assert current_tenant_revision(connection, schemas[1]) == "20261001_0011"
+            assert first_revision == second_revision == repeated_revision == "20261002_0012"
+            assert current_tenant_revision(connection, schemas[0]) == "20261002_0012"
+            assert current_tenant_revision(connection, schemas[1]) == "20261002_0012"
 
             inspector = inspect(connection)
             expected = set(TENANT_TABLE_NAMES) | {"alembic_version"}
@@ -72,9 +72,9 @@ def test_two_tenant_schemas_upgrade_independently_and_idempotently():
             connection.commit()
             assert current_tenant_revision(connection, schemas[0]) == "20260926_0007"
 
-            assert upgrade_tenant_schema(connection, schemas[0]) == "20261001_0011"
+            assert upgrade_tenant_schema(connection, schemas[0]) == "20261002_0012"
             connection.commit()
-            assert current_tenant_revision(connection, schemas[0]) == "20261001_0011"
+            assert current_tenant_revision(connection, schemas[0]) == "20261002_0012"
         finally:
             connection.rollback()
             for schema in schemas:
