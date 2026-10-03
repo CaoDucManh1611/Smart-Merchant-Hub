@@ -23,6 +23,8 @@ import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from
 import { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";
 import IndustryModules from "./IndustryModules.vue";
 import WorkQueue from "./WorkQueue.vue";
+import { normalizeProductUrl } from "./product-link-utils.js";
+import { customerInsightView } from "./customer-insights-utils.js";
 import {
   channelCapacityState,
   connectionStateMeta,
@@ -220,6 +222,7 @@ const outboundDeliveryNotice = computed(() => {
 const customer360 = ref(null);
 const customer360Loading = ref(false);
 const customer360Error = ref("");
+const customerInsights = ref({ loading: false, error: "", view: null });
 const customerConsents = ref([]);
 const customerConsentsLoading = ref(false);
 const customerConsentsError = ref("");
@@ -444,6 +447,7 @@ const products = ref([]);
 const productsLoading = ref(false);
 const productSaving = ref(false);
 const productError = ref("");
+const productErrorStatus = ref("");
 const productUploading = ref(false);
 const productUploadNotice = ref("");
 const productFileInput = ref(null);
@@ -460,6 +464,7 @@ const productForm = ref({
   sku: "",
   name: "",
   description: "",
+  product_url: "",
   price: 0,
   stock_quantity: 0,
   status: "active",
@@ -468,6 +473,7 @@ const orders = ref([]);
 const ordersLoading = ref(false);
 const orderSaving = ref(false);
 const orderError = ref("");
+const orderErrorStatus = ref("");
 const orderImportInput = ref(null);
 const orderImportFile = ref(null);
 const orderImportPreview = ref(null);
@@ -1042,6 +1048,9 @@ const serviceRequestForm = ref({
 const serviceRequestSubmitted = ref(false);
 const serviceRequestReference = ref("");
 const serviceRequestError = ref("");
+const serviceSuccessDialogOpen = ref(false);
+const serviceSuccessCloseButton = ref(null);
+const serviceSuccessReturnFocus = ref(null);
 const serviceMode = ref("package");
 const servicePurchaseLoading = ref(false);
 const servicePurchaseNotice = ref("");
@@ -1138,6 +1147,7 @@ const botConnectionNotice = ref("");
 const botTokenVisible = ref(false);
 const botConnectionForm = ref({ channel_type: "telegram", access_token: "" });
 const localConnectorPairingCode = ref("");
+const localConnectorExpiresAt = ref(0);
 const localConnectorLoading = ref(false);
 const localConnectorDownloading = ref(false);
 const localConnectorError = ref("");
@@ -1219,7 +1229,9 @@ function botConnectionStateLabel(state) {
 
 function localConnectorStatus(connection) {
   if (connection?.connector_paired) return t("ĐÃ GHÉP NỐI");
-  if (["verifying", "pending_pairing"].includes(String(connection?.status || "").toLowerCase())) return t("CHỜ GHÉP NỐI");
+  const status = String(connection?.status || "").toLowerCase();
+  if (["verifying", "pending_pairing"].includes(status)) return t("CHỜ GHÉP NỐI");
+  if (["error", "reconnect_required"].includes(status)) return connectionStateMeta(status).label;
   return t("CHƯA KẾT NỐI");
 }
 
@@ -1723,6 +1735,7 @@ function resetServiceRequestForm() {
     notes: "",
   };
   serviceRequestSubmitted.value = false;
+  serviceSuccessDialogOpen.value = false;
   serviceRequestReference.value = "";
   serviceRequestError.value = "";
   serviceRequestNotice.value = "";
@@ -1751,6 +1764,7 @@ function selectServicePlan(planCode) {
   serviceRequestForm.value.plan_code = planCode;
   normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
+  serviceSuccessDialogOpen.value = false;
   serviceRequestError.value = "";
   servicePurchaseNotice.value = "";
   servicePurchaseError.value = "";
@@ -1762,6 +1776,7 @@ function selectServiceMode(mode) {
   serviceRequestForm.value.plan_code = preferredServicePlanCode();
   normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
+  serviceSuccessDialogOpen.value = false;
   serviceRequestReference.value = "";
   serviceRequestError.value = "";
   serviceRequestNotice.value = "";
@@ -1801,6 +1816,7 @@ function toggleServiceChannel(channel) {
 }
 
 async function submitServiceRequest() {
+  serviceSuccessReturnFocus.value = document.activeElement;
   const form = serviceRequestForm.value;
   const contactName = String(form.contact_name || "").trim();
   const email = String(form.email || "").trim().toLowerCase();
@@ -1825,8 +1841,43 @@ async function submitServiceRequest() {
   serviceRequestReference.value = `SMH-${detail.id}`;
   serviceRequestSubmitted.value = true;
   serviceRequestNotice.value = detail.status === "pending"
-    ? "Yêu cầu đã được chuyển tới quản trị viên nền tảng để duyệt."
-    : "Gói Demo đã được kích hoạt cho shop.";
+    ? crmUiText("Yêu cầu đã được chuyển tới quản trị viên nền tảng để duyệt.")
+    : crmUiText("Gói Demo đã được kích hoạt cho shop.");
+  serviceSuccessDialogOpen.value = true;
+  await nextTick();
+  serviceSuccessCloseButton.value?.focus();
+}
+
+function closeServiceSuccessDialog() {
+  serviceSuccessDialogOpen.value = false;
+  const target = serviceSuccessReturnFocus.value;
+  void nextTick(() => {
+    if (target?.isConnected) target.focus();
+  });
+}
+
+function handleServiceSuccessDialogKeydown(event) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeServiceSuccessDialog();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = [...event.currentTarget.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+  if (!focusable.length) {
+    event.preventDefault();
+    serviceSuccessCloseButton.value?.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function servicePlanCodeForPurchase(code) {
@@ -4540,9 +4591,13 @@ function formatFactValue(value) {
 async function fetchProducts() {
   productsLoading.value = true;
   productError.value = "";
+  productErrorStatus.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/products`);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw Object.assign(new Error(detail.detail || `HTTP ${response.status}`), { status: response.status });
+    }
     const data = await response.json();
     products.value = data.items || [];
     const drafts = { ...productAdjustmentDrafts.value };
@@ -4555,6 +4610,7 @@ async function fetchProducts() {
         name: product.name || "",
         name_en: metadata.display_names?.en || metadata.display_name_en || "",
         description: product.description || "",
+        product_url: metadata.product_url || "",
         price: Number(product.price || 0),
       };
     }
@@ -4562,7 +4618,10 @@ async function fetchProducts() {
     productDetailsDrafts.value = detailsDrafts;
   } catch (err) {
     console.error("Fetch products error:", err);
-    productError.value = "Chưa tải được danh sách sản phẩm. Vui lòng thử lại sau.";
+    productError.value = Number(err?.status) === 403
+      ? crmUiText("Bạn không có quyền xem danh mục sản phẩm.")
+      : "Chưa tải được danh sách sản phẩm. Vui lòng thử lại sau.";
+    productErrorStatus.value = Number(err?.status) === 403 ? "forbidden" : "error";
   } finally {
     productsLoading.value = false;
   }
@@ -4740,6 +4799,7 @@ function resetProductForm() {
     sku: "",
     name: "",
     description: "",
+    product_url: "",
     price: 0,
     stock_quantity: 0,
     status: "active",
@@ -4752,6 +4812,7 @@ function editProduct(product) {
     sku: product.sku || "",
     name: product.name || "",
     description: product.description || "",
+    product_url: (product.metadata || product.metadata_ || {}).product_url || "",
     price: Number(product.price || 0),
     stock_quantity: Number(product.stock_quantity || 0),
     status: product.status || "active",
@@ -4762,6 +4823,11 @@ async function saveProduct() {
   const form = productForm.value;
   if (!form.sku.trim() || !form.name.trim()) {
     productError.value = "SKU và tên sản phẩm là bắt buộc.";
+    return;
+  }
+  const productUrl = normalizeProductUrl(form.product_url);
+  if (productUrl === null) {
+    productError.value = crmUiText("Liên kết sản phẩm phải là URL HTTP hoặc HTTPS hợp lệ.");
     return;
   }
   productSaving.value = true;
@@ -4779,6 +4845,10 @@ async function saveProduct() {
       price: Number(form.price || 0),
       status: form.status,
     };
+    const metadata = { ...(existingProduct?.metadata || existingProduct?.metadata_ || {}) };
+    if (productUrl) metadata.product_url = productUrl;
+    else delete metadata.product_url;
+    payload.metadata = metadata;
     if (!isEdit) payload.stock_quantity = Number(form.stock_quantity || 0);
     const response = await apiFetch(
       isEdit ? `${API_BASE}/products/${form.id}` : `${API_BASE}/products`,
@@ -4867,12 +4937,13 @@ async function archiveProduct(product) {
 async function fetchOrders() {
   ordersLoading.value = true;
   orderError.value = "";
+  orderErrorStatus.value = "";
   try {
     const [ordersResponse, revenueResponse] = await Promise.all([
       apiFetch(`${API_BASE}/orders`),
       apiFetch(`${API_BASE}/reports/revenue-by-channel`),
     ]);
-    if (!ordersResponse.ok) throw new Error(`HTTP ${ordersResponse.status}`);
+    if (!ordersResponse.ok) throw Object.assign(new Error(`HTTP ${ordersResponse.status}`), { status: ordersResponse.status });
     const orderData = await ordersResponse.json();
     orders.value = orderData.items || [];
     if (revenueResponse.ok) {
@@ -4881,7 +4952,10 @@ async function fetchOrders() {
     }
   } catch (err) {
     console.error("Fetch orders error:", err);
-    orderError.value = "Chưa tải được danh sách đơn bán. Vui lòng thử lại sau.";
+    orderError.value = Number(err?.status) === 403
+      ? crmUiText("Bạn không có quyền xem đơn bán.")
+      : "Chưa tải được danh sách đơn bán. Vui lòng thử lại sau.";
+    orderErrorStatus.value = Number(err?.status) === 403 ? "forbidden" : "error";
   } finally {
     ordersLoading.value = false;
   }
@@ -4936,7 +5010,15 @@ async function saveProductDetails(product) {
     return;
   }
 
+  const productUrl = normalizeProductUrl(draft.product_url);
+  if (productUrl === null) {
+    productError.value = crmUiText("Liên kết sản phẩm phải là URL HTTP hoặc HTTPS hợp lệ.");
+    return;
+  }
+
   const metadata = { ...(product.metadata || product.metadata_ || {}) };
+  if (productUrl) metadata.product_url = productUrl;
+  else delete metadata.product_url;
   const displayNames = metadata.display_names && typeof metadata.display_names === "object" && !Array.isArray(metadata.display_names)
     ? { ...metadata.display_names }
     : {};
@@ -7148,11 +7230,13 @@ async function createLocalConnectorPairingCode() {
   localConnectorError.value = "";
   localConnectorNotice.value = "";
   localConnectorPairingCode.value = "";
+  localConnectorExpiresAt.value = 0;
   try {
     const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels/${channelType}/pairing-code`, { method: "POST" });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
     localConnectorPairingCode.value = String(detail.pairing_code || "");
+    localConnectorExpiresAt.value = Number(detail.expires_at || 0);
     if (!localConnectorPairingCode.value) throw new Error("Máy chủ chưa trả pairing code.");
     localConnectorNotice.value = crmUiText("Mã chỉ dùng một lần và hết hạn sau 10 phút. Nhập mã trong ứng dụng trên máy của shop.");
     await fetchBotConnections();
@@ -7616,6 +7700,55 @@ async function exportCustomerCsv() {
   }
 }
 
+async function loadCustomerInsights(customerId) {
+  const targetId = Number(customerId);
+  if (!targetId) {
+    customerInsights.value = { loading: false, error: "", view: null };
+    return;
+  }
+  customerInsights.value = { loading: true, error: "", view: customerInsights.value.view };
+  try {
+    const [recommendationResponse, interactionResponse] = await Promise.all([
+      apiFetch(`${API_BASE}/recommendations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_id: targetId, limit: 3 }),
+      }),
+      apiFetch(`${API_BASE}/recommendations/interactions/summary?customer_id=${targetId}&days=30`),
+    ]);
+    const [recommendation, interactions] = await Promise.all([
+      recommendationResponse.json().catch(() => ({})),
+      interactionResponse.json().catch(() => ({})),
+    ]);
+    const errors = [];
+    if (!recommendationResponse.ok) errors.push(recommendationResponse.status === 403
+      ? crmUiText("Bạn không có quyền xem gợi ý khách hàng.")
+      : crmUiText("Chưa tải được gợi ý khách hàng."));
+    if (!interactionResponse.ok) errors.push(interactionResponse.status === 403
+      ? crmUiText("Bạn không có quyền xem dữ liệu sở thích.")
+      : crmUiText("Chưa tải được dữ liệu sở thích."));
+    if (Number(customer360.value?.id) !== targetId) return;
+    customerInsights.value = {
+      loading: false,
+      error: errors.join(" "),
+      view: customerInsightView(
+        recommendationResponse.ok ? recommendation : null,
+        interactionResponse.ok ? interactions : null,
+        products.value,
+      ),
+    };
+  } catch (error) {
+    console.error("Customer insights loading error:", error);
+    if (Number(customer360.value?.id) === targetId) {
+      customerInsights.value = {
+        loading: false,
+        error: crmUiText("Chưa tải được thông tin gợi ý khách hàng. Vui lòng thử lại."),
+        view: null,
+      };
+    }
+  }
+}
+
 async function loadCustomer360(customerId) {
   if (!customerId) {
     customer360.value = null;
@@ -7668,6 +7801,8 @@ async function loadCustomer360(customerId) {
       timelineOffset: 0,
       timelineHasMore: false,
     };
+    customerInsights.value = { loading: true, error: "", view: null };
+    void loadCustomerInsights(customerId);
     customerConsents.value = [];
     consentEvidenceMessageId.value = "";
     void fetchCustomerConsents(customerId);
@@ -11229,6 +11364,31 @@ function followupRecommendationLabel(item) {
             </div>
 
             <div v-else-if="customer360" class="customer-360-data">
+              <section class="customer-insights-panel" aria-labelledby="customer-insights-title">
+                <div class="customer-insights-heading">
+                  <div><h4 id="customer-insights-title">{{ crmUiText('Phân khúc & gợi ý') }}</h4><p>{{ crmUiText('Thông tin dựa trên dữ liệu shop hiện có.') }}</p></div>
+                  <span v-if="customerInsights.view?.segmentKnown" class="customer-rfm-badge">RFM · {{ customerInsights.view.segment }}</span>
+                </div>
+                <div v-if="customerInsights.loading" class="customer-insights-state" role="status" aria-live="polite">{{ crmUiText('Đang tải dữ liệu gợi ý...') }}</div>
+                <div v-else-if="customerInsights.error" class="customer-insights-error" role="alert"><span>{{ customerInsights.error }}</span><button type="button" class="table-action-btn" @click="loadCustomerInsights(customer360.id)">{{ crmUiText('Thử tải lại') }}</button></div>
+                <div v-else-if="customerInsights.view" class="customer-insights-content">
+                  <p v-if="!customerInsights.view.segmentKnown" class="customer-insights-unknown">{{ crmUiText('Chưa có nhãn RFM đã xác nhận.') }}</p>
+                  <div class="customer-interests">
+                    <strong>{{ crmUiText('Sở thích theo tương tác') }}</strong>
+                    <p v-if="!customerInsights.view.interestsKnown" class="customer-insights-unknown">{{ crmUiText('Chưa có dữ liệu tương tác đã ghi nhận.') }}</p>
+                    <template v-else>
+                      <small>{{ customerInsights.view.totalEvents }} {{ crmUiText('tương tác được ghi nhận trong 30 ngày') }}</small>
+                      <ul v-if="customerInsights.view.interests.length"><li v-for="interest in customerInsights.view.interests" :key="interest.id"><span>{{ interest.name || (uiLocale === 'en' ? `Product #${interest.id}` : `Sản phẩm #${interest.id}`) }}</span><small>{{ interest.known ? crmUiText('Đã khớp danh mục') : crmUiText('Chưa biết tên sản phẩm') }}</small></li></ul>
+                      <p v-else class="customer-insights-unknown">{{ crmUiText('Chưa có sản phẩm nổi bật trong tương tác.') }}</p>
+                    </template>
+                  </div>
+                  <div class="customer-recommendations">
+                    <strong>{{ crmUiText('Gợi ý sản phẩm') }}</strong>
+                    <ul v-if="customerInsights.view.recommendations.length"><li v-for="item in customerInsights.view.recommendations" :key="item.productId"><span>{{ item.name || (uiLocale === 'en' ? `Product #${item.productId}` : `Sản phẩm #${item.productId}`) }}</span><small>{{ item.reason || crmUiText('Chưa có lý do gợi ý.') }}</small></li></ul>
+                    <p v-else class="customer-insights-unknown">{{ crmUiText('Chưa có gợi ý sản phẩm.') }}</p>
+                  </div>
+                </div>
+              </section>
               <details class="section customer-section-accordion customer-identities-section" name="customer-profile-sections">
                 <summary class="customer-section-toggle">
                   <h4>Danh tính đa kênh</h4>
@@ -11897,6 +12057,7 @@ function followupRecommendationLabel(item) {
             <strong>Nhập tệp sản phẩm để cập nhật nhanh danh mục</strong>
             <small>CSV hoặc TXT · Tối đa 20MB · Cột cần có: Mã sản phẩm, Tên sản phẩm, Giá, Tồn kho · Có thể thêm cột “Tên tiếng Anh” để chatbot hiển thị tên dịch · Với SKU có sẵn, giữ tên/giá hiện tại và đặt Tồn kho = 0 để không cộng tồn</small>
             <button type="button" class="secondary-btn import-choice" @click.stop="openProductFilePicker">Nhập tệp</button>
+            <a class="template-download-link" href="/templates/product-catalog-template.csv" download>Tải mẫu danh mục sản phẩm</a>
           </div>
           <div v-else class="dropzone-content" role="status" aria-live="polite">
             <span class="spinner-icon" aria-hidden="true">...</span>
@@ -11905,7 +12066,7 @@ function followupRecommendationLabel(item) {
         </div>
 
         <div v-if="productUploadNotice" class="product-import-notice" role="status">{{ productUploadNotice }}</div>
-        <div v-if="productError" class="product-error">{{ productError }}</div>
+        <div v-if="productError" class="product-error" role="alert"><span>{{ productError }}</span><button v-if="productErrorStatus !== 'forbidden'" type="button" class="table-action-btn" @click="fetchProducts">{{ crmUiText('Thử lại') }}</button></div>
         <div v-if="productStatusNotice" class="product-import-notice product-status-notice" role="status">{{ productStatusNotice }}</div>
 
         <div class="operation-mode-banner" data-testid="products-processing-only">
@@ -11913,16 +12074,36 @@ function followupRecommendationLabel(item) {
           <span>Danh mục sản phẩm được đồng bộ từ nguồn dữ liệu shop. Tại đây có thể chỉnh thông tin, giá bán, trạng thái và tồn kho.</span>
         </div>
 
+        <form class="product-form product-create-form" @submit.prevent="saveProduct">
+          <div class="product-form-title">
+            <h3>{{ productForm.id ? 'Chỉnh sửa sản phẩm' : 'Thêm sản phẩm' }}</h3>
+            <button v-if="productForm.id" type="button" class="history-btn" :disabled="productSaving" @click="resetProductForm">Hủy chỉnh sửa</button>
+          </div>
+          <div class="product-form-grid">
+            <label>Mã sản phẩm (SKU)<input v-model.trim="productForm.sku" required maxlength="80" autocomplete="off" /></label>
+            <label>Tên sản phẩm<input v-model.trim="productForm.name" required maxlength="255" /></label>
+            <label>Giá bán<input v-model.number="productForm.price" type="number" min="0" step="0.01" required /></label>
+            <label>Liên kết sản phẩm<input v-model.trim="productForm.product_url" type="url" inputmode="url" placeholder="https://shop.example/san-pham" autocomplete="url" /></label>
+            <label class="product-adjustment-description">Mô tả<textarea v-model.trim="productForm.description" rows="2" maxlength="5000"></textarea></label>
+            <label v-if="!productForm.id">Tồn kho ban đầu<input v-model.number="productForm.stock_quantity" type="number" min="0" step="1" required /></label>
+            <label>Trạng thái<select v-model="productForm.status"><option value="active">Đang bán</option><option value="archived">Lưu trữ</option></select></label>
+          </div>
+          <div class="product-form-actions">
+            <small>Chỉ mở liên kết HTTP hoặc HTTPS.</small>
+            <button type="submit" class="primary-btn" :disabled="productSaving">{{ productSaving ? 'Đang lưu...' : productForm.id ? 'Lưu sản phẩm' : 'Thêm sản phẩm' }}</button>
+          </div>
+        </form>
+
         <div v-if="productsLoading" class="products-empty">Đang tải sản phẩm...</div>
         <div v-else-if="!products.length" class="products-empty">Chưa có sản phẩm nào.</div>
         <div v-else class="products-table-wrap">
           <table class="products-table">
-            <thead><tr><th>Mã sản phẩm</th><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Điều chỉnh tồn</th><th>Trạng thái</th></tr></thead>
+            <thead><tr><th>Mã sản phẩm</th><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Điều chỉnh tồn</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
             <tbody>
               <template v-for="product in products" :key="product.id">
                 <tr>
                   <td><strong>{{ product.sku }}</strong></td>
-                  <td><div>{{ product.name }}</div><small>{{ product.description || 'Không có mô tả' }}</small></td>
+                  <td><div>{{ product.name }}</div><small>{{ product.description || 'Không có mô tả' }}</small><a v-if="normalizeProductUrl((product.metadata || product.metadata_ || {}).product_url)" class="product-safe-link" :href="normalizeProductUrl((product.metadata || product.metadata_ || {}).product_url)" target="_blank" rel="noopener noreferrer">Mở liên kết sản phẩm</a><small v-else-if="(product.metadata || product.metadata_ || {}).product_url" class="product-link-invalid" role="status">Liên kết sản phẩm không hợp lệ</small></td>
                   <td>{{ formatMoney(product.price) }}</td>
                   <td class="inventory-cell">
                     <div class="inventory-summary">
@@ -11958,9 +12139,10 @@ function followupRecommendationLabel(item) {
                     </select>
                     <small v-if="productStatusSaving[product.id]" class="product-status-saving">Đang lưu...</small>
                   </td>
+                  <td><button type="button" class="table-action-btn" @click="editProduct(product)">Chỉnh sửa</button></td>
                 </tr>
                 <tr v-if="inventoryAdjustmentOpen === product.id" class="inventory-adjustment-row">
-                  <td colspan="6">
+                  <td colspan="7">
                     <div class="inventory-adjustment-panel">
                       <div class="inventory-adjustment-heading">
                         <div>
@@ -11978,6 +12160,7 @@ function followupRecommendationLabel(item) {
                         <label>{{ t("Mã sản phẩm") }}<input v-model="productDetailsDrafts[product.id].sku" maxlength="80" required /></label>
                         <label>{{ t("Tên sản phẩm") }}<input v-model="productDetailsDrafts[product.id].name" maxlength="255" required /></label>
                         <label>{{ t("Tên hiển thị tiếng Anh") }}<input v-model="productDetailsDrafts[product.id].name_en" maxlength="255" :placeholder="t('Không bắt buộc')" /></label>
+                        <label>{{ t("Liên kết sản phẩm") }}<input v-model.trim="productDetailsDrafts[product.id].product_url" type="url" inputmode="url" placeholder="https://shop.example/san-pham" autocomplete="url" /></label>
                         <label>{{ t("Giá bán") }}<input v-model.number="productDetailsDrafts[product.id].price" type="number" min="0" step="1000" required /></label>
                         <label class="product-adjustment-description">{{ t("Mô tả sản phẩm") }}<textarea v-model="productDetailsDrafts[product.id].description" rows="2" maxlength="5000"></textarea></label>
                         <div class="product-adjustment-actions">
@@ -12216,7 +12399,7 @@ function followupRecommendationLabel(item) {
           <button v-if="canManageWorkspace" type="button" class="settings-refresh" @click="downloadCommerceCsv('/orders/export.csv', 'sales-orders.csv', 'orders')">{{ crmUiText('Xuất đơn hàng CSV') }}</button>
         </div>
 
-        <div v-if="orderError" class="product-error">{{ orderError }}</div>
+        <div v-if="orderError" class="product-error" role="alert"><span>{{ orderError }}</span><button v-if="orderErrorStatus !== 'forbidden'" type="button" class="table-action-btn" @click="fetchOrders">{{ crmUiText('Thử lại') }}</button></div>
 
         <div class="revenue-cards">
           <div class="revenue-card total">
@@ -12238,6 +12421,7 @@ function followupRecommendationLabel(item) {
         <details class="report-panel order-import-panel">
           <summary>{{ crmUiText('Nhập CSV đơn hàng (tạo đơn nháp)') }}</summary>
           <p>{{ crmUiText('CSV cần các cột order_number,customer_id,sku,quantity; conversation_id tùy chọn.') }} {{ crmUiText('Dùng giá hiện tại trong danh mục; đơn nhập luôn ở trạng thái nháp và phải xác nhận qua quy trình tồn kho.') }}</p>
+          <a class="template-download-link" href="/templates/sales-orders-template.csv" download>{{ crmUiText('Tải mẫu đơn bán') }}</a>
           <div class="order-import-actions">
             <input ref="orderImportInput" type="file" accept=".csv,text/csv" aria-label="CSV order import file" @change="selectOrderImportFile" />
             <button type="button" class="settings-refresh" :disabled="orderImportBusy || !orderImportFile" @click="previewOrderImport">{{ orderImportBusy ? crmUiText('Đang xử lý...') : crmUiText('Xem trước') }}</button>
@@ -13119,10 +13303,11 @@ function followupRecommendationLabel(item) {
               <div v-if="metaStatus.connected" class="settings-actions"><button class="btn-meta-disconnect" type="button" :disabled="metaLoading" @click="disconnectMeta">Ngắt kết nối Facebook/Instagram</button></div>
             </template>
             <template v-else-if="['tiktok', 'shopee'].includes(channelModalTab)">
-              <div v-if="localConnectorError" class="settings-notice team-error" role="alert">{{ localConnectorError }}</div>
+              <div v-if="localConnectorError" class="settings-notice team-error local-connector-error" role="alert"><span>{{ localConnectorError }}</span><button type="button" class="settings-refresh" :disabled="localConnectorLoading" @click="createLocalConnectorPairingCode">{{ localConnectorLoading ? crmUiText('Đang tạo mã...') : crmUiText('Thử lại') }}</button></div>
               <div v-if="localConnectorNotice" class="settings-notice" role="status">{{ localConnectorNotice }}</div>
+              <div v-if="botConnectionError" class="settings-notice team-error local-connector-error" role="alert"><span>{{ botConnectionError }}</span><button type="button" class="settings-refresh" :disabled="botConnectionLoading" @click="fetchBotConnections">{{ botConnectionLoading ? crmUiText('Đang tải...') : crmUiText('Thử lại') }}</button></div>
               <template v-if="channelModalTab === 'tiktok'">
-              <div class="bot-provider-heading"><span class="channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><div><h3>TikTok Bridge</h3><p>Nhận tin TikTok qua tệp bridge đang chạy trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: activeTikTokConnection }">{{ activeTikTokConnection ? 'ĐÃ BẬT BRIDGE' : 'CHƯA CẤU HÌNH' }}</span></div>
+              <div class="bot-provider-heading"><span class="channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><div><h3>TikTok Bridge</h3><p>Nhận tin TikTok qua tệp bridge đang chạy trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: tiktokChannelConnection?.connector_paired }">{{ localConnectorStatus(tiktokChannelConnection) }}</span></div>
               <div class="tiktok-setup-tabs" role="tablist" :aria-label="crmUiText('Chuẩn bị kết nối TikTok')">
                 <button id="tiktok-guide-tab" type="button" role="tab" :aria-selected="tiktokSetupTab === 'guide'" aria-controls="tiktok-guide-panel" :tabindex="tiktokSetupTab === 'guide' ? 0 : -1" @click="tiktokSetupTab = 'guide'" @keydown="moveTikTokSetupTab">{{ crmUiText('Hướng dẫn') }}</button>
                 <button id="tiktok-cookie-tab" type="button" role="tab" :aria-selected="tiktokSetupTab === 'cookie'" aria-controls="tiktok-cookie-panel" :tabindex="tiktokSetupTab === 'cookie' ? 0 : -1" @click="tiktokSetupTab = 'cookie'" @keydown="moveTikTokSetupTab">{{ crmUiText('Nhập cookie') }}</button>
@@ -13137,7 +13322,7 @@ function followupRecommendationLabel(item) {
                 <ol><li>{{ crmUiText('Trong ứng dụng, mở tab Nhập cookie, dán Cookie header hoặc chọn tệp JSON rồi bấm Nhập & tiếp tục.') }}</li><li>{{ crmUiText('Cookie giống như mật khẩu. Ứng dụng xử lý và lưu phiên ngay trên máy; CRM không nhận cookie.') }}</li></ol>
               </section>
               <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ crmUiText(localConnectorDownloading ? 'Đang tải ứng dụng...' : 'Tải ứng dụng TikTok (.exe)') }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeTikTokConnection)" @click="createLocalConnectorPairingCode">{{ crmUiText(localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối') }}</button></div>
-              <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>{{ crmUiText('Pairing code') }}<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">{{ crmUiText('Sao chép mã') }}</button></div>
+              <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>{{ crmUiText('Pairing code') }}<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">{{ crmUiText('Sao chép mã') }}</button><small v-if="localConnectorExpiresAt">{{ crmUiText('Mã hết hạn lúc') }} {{ formatDateTime(new Date(localConnectorExpiresAt * 1000).toISOString()) }}</small></div>
               <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === 'tiktok').length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'tiktok')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>TikTok bridge · {{ botConnectionStateLabel(connection.status) }}</small></div><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul>
               <div v-else class="settings-empty">Chưa có TikTok connector nào.</div>
               </template>
@@ -13145,7 +13330,7 @@ function followupRecommendationLabel(item) {
                 <div class="bot-provider-heading"><span class="channel-card-icon shopee-channel-icon">S</span><div><h3>Shopee Seller Chat</h3><p>Nhận tin realtime từ Seller Chat trong Edge cục bộ.</p></div><span class="connection-badge" :class="{ connected: shopeeChannelConnection?.connector_paired }">{{ localConnectorStatus(shopeeChannelConnection) }}</span></div>
                 <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon shopee-channel-icon">S</div><div><ol><li>Tải ứng dụng Shopee (.exe) về máy dùng Seller Chat.</li><li>Khi sẵn sàng, tạo mã ghép nối bên dưới.</li><li>Mở file, nhập mã rồi đăng nhập Shopee trong Edge hiện ra.</li></ol><p class="bot-connect-note">Ứng dụng chỉ chuyển tin nhắn; cookie và phiên Edge không rời khỏi máy này.</p></div></div>
                 <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ localConnectorDownloading ? 'Đang tải ứng dụng...' : 'Tải ứng dụng Shopee (.exe)' }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeBotConnections.some((item) => item.channel_type === 'shopee'))" @click="createLocalConnectorPairingCode">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối' }}</button></div>
-                <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>Pairing code<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">Sao chép mã</button></div>
+                <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>Pairing code<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">Sao chép mã</button><small v-if="localConnectorExpiresAt">Mã hết hạn lúc {{ formatDateTime(new Date(localConnectorExpiresAt * 1000).toISOString()) }}</small></div>
                 <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.some((item) => item.channel_type === 'shopee')" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'shopee')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ connection.connector_paired ? 'Đã ghép nối' : botConnectionStateLabel(connection.status) }}</small></div><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có Shopee connector nào.</div>
               </template>
             </template>
@@ -13683,7 +13868,7 @@ function followupRecommendationLabel(item) {
           <div>
             <span class="service-page-kicker">TRIỂN KHAI CHO SHOP</span>
             <h1>Chọn cách shop muốn được hỗ trợ</h1>
-            <p>Chọn gói quản lý shop để tự vận hành hoặc thuê trọn gói trợ lý chatbot. Đội ngũ sẽ tư vấn và bàn giao theo nhu cầu của bạn.</p>
+            <p>{{ t('Quản lý shop hoặc thuê riêng trợ lý chatbot. Gói trả phí cần admin duyệt.') }}</p>
           </div>
           <button v-if="!authUser" type="button" class="service-back-link" @click="closePublicServicePage">← Quay lại đăng nhập</button>
           <button v-else type="button" class="service-back-link" @click="openServicePage">Chọn gói dịch vụ</button>
@@ -13761,6 +13946,18 @@ function followupRecommendationLabel(item) {
         </div>
       </section>
 
+      <div v-if="serviceSuccessDialogOpen" class="service-success-dialog-backdrop" @click.self="closeServiceSuccessDialog">
+        <section class="service-success-dialog" role="dialog" aria-modal="true" aria-labelledby="service-success-dialog-title" aria-describedby="service-success-dialog-message" tabindex="-1" @keydown="handleServiceSuccessDialogKeydown">
+          <div class="service-success-icon" aria-hidden="true">✓</div>
+          <h2 id="service-success-dialog-title">{{ servicePurchaseStatus === 'pending' ? 'Đã gửi yêu cầu' : 'Đã kích hoạt gói Demo' }}</h2>
+          <p id="service-success-dialog-message">{{ serviceRequestNotice }} {{ uiLocale === 'en' ? 'Reference' : 'Mã yêu cầu' }}: <strong>{{ serviceRequestReference }}</strong></p>
+          <div class="service-success-actions">
+            <button v-if="servicePurchaseStatus === 'active'" type="button" class="secondary-btn" @click="refreshTenantProvisioning">Kiểm tra trạng thái shop</button>
+            <button v-else type="button" class="secondary-btn" @click="fetchServiceAccountSummary">Làm mới trạng thái</button>
+          </div>
+          <button ref="serviceSuccessCloseButton" type="button" class="service-success-dialog-close" @click="closeServiceSuccessDialog">Đóng</button>
+        </section>
+      </div>
 
     </main>
 
@@ -13793,11 +13990,11 @@ function followupRecommendationLabel(item) {
           </div>
           <span class="login-eyebrow">{{ t('CỔNG VẬN HÀNH SHOP') }}</span>
           <h1>{{ t('Chăm khách gọn hơn,') }}<br /><em>{{ t('bán hàng chắc hơn.') }}</em></h1>
-          <p class="login-showcase-copy">{{ t('Một nơi để đội ngũ xử lý hội thoại, đơn bán và các công việc cần người thật — rõ ràng theo từng shop.') }}</p>
+          <p class="login-showcase-copy">{{ t('Hộp thư, đơn bán và công việc nhóm shop trong một màn hình.') }}</p>
           <div class="login-feature-list">
-            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Hộp thư hợp nhất') }}</strong><small>{{ t('Không bỏ sót khách từ mọi kênh.') }}</small></span></div>
-            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Quy trình có kiểm soát') }}</strong><small>{{ t('Trạng thái, thời hạn và nhật ký rõ ràng.') }}</small></span></div>
-            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Dữ liệu riêng từng shop') }}</strong><small>{{ t('Phân quyền theo không gian của bạn.') }}</small></span></div>
+            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Hộp thư hợp nhất') }}</strong><small>{{ t('Hội thoại từ các kênh trong một hộp thư.') }}</small></span></div>
+            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Quy trình có kiểm soát') }}</strong><small>{{ t('Trạng thái và lịch sử thao tác rõ ràng.') }}</small></span></div>
+            <div><span class="login-feature-icon">✓</span><span><strong>{{ t('Dữ liệu riêng từng shop') }}</strong><small>{{ t('Quyền truy cập riêng cho từng shop.') }}</small></span></div>
           </div>
         </div>
 
