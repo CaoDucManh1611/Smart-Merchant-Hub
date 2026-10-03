@@ -14,8 +14,10 @@ from app.models.customer_identity import CustomerIdentity
 from app.models.customer_note import CustomerNote
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.recommendation import CustomerProductInteraction, RecommendationCustomerProfile, RecommendationRequest
 from app.models.sales import Order
 from app.models.saas import DataLifecycleRequest
+from app.models.experimentation import BanditDecision
 
 
 def get_or_create_request(
@@ -52,6 +54,47 @@ def _customer_rows(db: Session, business_id: int) -> list[Customer]:
     return db.scalars(
         select(Customer).where(Customer.business_id == business_id).order_by(Customer.id.asc())
     ).all()
+
+
+def _scrub_personalized_bandit_decisions(db: Session, business_id: int, customer_id: int) -> None:
+    decisions = db.scalars(select(BanditDecision).where(
+        BanditDecision.business_id == business_id,
+        BanditDecision.subject_key == f"customer:{customer_id}",
+    )).all()
+    for decision in decisions:
+        decision.subject_key = "anonymous"
+        decision.context = {}
+        decision.context_hash = None
+
+
+def stop_customer_personalization(db: Session, business_id: int, customer_id: int) -> None:
+    """Erase derived profiles and retained query text after personalization opt-out."""
+    for fact in db.scalars(select(CustomerFact).where(
+        CustomerFact.business_id == business_id,
+        CustomerFact.customer_id == customer_id,
+        CustomerFact.source_type.in_(("extracted", "order_summary")),
+        CustomerFact.is_verified.is_(False),
+    )).all():
+        db.delete(fact)
+    for interaction in db.scalars(select(CustomerProductInteraction).where(
+        CustomerProductInteraction.business_id == business_id,
+        CustomerProductInteraction.customer_id == customer_id,
+    )).all():
+        db.delete(interaction)
+    for profile in db.scalars(select(RecommendationCustomerProfile).where(
+        RecommendationCustomerProfile.business_id == business_id,
+        RecommendationCustomerProfile.customer_id == customer_id,
+    )).all():
+        db.delete(profile)
+    for request in db.scalars(select(RecommendationRequest).where(
+        RecommendationRequest.business_id == business_id,
+        RecommendationRequest.customer_id == customer_id,
+    )).all():
+        request.customer_id = None
+        request.context = {}
+        request.bandit_decision_id = None
+        request.experiment_id = None
+    _scrub_personalized_bandit_decisions(db, business_id, customer_id)
 
 
 def export_customer_data(db: Session, business_id: int) -> tuple[dict, dict[str, int]]:
@@ -166,6 +209,27 @@ def _anonymize_customer(db: Session, customer: Customer, *, deleted: bool) -> di
         address.postal_code = None
     for fact in customer.facts:
         fact.fact_value_json = {"redacted": True}
+    for interaction in db.scalars(select(CustomerProductInteraction).where(
+        CustomerProductInteraction.business_id == customer.business_id,
+        CustomerProductInteraction.customer_id == customer.id,
+    )).all():
+        interaction.query_text = None
+        interaction.event_metadata = {}
+        interaction.customer_id = None
+    for profile in db.scalars(select(RecommendationCustomerProfile).where(
+        RecommendationCustomerProfile.business_id == customer.business_id,
+        RecommendationCustomerProfile.customer_id == customer.id,
+    )).all():
+        db.delete(profile)
+    for request in db.scalars(select(RecommendationRequest).where(
+        RecommendationRequest.business_id == customer.business_id,
+        RecommendationRequest.customer_id == customer.id,
+    )).all():
+        request.customer_id = None
+        request.context = {}
+        request.bandit_decision_id = None
+        request.experiment_id = None
+    _scrub_personalized_bandit_decisions(db, customer.business_id, customer.id)
     for note in db.scalars(select(CustomerNote).where(CustomerNote.customer_id == customer.id)).all():
         note.content = "[REDACTED]"
     conversations = db.scalars(select(Conversation).where(Conversation.business_id == customer.business_id, Conversation.customer_id == customer.id)).all()

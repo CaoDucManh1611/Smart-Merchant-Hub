@@ -390,6 +390,10 @@ def create_consent(
         revoked_at=now if payload.status == "revoked" else None,
     )
     db.add(row)
+    if payload.purpose == "personalization" and payload.status == "revoked":
+        from app.services.privacy_service import stop_customer_personalization
+
+        stop_customer_personalization(db, tenant.business_id, customer_id)
     record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action=payload.status, resource_type="customer_consent", metadata={"customer_id": customer_id, "purpose": payload.purpose})
     db.commit()
     db.refresh(row)

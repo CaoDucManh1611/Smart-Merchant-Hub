@@ -21,6 +21,7 @@ from app.models.canned_response import CannedResponse
 from app.models.conversation import Conversation
 from app.models.audit_log import AuditLog
 from app.models.customer_fact import CustomerFact
+from app.models.customer_collection import CustomerConsent
 from app.models.crm_extended import ConversationAssignment, CustomerTag, Tag
 from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
@@ -113,7 +114,12 @@ def build_agent_memory(db: Session, business_id: int, conversation_id: int) -> d
         if message.content:
             history.append({"role": role, "content": message.content, "sender_type": message.sender_type})
 
-    facts = db.query(CustomerFact).filter(
+    personalization_consent = db.query(CustomerConsent.status).filter(
+        CustomerConsent.business_id == business_id,
+        CustomerConsent.customer_id == conversation.customer_id,
+        CustomerConsent.purpose == "personalization",
+    ).order_by(CustomerConsent.id.desc()).first()
+    facts = [] if personalization_consent and personalization_consent[0] == "revoked" else db.query(CustomerFact).filter(
         CustomerFact.business_id == business_id,
         CustomerFact.customer_id == conversation.customer_id,
     ).order_by(CustomerFact.observed_at.desc(), CustomerFact.id.desc()).limit(20).all()

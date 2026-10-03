@@ -7,7 +7,8 @@ Retrieval-Augmented Generation cho CRM Chatbot.
 | File | Chức năng |
 |------|-----------|
 | `loader.py` | Đọc nội dung từ PDF, DOCX, TXT, CSV, HTML |
-| `chunker.py` | Chia text thành chunks (Recursive Character Splitter) |
+| `semantic_chunker.py` | Chia theo cấu trúc, câu hoàn chỉnh và ranh giới Gemini; thêm ngữ cảnh cho embedding |
+| `chunker.py` | Chunker cũ, giữ cho tương thích và kiểm thử |
 | `embedder.py` | Chuyển text → vector embedding (local Sentence-Transformers / Gemini / OpenAI) |
 | `retriever.py` | Hybrid retrieval: pgvector + tìm kiếm từ khóa |
 | `prompt_builder.py` | Xây dựng prompt cho LLM từ context + query |
@@ -18,7 +19,7 @@ Retrieval-Augmented Generation cho CRM Chatbot.
 
 ### Data Ingestion (upload thủ công)
 ```
-File upload → loader.py → chunker.py → embedder.py → pgvector DB
+File upload → Structure-aware → Semantic Chunking → Contextual Embedding → pgvector DB
 ```
 
 RAG sử dụng file do người bán upload thủ công trong mục **Kho tri thức**.
@@ -31,6 +32,16 @@ webhook Facebook/Instagram sẽ được truy xuất từ tài liệu đó.
 ```
 User query → embedder.py → retriever.py → prompt_builder.py → llm_caller.py → Response
 ```
+
+### Ranh giới và ngữ cảnh
+
+- Markdown, tiêu đề DOCX/HTML được giữ thành đường dẫn mục; bảng Markdown giữ tiêu đề cột trong mỗi dòng, CSV và sản phẩm có SKU không trộn sản phẩm.
+- Đoạn văn dài tách tại câu hoàn chỉnh; số thập phân và một số viết tắt thông dụng được giữ. Câu không có ranh giới rõ được giữ nguyên, nên 800 ký tự là mục tiêu mềm, không phải giới hạn cắt cứng.
+- Gemini chỉ trả chỉ số ranh giới cho các đơn vị nguồn. Tối đa 16 đơn vị/8.000 ký tự mỗi lượt và 32 lượt/tài liệu; lỗi, quota hoặc JSON sai dùng fallback cục bộ. Các giới hạn này giữ chi phí và độ trễ có trần.
+- Embedding nhận tên tài liệu, đường dẫn mục, SKU và văn bản chunk. Ngữ cảnh được lấy từ nguồn, không tạo tóm tắt mới bằng LLM; `DocumentChunk.content` giữ nguyên nội dung để trích dẫn.
+- Metadata `parent_start`, `parent_end`, `parent_id` cho phép dựng lại đoạn cha từ các chunk cùng tài liệu/shop mà không lưu bản sao đoạn cha.
+- Retrieval mở rộng cả đoạn cha khi tối đa 16 chunk và 6.000 ký tự; nếu lớn hơn, lấy hàng xóm gần nhất. Tổng nội dung bổ sung tối đa 12.000 ký tự/lượt truy xuất; giữ các kết quả độc lập và thứ tự nguồn trong đoạn cha.
+- Tài liệu cũ tiếp tục được đọc theo metadata cũ. Reindex từ bản gốc để áp dụng đầy đủ `structure-semantic-context-v2`; không trộn vector từ model khác trong một chỉ mục.
 
 Retriever luôn thử kết hợp tìm kiếm ngữ nghĩa với từ khóa. Vì vậy các mã SKU,
 tên sản phẩm và tài liệu chưa có embedding vẫn có thể được tìm thấy bằng lexical

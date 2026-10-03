@@ -22,6 +22,8 @@ from app.services.chatbot_followup import dispatch_due_followups
 from app.services.order_service import release_expired_draft_reservations
 from app.services.rag_job_service import dispatch_rag_job
 from app.services.recommendation_service import train_customer_segments
+from app.services.conversation_turn_service import dispatch_chatbot_turn
+from app.services.customer_fact_extractor import dispatch_customer_fact_extraction, dispatch_customer_profile_refresh
 from app.tenancy.context import TenantContext
 from app.tenancy.schema import schema_name_for, validate_schema_name
 from app.tenancy.workspace_modules import get_workspace_config
@@ -291,6 +293,9 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         "ticket.first_response.sla_check": lambda payload: _dispatch_ticket_first_response_sla_job(db, business_id, payload, warning=False),
         "workflow.run": lambda payload: _dispatch_workflow_run_job(db, business_id, payload, platform_db=platform_db),
         "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),
+        "chatbot.reply_turn": lambda payload: dispatch_chatbot_turn(db, business_id=business_id, payload=payload, platform_db=platform_db),
+        "customer.facts.extract": lambda payload: dispatch_customer_fact_extraction(db, business_id=business_id, payload=payload),
+        "customer.profile.refresh": lambda payload: dispatch_customer_profile_refresh(db, business_id=business_id),
         "notification.email": lambda payload: _dispatch_notification_email_job(db, business_id, payload),
         "recommendations.train_segments": lambda payload: _dispatch_recommendation_segment_training_job(db, business_id, payload),
         "appointment.reminder": lambda payload: _dispatch_appointment_reminder_job(db, business_id, payload),

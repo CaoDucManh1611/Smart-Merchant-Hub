@@ -1,10 +1,13 @@
 """User login, bearer session lifecycle, and audit log views."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import hashlib
+import hmac
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_authenticated_session, get_current_user, issue_token, require_admin_access, token_hash
@@ -15,11 +18,16 @@ from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
 from app.models.business import Business, User
 from app.models.saas import PlatformMembership
+from app.models.user_email_change import UserEmailChangeChallenge
 from app.middleware.security import LoginRateLimiter, RateLimitBackendUnavailable
-from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut, MfaVerifyOut, MfaVerifyRequest
+from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, EmailChangeRequest, EmailChangeRequestOut, EmailChangeVerify, EmailChangeVerifyOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut, MfaVerifyOut, MfaVerifyRequest
 from app.services.audit_service import record_audit
+from app.services.customer_collection import contact_hash, generate_verification_code, hash_verification_code, mask_contact
 from app.services.mfa_service import disable_mfa, enable_mfa, prepare_mfa, verify_mfa_code
+from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, deliver_otp
+from app.services.shop_otp_email import get_shop_otp_smtp_config
 from app.tenancy.context import TenantContext
+from app.tenancy.crm_session import get_tenant_db
 from app.tenancy.dependencies import get_tenant_context
 
 
@@ -184,6 +192,237 @@ def login(
         user=AuthUserOut.model_validate(user),
         mfa_required=user.mfa_status == "enabled",
     )
+
+
+@router.post("/email-change/request", status_code=202, response_model=EmailChangeRequestOut)
+def request_email_change(
+    payload: EmailChangeRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    smtp_settings_db: Session = Depends(get_tenant_db),
+):
+    """Send a one-time verification code; keep the current login email active until verified."""
+    if user.business_id is None:
+        raise HTTPException(status_code=403, detail="Chỉ tài khoản thuộc shop mới có thể đổi email tại đây.")
+    locked_user = db.query(User).filter(
+        User.id == user.id,
+        User.business_id == user.business_id,
+        User.is_active.is_(True),
+    ).with_for_update().first()
+    if locked_user is None:
+        raise HTTPException(status_code=401, detail="Mật khẩu hiện tại không đúng.")
+
+    new_email = payload.new_email
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    latest = db.query(UserEmailChangeChallenge).filter(
+        UserEmailChangeChallenge.user_id == locked_user.id,
+    ).order_by(UserEmailChangeChallenge.created_at.desc(), UserEmailChangeChallenge.id.desc()).first()
+    if latest is not None and latest.created_at is not None:
+        cooldown = int((latest.created_at + timedelta(seconds=60) - now).total_seconds())
+        if cooldown > 0:
+            raise HTTPException(
+                status_code=429,
+                detail="Vui lòng đợi trước khi yêu cầu mã xác minh khác.",
+                headers={"Retry-After": str(cooldown)},
+            )
+
+    cutoff = now - timedelta(hours=1)
+    recent_query = db.query(UserEmailChangeChallenge).filter(
+        UserEmailChangeChallenge.user_id == locked_user.id,
+        UserEmailChangeChallenge.created_at >= cutoff,
+    )
+    recent_count = recent_query.count()
+    if recent_count >= 5:
+        oldest = recent_query.order_by(UserEmailChangeChallenge.created_at.asc()).first()
+        retry_after = max(1, int(((oldest.created_at + timedelta(hours=1)) - now).total_seconds())) if oldest else 3600
+        raise HTTPException(
+            status_code=429,
+            detail="Đã đạt giới hạn yêu cầu mã xác minh email trong giờ này.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    code = generate_verification_code()
+    challenge = UserEmailChangeChallenge(
+        user_id=locked_user.id,
+        business_id=locked_user.business_id,
+        new_email=new_email,
+        code_hash=hash_verification_code(code),
+        status="request_started",
+        expires_at=now + timedelta(minutes=10),
+        created_at=now,
+    )
+    db.add(challenge)
+    email_hash = contact_hash("email", new_email)[:16]
+
+    if not locked_user.password_hash or not verify_password(payload.current_password, locked_user.password_hash):
+        challenge.status = "password_rejected"
+        record_audit(
+            db,
+            business_id=locked_user.business_id,
+            user_id=locked_user.id,
+            action="user_email_change_rejected",
+            resource_type="user_email",
+            resource_id=locked_user.id,
+            metadata={"new_email_hash": email_hash, "reason": "invalid_password"},
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Mật khẩu hiện tại không đúng.")
+
+    if new_email == str(locked_user.email or "").strip().lower():
+        challenge.status = "same_email"
+        record_audit(
+            db,
+            business_id=locked_user.business_id,
+            user_id=locked_user.id,
+            action="user_email_change_rejected",
+            resource_type="user_email",
+            resource_id=locked_user.id,
+            metadata={"new_email_hash": email_hash, "reason": "same_email"},
+        )
+        db.commit()
+        raise HTTPException(status_code=409, detail="Email mới giống email hiện tại.")
+    if db.query(User.id).filter(
+        User.business_id == locked_user.business_id,
+        func.lower(User.email) == new_email,
+        User.id != locked_user.id,
+    ).first():
+        challenge.status = "email_in_use"
+        record_audit(
+            db,
+            business_id=locked_user.business_id,
+            user_id=locked_user.id,
+            action="user_email_change_rejected",
+            resource_type="user_email",
+            resource_id=locked_user.id,
+            metadata={"new_email_hash": email_hash, "reason": "email_in_use"},
+        )
+        db.commit()
+        raise HTTPException(status_code=409, detail="Email này đã được dùng trong shop.")
+
+    for pending in db.query(UserEmailChangeChallenge).filter(
+        UserEmailChangeChallenge.user_id == locked_user.id,
+        UserEmailChangeChallenge.status.in_(("pending", "pending_delivery")),
+    ).all():
+        pending.status = "superseded"
+    challenge.status = "pending_delivery"
+    record_audit(
+        db,
+        business_id=locked_user.business_id,
+        user_id=locked_user.id,
+        action="user_email_change_requested",
+        resource_type="user_email",
+        resource_id=locked_user.id,
+        metadata={"new_email_hash": email_hash},
+    )
+    db.commit()
+
+    try:
+        delivery = deliver_otp(
+            channel="email",
+            destination=new_email,
+            code=code,
+            smtp_config=get_shop_otp_smtp_config(smtp_settings_db, locked_user.business_id),
+        )
+        # Email-change challenges must prove mailbox access. A development
+        # in-chat fallback is not proof that the new address belongs to them.
+        if not delivery.delivered or delivery.provider != "smtp":
+            raise OtpDeliveryNotConfigured("Email OTP chưa được gửi qua SMTP.")
+    except (OtpDeliveryNotConfigured, OtpDeliveryError, ValueError, OSError) as exc:
+        challenge.status = "delivery_failed"
+        record_audit(
+            db,
+            business_id=locked_user.business_id,
+            user_id=locked_user.id,
+            action="user_email_change_delivery_failed",
+            resource_type="user_email",
+            resource_id=locked_user.id,
+            metadata={"new_email_hash": email_hash, "error_type": type(exc).__name__},
+        )
+        db.commit()
+        raise HTTPException(status_code=503, detail="Chưa gửi được mã xác minh email. Email đăng nhập chưa thay đổi.") from exc
+
+    challenge.status = "pending"
+    db.commit()
+    return {
+        "status": "verification_sent",
+        "email": mask_contact("email", new_email),
+        "expires_in": 600,
+        "retry_after": 60,
+    }
+
+
+@router.post("/email-change/verify", response_model=EmailChangeVerifyOut)
+def verify_email_change(
+    payload: EmailChangeVerify,
+    user: User = Depends(get_current_user),
+    auth_session: AuthSession = Depends(get_authenticated_session),
+    db: Session = Depends(get_db),
+):
+    if user.business_id is None:
+        raise HTTPException(status_code=403, detail="Chỉ tài khoản thuộc shop mới có thể đổi email tại đây.")
+    locked_user = db.query(User).filter(
+        User.id == user.id,
+        User.business_id == user.business_id,
+        User.is_active.is_(True),
+    ).with_for_update().first()
+    challenge = db.query(UserEmailChangeChallenge).filter(
+        UserEmailChangeChallenge.user_id == user.id,
+        UserEmailChangeChallenge.business_id == user.business_id,
+        UserEmailChangeChallenge.status == "pending",
+    ).order_by(UserEmailChangeChallenge.created_at.desc(), UserEmailChangeChallenge.id.desc()).with_for_update().first()
+    if locked_user is None or challenge is None:
+        raise HTTPException(status_code=422, detail="Không có mã xác minh đang chờ. Hãy yêu cầu mã mới.")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if challenge.expires_at <= now:
+        challenge.status = "expired"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã xác minh đã hết hạn. Hãy yêu cầu mã mới.")
+    if challenge.attempts >= challenge.max_attempts:
+        challenge.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã xác minh đã bị khóa. Hãy yêu cầu mã mới.")
+    challenge.attempts += 1
+    if not hmac.compare_digest(hash_verification_code(payload.otp), challenge.code_hash):
+        if challenge.attempts >= challenge.max_attempts:
+            challenge.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=422, detail="Mã xác minh không đúng.")
+
+    if db.query(User.id).filter(
+        User.business_id == locked_user.business_id,
+        func.lower(User.email) == challenge.new_email,
+        User.id != locked_user.id,
+    ).first():
+        challenge.status = "conflict"
+        db.commit()
+        raise HTTPException(status_code=409, detail="Email này đã được dùng trong shop.")
+
+    old_email_hash = contact_hash("email", str(locked_user.email))[:16]
+    new_email_hash = contact_hash("email", challenge.new_email)[:16]
+    locked_user.email = challenge.new_email
+    challenge.status = "verified"
+    challenge.verified_at = now
+    db.query(AuthSession).filter(
+        AuthSession.user_id == locked_user.id,
+        AuthSession.id != auth_session.id,
+        AuthSession.revoked_at.is_(None),
+    ).update({AuthSession.revoked_at: now}, synchronize_session=False)
+    record_audit(
+        db,
+        business_id=locked_user.business_id,
+        user_id=locked_user.id,
+        action="user_email_changed",
+        resource_type="user_email",
+        resource_id=locked_user.id,
+        metadata={"old_email_hash": old_email_hash, "new_email_hash": new_email_hash, "other_sessions_revoked": True},
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Email này đã được dùng trong shop.") from exc
+    return {"status": "verified", "email": locked_user.email}
 
 
 @router.get("/me", response_model=AuthUserOut)

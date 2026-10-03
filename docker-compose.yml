@@ -56,9 +56,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in backend/.env or compose environment}
       PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_platform}
       TENANT_DATABASE_URL: ${TENANT_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_tenant}
+      ALLOWED_HOSTS: ${DOCKER_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      SHOPEE_BRIDGE_CONTROL_URL: ${SHOPEE_BRIDGE_CONTROL_URL:-http://host.docker.internal:8092}
-      TIKTOK_BRIDGE_CONTROL_URL: ${TIKTOK_BRIDGE_CONTROL_URL:-http://host.docker.internal:8091}
+      SHOPEE_BRIDGE_CONTROL_URL: ${SHOPEE_DOCKER_BRIDGE_CONTROL_URL:-http://host.docker.internal:8092}
+      TIKTOK_BRIDGE_CONTROL_URL: ${TIKTOK_DOCKER_BRIDGE_CONTROL_URL:-http://host.docker.internal:8091}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -121,6 +122,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in backend/.env or compose environment}
       PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_platform}
       TENANT_DATABASE_URL: ${TENANT_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/crm_tenant}
+      SHOPEE_BRIDGE_CONTROL_URL: ${SHOPEE_DOCKER_BRIDGE_CONTROL_URL:-http://host.docker.internal:8092}
+      TIKTOK_BRIDGE_CONTROL_URL: ${TIKTOK_DOCKER_BRIDGE_CONTROL_URL:-http://host.docker.internal:8091}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       backend:
         condition: service_healthy

@@ -1098,6 +1098,32 @@ def list_connected_channels(
         for channel in channels:
             config = channel.config if isinstance(channel.config, dict) else {}
             provider_account = config.get("provider_account")
+            is_local_connector = str(config.get("provider") or "") == f"{channel.channel_type}_local_connector"
+            connector_paired = channel.status == "active" and bool(
+                config.get("connector_paired_at")
+                or config.get("webhook_secret")
+                or config.get("webhook_secret_encrypted")
+            )
+            last_seen = config.get("connector_last_seen_at")
+            connector_state = "unknown"
+            if is_local_connector:
+                if not connector_paired:
+                    connector_state = "not_paired"
+                elif last_seen:
+                    try:
+                        heartbeat_at = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+                        if heartbeat_at.tzinfo is None:
+                            heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
+                        fresh = (datetime.now(timezone.utc) - heartbeat_at).total_seconds() <= 150
+                        connector_state = (
+                            str(config.get("connector_status"))
+                            if fresh and config.get("connector_status") == "error"
+                            else "online" if fresh else "offline"
+                        )
+                    except ValueError:
+                        connector_state = "unknown"
+                else:
+                    connector_state = "awaiting_heartbeat"
             output.append(
                 OnboardingChannelStatusOut(
                     id=channel.id,
@@ -1116,14 +1142,96 @@ def list_connected_channels(
                         if channel.status == "active" and (config.get("connector_paired_at") or config.get("webhook_url"))
                         else "unknown"
                     ),
-                    connector_paired=channel.status == "active" and bool(
-                        config.get("connector_paired_at")
-                        or config.get("webhook_secret")
-                        or config.get("webhook_secret_encrypted")
+                    connector_paired=connector_paired,
+                    connector_status=connector_state,
+                    connector_last_seen_at=last_seen,
+                    connector_last_error_code=(str(config.get("connector_last_error_code") or "")[:80] or None),
+                    requires_local_device=is_local_connector,
+                    automatic_supported=False if is_local_connector else None,
+                    retry_endpoint=(
+                        f"/api/onboarding/shops/{business_id}/channels/{channel.channel_type}/retry"
+                        if is_local_connector else None
                     ),
                 )
             )
         return output
+
+
+@router.post("/shops/{business_id}/channels/{channel_type}/retry")
+def retry_local_connector(
+    business_id: int,
+    channel_type: str,
+    db: Session = Depends(get_db),
+    actor: User | None = Depends(require_admin_access),
+):
+    """Queue one restart for a live local connector; the server cannot start an offline device."""
+    _require_shop_admin(db, business_id, actor)
+    channel_type = str(channel_type or "").strip().lower()
+    if channel_type not in {"tiktok", "shopee"}:
+        raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
+
+    now = datetime.now(timezone.utc)
+    with tenant_session(schema_name_for(business_id)) as tenant_db:
+        channel = tenant_db.scalar(select(Channel).where(
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        ).with_for_update())
+        if (
+            channel is None
+            or not isinstance(channel.config, dict)
+            or channel.config.get("provider") != f"{channel_type}_local_connector"
+            or not channel.config.get("connector_paired_at")
+        ):
+            raise HTTPException(status_code=409, detail={
+                "code": "connector_not_paired",
+                "message": "Ghép nối connector trước khi yêu cầu thử lại.",
+            })
+        config = dict(channel.config)
+        last_seen = config.get("connector_last_seen_at")
+        try:
+            heartbeat_at = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+            if heartbeat_at.tzinfo is None:
+                heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
+            online = (now - heartbeat_at.astimezone(timezone.utc)).total_seconds() <= 150
+        except (TypeError, ValueError):
+            online = False
+        if not online:
+            raise HTTPException(status_code=409, detail={
+                "code": "connector_offline",
+                "message": "Máy connector đang ngoại tuyến. Hãy mở ứng dụng trên máy đã đăng nhập rồi thử lại.",
+            })
+
+        retry_id = str(config.get("connector_retry_id") or "")
+        requested_at = config.get("connector_retry_requested_at")
+        if retry_id and requested_at:
+            try:
+                requested_time = datetime.fromisoformat(str(requested_at).replace("Z", "+00:00"))
+                if (now - requested_time.astimezone(timezone.utc)).total_seconds() > 300:
+                    retry_id = ""
+            except (TypeError, ValueError):
+                retry_id = ""
+        if not retry_id:
+            retry_id = secrets.token_urlsafe(18)
+            config["connector_retry_id"] = retry_id
+            config["connector_retry_requested_at"] = now.isoformat()
+            channel.config = config
+            record_audit(
+                db,
+                business_id=business_id,
+                user_id=actor.id if actor else None,
+                action="local_connector_retry_requested",
+                resource_type="channel",
+                resource_id=channel.id,
+                metadata={"channel_type": channel_type},
+            )
+            db.commit()
+    return {
+        "status": "retry_queued",
+        "connector_status": "online",
+        "requires_local_device": True,
+        "message": "Ứng dụng connector trên máy đang chạy sẽ nhận lệnh và khởi động lại.",
+    }
 
 
 @router.post("/shops/{business_id}/channels/{channel_type}/pairing-code")

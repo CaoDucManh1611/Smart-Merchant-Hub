@@ -8,22 +8,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
+from pathlib import Path
 
 from app.database.platform_session import PlatformSessionLocal
-from app.database.session import SessionLocal
 from app.database.tenant_session import tenant_session
+from app.scripts.sqlite_snapshot import validate_sqlite_snapshot
 from app.services.tenant_cutover_service import (
     DEFAULT_TABLE_ORDER,
     verify_business,
 )
 from app.models.platform_control import TenantRegistry
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
 from app.tenancy.schema import schema_name_for
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify one shop migration")
     parser.add_argument("business_id", type=int)
+    parser.add_argument("--sqlite-backup", type=Path, help="Read-only SQLite snapshot used by the migration")
     parser.add_argument("--tables", nargs="*", default=list(DEFAULT_TABLE_ORDER))
     args = parser.parse_args()
     business_id = int(args.business_id)
@@ -31,7 +35,18 @@ def main() -> int:
     # Open the platform session to validate that the target shop exists and is
     # registered.  The comparison itself remains source + tenant only.
     platform_db = PlatformSessionLocal()
-    source_db = SessionLocal()
+    source_engine = None
+    if args.sqlite_backup:
+        snapshot_info = validate_sqlite_snapshot(args.sqlite_backup)
+        snapshot = Path(str(snapshot_info["path"]))
+        source_engine = create_engine(
+            "sqlite+pysqlite://",
+            creator=lambda: sqlite3.connect(f"{snapshot.as_uri()}?mode=ro", uri=True, timeout=30),
+        )
+        source_db = sessionmaker(bind=source_engine, autoflush=False, autocommit=False)()
+    else:
+        from app.database.session import SessionLocal
+        source_db = SessionLocal()
     try:
         registry = platform_db.scalar(
             select(TenantRegistry).where(TenantRegistry.business_id == business_id)
@@ -61,6 +76,8 @@ def main() -> int:
         return 0 if report.ok else 2
     finally:
         source_db.close()
+        if source_engine is not None:
+            source_engine.dispose()
         platform_db.close()
 
 

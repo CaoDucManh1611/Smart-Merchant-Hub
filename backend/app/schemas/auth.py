@@ -1,14 +1,44 @@
 """Authentication API contracts."""
 
 from datetime import datetime
+import re
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=1, max_length=256)
     shop_slug: str | None = Field(default=None, min_length=2, max_length=120)
+
+
+class EmailChangeRequest(BaseModel):
+    new_email: str = Field(..., min_length=3, max_length=255)
+    current_password: str = Field(..., min_length=1, max_length=256)
+
+    @field_validator("new_email")
+    @classmethod
+    def validate_new_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
+            raise ValueError("Email mới không hợp lệ.")
+        return normalized
+
+
+class EmailChangeVerify(BaseModel):
+    otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class EmailChangeRequestOut(BaseModel):
+    status: str
+    email: str
+    expires_in: int
+    retry_after: int
+
+
+class EmailChangeVerifyOut(BaseModel):
+    status: str
+    email: str
 
 
 class AuthUserOut(BaseModel):

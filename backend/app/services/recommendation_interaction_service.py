@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.customer import Customer
+from app.models.customer_collection import CustomerConsent
 from app.models.recommendation import (
     CustomerProductInteraction,
     RecommendationRequest,
@@ -84,6 +85,15 @@ def record_interaction(
         ).first()
         if customer is None:
             raise RecommendationInteractionError("Khách hàng không tồn tại trong shop này.", 404)
+        latest_consent = db.query(CustomerConsent).filter(
+            CustomerConsent.business_id == business_id,
+            CustomerConsent.customer_id == customer_id,
+            CustomerConsent.purpose == "personalization",
+        ).order_by(CustomerConsent.id.desc()).first()
+        if latest_consent is not None and latest_consent.status == "revoked":
+            customer_id = None
+            query = None
+            metadata = None
     if product_id is not None:
         product = db.query(Product).filter(
             Product.id == product_id,
@@ -152,6 +162,13 @@ def record_order_purchase_interactions(db: Session, *, order: Order) -> None:
     """Emit purchase signals exactly once when a sales order is completed."""
     if order.status != "completed":
         return
+    consent = db.query(CustomerConsent.status).filter(
+        CustomerConsent.business_id == order.business_id,
+        CustomerConsent.customer_id == order.customer_id,
+        CustomerConsent.purpose == "personalization",
+    ).order_by(CustomerConsent.id.desc()).first()
+    if consent and consent[0] == "revoked":
+        return
     items = db.query(OrderItem).filter(OrderItem.order_id == order.id).order_by(OrderItem.id.asc()).all()
     for item in items:
         _existing_or_add(
@@ -174,6 +191,13 @@ def record_order_purchase_interactions(db: Session, *, order: Order) -> None:
 def record_order_refund_interactions(db: Session, *, order: Order) -> None:
     """Emit negative product signals only after a fully refunded order."""
     if order.status != "refunded":
+        return
+    consent = db.query(CustomerConsent.status).filter(
+        CustomerConsent.business_id == order.business_id,
+        CustomerConsent.customer_id == order.customer_id,
+        CustomerConsent.purpose == "personalization",
+    ).order_by(CustomerConsent.id.desc()).first()
+    if consent and consent[0] == "revoked":
         return
     items = db.query(OrderItem).filter(OrderItem.order_id == order.id).order_by(OrderItem.id.asc()).all()
     for item in items:

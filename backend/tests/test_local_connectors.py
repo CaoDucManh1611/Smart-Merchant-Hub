@@ -1,6 +1,7 @@
 import asyncio
 import sys
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,10 @@ from starlette.responses import FileResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import shopee_bot
+import connector_pairing
 from shopee_bot import normalize_message
 
-from app.api import conversations, local_connectors
+from app.api import conversations, local_connectors, onboarding
 from app.api.local_connectors import _code_parts, download_local_connector_app, download_local_connector_bundle_legacy
 
 
@@ -22,6 +24,229 @@ def test_pairing_and_connector_codes_are_shop_scoped(channel):
 
     token = f"CONN.{channel}.12.34.abcdEFGHijkl_1234"
     assert _code_parts(token, "CONN", channel) == (channel, 12, 34, "abcdEFGHijkl_1234")
+
+
+def test_connector_heartbeat_updates_only_the_authenticated_shop(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "business_id": 7,
+        "channel_type": "tiktok",
+        "status": "active",
+        "config": {"provider": "tiktok_local_connector"},
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query):
+            return channel
+
+        @staticmethod
+        def commit():
+            pass
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+
+    result = local_connectors.report_connector_heartbeat(
+        "tiktok",
+        local_connectors.ConnectorHeartbeatRequest(state="error", error_code="edge_session_locked"),
+        "Bearer connector-token",
+        object(),
+    )
+
+    assert result == {"status": "recorded", "connector_status": "error"}
+    assert channel.config["connector_status"] == "error"
+    assert channel.config["connector_last_error_code"] == "edge_session_locked"
+    assert channel.config["connector_last_seen_at"]
+
+
+def test_connector_status_report_sends_only_bounded_error_code(monkeypatch):
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read():
+            return b'{"status":"recorded"}'
+
+    def fake_urlopen(request, timeout):
+        captured.update(
+            url=request.full_url,
+            auth=request.get_header("Authorization"),
+            body=request.data,
+            timeout=timeout,
+        )
+        return Response()
+
+    monkeypatch.setattr(connector_pairing, "urlopen", fake_urlopen)
+    connector_pairing.report_connector_status(
+        "shopee", "https://crm.example/", "secret-token", state="error", error_code="edge_locked"
+    )
+
+    assert captured["url"] == "https://crm.example/api/channels/shopee/heartbeat"
+    assert captured["auth"] == "Bearer secret-token"
+    assert captured["body"] == b'{"state": "error", "error_code": "edge_locked"}'
+    assert captured["timeout"] == 3
+
+
+def test_connector_retry_is_acknowledged_only_for_the_current_request(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "business_id": 7,
+        "channel_type": "tiktok",
+        "status": "active",
+        "config": {
+            "connector_retry_id": "retry-1234567890",
+            "connector_retry_requested_at": datetime.now(timezone.utc).isoformat(),
+        },
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query):
+            return channel
+
+        @staticmethod
+        def commit():
+            pass
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+
+    pending = local_connectors.report_connector_heartbeat(
+        "tiktok", local_connectors.ConnectorHeartbeatRequest(), "Bearer connector-token", object()
+    )
+    assert pending["retry_id"] == "retry-1234567890"
+
+    acknowledged = local_connectors.report_connector_heartbeat(
+        "tiktok",
+        local_connectors.ConnectorHeartbeatRequest(retry_ack_id="retry-1234567890"),
+        "Bearer connector-token",
+        object(),
+    )
+    assert acknowledged["retry_acknowledged"] is True
+    assert "connector_retry_id" not in channel.config
+
+
+def test_retry_command_restarts_only_after_server_ack(monkeypatch):
+    calls = []
+    monkeypatch.setattr(connector_pairing, "report_connector_status", lambda *args, **kwargs: {"retry_acknowledged": True})
+    monkeypatch.setattr(connector_pairing, "_restart_connector_process", lambda: calls.append("restart"))
+
+    assert connector_pairing._acknowledge_retry_and_restart("tiktok", "https://crm.example", "token", "retry-1")
+    assert calls == ["restart"]
+
+
+def test_shop_admin_retry_queues_restart_only_for_a_live_paired_connector(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "business_id": 7,
+        "channel_type": "shopee",
+        "status": "active",
+        "config": {
+            "provider": "shopee_local_connector",
+            "connector_paired_at": 123,
+            "connector_last_seen_at": datetime.now(timezone.utc).isoformat(),
+        },
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query):
+            return channel
+
+    class PlatformSession:
+        @staticmethod
+        def commit():
+            pass
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(onboarding, "_require_shop_admin", lambda *_args: None)
+    monkeypatch.setattr(onboarding, "tenant_session", tenant_session)
+    monkeypatch.setattr(onboarding, "record_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(onboarding, "schema_name_for", lambda _business_id: "shop_7")
+    result = onboarding.retry_local_connector(7, "shopee", PlatformSession(), type("User", (), {"id": 3})())
+
+    assert result["status"] == "retry_queued"
+    assert result["requires_local_device"] is True
+    assert channel.config["connector_retry_id"]
+    assert channel.config["connector_retry_requested_at"]
+
+
+def test_shop_admin_retry_explains_offline_connector(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "business_id": 7,
+        "channel_type": "tiktok",
+        "status": "active",
+        "config": {
+            "provider": "tiktok_local_connector",
+            "connector_paired_at": 123,
+            "connector_last_seen_at": "2020-01-01T00:00:00+00:00",
+        },
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query):
+            return channel
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(onboarding, "_require_shop_admin", lambda *_args: None)
+    monkeypatch.setattr(onboarding, "tenant_session", tenant_session)
+    monkeypatch.setattr(onboarding, "schema_name_for", lambda _business_id: "shop_7")
+    with pytest.raises(HTTPException, match="ngoại tuyến"):
+        onboarding.retry_local_connector(7, "tiktok", object(), type("User", (), {"id": 3})())
+
+
+def test_shop_admin_retry_rejects_non_local_channel(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "business_id": 7,
+        "channel_type": "tiktok",
+        "status": "active",
+        "config": {
+            "provider": "official_tiktok_api",
+            "connector_paired_at": 123,
+            "connector_last_seen_at": datetime.now(timezone.utc).isoformat(),
+        },
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query):
+            return channel
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(onboarding, "_require_shop_admin", lambda *_args: None)
+    monkeypatch.setattr(onboarding, "tenant_session", tenant_session)
+    monkeypatch.setattr(onboarding, "schema_name_for", lambda _business_id: "shop_7")
+    with pytest.raises(HTTPException) as error:
+        onboarding.retry_local_connector(7, "tiktok", object(), type("User", (), {"id": 3})())
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "connector_not_paired"
 
 
 def test_connector_rejects_wrong_type_and_malformed_tokens():
@@ -83,6 +308,27 @@ def test_shopee_incoming_new_webchat_message_is_not_dropped():
     assert message["messageId"] == "msg-1"
     assert message["threadId"] == "conversation-1"
     assert message["message"] == "Hello shop"
+
+
+def test_shopee_system_card_does_not_become_customer_question(monkeypatch):
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(
+        local_connectors, "process_and_save_message",
+        lambda **_kwargs: pytest.fail("system card must not be saved as customer chat"),
+    )
+
+    result = asyncio.run(local_connectors.receive_local_connector_message(
+        "shopee",
+        {
+            "authorId": "buyer-1", "threadId": "thread-42", "messageId": "card-1",
+            "message": "[out_of_stock_reminder_card]",
+            "messageType": "out_of_stock_reminder_card",
+        },
+        "Bearer connector-token",
+        object(),
+    ))
+
+    assert result == {"status": "ignored", "processed": 0}
 
 
 def test_local_connector_persists_thread_id_for_outbound_replies(monkeypatch):
@@ -352,13 +598,19 @@ def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
             return 0
 
     class Page:
+        visible_messages = 0
+
         @staticmethod
         def is_closed():
             return False
 
         @staticmethod
-        async def evaluate(_script, _payload):
-            return {"found": True, "selected": True}
+        async def evaluate(script, payload):
+            if "threadId" in payload:
+                return {"found": True, "selected": True}
+            assert script == shopee_bot.SHOPEE_MESSAGE_COUNT_JS
+            assert payload == "Xin chào"
+            return Page.visible_messages
 
         @staticmethod
         async def wait_for_timeout(_milliseconds):
@@ -370,8 +622,10 @@ def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
             return ComposerLocator() if "textarea:visible" in selector else SendIconsLocator()
 
         @staticmethod
-        async def wait_for_function(_script, timeout):
-            assert timeout == 8000
+        async def wait_for_function(script, _payload=None, timeout=0):
+            assert timeout in (8000, 10000)
+            if script == shopee_bot.SHOPEE_MESSAGE_APPEARED_JS:
+                assert Page.visible_messages == 0
 
         @staticmethod
         def get_by_text(_text, exact):
@@ -383,6 +637,69 @@ def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
 
     assert result["status"] == "sent"
     assert actions == [("fill", "Xin chào"), ("click", "send-icon")]
+
+
+def test_shopee_outbound_does_not_report_success_when_chat_does_not_acknowledge(monkeypatch):
+    class Composer:
+        async def fill(self, _text):
+            pass
+
+    class ComposerLocator:
+        async def count(self):
+            return 1
+
+        def nth(self, _index):
+            return Composer()
+
+    class SendIcon:
+        async def click(self):
+            pass
+
+    class SendIconsLocator:
+        async def evaluate_all(self, _script):
+            return 0
+
+        def nth(self, _index):
+            return SendIcon()
+
+    class NoWarning:
+        async def count(self):
+            return 0
+
+    class Page:
+        @staticmethod
+        def is_closed():
+            return False
+
+        @staticmethod
+        async def evaluate(script, payload):
+            if "threadId" in payload:
+                return {"found": True, "selected": True}
+            assert script == shopee_bot.SHOPEE_MESSAGE_COUNT_JS
+            return 0
+
+        @staticmethod
+        async def wait_for_timeout(_milliseconds):
+            pass
+
+        @staticmethod
+        async def wait_for_function(script, _payload=None, timeout=0):
+            if script == shopee_bot.SHOPEE_MESSAGE_APPEARED_JS:
+                assert timeout == 10000
+                raise TimeoutError("message did not appear")
+
+        @staticmethod
+        def locator(selector):
+            return ComposerLocator() if "textarea:visible" in selector else SendIconsLocator()
+
+        @staticmethod
+        def get_by_text(_text, exact):
+            assert exact is False
+            return NoWarning()
+
+    monkeypatch.setattr(shopee_bot, "CONTROL_PAGE", Page())
+    with pytest.raises(shopee_bot.ShopeeDeliveryUnknown, match="trạng thái gửi chưa xác nhận"):
+        asyncio.run(shopee_bot.send_shopee_message("thread-1", "Xin chào"))
 
 
 def test_shopee_outbound_surfaces_platform_moderation_warning(monkeypatch):

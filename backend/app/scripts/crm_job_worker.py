@@ -48,7 +48,7 @@ def run_once() -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Dispatch due CRM and knowledge-base jobs.")
     parser.add_argument("--once", action="store_true", help="Run one polling cycle then exit.")
-    parser.add_argument("--poll-seconds", type=float, default=5.0, help="Delay between polling cycles.")
+    parser.add_argument("--poll-seconds", type=float, default=1.0, help="Delay between polling cycles.")
     args = parser.parse_args()
     poll_seconds = max(0.5, args.poll_seconds)
     settings.validate_runtime()

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.bases import TenantBase
@@ -52,6 +52,9 @@ class Customer(TenantBase):
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     custom_fields: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    fact_extraction_opt_out: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     avatar_url: Mapped[str | None] = mapped_column(
         String,

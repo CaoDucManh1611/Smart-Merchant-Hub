@@ -567,6 +567,8 @@ class CustomerCollectionFlowTests(unittest.TestCase):
         self.assertTrue(is_price_quote_request("Tôi muốn mua bin 20 sản phẩm thì giá như nào"))
         self.assertTrue(is_price_quote_request("giá của 18 cái bin"))
         self.assertTrue(is_stock_query_request("tôi muốn mua 20 cái bin bạn có không"))
+        self.assertTrue(is_stock_query_request("Serum còn hàng không ạ?"))
+        self.assertTrue(is_stock_query_request("Mẫu 1.8 lít còn hàng không?"))
         self.assertFalse(is_price_quote_request("Điện gia dụng mẫu 01 giá bao nhiêu và còn bao nhiêu sản phẩm"))
         self.assertFalse(is_order_intent("Tôi muốn mua sản phẩm bạn có gì"))
         self.assertFalse(is_order_intent("tôi muốn mua 20 cái bin bạn có không"))
@@ -685,6 +687,82 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             session = db.query(CustomerCollectionSession).filter_by(conversation_id=590).one()
             self.assertEqual(20, session.collected_fields["quantity"])
 
+    def test_explicit_quantity_correction_replaces_but_add_more_increments(self):
+        with Session(self.engine) as db:
+            quote = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee",
+                text="Mình muốn mua 2 Serum",
+            )
+            self.assertIn("mua 2 Serum", quote.prompt)
+
+            corrected = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee",
+                text="À mình đổi thành 3 Serum, tính lại giúp mình. Chưa xác nhận mua nhé.",
+            )
+            self.assertIn("mua 3 Serum", corrected.prompt)
+            self.assertIn("600.000 đồng", corrected.prompt)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=5901).one()
+            self.assertEqual(3, session.collected_fields["quantity"])
+
+            added = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee",
+                text="Thêm 2 Serum nữa nhé",
+            )
+            self.assertIn("mua 5 Serum", added.prompt)
+
+            corrected_from = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee",
+                text="Mình đổi từ 5 thành 3 Serum nhé",
+            )
+            self.assertIn("mua 3 Serum", corrected_from.prompt)
+
+            decreased = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee",
+                text="Bớt 1 Serum nhé",
+            )
+            self.assertIn("mua 2 Serum", decreased.prompt)
+            self.assertIn("400.000 đồng", decreased.prompt)
+
+            invalid = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee",
+                text="Bớt 3 Serum nhé",
+            )
+            self.assertIn("ít nhất 1", invalid.prompt)
+            db.refresh(session)
+            self.assertEqual(2, session.collected_fields["quantity"])
+
+            product = db.query(Product).filter_by(business_id=self.business_id, name="Serum").one()
+            product.price = Decimal("210000")
+            db.commit()
+            repriced = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee",
+                text="Đổi thành 3 Serum nhé",
+            )
+            self.assertIn("630.000 đồng", repriced.prompt)
+
+            accepted = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee", text="Xác nhận",
+            )
+            self.assertEqual("partial", accepted.status)
+            changed_after_acceptance = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=5901, source_channel="shopee", text="Thêm 3 nữa",
+            )
+            self.assertIn("mua 6 Serum", changed_after_acceptance.prompt)
+            db.refresh(session)
+            self.assertEqual("order_confirmation", session.purpose)
+            self.assertEqual(6, session.collected_fields["quantity"])
+            product.price = Decimal("200000")
+            db.commit()
+
     def test_commerce_corpus_dialogues_never_create_orders_before_checkout_verification(self):
         corpus_path = Path(__file__).resolve().parents[2] / "docs" / "commerce-nlu-evaluation-set.json"
         dialogues = [
@@ -794,7 +872,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                     ).count(),
                 )
 
-    def test_stock_question_reports_availability_before_collecting_customer_data(self):
+    def test_stock_question_stays_out_of_checkout_flow(self):
         with Session(self.engine) as db:
             result = advance_customer_collection(
                 db,
@@ -805,13 +883,64 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 text="tôi muốn mua 20 cái bin bạn có không",
             )
 
-            self.assertTrue(result.started)
-            self.assertEqual("stock_unavailable", result.status)
-            self.assertIsNone(result.current_field)
-            self.assertIn("chỉ còn 18", result.prompt)
+            # Availability questions stay in the assistant route; a stock
+            # question must never start or mutate a checkout quote.
+            self.assertIsNone(result)
             self.assertEqual(
                 0,
                 db.query(CustomerCollectionSession).filter_by(conversation_id=54).count(),
+            )
+            self.assertEqual(
+                0,
+                db.query(Order).filter_by(conversation_id=54).count(),
+            )
+
+    def test_product_model_number_in_stock_question_never_starts_checkout(self):
+        with Session(self.engine) as db:
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=542,
+                source_channel="shopee",
+                text="Shop ơi, mẫu 1.8 lít Serum còn hàng không ạ?",
+            )
+
+            self.assertIsNone(result)
+            self.assertEqual(
+                0,
+                db.query(CustomerCollectionSession).filter_by(conversation_id=542).count(),
+            )
+            self.assertEqual(0, db.query(Order).filter_by(conversation_id=542).count())
+
+    def test_stock_question_without_quantity_does_not_cancel_pending_quote(self):
+        with Session(self.engine) as db:
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=541,
+                source_channel="instagram",
+                text="Mình muốn mua Serum",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=541,
+                source_channel="instagram",
+                text="Serum còn hàng không ạ?",
+            )
+
+            self.assertIsNone(result)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=541).one()
+            self.assertEqual("pending", session.status)
+            self.assertEqual("order_confirmation", session.current_field)
+            self.assertEqual(
+                0,
+                db.query(Order).filter_by(conversation_id=541).count(),
             )
 
     def test_price_of_quantity_starts_quote_before_collecting_customer_data(self):
@@ -1297,6 +1426,42 @@ class CustomerCollectionFlowTests(unittest.TestCase):
 
             self.assertEqual("order_confirmation", result.current_field)
             self.assertIn("4.794.000 đồng", result.prompt)
+
+    def test_quote_only_quantity_correction_keeps_previous_product_without_order(self):
+        with Session(self.engine) as db:
+            orders_before = db.query(Order).filter(Order.business_id == self.business_id).count()
+            db.add(Message(
+                conversation_id=58111, channel="shopee", direction="inbound",
+                content="Nếu lấy 2 Serum Vitamin C Lunari thì tổng bao nhiêu? Chỉ hỏi giá, chưa đặt hàng.",
+            ))
+            db.commit()
+            first = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=58111, source_channel="shopee",
+                text="Nếu lấy 2 Serum Vitamin C Lunari thì tổng bao nhiêu? Chỉ hỏi giá, chưa đặt hàng.",
+            )
+            self.assertIn("840.000 đồng", first.prompt)
+            self.assertEqual("catalog_answer", first.status)
+
+            revised = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=58111, source_channel="shopee",
+                text="Đổi thành 3 chai thì tổng tiền bao nhiêu? Vẫn chỉ hỏi giá, chưa đặt hàng.",
+            )
+            self.assertIsNotNone(revised)
+            self.assertIn("1.260.000 đồng", revised.prompt)
+            self.assertEqual("catalog_answer", revised.status)
+            self.assertEqual(orders_before, db.query(Order).filter(Order.business_id == self.business_id).count())
+
+            explicit = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=58111, source_channel="shopee",
+                text="Ý mình là 3 Serum Vitamin C Lunari, tính tổng giúp mình, không tạo đơn.",
+            )
+            self.assertIsNotNone(explicit)
+            self.assertIn("1.260.000 đồng", explicit.prompt)
+            self.assertEqual("catalog_answer", explicit.status)
+            self.assertEqual(orders_before, db.query(Order).filter(Order.business_id == self.business_id).count())
 
     def test_price_question_reports_insufficient_stock_without_starting_checkout(self):
         with Session(self.engine) as db:

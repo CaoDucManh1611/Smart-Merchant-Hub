@@ -115,8 +115,8 @@ class ZaloWebhookApiTests(unittest.TestCase):
 
     def test_valid_secret_persists_zalo_message_under_channel_tenant(self):
         with patch(
-            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
-        ), patch("app.services.auto_reply_service.process_rag_auto_reply_background"):
+            "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
+        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"):
             response = self.client.post(
                 "/api/webhooks/zalo",
                 headers={"X-Bot-Api-Secret-Token": "zalo-secret-1"},
@@ -153,8 +153,8 @@ class ZaloWebhookApiTests(unittest.TestCase):
                 "avatar_url": "https://cdn.example/zalo-profile.jpg",
             },
         ), patch(
-            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
-        ), patch("app.services.auto_reply_service.process_rag_auto_reply_background"):
+            "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
+        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"):
             response = self.client.post(
                 "/api/webhooks/zalo",
                 headers={"X-Bot-Api-Secret-Token": "zalo-secret-1"},
@@ -187,8 +187,8 @@ class ZaloWebhookApiTests(unittest.TestCase):
                 "avatar_url": "https://cdn.example/oa-avatar.jpg",
             },
         ), patch(
-            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
-        ), patch("app.services.auto_reply_service.process_rag_auto_reply_background"):
+            "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
+        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"):
             response = self.client.post(
                 "/api/webhooks/zalo",
                 headers={
@@ -234,8 +234,8 @@ class ZaloWebhookApiTests(unittest.TestCase):
 
     def test_duplicate_zalo_delivery_is_acknowledged_without_duplicate_message(self):
         with patch(
-            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
-        ), patch("app.services.auto_reply_service.process_rag_auto_reply_background"):
+            "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
+        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"):
             first = self.client.post(
                 "/api/webhooks/zalo",
                 headers={"X-Bot-Api-Secret-Token": "zalo-secret-1"},
@@ -259,9 +259,9 @@ class ZaloWebhookApiTests(unittest.TestCase):
         """A failed acknowledgement must be recoverable without replaying side effects."""
         payload = self.text_payload("z-msg-recoverable")
         with patch(
-            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
+            "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
         ), patch(
-            "app.services.auto_reply_service.process_rag_auto_reply_background"
+            "app.services.conversation_turn_service.schedule_chatbot_turn"
         ) as auto_reply, patch(
             "app.api.zalo.mark_channel_event_processed",
             side_effect=RuntimeError("event status write failed"),
@@ -288,9 +288,9 @@ class ZaloWebhookApiTests(unittest.TestCase):
             self.assertEqual("failed", event.status)
 
         with patch(
-            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
+            "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
         ), patch(
-            "app.services.auto_reply_service.process_rag_auto_reply_background"
+            "app.services.conversation_turn_service.schedule_chatbot_turn"
         ) as retry_auto_reply:
             recovered = self.client.post(
                 "/api/webhooks/zalo",
@@ -323,8 +323,8 @@ class ZaloWebhookApiTests(unittest.TestCase):
             "sticker": {"url": "https://example.com/s.webp", "id": "sticker-1"},
         })
         with patch(
-            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
-        ), patch("app.services.auto_reply_service.process_rag_auto_reply_background"):
+            "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
+        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"):
             response = self.client.post(
                 "/api/webhooks/zalo",
                 headers={"X-Bot-Api-Secret-Token": "zalo-secret-1"},

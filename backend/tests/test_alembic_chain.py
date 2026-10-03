@@ -9,6 +9,53 @@ from alembic.script import ScriptDirectory
 
 
 class AlembicChainTests(unittest.TestCase):
+    def test_email_change_migration_keeps_bootstrapped_table(self):
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260923_0055_user_email_change_challenges.py"
+        )
+        spec = spec_from_file_location("email_change_migration", migration_path)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with (
+            patch.object(module.op, "get_bind", return_value=object()),
+            patch.object(module.sa, "inspect") as inspect,
+            patch.object(module.op, "create_table") as create_table,
+            patch.object(module.op, "create_index") as create_index,
+        ):
+            inspect.return_value.has_table.return_value = True
+            module.upgrade()
+
+        create_table.assert_not_called()
+        create_index.assert_not_called()
+
+    def test_email_change_migration_creates_table_when_missing(self):
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20260923_0055_user_email_change_challenges.py"
+        )
+        spec = spec_from_file_location("email_change_migration_missing", migration_path)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with (
+            patch.object(module.op, "get_bind", return_value=object()),
+            patch.object(module.sa, "inspect") as inspect,
+            patch.object(module.op, "create_table") as create_table,
+            patch.object(module.op, "create_index") as create_index,
+        ):
+            inspect.return_value.has_table.return_value = False
+            module.upgrade()
+
+        create_table.assert_called_once()
+        self.assertEqual("user_email_change_challenges", create_table.call_args.args[0])
+        self.assertEqual(5, create_index.call_count)
+
     def test_platform_migration_ledger_is_idempotent_for_bootstrapped_database(self):
         migration_path = (
             Path(__file__).parents[1]
@@ -63,7 +110,8 @@ class AlembicChainTests(unittest.TestCase):
         config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
         scripts = ScriptDirectory.from_config(config)
 
-        self.assertEqual(["20260922_0054"], scripts.get_heads())
+        self.assertEqual(["20260923_0055"], scripts.get_heads())
+        self.assertEqual("20260922_0054", scripts.get_revision("20260923_0055").down_revision)
         self.assertEqual("20260919_0045", scripts.get_revision("20260919_0046").down_revision)
         self.assertEqual("20260919_0044", scripts.get_revision("20260919_0045").down_revision)
         self.assertEqual("20260919_0043", scripts.get_revision("20260919_0044").down_revision)

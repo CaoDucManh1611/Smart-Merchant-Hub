@@ -54,6 +54,7 @@ class CustomerProfileOut(BaseModel):
     address: str | None = None
     custom_fields: dict[str, Any] = Field(default_factory=dict)
     avatar_url: str | None = None
+    fact_extraction_opt_out: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
     identities: list[CustomerIdentityOut] = Field(default_factory=list)
@@ -129,6 +130,17 @@ class CustomerFactExtractionStatusRequest(BaseModel):
 
 class CustomerFactExtractionStatusOut(BaseModel):
     enabled: bool
+
+
+class CustomerFactCollectionRequest(BaseModel):
+    opt_out: bool
+    delete_existing_extracted: bool = True
+
+
+class CustomerFactCollectionOut(BaseModel):
+    customer_id: int
+    opt_out: bool
+    deleted_extracted_facts: int = 0
 
 
 class CustomerTagCreate(BaseModel):

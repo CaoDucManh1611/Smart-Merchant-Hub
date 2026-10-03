@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
+from pathlib import Path
+
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
 
 from app.database.platform_session import PlatformSessionLocal
-from app.database.session import SessionLocal
 from app.database.tenant_session import tenant_session
+from app.scripts.sqlite_snapshot import create_sqlite_snapshot, validate_sqlite_snapshot
 from app.services.tenant_cutover_service import (
     DEFAULT_TABLE_ORDER,
     begin_cutover,
@@ -19,14 +24,15 @@ from app.services.tenant_cutover_service import (
     validate_destination_foreign_keys,
     verify_business,
 )
-from app.models.platform_control import TenantRegistry
-from sqlalchemy import select
+from app.models.platform_control import TenantMigrationOperation, TenantRegistry
 from app.tenancy.schema import schema_name_for
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Migrate one shop into its schema")
     parser.add_argument("business_id", type=int)
+    parser.add_argument("--sqlite-source", type=Path, help="Create a consistent backup of a legacy SQLite database")
+    parser.add_argument("--sqlite-backup", type=Path, help="Required snapshot path for SQLite source/restore runs")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--cutover",
@@ -44,6 +50,12 @@ def main() -> int:
     args = parser.parse_args()
     business_id = int(args.business_id)
 
+    if args.sqlite_source and not args.sqlite_backup:
+        parser.error("--sqlite-source requires --sqlite-backup so the source is never modified")
+    if args.sqlite_source and not args.dry_run:
+        parser.error("Create and review the SQLite snapshot with --dry-run first; use --sqlite-backup for cutover")
+    if args.sqlite_source and (args.rollback or args.complete):
+        parser.error("SQLite source options are only used for dry-run/copy; rollback/complete do not need them")
     if not args.dry_run and not args.rollback and not args.cutover and not args.complete:
         parser.error("a write migration requires explicit --cutover approval")
     if args.dry_run and (args.cutover or args.rollback or args.complete):
@@ -53,8 +65,16 @@ def main() -> int:
     if (args.cutover or args.rollback or args.complete) and not args.operation_id:
         parser.error("--operation-id is required for cutover, complete, and rollback")
 
+    if args.sqlite_backup and not (args.rollback or args.complete):
+        if args.sqlite_source:
+            sqlite_manifest = create_sqlite_snapshot(args.sqlite_source, args.sqlite_backup)
+        else:
+            sqlite_manifest = validate_sqlite_snapshot(args.sqlite_backup)
+        print(json.dumps({"sqlite_snapshot": sqlite_manifest}, ensure_ascii=False))
+
     platform_db = PlatformSessionLocal()
-    source_db = SessionLocal()
+    source_engine = None
+    source_db = None
     try:
         registry = platform_db.scalar(
             select(TenantRegistry).where(TenantRegistry.business_id == business_id)
@@ -98,6 +118,17 @@ def main() -> int:
                 "tenant_revision": str(completed.tenant_revision or ""),
             }, ensure_ascii=False))
             return 0
+        if not args.rollback and not args.complete:
+            if args.sqlite_backup:
+                snapshot = args.sqlite_backup.resolve(strict=True)
+                source_engine = create_engine(
+                    "sqlite+pysqlite://",
+                    creator=lambda: sqlite3.connect(f"{snapshot.as_uri()}?mode=ro", uri=True, timeout=30),
+                )
+                source_db = sessionmaker(bind=source_engine, autoflush=False, autocommit=False)()
+            else:
+                from app.database.session import SessionLocal
+                source_db = SessionLocal()
         if not args.dry_run:
             begin_cutover(
                 platform_db,
@@ -131,6 +162,8 @@ def main() -> int:
                 cursors=migration_cursors,
                 dry_run=args.dry_run,
             )
+            if not results:
+                raise RuntimeError("No compatible shop tables found in the source snapshot; refusing an empty migration")
             if not args.dry_run:
                 tenant_db.commit()
                 report = verify_business(
@@ -171,7 +204,10 @@ def main() -> int:
                 platform_db.rollback()
         raise
     finally:
-        source_db.close()
+        if source_db is not None:
+            source_db.close()
+        if source_engine is not None:
+            source_engine.dispose()
         platform_db.close()
 
 

@@ -139,9 +139,9 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
         ig_path, ig_body, ig_headers = self._meta_request("/api/webhooks/instagram", instagram, app_secret)
 
         with patch.object(settings, "ENVIRONMENT", "production"), patch.object(settings, "META_APP_SECRET", app_secret), patch(
-            "app.services.customer_fact_extractor.process_customer_fact_extraction_background"
+            "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
         ), patch(
-            "app.services.auto_reply_service.process_rag_auto_reply_background"
+            "app.services.conversation_turn_service.schedule_chatbot_turn"
         ):
             responses = [
                 self.client.post(fb_path, content=fb_body, headers=fb_headers),

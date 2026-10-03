@@ -1868,64 +1868,62 @@ def process_and_save_message(
     if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded and not transactional_reply:
         if saved_message and saved_message.get("message_id"):
             try:
-                from app.services.customer_fact_extractor import (
-                    process_customer_fact_extraction_background,
-                )
+                from app.services.customer_fact_extractor import schedule_customer_fact_extraction
 
-                process_customer_fact_extraction_background(
+                schedule_customer_fact_extraction(
+                    db,
                     business_id=int(business_id),
                     customer_id=int(customer_id),
                     source_message_id=int(saved_message["message_id"]),
-                    content=str(message.get("content")),
                 )
             except Exception:
                 logger.warning("Customer fact extraction trigger failed")
-        try:
-            from app.services.customer_collection_flow import (
-                advance_customer_collection,
-                send_collection_prompt_background,
-            )
-
-            collection_result = advance_customer_collection(
-                db,
-                business_id=int(business_id),
-                customer_id=int(customer_id),
-                conversation_id=int(conversation_id),
-                source_channel=str(channel),
-                text=str(message.get("content")),
-            )
-            if collection_result is not None:
-                send_collection_prompt_background(
-                    result=collection_result,
-                    conversation_id=int(conversation_id),
-                    channel=str(channel),
-                    business_id=int(business_id),
-                    auto_reply_key=(
-                        f"{auto_reply_base_key}:collection"
-                        if auto_reply_base_key
-                        else None
-                    ),
+        # Shopee/TikTok buyers often send one thought in several messages.
+        # Their collection flow runs once on the coalesced turn in the job
+        # worker; handling it here would send a quote for every fragment.
+        if channel not in {"shopee", "tiktok"}:
+            try:
+                from app.services.customer_collection_flow import (
+                    advance_customer_collection,
+                    send_collection_prompt_background,
                 )
-        except Exception:
-            # Collection is an enhancement on top of the accepted inbound
-            # message; a malformed session must not make the webhook fail.
-            logger.warning("Customer collection trigger failed", exc_info=True)
+
+                collection_result = advance_customer_collection(
+                    db,
+                    business_id=int(business_id),
+                    customer_id=int(customer_id),
+                    conversation_id=int(conversation_id),
+                    source_channel=str(channel),
+                    text=str(message.get("content")),
+                )
+                if collection_result is not None:
+                    send_collection_prompt_background(
+                        result=collection_result,
+                        conversation_id=int(conversation_id),
+                        channel=str(channel),
+                        business_id=int(business_id),
+                        auto_reply_key=(
+                            f"{auto_reply_base_key}:collection"
+                            if auto_reply_base_key
+                            else None
+                        ),
+                    )
+            except Exception:
+                # Collection is an enhancement on top of the accepted inbound
+                # message; a malformed session must not make the webhook fail.
+                logger.warning("Customer collection trigger failed", exc_info=True)
 
         if collection_result is None:
             try:
-                from app.services.auto_reply_service import process_rag_auto_reply_background
+                from app.services.conversation_turn_service import schedule_chatbot_turn
 
-                process_rag_auto_reply_background(
-                    conversation_id=conversation_id,
-                    channel=channel,
-                    query_text=message.get("content"),
-                    business_id=int(business_id),
-                    auto_reply_key=(
-                        f"{auto_reply_base_key}:rag"
-                        if auto_reply_base_key
-                        else None
-                    ),
-                )
+                if saved_message and saved_message.get("message_id") and message.get("content"):
+                    schedule_chatbot_turn(
+                        db,
+                        conversation_id=int(conversation_id),
+                        message_id=int(saved_message["message_id"]),
+                        business_id=int(business_id),
+                    )
             except Exception:
                 logger.warning("Auto-reply trigger failed")
 

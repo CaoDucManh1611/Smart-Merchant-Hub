@@ -145,9 +145,16 @@ PRICE_QUERY_PHRASES = (
 STOCK_QUERY_PHRASES = (
     "co khong",
     "con khong",
+    "con hang",
     "con hang khong",
+    "con may chiec",
+    "con may cai",
+    "con bao nhieu chiec",
+    "con bao nhieu cai",
     "du khong",
     "co san khong",
+    "in stock",
+    "available",
 )
 GENERIC_PURCHASE_WORDS = {"hang", "do", "san", "pham"}
 ENGLISH_QUANTITY_WORDS = {
@@ -178,6 +185,7 @@ BROWSING_PHRASES = (
 PHONE_PATTERN = re.compile(r"(?:\+?84|0)(?:[\s.-]?\d){8,10}")
 EMAIL_PATTERN = re.compile(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b")
 QUANTITY_PATTERN = re.compile(r"\b(\d{1,4})\b")
+PRODUCT_MEASURE_UNITS = re.compile(r"\s*(?:ml|l|lit|kg|g|cm|mm)\b")
 PRODUCT_QUERY_STOP_WORDS = {
     "bao", "bay", "co", "cai", "cho", "gi", "gia", "het", "hang", "la",
     "mua", "nhieu", "san", "pham", "thanh", "thi", "tien", "toi", "tong",
@@ -292,16 +300,15 @@ def is_price_quote_request(text: str | None) -> bool:
     folded = _fold(str(text or ""))
     return _has_explicit_quantity(folded) and (
         any(phrase in folded for phrase in PRICE_QUERY_PHRASES)
+        or bool(re.search(r"\b(?:tong tien|tinh tong|tong cong)\b", folded))
         or any(phrase in folded for phrase in ENGLISH_PRICE_PHRASES)
     )
 
 
 def is_stock_query_request(text: str | None) -> bool:
-    """Detect a quantity/availability question, not a confirmed purchase."""
+    """Detect an availability question, not a confirmed purchase."""
     folded = _fold(str(text or ""))
-    return _has_explicit_quantity(folded) and any(
-        phrase in folded for phrase in STOCK_QUERY_PHRASES
-    )
+    return any(phrase in folded for phrase in STOCK_QUERY_PHRASES)
 
 
 def _has_explicit_quantity(text: str) -> bool:
@@ -312,6 +319,8 @@ def _has_explicit_quantity(text: str) -> bool:
     checkout for a simple price/stock question.
     """
     for match in QUANTITY_PATTERN.finditer(text):
+        if _is_product_measurement(text, match):
+            continue
         prefix = text[max(0, match.start() - 16):match.start()]
         if re.search(r"(?:\b(?:mau|model|sku|ma)\s*)$", prefix):
             continue
@@ -326,6 +335,13 @@ def _has_explicit_quantity(text: str) -> bool:
         ):
             return True
     return False
+
+
+def _is_product_measurement(text: str, match: re.Match[str]) -> bool:
+    """A capacity/size in a product name is not an order quantity."""
+    before = text[match.start() - 1:match.start()] if match.start() else ""
+    after = text[match.end():match.end() + 12]
+    return before in {".", ","} or after.startswith((".", ",")) or bool(PRODUCT_MEASURE_UNITS.match(after))
 
 
 def _is_checkout_information_question(text: str) -> bool:
@@ -373,8 +389,13 @@ def _invoice_confirmation_prompt(order: Order, *, payment_method: str | None = N
 
 
 def _extract_quantity(text: str) -> int:
-    folded = re.sub(r"[^\w\s]", " ", _fold(text))
+    folded = _fold(text)
+    correction = re.search(r"\b(?:doi|sua|thay)(?:\s+tu\s+\d+)?\s+(?:thanh|bang)\s+", folded)
+    if correction:
+        folded = folded[correction.end():]
     for match in QUANTITY_PATTERN.finditer(folded):
+        if _is_product_measurement(folded, match):
+            continue
         prefix = folded[max(0, match.start() - 16):match.start()]
         if not re.search(r"(?:\b(?:mau|model|sku|ma)\s*)$", prefix):
             return int(match.group(1))
@@ -399,6 +420,21 @@ def _is_quantity_only_update(text: str) -> bool:
         r"(?:\s+(?:do|nay|thoi|nhe|please))?",
         folded,
     ))
+
+
+def _is_quantity_replacement(text: str) -> bool:
+    """A correction changes the quoted quantity; explicit add wording increments it."""
+    folded = " ".join(_fold(str(text or "")).split())
+    if any(phrase in folded for phrase in ("mua them", "them vao", "add ", "another ")):
+        return False
+    return any(phrase in folded for phrase in (
+        "doi thanh", "doi tu", "sua thanh", "thay bang", "change to", "change it to",
+        "make that", "make it", "set it to", "actually make",
+    )) or bool(re.search(r"\blay\s+\d+\s+(?:cai|chiec|bo|thoi)\b", folded))
+
+
+def _is_quantity_decrease(text: str) -> bool:
+    return bool(re.search(r"\b(?:bot|giam|tru)\s+\d+\b", _fold(text)))
 
 
 def _is_underspecified_purchase_request(text: str | None) -> bool:
@@ -552,6 +588,8 @@ def _refresh_quote_stock(db: Session, business_id: int, items: list[dict]) -> No
         if product is None:
             item["available"] = 0
             continue
+        item["unit_price"] = str(Decimal(str(product.price or 0)))
+        item["product_name"] = product.name
         item["product_name_en"] = product_display_name(product, "en")
         item["available"] = max(
             int(product.stock_quantity or 0) - int(product.reserved_quantity or 0),
@@ -713,6 +751,23 @@ def _start_product_quote(
             started=True,
         )
 
+    folded = " ".join(_fold(text).split())
+    quote_only = any(phrase in folded for phrase in (
+        "chi hoi gia", "chua dat hang", "chua xac nhan dat hang",
+        "khong tao don", "khong dat hang", "chi tinh tong", "van chi hoi gia",
+        "just asking the price", "just asking for the price", "not placing an order",
+    ))
+    if quote_only:
+        total = sum(Decimal(str(item["unit_price"])) * int(item["quantity"]) for item in items)
+        language = detect_reply_language(text)
+        names = ", ".join(f"{item['quantity']} {_quote_product_name(item, language)}" for item in items)
+        prompt = (
+            f"{names}: ₫{_format_quote_amount(total, language)} in total. No order has been placed."
+            if language == "en" else
+            f"{names}: tổng cộng {_format_vnd(total)} đồng. Mình chưa tạo đơn hàng nhé."
+        )
+        return CollectionFlowResult(session_id=0, status="catalog_answer", current_field=None, prompt=prompt)
+
     collected = {"reply_language": detect_reply_language(text)}
     total = _set_quote_items(collected, items)
     session = CustomerCollectionSession(
@@ -818,6 +873,10 @@ def _is_fresh_checkout_request(
 def is_browsing_request(text: str | None) -> bool:
     """Identify product discovery messages that must stay in RAG/chat mode."""
     folded = _fold(str(text or ""))
+    # A reference to a previously discussed item is not a request to list
+    # every product merely because it contains "mau ... khong".
+    if re.search(r"\b(?:mau|san pham)\s+(?:do|nay|vua hoi)\b", folded):
+        return False
     # A price quote is a separate flow: it must check stock and total before
     # collecting checkout details.
     if is_price_quote_request(folded) or is_stock_query_request(folded):
@@ -1677,6 +1736,16 @@ def advance_customer_collection(
     if customer is None:
         return None
 
+    # Stock questions belong to the assistant's factual catalogue route. In
+    # particular, do not let "còn hàng không?" decline an open quote or turn
+    # a product model number (for example 1.8 lít) into a checkout quantity.
+    folded_question = _fold(text)
+    if is_stock_query_request(text) or (
+        not is_price_quote_request(text)
+        and (re.search(r"\bgia\b(?!\s+dung\b)", folded_question) or any(phrase in folded_question for phrase in ENGLISH_PRICE_PHRASES))
+    ):
+        return None
+
     history_reply = _recent_quote_history_reply(
         db,
         business_id=business_id,
@@ -1702,7 +1771,7 @@ def advance_customer_collection(
                 current_field=None,
                 prompt=combo_reply,
             )
-        if is_price_quote_request(text) or is_stock_query_request(text):
+        if is_price_quote_request(text):
             # A numeric suffix in a product name (for example ``mẫu 01``) is
             # not a purchase quantity.  Only start checkout when a real
             # product mention resolves; otherwise leave the message for the
@@ -1711,8 +1780,8 @@ def advance_customer_collection(
                 db,
                 business_id=business_id,
                 text=text,
-                conversation_id=None,
-                allow_history=False,
+                conversation_id=conversation_id if _is_quantity_replacement(text) else None,
+                allow_history=_is_quantity_replacement(text),
             )
             if quoted_products:
                 return _start_product_quote(
@@ -1992,7 +2061,7 @@ def advance_customer_collection(
             draft_order_id=order.id,
         )
 
-    if is_price_quote_request(text) or is_stock_query_request(text):
+    if is_price_quote_request(text):
         session.status = "abandoned"
         session.current_field = None
         session.last_activity_at = _now()
@@ -2028,6 +2097,8 @@ def advance_customer_collection(
             allow_history=False,
         )
         is_switch = bool(additional_products and _is_product_switch_request(text))
+        is_quantity_replacement = _is_quantity_replacement(text)
+        is_quantity_decrease = _is_quantity_decrease(text)
         if _is_order_rejection(text) and not is_switch:
             session.status = "abandoned"
             session.current_field = None
@@ -2062,7 +2133,17 @@ def advance_customer_collection(
                     0,
                 )
                 existing = by_product.get(product.id)
-                requested_quantity = quantity + int(existing.get("quantity") or 0) if existing else quantity
+                requested_quantity = (
+                    quantity if existing and is_quantity_replacement
+                    else int(existing.get("quantity") or 0) - quantity if existing and is_quantity_decrease
+                    else quantity + int(existing.get("quantity") or 0) if existing
+                    else quantity
+                )
+                if requested_quantity < 1:
+                    return CollectionFlowResult(
+                        session_id=session.id, status=session.status, current_field=session.current_field,
+                        prompt="Số lượng cần còn ít nhất 1. Nếu bạn muốn hủy, hãy nhắn hủy đơn giúp mình nhé.",
+                    )
                 if existing is None:
                     try:
                         unit_price = Decimal(str(product.price or 0))
@@ -2100,7 +2181,7 @@ def advance_customer_collection(
                 prompt=_format_quote_prompt(items, language=reply_language),
             )
 
-        if _is_quantity_only_update(text):
+        if _is_quantity_only_update(text) or is_quantity_replacement or is_quantity_decrease or bool(re.search(r"\bthem\s+\d+\s+nua\b", _fold(text))):
             if len(items) != 1:
                 return CollectionFlowResult(
                     session_id=session.id,
@@ -2112,7 +2193,18 @@ def advance_customer_collection(
                         else "Đơn có nhiều sản phẩm. Bạn muốn đổi số lượng của sản phẩm nào?"
                     ),
                 )
-            items[0]["quantity"] = _extract_quantity(text)
+            quantity = _extract_quantity(text)
+            updated_quantity = (
+                int(items[0]["quantity"]) - quantity if is_quantity_decrease
+                else int(items[0]["quantity"]) + quantity if re.search(r"\bthem\s+\d+\s+nua\b", _fold(text))
+                else quantity
+            )
+            if updated_quantity < 1:
+                return CollectionFlowResult(
+                    session_id=session.id, status=session.status, current_field=session.current_field,
+                    prompt="Số lượng cần còn ít nhất 1. Nếu bạn muốn hủy, hãy nhắn hủy đơn giúp mình nhé.",
+                )
+            items[0]["quantity"] = updated_quantity
             _refresh_quote_stock(db, business_id, items)
             _set_quote_items(quote, items)
             session.collected_fields = quote
@@ -2154,6 +2246,21 @@ def advance_customer_collection(
             status=session.status,
             current_field=session.current_field,
             prompt=_collection_prompt(session.current_field, reply_language),
+        )
+
+    # Quantity edits after accepting a quote invalidate that acceptance.
+    # Return to the quote rather than treating "đổi thành 3" as a name/address.
+    if session.purpose == "order" and session.status == "partial" and (
+        _is_quantity_replacement(text) or _is_quantity_decrease(text)
+        or re.search(r"\bthem\s+\d+\s+nua\b", _fold(text))
+    ):
+        session.purpose = "order_confirmation"
+        session.status = "pending"
+        session.current_field = None
+        db.commit()
+        return advance_customer_collection(
+            db, business_id=business_id, customer_id=customer_id,
+            conversation_id=conversation_id, source_channel=source_channel, text=text,
         )
 
     if _ensure_channel_fields(session):

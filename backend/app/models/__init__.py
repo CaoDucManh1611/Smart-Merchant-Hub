@@ -58,6 +58,7 @@ from app.models.saas import SaaSUsage, QuotaReservation, PlatformMembership, Dat
 from app.models.platform_control import TenantRegistry, SupportGrant, ProvisioningOperation, TenantMigrationOperation, PlatformAudit, PlatformProviderIncident
 from app.models.channel_route import ChannelRoute
 from app.models.signup import SignupEmailChallenge
+from app.models.user_email_change import UserEmailChangeChallenge
 from app.models.industry_modules import AppointmentService, Appointment, CommercialQuote, CommercialProject, CommercialInvoice, CommercialInvoicePayment
 
 __all__ = [
@@ -152,6 +153,7 @@ __all__ = [
     "PlatformProviderIncident",
     "ChannelRoute",
     "SignupEmailChallenge",
+    "UserEmailChangeChallenge",
     "AppointmentService",
     "Appointment",
     "CommercialQuote",

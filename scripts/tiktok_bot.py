@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio, importlib, json, os, shutil, subprocess, sys
 from pathlib import Path
-from connector_pairing import configure_local_connector
+from connector_pairing import configure_local_connector, report_connector_status
 try:
     sys.stdout.reconfigure(encoding="utf-8",errors="replace")
     sys.stderr.reconfigure(encoding="utf-8",errors="replace")
@@ -302,6 +302,14 @@ def install_plugin(path: Path = PLUGIN):
         'log("🤖 RAG auto reply: CRM xử lý và gửi qua bridge theo cấu hình shop")',
     )
     code=code.replace('seen={}\n', CONTROL_CODE+'\nseen={}\n', 1)
+    # A failed CRM POST must remain retryable when TikTok repeats the event.
+    code=code.replace('        seen[k]=time.monotonic()\n', '', 1)
+    code=code.replace(
+        '        if err:\n            log("❌ Backend: "+err)\n            return\n',
+        '        if err:\n            log("❌ Backend: "+err)\n            return\n'
+        '        seen[k]=time.monotonic()\n',
+        1,
+    )
     code=code.replace(
         'async def on_start(bot):\n',
         'async def on_start(bot):\n    start_control_server(bot)\n',
@@ -646,9 +654,19 @@ def main():
     try:
         if IS_FROZEN:
             raise SystemExit(asyncio.run(_lttk_module("main")._run_all()))
-        raise SystemExit(subprocess.call([sys.executable,"main.py"],cwd=str(LTTK)))
+        result=subprocess.call([sys.executable,"main.py"],cwd=str(LTTK))
+        if result:
+            report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code="client_exit")
+        raise SystemExit(result)
     except KeyboardInterrupt:
         log("\n👋 Stop")
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code="startup_exit")
+        raise
+    except Exception as exc:
+        report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code=type(exc).__name__.lower())
+        raise
 
 def self_test():
     import sqlite3
