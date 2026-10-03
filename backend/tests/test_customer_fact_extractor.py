@@ -13,6 +13,7 @@ from app.models.customer_fact import CustomerFact
 from app.models.message import Message
 from app.services.customer_fact_extractor import (
     extract_customer_facts,
+    extract_and_persist_customer_facts,
     parse_extraction_response,
     persist_extracted_facts,
     get_customer_fact_extraction_enabled,
@@ -189,6 +190,26 @@ class CustomerFactExtractorTests(unittest.TestCase):
                     CustomerFact.fact_key == "interested_category",
                 ).count(),
             )
+
+    def test_customer_opt_out_prevents_llm_extraction_and_persistence(self):
+        with Session(self.engine) as db:
+            db.get(Customer, self.customer_id).fact_extraction_opt_out = True
+            db.commit()
+            with patch("app.services.customer_fact_extractor.reserve_ai_budget") as reserve, patch(
+                "app.services.customer_fact_extractor.call_llm"
+            ) as call:
+                facts = extract_and_persist_customer_facts(
+                    db,
+                    business_id=self.business_id,
+                    customer_id=self.customer_id,
+                    source_message_id=self.message_id,
+                    content="Tôi thích màu hồng",
+                )
+            self.assertEqual([], facts)
+            reserve.assert_not_called()
+            call.assert_not_called()
+            db.get(Customer, self.customer_id).fact_extraction_opt_out = False
+            db.commit()
 
 
 if __name__ == "__main__":

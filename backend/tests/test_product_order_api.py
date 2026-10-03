@@ -95,6 +95,38 @@ class ProductOrderApiTests(unittest.TestCase):
         self.assertIn(self.product_id, product_ids)
         self.assertNotIn(self.other_product_id, product_ids)
 
+    def test_product_url_crud_is_validated_and_tenant_scoped(self):
+        created = self.client.post(
+            "/api/products",
+            headers={"X-Business-Id": "1"},
+            json={"sku": "LINK-1", "name": "Linked item", "product_url": "https://shop.example/item/1"},
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        product_id = created.json()["id"]
+        self.assertEqual("https://shop.example/item/1", created.json()["product_url"])
+
+        read = self.client.get(f"/api/products/{product_id}", headers={"X-Business-Id": "1"})
+        self.assertEqual("https://shop.example/item/1", read.json()["product_url"])
+        self.assertEqual(404, self.client.get(f"/api/products/{product_id}", headers={"X-Business-Id": "2"}).status_code)
+
+        updated = self.client.patch(
+            f"/api/products/{product_id}",
+            headers={"X-Business-Id": "1"},
+            json={"product_url": "http://shop.example/new"},
+        )
+        self.assertEqual(200, updated.status_code, updated.text)
+        self.assertEqual("http://shop.example/new", updated.json()["product_url"])
+        self.assertEqual(422, self.client.patch(
+            f"/api/products/{product_id}",
+            headers={"X-Business-Id": "1"},
+            json={"product_url": "javascript:alert(1)"},
+        ).status_code)
+        self.assertEqual(422, self.client.post(
+            "/api/products",
+            headers={"X-Business-Id": "1"},
+            json={"sku": "LINK-BAD", "name": "Bad URL", "product_url": "https://user:password@shop.example"},
+        ).status_code)
+
     def test_product_import_restocks_existing_sku_and_creates_new_sku(self):
         with Session(self.engine) as db:
             existing = Product(
@@ -150,6 +182,34 @@ class ProductOrderApiTests(unittest.TestCase):
         self.assertEqual(422, applied.status_code, applied.text)
         with Session(self.engine) as db:
             self.assertIsNone(db.query(Product).filter_by(business_id=1, sku="DUPLICATE-01").first())
+
+    def test_product_import_saves_optional_product_url_and_rejects_unsafe_url(self):
+        valid = self.client.post(
+            "/api/products/import",
+            headers={"X-Business-Id": "1"},
+            files={"file": (
+                "product-link.csv",
+                "Mã sản phẩm,Tên sản phẩm,Giá,Tồn kho,Link sản phẩm\nLINK-IMPORT-01,Linked item,120000,2,https://shop.example/item/1\n".encode(),
+                "text/csv",
+            )},
+        )
+        self.assertEqual(200, valid.status_code, valid.text)
+        with Session(self.engine) as db:
+            product = db.query(Product).filter_by(business_id=1, sku="LINK-IMPORT-01").one()
+            self.assertEqual("https://shop.example/item/1", product.product_url)
+
+        invalid = self.client.post(
+            "/api/products/import?preview=true",
+            headers={"X-Business-Id": "1"},
+            files={"file": (
+                "unsafe-product-link.csv",
+                b"sku,name,price,stock_quantity,product_url\nLINK-IMPORT-BAD,Unsafe item,120000,2,javascript:alert(1)\n",
+                "text/csv",
+            )},
+        )
+        self.assertEqual(200, invalid.status_code, invalid.text)
+        self.assertEqual(1, invalid.json()["skipped"])
+        self.assertIn("link sản phẩm không hợp lệ", invalid.json()["errors"][0])
 
     def test_product_inventory_export_is_tenant_scoped_and_not_a_receipt_template(self):
         response = self.client.get("/api/products/export.csv", headers={"X-Business-Id": "1"})

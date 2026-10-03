@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -11,12 +11,14 @@ from app.main import app
 from app.models.business import Business
 from app.models.conversation import Conversation
 from app.models.customer import Customer
+from app.models.customer_fact import CustomerFact
 from app.models.crm_extended import CustomerTag, Tag
 from app.models.audit_log import AuditLog
 from app.models.customer_identity import CustomerIdentity
 from app.models.customer_collection import CustomerConsent
 from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.message import Message
+from app.models.sales import Order
 from app.services.customer_merge_service import duplicate_evidence
 
 
@@ -363,6 +365,145 @@ class Customer360FinalApiTests(unittest.TestCase):
             json={"name": "Không hợp lệ", "tag_ids": [999999], "match_mode": "all"},
         )
         self.assertEqual(422, response.status_code)
+
+    def test_rfm_classification_assigns_shop_scoped_tags_and_keeps_manual_tags(self):
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            ai_tag = Tag(business_id=self.business_id, name="RFM · AI nhóm 1")
+            db.add(ai_tag)
+            db.flush()
+            ai_tag_id = ai_tag.id
+            db.add(CustomerTag(
+                business_id=self.business_id,
+                customer_id=self.survivor_id,
+                tag_id=ai_tag_id,
+            ))
+            db.add_all([
+                Order(
+                    business_id=self.business_id,
+                    customer_id=self.survivor_id,
+                    order_number=f"RFM-{index}",
+                    status="completed",
+                    total_amount=100000,
+                    created_at=now,
+                )
+                for index in range(4)
+            ])
+            db.add(Order(
+                business_id=self.business_id,
+                customer_id=self.another_id,
+                order_number="RFM-OLD-1",
+                status="completed",
+                total_amount=1000,
+                created_at=now - timedelta(days=365),
+            ))
+            db.add(Order(
+                business_id=self.other_business_id,
+                customer_id=self.cross_tenant_id,
+                order_number="OTHER-RFM-1",
+                status="completed",
+                total_amount=9999999,
+                created_at=now,
+            ))
+            db.commit()
+
+        response = self.client.post("/api/customers/rfm/classify", headers=self.headers())
+        self.assertEqual(200, response.status_code, response.text)
+        result = response.json()
+        self.assertEqual(3, result["customer_count"])
+        self.assertEqual(2, result["buyer_count"])
+        self.assertEqual("queued", result["model_training"]["status"])
+        self.assertTrue(result["model_training"]["training_run_id"])
+        self.assertIn({"name": "RFM · Giá trị cao", "count": 1}, result["groups"])
+        self.assertIn({"name": "RFM · Nguy cơ rời bỏ", "count": 1}, result["groups"])
+        self.assertIn({"name": "RFM · Chưa mua", "count": 1}, result["groups"])
+
+        with Session(self.engine) as db:
+            rfm_tags = db.query(Tag).filter(
+                Tag.business_id == self.business_id,
+                Tag.name.like("RFM · %"),
+            ).all()
+            rfm_tag_ids = {tag.id for tag in rfm_tags}
+            assigned_customer_ids = {
+                link.customer_id
+                for link in db.query(CustomerTag).filter(
+                    CustomerTag.business_id == self.business_id,
+                    CustomerTag.tag_id.in_(rfm_tag_ids),
+                ).all()
+            }
+            self.assertEqual({self.survivor_id, self.duplicate_id, self.another_id}, assigned_customer_ids)
+            self.assertTrue(db.query(CustomerTag).filter_by(
+                business_id=self.business_id,
+                customer_id=self.survivor_id,
+                tag_id=self.vip_id,
+            ).first())
+            self.assertTrue(db.query(CustomerTag).filter_by(
+                business_id=self.business_id,
+                customer_id=self.survivor_id,
+                tag_id=ai_tag_id,
+            ).first())
+            self.assertFalse(db.query(CustomerTag).filter(
+                CustomerTag.customer_id == self.cross_tenant_id,
+                CustomerTag.tag_id.in_(rfm_tag_ids),
+            ).first())
+
+        other_response = self.client.post(
+            "/api/customers/rfm/classify",
+            headers=self.headers(self.other_business_id),
+        )
+        self.assertEqual(200, other_response.status_code, other_response.text)
+        self.assertEqual(1, other_response.json()["customer_count"])
+
+    def test_customer_fact_opt_out_is_tenant_scoped_and_deletes_only_inferred_facts(self):
+        with Session(self.engine) as db:
+            db.add_all([
+                CustomerFact(
+                    business_id=self.business_id,
+                    customer_id=self.survivor_id,
+                    fact_type="preference",
+                    fact_key="preferred_color",
+                    fact_value_json="pink",
+                    confidence=0.9,
+                    source_type="extracted",
+                ),
+                CustomerFact(
+                    business_id=self.business_id,
+                    customer_id=self.survivor_id,
+                    fact_type="preference",
+                    fact_key="budget_max",
+                    fact_value_json=100000,
+                    confidence=1.0,
+                    source_type="manual",
+                    is_verified=True,
+                ),
+            ])
+            db.commit()
+
+        response = self.client.patch(
+            f"/api/customers/{self.survivor_id}/fact-collection",
+            headers=self.headers(),
+            json={"opt_out": True},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(1, response.json()["deleted_extracted_facts"])
+        self.assertTrue(response.json()["opt_out"])
+
+        with Session(self.engine) as db:
+            self.assertEqual(0, db.query(CustomerFact).filter(
+                CustomerFact.customer_id == self.survivor_id,
+                CustomerFact.source_type == "extracted",
+            ).count())
+            self.assertEqual(1, db.query(CustomerFact).filter(
+                CustomerFact.customer_id == self.survivor_id,
+                CustomerFact.source_type == "manual",
+            ).count())
+
+        cross_tenant = self.client.patch(
+            f"/api/customers/{self.survivor_id}/fact-collection",
+            headers=self.headers(self.other_business_id),
+            json={"opt_out": False},
+        )
+        self.assertEqual(404, cross_tenant.status_code)
 
     def test_segment_campaign_is_repeat_safe_and_cannot_cross_tenants(self):
         with Session(self.engine) as db:

@@ -314,6 +314,9 @@ const segmentEditingId = ref("");
 const segmentForm = ref({ name: "", description: "", tag_ids: [], match_mode: "all" });
 const segmentCampaignForm = ref({ segment_id: "", message: "", run_at: "" });
 const segmentCampaignSaving = ref(false);
+const rfmClassification = ref(null);
+const rfmClassificationLoading = ref(false);
+const rfmClassificationError = ref("");
 const customerTagDraft = ref("");
 const customerTagSaving = ref(false);
 const customerTagError = ref("");
@@ -577,6 +580,17 @@ const workspaceConfigLoading = ref(false);
 const workspaceConfigSaving = ref(false);
 const workspaceConfigError = ref("");
 const workspaceConfigNotice = ref("");
+const shopOtpEmail = ref({ enabled: false, host: "smtp.gmail.com", port: 587, security: "starttls", username: "", password: "", from_email: "", from_name: "", password_configured: false });
+const shopOtpEmailLoading = ref(false);
+const shopOtpEmailSaving = ref(false);
+const shopOtpEmailError = ref("");
+const shopOtpEmailNotice = ref("");
+const accountEmailChange = ref({ new_email: "", current_password: "", otp: "" });
+const accountEmailChangePending = ref(false);
+const accountEmailChangeSending = ref(false);
+const accountEmailChangeVerifying = ref(false);
+const accountEmailChangeError = ref("");
+const accountEmailChangeNotice = ref("");
 const canManageWorkspace = computed(() => ["owner", "admin"].includes(String(authUser.value?.role || "").toLowerCase()));
 const defaultCrmPipelineStages = [
   { key: "new", label: "Mới" },
@@ -610,6 +624,93 @@ async function fetchCrmConfig() {
     crmConfigError.value = friendlyErrorMessage(err, "Chưa tải được cấu hình trường và pipeline.");
   } finally {
     crmConfigLoading.value = false;
+  }
+}
+
+async function fetchShopOtpEmail() {
+  if (!authUser.value || !tenantReady.value) return;
+  shopOtpEmailLoading.value = true;
+  shopOtpEmailError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/workspace/otp-email`);
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    shopOtpEmail.value = { ...shopOtpEmail.value, ...detail, password: "" };
+  } catch (err) {
+    shopOtpEmailError.value = friendlyErrorMessage(err, "Chưa tải được cấu hình email OTP.");
+  } finally {
+    shopOtpEmailLoading.value = false;
+  }
+}
+
+async function saveShopOtpEmail() {
+  if (!canManageWorkspace.value || shopOtpEmailSaving.value) return;
+  shopOtpEmailSaving.value = true;
+  shopOtpEmailError.value = "";
+  shopOtpEmailNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/workspace/otp-email`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(shopOtpEmail.value),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    shopOtpEmail.value = { ...shopOtpEmail.value, ...detail, password: "" };
+    shopOtpEmailNotice.value = detail.enabled
+      ? "Đã lưu. OTP mời nhân viên sẽ dùng địa chỉ gửi của shop."
+      : "Đã tắt email SMTP riêng; hệ thống sẽ dùng cấu hình gửi mặc định.";
+  } catch (err) {
+    shopOtpEmailError.value = friendlyErrorMessage(err, "Chưa lưu được cấu hình email OTP.");
+  } finally {
+    shopOtpEmailSaving.value = false;
+  }
+}
+
+async function requestAccountEmailChange() {
+  if (accountEmailChangeSending.value) return;
+  accountEmailChangeSending.value = true;
+  accountEmailChangeError.value = "";
+  accountEmailChangeNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/email-change/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_email: accountEmailChange.value.new_email, current_password: accountEmailChange.value.current_password }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    accountEmailChange.value.current_password = "";
+    accountEmailChangePending.value = true;
+    accountEmailChangeNotice.value = `${t('Đã gửi mã xác minh tới')} ${detail.email}. ${t('Email hiện tại vẫn được giữ cho đến khi xác minh xong.')}`;
+  } catch (err) {
+    accountEmailChangeError.value = friendlyErrorMessage(err, "Chưa gửi được mã xác minh email.");
+  } finally {
+    accountEmailChangeSending.value = false;
+  }
+}
+
+async function verifyAccountEmailChange() {
+  if (accountEmailChangeVerifying.value) return;
+  accountEmailChangeVerifying.value = true;
+  accountEmailChangeError.value = "";
+  accountEmailChangeNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/auth/email-change/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ otp: accountEmailChange.value.otp }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
+    authUser.value = { ...authUser.value, email: detail.email };
+    accountEmailChange.value = { new_email: "", current_password: "", otp: "" };
+    accountEmailChangePending.value = false;
+    accountEmailChangeNotice.value = "Email tài khoản đã được xác minh và cập nhật.";
+  } catch (err) {
+    accountEmailChangeError.value = friendlyErrorMessage(err, "Mã xác minh không hợp lệ hoặc đã hết hạn.");
+  } finally {
+    accountEmailChangeVerifying.value = false;
   }
 }
 
@@ -1138,6 +1239,7 @@ const botTokenVisible = ref(false);
 const botConnectionForm = ref({ channel_type: "telegram", access_token: "" });
 const localConnectorPairingCode = ref("");
 const localConnectorLoading = ref(false);
+const localConnectorRetryingId = ref(null);
 const localConnectorDownloading = ref(false);
 const localConnectorError = ref("");
 const localConnectorNotice = ref("");
@@ -1217,6 +1319,10 @@ function botConnectionStateLabel(state) {
 }
 
 function localConnectorStatus(connection) {
+  const liveState = String(connection?.connector_status || "").toLowerCase();
+  if (liveState === "online") return t("ĐANG TRỰC TUYẾN");
+  if (liveState === "offline") return t("ĐANG NGOẠI TUYẾN");
+  if (liveState === "error") return t("CẦN KIỂM TRA");
   if (connection?.connector_paired) return t("ĐÃ GHÉP NỐI");
   if (["verifying", "pending_pairing"].includes(String(connection?.status || "").toLowerCase())) return t("CHỜ GHÉP NỐI");
   return t("CHƯA KẾT NỐI");
@@ -1405,6 +1511,7 @@ function openSettings() {
   if (!authUser.value) return;
   void fetchSecuritySettings();
   void fetchWorkspaceConfig();
+  void fetchShopOtpEmail();
   if (!tenantReady.value) return;
   void fetchTeam();
   void fetchAuditLogs();
@@ -3872,6 +3979,25 @@ async function fetchTagCatalog() {
     tagCatalog.value = data.items || [];
   } catch (err) {
     console.error("Fetch tag catalog error:", err);
+  }
+}
+
+async function classifyCustomersByRfm() {
+  if (rfmClassificationLoading.value) return;
+  rfmClassificationLoading.value = true;
+  rfmClassificationError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/rfm/classify`, { method: "POST" });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
+    rfmClassification.value = detail;
+    await Promise.all([fetchTagCatalog(), loadConversations(false)]);
+    const customerId = selected.value?.customer_id;
+    if (customerId) await loadCustomer360(customerId);
+  } catch (err) {
+    rfmClassificationError.value = friendlyErrorMessage(err, "Chưa thể phân loại khách hàng. Vui lòng thử lại sau.");
+  } finally {
+    rfmClassificationLoading.value = false;
   }
 }
 
@@ -7159,6 +7285,23 @@ async function createLocalConnectorPairingCode() {
     localConnectorError.value = crmErrorText(botConnectionErrorMessage(err?.payload, ""), "Chưa thể tạo pairing code. Vui lòng thử lại sau.");
   } finally {
     localConnectorLoading.value = false;
+  }
+}
+
+async function retryLocalConnector(connection) {
+  localConnectorRetryingId.value = connection.id;
+  localConnectorError.value = "";
+  localConnectorNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels/${connection.channel_type}/retry`, { method: "POST" });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
+    localConnectorNotice.value = crmUiText("Đã gửi yêu cầu khởi động lại tới ứng dụng đang chạy trên máy của shop. Máy tắt hoặc connector ngoại tuyến thì cần mở ứng dụng thủ công.");
+    await fetchBotConnections();
+  } catch (err) {
+    localConnectorError.value = crmErrorText(botConnectionErrorMessage(err?.payload, ""), "Không gửi được yêu cầu thử lại. Hãy kiểm tra ứng dụng connector trên máy của shop.");
+  } finally {
+    localConnectorRetryingId.value = null;
   }
 }
 
@@ -11556,6 +11699,20 @@ function followupRecommendationLabel(item) {
               <div v-else class="tags-empty">
                 Chưa có nhãn
               </div>
+              <div class="customer-rfm-panel">
+                <div class="customer-rfm-heading">
+                  <span><strong>{{ t('Phân loại RFM') }}</strong><small>{{ t('Lần mua gần nhất · số đơn · chi tiêu') }}</small></span>
+                  <button type="button" :disabled="rfmClassificationLoading" @click="classifyCustomersByRfm">
+                    {{ rfmClassificationLoading ? t('Đang phân loại...') : t('Phân loại RFM + học nhóm AI') }}
+                  </button>
+                </div>
+                <div v-if="rfmClassification" class="customer-rfm-results" role="status">
+                  <span>{{ rfmClassification.customer_count }} {{ t('khách đã phân loại') }}</span>
+                  <span v-for="group in rfmClassification.groups" :key="group.name" class="customer-rfm-chip">{{ $t(group.name) }} <b>{{ group.count }}</b></span>
+                </div>
+                <small v-if="rfmClassification?.model_training" class="field-hint">{{ t('Phân nhóm AI đang được đưa vào hàng đợi; nhãn sẽ cập nhật sau khi worker xử lý.') }}</small>
+                <div v-if="rfmClassificationError" class="facts-error" role="alert">{{ crmErrorText(rfmClassificationError) }}</div>
+              </div>
               <form class="customer-tag-form" @submit.prevent="addCustomerTag">
                 <input v-model="customerTagDraft" maxlength="80" placeholder="Thêm nhãn / nhóm khách hàng" />
                 <button type="submit" :disabled="customerTagSaving">{{ customerTagSaving ? '...' : 'Gắn nhãn' }}</button>
@@ -11895,14 +12052,17 @@ function followupRecommendationLabel(item) {
             @change="handleProductFileSelect"
           />
           <div v-if="!productUploading" class="dropzone-content">
-            <span class="upload-icon" aria-hidden="true">NHẬP DANH MỤC</span>
-            <strong>Nhập tệp sản phẩm để cập nhật nhanh danh mục</strong>
-            <small>CSV hoặc TXT · Tối đa 20MB · Cột cần có: Mã sản phẩm, Tên sản phẩm, Giá, Tồn kho · Có thể thêm cột “Tên tiếng Anh” để chatbot hiển thị tên dịch · Với SKU có sẵn, giữ tên/giá hiện tại và đặt Tồn kho = 0 để không cộng tồn</small>
-            <button type="button" class="secondary-btn import-choice" @click.stop="openProductFilePicker">Nhập tệp</button>
+            <span class="upload-icon" aria-hidden="true">{{ crmUiText('NHẬP DANH MỤC') }}</span>
+            <strong>{{ crmUiText('Nhập tệp sản phẩm để cập nhật nhanh danh mục') }}</strong>
+            <small>{{ crmUiText('CSV/TXT tối đa 20MB · sửa hoặc xóa dòng ví dụ trước khi nhập · mã sản phẩm đã có sẽ được cộng tồn') }}</small>
+            <div class="import-choice-row">
+              <a class="secondary-btn import-choice" href="/templates/product-import-template.csv" download="mau-san-pham.csv" @click.stop>{{ crmUiText('Tải file mẫu sản phẩm') }}</a>
+              <button type="button" class="secondary-btn import-choice" @click.stop="openProductFilePicker">{{ crmUiText('Nhập tệp') }}</button>
+            </div>
           </div>
           <div v-else class="dropzone-content" role="status" aria-live="polite">
             <span class="spinner-icon" aria-hidden="true">...</span>
-            <strong>Đang nhập danh mục sản phẩm...</strong>
+            <strong>{{ crmUiText('Đang nhập danh mục sản phẩm...') }}</strong>
           </div>
         </div>
 
@@ -13140,7 +13300,7 @@ function followupRecommendationLabel(item) {
               </section>
               <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ crmUiText(localConnectorDownloading ? 'Đang tải ứng dụng...' : 'Tải ứng dụng TikTok (.exe)') }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeTikTokConnection)" @click="createLocalConnectorPairingCode">{{ crmUiText(localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối') }}</button></div>
               <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>{{ crmUiText('Pairing code') }}<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">{{ crmUiText('Sao chép mã') }}</button></div>
-              <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === 'tiktok').length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'tiktok')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>TikTok bridge · {{ botConnectionStateLabel(connection.status) }}</small></div><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul>
+              <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === 'tiktok').length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'tiktok')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>TikTok bridge · {{ localConnectorStatus(connection) }}</small></div><button v-if="connection.connector_paired" type="button" class="team-toggle" :disabled="localConnectorRetryingId === connection.id" @click="retryLocalConnector(connection)">{{ localConnectorRetryingId === connection.id ? t('Đang gửi...') : t('Thử kết nối lại') }}</button><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul>
               <div v-else class="settings-empty">Chưa có TikTok connector nào.</div>
               </template>
               <template v-else>
@@ -13148,7 +13308,7 @@ function followupRecommendationLabel(item) {
                 <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon shopee-channel-icon">S</div><div><ol><li>Tải ứng dụng Shopee (.exe) về máy dùng Seller Chat.</li><li>Khi sẵn sàng, tạo mã ghép nối bên dưới.</li><li>Mở file, nhập mã rồi đăng nhập Shopee trong Edge hiện ra.</li></ol><p class="bot-connect-note">Ứng dụng chỉ chuyển tin nhắn; cookie và phiên Edge không rời khỏi máy này.</p></div></div>
                 <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ localConnectorDownloading ? 'Đang tải ứng dụng...' : 'Tải ứng dụng Shopee (.exe)' }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeBotConnections.some((item) => item.channel_type === 'shopee'))" @click="createLocalConnectorPairingCode">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối' }}</button></div>
                 <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>Pairing code<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">Sao chép mã</button></div>
-                <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.some((item) => item.channel_type === 'shopee')" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'shopee')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ connection.connector_paired ? 'Đã ghép nối' : botConnectionStateLabel(connection.status) }}</small></div><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có Shopee connector nào.</div>
+                <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.some((item) => item.channel_type === 'shopee')" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'shopee')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ localConnectorStatus(connection) }}</small></div><button v-if="connection.connector_paired" type="button" class="team-toggle" :disabled="localConnectorRetryingId === connection.id" @click="retryLocalConnector(connection)">{{ localConnectorRetryingId === connection.id ? t('Đang gửi...') : t('Thử kết nối lại') }}</button><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có Shopee connector nào.</div>
               </template>
             </template>
             <template v-else>
@@ -13226,6 +13386,46 @@ function followupRecommendationLabel(item) {
               <small v-if="item.exceeded">Đã vượt giới hạn</small><small v-else-if="item.near_limit">Sắp chạm hạn mức</small>
             </div>
           </div>
+        </div>
+
+        <div v-if="authUser && authUser.business_id" class="settings-card auth-email-change-card">
+          <div class="settings-card-header">
+            <div><span class="card-eyebrow">{{ t('BẢO MẬT TÀI KHOẢN') }}</span><h2>{{ t('Email tài khoản nhận OTP') }}</h2><p>{{ t('Dùng email này để đăng nhập và nhận mã xác minh tài khoản.') }}</p></div>
+          </div>
+          <div class="settings-muted"><strong>{{ t('Email hiện tại') }}:</strong> {{ authUser.email }}</div>
+          <div v-if="accountEmailChangeError" class="settings-notice team-error" role="alert">{{ t(accountEmailChangeError) }}</div>
+          <div v-if="accountEmailChangeNotice" class="settings-notice" role="status">{{ t(accountEmailChangeNotice) }}</div>
+          <div v-if="!accountEmailChangePending" class="business-profile-grid">
+            <label>{{ t('Email mới') }}<input v-model="accountEmailChange.new_email" type="email" required maxlength="255" autocomplete="email" placeholder="info@example.com" /></label>
+            <label>{{ t('Mật khẩu hiện tại') }}<input v-model="accountEmailChange.current_password" type="password" required maxlength="256" autocomplete="current-password" /></label>
+          </div>
+          <label v-else class="business-profile-wide">{{ t('Mã xác minh 6 chữ số') }}<input v-model="accountEmailChange.otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" /></label>
+          <p class="settings-muted">{{ t('Email đăng nhập chỉ đổi sau khi mã được gửi qua SMTP và xác minh thành công. Mã hết hạn sau 10 phút; tối đa 5 lần gửi mỗi giờ.') }}</p>
+          <button v-if="!accountEmailChangePending" type="button" class="primary-btn" :disabled="accountEmailChangeSending || !accountEmailChange.new_email || !accountEmailChange.current_password" @click="requestAccountEmailChange">{{ accountEmailChangeSending ? t('Đang gửi mã...') : t('Gửi mã xác minh') }}</button>
+          <button v-else type="button" class="primary-btn" :disabled="accountEmailChangeVerifying || accountEmailChange.otp.length !== 6" @click="verifyAccountEmailChange">{{ accountEmailChangeVerifying ? t('Đang xác minh...') : t('Xác minh và đổi email') }}</button>
+        </div>
+
+        <div v-if="authUser" class="settings-card shop-otp-email-card">
+          <div class="settings-card-header">
+            <div><span class="card-eyebrow">{{ t('EMAIL CHO SHOP') }}</span><h2>{{ t('Email gửi mã OTP') }}</h2><p>{{ t('Chủ shop có thể dùng hộp thư riêng để gửi OTP khi mời nhân viên.') }}</p></div>
+            <button type="button" class="settings-refresh" :disabled="shopOtpEmailLoading" @click="fetchShopOtpEmail">{{ shopOtpEmailLoading ? t('Đang tải...') : t('Làm mới') }}</button>
+          </div>
+          <div v-if="shopOtpEmailError" class="settings-notice team-error" role="alert">{{ shopOtpEmailError }}</div>
+          <div v-if="shopOtpEmailNotice" class="settings-notice" role="status">{{ t(shopOtpEmailNotice) }}</div>
+          <label class="checkbox-field shop-otp-email-toggle"><input v-model="shopOtpEmail.enabled" type="checkbox" :disabled="!canManageWorkspace" /> {{ t('Dùng SMTP riêng của shop') }}</label>
+          <div v-if="shopOtpEmail.enabled" class="business-profile-grid">
+            <label>{{ t('Máy chủ SMTP') }}<input v-model="shopOtpEmail.host" required maxlength="255" placeholder="smtp.example.com" :disabled="!canManageWorkspace" /></label>
+            <label>{{ t('Bảo mật SMTP') }}<select v-model="shopOtpEmail.security" @change="shopOtpEmail.port = shopOtpEmail.security === 'ssl' ? 465 : 587" :disabled="!canManageWorkspace"><option value="starttls">STARTTLS · 587</option><option value="ssl">SSL/TLS · 465</option></select></label>
+            <label>{{ t('Cổng SMTP') }}<input v-model.number="shopOtpEmail.port" required type="number" min="1" max="65535" :placeholder="shopOtpEmail.security === 'ssl' ? '465' : '587'" :disabled="!canManageWorkspace" /></label>
+            <label>{{ t('Tài khoản SMTP') }}<input v-model="shopOtpEmail.username" required maxlength="255" autocomplete="username" placeholder="info@gmail.com" :disabled="!canManageWorkspace" /></label>
+            <label>{{ t('Email người gửi') }}<input v-model="shopOtpEmail.from_email" required type="email" maxlength="255" placeholder="info@gmail.com" :disabled="!canManageWorkspace" /></label>
+            <label>{{ t('Tên người gửi') }}<input v-model="shopOtpEmail.from_name" required maxlength="120" :placeholder="authUser.business?.name || 'Tên shop'" :disabled="!canManageWorkspace" /></label>
+            <label class="business-profile-wide">{{ t('Mật khẩu ứng dụng SMTP') }}<input v-model="shopOtpEmail.password" type="password" maxlength="200" autocomplete="new-password" :placeholder="shopOtpEmail.password_configured ? t('Để trống để giữ mật khẩu đã lưu') : t('Nhập mật khẩu ứng dụng')" :disabled="!canManageWorkspace" /></label>
+          </div>
+          <p v-if="shopOtpEmail.enabled" class="settings-muted">{{ t('Nhập máy chủ mail do nhà cung cấp email cấp; chỉ hỗ trợ kết nối mã hóa STARTTLS cổng 587 hoặc SSL/TLS cổng 465. Mật khẩu được mã hóa khi lưu.') }}</p>
+          <p class="settings-muted">{{ t('Cấu hình này chỉ áp dụng cho OTP mời nhân viên; OTP đăng ký shop mới vẫn dùng email hệ thống.') }}</p>
+          <button v-if="canManageWorkspace" type="button" class="primary-btn" :disabled="shopOtpEmailSaving || shopOtpEmailLoading" @click="saveShopOtpEmail">{{ shopOtpEmailSaving ? t('Đang lưu...') : t('Lưu email OTP') }}</button>
+          <p v-else class="settings-muted">{{ t('Chỉ chủ shop hoặc quản trị viên được thay đổi cấu hình này.') }}</p>
         </div>
 
         <div v-if="authUser" class="settings-card workspace-config-card">

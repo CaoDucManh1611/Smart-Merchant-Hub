@@ -244,6 +244,12 @@ class OnboardingChannelStatusOut(BaseModel):
     webhook_url: str | None = None
     webhook_status: str = "unknown"
     connector_paired: bool = False
+    connector_status: str = "unknown"
+    connector_last_seen_at: datetime | None = None
+    connector_last_error_code: str | None = None
+    requires_local_device: bool = False
+    automatic_supported: bool | None = None
+    retry_endpoint: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

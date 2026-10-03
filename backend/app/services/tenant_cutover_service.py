@@ -308,6 +308,18 @@ def verify_business(
             dict(row)
             for row in tenant_db.execute(destination_query).mappings().all()
         ]
+        # A legacy SQLite database may have an older schema than the migrated
+        # PostgreSQL tenant. Compare columns present in the source snapshot;
+        # destination-only nullable/defaulted columns are not source data.
+        source_columns = set(source_table.c.keys())
+        comparable_columns = source_columns.intersection(destination_table.c.keys())
+        if comparable_columns != source_columns:
+            checks.append(TableVerification(name, len(source_rows), len(destination_rows), "", "", False))
+            continue
+        destination_rows = [
+            {column: row[column] for column in source_columns}
+            for row in destination_rows
+        ]
         source_checksum = checksum_rows(source_rows)
         destination_checksum = checksum_rows(destination_rows)
         checks.append(

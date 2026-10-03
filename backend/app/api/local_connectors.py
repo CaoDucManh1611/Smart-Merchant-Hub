@@ -41,6 +41,12 @@ class PairConnectorRequest(BaseModel):
     pairing_code: str = Field(min_length=24, max_length=200)
 
 
+class ConnectorHeartbeatRequest(BaseModel):
+    state: str = Field(default="online", pattern="^(online|error)$")
+    error_code: str | None = Field(default=None, max_length=80, pattern="^[a-zA-Z0-9_.-]+$")
+    retry_ack_id: str | None = Field(default=None, max_length=80, pattern="^[A-Za-z0-9_-]+$")
+
+
 def _code_parts(value: str, kind: str, channel_type: str | None = None) -> tuple[str, int, int, str]:
     match = _CODE_RE.fullmatch(str(value or "").strip())
     if not match or match.group(1) != kind or (channel_type and match.group(2) != channel_type):
@@ -172,6 +178,59 @@ def _connector_channel(
         if not hmac.compare_digest(expected, token):
             raise HTTPException(status_code=401, detail="Connector token không hợp lệ.")
     return business_id, channel_id
+
+
+@router.post("/channels/{channel_type}/heartbeat")
+def report_connector_heartbeat(
+    channel_type: str,
+    payload: ConnectorHeartbeatRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    """Record a minimal, authenticated liveness/error signal; never accept raw logs."""
+    if channel_type not in _SUPPORTED:
+        raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
+    business_id, channel_id = _connector_channel(channel_type, authorization, platform_db)
+    schema = _tenant_schema(platform_db, business_id)
+    with tenant_session(schema) as tenant_db:
+        channel = tenant_db.scalar(select(Channel).where(
+            Channel.id == channel_id,
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        ))
+        if channel is None:
+            raise HTTPException(status_code=401, detail="Connector đã bị ngắt hoặc không còn hợp lệ.")
+        config = dict(channel.config) if isinstance(channel.config, dict) else {}
+        now = datetime.now(timezone.utc)
+        config["connector_last_seen_at"] = now.isoformat()
+        config["connector_last_error_code"] = payload.error_code if payload.state == "error" else None
+        config["connector_status"] = payload.state
+        pending_retry_id = str(config.get("connector_retry_id") or "")
+        requested_at = config.get("connector_retry_requested_at")
+        if pending_retry_id and requested_at:
+            try:
+                requested_time = datetime.fromisoformat(str(requested_at).replace("Z", "+00:00"))
+                if (now - requested_time.astimezone(timezone.utc)).total_seconds() > 300:
+                    config.pop("connector_retry_id", None)
+                    config.pop("connector_retry_requested_at", None)
+                    pending_retry_id = ""
+            except (TypeError, ValueError):
+                config.pop("connector_retry_id", None)
+                config.pop("connector_retry_requested_at", None)
+                pending_retry_id = ""
+        retry_acknowledged = bool(pending_retry_id and payload.retry_ack_id == pending_retry_id)
+        if retry_acknowledged:
+            config.pop("connector_retry_id", None)
+            config.pop("connector_retry_requested_at", None)
+        channel.config = config
+        tenant_db.commit()
+    result = {"status": "recorded", "connector_status": payload.state}
+    if retry_acknowledged:
+        result["retry_acknowledged"] = True
+    elif pending_retry_id:
+        result["retry_id"] = pending_retry_id
+    return result
 
 
 async def receive_local_connector_message(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio, importlib, json, os, shutil, subprocess, sys
 from pathlib import Path
-from connector_pairing import configure_local_connector
+from connector_pairing import configure_local_connector, report_connector_status
 try:
     sys.stdout.reconfigure(encoding="utf-8",errors="replace")
     sys.stderr.reconfigure(encoding="utf-8",errors="replace")
@@ -654,9 +654,19 @@ def main():
     try:
         if IS_FROZEN:
             raise SystemExit(asyncio.run(_lttk_module("main")._run_all()))
-        raise SystemExit(subprocess.call([sys.executable,"main.py"],cwd=str(LTTK)))
+        result=subprocess.call([sys.executable,"main.py"],cwd=str(LTTK))
+        if result:
+            report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code="client_exit")
+        raise SystemExit(result)
     except KeyboardInterrupt:
         log("\n👋 Stop")
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code="startup_exit")
+        raise
+    except Exception as exc:
+        report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code=type(exc).__name__.lower())
+        raise
 
 def self_test():
     import sqlite3

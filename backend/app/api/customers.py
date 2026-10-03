@@ -35,9 +35,12 @@ from app.models.audit_log import AuditLog
 from app.models.order_event import OrderEvent
 from app.models.revenue import LeadActivity
 from app.models.industry_modules import Appointment, AppointmentService, CommercialInvoice, CommercialInvoicePayment, CommercialProject, CommercialQuote
+from app.models.recommendation import RecommendationTrainingRun
 from app.models.business_setting import BusinessSetting
 from app.schemas.customer import (
     CustomerFactCreate,
+    CustomerFactCollectionOut,
+    CustomerFactCollectionRequest,
     CustomerFactExtractionStatusOut,
     CustomerFactExtractionStatusRequest,
     CustomerFactListOut,
@@ -94,7 +97,8 @@ from app.models.business import User
 from app.services.audit_service import record_audit
 from app.services.crm_workspace_config import get_crm_workspace_config, validate_customer_custom_fields
 from app.services.customer_profile import normalize_email, normalize_name, normalize_phone
-from app.services.chatbot_followup import schedule_segment_followups
+from app.services.chatbot_followup import REVENUE_ORDER_STATUSES, schedule_segment_followups
+from app.services.job_service import enqueue_job
 
 
 router = APIRouter()
@@ -265,6 +269,47 @@ class BulkCustomerTagUpdate(BaseModel):
     customer_ids: list[int] = Field(min_length=1, max_length=100)
     tag_id: int = Field(gt=0)
     action: Literal["add", "remove"]
+
+
+RFM_TAG_PREFIX = "RFM · "
+RFM_GROUPS = (
+    "RFM · Chưa mua",
+    "RFM · Giá trị cao",
+    "RFM · Trung thành",
+    "RFM · Tiềm năng",
+    "RFM · Cần chăm sóc",
+    "RFM · Nguy cơ rời bỏ",
+    "RFM · Duy trì",
+)
+
+
+def _rfm_score(value: float, population: list[float], *, lower_is_better: bool = False) -> int:
+    if not population:
+        return 1
+    if len(population) == 1:
+        return 3
+    rank = sum(candidate < value for candidate in population)
+    tied = sum(candidate == value for candidate in population)
+    rank += (tied - 1) / 2
+    if lower_is_better:
+        rank = len(population) - 1 - rank
+    return max(1, min(5, 1 + round(4 * rank / (len(population) - 1))))
+
+
+def _rfm_group(recency: int, frequency: int, monetary: float) -> str:
+    if frequency == 0:
+        return "RFM · Chưa mua"
+    if recency >= 4 and frequency >= 4 and monetary >= 4:
+        return "RFM · Giá trị cao"
+    if recency >= 3 and frequency >= 4:
+        return "RFM · Trung thành"
+    if recency >= 4 and frequency <= 2:
+        return "RFM · Tiềm năng"
+    if recency <= 2 and frequency >= 3:
+        return "RFM · Cần chăm sóc"
+    if recency <= 2 and frequency <= 2:
+        return "RFM · Nguy cơ rời bỏ"
+    return "RFM · Duy trì"
 
 
 # The CRM is operated in Vietnam. Keeping the date comparison here (instead of
@@ -959,6 +1004,44 @@ def set_fact_extraction_status(
     return CustomerFactExtractionStatusOut(enabled=payload.enabled)
 
 
+@router.patch("/{customer_id}/fact-collection", response_model=CustomerFactCollectionOut, dependencies=[Depends(require_write_access)])
+def set_customer_fact_collection(
+    customer_id: int,
+    payload: CustomerFactCollectionRequest,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    """Stop inferred preference collection for one customer and optionally erase old inferred facts."""
+    customer = _get_customer(db, customer_id, tenant)
+    customer.fact_extraction_opt_out = payload.opt_out
+    deleted = 0
+    if payload.opt_out and payload.delete_existing_extracted:
+        facts = db.query(CustomerFact).filter(
+            CustomerFact.business_id == tenant.business_id,
+            CustomerFact.customer_id == customer_id,
+            CustomerFact.source_type == "extracted",
+        ).all()
+        deleted = len(facts)
+        for fact in facts:
+            db.delete(fact)
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="customer_fact_collection_update",
+        resource_type="customer",
+        resource_id=str(customer_id),
+        metadata={"opt_out": payload.opt_out, "deleted_extracted_facts": deleted},
+    )
+    db.commit()
+    return CustomerFactCollectionOut(
+        customer_id=customer_id,
+        opt_out=bool(customer.fact_extraction_opt_out),
+        deleted_extracted_facts=deleted,
+    )
+
+
 @router.get("/tags/catalog")
 def list_customer_tag_catalog(
     db: Session = Depends(get_tenant_db),
@@ -989,6 +1072,141 @@ def list_customer_tag_catalog(
             for tag in rows
         ],
         "total": len(rows),
+    }
+
+
+@router.post("/rfm/classify", dependencies=[Depends(require_write_access)])
+def classify_customers_rfm(
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    """Recompute tenant-local RFM groups and replace only app-managed RFM tags."""
+    customers = db.query(Customer.id).filter(
+        Customer.business_id == tenant.business_id,
+        Customer.status != "merged",
+    ).order_by(Customer.id.asc()).all()
+    customer_ids = [int(customer_id) for (customer_id,) in customers]
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    order_rows = []
+    if customer_ids:
+        order_rows = db.query(
+            Order.customer_id,
+            func.count(Order.id),
+            func.sum(Order.total_amount),
+            func.max(Order.created_at),
+        ).filter(
+            Order.business_id == tenant.business_id,
+            Order.customer_id.in_(customer_ids),
+            Order.status.in_(tuple(REVENUE_ORDER_STATUSES)),
+        ).group_by(Order.customer_id).all()
+
+    rfm = {
+        int(customer_id): {
+            "frequency": int(frequency or 0),
+            "monetary": float(monetary or 0),
+            "last_order_at": last_order_at,
+        }
+        for customer_id, frequency, monetary, last_order_at in order_rows
+    }
+    recencies = [
+        max(0, (now - item["last_order_at"].replace(tzinfo=None)).days)
+        for item in rfm.values()
+        if item["last_order_at"] is not None
+    ]
+    frequencies = [float(item["frequency"]) for item in rfm.values()]
+    monetary_values = [float(item["monetary"]) for item in rfm.values()]
+
+    assignments: dict[int, str] = {}
+    for customer_id in customer_ids:
+        stats = rfm.get(customer_id)
+        if stats is None:
+            assignments[customer_id] = "RFM · Chưa mua"
+            continue
+        last_order_at = stats["last_order_at"]
+        recency_days = max(0, (now - last_order_at.replace(tzinfo=None)).days) if last_order_at else 3650
+        scores = (
+            _rfm_score(float(recency_days), recencies, lower_is_better=True),
+            _rfm_score(float(stats["frequency"]), frequencies),
+            _rfm_score(float(stats["monetary"]), monetary_values),
+        )
+        assignments[customer_id] = _rfm_group(*scores)
+
+    tag_rows = db.query(Tag).filter(
+        Tag.business_id == tenant.business_id,
+        Tag.name.in_(RFM_GROUPS),
+    ).all()
+    tags_by_name = {tag.name: tag for tag in tag_rows}
+    for name in set(assignments.values()):
+        if name not in tags_by_name:
+            tag = Tag(business_id=tenant.business_id, name=name, color="#2b9b99")
+            db.add(tag)
+            db.flush()
+            tags_by_name[name] = tag
+
+    rfm_tag_ids = [tag.id for tag in tags_by_name.values()]
+    existing_links = db.query(CustomerTag).filter(
+        CustomerTag.business_id == tenant.business_id,
+        CustomerTag.customer_id.in_(customer_ids),
+        CustomerTag.tag_id.in_(rfm_tag_ids),
+    ).all() if customer_ids and rfm_tag_ids else []
+    existing_pairs = {(int(link.customer_id), int(link.tag_id)): link for link in existing_links}
+    desired_pairs = {
+        (customer_id, int(tags_by_name[name].id))
+        for customer_id, name in assignments.items()
+    }
+
+    for pair, link in existing_pairs.items():
+        if pair not in desired_pairs:
+            db.delete(link)
+    for customer_id, tag_id in desired_pairs - set(existing_pairs):
+        db.add(CustomerTag(
+            business_id=tenant.business_id,
+            customer_id=customer_id,
+            tag_id=tag_id,
+            created_by=actor.id if actor else None,
+        ))
+
+    counts: dict[str, int] = {}
+    for name in assignments.values():
+        counts[name] = counts.get(name, 0) + 1
+    ordered_groups = [
+        {"name": name, "count": counts[name]}
+        for name in RFM_GROUPS
+        if counts.get(name)
+    ]
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="customer_rfm_classify",
+        resource_type="customer_rfm",
+        resource_id=None,
+        metadata={"customer_count": len(customer_ids), "group_counts": counts},
+    )
+    training_run = RecommendationTrainingRun(
+        business_id=tenant.business_id,
+        algorithm="deterministic_rfm_kmeans",
+        status="queued",
+        metrics={},
+        artifact={"model_version": "rfm_kmeans_v2", "purpose": "customer_label_learning"},
+    )
+    db.add(training_run)
+    db.flush()
+    training_job = enqueue_job(
+        db,
+        business_id=tenant.business_id,
+        kind="recommendations.train_segments",
+        payload={"training_run_id": training_run.id},
+        idempotency_key=f"recommendations:rfm-customer-labels:{training_run.id}",
+    )
+    db.commit()
+    return {
+        "customer_count": len(customer_ids),
+        "buyer_count": len(rfm),
+        "groups": ordered_groups,
+        "model_training": {"training_run_id": training_run.id, "job_id": training_job.id, "status": training_run.status},
     }
 
 
@@ -1111,6 +1329,7 @@ def get_customer(
             business_id=tenant.business_id,
             channel=customer.channel,
         ),
+        fact_extraction_opt_out=bool(customer.fact_extraction_opt_out),
         created_at=customer.created_at,
         updated_at=customer.updated_at,
         identities=[CustomerIdentityOut.model_validate(identity) for identity in identities],

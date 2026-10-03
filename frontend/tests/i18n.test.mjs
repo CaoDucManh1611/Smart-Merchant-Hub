@@ -205,6 +205,28 @@ test("English localizes dynamic CRM and chatbot plan names and descriptions", ()
   setLocale("vi");
 });
 
+test("English localizes RFM labels and the compact service request introduction", () => {
+  const copy = [
+    ["Phân loại RFM", "RFM customer groups"],
+    ["Lần mua gần nhất · số đơn · chi tiêu", "Recent purchase · order count · spend"],
+    ["Phân loại & gắn nhãn", "Classify & tag"],
+    ["Phân loại RFM + học nhóm AI", "Classify RFM + learn AI segments"],
+    ["RFM · AI nhóm 1", "RFM · AI group 1"],
+    ["Tối đa", "Up to"],
+    ["kênh. Kết nối sau khi gói được duyệt.", "channels. Connect after plan approval."],
+    ["RFM · Chưa mua", "RFM · No purchases"],
+    ["RFM · Giá trị cao", "RFM · High value"],
+    ["RFM · Trung thành", "RFM · Loyal"],
+    ["RFM · Tiềm năng", "RFM · Potential"],
+    ["RFM · Cần chăm sóc", "RFM · Needs attention"],
+    ["RFM · Nguy cơ rời bỏ", "RFM · At risk"],
+    ["RFM · Duy trì", "RFM · Regular"],
+  ];
+  setLocale("en");
+  for (const [source, expected] of copy) assert.equal(t(source), expected);
+  setLocale("vi");
+});
+
 test("English localizes dynamic workspace business profile labels and descriptions", () => {
   const profiles = [
     ["Bán lẻ", "Retail"],

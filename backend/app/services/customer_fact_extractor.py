@@ -53,8 +53,10 @@ Use only information explicitly stated or unambiguously requested by the custome
 Do not invent names, preferences, budgets, demographics, or purchase history.
 Ignore passwords, access tokens, payment credentials, and unrelated small talk.
 Return ONLY valid JSON in exactly this shape:
-{"facts":[{"fact_type":"preference","fact_key":"budget_max","fact_value":500000,"confidence":0.95}]}
+{"facts":[{"fact_type":"preference","fact_key":"preferred_color","fact_value":"pink","confidence":0.95}]}
 fact_type should be a short category such as preference, intent, profile, habit, or constraint.
+Use stable keys such as preferred_color, interested_category, or budget_max when explicitly stated.
+Never infer purchase_frequency from chat; it must be derived from shop order history.
 fact_key must be one of budget_max, budget_min, interested_category, preferred_category,
 preferred_product_group, preferred_color, favorite_color, preferred_size, preferred_style,
 or preferred_brand. Never return a person's name, contact details, location, credentials,
@@ -211,7 +213,7 @@ def persist_extracted_facts(
         customer_id=customer_id,
         source_message_id=source_message_id,
     )
-    if customer is None or source is None:
+    if customer is None or customer.fact_extraction_opt_out or source is None:
         logger.warning(
             "Skipping extracted facts with invalid tenant/source: business=%s customer=%s message=%s",
             business_id,
@@ -303,6 +305,12 @@ def extract_and_persist_customer_facts(
     content: str,
 ) -> list[CustomerFact]:
     if not (content or "").strip() or (content or "").strip().startswith("/"):
+        return []
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.business_id == business_id,
+    ).first()
+    if customer is None or customer.fact_extraction_opt_out:
         return []
     # Fact extraction is an LLM call too.  Reserve the tenant budget before
     # invoking the provider; source_message_id gives webhook retries a stable
@@ -504,6 +512,14 @@ def process_customer_fact_extraction_background(
             with tenant_session(schema_name_for(business_id)) as db:
                 if not get_customer_fact_extraction_enabled(db, business_id):
                     logger.info("Customer fact extraction disabled for business=%s", business_id)
+                    return
+                customer = db.query(Customer.id).filter(
+                    Customer.id == customer_id,
+                    Customer.business_id == business_id,
+                    Customer.fact_extraction_opt_out.is_(False),
+                ).first()
+                if customer is None:
+                    logger.info("Customer preference extraction opted out or customer missing: business=%s customer=%s", business_id, customer_id)
                     return
                 already_extracted = db.query(CustomerFact.id).filter(
                     CustomerFact.business_id == business_id,

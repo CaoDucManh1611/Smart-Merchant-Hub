@@ -18,6 +18,7 @@ from app.models.experimentation import (
     Experiment,
 )
 from app.models.message import Message
+from app.models.recommendation import RecommendationCustomerProfile
 from app.services.chatbot_bandit_service import (
     ChatbotBanditChoice,
     select_chatbot_reply_choice,
@@ -67,6 +68,18 @@ def test_runtime_selection_is_opt_in_approved_and_idempotent():
         business = Business(name="Bandit Shop", slug="bandit-shop")
         db.add(business)
         db.flush()
+        customer = Customer(business_id=business.id, channel="telegram", external_user_id="rfm-buyer")
+        db.add(customer)
+        db.flush()
+        db.add(Conversation(id=42, business_id=business.id, customer_id=customer.id, channel="telegram"))
+        db.add(RecommendationCustomerProfile(
+            business_id=business.id,
+            customer_id=customer.id,
+            segment_label="rfm_cluster_1",
+            features={"frequency": 5, "monetary": 1000, "recency_days": 2},
+            model_version="rfm_kmeans_v2",
+        ))
+        db.flush()
         experiment, policy = _runtime_policy(db, business.id)
 
         first = select_chatbot_reply_choice(
@@ -92,6 +105,7 @@ def test_runtime_selection_is_opt_in_approved_and_idempotent():
         assert first.arm in {"control", "concise"}
         assert first.policy_id == policy.id
         assert db.query(BanditDecision).filter_by(experiment_id=experiment.id).count() == 1
+        assert db.query(BanditDecision).filter_by(experiment_id=experiment.id).one().context["rfm_segment"] == "rfm_cluster_1"
 
 
 def test_policy_without_runtime_binding_does_not_touch_live_chatbot():

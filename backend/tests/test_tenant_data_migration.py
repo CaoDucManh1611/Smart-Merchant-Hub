@@ -13,7 +13,7 @@ from app.models import platform_control
 from app.models.platform_control import PlatformBusiness, TenantRegistry
 from app.services.tenant_data_migration import TableMigrationResult
 from pathlib import Path
-from sqlalchemy import Column, ForeignKey, Integer, MetaData, Table, create_engine, select
+from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, create_engine, select
 from sqlalchemy.orm import Session
 
 
@@ -149,6 +149,24 @@ def test_migrate_business_walks_nested_message_attachment_ownership():
         )
         tenant_db.commit()
         assert tenant_db.execute(destination_metadata.tables["message_attachments"].select()).mappings().all() == [{"id": 21, "message_id": 11}]
+
+
+def test_verify_business_allows_migrated_destination_columns_missing_from_sqlite_source():
+    source_engine = create_engine("sqlite://")
+    destination_engine = create_engine("sqlite://")
+    source_metadata = MetaData()
+    Table("customers", source_metadata, Column("id", Integer, primary_key=True), Column("business_id", Integer), Column("name", String))
+    source_metadata.create_all(source_engine)
+    destination_metadata = MetaData()
+    Table("customers", destination_metadata, Column("id", Integer, primary_key=True), Column("business_id", Integer), Column("name", String), Column("product_url", String, nullable=True))
+    destination_metadata.create_all(destination_engine)
+    with Session(source_engine) as source_db, Session(destination_engine) as tenant_db:
+        source_db.execute(source_metadata.tables["customers"].insert(), {"id": 1, "business_id": 7, "name": "Alice"})
+        tenant_db.execute(destination_metadata.tables["customers"].insert(), {"id": 1, "business_id": 7, "name": "Alice", "product_url": None})
+        source_db.commit()
+        tenant_db.commit()
+        report = cutover.verify_business(source_db, tenant_db, business_id=7, tables=("customers",))
+        assert report.ok
 
 
 def test_cutover_ledger_records_only_counts_hashes_and_cursors():

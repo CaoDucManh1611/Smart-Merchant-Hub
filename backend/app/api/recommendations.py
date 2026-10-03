@@ -176,7 +176,7 @@ def schedule_segment_training(
         algorithm="deterministic_rfm_kmeans",
         status="queued",
         metrics={},
-        artifact={"model_version": "rfm_kmeans_v1"},
+        artifact={"model_version": "rfm_kmeans_v2"},
     )
     db.add(run)
     db.flush()

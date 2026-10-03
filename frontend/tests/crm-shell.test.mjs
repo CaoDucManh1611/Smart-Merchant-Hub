@@ -463,6 +463,8 @@ test("channel onboarding exposes guided Telegram and Zalo Bot Creator token veri
   assert.match(appSource, /Sao chép token/);
   assert.match(appSource, /Kiểm tra và kết nối/);
   assert.match(appSource, /channels\/verify/);
+  assert.match(appSource, /async function retryLocalConnector/);
+  assert.match(appSource, /channels\/\$\{connection\.channel_type\}\/retry/);
   assert.match(appSource, /BotFather/);
   assert.match(appSource, /Zalo Bot Manager/);
   assert.match(appSource, /access_token: token/);

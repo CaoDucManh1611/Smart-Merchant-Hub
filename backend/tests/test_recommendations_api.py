@@ -13,6 +13,8 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models.business import Business
 from app.models.customer import Customer
+from app.models.crm_extended import CustomerTag, Tag
+from app.models.experimentation import BanditDecision, BanditPolicy, Experiment
 from app.models.recommendation import (
     CustomerProductInteraction,
     RecommendationCustomerProfile,
@@ -424,7 +426,48 @@ class RecommendationApiTests(unittest.TestCase):
             profiles = db.query(RecommendationCustomerProfile).filter_by(business_id=self.business_id).all()
             self.assertEqual("succeeded", run.status)
             self.assertEqual(2, len(profiles))
-            self.assertTrue(all(profile.segment_label.startswith("cluster_") for profile in profiles))
+            self.assertTrue(all(profile.segment_label.startswith("rfm_cluster_") for profile in profiles))
+            ai_tags = db.query(Tag).filter(
+                Tag.business_id == self.business_id,
+                Tag.name.like("RFM · AI nhóm %"),
+            ).all()
+            self.assertTrue(ai_tags)
+            self.assertEqual(2, db.query(CustomerTag).filter(
+                CustomerTag.business_id == self.business_id,
+                CustomerTag.tag_id.in_([tag.id for tag in ai_tags]),
+            ).count())
+
+            experiment = Experiment(
+                business_id=self.business_id,
+                name="RFM strategy test",
+                variants=["balanced", "personalized"],
+                status="running",
+            )
+            db.add(experiment)
+            db.flush()
+            db.add(BanditPolicy(
+                business_id=self.business_id,
+                experiment_id=experiment.id,
+                version="rfm-context-v1",
+                epsilon=Decimal("0"),
+                status="active",
+                config={"objective": "terminal_conversion_reward"},
+            ))
+            db.commit()
+            experiment_id = experiment.id
+
+        response = self.client.post(
+            "/api/recommendations",
+            headers=self.headers(),
+            json={"customer_id": self.customer_id, "experiment_id": experiment_id, "limit": 1},
+        )
+        self.assertEqual(201, response.status_code, response.text)
+        with Session(self.engine) as db:
+            decision = db.query(BanditDecision).filter_by(business_id=self.business_id, experiment_id=experiment_id).one()
+            profile = db.query(RecommendationCustomerProfile).filter_by(
+                business_id=self.business_id, customer_id=self.customer_id
+            ).one()
+            self.assertEqual(profile.segment_label, decision.context["rfm_segment"])
 
 
 if __name__ == "__main__":

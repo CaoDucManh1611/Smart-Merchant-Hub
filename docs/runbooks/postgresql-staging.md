@@ -39,7 +39,50 @@ tenant schema.
 
 ## Per-shop migration pilot
 
-Use the dry run first. Output is limited to counts and checksums:
+Before any copy, back up the PostgreSQL platform database and tenant destination.
+If the legacy source is PostgreSQL, back it up with `pg_dump` too. If it is
+SQLite, do not pass it to the PostgreSQL backup script; create the immutable
+snapshot with the SQLite dry-run below. The migration writes only to the shop
+schema and never replaces the source. Keep every archive through verification
+and the rollback window:
+
+```powershell
+.\scripts\backup_postgres.ps1 -DatabaseUrl $env:TENANT_DATABASE_URL -OutputDirectory .\backups\tenant-destination
+.\scripts\backup_postgres.ps1 -DatabaseUrl $env:PLATFORM_DATABASE_URL -OutputDirectory .\backups\platform
+```
+
+For a PostgreSQL legacy source, also back it up:
+
+```powershell
+.\scripts\backup_postgres.ps1 -DatabaseUrl $env:DATABASE_URL -OutputDirectory .\backups\source
+```
+
+If the legacy shared source is SQLite, make a consistent read-only snapshot
+with SQLite's backup API through the migration command. Do not copy a live
+database file while the application is writing to it. Keep the snapshot for
+the dry-run, cutover, and verification:
+
+```powershell
+python -m app.scripts.migrate_tenant 42 `
+  --sqlite-source .\data\legacy.sqlite `
+  --sqlite-backup .\backups\shop-42-source.sqlite `
+  --dry-run
+
+python -m app.scripts.migrate_tenant 42 `
+  --sqlite-backup .\backups\shop-42-source.sqlite `
+  --cutover --operation-id pilot-42-sqlite
+
+python -m app.scripts.verify_tenant_migration 42 `
+  --sqlite-backup .\backups\shop-42-source.sqlite
+```
+
+The command refuses to overwrite an existing backup. It reports its SHA-256,
+table count and SQLite integrity result before any cutover. PostgreSQL
+destination migrations must already be applied; the copy remains restricted
+to one business and is rolled back by disabling routing, never by erasing the
+source or destination snapshot.
+
+Then use the dry run first. Output is limited to counts and checksums:
 
 ```powershell
 python -m app.scripts.migrate_tenant 42 --dry-run

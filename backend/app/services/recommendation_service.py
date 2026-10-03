@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import random
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.customer import Customer
+from app.models.crm_extended import CustomerTag, Tag
 from app.models.customer_collection import CustomerConsent
 from app.models.customer_fact import CustomerFact
 from app.models.experimentation import BanditArmStat, BanditDecision, BanditPolicy, Experiment
@@ -36,7 +38,7 @@ from app.services.recommendation_interaction_service import (
 
 REVENUE_ORDER_STATUSES = ("confirmed", "processing", "shipped", "delivered", "completed", "paid")
 MODEL_VERSION = "item_affinity_v1"
-SEGMENT_MODEL_VERSION = "rfm_kmeans_v1"
+SEGMENT_MODEL_VERSION = "rfm_kmeans_v2"
 STRATEGIES = {"balanced", "personalized", "popular", "rag"}
 REWARDS = {
     "impression": Decimal("0"),
@@ -94,6 +96,7 @@ def _select_strategy(
     business_id: int,
     payload: RecommendationRequestCreate,
     subject_key: str,
+    context: dict | None = None,
 ) -> tuple[str, int | None]:
     if payload.experiment_id is None:
         return "balanced", None
@@ -124,8 +127,8 @@ def _select_strategy(
         )
         db.add(policy)
         db.flush()
-    context_hash = _context_hash(payload.context)
-    seed = int(hashlib.sha256(f"{subject_key}:{context_hash}:{policy.version}".encode()).hexdigest(), 16)
+    context = context if context is not None else payload.context
+    context_hash = _context_hash(context)
     stats = {
         arm: db.query(BanditArmStat).filter(
             BanditArmStat.policy_id == policy.id,
@@ -134,9 +137,9 @@ def _select_strategy(
         ).first()
         for arm in variants
     }
-    explore = (seed % 1_000_000) / 1_000_000 < float(policy.epsilon)
+    explore = random.random() < float(policy.epsilon)
     if explore or not any(stat and stat.pulls for stat in stats.values()):
-        strategy, reason = variants[seed % len(variants)], "exploration"
+        strategy, reason = random.choice(variants), "exploration"
     else:
         strategy = max(variants, key=lambda arm: (float((stats[arm].reward_sum or 0) / max(1, stats[arm].pulls)), arm))
         reason = "exploitation"
@@ -145,7 +148,7 @@ def _select_strategy(
         experiment_id=experiment.id,
         subject_key=subject_key,
         arm=strategy,
-        context=payload.context,
+        context=context,
         policy_id=policy.id,
         policy_version=policy.version,
         context_hash=context_hash,
@@ -348,7 +351,21 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
     if customer is not None and personalized_id is None:
         selection_payload = payload.model_copy(update={"context": {}, "experiment_id": None})
     subject_key = f"customer:{personalized_id}" if personalized_id else "anonymous"
-    strategy, bandit_decision_id = _select_strategy(db, business_id=business_id, payload=selection_payload, subject_key=subject_key)
+    profile = None
+    if personalized_id is not None:
+        profile = db.query(RecommendationCustomerProfile).filter(
+            RecommendationCustomerProfile.business_id == business_id,
+            RecommendationCustomerProfile.customer_id == personalized_id,
+        ).first()
+    rfm_segment = profile.segment_label if profile else "unclassified"
+    learning_context = {**selection_payload.context, "rfm_segment": rfm_segment} if personalized_id is not None else {}
+    strategy, bandit_decision_id = _select_strategy(
+        db,
+        business_id=business_id,
+        payload=selection_payload,
+        subject_key=subject_key,
+        context=learning_context,
+    )
     recent, historical = _recent_and_historical_products(db, business_id, personalized_id)
     candidates = db.query(Product).filter(
         Product.business_id == business_id,
@@ -437,7 +454,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         strategy=strategy,
         model_version="+".join(model_versions),
         context={
-            **(payload.context if customer is None or personalized_id is not None else {}),
+            **learning_context,
             "query": payload.query if personalized_id is not None else "",
             "rag_candidate_count": len(payload.rag_candidates),
             "eligible_candidate_count": len(scored_items),
@@ -618,7 +635,6 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
         use_imported_model = len(labels) == len(profiles) and all(label is not None for label in labels)
         if use_imported_model:
             labels = [int(label) for label in labels]
-            cluster_count = len(set(labels))
             profile_model_version = "uci_kmeans_demo_v1"
             algorithm = "imported_uci_kmeans"
         else:
@@ -630,13 +646,54 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
             labels = _kmeans(normalized, cluster_count)
             profile_model_version = SEGMENT_MODEL_VERSION
             algorithm = "deterministic_rfm_kmeans"
+
+        cluster_quality: dict[int, float] = {}
+        for label in set(labels):
+            if use_imported_model:
+                cluster_quality[label] = -float(label)
+                continue
+            members = [vector for vector, assigned in zip(normalized, labels) if assigned == label]
+            center = [sum(vector[index] for vector in members) / len(members) for index in range(3)]
+            # Higher frequency/value and more recent purchasing rank ahead of dormant clusters.
+            cluster_quality[label] = center[1] + center[2] - center[0]
+        ordered_labels = sorted(set(labels), key=lambda label: (-cluster_quality[label], label))
+        display_rank = {label: rank for rank, label in enumerate(ordered_labels, start=1)}
+        desired_tags: set[tuple[int, int]] = set()
+        for rank in display_rank.values():
+            tag_name = f"RFM · AI nhóm {rank}"
+            tag = db.query(Tag).filter(Tag.business_id == business_id, Tag.name == tag_name).first()
+            if tag is None:
+                tag = Tag(business_id=business_id, name=tag_name, color="#2b9b99")
+                db.add(tag)
+                db.flush()
+            for profile, label in zip(profiles, labels):
+                if display_rank[label] == rank:
+                    desired_tags.add((int(profile["customer_id"]), int(tag.id)))
+
+        managed_tags = db.query(Tag).filter(
+            Tag.business_id == business_id,
+            Tag.name.like("RFM · AI nhóm %"),
+        ).all()
+        managed_tag_ids = [tag.id for tag in managed_tags]
+        existing_links = db.query(CustomerTag).filter(
+            CustomerTag.business_id == business_id,
+            CustomerTag.tag_id.in_(managed_tag_ids),
+        ).all() if managed_tag_ids else []
+        existing_pairs = {(int(link.customer_id), int(link.tag_id)): link for link in existing_links}
+        for pair, link in existing_pairs.items():
+            if pair not in desired_tags:
+                db.delete(link)
+        for customer_id, tag_id in desired_tags - set(existing_pairs):
+            db.add(CustomerTag(business_id=business_id, customer_id=customer_id, tag_id=tag_id))
+
         for profile, label in zip(profiles, labels):
+            rank = display_rank[label]
             row = db.query(RecommendationCustomerProfile).filter(
                 RecommendationCustomerProfile.business_id == business_id,
                 RecommendationCustomerProfile.customer_id == profile["customer_id"],
             ).first()
             values = {
-                "segment_label": f"{'uci_cluster' if use_imported_model else 'cluster'}_{label}",
+                "segment_label": f"rfm_cluster_{rank}",
                 "features": {key: profile[key] for key in ("recency_days", "frequency", "monetary", "total_items", "distinct_products", "avg_order_value")},
                 "model_version": profile_model_version,
                 "trained_at": _now(),
@@ -647,7 +704,15 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
                 for key, value in values.items():
                     setattr(row, key, value)
         run.status = "succeeded"
-        run.metrics = {"customers": len(profiles), "clusters": cluster_count, "orders": len(orders)}
+        run.metrics = {
+            "customers": len(profiles),
+            "clusters": len(ordered_labels),
+            "orders": len(orders),
+            "groups": {
+                f"RFM · AI nhóm {display_rank[label]}": sum(1 for assigned in labels if assigned == label)
+                for label in ordered_labels
+            },
+        }
         run.artifact = {"model_version": profile_model_version, "algorithm": algorithm}
         run.completed_at = _now()
         db.commit()
