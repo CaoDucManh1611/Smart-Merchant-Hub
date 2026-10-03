@@ -7,6 +7,8 @@ Kiến trúc ban đầu:
 - Database: PostgreSQL + pgvector
 - Webhook: Facebook, Instagram, Shopee, TikTok
 - RAG: PostgreSQL + pgvector, hỗ trợ upload tài liệu, hybrid retrieval và chatbot có nguồn
+
+Tài liệu Kho kiến thức mới được chia theo cấu trúc/đoạn văn và giữ nguyên văn bản gốc. Nếu cấu hình `GEMINI_API_KEY` hoặc `GEMINI_API_KEYS` trong `backend/.env`, hệ thống gửi từng nhóm tối đa 16 đoạn/8.000 ký tự tới Google Gemini để chọn ranh giới ngữ nghĩa; không gửi file gốc hay thông tin shop kèm theo. Gemini lỗi, hết quota hoặc chưa cấu hình key thì dùng chia cục bộ; tối đa 32 lượt Gemini cho mỗi tài liệu. Tài liệu đã nạp trước đây chỉ đổi cách chia khi được reindex; không tự động reindex hay xóa dữ liệu cũ.
 - Docker Compose
 - GitHub Actions CI
 
@@ -18,29 +20,31 @@ Cần mở Docker Desktop trước. Các lệnh dưới đây chạy tại thư 
 ```powershell
 Set-Location 'C:\Users\DUC_STRONG\Smart-Merchant-Hub-full-stack-ready'
 docker info
+if (-not (Test-Path '.env')) { Copy-Item '.env.example' '.env' }
 if (-not (Test-Path 'backend\.env')) { Copy-Item 'backend\.env.example' 'backend\.env' }
 ```
 
-Nếu vừa tạo `backend\.env`, mở file đó và thêm/sửa các dòng sau. Dùng cùng một
-mật khẩu cho PostgreSQL và các URL; với Docker, host là `db`/`redis`, không phải
-`localhost`. Không ghi mật khẩu thật vào Git:
+Nếu vừa tạo `.env` ở thư mục gốc, mở file đó và điền các dòng sau. Dùng cùng
+một mật khẩu cho PostgreSQL và URL; trong Docker, host là `db`, không phải
+`localhost`. `backend\.env` chứa cấu hình riêng của backend, không dùng làm
+`--env-file` cho Compose. Không ghi mật khẩu thật vào Git:
 
 ```dotenv
 POSTGRES_DB=crm_chatbot
 POSTGRES_USER=crm_app
 POSTGRES_PASSWORD=YOUR_LOCAL_PASSWORD
 DATABASE_URL=postgresql+psycopg://crm_app:YOUR_LOCAL_PASSWORD@db:5432/crm_chatbot
-PLATFORM_DATABASE_URL=postgresql+psycopg://crm_app:YOUR_LOCAL_PASSWORD@db:5432/crm_platform
-TENANT_DATABASE_URL=postgresql+psycopg://crm_app:YOUR_LOCAL_PASSWORD@db:5432/crm_tenant
-REDIS_URL=redis://redis:6379/0
 ```
 
-Với dữ liệu Docker đã có, giữ nguyên mật khẩu và tên project Compose đang dùng.
+Compose tự tạo URL mặc định cho database platform/tenant và Redis từ các biến
+trên. Nếu đã có dữ liệu Docker, giữ nguyên mật khẩu hiện tại trong `.env`.
+
+Giữ nguyên tên project Compose đã dùng để tiếp tục dùng đúng volume dữ liệu.
 Trong hướng dẫn này, tên project là `smart-merchant-hub-runtime`:
 
 ```powershell
-docker compose --env-file backend/.env -p smart-merchant-hub-runtime up -d --build
-docker compose --env-file backend/.env -p smart-merchant-hub-runtime ps -a
+docker compose --env-file .\.env -p smart-merchant-hub-runtime up -d --build
+docker compose --env-file .\.env -p smart-merchant-hub-runtime ps -a
 Start-Process 'http://127.0.0.1:5173/'
 ```
 
@@ -49,7 +53,7 @@ Giao diện ở <http://127.0.0.1:5173/>, tài liệu API ở
 migration và có thể mất vài phút. Nếu container chưa lên, xem log:
 
 ```powershell
-docker compose --env-file backend/.env -p smart-merchant-hub-runtime logs --tail 100 db backend frontend worker
+docker compose --env-file .\.env -p smart-merchant-hub-runtime logs --tail 100 db backend frontend worker
 ```
 
 Không dùng `docker compose down -v` khi muốn giữ dữ liệu PostgreSQL. Nếu cần
@@ -74,7 +78,7 @@ không nằm trong phạm vi bản này.
 Kiểm tra phiên bản schema:
 
 ```powershell
-docker compose --env-file backend/.env -p smart-merchant-hub-runtime exec backend python -m alembic current
+docker compose --env-file .\.env -p smart-merchant-hub-runtime exec backend python -m alembic current
 ```
 
 Schema được quản lý bằng Alembic trong `backend/alembic/`; không cần xóa DB

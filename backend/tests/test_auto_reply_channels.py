@@ -1,14 +1,36 @@
 from datetime import datetime
 from decimal import Decimal
 from unittest.mock import Mock, patch
+import pytest
+from fastapi import HTTPException
 
 from app.services.auto_reply_service import (
+    _social_reply,
     _claim_auto_reply,
     _send_channel_reply,
     format_product_catalog_reply,
     process_rag_auto_reply,
     send_text_reply,
 )
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("hello", "Hi!"),
+        ("chào nha", "Chào bạn!"),
+        ("tôi đâu hỏi bình giữ nhiệt gì đâu", "xin lỗi"),
+    ],
+)
+def test_social_turn_does_not_inherit_old_product(message, expected):
+    reply = _social_reply(message)
+    assert reply is not None
+    assert expected.casefold() in reply.casefold()
+    assert "bình giữ nhiệt" not in reply.casefold()
+
+
+def test_product_question_is_not_routed_as_social_turn():
+    assert _social_reply("Bình giữ nhiệt inox 600 ml còn hàng không?") is None
 from app.services.quota_service import QuotaDecision, QuotaExceededError
 
 
@@ -35,6 +57,20 @@ def test_shopee_suppresses_same_auto_reply_within_short_cooldown():
         conversation_id=24,
         auto_reply_key="inbound-2:reply-1",
     )
+
+
+def test_unknown_shopee_delivery_is_not_automatically_sent_again():
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = Mock(status="delivery_unknown")
+    with patch("app.services.auto_reply_service._get_conversation_recipient", return_value=("shopee", "buyer-1")), \
+         patch("app.services.auto_reply_service._claim_auto_reply", return_value=False), \
+         patch("app.services.auto_reply_service._send_channel_reply") as send:
+        with pytest.raises(HTTPException) as error:
+            send_text_reply(db=db, conversation_id=24, channel="shopee", text="Dạ còn hàng ạ.",
+                            business_id=3, auto_reply_key="turn:3:24:1:2")
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "delivery_unknown"
+    send.assert_not_called()
 
 
 def test_auto_reply_dispatches_telegram_through_tenant_channel():
@@ -85,6 +121,18 @@ def test_auto_reply_dispatches_zalo_through_tenant_channel():
         recipient_id="z-user-1",
         text="Serum Vitamin C giá 420.000 đồng.",
     )
+
+
+def test_auto_reply_dispatches_facebook_and_instagram_through_mocked_meta_adapters():
+    db = Mock()
+    for channel, sender_name in (("facebook", "send_facebook_message"), ("instagram", "send_instagram_message")):
+        with patch(f"app.services.auto_reply_service.{sender_name}", return_value={"message_id": f"{channel}:out-1"}) as send:
+            response = _send_channel_reply(
+                db=db, conversation_id=11, channel=channel, recipient_id="customer-1",
+                text="Hello!", business_id=4,
+            )
+        assert response["message_id"] == f"{channel}:out-1"
+        send.assert_called_once_with(recipient_id="customer-1", text="Hello!", db=db, business_id=4)
 
 
 def test_auto_reply_dispatches_shopee_and_tiktok_through_existing_connectors():
@@ -222,7 +270,7 @@ def test_english_product_discovery_uses_live_catalog_in_english_before_rag():
     assert "Here are the shop's products" in send.call_args.kwargs["text"]
 
 
-def test_rag_without_context_uses_shared_safe_conversation_without_handoff():
+def test_rag_without_context_sends_safe_handoff_without_calling_llm():
     conversation = Mock(
         id=4,
         customer_id=8,
@@ -237,20 +285,15 @@ def test_rag_without_context_uses_shared_safe_conversation_without_handoff():
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
         patch("app.services.auto_reply_service.retrieve", return_value=[]), \
-        patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
-        patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "q"}]), \
-        patch("app.services.auto_reply_service.record_quota_usage"), \
-        patch("app.services.auto_reply_service.call_llm", return_value="Mình hiểu rồi. Bạn cần mình hỗ trợ điều gì về shop?"), \
-        patch("app.services.auto_reply_service._get_conversation_recipient", return_value=("telegram", "customer-1")), \
-        patch("app.services.auto_reply_service._send_channel_reply", return_value={"message_id": "out-1"}), \
-        patch("app.services.auto_reply_service._save_auto_reply_outbound") as save, \
+        patch("app.services.auto_reply_service.call_llm") as call_llm, \
+        patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "out-1"}) as send, \
         patch("app.services.auto_reply_service.create_notification") as create_notification, \
         patch("app.services.auto_reply_service._notify_rag_handoff_required") as handoff:
         result = process_rag_auto_reply(
             db=db,
             conversation_id=4,
             channel="telegram",
-            query_text="Câu hỏi ngoài dữ liệu",
+            query_text="Địa chỉ shop ở đâu?",
             business_id=1,
         )
 
@@ -258,9 +301,9 @@ def test_rag_without_context_uses_shared_safe_conversation_without_handoff():
     assert conversation.bot_mode == "auto"
     assert conversation.resolution_outcome is None
     create_notification.assert_not_called()
-    handoff.assert_not_called()
-    assert save.call_args.kwargs["content"] == "Mình hiểu rồi. Bạn cần mình hỗ trợ điều gì về shop?"
-    assert save.call_args.kwargs["source_document_ids"] == []
+    handoff.assert_called_once()
+    call_llm.assert_not_called()
+    assert "chưa có đủ thông tin" in send.call_args.kwargs["text"].lower()
 
 
 def test_order_status_reply_bypasses_rag_and_uses_customer_scoped_flow():

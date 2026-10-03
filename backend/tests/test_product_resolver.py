@@ -1,5 +1,6 @@
 import unittest
 from decimal import Decimal
+from unittest.mock import Mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -8,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.models.business import Business
 from app.models.message import Message
 from app.models.sales import Product
+from app.services.customer_collection_flow import _start_product_quote
 from app.services.product_resolver import resolve_product, resolve_product_mentions
 
 
@@ -141,6 +143,40 @@ class ProductResolverTests(unittest.TestCase):
             db.delete(appliance)
             db.delete(unrelated)
             db.commit()
+
+
+class DemoProductResolverRegressionTests(unittest.TestCase):
+    def test_exact_demo_name_beats_earlier_weak_quantity_match(self):
+        bottle = Product(
+            id=53, business_id=4, sku="BOTTLE-600",
+            name="[DEMO] Bình giữ nhiệt inox 600 ml Mây Nhà",
+            price=Decimal("189000"), stock_quantity=38, status="active",
+        )
+        hooks = Product(
+            id=76, business_id=4, sku="HOOKS-10",
+            name="[DEMO] Bộ móc treo chống trượt 10 chiếc Mây Nhà",
+            price=Decimal("99000"), stock_quantity=20, status="active",
+        )
+        db = Mock()
+        db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [bottle, hooks]
+
+        products = resolve_product_mentions(
+            db,
+            business_id=4,
+            text="Nếu mua 2 chiếc bình giữ nhiệt inox 600 ml Mây Nhà thì tổng bao nhiêu? Mình chưa xác nhận đặt hàng nhé.",
+        )
+
+        self.assertEqual([bottle.id], [product.id for product in products])
+
+        answer = _start_product_quote(
+            db, business_id=4, customer_id=1, conversation_id=None,
+            source_channel="shopee",
+            text="Cho mình hỏi 2 chiếc bình giữ nhiệt inox 600 ml Mây Nhà tổng bao nhiêu tiền? Mình chỉ hỏi giá, chưa đặt hàng.",
+        )
+        self.assertEqual("catalog_answer", answer.status)
+        self.assertIn("378.000 đồng", answer.prompt)
+        self.assertNotIn("xác nhận đặt hàng", answer.prompt)
+        db.add.assert_not_called()
 
 
 if __name__ == "__main__":

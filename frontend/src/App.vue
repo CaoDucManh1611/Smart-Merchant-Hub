@@ -1105,7 +1105,6 @@ const selectedCannedId = ref("");
 const cannedResponseForm = ref({ shortcut: "/cod", title: "COD", content: "Shop hỗ trợ thanh toán COD.", enabled: true });
 const cannedResponseSaving = ref(false);
 const cannedResponseError = ref("");
-const botModes = ref({});
 const followups = ref([]);
 const followupStatusFilter = ref("scheduled");
 const followupsLoading = ref(false);
@@ -2407,7 +2406,7 @@ const selected = computed(() => {
 
 const selectedBotMode = computed(() => (
   selected.value?.conversation_id
-    ? botModes.value[selected.value.conversation_id] || selected.value.bot_mode || "auto"
+    ? selected.value.bot_mode || "auto"
     : "auto"
 ));
 const selectedHasAiActivity = computed(() => Boolean(selected.value && (
@@ -9044,7 +9043,10 @@ async function toggleBotMode() {
       body: JSON.stringify({ reason: mode === "pause" ? "Nhân viên tiếp quản từ hệ thống" : "Nhân viên trả lại cho bot" }),
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
-    botModes.value = { ...botModes.value, [selected.value.conversation_id]: (await response.json()).bot_mode };
+    const { bot_mode } = await response.json();
+    conversations.value = conversations.value.map((item) => Number(item.conversation_id) === Number(selected.value.conversation_id)
+      ? { ...item, bot_mode }
+      : item);
     await loadCustomer360(customerId);
   } catch (err) {
     error.value = friendlyErrorMessage(err, "Chưa thể đổi cách trả lời. Vui lòng thử lại sau.");

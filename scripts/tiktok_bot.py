@@ -302,6 +302,14 @@ def install_plugin(path: Path = PLUGIN):
         'log("🤖 RAG auto reply: CRM xử lý và gửi qua bridge theo cấu hình shop")',
     )
     code=code.replace('seen={}\n', CONTROL_CODE+'\nseen={}\n', 1)
+    # A failed CRM POST must remain retryable when TikTok repeats the event.
+    code=code.replace('        seen[k]=time.monotonic()\n', '', 1)
+    code=code.replace(
+        '        if err:\n            log("❌ Backend: "+err)\n            return\n',
+        '        if err:\n            log("❌ Backend: "+err)\n            return\n'
+        '        seen[k]=time.monotonic()\n',
+        1,
+    )
     code=code.replace(
         'async def on_start(bot):\n',
         'async def on_start(bot):\n    start_control_server(bot)\n',

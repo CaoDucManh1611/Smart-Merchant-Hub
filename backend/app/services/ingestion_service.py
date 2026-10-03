@@ -5,6 +5,7 @@ Chạy như background task để không block request.
 """
 
 import logging
+import hashlib
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
@@ -13,7 +14,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.document import Document, DocumentChunk
 from app.rag.loader import DocumentValidationError, load_document, detect_file_type
-from app.rag.chunker import chunk_text
+from app.rag.semantic_chunker import chunk_document, contextual_embedding_text
+from app.rag.semantic_chunker import _parse_model_boundaries
+from app.rag.llm_caller import call_gemini_for_chunking, gemini_chunking_messages
 from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog, safe_error_message
 from app.rag.topics import infer_document_topic
@@ -128,10 +131,39 @@ def ingest_document(
             # -------------------------------------------------
             # Bước 2: Chunk text
             # -------------------------------------------------
-            chunks = chunk_text(
+            gemini_calls = 0
+            gemini_enabled = bool(doc.business_id and settings.dedicated_gemini_api_keys)
+
+            def detect_boundaries(parts: list[str]) -> list[int] | None:
+                nonlocal gemini_calls, gemini_enabled
+                # ponytail: cap remote calls per document; local boundaries cover the rest.
+                if not gemini_enabled or gemini_calls >= 32:
+                    return None
+                gemini_calls += 1
+                messages = gemini_chunking_messages(parts)
+                digest = hashlib.sha256(messages[-1]["content"].encode("utf-8")).hexdigest()
+                try:
+                    reserve_ai_budget(
+                        db, int(doc.business_id), messages,
+                        idempotency_key=f"rag-chunking:{doc.id}:{doc.reindex_count}:{gemini_calls}:{digest}",
+                    )
+                    db.commit()
+                    return _parse_model_boundaries(call_gemini_for_chunking(messages), len(parts))
+                except QuotaExceededError:
+                    db.rollback()
+                    gemini_enabled = False
+                    logger.warning("Gemini chunking quota exhausted for document id=%s", doc.id)
+                except Exception as error:
+                    db.rollback()
+                    gemini_enabled = False
+                    logger.warning("Gemini chunking failed for document id=%s: error_type=%s", doc.id, type(error).__name__)
+                return None
+
+            chunks = chunk_document(
                 text=raw_text,
+                filename=filename,
                 chunk_size=settings.RAG_CHUNK_SIZE,
-                chunk_overlap=settings.RAG_CHUNK_OVERLAP,
+                semantic_boundary_detector=detect_boundaries if gemini_enabled else None,
                 source_metadata={
                     "source": filename,
                     "topic": infer_document_topic(filename, raw_text),
@@ -153,8 +185,8 @@ def ingest_document(
                 )
                 return
 
-            # Check the RAG chunk allowance before spending AI budget or
-            # calling Gemini. A large upload on a small plan should fail fast
+            # Check the RAG chunk allowance before remote embedding.
+            # A large upload on a small plan should fail fast
             # with an actionable upgrade message instead of doing expensive
             # work only to be discarded by the final quota reservation.
             if doc.business_id is not None:
@@ -201,7 +233,7 @@ def ingest_document(
             # -------------------------------------------------
             # Bước 3: Embed chunks (hoặc lưu nhanh khi auto-seed file lớn)
             # -------------------------------------------------
-            chunk_contents = [c.content for c in chunks]
+            chunk_contents = [contextual_embedding_text(c) for c in chunks]
             if use_embeddings:
                 if doc.business_id is not None and settings.EMBEDDING_PROVIDER.strip().lower() != "local":
                     try:

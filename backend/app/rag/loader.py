@@ -43,12 +43,19 @@ def load_docx(file_bytes: bytes) -> str:
     parts = []
     for block in doc.iter_inner_content():
         if hasattr(block, "rows"):
+            table_lines = []
             for row in block.rows:
-                line = " | ".join(cell.text.strip() for cell in row.cells)
+                line = " | ".join(" ".join(cell.text.split()) for cell in row.cells)
                 if line.strip(" |"):
-                    parts.append(line)
+                    table_lines.append("| " + line + " |")
+            if table_lines:
+                table_lines.insert(1, "| " + " | ".join("---" for _ in block.rows[0].cells) + " |")
+                parts.append("\n".join(table_lines))
         elif block.text.strip():
-            parts.append(block.text)
+            style = block.style.name if block.style is not None else ""
+            level = style.removeprefix("Heading ")
+            prefix = "#" * int(level) + " " if style.startswith("Heading ") and level.isdigit() and 1 <= int(level) <= 6 else ""
+            parts.append(prefix + block.text)
     return "\n\n".join(parts)
 
 
@@ -68,7 +75,7 @@ def load_csv(file_bytes: bytes) -> str:
     reader = csv.reader(io.StringIO(text))
     rows = []
     for row in reader:
-        rows.append(" | ".join(row))
+        rows.append(" | ".join(cell.replace("\r", " ").replace("\n", " ") for cell in row))
     return "\n".join(rows)
 
 
@@ -82,6 +89,17 @@ def load_html(file_bytes: bytes) -> str:
     # Xóa script, style tags
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
+
+    for heading in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        heading.replace_with("\n" + "#" * int(heading.name[1]) + " " + heading.get_text(" ", strip=True) + "\n")
+
+    for table in soup.find_all("table"):
+        rows = [row.find_all(["th", "td"]) for row in table.find_all("tr")]
+        rows = [row for row in rows if row]
+        if rows:
+            lines = ["| " + " | ".join(cell.get_text(" ", strip=True) for cell in row) + " |" for row in rows]
+            lines.insert(1, "| " + " | ".join("---" for _ in rows[0]) + " |")
+            table.replace_with("\n" + "\n".join(lines) + "\n")
 
     return soup.get_text(separator="\n", strip=True)
 
