@@ -35,8 +35,12 @@ SYNCED_AVATAR_IDS: set[str] = set()
 CONTROL_SERVER: ThreadingHTTPServer | None = None
 CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
 CONTROL_PAGE = None
+CONTROL_CONTEXT = None
 CONTROL_SECRET = ""
 CONTROL_SEND_LOCK = Lock()
+
+class ShopeeDeliveryUnknown(RuntimeError):
+    """The click may have reached Shopee, but the chat did not confirm it."""
 
 
 def extract_avatar_url(value: object, depth: int = 0) -> str:
@@ -307,8 +311,9 @@ async def deliver(message: dict | None) -> None:
         SEEN_MESSAGE_IDS.clear()
     if message["messageId"] in SEEN_MESSAGE_IDS and now - SEEN_MESSAGE_IDS[message["messageId"]] < 3600:
         return
-    SEEN_MESSAGE_IDS[message["messageId"]] = now
     status, detail = await asyncio.to_thread(post_message, message)
+    if 200 <= status < 300:
+        SEEN_MESSAGE_IDS[message["messageId"]] = now
     print(
         f"{'✅' if 200 <= status < 300 else '❌'} Shopee message {message['messageId']} → CRM HTTP {status}",
         flush=True,
@@ -419,6 +424,25 @@ SHOPEE_CONVERSATION_JS = r"""({threadId, recipientId, click}) => {
   return {found: false, mismatch: false};
 }"""
 
+SHOPEE_MESSAGE_COUNT_JS = r"""text => {
+  const list = document.querySelector('#message-virtualized-list');
+  if (!list) return null;
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  return [...list.querySelectorAll('*')].filter(node =>
+    node.childElementCount === 0 && normalize(node.textContent) === normalize(text)
+  ).length;
+}"""
+
+SHOPEE_MESSAGE_APPEARED_JS = r"""({text, previousCount}) => {
+  const list = document.querySelector('#message-virtualized-list');
+  if (!list) return false;
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const count = [...list.querySelectorAll('*')].filter(node =>
+    node.childElementCount === 0 && normalize(node.textContent) === normalize(text)
+  ).length;
+  return count > previousCount;
+}"""
+
 
 async def enrich_avatar_from_edge(page, message: dict) -> str:
     for _ in range(5):
@@ -450,6 +474,15 @@ async def enrich_avatar_from_edge(page, message: dict) -> str:
 
 async def send_shopee_message(thread_id: str, text: str, recipient_id: str = "") -> dict:
     """Send text through the logged-in Seller Chat page, only on an exact thread match."""
+    global CONTROL_PAGE
+    if CONTROL_PAGE is None or CONTROL_PAGE.is_closed():
+        CONTROL_PAGE = next(
+            (
+                page for page in (CONTROL_CONTEXT.pages if CONTROL_CONTEXT is not None else [])
+                if not page.is_closed() and page.url.startswith("https://banhang.shopee.vn/new-webchat/")
+            ),
+            None,
+        )
     if CONTROL_PAGE is None or CONTROL_PAGE.is_closed():
         raise RuntimeError("Shopee Edge page chưa sẵn sàng.")
     thread_id = str(thread_id or "").strip()
@@ -480,6 +513,9 @@ async def send_shopee_message(thread_id: str, text: str, recipient_id: str = "")
         raise RuntimeError("Shopee chưa xác nhận đã mở đúng hội thoại; không gửi để tránh nhầm khách.")
 
     await CONTROL_PAGE.wait_for_timeout(500)
+    previous_message_count = await CONTROL_PAGE.evaluate(SHOPEE_MESSAGE_COUNT_JS, text)
+    if previous_message_count is None:
+        raise RuntimeError("Không tìm thấy danh sách tin nhắn Shopee để xác nhận đúng cuộc trò chuyện.")
     composers = CONTROL_PAGE.locator(
         '[data-cy="webchat-conversation-detail-input"] textarea:visible, '
         '[data-cy="webchat-conversation-detail-input"] [contenteditable="true"]:visible'
@@ -517,6 +553,17 @@ async def send_shopee_message(thread_id: str, text: str, recipient_id: str = "")
         )
     except Exception as exc:
         raise RuntimeError("Shopee chưa xác nhận đã nhận tin gửi; hãy kiểm tra hội thoại trước khi thử lại.") from exc
+    try:
+        await CONTROL_PAGE.wait_for_function(
+            SHOPEE_MESSAGE_APPEARED_JS,
+            {"text": text, "previousCount": previous_message_count},
+            timeout=10000,
+        )
+    except Exception as exc:
+        raise ShopeeDeliveryUnknown(
+            "Shopee chưa hiển thị tin nhắn trong hội thoại; trạng thái gửi chưa xác nhận. "
+            "Hãy kiểm tra Shopee trước khi thử gửi lại."
+        ) from exc
     return {"status": "sent", "message_id": f"shopee-ui:{thread_id}:{time.time_ns()}", "threadId": thread_id}
 
 
@@ -557,6 +604,8 @@ class _ShopeeControlHandler(BaseHTTPRequestHandler):
                 )
                 result = future.result(timeout=25)
             self._reply(200, result)
+        except ShopeeDeliveryUnknown as exc:
+            self._reply(409, {"code": "delivery_unknown", "detail": str(exc)})
         except ValueError as exc:
             self._reply(400, {"detail": str(exc)})
         except Exception as exc:
@@ -565,9 +614,10 @@ class _ShopeeControlHandler(BaseHTTPRequestHandler):
 
 
 def start_control_server(page) -> None:
-    global CONTROL_SERVER, CONTROL_LOOP, CONTROL_PAGE
+    global CONTROL_SERVER, CONTROL_LOOP, CONTROL_PAGE, CONTROL_CONTEXT
     CONTROL_LOOP = asyncio.get_running_loop()
     CONTROL_PAGE = page
+    CONTROL_CONTEXT = page.context
     if CONTROL_SERVER is not None:
         return
     # Docker Desktop reaches the Windows host through its host-gateway interface.

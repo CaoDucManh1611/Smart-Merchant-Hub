@@ -1139,6 +1139,8 @@ def send_shopee_text(
         payload = {}
     if response.status_code >= 400:
         detail = payload.get("detail") if isinstance(payload, dict) else None
+        if response.status_code == 409 and isinstance(payload, dict) and payload.get("code") == "delivery_unknown":
+            raise HTTPException(status_code=409, detail=payload)
         raise HTTPException(status_code=response.status_code, detail=detail or "Shopee connector từ chối gửi tin")
     return payload if isinstance(payload, dict) else {"status": "sent"}, channel
 

@@ -245,10 +245,14 @@ async def receive_local_connector_message(
         raise HTTPException(status_code=413, detail="Tin nhắn gửi lên vượt quá dung lượng cho phép.")
 
     business_id, channel_id = _connector_channel(channel_type, authorization, platform_db)
+    # Seller Chat also emits shop/system cards. They are not customer text and
+    # must not enter the conversation-turn queue or trigger an AI reply.
+    message_type = str(payload.get("messageType") or payload.get("message_type") or "text").strip().lower()
+    if message_type not in {"text", "image", "video", "audio", "file", "sticker"}:
+        return {"status": "ignored", "processed": 0}
     sender_id = str(payload.get("authorId") or payload.get("sender_id") or payload.get("from_id") or "").strip()
     thread_id = str(payload.get("threadId") or payload.get("conversation_id") or payload.get("conv_id") or "").strip()
     content = str(payload.get("message") or payload.get("text") or "").strip()
-    message_type = str(payload.get("messageType") or payload.get("message_type") or "text").strip().lower()
     if not sender_id or not thread_id:
         raise HTTPException(status_code=422, detail="Tin nhắn thiếu mã khách hoặc cuộc hội thoại.")
     if not content and message_type not in {"image", "video", "audio", "file", "sticker"}:

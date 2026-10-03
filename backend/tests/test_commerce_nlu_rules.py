@@ -1,13 +1,21 @@
 from app.rag.prompt_builder import detect_reply_language
 from app.services.auto_reply_service import (
+    _product_hint,
     _requested_variant_tokens,
     _is_price_question,
     _is_product_fact_question,
     _is_specific_product_lookup,
     _fold_text,
 )
+
+
+def test_product_hint_keeps_vietnamese_accents_and_capacity():
+    hint = _product_hint("Bình giữ nhiệt inox 600 ml Mây Nhà")
+    assert "Bình" in hint and "600 ml" in hint
 from app.services.customer_collection_flow import (
     _extract_quantity,
+    is_price_quote_request,
+    is_stock_query_request,
     _format_quote_prompt,
     _is_order_approval,
     _is_order_rejection,
@@ -35,6 +43,17 @@ def test_model_reference_allows_precise_product_price_and_detail_routes():
 def test_bare_price_question_remains_supported_without_matching_product_names():
     assert _is_price_question(_fold_text("Giá?"))
     assert not _is_price_question(_fold_text("Thiết bị gia dụng"))
+
+
+def test_product_capacity_is_not_order_quantity():
+    question = "Shop ơi, bình giữ nhiệt inox 600 ml Mây Nhà giá bao nhiêu ạ?"
+    assert not is_price_quote_request(question)
+    assert _extract_quantity(question) == 0
+
+
+def test_how_many_left_is_stock_question_not_a_checkout_update():
+    assert is_stock_query_request("Ấm đun siêu tốc 1.8 lít Mây Nhà hiện còn mấy chiếc ạ?")
+    assert is_stock_query_request("Bình giữ nhiệt inox 600 ml còn bao nhiêu chiếc?")
 
 
 def test_common_english_greetings_and_product_lookup_use_english_reply_language():

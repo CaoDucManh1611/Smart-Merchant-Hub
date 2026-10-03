@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from threading import Lock, Thread
 
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -110,7 +111,7 @@ NO_RECOMMENDATION_REPLY = (
 
 _STOCK_TERMS = (
     "ton kho", "ton", "con hang", "con khong", "co san khong", "du khong",
-    "het hang", "so luong", "bao nhieu cai", "bao nhieu san pham",
+    "het hang", "so luong", "bao nhieu cai", "bao nhieu chiec", "con bao nhieu", "con may chiec", "con may cai", "bao nhieu san pham",
     "in stock", "available", "how many", "units left",
 )
 _PRICE_TERMS = (
@@ -129,6 +130,11 @@ _RETURN_TERMS = (
 _RECOMMENDATION_TERMS = (
     "da nhay cam", "phu hop", "goi y", "tu van", "nen dung", "danh cho",
 )
+_PRODUCT_ATTRIBUTE_TERMS = (
+    "mau sac", "color", "colour", "giu nong", "giu lanh", "bao lau", "bao nhieu gio",
+    "chat lieu", "kich thuoc", "dung tich", "bao hanh", "warranty", "material",
+    "keep warm", "keep hot", "retain heat", "how long", "how many hours",
+)
 _PRODUCT_HINT_STOP_WORDS = {
     "shop", "co", "con", "khong", "cho", "minh", "toi", "ban", "san", "pham",
     "hang", "mau", "nao", "gi", "nhe", "voi", "la", "cua", "gia", "bao",
@@ -137,10 +143,36 @@ _PRODUCT_HINT_STOP_WORDS = {
 }
 _NON_PRODUCT_HINT_WORDS = set(_DELIVERY_TERMS + _RETURN_TERMS + (
     "chinh sach", "nhan vien", "ho tro", "don hang", "thanh toan", "dat hang",
+    "hong", "den", "trang", "xanh", "do", "vang", "tim", "nau",
+    "giu nhiet", "giu nong", "giu lanh", "bao lau", "gio", "chat lieu",
+    "kich thuoc", "dung tich", "warranty", "material", "color", "colour",
 ))
 
 # ponytail: process-local duplicate guard; use a database lock if multiple backend workers can race.
 _reply_locks: dict[str, Lock] = defaultdict(Lock)
+
+
+class _SupersededTurn(Exception):
+    pass
+
+
+def _social_reply(query: str) -> str | None:
+    """Do not let old product history turn greetings or corrections into facts."""
+    folded = " ".join(re.sub(r"[^\w\s]", " ", _fold_text(query)).split())
+    english = detect_reply_language(query) == "en"
+    if is_greeting(query) or folded in {"chao nha", "xin chao nha", "shop oi"}:
+        return (
+            "Hi! What can I help you find today?"
+            if english else "Chào bạn! Mình có thể giúp bạn tìm sản phẩm nào ạ?"
+        )
+    if re.search(r"\b(?:toi|minh|em)\s+(?:dau|khong|co)\s+hoi\b", folded) or re.search(
+        r"\bi\s+(?:didn t|did not|wasn t)\s+ask\b", folded
+    ):
+        return (
+            "Sorry, I misunderstood. What would you like me to help with?"
+            if english else "Dạ mình xin lỗi, mình đã hiểu nhầm. Bạn muốn hỏi điều gì ạ?"
+        )
+    return None
 
 
 def _is_casual_query(query: str) -> bool:
@@ -570,7 +602,7 @@ def _claim_auto_reply(
                 )
                 return False
         existing = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
-        if existing is not None and existing.status in {"sending", "sent"}:
+        if existing is not None and existing.status in {"sending", "sent", "delivery_unknown"}:
             _record_duplicate_reply_attempt(
                 db,
                 business_id=business_id,
@@ -616,9 +648,14 @@ def _mark_auto_reply_failed(db: Session, auto_reply_key: str, error: Exception) 
     row = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
     if row is None:
         return
-    row.status = "failed"
+    unknown = _is_delivery_unknown_error(error)
+    row.status = "delivery_unknown" if unknown else "failed"
     # Keep provider/customer payloads out of the message metadata and logs.
-    row.metadata_ = {"auto_reply_key": auto_reply_key, "error_type": type(error).__name__}
+    row.metadata_ = {
+        "auto_reply_key": auto_reply_key,
+        "error_type": type(error).__name__,
+        "error_code": "delivery_unknown" if unknown else "send_failed",
+    }
     db.commit()
 
 
@@ -697,30 +734,101 @@ def _is_price_question(folded_text: str) -> bool:
     return bool(re.search(r"\bgia\b", folded_text)) and "gia dung" not in folded_text
 
 
+def _is_product_attribute_question(text: str) -> bool:
+    folded = _fold_text(text)
+    return _has_any_term(folded, _PRODUCT_ATTRIBUTE_TERMS) or bool(re.search(
+        r"\b(?:màu|mau|color|colour)\s+(?:gì|gi|nào|nao|hồng|hong|đỏ|do|xanh|đen|den|trắng|trang|vàng|vang|tím|tim|nâu|nau|xám|xam|pink|red|blue|green|black|white)\b",
+        str(text or ""), re.IGNORECASE,
+    ))
+
+
 def _product_hint(text: str) -> str:
     """Extract a human-readable product hint without guessing a product."""
     original = " ".join(str(text or "").strip().split())
+    # A prefatory clause (e.g. "Please check: price of X") is not a product name.
+    original = original.rsplit(": ", 1)[-1]
     folded = _fold_text(original)
     if not folded:
         return ""
     product_reference = re.search(r"\b(?:mẫu|model|sku|mã)\s+[a-z0-9][a-z0-9-]*", original, re.IGNORECASE)
-    if product_reference:
+    if product_reference and (
+        any(char.isdigit() for char in product_reference.group(0))
+        or product_reference.group(0).split()[-1].isupper()
+    ):
         return product_reference.group(0)
+    # Matching may fold accents, but customer-facing hints retain the original
+    # spelling and capacity numbers (600 ml is part of a product identity).
     tokens = [
-        token for token in folded.split()
-        if token not in _PRODUCT_HINT_STOP_WORDS
-        and token not in _NON_PRODUCT_HINT_WORDS
-        and not token.isdigit()
-        and len(token) >= 2
+        token for token in original.split()
+        if _fold_text(token) not in _PRODUCT_HINT_STOP_WORDS
+        and _fold_text(token) not in _NON_PRODUCT_HINT_WORDS
+        and len(_fold_text(token)) >= 2
     ]
-    return " ".join(tokens[:5])
+    return " ".join(tokens[:8])
+
+
+def _capacities_ml(text: str) -> list[int]:
+    """Normalize ml/litre variants without inferring a product attribute."""
+    folded = unicodedata.normalize("NFKD", str(text or "").casefold()).replace("đ", "d")
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    values = []
+    for match in re.finditer(r"\b(\d+(?:[.,]\d+)?)\s*(ml|litre|liter|lit|l)\b", folded):
+        amount = Decimal(match.group(1).replace(",", "."))
+        value = int(amount * (1 if match.group(2) == "ml" else 1000))
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _compare_catalog_products(db: Session, business_id: int, query: str) -> str | None:
+    """Compare two explicitly sized products using only live catalog facts."""
+    capacities = _capacities_ml(query)
+    if len(capacities) != 2:
+        return None
+    try:
+        products = db.query(Product).filter(
+            Product.business_id == business_id,
+            Product.status == "active",
+        ).order_by(Product.id.asc()).all()
+    except Exception:
+        return None
+    query_terms = set(_fold_text(query).split()) - _PRODUCT_HINT_STOP_WORDS - {
+        "so", "sanh", "compare", "comparison", "the", "and", "loai", "litre", "liter",
+        "lit", "ml", "prices", "price", "current", "only", "bottles", "insulated",
+    }
+    query_terms = {term for term in query_terms if not term.isdigit()}
+    selected = []
+    for capacity in capacities:
+        choices = [product for product in products if capacity in _capacities_ml(product.name)]
+        ranked = []
+        for product in choices:
+            terms = set(_fold_text(product.name).split()) - {"demo", "ml", "lit", "l"}
+            terms = {term for term in terms if not term.isdigit()}
+            overlap = len(terms & query_terms)
+            family_overlap = len(terms & selected[0][1]) if selected else 0
+            ranked.append((2 * overlap + family_overlap, product, terms))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        if not ranked or ranked[0][0] < 4 or (len(ranked) > 1 and ranked[0][0] == ranked[1][0]):
+            return None
+        selected.append((ranked[0][1], ranked[0][2]))
+    language = detect_reply_language(query)
+    lines = []
+    for product, _terms in selected:
+        name = product_display_name(product, language)
+        available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+        if language == "en":
+            lines.append(f"- {name}: ₫{_format_vnd(product.price).replace('.', ',')} ({available} in stock)")
+        else:
+            lines.append(f"- {name}: {_format_vnd(product.price)} đồng (còn {available})")
+    intro = "Here are the current shop prices and stock:" if language == "en" else "Dạ, giá và tồn kho hiện tại của hai mẫu là:"
+    return intro + "\n" + "\n".join(lines)
 
 
 def _is_product_fact_question(text: str, *, conversation_id: int | None = None) -> bool:
     folded = _fold_text(text)
     if not folded:
         return False
-    if _has_any_term(folded, _STOCK_TERMS):
+    if _has_any_term(folded, _STOCK_TERMS) or re.search(r"\bcon\b.{0,50}\bkhong\b", folded):
         # ``is_browsing_request`` also recognises the phrase "còn hàng".  A
         # stock question must still reach the exact-product/follow-up router,
         # otherwise a bare "còn hàng không?" falls through to RAG.
@@ -790,7 +898,9 @@ def _find_exact_product(
 
     identity_matches: list[tuple[int, int, Product]] = []
     fallback_matches: list[tuple[int, int, Product]] = []
-    variant_tokens = _requested_variant_tokens(text)
+    # A color/size mentioned in a detail question is not a stock-variant
+    # constraint. Keep the base product available to contextual retrieval.
+    variant_tokens = _requested_variant_tokens(text) if _has_any_term(_fold_text(text), _STOCK_TERMS) else set()
     query_tokens = set(folded.split())
     for product in products:
         identity_aliases = product_identity_aliases(product)
@@ -828,6 +938,24 @@ def _find_exact_product(
     return None, hint
 
 
+def _contextual_retrieval_query(
+    db: Session,
+    business_id: int,
+    text: str,
+    conversation_id: int,
+) -> str:
+    """Include the last customer-mentioned product for attribute follow-ups."""
+    if not _is_product_attribute_question(text):
+        return text
+    product, _hint = _find_exact_product(
+        db,
+        business_id,
+        text,
+        conversation_id=conversation_id,
+    )
+    return f"{product.name}\n{text}" if product is not None else text
+
+
 def _format_product_fact_reply(product: Product, folded_query: str, *, language: str = "vi") -> str:
     available = max(
         int(product.stock_quantity or 0) - int(product.reserved_quantity or 0),
@@ -844,10 +972,10 @@ def _format_product_fact_reply(product: Product, folded_query: str, *, language:
             return f"{name} costs {price}."
         return f"{name} has {available} units in stock." if available else f"{name} is out of stock."
     if price_requested and stock_requested:
-        return f"{name} hiện có giá {_format_vnd(product.price)} đồng và còn {available} sản phẩm."
+        return f"Dạ, {name} đang có giá {_format_vnd(product.price)} đồng và hiện còn {available} sản phẩm ạ."
     if price_requested:
-        return f"{name} hiện có giá {_format_vnd(product.price)} đồng."
-    return f"{name} hiện còn {available} sản phẩm." if available else f"{name} hiện đã hết hàng."
+        return f"Dạ, {name} đang có giá {_format_vnd(product.price)} đồng ạ."
+    return f"Dạ, {name} hiện còn {available} sản phẩm ạ." if available else f"Dạ, {name} hiện đã hết hàng ạ."
 
 
 def _recommendation_reply(
@@ -862,10 +990,28 @@ def _recommendation_reply(
     query_terms = {
         token
         for token in folded_query.split()
-        if len(token) >= 3 and token not in _PRODUCT_HINT_STOP_WORDS and token not in {"phu", "hop"}
+        if len(token) >= 3
+        and token not in _PRODUCT_HINT_STOP_WORDS
+        and token not in _NON_PRODUCT_HINT_WORDS
+        and token not in {"phu", "hop", "mang", "nho", "gon", "duoi", "ngan", "sach", "di", "lam", "can", "dung"}
     }
-    if not query_terms:
-        return None
+
+    budget = re.search(
+        r"(?:dưới|tối đa|under|below|less than)\s*(\d[\d.,]*)\s*(k|nghìn|ngàn|triệu|m|million)?\b",
+        query_text,
+        re.IGNORECASE,
+    )
+    max_price = None
+    if budget:
+        amount = int(re.sub(r"\D", "", budget.group(1)) or "0")
+        unit = _fold_text(budget.group(2) or "")
+        scale = 1_000_000 if unit in {"trieu", "m", "million"} else 1_000 if unit in {"k", "nghin", "ngan"} else 1
+        max_price = amount * scale
+
+    wants_hot_water = any(term in folded_query for term in ("nuoc nong", "giu nong", "giu nuoc nong", "hot water", "keep hot", "keep warm"))
+    wants_container = any(term in folded_query for term in ("binh", "chai", "bottle", "thermos", "flask")) or (
+        wants_hot_water and any(term in folded_query for term in ("mang", "dung nuoc", "dut nuoc", "carry", "take to work"))
+    )
 
     try:
         products = db.query(Product).filter(
@@ -877,21 +1023,40 @@ def _recommendation_reply(
 
     matches: list[tuple[int, Product]] = []
     for product in products:
-        raw_attributes = (product.metadata_ or {}).get("attributes") if isinstance(product.metadata_, dict) else None
-        if not isinstance(raw_attributes, dict):
-            continue
+        metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+        raw_attributes = metadata.get("attributes") if isinstance(metadata.get("attributes"), dict) else {}
         values = [
             _fold_text(value)
             for raw in raw_attributes.values()
             for value in (raw if isinstance(raw, list) else [raw])
             if str(value or "").strip()
         ]
+        searchable_text = _fold_text(" ".join((
+            str(product.name or ""), str(getattr(product, "description", None) or ""),
+            " ".join(product_aliases(product)), " ".join(values),
+        )))
+        product_name = _fold_text(product.name)
+        available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+        if available <= 0:
+            continue
+        if max_price is not None and Decimal(str(product.price or 0)) > max_price:
+            continue
+        if wants_container and not any(term in product_name.split() for term in ("binh", "chai", "bottle", "thermos", "flask")):
+            continue
+        verified_hot_use = any(term in product_name for term in ("giu nhiet", "giu nong", "thermos", "insulated")) or any(
+            term in value for value in values for term in ("giu nuoc nong", "dung nuoc nong", "keep hot water")
+        )
+        if wants_hot_water and not verified_hot_use:
+            continue
         score = 0
         for value in values:
             if value in folded_query:
                 score += 3
             elif query_terms.intersection(value.split()):
                 score += 1
+        score += len(query_terms & set(searchable_text.split()))
+        if wants_container or wants_hot_water or max_price is not None:
+            score += 1
         if score:
             matches.append((score, product))
 
@@ -924,10 +1089,25 @@ def _deterministic_customer_reply(
 ) -> tuple[str, str] | None:
     """Return a safe reply and route for questions that must not enter RAG."""
     folded = _fold_text(query_text)
+    if re.search(r"\b(?:so sanh|compare|comparison)\b", folded):
+        comparison = _compare_catalog_products(db, business_id, query_text)
+        if comparison:
+            return comparison, "product_comparison"
+        return (
+            "Please send the exact names or SKUs of both products so I can compare them accurately."
+            if detect_reply_language(query_text) == "en"
+            else "Bạn cho mình tên hoặc mã của cả hai sản phẩm để mình so sánh chính xác nhé.",
+            "product_comparison_clarification",
+        )
     # Policy questions are checked after retrieval.  If the knowledge base
     # contains a matching policy, the LLM may summarize it; if not, the caller
     # sends the explicit missing-policy reply instead of a product catalogue.
     if _policy_kind(query_text):
+        return None
+
+    # The deterministic catalogue path has verified price/stock only. Attribute
+    # questions should retain the conversation and continue through sourced RAG.
+    if _is_product_attribute_question(query_text):
         return None
 
     if (
@@ -955,6 +1135,20 @@ def _deterministic_customer_reply(
         return None
 
     product_fact = _is_product_fact_question(query_text, conversation_id=conversation_id)
+    if product_fact and re.search(
+        r"\b(?:san pham|mat hang|loai)\b.*\b(?:nao|gi)\b"
+        r"|\b(?:what|which)\s+(?:products?|items?)\b"
+        r"|\b(?:products?|items?)\s+(?:available|in stock)\b",
+        folded,
+    ):
+        # A category-level request is not an exact product lookup. Ask for a
+        # name/SKU instead of fabricating a missing product from category words.
+        reply = (
+            "Which product do you mean? Send its name or SKU, and I’ll check the exact stock."
+            if detect_reply_language(query_text) == "en"
+            else AMBIGUOUS_STOCK_REPLY
+        )
+        return reply, "product_stock_clarification"
     specific_lookup = _is_specific_product_lookup(query_text)
     english = detect_reply_language(query_text) == "en"
     if not product_fact and not specific_lookup:
@@ -987,7 +1181,7 @@ def _deterministic_customer_reply(
         if hint:
             if english:
                 return f'I could not find "{hint}" in the shop catalog. Please check the exact name or SKU.', "product_not_found"
-            return PRODUCT_NOT_FOUND_WITH_HINT.format(hint=hint), "product_not_found"
+            return PRODUCT_NOT_FOUND_REPLY, "product_not_found"
         if english:
             return "I could not match that product to the shop catalog. Please send its exact name or SKU.", "product_not_found"
         return PRODUCT_NOT_FOUND_REPLY, "product_not_found"
@@ -1015,6 +1209,15 @@ def _policy_kind(text: str) -> str | None:
     if _has_any_term(folded, _RETURN_TERMS):
         return "return"
     return None
+
+
+def _is_delivery_unknown_error(error: Exception) -> bool:
+    return (
+        isinstance(error, HTTPException)
+        and error.status_code == 409
+        and isinstance(error.detail, dict)
+        and error.detail.get("code") == "delivery_unknown"
+    )
 
 
 def send_text_reply(
@@ -1050,6 +1253,8 @@ def send_text_reply(
         auto_reply_key=auto_reply_key,
     ):
         existing = db.query(Message).filter(Message.auto_reply_key == auto_reply_key).first()
+        if existing is not None and existing.status == "delivery_unknown":
+            raise HTTPException(status_code=409, detail={"code": "delivery_unknown", "detail": "Kiểm tra tin trên Shopee trước khi gửi lại để tránh trùng."})
         return {
             "message_id": existing.external_message_id if existing is not None else None,
             "idempotent": True,
@@ -1151,6 +1356,7 @@ def process_rag_auto_reply(
     business_id: int,
     auto_reply_key: str | None = None,
     platform_db: Session | None = None,
+    expected_latest_inbound_id: int | None = None,
 ) -> bool:
     """
     Tự động tra cứu RAG và gửi tin nhắn phản hồi cho khách hàng.
@@ -1171,8 +1377,19 @@ def process_rag_auto_reply(
     bandit_choice: ChatbotBanditChoice | None = None
     external_reply_sent = False
 
+    def turn_is_current() -> bool:
+        if expected_latest_inbound_id is None:
+            return True
+        latest_id = db.query(Message.id).filter(
+            Message.conversation_id == conversation_id,
+            Message.direction == "inbound",
+        ).order_by(Message.id.desc()).limit(1).scalar()
+        return latest_id == expected_latest_inbound_id
+
     def send_reply(text_value: str) -> dict:
         nonlocal external_reply_sent
+        if not turn_is_current():
+            raise _SupersededTurn()
         text_value = localize_rag_fallback(text_value, query=query_text)
         kwargs = {
             "db": db,
@@ -1190,6 +1407,8 @@ def process_rag_auto_reply(
         return result
 
     def send_handoff_reply(text_value: str, *, reason: str) -> None:
+        if not turn_is_current():
+            raise _SupersededTurn()
         if conversation is not None:
             try:
                 _notify_rag_handoff_required(
@@ -1241,6 +1460,12 @@ def process_rag_auto_reply(
           return True
 
       try:
+        social_reply = _social_reply(query_text)
+        if social_reply:
+            send_reply(social_reply)
+            run.finish("social_reply", phase="complete", chunks_found=0, answer_chars=len(social_reply))
+            return True
+
         deterministic_order_reply = customer_order_reply(
             db,
             business_id,
@@ -1307,7 +1532,7 @@ def process_rag_auto_reply(
         # Policy and recommendation questions are deliberately excluded: the
         # phrase "có ... không" also matches those questions, but a catalogue
         # dump is not an answer to them.
-        if is_browsing_request(query_text) and not policy_kind and not recommendation_question:
+        if is_browsing_request(query_text) and not policy_kind and not recommendation_question and not _is_product_attribute_question(query_text):
             catalog_reply = build_product_catalog_reply(
                 db,
                 business_id,
@@ -1333,8 +1558,14 @@ def process_rag_auto_reply(
 
         # 1. Retrieve
         retrieval_started = perf_counter()
+        retrieval_query = _contextual_retrieval_query(
+            db,
+            business_id,
+            query_text,
+            conversation_id,
+        )
         chunks = [] if _is_casual_query(query_text) else retrieve(
-            query=query_text,
+            query=retrieval_query,
             db=db,
             top_k=top_k,
             similarity_threshold=similarity_threshold,
@@ -1398,7 +1629,7 @@ def process_rag_auto_reply(
                     answer_chars=len(NO_RECOMMENDATION_REPLY),
                 )
                 return True
-            if is_browsing_request(query_text):
+            if is_browsing_request(query_text) and not _is_product_attribute_question(query_text):
                 catalog_reply = build_product_catalog_reply(
                     db,
                     business_id,
@@ -1417,10 +1648,10 @@ def process_rag_auto_reply(
                     answer_chars=len(catalog_reply),
                 )
                 return True
-            logger.info(
-                "Auto-reply has no relevant source for conversation %d; using safe conversational mode",
-                conversation_id,
-            )
+            if not _is_casual_query(query_text):
+                send_handoff_reply(NO_CONTEXT_FALLBACK, reason="no_rag_context")
+                run.finish("no_context", phase="complete", chunks_found=0, handoff_required=True)
+                return True
 
         # Live experimentation is explicitly opt-in. Only an active policy
         # bound to chatbot_auto_reply with reviewed arm controls can create a
@@ -1519,6 +1750,7 @@ def process_rag_auto_reply(
             send_handoff_reply(SERVICE_ERROR_FALLBACK, reason="empty_llm_answer")
             run.finish("service_error", phase="complete", reason="empty_llm_answer", answer_chars=0, handoff_required=True)
             return True
+        answer = answer.replace("***", "").strip()
         if chunks and not has_valid_citations(answer, [chunk.content for chunk in chunks]):
             send_handoff_reply(NO_CONTEXT_FALLBACK, reason="missing_or_invalid_citation")
             run.finish("no_context", phase="complete", reason="missing_or_invalid_citation", handoff_required=True)
@@ -1538,6 +1770,8 @@ def process_rag_auto_reply(
             )
             channel = stored_channel
 
+        if not turn_is_current():
+            raise _SupersededTurn()
         if auto_reply_key and not _claim_auto_reply(
             db,
             conversation_id=conversation_id,
@@ -1592,13 +1826,22 @@ def process_rag_auto_reply(
         run.finish("success", phase="complete", answer_chars=len(answer))
         return True
 
+      except _SupersededTurn:
+          run.finish("superseded", phase="complete")
+          return False
       except Exception as e:
-          logger.warning("RAG auto-reply failed: error_type=%s", type(e).__name__)
+          logger.exception("RAG auto-reply failed: error_type=%s", type(e).__name__)
+          if _is_delivery_unknown_error(e):
+              run.finish("delivery_unknown", phase="complete", handoff_required=True)
+              return True
+          if isinstance(e, HTTPException) and e.status_code in {502, 503, 504}:
+              run.finish("retry", phase="complete", error_type=type(e).__name__)
+              raise
           if not external_reply_sent and conversation is not None:
               try:
                   send_handoff_reply(SERVICE_ERROR_FALLBACK, reason="rag_service_error")
               except Exception as handoff_error:
-                  logger.error("RAG service-error handoff failed: error_type=%s", type(handoff_error).__name__)
+                  logger.exception("RAG service-error handoff failed: error_type=%s", type(handoff_error).__name__)
           run.finish(
               "error",
               phase="complete",

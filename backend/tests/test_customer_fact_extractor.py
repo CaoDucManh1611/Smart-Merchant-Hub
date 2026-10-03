@@ -86,6 +86,8 @@ class CustomerFactExtractorTests(unittest.TestCase):
         raw = """```json
         {"facts": [
           {"fact_type": "preference", "fact_key": "budget_max", "fact_value": 500000, "confidence": 0.94},
+          {"fact_type": "profile", "fact_key": "phone", "fact_value": "0912345678", "confidence": 0.99},
+          {"fact_type": "preference", "fact_key": "preferred_brand", "fact_value": "buyer@example.com", "confidence": 0.99},
           {"fact_type": "", "fact_key": "", "fact_value": null, "confidence": 0.99},
           {"fact_type": "preference", "fact_key": "weak", "fact_value": "x", "confidence": 0.2}
         ]}

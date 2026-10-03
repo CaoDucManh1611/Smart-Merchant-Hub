@@ -310,6 +310,27 @@ def test_shopee_incoming_new_webchat_message_is_not_dropped():
     assert message["message"] == "Hello shop"
 
 
+def test_shopee_system_card_does_not_become_customer_question(monkeypatch):
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(
+        local_connectors, "process_and_save_message",
+        lambda **_kwargs: pytest.fail("system card must not be saved as customer chat"),
+    )
+
+    result = asyncio.run(local_connectors.receive_local_connector_message(
+        "shopee",
+        {
+            "authorId": "buyer-1", "threadId": "thread-42", "messageId": "card-1",
+            "message": "[out_of_stock_reminder_card]",
+            "messageType": "out_of_stock_reminder_card",
+        },
+        "Bearer connector-token",
+        object(),
+    ))
+
+    assert result == {"status": "ignored", "processed": 0}
+
+
 def test_local_connector_persists_thread_id_for_outbound_replies(monkeypatch):
     captured = {}
     channel = type("ChannelRow", (), {
@@ -577,13 +598,19 @@ def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
             return 0
 
     class Page:
+        visible_messages = 0
+
         @staticmethod
         def is_closed():
             return False
 
         @staticmethod
-        async def evaluate(_script, _payload):
-            return {"found": True, "selected": True}
+        async def evaluate(script, payload):
+            if "threadId" in payload:
+                return {"found": True, "selected": True}
+            assert script == shopee_bot.SHOPEE_MESSAGE_COUNT_JS
+            assert payload == "Xin chào"
+            return Page.visible_messages
 
         @staticmethod
         async def wait_for_timeout(_milliseconds):
@@ -595,8 +622,10 @@ def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
             return ComposerLocator() if "textarea:visible" in selector else SendIconsLocator()
 
         @staticmethod
-        async def wait_for_function(_script, timeout):
-            assert timeout == 8000
+        async def wait_for_function(script, _payload=None, timeout=0):
+            assert timeout in (8000, 10000)
+            if script == shopee_bot.SHOPEE_MESSAGE_APPEARED_JS:
+                assert Page.visible_messages == 0
 
         @staticmethod
         def get_by_text(_text, exact):
@@ -608,6 +637,69 @@ def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
 
     assert result["status"] == "sent"
     assert actions == [("fill", "Xin chào"), ("click", "send-icon")]
+
+
+def test_shopee_outbound_does_not_report_success_when_chat_does_not_acknowledge(monkeypatch):
+    class Composer:
+        async def fill(self, _text):
+            pass
+
+    class ComposerLocator:
+        async def count(self):
+            return 1
+
+        def nth(self, _index):
+            return Composer()
+
+    class SendIcon:
+        async def click(self):
+            pass
+
+    class SendIconsLocator:
+        async def evaluate_all(self, _script):
+            return 0
+
+        def nth(self, _index):
+            return SendIcon()
+
+    class NoWarning:
+        async def count(self):
+            return 0
+
+    class Page:
+        @staticmethod
+        def is_closed():
+            return False
+
+        @staticmethod
+        async def evaluate(script, payload):
+            if "threadId" in payload:
+                return {"found": True, "selected": True}
+            assert script == shopee_bot.SHOPEE_MESSAGE_COUNT_JS
+            return 0
+
+        @staticmethod
+        async def wait_for_timeout(_milliseconds):
+            pass
+
+        @staticmethod
+        async def wait_for_function(script, _payload=None, timeout=0):
+            if script == shopee_bot.SHOPEE_MESSAGE_APPEARED_JS:
+                assert timeout == 10000
+                raise TimeoutError("message did not appear")
+
+        @staticmethod
+        def locator(selector):
+            return ComposerLocator() if "textarea:visible" in selector else SendIconsLocator()
+
+        @staticmethod
+        def get_by_text(_text, exact):
+            assert exact is False
+            return NoWarning()
+
+    monkeypatch.setattr(shopee_bot, "CONTROL_PAGE", Page())
+    with pytest.raises(shopee_bot.ShopeeDeliveryUnknown, match="trạng thái gửi chưa xác nhận"):
+        asyncio.run(shopee_bot.send_shopee_message("thread-1", "Xin chào"))
 
 
 def test_shopee_outbound_surfaces_platform_moderation_warning(monkeypatch):

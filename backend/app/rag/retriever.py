@@ -8,7 +8,7 @@ may not always be represented well by an embedding model.
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
@@ -106,7 +106,7 @@ def retrieve(
             min(len(lexical_results), top_k),
             (time.perf_counter() - started) * 1000,
         )
-        return lexical_results[:top_k]
+        return _expand_parent_neighbors(lexical_results[:top_k], db, business_id, top_k)
 
     # Search pgvector using a bound parameter.  Do not interpolate the vector
     # into SQL even though it currently comes from a trusted provider.
@@ -152,7 +152,7 @@ def retrieve(
             min(len(lexical_results), top_k),
             (time.perf_counter() - started) * 1000,
         )
-        return lexical_results[:top_k]
+        return _expand_parent_neighbors(lexical_results[:top_k], db, business_id, top_k)
 
     vector_results = []
     for row in rows:
@@ -182,7 +182,111 @@ def retrieve(
         (time.perf_counter() - started) * 1000,
     )
 
-    return results
+    return _expand_parent_neighbors(results, db, business_id, top_k)
+
+
+def _expand_parent_neighbors(
+    results: list[RetrievedChunk], db: Session, business_id: int, top_k: int,
+) -> list[RetrievedChunk]:
+    """Expand bounded source parents while preserving independently ranked hits."""
+    if not results:
+        return results
+    if any("parent_start" in (item.metadata or {}) for item in results):
+        expanded = []
+        covered: set[tuple[int, int]] = set()
+        remaining_context = 12000
+        for lead in results[:top_k]:
+            if (lead.document_id, lead.chunk_id) in covered:
+                continue
+            metadata = lead.metadata or {}
+            start, end = metadata.get("parent_start"), metadata.get("parent_end")
+            if (type(start) is not int or type(end) is not int or lead.chunk_index is None
+                    or not 0 <= start <= lead.chunk_index <= end or metadata.get("parent_id") is None):
+                expanded.append(lead)
+                continue
+            whole_parent = end - start < 16
+            if not whole_parent:
+                start, end = max(start, lead.chunk_index - 1), min(end, lead.chunk_index + 1)
+            try:
+                rows = db.execute(sa_text("""
+                    SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
+                           d.filename AS source_filename, dc.chunk_index
+                    FROM document_chunks dc JOIN documents d ON d.id = dc.document_id
+                    WHERE d.status = 'ready' AND d.business_id = :business_id
+                      AND d.id = :document_id AND dc.chunk_index BETWEEN :start_index AND :end_index
+                    ORDER BY dc.chunk_index LIMIT 16
+                """), {"business_id": business_id, "document_id": lead.document_id,
+                        "start_index": start, "end_index": end}).fetchall()
+            except Exception as error:
+                logger.warning("Parent retrieval unavailable: %s", type(error).__name__)
+                expanded.append(lead)
+                continue
+            evidence = {lead.chunk_index: (lead.chunk_id, lead.content)}
+            for row in rows:
+                data = row._mapping
+                if (data["document_id"] == lead.document_id
+                        and (data["chunk_metadata"] or {}).get("parent_id") == metadata["parent_id"]
+                        and start <= data["chunk_index"] <= end):
+                    evidence[data["chunk_index"]] = (data["id"], data["content"])
+            budget = min(6000, remaining_context + len(lead.content))
+            content = "\n\n".join(evidence[i][1] for i in sorted(evidence))
+            complete = whole_parent and sorted(evidence) == list(range(start, end + 1))
+            if len(content) > budget or not complete:
+                selected = {lead.chunk_index: evidence[lead.chunk_index]}
+                size = len(lead.content)
+                for index in (lead.chunk_index - 1, lead.chunk_index + 1):
+                    if index in evidence and size + len(evidence[index][1]) + 2 <= budget:
+                        selected[index] = evidence[index]
+                        size += len(evidence[index][1]) + 2
+                evidence = selected
+                content = "\n\n".join(evidence[i][1] for i in sorted(evidence))
+                complete = False
+            ids = [evidence[i][0] for i in sorted(evidence)]
+            remaining_context -= max(0, len(content) - len(lead.content))
+            covered.update((lead.document_id, chunk_id) for chunk_id in ids)
+            expanded.append(replace(lead, content=content, metadata={
+                **metadata, "expanded_chunk_ids": ids,
+                "retrieval_context": "parent" if complete else "neighbors",
+            }))
+        return expanded
+    if top_k < 2:
+        return results
+    lead = results[0]
+    parent_id = (lead.metadata or {}).get("parent_id")
+    if parent_id is None or lead.chunk_index is None:
+        return results  # legacy chunks have no structural parent
+    try:
+        rows = db.execute(sa_text("""
+            SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
+                   d.filename AS source_filename, dc.chunk_index
+            FROM document_chunks dc JOIN documents d ON d.id = dc.document_id
+            WHERE d.status = 'ready' AND d.business_id = :business_id
+              AND d.id = :document_id
+              AND dc.chunk_index IN (:previous_index, :next_index)
+            ORDER BY dc.chunk_index
+        """), {
+            "business_id": business_id,
+            "document_id": lead.document_id,
+            "previous_index": lead.chunk_index - 1,
+            "next_index": lead.chunk_index + 1,
+        }).fetchall()
+    except Exception as error:
+        logger.warning("Parent neighbor lookup unavailable: %s", type(error).__name__)
+        return results
+    seen = {item.chunk_id for item in results}
+    neighbors = []
+    for row in rows:
+        data = row._mapping
+        metadata = data["chunk_metadata"] or {}
+        if metadata.get("parent_id") != parent_id or data["id"] in seen:
+            continue
+        neighbors.append(RetrievedChunk(
+            chunk_id=data["id"], document_id=data["document_id"],
+            content=data["content"], similarity=lead.similarity,
+            metadata=metadata, filename=data["source_filename"],
+            chunk_index=data["chunk_index"],
+        ))
+    return (results[:1] + neighbors + results[1:])[:top_k]
 
 
 def _merge_hybrid_results(

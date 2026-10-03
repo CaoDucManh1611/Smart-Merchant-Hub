@@ -35,9 +35,13 @@ def _tokens(value: str) -> set[str]:
     }
 
 
+def _name_aliases(product: Product) -> list[str]:
+    return list(dict.fromkeys([product.name, re.sub(r"^\[DEMO\]\s*", "", product.name, flags=re.I)]))
+
+
 def product_aliases(product: Product) -> list[str]:
     metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
-    aliases: list[str] = [product.name, product.sku]
+    aliases: list[str] = [*_name_aliases(product), product.sku]
     for key in ("aliases", "search_terms", "keywords"):
         value = metadata.get(key)
         if isinstance(value, str):
@@ -55,7 +59,7 @@ def product_identity_aliases(product: Product) -> list[str]:
         aliases = [aliases]
     return list(dict.fromkeys(
         value.strip()
-        for value in (product.name, product.sku, *aliases)
+        for value in (*_name_aliases(product), product.sku, *aliases)
         if isinstance(value, str) and value.strip()
     ))
 
@@ -135,6 +139,7 @@ def resolve_product_mentions(
     identity_candidates: list[tuple[int, int, int, Product]] = []
     fallback_candidates: list[tuple[int, int, int, Product]] = []
     seen_candidates: set[tuple[int, int, int]] = set()
+    seen_identity_candidates: set[tuple[int, int, int]] = set()
     for product in products:
         identity_aliases = set(product_identity_aliases(product))
         for alias in product_aliases(product):
@@ -146,9 +151,10 @@ def resolve_product_mentions(
             while start >= 0:
                 end = start + len(normalized_alias)
                 candidate_key = (start, end, product.id)
-                if candidate_key not in seen_candidates:
+                seen = seen_identity_candidates if target_candidates is identity_candidates else seen_candidates
+                if candidate_key not in seen:
                     target_candidates.append((start, -len(normalized_alias), product.id, product))
-                    seen_candidates.add(candidate_key)
+                    seen.add(candidate_key)
                 start = query.find(normalized_alias, start + 1)
 
             # Customers often omit descriptive suffixes ("kem chống nắng",

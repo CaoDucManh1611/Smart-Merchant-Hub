@@ -152,6 +152,12 @@ def build_context_text(chunks: list[RetrievedChunk]) -> str:
         header = f"[Nguồn {i}]"
         if source:
             header += f" ({source})"
+        section = (chunk.metadata or {}).get("section")
+        if section:
+            header += f" | Mục: {section}"
+        sku = (chunk.metadata or {}).get("sku")
+        if sku:
+            header += f" | SKU: {sku}"
         parts.append(f"{header}\n{chunk.content}")
 
     return "\n\n---\n\n".join(parts)

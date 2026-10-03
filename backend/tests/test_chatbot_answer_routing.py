@@ -6,10 +6,16 @@ from app.services.auto_reply_service import (
     NO_DELIVERY_POLICY_REPLY,
     NO_RECOMMENDATION_REPLY,
     NO_RETURN_POLICY_REPLY,
-    PRODUCT_NOT_FOUND_WITH_HINT,
+    PRODUCT_NOT_FOUND_REPLY,
     _chunk_supports_policy,
+    _contextual_retrieval_query,
     _deterministic_customer_reply,
+    _find_exact_product,
+    _is_delivery_unknown_error,
+    _recommendation_reply,
+    _product_hint,
 )
+import app.services.auto_reply_service as auto_reply_service
 
 
 class _Query:
@@ -72,7 +78,28 @@ def test_unknown_sku_never_falls_back_to_full_catalogue():
     assert reply is not None
     text, route = reply
     assert route == "product_not_found"
-    assert text == PRODUCT_NOT_FOUND_WITH_HINT.format(hint="serun01")
+    assert text == PRODUCT_NOT_FOUND_REPLY
+
+
+def test_product_hint_ignores_prefatory_clause():
+    hint = _product_hint("Kiểm thử sau khi bật bot: giá bộ dao bếp 5 món là bao nhiêu?")
+    assert "bếp" in hint and "Kiểm" not in hint
+
+
+def test_demo_product_stock_question_uses_full_name_not_mau_b():
+    product = SimpleNamespace(
+        id=4, name="[DEMO] Bình giữ nhiệt inox 600 ml Mây Nhà", sku="BINH-600",
+        price=189000, stock_quantity=38, reserved_quantity=0, status="active", metadata_={},
+    )
+    question = "Shop cho mình biết mẫu bình giữ nhiệt inox 600 ml Mây Nhà hiện còn không nhé?"
+    assert _product_hint(question) != "mẫu b"
+    reply = _deterministic_customer_reply(_DB([product]), business_id=1, conversation_id=1, query_text=question)
+    assert reply == ("Dạ, [DEMO] Bình giữ nhiệt inox 600 ml Mây Nhà hiện còn 38 sản phẩm ạ.", "product_fact")
+    quantity_reply = _deterministic_customer_reply(
+        _DB([product]), business_id=1, conversation_id=1,
+        query_text="Bình giữ nhiệt inox 600 ml Mây Nhà còn bao nhiêu chiếc ạ?",
+    )
+    assert quantity_reply == ("Dạ, [DEMO] Bình giữ nhiệt inox 600 ml Mây Nhà hiện còn 38 sản phẩm ạ.", "product_fact")
 
 
 def test_known_product_price_and_stock_are_read_from_live_catalogue():
@@ -80,7 +107,43 @@ def test_known_product_price_and_stock_are_read_from_live_catalogue():
         _db(), business_id=1, conversation_id=1, query_text="serum01 giá bao nhiêu, còn hàng không?"
     )
 
-    assert reply == ("Điện gia dụng mẫu 01 hiện có giá 349.000 đồng và còn 46 sản phẩm.", "product_fact")
+    assert reply == ("Dạ, Điện gia dụng mẫu 01 đang có giá 349.000 đồng và hiện còn 46 sản phẩm ạ.", "product_fact")
+
+
+def test_two_bottle_comparison_reads_both_live_prices_without_guessing():
+    products = [
+        SimpleNamespace(id=1, name="[DEMO] Bình giữ nhiệt inox 600 ml Mây Nhà", sku="B600",
+                        price=189000, stock_quantity=38, reserved_quantity=0, status="active", metadata_={}),
+        SimpleNamespace(id=2, name="[DEMO] Bình giữ nhiệt inox 1 lít Mây Nhà", sku="B1000",
+                        price=259000, stock_quantity=21, reserved_quantity=0, status="active", metadata_={}),
+        SimpleNamespace(id=3, name="[DEMO] Ấm đun siêu tốc 1 lít Mây Nhà", sku="A1000",
+                        price=499000, stock_quantity=6, reserved_quantity=0, status="active", metadata_={}),
+    ]
+    reply = _deterministic_customer_reply(
+        _DB(products), business_id=1, conversation_id=1,
+        query_text="Shop ơi, so sánh bình giữ nhiệt inox 600 ml và loại 1 lít Mây Nhà: giá mỗi loại bao nhiêu ạ?",
+    )
+    assert reply is not None
+    text, route = reply
+    assert route == "product_comparison"
+    assert "189.000" in text and "259.000" in text
+    assert "Ấm đun" not in text
+
+
+def test_english_comparison_uses_vietnamese_catalog_capacity_and_english_reply():
+    products = [
+        SimpleNamespace(id=1, name="Bình giữ nhiệt inox 600 ml Mây Nhà", sku="B600",
+                        price=189000, stock_quantity=38, reserved_quantity=0, status="active", metadata_={}),
+        SimpleNamespace(id=2, name="Bình giữ nhiệt inox 1 lít Mây Nhà", sku="B1000",
+                        price=259000, stock_quantity=21, reserved_quantity=0, status="active", metadata_={}),
+    ]
+    reply = _deterministic_customer_reply(
+        _DB(products), business_id=1, conversation_id=1,
+        query_text="Can you compare the 600 ml and 1 litre Mây Nhà insulated bottles? Current prices only.",
+    )
+    assert reply is not None
+    assert reply[1] == "product_comparison"
+    assert "189,000" in reply[0] and "259,000" in reply[0]
 
 
 def test_variant_stock_lookup_does_not_substitute_base_product():
@@ -121,6 +184,28 @@ def test_ambiguous_stock_request_asks_for_product_name():
     assert reply == (AMBIGUOUS_STOCK_REPLY, "product_stock_clarification")
 
 
+def test_generic_category_stock_question_does_not_claim_product_is_missing():
+    reply = _deterministic_customer_reply(
+        _db(),
+        business_id=1,
+        conversation_id=1,
+        query_text="Shop có sản phẩm điện gia dụng nào đang còn hàng không?",
+    )
+
+    assert reply == (AMBIGUOUS_STOCK_REPLY, "product_stock_clarification")
+
+    english_reply = _deterministic_customer_reply(
+        _db(),
+        business_id=1,
+        conversation_id=1,
+        query_text="What products are available?",
+    )
+    assert english_reply == (
+        "Which product do you mean? Send its name or SKU, and I’ll check the exact stock.",
+        "product_stock_clarification",
+    )
+
+
 def test_policy_and_recommendation_routes_are_explicit_when_context_is_missing():
     assert NO_DELIVERY_POLICY_REPLY
     assert NO_RETURN_POLICY_REPLY
@@ -147,3 +232,121 @@ def test_recommendation_uses_explicit_product_attributes():
     text, route = reply
     assert route == "product_recommendation"
     assert "Kem chống nắng Daily Shield" in text
+
+
+def test_need_recommendation_filters_wrong_category_and_budget_first():
+    products = [
+        SimpleNamespace(
+            id=1, name="Bình giữ nhiệt inox 600 ml", description="Giữ nóng, phù hợp mang đi làm",
+            sku="BOTTLE-600", price=189000, stock_quantity=8, reserved_quantity=0,
+            metadata_={"attributes": {"use_case": ["đi làm"], "temperature": ["giữ nước nóng"]}},
+        ),
+        SimpleNamespace(
+            id=2, name="Ô gấp chống nắng mưa", description="Gọn nhẹ mang đi làm",
+            sku="UMBRELLA", price=179000, stock_quantity=12, reserved_quantity=0,
+            metadata_={"attributes": {"use_case": ["đi làm"]}},
+        ),
+        SimpleNamespace(
+            id=3, name="Túi giữ nhiệt đựng hộp cơm", description="Mang cơm đi làm",
+            sku="LUNCH-BAG", price=149000, stock_quantity=10, reserved_quantity=0,
+            metadata_={"attributes": {"use_case": ["đi làm"]}},
+        ),
+        SimpleNamespace(
+            id=4, name="Bình giữ nhiệt 1 lít", description="Giữ nóng",
+            sku="BOTTLE-1000", price=259000, stock_quantity=7, reserved_quantity=0,
+            metadata_={"attributes": {}},
+        ),
+    ]
+    reply = _recommendation_reply(
+        _DB(products), business_id=1,
+        query_text="Mình cần bình mang đi làm, nhỏ gọn, giữ nước nóng, ngân sách dưới 200.000 đồng.",
+    )
+
+    assert reply is not None
+    assert "Bình giữ nhiệt inox 600 ml" in reply
+    assert "Ô gấp" not in reply
+    assert "Túi giữ nhiệt" not in reply
+    assert "Bình giữ nhiệt 1 lít" not in reply
+
+
+def test_hot_water_need_without_product_noun_recommends_verified_thermos():
+    products = [
+        SimpleNamespace(id=1, name="[DEMO] Bình giữ nhiệt inox 600 ml Mây Nhà", description="",
+                        sku="B600", price=189000, stock_quantity=38, reserved_quantity=0,
+                        status="active", metadata_={}),
+        SimpleNamespace(id=2, name="[DEMO] Ấm đun siêu tốc 1 lít Mây Nhà", description="",
+                        sku="A1000", price=179000, stock_quantity=8, reserved_quantity=0,
+                        status="active", metadata_={}),
+        SimpleNamespace(id=3, name="[DEMO] Bình nước nhựa Tritan 700 ml Mây Nhà", description="Bình mang đi làm",
+                        sku="T700", price=99000, stock_quantity=44, reserved_quantity=0,
+                        status="active", metadata_={}),
+        SimpleNamespace(id=4, name="[DEMO] Túi giữ nhiệt đựng hộp cơm Mây Nhà", description="Mang đi làm",
+                        sku="BAG", price=149000, stock_quantity=22, reserved_quantity=0,
+                        status="active", metadata_={}),
+    ]
+    reply = _deterministic_customer_reply(
+        _DB(products), business_id=1, conversation_id=1,
+        query_text="Mình cần mang nước nóng đi làm, ngân sách dưới 200 nghìn. Shop có mẫu nào phù hợp không?",
+    )
+    assert reply is not None
+    assert reply[1] == "product_recommendation"
+    assert "Bình giữ nhiệt inox 600 ml" in reply[0]
+    assert "Ấm đun" not in reply[0]
+    assert "Tritan" not in reply[0]
+    assert "Túi" not in reply[0]
+
+
+def test_product_attribute_question_is_not_misclassified_as_unknown_product():
+    product = SimpleNamespace(
+        id=1, name="[DEMO] Bình giữ nhiệt inox 600 ml Mây Nhà", sku="BINH-600",
+        price=189000, stock_quantity=38, reserved_quantity=0, status="active", metadata_={},
+    )
+    reply = _deterministic_customer_reply(
+        _DB([product]),
+        business_id=1, conversation_id=1,
+        query_text="Bình giữ nhiệt inox 600 ml Mây Nhà giữ nóng được bao nhiêu giờ và có màu hồng không?",
+    )
+
+    assert reply is None
+
+
+def test_attribute_followup_does_not_trigger_full_catalog():
+    from app.services.customer_collection_flow import is_browsing_request
+
+    assert not is_browsing_request("Mẫu đó giữ nóng được bao nhiêu giờ, có màu hồng không ạ?")
+    assert is_browsing_request("Shop có mẫu nào để mình xem không?")
+
+
+def test_quantity_total_question_is_a_quote_request():
+    from app.services.customer_collection_flow import is_price_quote_request
+
+    assert is_price_quote_request("Đổi thành 3 bình thì tổng tiền bao nhiêu? Vẫn chỉ hỏi giá, chưa đặt hàng.")
+    assert is_price_quote_request("Ý mình là 3 bình giữ nhiệt inox 600 ml Mây Nhà, tính tổng giúp mình, không tạo đơn.")
+
+
+def test_attribute_followup_resolves_product_from_prior_customer_turn(monkeypatch):
+    product = SimpleNamespace(
+        id=1, name="[DEMO] Bình giữ nhiệt inox 600 ml Mây Nhà", sku="BINH-600",
+        price=189000, stock_quantity=38, reserved_quantity=0, status="active", metadata_={},
+    )
+    monkeypatch.setattr(auto_reply_service, "resolve_product", lambda *_args, **_kwargs: product)
+
+    resolved, hint = _find_exact_product(
+        _DB([product]), business_id=1, text="Màu hồng không ạ?", conversation_id=55,
+    )
+
+    assert resolved is product
+    assert hint == ""
+
+    retrieval_query = _contextual_retrieval_query(
+        _DB([product]), business_id=1, text="Màu hồng không ạ?", conversation_id=55,
+    )
+    assert retrieval_query == f"{product.name}\nMàu hồng không ạ?"
+
+
+def test_uncertain_platform_delivery_is_not_retried_as_a_second_customer_reply():
+    from fastapi import HTTPException
+
+    unknown = HTTPException(status_code=409, detail={"code": "delivery_unknown"})
+    assert _is_delivery_unknown_error(unknown)
+    assert not _is_delivery_unknown_error(HTTPException(status_code=502, detail="bridge unavailable"))

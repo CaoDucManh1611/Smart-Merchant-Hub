@@ -111,8 +111,12 @@ class Settings(BaseSettings):
     LLM_API_KEYS: str = ""
     GROQ_API_KEY: str = ""
     GROQ_API_KEYS: str = ""
+    GEMINI_API_KEY: str = ""
+    GEMINI_API_KEYS: str = ""
 
     LLM_MODEL: str = "openai/gpt-oss-20b"
+    CONVERSATION_TURN_WAIT_SECONDS: int = 4
+    CONVERSATION_GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     # openai/gpt-oss-20b | gemini-3.6-flash | gpt-4o-mini
 
     EMBEDDING_PROVIDER: str = "gemini"
@@ -180,6 +184,18 @@ class Settings(BaseSettings):
     @property
     def groq_api_keys(self) -> list[str]:
         return self._csv(self.GROQ_API_KEYS) or self._csv(self.GROQ_API_KEY)
+
+    @property
+    def gemini_api_keys(self) -> list[str]:
+        return self._csv(self.GEMINI_API_KEYS) or self._csv(self.GEMINI_API_KEY) or self.llm_api_keys
+
+    @property
+    def dedicated_gemini_api_keys(self) -> list[str]:
+        return self._csv(self.GEMINI_API_KEYS) or self._csv(self.GEMINI_API_KEY)
+
+    @property
+    def conversation_gemini_api_keys(self) -> list[str]:
+        return self.dedicated_gemini_api_keys or (self.llm_api_keys if self.LLM_PROVIDER.strip().lower() == "gemini" else [])
 
     @property
     def embedding_api_keys(self) -> list[str]:
