@@ -68,4 +68,6 @@ Screenshots are in `docs/screenshots/`:
 
 ### Branch and PR
 
-Changes are on `feat/crm-ui-templates`, based on the clean `main` branch. No merge was performed. The remote currently has no branch named `integration`/`develop`; `main` is the only shared base branch. The PR target must therefore be confirmed as `main` or created after an integration branch is published. The remaining email-OTP and group-insight API gates should stay explicit follow-ups rather than being represented as complete.
+Changes are on `feat/crm-ui-templates`, based on the clean `main` branch. Commit: `ae27006` (`feat: improve CRM UI templates and insights`); the branch is pushed to `origin`. No merge was performed.
+
+The remote currently has no branch named `integration`/`develop`; `main` is the only shared base branch. The GitHub compare page is [ready to create a PR](https://github.com/CaoDucManh1611/Smart-Merchant-Hub/compare/main...feat/crm-ui-templates?expand=1), but the browser session is signed out and no authenticated PR tool is available, so the PR itself was not submitted. Confirm `main` as the target or publish the intended integration branch first. Keep the email-OTP and group-insight API gates explicit in the PR rather than representing them as complete.
