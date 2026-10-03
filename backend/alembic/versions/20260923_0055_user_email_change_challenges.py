@@ -11,6 +11,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # The metadata-driven baseline (or the legacy create_all startup path)
+    # may have already created this model's table and indexes. Preserve those
+    # rows and let Alembic record the revision instead of recreating the table.
+    if sa.inspect(op.get_bind()).has_table("user_email_change_challenges"):
+        return
+
     op.create_table(
         "user_email_change_challenges",
         sa.Column("id", sa.Integer(), primary_key=True),
