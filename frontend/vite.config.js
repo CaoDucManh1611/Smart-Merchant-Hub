@@ -7,6 +7,7 @@ export default defineConfig({
   plugins: [localizeVueTemplatePlugin(), vue()],
   server: {
     host: "0.0.0.0",
+    watch: process.env.VITE_USE_POLLING === "true" ? { usePolling: true, interval: 1000 } : undefined,
     allowedHosts: ["vocalist-dreamy-corned.ngrok-free.dev"],
     proxy: {
       "/api": {

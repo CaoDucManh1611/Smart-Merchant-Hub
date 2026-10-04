@@ -28,7 +28,7 @@ from app.models.message import Message
 from app.models.sales import Product
 
 from app.rag.retriever import retrieve
-from app.rag.answer_guard import has_valid_citations
+from app.rag.answer_guard import customer_facing_answer, has_valid_citations
 from app.rag.prompt_builder import (
     NO_CONTEXT_FALLBACK,
     SERVICE_ERROR_FALLBACK,
@@ -160,7 +160,7 @@ def _social_reply(query: str) -> str | None:
     """Do not let old product history turn greetings or corrections into facts."""
     folded = " ".join(re.sub(r"[^\w\s]", " ", _fold_text(query)).split())
     english = detect_reply_language(query) == "en"
-    if is_greeting(query) or folded in {"chao nha", "xin chao nha", "shop oi"}:
+    if is_greeting(query) or folded in {"chao nha", "xin chao nha", "shop oi", "shop nha"}:
         return (
             "Hi! What can I help you find today?"
             if english else "Chào bạn! Mình có thể giúp bạn tìm sản phẩm nào ạ?"
@@ -1755,6 +1755,7 @@ def process_rag_auto_reply(
             send_handoff_reply(NO_CONTEXT_FALLBACK, reason="missing_or_invalid_citation")
             run.finish("no_context", phase="complete", reason="missing_or_invalid_citation", handoff_required=True)
             return True
+        answer = customer_facing_answer(answer)
 
         # 4. Resolve the platform recipient and send the reply.
         stored_channel, recipient_id = _get_conversation_recipient(
@@ -1834,7 +1835,7 @@ def process_rag_auto_reply(
           if _is_delivery_unknown_error(e):
               run.finish("delivery_unknown", phase="complete", handoff_required=True)
               return True
-          if isinstance(e, HTTPException) and e.status_code in {502, 503, 504}:
+          if isinstance(e, HTTPException) and e.status_code in {401, 502, 503, 504}:
               run.finish("retry", phase="complete", error_type=type(e).__name__)
               raise
           if not external_reply_sent and conversation is not None:

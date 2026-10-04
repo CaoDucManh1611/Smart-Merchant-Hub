@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEYS: str = ""
 
     LLM_MODEL: str = "openai/gpt-oss-20b"
-    CONVERSATION_TURN_WAIT_SECONDS: int = 4
+    CONVERSATION_TURN_WAIT_SECONDS: int = 10
     CONVERSATION_GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     # openai/gpt-oss-20b | gemini-3.6-flash | gpt-4o-mini
 

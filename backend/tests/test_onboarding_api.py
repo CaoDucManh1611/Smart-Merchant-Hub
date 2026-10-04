@@ -187,6 +187,21 @@ class OnboardingApiTests(unittest.TestCase):
             self.assertEqual(1, db.query(Business).filter(Business.name == request_payload["shop_name"]).count())
             self.assertEqual("verified", db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == request_payload["email"]).one().status)
 
+    def test_otp_signup_preserves_selected_paid_plan_and_waits_for_approval(self):
+        for service_type in ("package", "chatbot"):
+            email = f"selected-{service_type}@onboarding.test"
+            with patch("app.api.onboarding.generate_verification_code", return_value="123456"), patch("app.api.onboarding.deliver_otp", return_value=OtpDeliveryResult(provider="smtp", delivered=True)):
+                requested = self.client.post("/api/onboarding/signup/request", json={"owner_name": "Selected Owner", "email": email, "shop_name": f"Selected {service_type}", "password": "strong-pass-1"})
+            self.assertEqual(202, requested.status_code, requested.text)
+            with patch("app.api.onboarding._mirror_initial_subscription") as mirror:
+                verified = self.client.post("/api/onboarding/signup/verify", json={"email": email, "otp": "123456", "plan_code": "growth", "service_type": service_type})
+            self.assertEqual(201, verified.status_code, verified.text)
+            self.assertEqual("growth", verified.json()["subscription"]["plan_code"])
+            self.assertEqual(service_type, verified.json()["subscription"]["service_type"])
+            self.assertEqual("pending", verified.json()["subscription"]["status"])
+            self.assertEqual("awaiting_approval", verified.json()["provisioning_state"])
+            mirror.assert_not_called()
+
     def test_invalid_email_and_inactive_paid_subscription_are_rejected(self):
         invalid = self.client.post(
             "/api/onboarding/shops",

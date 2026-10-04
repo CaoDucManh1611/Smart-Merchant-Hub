@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import Future
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -12,6 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import shopee_bot
 import connector_pairing
 from shopee_bot import normalize_message
+
+
+def test_shopee_bridge_timeout_is_delivery_unknown_not_send_failure():
+    pending = Future()
+    with pytest.raises(shopee_bot.ShopeeDeliveryUnknown, match="chưa xác nhận"):
+        shopee_bot.await_bridge_result(pending, timeout=0.001)
+    pending.cancel()
 
 from app.api import conversations, local_connectors, onboarding
 from app.api.local_connectors import _code_parts, download_local_connector_app, download_local_connector_bundle_legacy
@@ -622,10 +630,11 @@ def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
             return ComposerLocator() if "textarea:visible" in selector else SendIconsLocator()
 
         @staticmethod
-        async def wait_for_function(script, _payload=None, timeout=0):
+        async def wait_for_function(script, *, arg=None, timeout=0):
             assert timeout in (8000, 10000)
             if script == shopee_bot.SHOPEE_MESSAGE_APPEARED_JS:
                 assert Page.visible_messages == 0
+                assert arg == {"text": "Xin chào", "previousCount": 0}
 
         @staticmethod
         def get_by_text(_text, exact):
@@ -683,9 +692,10 @@ def test_shopee_outbound_does_not_report_success_when_chat_does_not_acknowledge(
             pass
 
         @staticmethod
-        async def wait_for_function(script, _payload=None, timeout=0):
+        async def wait_for_function(script, *, arg=None, timeout=0):
             if script == shopee_bot.SHOPEE_MESSAGE_APPEARED_JS:
                 assert timeout == 10000
+                assert arg == {"text": "Xin chào", "previousCount": 0}
                 raise TimeoutError("message did not appear")
 
         @staticmethod
@@ -905,3 +915,73 @@ def test_shopee_cdp_ready_uses_fixed_port_without_active_port_file(tmp_path, mon
 
     responses[shopee_bot.CDP + "/json/list"] = EdgeResponse(b'[{"type":"page","url":"https://example.com/"}]')
     assert not shopee_bot.cdp_ready()
+    assert shopee_bot.cdp_browser_ready()
+
+
+def test_shopee_connector_recovers_when_debug_port_disappears(monkeypatch):
+    events = []
+    monkeypatch.setattr(shopee_bot, "cdp_browser_ready", lambda: False)
+    monkeypatch.setattr(shopee_bot, "start_edge", lambda: events.append("restart"))
+
+    shopee_bot.ensure_edge_connection()
+
+    assert events == ["restart"]
+
+
+def test_shopee_connector_reuses_edge_if_only_seller_tab_closed(monkeypatch):
+    monkeypatch.setattr(shopee_bot, "cdp_browser_ready", lambda: True)
+    monkeypatch.setattr(shopee_bot, "start_edge", lambda: pytest.fail("must reuse Edge"))
+
+    shopee_bot.ensure_edge_connection()
+
+
+def test_shopee_waits_for_selected_chat_messages_to_render():
+    attempts = []
+
+    class Page:
+        async def evaluate(self, script, text):
+            assert script == shopee_bot.SHOPEE_MESSAGE_COUNT_JS
+            assert text == "Xin chào"
+            attempts.append("check")
+            return None if attempts.count("check") < 3 else 0
+
+        async def wait_for_timeout(self, milliseconds):
+            assert milliseconds == 250
+            attempts.append("wait")
+
+    assert asyncio.run(shopee_bot.wait_for_message_list(Page(), "Xin chào")) == 0
+    assert attempts == ["check", "wait", "check", "wait", "check"]
+
+
+def test_shopee_message_acknowledgement_supports_current_seller_chat_container():
+    selector = '[data-cy="webchat-conversation-detail-message-container"]'
+    assert selector in shopee_bot.SHOPEE_MESSAGE_COUNT_JS
+    assert selector in shopee_bot.SHOPEE_MESSAGE_APPEARED_JS
+    for script in (shopee_bot.SHOPEE_MESSAGE_COUNT_JS, shopee_bot.SHOPEE_MESSAGE_APPEARED_JS):
+        assert '[data-cy="webchat-message-send"] pre > div' in script
+        assert "Node.TEXT_NODE" in script
+
+
+def test_shopee_does_not_post_same_inflight_message_twice(monkeypatch):
+    calls = []
+    release = asyncio.Event()
+
+    async def slow_post(_function, message):
+        calls.append(message["messageId"])
+        await release.wait()
+        return 200, "{}"
+
+    monkeypatch.setattr(shopee_bot, "SEEN_MESSAGE_IDS", {})
+    monkeypatch.setattr(shopee_bot, "IN_FLIGHT_MESSAGE_IDS", set())
+    monkeypatch.setattr(shopee_bot.asyncio, "to_thread", slow_post)
+
+    async def check():
+        message = {"messageId": "duplicate-1"}
+        first = asyncio.create_task(shopee_bot.deliver(message))
+        await asyncio.sleep(0)
+        await shopee_bot.deliver(message)
+        release.set()
+        await first
+
+    asyncio.run(check())
+    assert calls == ["duplicate-1"]

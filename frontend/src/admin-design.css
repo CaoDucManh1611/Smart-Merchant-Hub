@@ -1,0 +1,60 @@
+/* Admin presentation only; approval, billing and security handlers stay unchanged. */
+.crm-app.platform-admin-workspace .admin-section-nav { display:flex; flex-wrap:wrap; gap:8px; padding:12px 0; border-block:1px solid var(--admin-line); }
+.crm-app.platform-admin-workspace .admin-section-nav a { display:inline-flex; align-items:center; gap:8px; text-decoration:none; padding:9px 13px; border-radius:8px; font-size:13px; font-weight:600; color:var(--admin-muted); transition:background-color .15s; }
+.crm-app.platform-admin-workspace .admin-section-nav a:is(:hover,:focus-visible) { background:var(--admin-soft); color:var(--admin-accent); }
+.crm-app.platform-admin-workspace .admin-section-nav span { border-radius:999px; padding:2px 7px; background:var(--admin-soft); color:var(--admin-accent); }
+.crm-app.platform-admin-workspace [id^="admin-"] { scroll-margin-top:20px; }
+.crm-app.platform-admin-workspace .platform-admin-layout { max-width:1500px!important; }
+.crm-app.platform-admin-workspace .platform-admin-panel { box-shadow:none!important; }
+.crm-app.platform-admin-workspace .platform-plan-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; }
+.crm-app.platform-admin-workspace .platform-plan-item > small { grid-column:1/-1; color:var(--admin-muted); overflow-wrap:anywhere; }
+.crm-app.platform-admin-workspace .platform-plan-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.crm-app.platform-admin-workspace .platform-schema-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.crm-app.platform-admin-workspace .platform-alert-list { max-height:360px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--admin-accent) transparent; }
+.crm-app.platform-admin-workspace .platform-alert-list li { padding:14px 12px; border-bottom:1px solid var(--admin-line); border-left:3px solid var(--admin-accent); margin-bottom:8px; background:var(--admin-soft); border-radius:0 8px 8px 0; }
+@media(max-width:600px) { .crm-app.platform-admin-workspace .platform-plan-item { grid-template-columns:1fr; } .crm-app.platform-admin-workspace .admin-section-nav a { padding:8px; font-size:12px; } }
+.crm-app.platform-admin-workspace .platform-admin-hero { background:var(--admin-soft)!important; border:1px solid var(--admin-line)!important; border-left:4px solid var(--admin-accent)!important; border-radius:16px!important; padding:26px 28px!important; }
+.crm-app.platform-admin-workspace .platform-plan-form { grid-template-columns:repeat(2,minmax(0,1fr))!important; background:var(--admin-soft)!important; padding:16px!important; border-radius:10px; }
+.crm-app.platform-admin-workspace .platform-admin-metric strong { font-size:32px!important; }
+.crm-app.platform-admin-workspace .platform-admin-panel h3 { font-size:19px!important; }
+@media(max-width:600px) { .crm-app.platform-admin-workspace .platform-plan-form { grid-template-columns:1fr!important; } }
+.platform-admin-workspace { --admin-surface:#fff; --admin-soft:#eef7f5; --admin-line:#d9e7e3; --admin-ink:#193c42; --admin-muted:#58716f; --admin-accent:#087f7b; }
+.platform-admin-workspace.crm-dark { --admin-surface:#202c30; --admin-soft:#263d3c; --admin-line:#3d5554; --admin-ink:#e5f1ef; --admin-muted:#b7cbc7; --admin-accent:#86d8ce; }
+.platform-admin-workspace .platform-admin-layout { max-width:1500px; margin-inline:auto; padding:24px; color:var(--admin-ink); gap:20px; }
+.platform-admin-workspace .platform-workspace-header { padding:0 0 18px; border-bottom:1px solid var(--admin-line); }
+.platform-admin-workspace .platform-admin-hero { background:var(--admin-soft); border:1px solid var(--admin-line); border-left:4px solid var(--admin-accent); border-radius:16px; padding:26px 28px; margin:0; }
+.platform-admin-workspace .platform-admin-hero h2 { font-size:30px; letter-spacing:-.7px; margin:8px 0; }
+.platform-admin-workspace .card-eyebrow { color:var(--admin-accent)!important; letter-spacing:1.4px; font-size:10px; }
+.platform-admin-workspace .platform-admin-metrics { gap:14px; }
+.platform-admin-workspace .platform-admin-metric { padding:20px; border:1px solid var(--admin-line); border-radius:12px; background:var(--admin-surface); box-shadow:none; }
+.platform-admin-workspace .platform-admin-metric strong { font-size:32px; line-height:1.5; }
+.platform-admin-workspace .platform-admin-metric:not(.platform-admin-metric-alert) strong { color:var(--admin-accent); }
+.platform-admin-workspace .platform-admin-panel { padding:22px; border:1px solid var(--admin-line); border-radius:14px; background:var(--admin-surface); box-shadow:none; }
+.platform-admin-workspace .platform-admin-panel-heading { padding-bottom:16px; margin-bottom:16px; border-bottom:1px solid var(--admin-line); align-items:center; }
+.platform-admin-workspace .platform-admin-panel h3 { font-size:19px; margin-block:6px; color:var(--admin-ink); }
+.platform-admin-workspace .platform-admin-panel p { line-height:1.65; color:var(--admin-muted); }
+.platform-admin-workspace .platform-admin-count { background:var(--admin-soft); color:var(--admin-accent); border-radius:999px; padding:6px 10px; white-space:nowrap; }
+.platform-admin-workspace .platform-admin-grid { grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:20px; align-items:start; }
+.platform-admin-workspace .platform-admin-tenant-card { border:0; border-bottom:1px solid var(--admin-line); border-radius:0; padding:18px 0; background:transparent; box-shadow:none; }
+.platform-admin-workspace .platform-tenant-summary > div { background:var(--admin-soft); border:0; border-radius:8px; padding:12px; }
+.platform-admin-workspace .platform-plan-form { grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; padding:16px; background:var(--admin-soft); border-radius:10px; }
+.platform-admin-workspace .platform-plan-description,.platform-admin-workspace .platform-plan-form-actions { grid-column:1/-1; }
+.platform-admin-workspace :is(input,select,textarea) { font-family:inherit; border-radius:8px; min-height:40px; border-color:var(--admin-line); color:var(--admin-ink); background:var(--admin-surface); }
+.platform-admin-workspace .platform-plan-item { padding:16px 0; border:0; border-bottom:1px solid var(--admin-line); background:transparent; border-radius:0; }
+.platform-admin-workspace button { transition:background-color .16s,box-shadow .16s; }
+.platform-admin-workspace button:focus-visible { outline:2px solid var(--admin-accent); outline-offset:3px; }
+.platform-admin-workspace .settings-empty { background:var(--admin-soft); padding:16px; border-radius:8px; }
+@supports (appearance:base-select) {
+ .platform-admin-workspace select,.platform-admin-workspace select::picker(select) { appearance:base-select; }
+ .platform-admin-workspace select::picker(select) { position-area:block-end span-inline-end; position-try-fallbacks:none; background:var(--admin-surface); color:var(--admin-ink); border:1px solid var(--admin-line); border-radius:10px; padding:6px; margin-top:6px; max-height:240px; overflow:auto; box-shadow:0 8px 24px #12392e20; }
+ .platform-admin-workspace select option { padding:10px; border-radius:6px; }
+ .platform-admin-workspace select option:is(:checked,:hover) { background:var(--admin-soft); color:var(--admin-accent); }
+}
+@keyframes admin-enter { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+@media(prefers-reduced-motion:no-preference) { .platform-admin-workspace .platform-admin-hero,.platform-admin-workspace .platform-admin-metrics { animation:admin-enter .3s ease-out; } }
+@media(max-width:1050px) { .platform-admin-workspace .platform-admin-grid { grid-template-columns:1fr; } }
+@media(max-width:600px) { .platform-admin-workspace .platform-admin-layout { padding:12px; } .platform-admin-workspace .platform-admin-panel,.platform-admin-workspace .platform-admin-hero { padding:16px; } .platform-admin-workspace .platform-admin-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .platform-admin-workspace .platform-workspace-header { flex-wrap:wrap; gap:12px; } .platform-admin-workspace .platform-plan-form { grid-template-columns:1fr; } }
+.platform-payment-form { display:flex; align-items:end; flex-wrap:wrap; gap:12px; margin-top:16px; }
+.platform-payment-form label { display:grid; gap:6px; flex:1; min-width:180px; }
+.platform-payment-form small { flex-basis:100%; color:var(--admin-muted, #58716f); }
+.platform-payment-history { margin-top:16px; max-height:240px; overflow:auto; }

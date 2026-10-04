@@ -31,6 +31,25 @@ def test_social_turn_does_not_inherit_old_product(message, expected):
 
 def test_product_question_is_not_routed_as_social_turn():
     assert _social_reply("Bình giữ nhiệt inox 600 ml còn hàng không?") is None
+
+
+def test_short_greeting_does_not_reuse_product_context():
+    assert _social_reply("shop nha") is not None
+
+
+def test_shopee_bridge_auth_error_does_not_force_human_takeover():
+    db = Mock()
+    conversation = Mock(bot_mode="auto")
+    db.query.return_value.filter.return_value.first.return_value = conversation
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.services.auto_reply_service.send_text_reply", side_effect=HTTPException(401, "bridge secret mismatch")), \
+        patch("app.services.auto_reply_service._notify_rag_handoff_required") as handoff:
+        with pytest.raises(HTTPException) as error:
+            process_rag_auto_reply(db, 7, "shopee", "hello", 4)
+    assert error.value.status_code == 401
+    assert conversation.bot_mode == "auto"
+    handoff.assert_not_called()
 from app.services.quota_service import QuotaDecision, QuotaExceededError
 
 
