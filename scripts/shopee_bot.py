@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import hmac
 import json
 import os
@@ -31,6 +32,7 @@ SELLER_CHAT = "https://banhang.shopee.vn/new-webchat/conversations"
 BACKEND_URL = ""
 CONNECTOR_TOKEN = ""
 SEEN_MESSAGE_IDS: dict[str, float] = {}
+IN_FLIGHT_MESSAGE_IDS: set[str] = set()
 SYNCED_AVATAR_IDS: set[str] = set()
 CONTROL_SERVER: ThreadingHTTPServer | None = None
 CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
@@ -41,6 +43,16 @@ CONTROL_SEND_LOCK = Lock()
 
 class ShopeeDeliveryUnknown(RuntimeError):
     """The click may have reached Shopee, but the chat did not confirm it."""
+
+
+def await_bridge_result(future, timeout: float = 25) -> dict:
+    """A slow UI send may still complete; never report a safe-to-retry 502."""
+    try:
+        return future.result(timeout=timeout)
+    except FutureTimeoutError as exc:
+        raise ShopeeDeliveryUnknown(
+            "Shopee chưa xác nhận tin đã gửi; hãy kiểm tra hội thoại trước khi thử lại."
+        ) from exc
 
 
 def extract_avatar_url(value: object, depth: int = 0) -> str:
@@ -74,11 +86,9 @@ def find_edge() -> Path | None:
 
 
 def cdp_ready() -> bool:
+    if not cdp_browser_ready():
+        return False
     try:
-        with urlopen(CDP + "/json/version", timeout=1.5) as response:
-            version = json.loads(response.read().decode("utf-8"))
-            if response.status != 200 or not str(version.get("Browser", "")).startswith("Edg/"):
-                return False
         with urlopen(CDP + "/json/list", timeout=1.5) as response:
             targets = json.loads(response.read().decode("utf-8"))
             return response.status == 200 and any(
@@ -87,6 +97,15 @@ def cdp_ready() -> bool:
                 for target in targets
                 if isinstance(target, dict)
             )
+    except Exception:
+        return False
+
+
+def cdp_browser_ready() -> bool:
+    try:
+        with urlopen(CDP + "/json/version", timeout=1.5) as response:
+            version = json.loads(response.read().decode("utf-8"))
+            return response.status == 200 and str(version.get("Browser", "")).startswith("Edg/")
     except Exception:
         return False
 
@@ -115,6 +134,12 @@ def start_edge() -> None:
             return
         time.sleep(0.5)
     raise RuntimeError("Edge chưa sẵn sàng sau 90 giây. Hãy giữ cửa sổ Edge riêng mở và chạy lại connector.")
+
+
+def ensure_edge_connection() -> None:
+    """Restore the Seller Chat debug endpoint after its Edge process closes."""
+    if not cdp_browser_ready():
+        start_edge()
 
 
 def normalize_message(message: object) -> dict | None:
@@ -311,9 +336,15 @@ async def deliver(message: dict | None) -> None:
         SEEN_MESSAGE_IDS.clear()
     if message["messageId"] in SEEN_MESSAGE_IDS and now - SEEN_MESSAGE_IDS[message["messageId"]] < 3600:
         return
-    status, detail = await asyncio.to_thread(post_message, message)
-    if 200 <= status < 300:
-        SEEN_MESSAGE_IDS[message["messageId"]] = now
+    if message["messageId"] in IN_FLIGHT_MESSAGE_IDS:
+        return
+    IN_FLIGHT_MESSAGE_IDS.add(message["messageId"])
+    try:
+        status, detail = await asyncio.to_thread(post_message, message)
+        if 200 <= status < 300:
+            SEEN_MESSAGE_IDS[message["messageId"]] = now
+    finally:
+        IN_FLIGHT_MESSAGE_IDS.discard(message["messageId"])
     print(
         f"{'✅' if 200 <= status < 300 else '❌'} Shopee message {message['messageId']} → CRM HTTP {status}",
         flush=True,
@@ -425,23 +456,37 @@ SHOPEE_CONVERSATION_JS = r"""({threadId, recipientId, click}) => {
 }"""
 
 SHOPEE_MESSAGE_COUNT_JS = r"""text => {
-  const list = document.querySelector('#message-virtualized-list');
+  const list = document.querySelector('#message-virtualized-list') ||
+    document.querySelector('[data-cy="webchat-conversation-detail-message-container"]');
   if (!list) return null;
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
-  return [...list.querySelectorAll('*')].filter(node =>
-    node.childElementCount === 0 && normalize(node.textContent) === normalize(text)
+  return [...list.querySelectorAll('[data-cy="webchat-message-send"] pre > div')].filter(node =>
+    normalize([...node.childNodes].filter(child => child.nodeType === Node.TEXT_NODE)
+      .map(child => child.textContent).join('')) === normalize(text)
   ).length;
 }"""
 
 SHOPEE_MESSAGE_APPEARED_JS = r"""({text, previousCount}) => {
-  const list = document.querySelector('#message-virtualized-list');
+  const list = document.querySelector('#message-virtualized-list') ||
+    document.querySelector('[data-cy="webchat-conversation-detail-message-container"]');
   if (!list) return false;
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
-  const count = [...list.querySelectorAll('*')].filter(node =>
-    node.childElementCount === 0 && normalize(node.textContent) === normalize(text)
+  const count = [...list.querySelectorAll('[data-cy="webchat-message-send"] pre > div')].filter(node =>
+    normalize([...node.childNodes].filter(child => child.nodeType === Node.TEXT_NODE)
+      .map(child => child.textContent).join('')) === normalize(text)
   ).length;
   return count > previousCount;
 }"""
+
+
+async def wait_for_message_list(page, text: str) -> int:
+    """Shopee renders the selected chat asynchronously after selecting a row."""
+    for _ in range(40):
+        count = await page.evaluate(SHOPEE_MESSAGE_COUNT_JS, text)
+        if count is not None:
+            return count
+        await page.wait_for_timeout(250)
+    raise RuntimeError("Shopee chưa tải xong danh sách tin nhắn của hội thoại đã chọn.")
 
 
 async def enrich_avatar_from_edge(page, message: dict) -> str:
@@ -513,9 +558,7 @@ async def send_shopee_message(thread_id: str, text: str, recipient_id: str = "")
         raise RuntimeError("Shopee chưa xác nhận đã mở đúng hội thoại; không gửi để tránh nhầm khách.")
 
     await CONTROL_PAGE.wait_for_timeout(500)
-    previous_message_count = await CONTROL_PAGE.evaluate(SHOPEE_MESSAGE_COUNT_JS, text)
-    if previous_message_count is None:
-        raise RuntimeError("Không tìm thấy danh sách tin nhắn Shopee để xác nhận đúng cuộc trò chuyện.")
+    previous_message_count = await wait_for_message_list(CONTROL_PAGE, text)
     composers = CONTROL_PAGE.locator(
         '[data-cy="webchat-conversation-detail-input"] textarea:visible, '
         '[data-cy="webchat-conversation-detail-input"] [contenteditable="true"]:visible'
@@ -556,7 +599,7 @@ async def send_shopee_message(thread_id: str, text: str, recipient_id: str = "")
     try:
         await CONTROL_PAGE.wait_for_function(
             SHOPEE_MESSAGE_APPEARED_JS,
-            {"text": text, "previousCount": previous_message_count},
+            arg={"text": text, "previousCount": previous_message_count},
             timeout=10000,
         )
     except Exception as exc:
@@ -602,7 +645,7 @@ class _ShopeeControlHandler(BaseHTTPRequestHandler):
                     send_shopee_message(payload.get("threadId"), payload.get("message"), payload.get("recipientId")),
                     CONTROL_LOOP,
                 )
-                result = future.result(timeout=25)
+                result = await_bridge_result(future)
             self._reply(200, result)
         except ShopeeDeliveryUnknown as exc:
             self._reply(409, {"code": "delivery_unknown", "detail": str(exc)})
@@ -634,7 +677,7 @@ def start_control_server(page) -> None:
 
 
 async def run() -> None:
-    global BACKEND_URL, CONNECTOR_TOKEN, CONTROL_SECRET
+    global BACKEND_URL, CONNECTOR_TOKEN, CONTROL_SECRET, CONTROL_PAGE, CONTROL_CONTEXT
     print("SmartMerchantShopee build: two-way replies + Shopee avatars", flush=True)
     try:
         from playwright.async_api import async_playwright
@@ -642,79 +685,89 @@ async def run() -> None:
         raise SystemExit("Thiếu Playwright. Chạy: python -m pip install playwright") from exc
     BACKEND_URL, CONNECTOR_TOKEN = configure_local_connector("shopee", RUNTIME, PACKAGE_DIR)
     CONTROL_SECRET = CONNECTOR_TOKEN
-    if not cdp_ready():
-        start_edge()
-
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.connect_over_cdp(CDP)
-        if not browser.contexts:
-            raise RuntimeError("Edge chưa có browser context.")
-        context = browser.contexts[0]
-        attached: set[int] = set()
-
-        def attach(page) -> None:
-            if id(page) in attached:
-                return
-            attached.add(id(page))
-
-            async def on_console(console_message) -> None:
-                raw = console_message.text
-                if not raw.startswith("__SMH_SHOPEE__"):
-                    return
-                try:
-                    parsed = json.loads(raw[len("__SMH_SHOPEE__"):])
-                except ValueError:
-                    return
-                incoming = normalize_message(parsed)
-                if incoming and not incoming["avatarUrl"]:
-                    incoming["avatarUrl"] = await enrich_avatar_from_edge(page, incoming)
-                await deliver(incoming)
-
-            page.on("console", lambda event: asyncio.create_task(on_console(event)))
-
-        for page in context.pages:
-            attach(page)
-            await page.add_init_script(PROBE_JS)
-            try:
-                await page.evaluate(PROBE_JS)
-            except Exception:
-                pass
-
-        async def prepare_page(page) -> None:
-            attach(page)
-            await page.add_init_script(PROBE_JS)
-            try:
-                await page.evaluate(PROBE_JS)
-            except Exception:
-                pass
-
-        context.on("page", lambda page: asyncio.create_task(prepare_page(page)))
-        page = next((item for item in context.pages if "banhang.shopee.vn" in item.url), None)
-        if page is None:
-            page = await context.new_page()
-            attach(page)
-            await page.add_init_script(PROBE_JS)
-            await page.goto(SELLER_CHAT, wait_until="domcontentloaded", timeout=120000)
-        try:
-            await page.reload(wait_until="domcontentloaded", timeout=120000)
-        except Exception:
-            pass
-        start_control_server(page)
-        print("Shopee connector đang chạy. Hãy đăng nhập thủ công trong Edge nếu cần; Ctrl+C để dừng.", flush=True)
-        last_avatar_sync = 0.0
-        all_conversations_selected = False
         while True:
             try:
-                selected = await select_all_conversations_tab(page)
-                if selected and not all_conversations_selected:
-                    print("✅ Shopee đang theo dõi tab Tất cả cuộc trò chuyện.", flush=True)
-                all_conversations_selected = selected
-            except Exception:
+                await asyncio.to_thread(ensure_edge_connection)
+                browser = await playwright.chromium.connect_over_cdp(CDP)
+                if not browser.contexts:
+                    raise RuntimeError("Edge chưa có browser context.")
+                context = browser.contexts[0]
+                attached: set[int] = set()
+
+                def attach(page) -> None:
+                    if id(page) in attached:
+                        return
+                    attached.add(id(page))
+
+                    async def on_console(console_message) -> None:
+                        raw = console_message.text
+                        if not raw.startswith("__SMH_SHOPEE__"):
+                            return
+                        try:
+                            parsed = json.loads(raw[len("__SMH_SHOPEE__"):])
+                        except ValueError:
+                            return
+                        incoming = normalize_message(parsed)
+                        if incoming and not incoming["avatarUrl"]:
+                            incoming["avatarUrl"] = await enrich_avatar_from_edge(page, incoming)
+                        await deliver(incoming)
+
+                    page.on("console", lambda event: asyncio.create_task(on_console(event)))
+
+                for page in context.pages:
+                    attach(page)
+                    await page.add_init_script(PROBE_JS)
+                    try:
+                        await page.evaluate(PROBE_JS)
+                    except Exception:
+                        pass
+
+                async def prepare_page(page) -> None:
+                    attach(page)
+                    await page.add_init_script(PROBE_JS)
+                    try:
+                        await page.evaluate(PROBE_JS)
+                    except Exception:
+                        pass
+
+                context.on("page", lambda page: asyncio.create_task(prepare_page(page)))
+                page = next((item for item in context.pages if "banhang.shopee.vn" in item.url), None)
+                if page is None:
+                    page = await context.new_page()
+                    attach(page)
+                    await page.add_init_script(PROBE_JS)
+                    await page.goto(SELLER_CHAT, wait_until="domcontentloaded", timeout=120000)
+                else:
+                    try:
+                        await page.reload(wait_until="domcontentloaded", timeout=120000)
+                    except Exception:
+                        pass
+                start_control_server(page)
+                print("Shopee connector đang chạy. Hãy đăng nhập thủ công trong Edge nếu cần; Ctrl+C để dừng.", flush=True)
+                last_avatar_sync = 0.0
                 all_conversations_selected = False
-            if time.monotonic() - last_avatar_sync >= 30:
-                await sync_visible_avatars(page)
-                last_avatar_sync = time.monotonic()
-            await asyncio.sleep(5)
+                while cdp_ready() and not page.is_closed():
+                    try:
+                        selected = await select_all_conversations_tab(page)
+                        if selected and not all_conversations_selected:
+                            print("✅ Shopee đang theo dõi tab Tất cả cuộc trò chuyện.", flush=True)
+                        all_conversations_selected = selected
+                    except Exception:
+                        all_conversations_selected = False
+                    if time.monotonic() - last_avatar_sync >= 30:
+                        await sync_visible_avatars(page)
+                        last_avatar_sync = time.monotonic()
+                    await asyncio.sleep(5)
+                print("⚠️ Mất kết nối Edge Seller Chat; đang thử nối lại.", flush=True)
+                report_connector_status("shopee", BACKEND_URL, CONNECTOR_TOKEN, state="error", error_code="edge_disconnected")
+            except Exception as exc:
+                print(f"⚠️ Shopee connector chưa nối lại được Edge: {type(exc).__name__}: {exc}", flush=True)
+                report_connector_status("shopee", BACKEND_URL, CONNECTOR_TOKEN, state="error", error_code="edge_reconnect_failed")
+                await asyncio.sleep(10)
+            finally:
+                CONTROL_PAGE = None
+                CONTROL_CONTEXT = None
 
 
 def self_test() -> None:

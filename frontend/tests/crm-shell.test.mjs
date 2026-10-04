@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 const appSource = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
+const landingSource = fs.readFileSync(new URL("../src/MarketingLanding.vue", import.meta.url), "utf8");
 const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 const indexSource = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const channelUtilsSource = fs.readFileSync(new URL("../src/channel-utils.js", import.meta.url), "utf8");
@@ -159,7 +160,15 @@ test("CRM shell exposes the product's operational navigation", () => {
   assert.match(appSource, /data-testid="crm-brand-mark"/);
 });
 
-test("anonymous visitors land on a branded Owly/Salon login gate", () => {
+test("anonymous visitors see the public landing page before choosing login or signup", () => {
+  assert.match(appSource, /const publicView = ref\("home"\)/);
+  assert.match(appSource, /<MarketingLanding v-else-if="publicView === 'home'"/);
+  assert.match(landingSource, /data-testid="marketing-page"/);
+  assert.match(appSource, /@login="openLogin" @signup="openSignup" @plans="openPublicServicePage"/);
+  assert.match(appSource, /@click="openLogin"/);
+  assert.match(appSource, /@click="openSignup"/);
+  assert.match(appSource, /@click="openPublicServicePage"/);
+  assert.match(appSource, /v-if="!authUser" class="service-public-gate"/);
   assert.match(appSource, /<section v-else class="login-page"/);
   assert.match(appSource, /data-testid="login-page"/);
     assert.match(appSource, /class="login-form"/);
@@ -169,6 +178,8 @@ test("anonymous visitors land on a branded Owly/Salon login gate", () => {
     assert.match(appSource, /<main v-if="\(authUser && !sessionBootstrapLoading\) \|\| serviceLandingOpen" class="main"/);
   assert.match(styleSource, /\.login-page/);
   assert.match(styleSource, /\.login-card/);
+  assert.match(landingSource, /\.crm-app\.public-home/);
+  assert.match(landingSource, /overflow-y:auto/);
 });
 
 test("login form surfaces a retry countdown when the auth endpoint rate-limits", () => {

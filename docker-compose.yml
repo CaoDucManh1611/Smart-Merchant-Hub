@@ -96,6 +96,8 @@ services:
       context: ./frontend
       target: development
     container_name: crm_chatbot_frontend
+    environment:
+      VITE_USE_POLLING: "true"
     ports:
       - "5173:5173"
     depends_on:

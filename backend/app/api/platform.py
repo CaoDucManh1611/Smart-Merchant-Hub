@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
-from sqlalchemy import String, cast, func, inspect, select
+from sqlalchemy import String, cast, case, func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -55,6 +56,27 @@ from app.tenancy.provisioning import provision_shop, retry_provision_shop, Provi
 
 router = APIRouter(prefix="/platform")
 logger = logging.getLogger(__name__)
+
+
+@router.get("/billing-summary")
+def billing_summary(db: Session = Depends(get_db), _actor: User = Depends(require_platform_admin)):
+    """Actual VND receipts, never package selections or approvals."""
+    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    row = db.execute(select(
+        func.coalesce(func.sum(case((Payment.status == "paid", Payment.amount), else_=0)), 0),
+        func.coalesce(func.sum(case(((Payment.status == "paid") & (Payment.paid_at >= month_start), Payment.amount), else_=0)), 0),
+        func.coalesce(func.sum(case((Payment.status == "refunded", Payment.amount), else_=0)), 0),
+        func.count(case((Payment.status == "paid", Payment.id))),
+    ).where(Payment.currency == "VND", Payment.provider != "demo")).one()
+    return {
+        "currency": "VND",
+        "net_collected": Decimal(row[0]),
+        "month_collected": Decimal(row[1]),
+        "refunded_amount": Decimal(row[2]),
+        "paid_transactions": row[3],
+        "pending_requests": db.scalar(select(func.count(Subscription.id)).where(Subscription.status == "pending")),
+        "period_start": month_start,
+    }
 
 
 def _provider_error_type(message: str | None) -> str | None:
@@ -504,6 +526,15 @@ def approve_subscription_request(
     row.status = "active"
     row.starts_at = datetime.now(timezone.utc).replace(tzinfo=None)
     row.ends_at = None
+    provisioning_plan = plan if row.service_type == "package" else None
+    if row.service_type == "chatbot":
+        from app.api.onboarding import _active_subscription_for
+        if _active_subscription_for(db, business.id) is None:
+            # A rental-only signup needs a zero-channel base workspace, not
+            # the paid CRM tier whose price happens to match the rental.
+            ensure_default_plans(db)
+            provisioning_plan = db.scalar(select(ServicePlan).where(ServicePlan.code == "demo"))
+            db.add(Subscription(business_id=business.id, plan_id=provisioning_plan.id, service_type="package", status="active", starts_at=row.starts_at, auto_renew=False))
     db.flush()
     record_audit(
         db,
@@ -518,13 +549,13 @@ def approve_subscription_request(
     db.refresh(row)
 
     try:
-        if row.service_type == "package":
+        if provisioning_plan is not None:
             # Paid CRM approvals must update the control-plane quota now. A
             # chatbot approval intentionally skips this mirror because it is
             # an add-on and must not replace the shop's CRM package.
             from app.api.onboarding import _sync_platform_subscription
 
-            _sync_platform_subscription(platform_db, business, plan)
+            _sync_platform_subscription(platform_db, business, provisioning_plan)
         _sync_platform_business(platform_db, db, business.id)
         registry = provision_shop(
             platform_db,
@@ -610,6 +641,13 @@ def get_shop_subscription(
     return _subscription_out(row)
 
 
+@router.get("/shops/{business_id}/subscriptions", response_model=list[PlatformSubscriptionOut])
+def list_shop_subscriptions(business_id: int, db: Session = Depends(get_db), _actor: User = Depends(require_platform_admin)):
+    if db.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    return [_subscription_out(row) for row in db.scalars(select(Subscription).where(Subscription.business_id == business_id).order_by(Subscription.id.desc()))]
+
+
 @router.put("/shops/{business_id}/subscription", response_model=PlatformSubscriptionOut)
 def upsert_shop_subscription(
     business_id: int,
@@ -692,8 +730,12 @@ def record_shop_payment(
     )
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription không thuộc shop.")
-    if payload.status == "paid" and subscription.plan is not None and payload.amount != subscription.plan.price:
-        raise HTTPException(status_code=409, detail="Số tiền thanh toán không khớp giá gói dịch vụ.")
+    from app.api.onboarding import _chatbot_rental_price
+    expected_amount = _chatbot_rental_price(subscription.plan) if subscription.service_type == "chatbot" else subscription.plan.price
+    if payload.currency.upper() != "VND":
+        raise HTTPException(status_code=422, detail="Chỉ hỗ trợ ghi nhận thanh toán VND.")
+    if not payload.provider_transaction_id.strip():
+        raise HTTPException(status_code=422, detail="Vui lòng nhập mã giao dịch.")
     transaction_id = payload.provider_transaction_id.strip()
     existing = db.scalar(
         select(Payment).where(Payment.provider_transaction_id == transaction_id)
@@ -703,10 +745,10 @@ def record_shop_payment(
             raise HTTPException(status_code=409, detail="Mã giao dịch đã thuộc shop khác.")
         if not _same_payment_identity(existing, payload):
             raise HTTPException(status_code=409, detail="Mã giao dịch đã tồn tại với số tiền hoặc nguồn khác.")
+        if existing.status == "pending" and payload.status == "paid" and payload.amount != expected_amount:
+            raise HTTPException(status_code=409, detail="Số tiền thanh toán không khớp giá gói dịch vụ.")
         changed = _apply_payment_status(existing, payload)
         if changed:
-            if existing.status == "paid" and subscription.status == "pending":
-                subscription.status = "active"
             record_audit(
                 db,
                 business_id=business_id,
@@ -720,6 +762,10 @@ def record_shop_payment(
             db.refresh(existing)
         response.status_code = 200
         return existing
+    if payload.status == "paid" and payload.amount != expected_amount:
+        raise HTTPException(status_code=409, detail="Số tiền thanh toán không khớp giá gói dịch vụ.")
+    if payload.status == "refunded":
+        raise HTTPException(status_code=409, detail="Chỉ ghi nhận hoàn tiền cho giao dịch đã thu trước đó.")
     payment = Payment(
         business_id=business_id,
         subscription_id=subscription.id,
@@ -733,8 +779,6 @@ def record_shop_payment(
     if payment.status == "paid" and payment.paid_at is None:
         payment.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.add(payment)
-    if payment.status == "paid" and subscription.status == "pending":
-        subscription.status = "active"
     try:
         db.flush()
     except IntegrityError as exc:

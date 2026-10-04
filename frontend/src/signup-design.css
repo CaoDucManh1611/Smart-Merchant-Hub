@@ -1,0 +1,42 @@
+/* Editorial shop identity with a focused, email-first registration form. */
+.signup-page{--signup-ink:#183c38;--signup-muted:#59736d;--signup-teal:#087f78;background:#f6f8f4;padding:32px;overflow-y:auto}
+.signup-page .login-orb{display:none}
+.signup-page .login-shell{width:min(1180px,100%);grid-template-columns:1fr 1.12fr;border:1px solid #dce7df;border-radius:20px;box-shadow:0 18px 60px #284e3810;background:white;overflow:hidden}
+.signup-page .login-showcase{background:#e8eee5;color:var(--signup-ink);padding:40px;min-height:0;display:flex;flex-direction:column}
+.signup-page .login-showcase::after{display:none}
+.signup-page .login-brand-lockup{margin-bottom:40px}
+.signup-page .login-brand-mark{background:#fff;border:0;color:var(--signup-teal)}
+.signup-page .login-brand-lockup span,.signup-page .login-eyebrow,.signup-page .login-showcase-copy{color:var(--signup-muted)}
+.signup-page .login-showcase h1{font-family:var(--font-ui);font-size:40px;line-height:1.2;font-weight:700;letter-spacing:-.035em}
+.signup-page .login-showcase h1 em{color:var(--signup-teal)}
+.signup-page .login-feature-list{display:none}
+.signup-page .login-card{padding:32px 44px;min-width:0;background:#fff;border:0;box-shadow:none;border-radius:0;margin:0;display:flex;flex-direction:column;justify-content:center}
+.signup-page .login-card>.smh-logo{display:none}
+.signup-page .login-card-topline{gap:12px;flex-wrap:wrap}
+.signup-page .login-card-kicker{font-size:10px;letter-spacing:.1em;color:var(--signup-teal)}
+.signup-page .login-security-pill{display:none}
+.signup-page .ui-language-control{margin-left:auto}
+.signup-page .login-card-heading h2{font-size:30px;letter-spacing:-.03em;color:var(--signup-ink)}
+.signup-page .login-card-heading p{color:var(--signup-muted);font-size:13px;line-height:1.65}
+.signup-page .signup-stepper{gap:14px;margin:24px 0;padding-bottom:18px;border-bottom:1px solid #e4ece6;grid-template-columns:repeat(3,minmax(0,1fr))}
+.signup-page .signup-stepper small{display:none}
+.signup-page .signup-stepper strong{font-size:11px;font-weight:600}
+.signup-page .signup-stepper li{align-items:center}
+.signup-page .signup-stepper li.active>span,.signup-page .signup-stepper li.complete>span{background:var(--signup-teal);border-color:var(--signup-teal)}
+.signup-page .signup-form{display:grid;grid-template-columns:1fr;gap:16px}
+.signup-page .signup-form>label:nth-child(2),.signup-full-width,.signup-otp-note{grid-column:1/-1}
+.signup-page .login-form label{font-size:12px;line-height:1.5;color:var(--signup-ink);gap:7px}
+.signup-page .login-form input{min-width:0;width:100%;height:48px;border:1px solid #c9d8cf;border-radius:8px;background:#fbfcfa;box-shadow:none;padding:12px 14px;font-size:14px;color:var(--signup-ink)}
+.signup-page .login-form input:focus{outline:2px solid #087f7833;border-color:var(--signup-teal)}
+.signup-page .signup-email-control{display:flex;gap:10px}
+.signup-page .signup-email-control input{flex:1}
+.signup-page .signup-otp-button{background:#eef5ef;border:1px solid #c9d8cf;color:var(--signup-teal);border-radius:8px;min-height:44px;padding:8px 12px}
+.signup-page .signup-password-hint{font-size:11px;color:var(--signup-muted)}
+.signup-page .login-submit{justify-content:center;min-height:48px;background:var(--signup-teal);border-radius:8px;box-shadow:none;margin-top:4px;font-size:14px}
+.signup-page .login-submit:hover{background:#066c66}
+.signup-page .login-footer-note{color:var(--signup-muted);font-size:11px;line-height:1.6;margin-top:20px}
+.signup-account-links{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:16px;padding-top:18px;border-top:1px solid #e4ece6}
+.signup-page .signup-account-links .login-service-link{margin:0;padding:8px 0;font-size:12px;color:var(--signup-teal);min-height:44px}
+.signup-page button:focus-visible{outline:2px solid var(--signup-teal);outline-offset:3px}
+@media(max-width:900px){.signup-page{padding:24px}.signup-page .login-shell{grid-template-columns:1fr}.signup-page .login-showcase{display:none}.signup-page .login-card{padding:32px;max-width:620px;margin:auto;width:100%}.signup-page .login-card>.smh-logo{display:flex;margin-bottom:24px}}
+@media(max-width:480px){.signup-page{padding:12px}.signup-page .login-card{padding:24px 20px}.signup-page .signup-form{grid-template-columns:1fr;gap:16px}.signup-page .login-card-heading h2{font-size:26px}.signup-page .signup-stepper{gap:6px}.signup-page .signup-stepper li{gap:5px}.signup-page .signup-stepper strong{font-size:10px}.signup-page .signup-stepper li>span{width:20px;height:20px;flex-basis:20px}.signup-page .signup-account-links{align-items:flex-start;flex-direction:column}}

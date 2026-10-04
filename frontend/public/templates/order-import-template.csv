@@ -1,0 +1,2 @@
+order_number,customer_id,sku,quantity,conversation_id
+EXAMPLE-ORDER-001,1,EXAMPLE-SKU-001,1,

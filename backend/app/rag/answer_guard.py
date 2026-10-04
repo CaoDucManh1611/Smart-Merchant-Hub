@@ -4,6 +4,13 @@ import re
 
 
 _CITATION = re.compile(r"\[(?:Nguồn|Source)\s+(\d+)\]", re.IGNORECASE)
+
+
+def customer_facing_answer(answer: str) -> str:
+    """Hide verified RAG source markers and Markdown from channel messages."""
+    without_citations = _CITATION.sub("", answer or "")
+    without_markdown = without_citations.replace("***", "").replace("**", "")
+    return "\n".join(line.strip() for line in without_markdown.splitlines()).strip()
 _MONEY = re.compile(
     r"(?<!\w)(?:(?P<prefix>USD|VND|\$|₫)\s*(?P<prefix_amount>\d+(?:[.,]\d+)*)|"
     r"(?P<suffix_amount>\d+(?:[.,]\d+)*)\s*(?P<suffix>đồng|VND|USD|đ|₫))(?!\w)",

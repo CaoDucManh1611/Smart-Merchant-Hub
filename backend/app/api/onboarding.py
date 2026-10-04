@@ -224,6 +224,7 @@ def _create_shop_records(
     owner_email: str,
     password_hash: str,
     plan_code: str,
+    service_type: str = "package",
 ):
     """Build the legacy shop records without committing them.
 
@@ -253,8 +254,8 @@ def _create_shop_records(
     subscription = Subscription(
         business_id=business.id,
         plan_id=plan.id,
-        service_type="package",
-        status="active" if plan.price == 0 else "pending",
+        service_type=service_type,
+        status="active" if service_type == "package" and plan.price == 0 else "pending",
         starts_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(subscription)
@@ -766,7 +767,8 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
             owner_name=challenge.owner_name,
             owner_email=email,
             password_hash=challenge.password_hash,
-            plan_code="demo",
+            plan_code=payload.plan_code,
+            service_type=payload.service_type,
         )
         db.commit()
     except IntegrityError as exc:
@@ -774,7 +776,8 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Không thể tạo shop với thông tin đã nhập.") from exc
 
     provisioning_state = _start_platform_provisioning(business, subscription)
-    _mirror_initial_subscription(business, plan)
+    if subscription.status == "active" and subscription.service_type == "package":
+        _mirror_initial_subscription(business, plan)
     return OnboardingShopOut(
         business_id=business.id,
         shop_name=business.name,

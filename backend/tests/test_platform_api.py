@@ -554,13 +554,85 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(200, paid.status_code, paid.text)
         self.assertEqual("paid", paid.json()["status"])
         with Session(self.engine) as db:
-            self.assertEqual("active", db.get(Subscription, subscription_id).status)
+            self.assertEqual("pending", db.get(Subscription, subscription_id).status)
         conflict = self.client.post(
             f"/api/platform/shops/{self.business_id}/payments",
             headers=headers,
             json={"subscription_id": subscription_id, "amount": "999", "currency": "VND", "provider": "manual", "provider_transaction_id": "state-tx-1", "status": "paid"},
         )
         self.assertEqual(409, conflict.status_code, conflict.text)
+
+    def test_billing_summary_only_counts_paid_vnd_and_replay_is_idempotent(self):
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        baseline = self.client.get("/api/platform/billing-summary", headers=headers)
+        self.assertEqual(200, baseline.status_code, baseline.text)
+        with Session(self.engine) as db:
+            plan = ServicePlan(code="billing-summary-plan", name="Billing Summary", price=Decimal("400000"))
+            db.add(plan)
+            db.flush()
+            subscription = Subscription(business_id=self.business_id, plan_id=plan.id, status="active")
+            db.add(subscription)
+            db.commit()
+            subscription_id = subscription.id
+        payload = {"subscription_id": subscription_id, "amount": "400000", "provider": "manual", "provider_transaction_id": "billing-summary-tx", "status": "paid"}
+        with Session(self.engine) as db:
+            db.add_all([
+                Payment(business_id=self.business_id, subscription_id=subscription_id, amount=Decimal("400000"), currency="VND", provider="manual", provider_transaction_id="summary-pending", status="pending"),
+                Payment(business_id=self.business_id, subscription_id=subscription_id, amount=Decimal("400000"), currency="USD", provider="manual", provider_transaction_id="summary-usd", status="paid"),
+                Payment(business_id=self.business_id, subscription_id=subscription_id, amount=Decimal("0"), currency="VND", provider="demo", provider_transaction_id="summary-demo", status="paid"),
+            ])
+            db.commit()
+        for _ in range(2):
+            result = self.client.post(f"/api/platform/shops/{self.business_id}/payments", headers=headers, json=payload)
+            self.assertIn(result.status_code, (200, 201), result.text)
+        summary = self.client.get("/api/platform/billing-summary", headers=headers).json()
+        self.assertEqual(Decimal(str(baseline.json()["net_collected"])) + Decimal("400000"), Decimal(str(summary["net_collected"])))
+        self.assertEqual(baseline.json()["paid_transactions"] + 1, summary["paid_transactions"])
+        refunded = self.client.post(f"/api/platform/shops/{self.business_id}/payments", headers=headers, json={**payload, "status": "refunded"})
+        self.assertEqual(200, refunded.status_code, refunded.text)
+        after = self.client.get("/api/platform/billing-summary", headers=headers).json()
+        self.assertEqual(Decimal(str(summary["net_collected"])) - Decimal("400000"), Decimal(str(after["net_collected"])))
+        agent_headers = {"Authorization": f"Bearer {self.login('platform-agent@test', 'agent-password')}"}
+        self.assertEqual(403, self.client.get("/api/platform/billing-summary", headers=agent_headers).status_code)
+
+    def test_chatbot_receipts_use_rental_price_and_list_independent_subscriptions(self):
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        with Session(self.engine) as db:
+            plan = ServicePlan(code="receipt-chatbot-plan", name="Chatbot Receipts", price=Decimal("0"), features={"chatbot_rental_price": 100000})
+            db.add(plan)
+            db.flush()
+            subscription = Subscription(business_id=self.business_id, plan_id=plan.id, status="active", service_type="chatbot")
+            db.add(subscription)
+            db.commit()
+            subscription_id = subscription.id
+        result = self.client.post(f"/api/platform/shops/{self.business_id}/payments", headers=headers, json={"subscription_id": subscription_id, "amount": "100000", "provider": "manual", "provider_transaction_id": "chatbot-receipt-tx", "status": "paid"})
+        self.assertEqual(201, result.status_code, result.text)
+        listed = self.client.get(f"/api/platform/shops/{self.business_id}/subscriptions", headers=headers)
+        self.assertEqual(200, listed.status_code, listed.text)
+        self.assertTrue(any(item["id"] == subscription_id and item["service_type"] == "chatbot" for item in listed.json()))
+
+    def test_rental_only_approval_creates_demo_workspace_without_paid_crm_quota(self):
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        with Session(self.engine) as db:
+            business = Business(name="Rental Only", slug="rental-only-approval")
+            plan = ServicePlan(code="rental-only-plan", name="Rental Only Plan", price=Decimal("400000"))
+            db.add_all([business, plan])
+            db.flush()
+            rental = Subscription(business_id=business.id, plan_id=plan.id, service_type="chatbot", status="pending")
+            db.add(rental)
+            db.commit()
+            business_id, rental_id = business.id, rental.id
+        registry = SimpleNamespace(business_id=business_id, schema_name=f"tenant_{business_id}", state="active", feature_enabled=True, tenant_revision="test", migration_error=None)
+        mirrored_codes = []
+        with patch("app.api.platform.provision_shop", return_value=registry), patch("app.api.onboarding._sync_platform_subscription", side_effect=lambda _db, _business, plan: mirrored_codes.append(plan.code)):
+            result = self.client.post(f"/api/platform/subscription-requests/{rental_id}/approve", headers=headers)
+            self.assertEqual(200, result.status_code, result.text)
+            self.assertEqual(["demo"], mirrored_codes)
+        with Session(self.engine) as db:
+            packages = db.scalars(select(Subscription).where(Subscription.business_id == business_id, Subscription.service_type == "package")).all()
+            self.assertEqual(1, len(packages))
+            self.assertEqual("demo", packages[0].plan.code)
+            self.assertEqual("active", packages[0].status)
 
     def test_provider_errors_are_classified_without_returning_payload_or_message(self):
         with Session(self.engine) as db:

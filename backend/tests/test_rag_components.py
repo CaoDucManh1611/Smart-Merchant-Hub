@@ -1,5 +1,11 @@
 from app.rag.chunker import chunk_text
-from app.rag.answer_guard import has_valid_citations
+from app.rag.answer_guard import customer_facing_answer, has_valid_citations
+
+
+def test_customer_facing_answer_hides_rag_markup():
+    assert customer_facing_answer("Dạ, **bình 600 ml** giá 189.000 đồng. [Nguồn 1]") == (
+        "Dạ, bình 600 ml giá 189.000 đồng."
+    )
 from app.rag.loader import DocumentValidationError, load_document, validate_document_bytes
 import io
 from app.rag.prompt_builder import build_prompt

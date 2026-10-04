@@ -79,6 +79,8 @@ class SignupOtpRequest(BaseModel):
 class SignupOtpVerify(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     otp: str = Field(..., min_length=6, max_length=6)
+    plan_code: str = Field(default="demo", min_length=2, max_length=50)
+    service_type: Literal["package", "chatbot"] = "package"
 
     @field_validator("email")
     @classmethod
