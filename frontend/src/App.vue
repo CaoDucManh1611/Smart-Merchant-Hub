@@ -12,7 +12,7 @@ import "./style.css";
 import SignupBrandScene from "./SignupBrandScene.vue";
 import { channelLabel } from "./channel-utils.js";
 import { safeProductUrl } from "./product-url.js";
-import { customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";
+import { customerTagDisplayName, customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";
 import { filterConversationsForCustomer } from "./ticket-utils.js";
 import { displayAttachments, displayMessageText, resolveMediaUrl } from "./media-utils.js";
 import { getInboxChannels } from "./inbox-utils.js";
@@ -23,6 +23,7 @@ import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privac
 import { apiFetch, AUTH_EXPIRED_EVENT } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
 import { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";
+import QRCode from "qrcode";
 import IndustryModules from "./IndustryModules.vue";
 import WorkQueue from "./WorkQueue.vue";
 import MarketingLanding from "./MarketingLanding.vue";
@@ -290,7 +291,6 @@ const conversationOutcomeSaving = ref(false);
 const conversationOutcomeError = ref("");
 const conversationActionsOpen = ref(false);
 const conversationPrioritySaving = ref(false);
-const conversationFavoriteIds = ref(new Set());
 const composerMode = ref("reply");
 
 const activeFilter = ref("all");
@@ -575,6 +575,12 @@ const authError = ref("");
 const authRateLimitSeconds = ref(0);
 let authRateLimitTimer = null;
 const loginForm = ref({ email: "", password: "", shop_slug: "" });
+const loginRememberMe = ref(false);
+const passwordResetStep = ref("request");
+const passwordResetLoading = ref(false);
+const passwordResetError = ref("");
+const passwordResetNotice = ref("");
+const passwordResetForm = ref({ email: "", shop_slug: "", otp: "", new_password: "" });
 const authView = ref("login");
 const publicView = ref("home");
 const signupStep = ref("details");
@@ -593,12 +599,6 @@ const shopOtpEmailLoading = ref(false);
 const shopOtpEmailSaving = ref(false);
 const shopOtpEmailError = ref("");
 const shopOtpEmailNotice = ref("");
-const accountEmailChange = ref({ new_email: "", current_password: "", otp: "" });
-const accountEmailChangePending = ref(false);
-const accountEmailChangeSending = ref(false);
-const accountEmailChangeVerifying = ref(false);
-const accountEmailChangeError = ref("");
-const accountEmailChangeNotice = ref("");
 const canManageWorkspace = computed(() => ["owner", "admin"].includes(String(authUser.value?.role || "").toLowerCase()));
 const defaultCrmPipelineStages = [
   { key: "new", label: "Mới" },
@@ -672,53 +672,6 @@ async function saveShopOtpEmail() {
     shopOtpEmailError.value = friendlyErrorMessage(err, "Chưa lưu được cấu hình email OTP.");
   } finally {
     shopOtpEmailSaving.value = false;
-  }
-}
-
-async function requestAccountEmailChange() {
-  if (accountEmailChangeSending.value) return;
-  accountEmailChangeSending.value = true;
-  accountEmailChangeError.value = "";
-  accountEmailChangeNotice.value = "";
-  try {
-    const response = await apiFetch(`${API_BASE}/auth/email-change/request`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ new_email: accountEmailChange.value.new_email, current_password: accountEmailChange.value.current_password }),
-    });
-    const detail = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
-    accountEmailChange.value.current_password = "";
-    accountEmailChangePending.value = true;
-    accountEmailChangeNotice.value = `${t('Đã gửi mã xác minh tới')} ${detail.email}. ${t('Email hiện tại vẫn được giữ cho đến khi xác minh xong.')}`;
-  } catch (err) {
-    accountEmailChangeError.value = friendlyErrorMessage(err, "Chưa gửi được mã xác minh email.");
-  } finally {
-    accountEmailChangeSending.value = false;
-  }
-}
-
-async function verifyAccountEmailChange() {
-  if (accountEmailChangeVerifying.value) return;
-  accountEmailChangeVerifying.value = true;
-  accountEmailChangeError.value = "";
-  accountEmailChangeNotice.value = "";
-  try {
-    const response = await apiFetch(`${API_BASE}/auth/email-change/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ otp: accountEmailChange.value.otp }),
-    });
-    const detail = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
-    authUser.value = { ...authUser.value, email: detail.email };
-    accountEmailChange.value = { new_email: "", current_password: "", otp: "" };
-    accountEmailChangePending.value = false;
-    accountEmailChangeNotice.value = "Email tài khoản đã được xác minh và cập nhật.";
-  } catch (err) {
-    accountEmailChangeError.value = friendlyErrorMessage(err, "Mã xác minh không hợp lệ hoặc đã hết hạn.");
-  } finally {
-    accountEmailChangeVerifying.value = false;
   }
 }
 
@@ -903,6 +856,7 @@ const sessionVisibleCount = ref(5);
 const securityLoading = ref(false);
 const securityError = ref("");
 const mfaProvisioningUri = ref("");
+const mfaQrCodeDataUrl = ref("");
 const mfaVerifyCode = ref("");
 const mfaVerifyPending = ref(false);
 const privacyLoading = ref(false);
@@ -1154,7 +1108,9 @@ const serviceRequestForm = ref({
   channels: [],
   notes: "",
 });
+const servicePlanSelectionTouched = ref(false);
 const serviceRequestSubmitted = ref(false);
+const serviceRequestOpen = ref(false);
 const serviceSuccessDialogOpen = ref(false);
 const serviceSuccessCloseButton = ref(null);
 const serviceSuccessStatusButton = ref(null);
@@ -1209,6 +1165,14 @@ const activeServicePlans = computed(() => {
 const selectedServicePlan = computed(() => (
   activeServicePlans.value.find((plan) => plan.code === serviceRequestForm.value.plan_code) || null
 ));
+const currentServicePlanCode = computed(() => {
+  const currentSubscription = serviceMode.value === "chatbot"
+    ? serviceAccountSummary.value?.chatbot_subscription
+    : quotaSnapshot.value;
+  if (serviceMode.value === "chatbot" && currentSubscription?.status !== "active") return "";
+  const code = servicePlanCodeForPurchase(currentSubscription?.plan_code);
+  return activeServicePlans.value.some((plan) => plan.code === code) ? code : "";
+});
 const serviceChannelLimit = computed(() => {
   const selectedLimit = Number(selectedServicePlan.value?.max_channels);
   if (Number.isFinite(selectedLimit)) return Math.max(0, selectedLimit);
@@ -1261,6 +1225,8 @@ const localConnectorDownloading = ref(false);
 const localConnectorError = ref("");
 const localConnectorNotice = ref("");
 const notificationError = ref("");
+const notificationMarkAllLoading = ref(false);
+const notificationClearAllLoading = ref(false);
 const activeBotConnections = computed(() => botConnections.value.filter((item) => ["connected", "active"].includes(String(item.status || "").toLowerCase())));
 const activeTikTokConnection = computed(() => activeBotConnections.value.find((item) => item.channel_type === "tiktok"));
 const tiktokChannelConnection = computed(() => botConnections.value.find((item) => item.channel_type === "tiktok"));
@@ -1567,7 +1533,7 @@ function loadBusinessProfile() {
 }
 
 function themeStorageKey() {
-  const businessId = authUser.value?.business_id || authUser.value?.business?.id || "shop";
+  const businessId = authUser.value?.business_id || authUser.value?.business?.id || "public";
   return `crm-theme-${businessId}`;
 }
 
@@ -1813,6 +1779,7 @@ function formatPlanPrice(value, billingCycle = "monthly") {
 }
 
 function preferredServicePlanCode() {
+  if (currentServicePlanCode.value) return currentServicePlanCode.value;
   return activeServicePlans.value.find((plan) => plan.code === "growth")?.code
     || activeServicePlans.value[0]?.code
     || "growth";
@@ -1839,6 +1806,7 @@ async function fetchPublicServicePlans() {
 }
 
 function resetServiceRequestForm() {
+  servicePlanSelectionTouched.value = false;
   const planCode = preferredServicePlanCode();
   serviceRequestForm.value = {
     contact_name: authUser.value?.full_name || "",
@@ -1850,6 +1818,7 @@ function resetServiceRequestForm() {
     notes: "",
   };
   serviceRequestSubmitted.value = false;
+  serviceRequestOpen.value = false;
   serviceSuccessDialogOpen.value = false;
   serviceRequestReference.value = "";
   serviceRequestError.value = "";
@@ -1876,6 +1845,7 @@ function normalizeServiceChannels(fillToLimit = false) {
 }
 
 function selectServicePlan(planCode) {
+  servicePlanSelectionTouched.value = true;
   serviceRequestForm.value.plan_code = planCode;
   normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
@@ -1884,10 +1854,20 @@ function selectServicePlan(planCode) {
   servicePurchaseNotice.value = "";
   servicePurchaseError.value = "";
   servicePurchaseStatus.value = "";
+  serviceRequestOpen.value = Boolean(authUser.value);
+  if (serviceRequestOpen.value) {
+    nextTick(() => document.querySelector(".service-request-card")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
+}
+
+function scrollToServicePlans() {
+  document.querySelector(".smh-pricing")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function selectServiceMode(mode) {
   serviceMode.value = mode === "chatbot" ? "chatbot" : "package";
+  serviceRequestOpen.value = false;
+  servicePlanSelectionTouched.value = false;
   serviceRequestForm.value.plan_code = preferredServicePlanCode();
   normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
@@ -1903,6 +1883,7 @@ function selectServiceMode(mode) {
 function openServicePage() {
   serviceLandingOpen.value = false;
   currentTab.value = "service";
+  serviceRequestOpen.value = false;
   void fetchPublicServicePlans();
   if (!serviceRequestForm.value.contact_name && authUser.value) resetServiceRequestForm();
   if (authUser.value) {
@@ -2198,6 +2179,48 @@ async function openNotifications() {
   }
   notificationsOpen.value = !notificationsOpen.value;
   if (notificationsOpen.value) await fetchOperationalNotifications();
+}
+
+async function markAllNotificationsRead() {
+  if (!unreadOperationalNotificationCount.value || notificationMarkAllLoading.value || notificationClearAllLoading.value) return;
+  notificationMarkAllLoading.value = true;
+  notificationError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/notifications/read-all`, { method: "POST" });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    operationalNotifications.value = operationalNotifications.value.map((item) => ({ ...item, is_read: true }));
+  } catch (error) {
+    notificationError.value = friendlyErrorMessage(error, "Chưa thể đánh dấu tất cả đã đọc. Vui lòng thử lại sau.");
+  } finally {
+    notificationMarkAllLoading.value = false;
+  }
+}
+
+async function clearAllNotifications() {
+  if (!operationalNotifications.value.length || notificationMarkAllLoading.value || notificationClearAllLoading.value) return;
+  const confirmed = await requestConfirmation(
+    t("Bạn có chắc muốn xóa toàn bộ thông báo? Thao tác này không thể hoàn tác."),
+    { title: t("Xóa tất cả thông báo"), confirmLabel: t("Xóa tất cả"), cancelLabel: t("Hủy"), tone: "danger" },
+  );
+  if (!confirmed) return;
+
+  notificationClearAllLoading.value = true;
+  notificationError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/notifications`, { method: "DELETE" });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `HTTP ${response.status}`);
+    }
+    operationalNotifications.value = [];
+  } catch (error) {
+    notificationError.value = friendlyErrorMessage(error, "Chưa thể xóa thông báo. Vui lòng thử lại sau.");
+  } finally {
+    notificationClearAllLoading.value = false;
+  }
 }
 
 async function activateNotification(notification) {
@@ -2616,12 +2639,6 @@ const conversationPriorityActive = computed(() => (
   selectedId.value !== null
   && String(selected.value?.priority || "normal") !== "normal"
 ));
-
-const conversationFavoriteActive = computed(() => (
-  selectedId.value !== null
-  && conversationFavoriteIds.value.has(selectedId.value)
-));
-
 
 // A ticket may only reference a conversation owned by its selected customer.
 // Keep this list derived from the tenant-scoped inbox data so the form cannot
@@ -5595,6 +5612,10 @@ async function fetchQuotaUsage() {
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
     quotaSnapshot.value = detail;
+    if (!servicePlanSelectionTouched.value) {
+      serviceRequestForm.value.plan_code = preferredServicePlanCode();
+      normalizeServiceChannels(false);
+    }
   } catch (err) {
     quotaError.value = friendlyErrorMessage(err, "Chưa tải được hạn mức sử dụng. Vui lòng thử lại sau.");
   } finally {
@@ -5620,6 +5641,80 @@ function openLogin() {
   signupLoading.value = false;
   signupError.value = "";
   signupNotice.value = "";
+  passwordResetError.value = "";
+  passwordResetNotice.value = "";
+}
+
+function openPasswordReset() {
+  publicView.value = "auth";
+  authView.value = "forgot";
+  passwordResetStep.value = "request";
+  passwordResetError.value = "";
+  passwordResetNotice.value = "";
+  passwordResetForm.value = {
+    email: loginForm.value.email.trim(),
+    shop_slug: loginForm.value.shop_slug.trim(),
+    otp: "",
+    new_password: "",
+  };
+}
+
+async function requestPasswordReset() {
+  passwordResetLoading.value = true;
+  passwordResetError.value = "";
+  passwordResetNotice.value = "";
+  try {
+    const response = await fetch(`${API_BASE}/auth/password-reset/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: passwordResetForm.value.email.trim(),
+        ...(passwordResetForm.value.shop_slug.trim() ? { shop_slug: passwordResetForm.value.shop_slug.trim() } : {}),
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(typeof detail.detail === "string" ? detail.detail : t("Chưa thể gửi mã lúc này. Vui lòng thử lại."));
+    }
+    passwordResetStep.value = "verify";
+    passwordResetNotice.value = t("Nếu email khớp tài khoản, mã xác minh đã được gửi. Hãy kiểm tra cả mục Spam.");
+  } catch (error) {
+    passwordResetError.value = friendlyErrorMessage(error, t("Chưa thể gửi mã lúc này. Vui lòng thử lại."));
+  } finally {
+    passwordResetLoading.value = false;
+  }
+}
+
+async function completePasswordReset() {
+  passwordResetLoading.value = true;
+  passwordResetError.value = "";
+  passwordResetNotice.value = "";
+  try {
+    const response = await fetch(`${API_BASE}/auth/password-reset/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: passwordResetForm.value.email.trim(),
+        otp: passwordResetForm.value.otp.trim(),
+        new_password: passwordResetForm.value.new_password,
+        ...(passwordResetForm.value.shop_slug.trim() ? { shop_slug: passwordResetForm.value.shop_slug.trim() } : {}),
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(typeof detail.detail === "string" ? detail.detail : t("Mã không hợp lệ hoặc đã hết hạn. Hãy yêu cầu mã mới."));
+    }
+    loginForm.value.email = passwordResetForm.value.email.trim();
+    loginForm.value.password = "";
+    loginForm.value.shop_slug = passwordResetForm.value.shop_slug.trim();
+    passwordResetForm.value.new_password = "";
+    passwordResetNotice.value = t("Mật khẩu đã được đổi. Bạn có thể đăng nhập bằng mật khẩu mới.");
+    authView.value = "login";
+  } catch (error) {
+    passwordResetError.value = friendlyErrorMessage(error, t("Chưa thể đổi mật khẩu lúc này. Vui lòng thử lại."));
+  } finally {
+    passwordResetLoading.value = false;
+  }
 }
 
 function invalidateSignupOtp() {
@@ -5629,17 +5724,22 @@ function invalidateSignupOtp() {
   signupNotice.value = "";
 }
 
+function validSignupEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
 async function requestSignupOtp() {
+  if (!validSignupEmail(signupForm.value.email)) {
+    signupError.value = uiLocale.value === "en"
+      ? "Enter a valid email address, such as name@shop.com."
+      : "Email chưa đúng định dạng. Hãy nhập địa chỉ như ten@shop.vn.";
+    return;
+  }
   signupLoading.value = true;
   signupError.value = "";
   signupNotice.value = "";
   try {
-    const payload = {
-      owner_name: signupForm.value.owner_name.trim(),
-      email: signupForm.value.email.trim().toLowerCase(),
-      shop_name: signupForm.value.shop_name.trim(),
-      password: signupForm.value.password,
-    };
+    const payload = { email: signupForm.value.email.trim().toLowerCase() };
     const response = await fetch(`${API_BASE}/onboarding/signup/request`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -5649,12 +5749,22 @@ async function requestSignupOtp() {
     if (!response.ok) throw new Error(typeof detail.detail === "string" ? detail.detail : detail.detail?.message || `HTTP ${response.status}`);
     signupForm.value.email = payload.email;
     signupStep.value = "otp";
-    signupNotice.value = "Mã OTP đã được gửi tới email công việc. Mã có hiệu lực trong 10 phút.";
+    signupNotice.value = uiLocale.value === "en"
+      ? "A verification code was sent. It expires in 10 minutes."
+      : "Mã OTP đã được gửi tới email công việc. Mã có hiệu lực trong 10 phút.";
   } catch (err) {
     signupError.value = friendlyErrorMessage(err, "Chưa thể gửi mã xác minh. Vui lòng thử lại sau.");
   } finally {
     signupLoading.value = false;
   }
+}
+
+function browserDeviceLabel() {
+  const agent = String(globalThis.navigator?.userAgent || "");
+  const platform = String(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || "");
+  const browser = /Edg\//.test(agent) ? "Edge" : /Firefox\//.test(agent) ? "Firefox" : /Chrome\//.test(agent) ? "Chrome" : /Safari\//.test(agent) ? "Safari" : "Browser";
+  const device = /Windows|Win32/i.test(platform) ? "Windows" : /Mac/i.test(platform) ? "macOS" : /Linux/i.test(platform) ? "Linux" : /Android/i.test(agent) ? "Android" : /iPhone|iPad/i.test(agent) ? "iOS" : "device";
+  return `${browser} · ${device}`.slice(0, 120);
 }
 
 async function handleSignupSubmit() {
@@ -5673,7 +5783,15 @@ async function verifySignupOtp() {
     const response = await fetch(`${API_BASE}/onboarding/signup/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: signupForm.value.email.trim().toLowerCase(), otp: signupForm.value.otp.trim(), plan_code: signupPlanCode.value, service_type: signupServiceType.value }),
+      body: JSON.stringify({
+        email: signupForm.value.email.trim().toLowerCase(),
+        otp: signupForm.value.otp.trim(),
+        owner_name: signupForm.value.owner_name.trim(),
+        shop_name: signupForm.value.shop_name.trim(),
+        password: signupForm.value.password,
+        plan_code: signupPlanCode.value,
+        service_type: signupServiceType.value,
+      }),
     });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(typeof detail.detail === "string" ? detail.detail : detail.detail?.message || `HTTP ${response.status}`);
@@ -5726,11 +5844,12 @@ async function login() {
     const credentials = {
       email: loginForm.value.email,
       password: loginForm.value.password,
+      remember_me: loginRememberMe.value,
       ...(loginForm.value.shop_slug.trim() ? { shop_slug: loginForm.value.shop_slug.trim() } : {}),
     };
     const response = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Device-Label": browserDeviceLabel() },
       body: JSON.stringify(credentials),
     });
     if (!response.ok) {
@@ -5754,7 +5873,7 @@ async function login() {
       throw new Error(message);
     }
     const data = await response.json();
-    storeAuthToken(data.access_token);
+    storeAuthToken(data.access_token, loginRememberMe.value ? window.localStorage : window.sessionStorage);
     authToken.value = data.access_token;
     authUser.value = { ...data.user, mfa_required: Boolean(data.mfa_required) };
     loadBusinessProfile();
@@ -5799,12 +5918,14 @@ async function logout() {
   clearAuthToken();
   authToken.value = "";
   authUser.value = null;
+  loadThemePreference();
   tenantProvisioning.value = { state: "unknown", feature_enabled: false, subscription_active: false, subscription_status: null };
   tenantProvisioningError.value = "";
   serviceAccountSummary.value = null;
   serviceAccountError.value = "";
   authSessions.value = [];
   mfaProvisioningUri.value = "";
+  mfaQrCodeDataUrl.value = "";
   mfaVerifyCode.value = "";
   mfaVerifyPending.value = false;
   privacyResult.value = null;
@@ -5816,6 +5937,8 @@ function handleAuthExpired() {
   authToken.value = "";
   authUser.value = null;
   currentTab.value = "settings";
+  publicView.value = "auth";
+  authView.value = "login";
   authError.value = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
 }
 
@@ -5906,9 +6029,14 @@ async function prepareMfaEnrollment() {
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
     mfaProvisioningUri.value = detail.provisioning_uri || "";
+    mfaQrCodeDataUrl.value = mfaProvisioningUri.value
+      ? await QRCode.toDataURL(mfaProvisioningUri.value, { errorCorrectionLevel: "M", margin: 2, width: 240 })
+      : "";
     authUser.value = { ...authUser.value, mfa_status: detail.status || "prepared" };
     mfaVerifyPending.value = true;
   } catch (err) {
+    mfaProvisioningUri.value = "";
+    mfaQrCodeDataUrl.value = "";
     securityError.value = friendlyErrorMessage(err, "Chưa thể chuẩn bị bước bảo mật bổ sung. Vui lòng thử lại sau.");
   }
 }
@@ -5957,6 +6085,7 @@ async function disableMfaEnrollment() {
     if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
     authUser.value = { ...authUser.value, mfa_status: "disabled" };
     mfaProvisioningUri.value = "";
+    mfaQrCodeDataUrl.value = "";
   } catch (err) {
     securityError.value = friendlyErrorMessage(err, "Chưa thể tắt bước bảo mật bổ sung. Vui lòng thử lại sau.");
   }
@@ -8735,14 +8864,6 @@ async function toggleConversationPriority() {
   }
 }
 
-function toggleConversationFavorite() {
-  if (selectedId.value === null) return;
-  const next = new Set(conversationFavoriteIds.value);
-  if (next.has(selectedId.value)) next.delete(selectedId.value);
-  else next.add(selectedId.value);
-  conversationFavoriteIds.value = next;
-}
-
 async function refreshSelectedConversation() {
   if (!selectedId.value) return;
   conversationActionsOpen.value = false;
@@ -9140,6 +9261,7 @@ onMounted(async () => {
   }
 
   void fetchPublicServicePlans();
+  loadThemePreference();
   try {
     await loadAuthSession();
     await fetchPlatformAdmin();
@@ -9485,6 +9607,10 @@ async function fetchServiceAccountSummary() {
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
     serviceAccountSummary.value = detail;
+    if (serviceMode.value === "chatbot" && !servicePlanSelectionTouched.value) {
+      serviceRequestForm.value.plan_code = preferredServicePlanCode();
+      normalizeServiceChannels(false);
+    }
   } catch (err) {
     if (Number(err?.status) !== 401 && Number(err?.status) !== 403) {
       serviceAccountError.value = friendlyErrorMessage(err, "Chưa tải được thông tin gói của shop. Vui lòng thử lại sau.");
@@ -9727,14 +9853,24 @@ function followupRecommendationLabel(item) {
             @click="openNotifications"
             >
               <svg class="top-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 10a6 6 0 0 0-12 0c0 6-2.5 6.5-2.5 8h17C20.5 16.5 18 16 18 10Z" /><path d="M10 21h4" /></svg>
-              <i v-if="unreadOperationalNotificationCount">{{ unreadOperationalNotificationCount }}</i>
+              <i v-if="unreadOperationalNotificationCount && currentTab !== 'work_queue'">{{ unreadOperationalNotificationCount > 99 ? '99+' : unreadOperationalNotificationCount }}</i>
             </button>
               <div v-if="notificationsOpen" class="notification-popover" role="dialog" :aria-label="t('Thông báo hệ thống')">
               <div class="notification-popover-head">
-                <strong>{{ t('Thông báo') }}</strong>
-                <span>{{ unreadOperationalNotificationCount }} {{ t('chưa đọc') }}</span>
+                <div class="notification-popover-summary">
+                  <strong>{{ t('Thông báo') }}</strong>
+                  <span>{{ unreadOperationalNotificationCount }} {{ t('chưa đọc') }}</span>
+                </div>
+                <div class="notification-popover-actions">
+                  <button v-if="unreadOperationalNotificationCount" type="button" class="notification-mark-all" :disabled="notificationMarkAllLoading || notificationClearAllLoading" @click="markAllNotificationsRead">
+                    {{ t(notificationMarkAllLoading ? 'Đang cập nhật...' : 'Đọc tất cả') }}
+                  </button>
+                  <button v-if="operationalNotifications.length" type="button" class="notification-clear-all" :disabled="notificationMarkAllLoading || notificationClearAllLoading" @click="clearAllNotifications">
+                    {{ t(notificationClearAllLoading ? 'Đang xóa...' : 'Xóa tất cả') }}
+                  </button>
+                </div>
               </div>
-              <p v-if="notificationError" class="notification-empty notification-error" role="alert">{{ notificationError }}</p>
+              <p v-if="notificationError" class="notification-empty notification-error" role="alert">{{ t(notificationError) }}</p>
               <p v-else-if="!operationalNotifications.length" class="notification-empty">{{ t('Chưa có thông báo mới.') }}</p>
               <button
                 v-for="notification in operationalNotifications"
@@ -9769,22 +9905,6 @@ function followupRecommendationLabel(item) {
             </select>
           </label>
 
-
-          <button
-            type="button"
-            class="team"
-            :aria-label="t('Mở Cài đặt')"
-            :title="t('Mở Cài đặt')"
-            :disabled="!tenantReady && !mfaVerifyPending"
-            @click="openSettings"
-          >
-
-            <div class="team-avatar">
-              SM
-            </div>
-            <span>{{ t('Cài đặt') }}</span>
-
-          </button>
 
           <button
             type="button"
@@ -10443,11 +10563,13 @@ function followupRecommendationLabel(item) {
 
                 <button
                   type="button"
-                  title="Thao tác hội thoại"
-                  aria-label="Thao tác hội thoại"
+                  class="conversation-actions-trigger"
+                  :title="uiLocale === 'en' ? 'More conversation actions' : 'Thao tác hội thoại'"
+                  :aria-label="uiLocale === 'en' ? 'More conversation actions' : 'Thao tác hội thoại'"
                   :aria-expanded="conversationActionsOpen"
+                  aria-haspopup="menu"
                   @click="toggleConversationActions"
-                >⋮</button>
+                ><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>
                 <button
                   type="button"
                   title="Đánh dấu ưu tiên"
@@ -10457,21 +10579,17 @@ function followupRecommendationLabel(item) {
                   :disabled="conversationPrioritySaving"
                   @click="toggleConversationPriority"
                 >!</button>
-                <button
-                  type="button"
-                  title="Ghim hội thoại"
-                  aria-label="Ghim hội thoại"
-                  :class="{ active: conversationFavoriteActive }"
-                  :aria-pressed="conversationFavoriteActive"
-                  @click="toggleConversationFavorite"
-                >♡</button>
-
                 </div>
 
                 <div v-if="conversationActionsOpen" class="conversation-actions-popover" role="menu">
-                  <button type="button" role="menuitem" @click="refreshSelectedConversation">Làm mới hội thoại</button>
-                  <button type="button" role="menuitem" @click="saveSelectedConversationSample">Lưu làm mẫu trả lời</button>
-                  <button type="button" role="menuitem" @click="toggleConversationActions">Đóng menu</button>
+                  <button type="button" role="menuitem" class="conversation-actions-menu-item" @click="refreshSelectedConversation">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 1 4.1"/><path d="M20 4v7h-7"/></svg>
+                    <span>{{ uiLocale === 'en' ? 'Refresh conversation' : 'Làm mới hội thoại' }}</span>
+                  </button>
+                  <button type="button" role="menuitem" class="conversation-actions-menu-item" @click="saveSelectedConversationSample">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v6h8V4M8 16h8"/></svg>
+                    <span>{{ uiLocale === 'en' ? 'Save as a reply example' : 'Lưu làm mẫu trả lời' }}</span>
+                  </button>
                 </div>
 
               </div>
@@ -11038,18 +11156,6 @@ function followupRecommendationLabel(item) {
 
                   <button
                     type="button"
-                    title="Ghim hội thoại"
-                    aria-label="Ghim hội thoại"
-                    :class="{ active: conversationFavoriteActive }"
-                    :aria-pressed="conversationFavoriteActive"
-                    @click="toggleConversationFavorite"
-                  >
-                    ♡
-                  </button>
-
-
-                  <button
-                    type="button"
                     class="
                       template
                     "
@@ -11464,9 +11570,10 @@ function followupRecommendationLabel(item) {
             <div v-else-if="customer360" class="customer-360-data">
               <details class="section customer-section-accordion customer-identities-section" name="customer-profile-sections">
                 <summary class="customer-section-toggle">
-                  <h4>Danh tính đa kênh</h4>
+                  <h4>{{ t('Danh tính đa kênh') }}</h4>
                   <span>{{ customer360.identities.length }}</span>
                 </summary>
+                <p class="customer-identity-help">{{ uiLocale === 'en' ? 'Each row is one account linked to this customer. The channel is where the conversation started; the account ID is the identifier assigned by that platform.' : 'Mỗi dòng là một tài khoản của khách trên một nền tảng. Kênh cho biết nơi bắt đầu hội thoại; mã tài khoản là định danh do nền tảng cấp.' }}</p>
                 <div class="customer-identities">
                   <div
                     v-for="identity in customer360.identities"
@@ -11474,8 +11581,14 @@ function followupRecommendationLabel(item) {
                     class="customer-identity-row"
                   >
                     <span class="social-icon" :class="identity.channel"></span>
-                    <span>{{ channelLabel(identity.channel) }}</span>
-                    <small>{{ identity.external_user_id }}</small>
+                    <span class="customer-identity-channel">
+                      <small>{{ uiLocale === 'en' ? 'Channel' : 'Kênh' }}</small>
+                      <strong>{{ channelLabel(identity.channel) }}</strong>
+                    </span>
+                    <span class="customer-identity-id">
+                      <small>{{ uiLocale === 'en' ? 'Account ID' : 'Mã tài khoản' }}</small>
+                      <code>{{ identity.external_user_id || (uiLocale === 'en' ? 'Not provided' : 'Chưa có mã') }}</code>
+                    </span>
                   </div>
                 </div>
               </details>
@@ -11781,8 +11894,8 @@ function followupRecommendationLabel(item) {
 
               <div v-if="customerTagNames(customer360).length" class="tags">
                 <span v-for="tag in customerTagNames(customer360)" :key="tag" class="tag-chip">
-                  {{ tag }}
-                  <button type="button" class="tag-remove" :aria-label="`Xóa tag ${tag}`" @click="removeCustomerTag(tag)">×</button>
+                  {{ t(customerTagDisplayName(tag)) }}
+                  <button type="button" class="tag-remove" :aria-label="`${t('Xóa nhãn')} ${t(customerTagDisplayName(tag))}`" @click="removeCustomerTag(tag)">×</button>
                 </span>
               </div>
               <div v-else class="tags-empty">
@@ -11790,21 +11903,21 @@ function followupRecommendationLabel(item) {
               </div>
               <div class="customer-rfm-panel">
                 <div class="customer-rfm-heading">
-                  <span><strong>{{ t('Phân loại RFM') }}</strong><small>{{ t('Lần mua gần nhất · số đơn · chi tiêu') }}</small></span>
+                  <span><strong>{{ t('Chia nhóm khách hàng') }}</strong><small>{{ t('Dựa trên lần mua gần đây, số đơn và tổng tiền mua') }}</small></span>
                   <button type="button" :disabled="rfmClassificationLoading" @click="classifyCustomersByRfm">
-                    {{ rfmClassificationLoading ? t('Đang phân loại...') : t('Phân loại RFM + học nhóm AI') }}
+                    {{ rfmClassificationLoading ? t('Đang chia nhóm...') : t('Tự động chia nhóm') }}
                   </button>
                 </div>
                 <div v-if="rfmClassification" class="customer-rfm-results" role="status">
-                  <span>{{ rfmClassification.customer_count }} {{ t('khách đã phân loại') }}</span>
-                  <span v-for="group in rfmClassification.groups" :key="group.name" class="customer-rfm-chip">{{ $t(group.name) }} <b>{{ group.count }}</b></span>
+                  <span>{{ rfmClassification.customer_count }} {{ t('khách đã được xếp nhóm') }}</span>
+                  <span v-for="group in rfmClassification.groups" :key="group.name" class="customer-rfm-chip">{{ t(customerTagDisplayName(group.name)) }} <b>{{ group.count }}</b></span>
                 </div>
-                <small v-if="rfmClassification?.model_training" class="field-hint">{{ t('Phân nhóm AI đang được đưa vào hàng đợi; nhãn sẽ cập nhật sau khi worker xử lý.') }}</small>
+                <small v-if="rfmClassification?.model_training" class="field-hint">{{ t('Đang cập nhật cách chia nhóm. Nhãn sẽ tự làm mới sau khi xử lý xong.') }}</small>
                 <div v-if="rfmClassificationError" class="facts-error" role="alert">{{ crmErrorText(rfmClassificationError) }}</div>
               </div>
               <form class="customer-tag-form" @submit.prevent="addCustomerTag">
-                <input v-model="customerTagDraft" maxlength="80" placeholder="Thêm nhãn / nhóm khách hàng" />
-                <button type="submit" :disabled="customerTagSaving">{{ customerTagSaving ? '...' : 'Gắn nhãn' }}</button>
+                <input v-model="customerTagDraft" maxlength="80" :placeholder="t('Thêm tên nhóm khách hàng')" />
+                <button type="submit" :disabled="customerTagSaving">{{ customerTagSaving ? '...' : t('Thêm nhãn') }}</button>
               </form>
               <div v-if="customerTagError" class="facts-error" role="alert">{{ crmErrorText(customerTagError) }}</div>
 
@@ -12563,7 +12676,7 @@ function followupRecommendationLabel(item) {
                   <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order) || orderTransitionSaving[order.id]" @click.stop="transitionSalesOrder(order, 'confirmed')">{{ orderTransitionSaving[order.id] ? 'Đang cập nhật...' : 'Xác nhận đơn' }}</button>
                   <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">Thiếu tồn khả dụng</small>
                 </td>
-                <td><button type="button" class="table-action-btn" data-testid="order-history-button" title="Xem toàn bộ quy trình" aria-label="Xem toàn bộ quy trình" @click.stop="loadSalesOrderEvents(order)">Quy trình</button><small>Nhật ký bất biến</small></td>
+                <td><button type="button" class="table-action-btn" data-testid="order-history-button" :title="uiLocale === 'en' ? 'View order history' : 'Xem lịch sử đơn hàng'" :aria-label="uiLocale === 'en' ? 'View order history' : 'Xem lịch sử đơn hàng'" @click.stop="loadSalesOrderEvents(order)">{{ uiLocale === 'en' ? 'History' : 'Lịch sử' }}</button><small>{{ uiLocale === 'en' ? 'Order updates' : 'Các lần cập nhật đơn' }}</small></td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ paymentStatusLabel(order.payment_status) }}</span>
                   <small>{{ formatMoney(order.paid_amount || 0) }} / {{ formatMoney(order.total_amount || 0) }}</small>
@@ -12580,7 +12693,7 @@ function followupRecommendationLabel(item) {
           </table>
         </div>
         <div v-if="selectedOrderEvents" class="report-panel order-events-panel" data-testid="order-events-panel">
-          <div class="report-panel-header"><div><h3>Toàn bộ quy trình {{ selectedOrderEvents.order.order_number }}</h3><p>Nhật ký bất biến theo thời gian; thao tác nhầm vẫn được lưu để đối soát, không rollback.</p></div><button type="button" class="settings-refresh" @click="selectedOrderEvents = null">Đóng</button></div>
+          <div class="report-panel-header"><div><h3>{{ uiLocale === 'en' ? `Order history ${selectedOrderEvents.order.order_number}` : `Lịch sử đơn ${selectedOrderEvents.order.order_number}` }}</h3><p>{{ uiLocale === 'en' ? 'Review when the order changed and what action was taken.' : 'Xem đơn được cập nhật lúc nào và đã có những thao tác gì.' }}</p></div><button type="button" class="settings-refresh" @click="selectedOrderEvents = null">{{ uiLocale === 'en' ? 'Close' : 'Đóng' }}</button></div>
           <form class="order-logistics-card" data-testid="order-logistics-card" @submit.prevent="updateOrderLogistics(selectedOrderEvents.order)">
             <div class="order-logistics-heading"><div><strong>Thông tin vận chuyển</strong><small>Chỉ lưu thông tin giao hàng để nhân viên và hệ thống vận hành cùng theo dõi.</small></div><span class="logistics-status" :class="orderLogisticsDraft.shipping_status">{{ shippingStatusLabel(orderLogisticsDraft.shipping_status) }}</span></div>
             <div class="order-logistics-grid">
@@ -13516,24 +13629,6 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
-        <div v-if="authUser && authUser.business_id" class="settings-card auth-email-change-card">
-          <div class="settings-card-header">
-            <div><span class="card-eyebrow">{{ t('BẢO MẬT TÀI KHOẢN') }}</span><h2>{{ t('Email tài khoản nhận OTP') }}</h2><p>{{ t('Dùng email này để đăng nhập và nhận mã xác minh tài khoản.') }}</p></div>
-          </div>
-          <div class="settings-muted"><strong>{{ t('Email hiện tại') }}:</strong> {{ authUser.email }}</div>
-          <p v-if="accountEmailChangePending" class="settings-muted" role="status">{{ t('Email mới chưa xác minh; mã đã được gửi nhưng email đăng nhập chưa thay đổi.') }}</p>
-          <div v-if="accountEmailChangeError" class="settings-notice team-error" role="alert">{{ t(accountEmailChangeError) }}</div>
-          <div v-if="accountEmailChangeNotice" class="settings-notice" role="status">{{ t(accountEmailChangeNotice) }}</div>
-          <div v-if="!accountEmailChangePending" class="business-profile-grid">
-            <label>{{ t('Email mới') }}<input v-model="accountEmailChange.new_email" type="email" required maxlength="255" autocomplete="email" placeholder="info@example.com" /></label>
-            <label>{{ t('Mật khẩu hiện tại') }}<input v-model="accountEmailChange.current_password" type="password" required maxlength="256" autocomplete="current-password" /></label>
-          </div>
-          <label v-else class="business-profile-wide">{{ t('Mã xác minh 6 chữ số') }}<input v-model="accountEmailChange.otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" /></label>
-          <p class="settings-muted">{{ t('Email đăng nhập chỉ đổi sau khi mã được gửi qua SMTP và xác minh thành công. Mã hết hạn sau 10 phút; tối đa 5 lần gửi mỗi giờ.') }}</p>
-          <button v-if="!accountEmailChangePending" type="button" class="primary-btn" :disabled="accountEmailChangeSending || !accountEmailChange.new_email || !accountEmailChange.current_password" @click="requestAccountEmailChange">{{ accountEmailChangeSending ? t('Đang gửi mã...') : t('Gửi mã xác minh') }}</button>
-          <button v-else type="button" class="primary-btn" :disabled="accountEmailChangeVerifying || accountEmailChange.otp.length !== 6" @click="verifyAccountEmailChange">{{ accountEmailChangeVerifying ? t('Đang xác minh...') : t('Xác minh và đổi email') }}</button>
-        </div>
-
         <div v-if="authUser" class="settings-card shop-otp-email-card">
           <div class="settings-card-header">
             <div><span class="card-eyebrow">{{ t('EMAIL CHO SHOP') }}</span><h2>{{ t('Email gửi mã OTP') }}</h2><p>{{ t('Chủ shop có thể dùng hộp thư riêng để gửi OTP khi mời nhân viên.') }}</p></div>
@@ -13681,15 +13776,20 @@ function followupRecommendationLabel(item) {
           <div v-if="securityError" class="settings-notice team-error">{{ securityError }}</div>
           <div class="security-grid">
             <div class="security-section">
-              <div class="security-section-title"><strong>Xác thực 2 bước</strong><span class="connection-badge" :class="{ connected: ['prepared', 'enabled'].includes(authUser.mfa_status) }">{{ authUser.mfa_status === 'enabled' ? 'ĐÃ BẬT' : authUser.mfa_status === 'prepared' ? 'ĐÃ CHUẨN BỊ' : 'CHƯA BẬT' }}</span></div>
-              <p class="settings-muted">Mã xác thực được mã hóa khi lưu; phiên mới phải xác minh riêng trước khi dùng CRM.</p>
+              <div class="security-section-title"><strong>{{ uiLocale === 'en' ? 'Two-step verification' : 'Xác thực 2 bước' }}</strong><span class="connection-badge" :class="{ connected: ['prepared', 'enabled'].includes(authUser.mfa_status) }">{{ authUser.mfa_status === 'enabled' ? (uiLocale === 'en' ? 'ON' : 'ĐÃ BẬT') : authUser.mfa_status === 'prepared' ? (uiLocale === 'en' ? 'SETUP IN PROGRESS' : 'ĐANG THIẾT LẬP') : (uiLocale === 'en' ? 'OFF' : 'CHƯA BẬT') }}</span></div>
+              <p class="settings-muted">{{ uiLocale === 'en' ? 'Scan the QR code with Google Authenticator, Microsoft Authenticator, or another TOTP app. Each new session must be verified separately.' : 'Quét mã bằng Google Authenticator, Microsoft Authenticator hoặc ứng dụng tạo mã TOTP khác. Mỗi phiên mới sẽ cần xác minh riêng.' }}</p>
               <form v-if="mfaVerifyPending" class="settings-actions" @submit.prevent="verifyMfaEnrollment"><input v-model="mfaVerifyCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Mã xác thực 6 số" required /><button class="primary-btn" type="submit">Xác minh mã</button></form>
               <div v-if="['owner', 'admin'].includes(authUser.role)" class="settings-actions">
                 <button v-if="!['prepared', 'enabled'].includes(authUser.mfa_status)" type="button" class="settings-refresh" @click="prepareMfaEnrollment">Thiết lập xác thực 2 bước</button>
                 <button v-if="['prepared', 'enabled'].includes(authUser.mfa_status)" type="button" class="team-toggle" @click="disableMfaEnrollment">Tắt xác thực 2 bước</button>
               </div>
               <span v-else class="settings-muted">Chỉ chủ shop hoặc quản trị viên được thay đổi xác thực 2 bước.</span>
-              <code v-if="mfaProvisioningUri" class="mfa-uri">{{ mfaProvisioningUri }}</code>
+              <div v-if="mfaQrCodeDataUrl" class="mfa-qr-setup">
+                <img :src="mfaQrCodeDataUrl" :alt="uiLocale === 'en' ? 'Authenticator setup QR code' : 'Mã QR để thiết lập ứng dụng xác thực'" />
+                <div><strong>{{ uiLocale === 'en' ? 'Scan to add your account' : 'Quét để thêm tài khoản' }}</strong><p>{{ uiLocale === 'en' ? 'Then enter the 6-digit code from the app to finish setup.' : 'Sau đó nhập mã 6 số trong ứng dụng để hoàn tất thiết lập.' }}</p>
+                  <details><summary>{{ uiLocale === 'en' ? 'Can’t scan the code?' : 'Không quét được mã?' }}</summary><code class="mfa-uri">{{ mfaProvisioningUri }}</code></details>
+                </div>
+              </div>
             </div>
             <div class="security-section">
               <div class="security-section-title"><strong>Yêu cầu dữ liệu khách hàng</strong><span class="settings-muted">Chỉ dành cho admin</span></div>
@@ -13704,11 +13804,12 @@ function followupRecommendationLabel(item) {
             </div>
           </div>
           <div class="security-sessions">
-            <div class="security-section-title"><strong>Phiên đăng nhập</strong><span class="settings-muted">{{ authSessions.length }} phiên</span></div>
+            <div class="security-section-title"><strong>{{ uiLocale === 'en' ? 'Signed-in devices' : 'Thiết bị đã đăng nhập' }}</strong><span class="settings-muted">{{ authSessions.length }} {{ uiLocale === 'en' ? 'sessions' : 'phiên' }}</span></div>
+            <p class="settings-muted">{{ uiLocale === 'en' ? 'Device names come from the browser and do not verify physical identity. The status below confirms whether this session passed two-step verification.' : 'Tên thiết bị được lấy từ trình duyệt, không xác minh thiết bị vật lý. Trạng thái bên dưới cho biết phiên đó đã qua xác thực 2 bước hay chưa.' }}</p>
             <div v-if="!authSessions.length" class="settings-empty">Chưa có thông tin phiên đăng nhập.</div>
             <ul v-else class="session-list">
               <li v-for="session in authSessions.slice(0, sessionVisibleCount)" :key="session.id">
-                <span><strong>{{ session.device_label || 'Thiết bị không đặt tên' }}</strong><small>Tạo {{ session.created_at ? formatDateTime(session.created_at) : '—' }} · {{ session.mfa_verified ? 'Đã xác minh 2 bước' : 'Chưa xác minh 2 bước' }}</small></span>
+                <span><strong>{{ session.device_label || (uiLocale === 'en' ? 'Browser not identified' : 'Trình duyệt chưa ghi tên') }}</strong><small>{{ uiLocale === 'en' ? 'Signed in' : 'Đăng nhập' }} {{ session.created_at ? formatDateTime(session.created_at) : '—' }} · {{ session.mfa_verified ? (uiLocale === 'en' ? 'Two-step check passed' : 'Đã xác minh 2 bước trong phiên này') : (uiLocale === 'en' ? 'Two-step check not completed' : 'Chưa xác minh 2 bước') }}</small></span>
                 <button v-if="!session.revoked_at" type="button" class="team-toggle" @click="revokeAuthSession(session)">Thu hồi</button>
                 <span v-else class="settings-muted">Đã thu hồi</span>
               </li>
@@ -13790,10 +13891,10 @@ function followupRecommendationLabel(item) {
         <div v-if="authUser" class="settings-card followup-card">
           <div class="settings-card-header">
             <div>
-              <h2>🔔 Chăm sóc chủ động</h2>
-              <p>Nhắc khách xác nhận đơn nháp hoặc chăm sóc lại theo lịch.</p>
+              <h2>{{ uiLocale === 'en' ? 'Scheduled customer follow-up' : 'Lịch chăm sóc khách hàng' }}</h2>
+              <p>{{ uiLocale === 'en' ? 'Schedule a reminder or follow-up for a saved customer group.' : 'Lên lịch nhắc khách hoặc chăm sóc lại một nhóm đã lưu.' }}</p>
             </div>
-            <button type="button" class="settings-refresh" :disabled="followupDispatching" @click="dispatchFollowups">{{ followupDispatching ? 'Đang chạy...' : 'Chạy lịch nhắc đến hạn' }}</button>
+            <button type="button" class="settings-refresh" :disabled="followupDispatching" @click="dispatchFollowups">{{ followupDispatching ? (uiLocale === 'en' ? 'Working…' : 'Đang chạy...') : (uiLocale === 'en' ? 'Send due reminders' : 'Gửi nhắc đến hạn') }}</button>
           </div>
           <div v-if="followupNotice" class="settings-notice" role="status" aria-live="polite">{{ followupNotice }}</div>
           <div v-if="followupError" class="settings-notice team-error" role="alert">{{ followupError }}</div>
@@ -14017,22 +14118,24 @@ function followupRecommendationLabel(item) {
       <section v-if="currentTab === 'service'" class="service-page-layout" aria-label="Gói dịch vụ">
         <div class="service-page-hero">
           <div>
-            <BrandLogo class="service-brand-logo" />
+            <div class="service-brand-lockup">
+              <BrandLogo icon alt="" aria-hidden="true" />
+              <strong>Smart Merchant Hub</strong>
+            </div>
             <span class="service-page-kicker">TRIỂN KHAI CHO SHOP</span>
             <h1>Chọn cách vận hành shop</h1>
             <p>Quản lý bán hàng hoặc thuê trợ lý chatbot. Chọn gói phù hợp với shop.</p>
           </div>
           <button v-if="!authUser" type="button" class="service-back-link" @click="closePublicServicePage">{{ t('← Về trang chủ') }}</button>
-          <button v-else type="button" class="service-back-link" @click="openServicePage">Chọn gói dịch vụ</button>
         </div>
 
-        <div class="service-mode-switch" role="tablist" :aria-label="t('Chọn dịch vụ')">
+        <div class="service-mode-switch" :class="{ 'is-chatbot': serviceMode === 'chatbot' }" role="tablist" :aria-label="t('Chọn dịch vụ')">
           <button type="button" class="service-mode-option" :class="{ selected: serviceMode === 'package' }" role="tab" :aria-selected="serviceMode === 'package'" @click="selectServiceMode('package')">{{ t('Gói quản lý shop') }}</button>
           <button type="button" class="service-mode-option" :class="{ selected: serviceMode === 'chatbot' }" role="tab" :aria-selected="serviceMode === 'chatbot'" @click="selectServiceMode('chatbot')">{{ t('Thuê riêng trợ lý chatbot') }}</button>
         </div>
-        <ServicePricing :plans="activeServicePlans" :mode="serviceMode" :selected="serviceRequestForm.plan_code" :authenticated="!!authUser" @select="selectServicePlan" @signup="closePublicServicePage(); openSignup(true)" @login="closePublicServicePage(); openLogin()" />
+        <ServicePricing :plans="activeServicePlans" :mode="serviceMode" :selected="serviceRequestForm.plan_code" :current-plan="currentServicePlanCode" :authenticated="!!authUser" @select="selectServicePlan" @signup="closePublicServicePage(); openSignup(true)" @login="closePublicServicePage(); openLogin()" />
 
-        <div class="service-page-grid" :class="{ 'guest-pricing': !authUser }">
+        <div v-if="!authUser || serviceRequestOpen || serviceRequestSubmitted" class="service-page-grid" :class="{ 'guest-pricing': !authUser }">
           <article class="service-benefits-card">
             <span class="service-page-kicker">SHOP NHẬN ĐƯỢC GÌ</span>
             <h2>{{ t(serviceMode === 'chatbot' ? 'Trợ lý theo cách shop phục vụ' : 'Từ đăng ký đến vận hành') }}</h2>
@@ -14059,7 +14162,7 @@ function followupRecommendationLabel(item) {
               </div>
             </div>
             <form v-else-if="authUser" class="service-request-form" @submit.prevent="submitServiceRequest">
-              <div class="service-request-heading"><div><span class="service-page-kicker">CHỌN GÓI</span><h2>{{ serviceMode === 'chatbot' ? 'Thuê riêng trợ lý chatbot' : 'Mua gói dịch vụ cho shop' }}</h2></div><span class="service-request-badge">{{ servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? 'Dùng thử ngay' : 'Admin duyệt' }}</span></div>
+              <div class="service-request-heading"><div><span class="service-page-kicker">{{ uiLocale === 'en' ? 'SELECTED PLAN' : 'GÓI ĐÃ CHỌN' }}</span><h2>{{ uiLocale === 'en' ? 'Request details' : 'Thông tin đăng ký' }}</h2></div><span class="service-request-badge">{{ servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? (uiLocale === 'en' ? 'Start trial' : 'Dùng thử ngay') : (uiLocale === 'en' ? 'Admin approval' : 'Admin duyệt') }}</span><button type="button" class="service-request-dismiss" :aria-label="uiLocale === 'en' ? 'Close request form' : 'Đóng biểu mẫu'" @click="serviceRequestOpen = false">×</button></div>
               <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Thuê riêng trợ lý AI theo mức hỗ trợ. Dịch vụ này độc lập với gói CRM và không làm thay đổi hạn mức kênh.' : `Gói đã chọn cho phép kết nối tối đa ${serviceChannelLimit} nền tảng. Việc kết nối thực tế được thực hiện duy nhất tại mục Kết nối mạng xã hội.` }}</p>
               <div v-if="serviceRequestError" class="service-request-error" role="alert">{{ serviceRequestError }}</div>
               <div class="service-request-fields">
@@ -14068,7 +14171,10 @@ function followupRecommendationLabel(item) {
                 <label>Số điện thoại <span>(không bắt buộc)</span><input v-model="serviceRequestForm.phone" type="tel" maxlength="30" placeholder="0901 234 567" /></label>
                 <label>Tên shop<input v-model="serviceRequestForm.shop_name" required maxlength="160" placeholder="Shop của bạn" /></label>
               </div>
-              <fieldset class="service-plan-picker"><legend>{{ serviceMode === 'chatbot' ? 'Chọn mức hỗ trợ' : 'Chọn gói quản lý shop' }}</legend><div class="service-plan-options"><label v-for="plan in activeServicePlans" :key="plan.code" class="service-plan-option" :class="{ selected: serviceRequestForm.plan_code === plan.code }"><input :checked="serviceRequestForm.plan_code === plan.code" type="radio" name="service-plan" :value="plan.code" @change="selectServicePlan(plan.code)" /><span><strong>{{ $t(plan.name) }}</strong><small>{{ $t(serviceMode !== 'chatbot' && plan.code === 'pro' && Number(plan.max_channels) !== 6 ? 'Gói dành cho shop vận hành nhiều kênh.' : plan.description) }}</small><small v-if="serviceMode !== 'chatbot'">{{ plan.max_channels }} nền tảng kết nối</small><small v-else>Thuê riêng, không trừ hạn mức kênh CRM</small><em>{{ plan.price }}</em></span></label></div></fieldset>
+              <div class="selected-plan-summary" aria-live="polite">
+                <div><strong>{{ selectedServicePlan ? $t(selectedServicePlan.name) : serviceRequestForm.plan_code }}</strong><span>{{ selectedServicePlan?.price || '' }} · {{ serviceMode === 'chatbot' ? (uiLocale === 'en' ? 'Separate chatbot support' : 'Trợ lý chatbot riêng') : `${serviceChannelLimit} ${uiLocale === 'en' ? 'connected channels' : 'nền tảng kết nối'}` }}</span></div>
+                <button type="button" class="selected-plan-change" @click="scrollToServicePlans">{{ uiLocale === 'en' ? 'Change plan above' : 'Đổi gói ở phía trên' }}</button>
+              </div>
               <div v-if="authUser" class="service-purchase-box">
                 <div v-if="servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo'"><strong>Gói Demo được mở ngay</strong><small>Sau khi gửi đăng ký, shop có thể dùng thử ngay khi không gian dữ liệu sẵn sàng.</small></div>
                 <div v-else><strong>Gói trả phí cần admin xác nhận</strong><small>Yêu cầu được chuyển vào hàng chờ duyệt. CRM chỉ mở sau khi admin duyệt và hệ thống chuẩn bị xong dữ liệu riêng.</small></div>
@@ -14113,7 +14219,7 @@ function followupRecommendationLabel(item) {
       </div>
     </section>
 
-    <MarketingLanding v-else-if="publicView === 'home'" @login="openLogin" @signup="openSignup" @plans="openPublicServicePage" />
+    <MarketingLanding v-else-if="publicView === 'home'" :dark-mode="darkMode" @toggle-dark-mode="toggleDarkMode" @login="openLogin" @signup="openSignup" @plans="openPublicServicePage" />
 
     <section v-else class="login-page" :class="'signup-page'" data-testid="login-page" aria-label="Đăng nhập CRM">
       <div class="login-orb login-orb-one" aria-hidden="true"></div>
@@ -14142,7 +14248,7 @@ function followupRecommendationLabel(item) {
           <div class="login-card-topline">
             <span class="login-card-kicker">{{ t('CHÀO MỪNG TRỞ LẠI') }}</span>
             <span class="login-security-pill"><i></i> {{ t('Kết nối bảo mật') }}</span>
-            <label class="ui-language-control">
+            <label class="ui-language-control login-language-control">
               <span class="visually-hidden">{{ t('Ngôn ngữ giao diện') }}</span>
               <select :value="uiLocale" :aria-label="t('Ngôn ngữ giao diện')" @change="setUiLocale($event.target.value)">
                 <option value="vi">Tiếng Việt</option><option value="en">English</option>
@@ -14156,11 +14262,16 @@ function followupRecommendationLabel(item) {
           <form class="login-form" @submit.prevent="login">
             <label>{{ t('Email đăng nhập') }}<input v-model="loginForm.email" required type="email" maxlength="255" autocomplete="username" placeholder="admin@gmail.com" /></label>
             <label>{{ t('Mật khẩu') }}<input v-model="loginForm.password" required type="password" autocomplete="current-password" :placeholder="t('Nhập mật khẩu')" /></label>
+            <div class="login-options-row">
+              <label class="login-remember"><input v-model="loginRememberMe" type="checkbox" /><span>{{ t('Ghi nhớ đăng nhập') }}</span></label>
+              <button type="button" class="login-forgot-link" @click="openPasswordReset">{{ t('Quên mật khẩu?') }}</button>
+            </div>
             <label>{{ t('Mã shop') }} <span>{{ t('(không bắt buộc)') }}</span><input v-model="loginForm.shop_slug" type="text" maxlength="120" autocomplete="organization" placeholder="shop-cua-ban" /></label>
             <button class="login-submit" type="submit" :disabled="authLoading || authRateLimitSeconds > 0">
               <span>{{ t(authLoading ? 'Đang xác thực...' : authRateLimitSeconds > 0 ? 'Tạm khóa đăng nhập' : 'Đăng nhập') }}</span>
             </button>
           </form>
+          <div v-if="passwordResetNotice" class="login-notice" role="status">{{ passwordResetNotice }}</div>
           <div v-if="authError" class="login-alert" role="alert">{{ t(authError) }}</div>
           <div v-if="authRateLimitSeconds > 0" class="login-rate-limit" role="status">
             <span class="login-rate-limit-icon" aria-hidden="true">⏱</span>
@@ -14172,12 +14283,47 @@ function followupRecommendationLabel(item) {
           <button type="button" class="login-service-link" @click="publicView = 'home'">{{ t('Về trang chủ') }}</button>
         </div>
 
+        <div v-else-if="authView === 'forgot'" class="login-card password-reset-page" data-testid="password-reset-page">
+          <BrandLogo />
+          <div class="login-card-topline">
+            <span class="login-card-kicker">{{ t('KHÔI PHỤC TÀI KHOẢN') }}</span>
+            <span class="login-security-pill"><i></i> {{ t('Xác minh email') }}</span>
+            <label class="ui-language-control login-language-control">
+              <span class="visually-hidden">{{ t('Ngôn ngữ giao diện') }}</span>
+              <select :value="uiLocale" :aria-label="t('Ngôn ngữ giao diện')" @change="setUiLocale($event.target.value)">
+                <option value="vi">Tiếng Việt</option><option value="en">English</option>
+              </select>
+            </label>
+          </div>
+          <div class="login-card-heading">
+            <h2>{{ t('Khôi phục mật khẩu') }}</h2>
+            <p>{{ t('Nhập email đăng nhập để nhận mã xác minh và đặt mật khẩu mới.') }}</p>
+          </div>
+          <form v-if="passwordResetStep === 'request'" class="login-form password-reset-form" @submit.prevent="requestPasswordReset">
+            <label>{{ t('Email đăng nhập') }}<input v-model="passwordResetForm.email" required type="email" maxlength="255" autocomplete="email" placeholder="admin@gmail.com" /></label>
+            <label>{{ t('Mã shop') }} <span>{{ t('(không bắt buộc)') }}</span><input v-model="passwordResetForm.shop_slug" type="text" maxlength="120" autocomplete="organization" placeholder="shop-cua-ban" /></label>
+            <button class="login-submit" type="submit" :disabled="passwordResetLoading"><span>{{ t(passwordResetLoading ? 'Đang gửi mã...' : 'Gửi mã xác minh') }}</span></button>
+          </form>
+          <form v-else class="login-form password-reset-form" @submit.prevent="completePasswordReset">
+            <p class="password-reset-email">{{ t('Mã OTP được gửi tới') }} <strong>{{ passwordResetForm.email }}</strong></p>
+            <label>{{ t('Mã OTP') }}<input v-model="passwordResetForm.otp" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" :placeholder="t('Nhập mã OTP 6 số')" /></label>
+            <label>{{ t('Mật khẩu mới') }}<input v-model="passwordResetForm.new_password" required minlength="12" type="password" autocomplete="new-password" :placeholder="t('Tối thiểu 12 ký tự, gồm 3 nhóm ký tự')" /></label>
+            <small class="signup-password-hint">{{ t('Dùng ít nhất 3 nhóm: chữ thường, chữ hoa, số, ký tự đặc biệt.') }}</small>
+            <button class="login-submit" type="submit" :disabled="passwordResetLoading || passwordResetForm.otp.length !== 6"><span>{{ t(passwordResetLoading ? 'Đang cập nhật...' : 'Đổi mật khẩu') }}</span></button>
+            <button class="password-reset-resend" type="button" :disabled="passwordResetLoading" @click="requestPasswordReset">{{ t('Gửi mã mới') }}</button>
+          </form>
+          <div v-if="passwordResetError" class="login-alert" role="alert">{{ t(passwordResetError) }}</div>
+          <div v-if="passwordResetNotice" class="login-notice" role="status">{{ passwordResetNotice }}</div>
+          <button type="button" class="login-service-link password-reset-back" @click="openLogin">{{ t('Quay lại đăng nhập') }}</button>
+          <button type="button" class="login-service-link" @click="publicView = 'home'">{{ t('Về trang chủ') }}</button>
+        </div>
+
         <div v-else class="login-card signup-card">
           <BrandLogo />
           <div class="login-card-topline">
             <span class="login-card-kicker">{{ t('BẮT ĐẦU VỚI SHOP CỦA BẠN') }}</span>
             <span class="login-security-pill"><i></i> {{ t('Xác minh email') }}</span>
-            <label class="ui-language-control">
+            <label class="ui-language-control login-language-control">
               <span class="visually-hidden">{{ t('Ngôn ngữ giao diện') }}</span>
               <select :value="uiLocale" :aria-label="t('Ngôn ngữ giao diện')" @change="setUiLocale($event.target.value)">
                 <option value="vi">Tiếng Việt</option><option value="en">English</option>
@@ -14188,27 +14334,24 @@ function followupRecommendationLabel(item) {
             <h2>{{ t('Tạo không gian shop') }}</h2>
             <p>{{ t('Nhập email công việc để nhận mã OTP. Shop chỉ được tạo sau khi xác minh thành công.') }}</p>
           </div>
-          <ol class="signup-stepper" :aria-label="t('Tiến trình tạo shop')">
-            <li :class="{ active: signupStep === 'details', complete: signupStep === 'otp' }"><span>1</span><div><strong>{{ t('Thông tin shop') }}</strong><small>{{ t('Người đại diện, email và mật khẩu') }}</small></div></li>
-            <li :class="{ active: signupStep === 'otp' }"><span>2</span><div><strong>{{ t('Xác minh OTP') }}</strong><small>{{ t('Xác nhận email công việc') }}</small></div></li>
-            <li><span>3</span><div><strong>{{ t('Kích hoạt gói') }}</strong><small>{{ t('Theo dõi yêu cầu sau khi shop được tạo') }}</small></div></li>
-          </ol>
           <form class="login-form signup-form" @submit.prevent="handleSignupSubmit">
             <p class="signup-full-width">Gói đăng ký: <strong>{{ t(publicServicePlans.find(plan => plan.code === signupPlanCode)?.name || FALLBACK_SERVICE_PLANS.find(plan => plan.code === signupPlanCode)?.name || signupPlanCode) }}</strong> · {{ signupServiceType === 'chatbot' ? 'Trợ lý chatbot — chờ admin duyệt' : signupPlanCode === 'demo' || signupPlanCode === 'starter' ? 'Gói miễn phí' : 'Chờ admin duyệt sau xác minh email' }}</p>
-            <label>{{ t('Người đại diện') }}<input v-model="signupForm.owner_name" @input="invalidateSignupOtp" required minlength="2" maxlength="255" autocomplete="name" placeholder="Nguyễn Văn A" /></label>
+            <label>{{ t('Người đại diện') }}<input v-model="signupForm.owner_name" required minlength="2" maxlength="255" autocomplete="name" placeholder="Nguyễn Văn A" /></label>
             <label>{{ t('Email công việc') }}
               <div class="signup-email-control">
-                <input v-model="signupForm.email" @input="invalidateSignupOtp" required type="email" maxlength="255" autocomplete="email" placeholder="banhang@shop.vn" />
-                <button v-if="signupStep === 'otp'" class="signup-otp-button" type="button" :disabled="signupLoading" @click="requestSignupOtp">{{ t('Gửi lại OTP') }}</button>
+                <input v-model="signupForm.email" @input="invalidateSignupOtp" required type="email" maxlength="255" autocomplete="email" placeholder="banhang@shop.vn" :aria-invalid="Boolean(signupForm.email && !validSignupEmail(signupForm.email))" />
+                <button v-if="signupStep === 'details'" class="signup-otp-button" type="button" :disabled="signupLoading || !validSignupEmail(signupForm.email)" @click="requestSignupOtp">{{ signupLoading ? t('Đang gửi mã...') : t('Gửi mã OTP') }}</button>
+                <button v-else class="signup-otp-button" type="button" :disabled="signupLoading || !validSignupEmail(signupForm.email)" @click="requestSignupOtp">{{ t('Gửi lại OTP') }}</button>
               </div>
+              <small v-if="signupForm.email && !validSignupEmail(signupForm.email)" class="signup-email-error" role="alert">{{ uiLocale === 'en' ? 'Enter a valid email address, such as name@shop.com.' : 'Email chưa đúng định dạng. Ví dụ: ten@shop.vn.' }}</small>
             </label>
             <div v-if="signupStep === 'otp'" class="signup-otp-note">{{ t('Mã xác minh đã gửi tới') }} <strong>{{ signupForm.email }}</strong>. {{ t('Kiểm tra cả mục Spam nếu chưa thấy email.') }}</div>
-            <label v-if="signupStep === 'otp'" class="signup-full-width">{{ t('Mã OTP') }}
-              <input v-model="signupForm.otp" class="signup-otp-input" :disabled="signupStep !== 'otp'" :required="signupStep === 'otp'" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="Nhập mã OTP 6 số" />
+            <label class="signup-full-width signup-otp-field">{{ t('Mã OTP') }}
+              <input v-model="signupForm.otp" class="signup-otp-input" :disabled="signupStep !== 'otp'" :required="signupStep === 'otp'" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" :placeholder="t('Nhập mã OTP 6 số')" />
             </label>
-            <label>{{ t('Tên shop') }}<input v-model="signupForm.shop_name" @input="invalidateSignupOtp" required minlength="2" maxlength="255" autocomplete="organization" :placeholder="t('Shop của bạn')" /></label>
-            <label class="signup-full-width">{{ t('Mật khẩu') }}<input v-model="signupForm.password" @input="invalidateSignupOtp" required minlength="12" type="password" autocomplete="new-password" :placeholder="t('Tối thiểu 12 ký tự, gồm 3 nhóm ký tự')" /><small class="signup-password-hint">{{ t('Dùng ít nhất 3 nhóm: chữ thường, chữ hoa, số, ký tự đặc biệt.') }}</small></label>
-            <button class="login-submit signup-full-width" type="submit" :disabled="signupLoading"><span>{{ t(signupLoading ? (signupStep === 'otp' ? 'Đang tạo shop...' : 'Đang gửi mã...') : (signupStep === 'otp' ? 'Xác minh và đăng ký' : 'Tiếp tục với email')) }}</span></button>
+            <label>{{ t('Tên shop') }}<input v-model="signupForm.shop_name" required minlength="2" maxlength="255" autocomplete="organization" :placeholder="t('Shop của bạn')" /></label>
+            <label class="signup-full-width">{{ t('Mật khẩu') }}<input v-model="signupForm.password" required minlength="12" type="password" autocomplete="new-password" :placeholder="t('Tối thiểu 12 ký tự, gồm 3 nhóm ký tự')" /><small class="signup-password-hint">{{ t('Dùng ít nhất 3 nhóm: chữ thường, chữ hoa, số, ký tự đặc biệt.') }}</small></label>
+            <button class="login-submit signup-full-width signup-submit" type="submit" :disabled="signupLoading || !validSignupEmail(signupForm.email) || (signupStep === 'otp' && signupForm.otp.length !== 6)"><span>{{ signupLoading ? t(signupStep === 'otp' ? 'Đang tạo shop...' : 'Đang gửi mã...') : t('Đăng ký') }}</span></button>
           </form>
           <div v-if="signupError" class="login-alert" role="alert">{{ signupError }}</div>
           <div v-if="signupNotice" class="login-notice" role="status">{{ signupNotice }}</div>
@@ -14262,6 +14405,13 @@ function followupRecommendationLabel(item) {
   font-weight: 700;
 }
 .ui-language-control select:focus-visible { outline: 2px solid var(--leader-sidebar-accent, #137d82); outline-offset: 2px; }
+.login-language-control { position: relative; }
+.login-language-control::after { position: absolute; top: 50%; right: 14px; width: 7px; height: 7px; border-right: 2px solid #137d82; border-bottom: 2px solid #137d82; content: ""; pointer-events: none; transform: translateY(-70%) rotate(45deg); }
+.login-language-control select { min-width: 132px; min-height: 42px; appearance: none; padding: 0 36px 0 14px; border: 1px solid #c7ddd5; border-radius: 11px; color: #19443f; background: #f0f7f4; font-size: 13px; cursor: pointer; }
+.login-language-control select:focus-visible { border-color: #137d82; box-shadow: 0 0 0 3px rgba(19,125,130,.16); outline: 0; }
+:global(body.crm-dark) .login-language-control::after { border-color: #9be2d7; }
+:global(body.crm-dark) .login-language-control select { border-color: #486362; color: #edf6f2; background: #1a2628; color-scheme: dark; }
+:global(body.crm-dark) .login-language-control select option { color: #edf6f2; background: #1a2628; }
 
 /* =========================================================
    MEDIA MESSAGE
@@ -16586,56 +16736,87 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 }
 .permission-panel {
   margin-top: 22px;
-  padding: 16px 18px 18px;
+  padding: 20px 22px 22px;
   border: 1px solid var(--owly-border);
-  border-radius: 15px;
+  border-radius: 16px;
   background: var(--owly-surface);
 }
 .permission-panel .settings-card-header {
-  margin-bottom: 0;
-  padding-bottom: 2px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
 }
 .permission-panel .settings-card-header h3 {
-  margin-bottom: 3px;
+  margin-bottom: 5px;
+  color: var(--owly-ink);
+  font-size: 20px;
+  line-height: 1.3;
 }
 .permission-panel .settings-card-header p {
   margin: 0;
-  font-size: 13px;
+  max-width: 72ch;
+  color: var(--owly-muted);
+  font-size: 14px;
+  line-height: 1.6;
 }
 .permission-form {
-  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(132px, .9fr);
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 12px;
+  grid-template-columns: repeat(5, minmax(145px, 1fr)) minmax(148px, .9fr);
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
   border-top: 1px solid var(--owly-border);
 }
 .permission-form label {
   min-width: 0;
-  gap: 5px;
-  font-size: 11px;
+  gap: 7px;
+  color: var(--owly-ink);
+  font-size: 13px;
+  line-height: 1.4;
 }
 .permission-form select {
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
+  padding: 9px 11px;
   border-color: var(--owly-border);
   background: var(--owly-surface);
   color: var(--owly-ink);
+  font-size: 14px;
 }
 .permission-form > button {
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
   padding-inline: 12px;
+  white-space: nowrap;
 }
 .permission-list {
-  gap: 6px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 16px;
 }
 .permission-list li {
   border-color: var(--owly-border);
   background: var(--owly-surface);
-  padding: 9px 11px;
+  padding: 11px 13px;
   align-items: center;
 }
+.permission-list li > strong,
+.permission-list li > span { font-size: 14px; }
+.permission-list li > small { font-size: 13px; }
+
+.service-page-layout { padding-top: clamp(24px, 3vw, 40px); }
+.service-page-hero p { font-size: 16px; line-height: 1.65; }
+.service-request-card { padding: clamp(22px, 2.4vw, 32px); }
+.service-request-heading h2 { font-size: clamp(22px, 2vw, 28px); line-height: 1.25; }
+.service-request-intro { font-size: 15px; line-height: 1.65; }
+.service-request-fields { gap: 16px; }
+.service-request-fields label,
+.service-request-notes { gap: 8px; font-size: 14px; line-height: 1.45; }
+.service-request-fields input,
+.service-request-notes textarea { min-height: 46px; font-size: 14px; }
+.service-request-badge { font-size: 12px; }
+.selected-plan-summary strong { font-size: 16px; }
+.selected-plan-summary span { font-size: 14px; }
+.service-purchase-box strong { font-size: 14px; }
+.service-purchase-box small { font-size: 13px; line-height: 1.55; }
+.service-form-footnote { font-size: 12px; line-height: 1.5; }
 
 @media (max-width: 1050px) {
   .team-form {
@@ -16666,6 +16847,167 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
   .permission-form > button { grid-column: auto; }
   .team-table { min-width: 680px; }
   .team-table-wrap { overflow-x: auto; }
+}
+
+/* Give the main operational views one consistent outer surface. */
+.main > :is(.rag-docs-layout, .workflow-layout, .channels-layout, .webhooks-layout, .account-settings-layout, .orders-layout, .industry-workspace) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: clamp(16px, 2vw, 26px);
+  border: 1px solid var(--owly-border);
+  border-radius: 16px;
+  background: var(--owly-surface);
+  box-shadow: 0 8px 24px rgba(24, 49, 73, .05);
+}
+.crm-app.crm-dark .main > :is(.rag-docs-layout, .workflow-layout, .channels-layout, .webhooks-layout, .account-settings-layout, .orders-layout, .industry-workspace) {
+  border-color: #394145 !important;
+  background: #202427 !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .16);
+}
+.settings-card.followup-card {
+  margin: 20px auto 0;
+  padding: 22px;
+  border: 1px solid var(--owly-border) !important;
+  border-radius: 18px;
+  background: var(--owly-surface);
+  box-shadow: 0 10px 28px rgba(24, 49, 73, .08);
+}
+.settings-card.followup-card .segment-campaign-form {
+  margin: 18px 0 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+@media (max-width: 1050px) {
+  .permission-form { grid-template-columns: repeat(3, minmax(145px, 1fr)); }
+}
+@media (max-width: 760px) {
+  .main > :is(.rag-docs-layout, .workflow-layout, .channels-layout, .webhooks-layout, .account-settings-layout, .orders-layout, .industry-workspace) {
+    padding: 14px;
+    border-radius: 13px;
+  }
+  .permission-form { grid-template-columns: 1fr; }
+  .permission-form > button { grid-column: auto; }
+}
+
+/* Keep dense chat actions and channel identities easy to scan at a glance. */
+.chat-shell .chat-tool-actions > button[aria-haspopup="menu"] {
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--owly-surface) 88%, var(--workspace-primary) 12%);
+  box-shadow: 0 5px 14px rgba(24, 73, 77, .08);
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+.chat-shell .chat-tool-actions > button[aria-haspopup="menu"]:hover,
+.chat-shell .chat-tool-actions > button[aria-haspopup="menu"][aria-expanded="true"] {
+  color: var(--workspace-primary-dark);
+  background: color-mix(in srgb, var(--workspace-primary) 12%, var(--owly-surface));
+  border-color: color-mix(in srgb, var(--workspace-primary) 52%, var(--owly-border));
+  box-shadow: 0 8px 18px rgba(24, 73, 77, .14);
+  transform: translateY(-1px);
+}
+.chat-shell .chat-tools .conversation-actions-popover {
+  padding: 7px;
+  transform-origin: top right;
+  animation: conversation-menu-in 140ms ease-out;
+}
+.conversation-actions-menu-item {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+}
+.conversation-actions-menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.conversation-actions-menu-item span { min-width: 0; }
+
+.customer-identity-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 66px;
+  padding: 11px 12px;
+  border-radius: 12px;
+}
+.customer-identity-channel,
+.customer-identity-id {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+:global(.crm-app:not(.platform-admin-workspace) .layout .customer .customer-identity-channel small) {
+  grid-column: 1 !important;
+  margin-left: 0 !important;
+}
+.customer-identity-channel small,
+.customer-identity-id small {
+  margin: 0;
+  color: var(--owly-muted);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.customer-identity-channel strong {
+  overflow: hidden;
+  color: var(--owly-ink);
+  font-size: 13px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.customer-identity-id {
+  grid-column: 2;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 8px;
+  text-align: left;
+}
+.customer-identity-id small { flex: 0 0 auto; }
+.customer-identity-id code {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--workspace-primary-dark);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.crm-dark .customer-identity-channel small,
+body.crm-dark .customer-identity-id small { color: #9bb2b4; }
+body.crm-dark .customer-identity-channel strong { color: #f3f8f8; }
+body.crm-dark .customer-identity-id code { color: #8bd8d7; }
+
+@keyframes conversation-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell .chat-tools .conversation-actions-popover { animation: none; }
+  .chat-shell .chat-tool-actions > button[aria-haspopup="menu"] { transition: none; }
+}
+
+@media (max-width: 560px) {
+  .settings-card.followup-card { padding: 16px; border-radius: 15px; }
+  .customer-identity-row { gap: 10px; }
+  .customer-identity-id { gap: 6px; }
 }
 
 </style>

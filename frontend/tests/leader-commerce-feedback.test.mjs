@@ -32,13 +32,13 @@ test("sales order workspace keeps lifecycle processing without an intake form", 
   assert.match(ordersView, /recordSalesPayment/);
 });
 
-test("sales orders show the selected customer phone and an append-only process history", () => {
+test("sales orders show customer contact and a plain-language order history", () => {
   assert.match(appSource, /SĐT khách/);
   assert.match(appSource, /function orderCustomerPhone\(customerId\)/);
-  assert.match(appSource, /Xem toàn bộ quy trình/);
+  assert.match(appSource, /Xem lịch sử đơn hàng/);
   assert.match(appSource, /function chronologicalOrderEvents\(events\)/);
-  assert.match(appSource, /Nhật ký bất biến theo thời gian/);
-  assert.match(appSource, /không rollback/);
+  assert.match(appSource, /Xem đơn được cập nhật lúc nào/);
+  assert.doesNotMatch(appSource, /Nhật ký bất biến/);
 });
 
 test("ticket descriptions occupy a dedicated readable table column", () => {

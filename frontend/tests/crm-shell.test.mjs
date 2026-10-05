@@ -4,6 +4,7 @@ import test from "node:test";
 
 const appSource = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
 const landingSource = fs.readFileSync(new URL("../src/MarketingLanding.vue", import.meta.url), "utf8");
+const pricingSource = fs.readFileSync(new URL("../src/ServicePricing.vue", import.meta.url), "utf8");
 const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 const indexSource = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const channelUtilsSource = fs.readFileSync(new URL("../src/channel-utils.js", import.meta.url), "utf8");
@@ -119,10 +120,42 @@ test("customer 360 shows bought products and staff can process a customer-confir
 test("service plans declare channel limits without preselecting channels and include the 3-platform tier", () => {
   assert.match(appSource, /code: "scale"/);
   assert.match(appSource, /FALLBACK_SERVICE_PLANS\.filter\(\(plan\) => !returnedCodes\.has\(plan\.code\)\)/);
-  assert.match(templateSource, /plan\.max_channels \}\} nền tảng kết nối/);
+  assert.match(templateSource, /serviceChannelLimit/);
   assert.match(templateSource, /Không chọn nền tảng tại đây để tránh lệch dữ liệu/);
   assert.match(templateSource, /Nâng cấp không cần hủy gói hiện tại/);
+  assert.match(templateSource, /class="selected-plan-summary"/);
+  assert.match(templateSource, /selectedServicePlan \? \$t\(selectedServicePlan\.name\)/);
+  assert.doesNotMatch(templateSource, /class="service-plan-picker"/);
   assert.doesNotMatch(templateSource, /class="service-channel-picker"/);
+});
+
+test("service plan defaults to the shop's assigned tier and preserves manual choices", () => {
+  assert.match(appSource, /const servicePlanSelectionTouched = ref\(false\)/);
+  assert.match(appSource, /const currentServicePlanCode = computed\(\(\) => \{\s*const currentSubscription = serviceMode\.value === "chatbot"\s*\? serviceAccountSummary\.value\?\.chatbot_subscription\s*:\s*quotaSnapshot\.value;/);
+  assert.match(appSource, /function preferredServicePlanCode\(\) \{\s*if \(currentServicePlanCode\.value\) return currentServicePlanCode\.value;/);
+  assert.match(appSource, /quotaSnapshot\.value = detail;\s*if \(!servicePlanSelectionTouched\.value\) \{\s*serviceRequestForm\.value\.plan_code = preferredServicePlanCode\(\);/);
+  assert.match(appSource, /serviceAccountSummary\.value = detail;\s*if \(serviceMode\.value === "chatbot" && !servicePlanSelectionTouched\.value\)/);
+  assert.match(appSource, /function selectServicePlan\(planCode\) \{\s*servicePlanSelectionTouched\.value = true;/);
+});
+
+test("service selection stays compact until a plan is chosen and uses a high-contrast segmented switch", () => {
+  assert.match(appSource, /const serviceRequestOpen = ref\(false\)/);
+  assert.match(appSource, /serviceRequestOpen\.value = Boolean\(authUser\.value\)/);
+  assert.match(templateSource, /v-if="!authUser \|\| serviceRequestOpen \|\| serviceRequestSubmitted" class="service-page-grid"/);
+  assert.doesNotMatch(templateSource, /Xác nhận gói quản lý shop/);
+  assert.match(templateSource, /Thông tin đăng ký/);
+  assert.match(styleSource, /\.service-mode-switch \{[\s\S]*?border-radius: 999px;/);
+  assert.match(styleSource, /\.crm-app\.crm-dark \.service-mode-switch::before \{[\s\S]*?background: #1d2224;/);
+  assert.match(pricingSource, /body\.crm-dark \.smh-price-card \{ background:#202427;border-color:#394145; \}/);
+  assert.match(templateSource, /class="service-mode-switch" :class="\{ 'is-chatbot': serviceMode === 'chatbot' \}"/);
+  assert.match(styleSource, /\.service-mode-switch\.is-chatbot::before \{ transform: translateX\(100%\); \}/);
+  assert.match(pricingSource, /\.smh-price-card \{[^}]*min-height:620px;/);
+  assert.match(templateSource, /<div class="service-brand-lockup">\s*<BrandLogo icon alt="" aria-hidden="true" \/>\s*<strong>Smart Merchant Hub<\/strong>/);
+  assert.doesNotMatch(templateSource, /v-else type="button" class="service-back-link"[^>]*>Chọn gói dịch vụ/);
+});
+
+test("dark conversation shell uses a quiet one-pixel frame", () => {
+  assert.match(styleSource, /body\.crm-dark \.crm-app:not\(\.platform-admin-workspace\) \.chat-shell \{[\s\S]*?border-width: 1px !important;[\s\S]*?border-color: #303538 !important;/);
 });
 
 test("business hours support dated exceptions and use the knowledge-base label consistently", () => {
@@ -164,6 +197,20 @@ test("anonymous visitors see the public landing page before choosing login or si
   assert.match(appSource, /const publicView = ref\("home"\)/);
   assert.match(appSource, /<MarketingLanding v-else-if="publicView === 'home'"/);
   assert.match(landingSource, /data-testid="marketing-page"/);
+  assert.match(landingSource, /<option value="vi">Tiếng Việt<\/option><option value="en">English<\/option>/);
+  assert.match(landingSource, /<a class="smh-brand"[^>]*><BrandLogo icon\/><span><strong>Smart Merchant Hub<\/strong>/);
+  assert.match(landingSource, /\.smh-header \.smh-brand \.smh-logo-icon,\.smh-footer \.smh-brand \.smh-logo-icon \{ width:44px; height:44px; padding:0;/);
+  assert.doesNotMatch(landingSource, /smh-channel-motion|motionPaused \? text\.resume/);
+  assert.doesNotMatch(landingSource, /smh-art-pill/);
+  assert.match(landingSource, /\.smh-site \.smh-lead \{ font-size:17px;/);
+  assert.match(landingSource, /\.crm-app\.public-home\.crm-dark \.smh-site \.smh-button-secondary \{ color:#e8f3ed;/);
+  assert.match(landingSource, /\.crm-app\.public-home\.crm-dark \.smh-site \.smh-eyebrow \{ color:#75d8c4;/);
+  assert.match(landingSource, /\.smh-site \.smh-button \{ font-size:14px; \}/);
+  assert.match(landingSource, /\.smh-site \.smh-faq-list summary \{ font-size:16px; \}/);
+  assert.match(landingSource, /\.smh-site \.smh-footer-main > div > a:not\(\.smh-brand\),\.smh-site \.smh-footer-main button \{ color:#40594b; font-size:14px; \}/);
+  assert.match(landingSource, /\.crm-app\.public-home\.crm-dark \.smh-site \.smh-profile-tags span \{ color:#193c34; background:#dcece3; \}/);
+  assert.match(landingSource, /\.crm-app\.public-home\.crm-dark \.smh-site \.smh-tour-tabs button \{ color:#d6e4dc; \}/);
+  assert.match(landingSource, /\.smh-site \.smh-channels small \{ color:#40574b; font-size:14px;/);
   assert.match(appSource, /@login="openLogin" @signup="openSignup" @plans="openPublicServicePage"/);
   assert.match(appSource, /@click="openLogin"/);
   assert.match(appSource, /@click="openSignup"/);
@@ -180,6 +227,45 @@ test("anonymous visitors see the public landing page before choosing login or si
   assert.match(styleSource, /\.login-card/);
   assert.match(landingSource, /\.crm-app\.public-home/);
   assert.match(landingSource, /overflow-y:auto/);
+});
+
+test("login, recovery, and signup surfaces follow the selected theme and use a styled language picker", () => {
+  assert.equal((appSource.match(/class="ui-language-control login-language-control"/g) || []).length, 3);
+  assert.match(appSource, /\.login-language-control select \{[^}]*appearance: none;/);
+  assert.match(appSource, /:global\(body\.crm-dark\) \.login-language-control select \{[^}]*background: #1a2628/);
+  assert.match(styleSource, /body:not\(\.crm-dark\) \.login-showcase \{[^}]*background:/);
+  assert.match(styleSource, /body\.crm-dark \.login-page \{[^}]*background:/);
+  assert.match(styleSource, /body\.crm-dark \.login-card \{[^}]*background: #202729/);
+  assert.match(styleSource, /body\.crm-dark \.login-form input \{[^}]*background: #171d1f/);
+});
+
+test("auth forms stay scrollable when taller than the viewport and keep theme text readable", () => {
+  assert.match(styleSource, /\.crm-app\.auth-locked\s*\{[^}]*overflow-y:\s*auto/);
+  assert.match(styleSource, /\.crm-app\.auth-locked \.login-page\s*\{[^}]*overflow:\s*visible/);
+  assert.match(styleSource, /\.login-footer-note\s*\{\s*font-size:\s*13px/);
+  assert.match(styleSource, /body\.crm-dark \.signup-brand-scene > p\s*\{\s*color:\s*#d1e5df/);
+});
+
+test("dark notifications and conversation actions remain readable and correctly shaped", () => {
+  assert.match(styleSource, /body\.crm-dark \.notification-item strong \{ color: #edf5f5 !important;/);
+  assert.match(styleSource, /body\.crm-dark \.notification-popover\s*\{[^}]*border-radius:\s*14px/);
+  assert.match(styleSource, /\.chat-shell \.chat-tools \.conversation-actions-popover button\s*\{[^}]*width:\s*100%/);
+  assert.match(styleSource, /\.settings-layout \.followup-card \{ border-radius: 16px !important;/);
+});
+
+test("notifications can be marked all read and the bell stays rounded in dark mode", () => {
+  assert.match(appSource, /notifications\/read-all/);
+  assert.match(appSource, /@click="markAllNotificationsRead"/);
+  assert.match(styleSource, /\.crm-app\.crm-dark \.top-actions \.notification-menu \{[\s\S]*?background: transparent !important;/);
+  assert.match(styleSource, /\.crm-app\.crm-dark \.top-actions \.notification-menu > button\.bell \{[\s\S]*?border-radius: 12px !important;/);
+});
+
+test("notifications can be cleared after confirmation", () => {
+  assert.match(appSource, /async function clearAllNotifications\(\)/);
+  assert.match(appSource, /requestConfirmation\([\s\S]*?Xóa tất cả thông báo[\s\S]*?tone: "danger"/);
+  assert.match(appSource, /apiFetch\(`\$\{API_BASE\}\/notifications`, \{ method: "DELETE" \}\)/);
+  assert.match(appSource, /operationalNotifications\.value = \[\];/);
+  assert.match(templateSource, /class="notification-clear-all"[\s\S]*?@click="clearAllNotifications"/);
 });
 
 test("login form surfaces a retry countdown when the auth endpoint rate-limits", () => {
@@ -455,8 +541,10 @@ test("platform administration surfaces pending package approvals before tenant o
 test("shop self-service signup verifies email before creating a shop", () => {
   assert.doesNotMatch(appSource, /Chưa có workspace/);
   assert.match(appSource, /Đăng ký shop mới/);
-  assert.match(appSource, /signupLoading \? \(signupStep === 'otp' \? 'Đang tạo shop\.\.\.' : 'Đang gửi mã\.\.\.'\)/);
-  assert.match(templateSource, /class="signup-stepper"/);
+  assert.match(templateSource, /class="signup-otp-button"/);
+  assert.match(templateSource, /validSignupEmail\(signupForm\.email\)/);
+  assert.match(appSource, /const payload = \{ email: signupForm\.value\.email\.trim\(\)\.toLowerCase\(\) \}/);
+  assert.doesNotMatch(templateSource, /signup-stepper/);
   assert.match(appSource, /onboarding\/signup\/request/);
   assert.match(appSource, /onboarding\/signup\/verify/);
   assert.match(appSource, /Mã OTP/);
@@ -533,7 +621,7 @@ test("P2 logistics and payment history remain actionable in sales orders", () =>
   assert.match(appSource, /shipping_status/);
   assert.match(appSource, /recordSalesPayment/);
   assert.match(appSource, /"refunds"/);
-  assert.match(appSource, /Xem toàn bộ quy trình/);
+  assert.match(appSource, /Lịch sử đơn/);
 });
 
 test("settings expose session, MFA, and privacy controls", () => {
@@ -643,7 +731,7 @@ test("Customer 360 projects one primary contact/address and keeps history expand
 });
 
 test("Order table keeps actions compact and keyboard discoverable", () => {
-  assert.match(appSource, /data-testid="order-history-button"[^>]*title="Xem toàn bộ quy trình"[^>]*aria-label="Xem toàn bộ quy trình"/);
+  assert.match(appSource, /data-testid="order-history-button"[^>]*:title="uiLocale === 'en' \? 'View order history' : 'Xem lịch sử đơn hàng'"[^>]*:aria-label="uiLocale === 'en' \? 'View order history' : 'Xem lịch sử đơn hàng'"/);
   assert.match(appSource, /aria-label="Ghi nhận thanh toán"/);
   assert.match(appSource, /aria-label="Ghi nhận hoàn tiền"/);
   assert.match(styleSource, /\.orders-table\s+\.table-action-btn,[\s\S]*?white-space:\s*nowrap/);
@@ -758,7 +846,7 @@ test("CRM workspace header keeps core actions without redundant copy", () => {
   assert.match(crmHeader, /class="notification-menu"/);
   assert.match(crmHeader, /class="dark-mode-toggle"/);
   assert.match(crmHeader, /class="ui-language-control"/);
-  assert.match(crmHeader, /<span>\{\{ t\('Cài đặt'\) \}\}<\/span>/);
+  assert.doesNotMatch(crmHeader, /<span>\{\{ t\('Cài đặt'\) \}\}<\/span>/);
   assert.match(crmHeader, /class="top-logout"/);
   assert.match(crmHeader, /:aria-label="t\('Đăng xuất'\)"/);
   assert.match(crmHeader, /@click="logout"/);
@@ -980,9 +1068,9 @@ test("chat workspace uses a neutral timeline and aligned composer layout", () =>
 test("chat controls are actionable and the composer keeps a standard input hint", () => {
   assert.match(appSource, /@click="toggleConversationActions"/);
   assert.match(appSource, /@click="toggleConversationPriority"/);
-  assert.match(appSource, /@click="toggleConversationFavorite"/);
+  assert.doesNotMatch(appSource, /toggleConversationFavorite|conversationFavoriteActive/);
   assert.match(appSource, /:aria-pressed="conversationPriorityActive"/);
-  assert.match(appSource, /:aria-pressed="conversationFavoriteActive"/);
+  assert.doesNotMatch(appSource, /aria-label="Ghim cuộc trò chuyện"|>♡</);
   assert.doesNotMatch(appSource, /MÃ\s*\n?\s*Tạo mã giảm giá/);
   assert.doesNotMatch(appSource, /Ctrl\+V để dán ảnh/);
   assert.match(styleSource, /\.conversation-actions-popover/);
@@ -1023,7 +1111,8 @@ test("embedded conversation keeps its controls while compacting the header and c
   assert.match(styleSource, /\.composer-tabs button\s*\{[^}]*min-height:\s*28px/);
   assert.match(appSource, /class="chat-tool-primary"[\s\S]*?class="linked-customer-toggle"[\s\S]*?class="bot-mode-button"/);
   assert.match(appSource, /class="chat-tool-fields" :class="\{ 'has-outcome': selectedHasAiActivity \}"[\s\S]*?class="conversation-assignment"[\s\S]*?conversation-outcome-control/);
-  assert.match(appSource, /class="chat-tool-actions"[\s\S]*?toggleConversationActions[\s\S]*?toggleConversationPriority[\s\S]*?toggleConversationFavorite/);
+  assert.match(appSource, /class="chat-tool-actions"[\s\S]*?toggleConversationActions[\s\S]*?toggleConversationPriority/);
+  assert.doesNotMatch(appSource, /toggleConversationFavorite/);
   assert.match(appSource, /class="conversation-assignment conversation-outcome-control"/);
   assert.match(appSource, /class="composer-access-notice"/);
   assert.match(appSource, /class="composer-bottom"/);
@@ -1103,4 +1192,9 @@ test("chat composer replaces the search control with a voice recorder", () => {
 test("expired-session copy follows the current interface language", () => {
   assert.match(appSource, /authError\.value = "Phiên đăng nhập đã hết hạn\. Vui lòng đăng nhập lại\."/);
   assert.match(appSource, /class="login-alert" role="alert">\{\{ t\(authError\) \}\}/);
+});
+
+test("dark auth links stay on-theme and clickable controls share a restrained press state", () => {
+  assert.match(styleSource, /body\.crm-dark \.login-service-link:hover \{[^}]*background: #29393a;/);
+  assert.match(styleSource, /\.crm-app :where\(button, a, \[role="button"\]\):active:not\(:disabled\) \{\s*transform: translateY\(1px\) scale\(\.985\);/);
 });

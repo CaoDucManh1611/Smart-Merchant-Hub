@@ -31,11 +31,9 @@ test("shop lifecycle actions expose confirmation, busy and result states", () =>
   assert.match(templateSource, /role="status"/);
 });
 
-test("auth and onboarding communicate the current step", () => {
-  assert.match(templateSource, /signup-stepper/);
-  assert.match(templateSource, /Thông tin shop/);
-  assert.match(templateSource, /Xác minh OTP/);
-  assert.match(templateSource, /Chọn gói/);
+test("auth keeps OTP verification inline in the signup form", () => {
+  assert.doesNotMatch(templateSource, /signup-stepper|Xác minh OTP/);
+  assert.match(templateSource, /signupStep === 'otp'/);
   assert.match(templateSource, /autocomplete="one-time-code"/);
 });
 

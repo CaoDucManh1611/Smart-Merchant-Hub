@@ -55,3 +55,28 @@ class SubscriptionUpgradeFlowTests(unittest.TestCase):
             summary = get_shop_subscription_summary(self.business_id, db, owner)
             self.assertEqual("pending", summary.subscription.status)
             self.assertEqual("growth", summary.subscription.plan_code)
+
+    def test_subscription_summary_reports_active_chatbot_plan_while_an_upgrade_is_pending(self):
+        with Session(self.engine) as db:
+            owner = db.get(User, self.owner_id)
+            starter = db.query(ServicePlan).filter(ServicePlan.code == "starter").one()
+            growth = db.query(ServicePlan).filter(ServicePlan.code == "growth").one()
+            db.add(Subscription(
+                business_id=self.business_id,
+                plan_id=starter.id,
+                service_type="chatbot",
+                status="active",
+            ))
+            db.flush()
+            db.add(Subscription(
+                business_id=self.business_id,
+                plan_id=growth.id,
+                service_type="chatbot",
+                status="pending",
+            ))
+            db.commit()
+
+            summary = get_shop_subscription_summary(self.business_id, db, owner)
+
+            self.assertEqual("active", summary.chatbot_subscription.status)
+            self.assertEqual("starter", summary.chatbot_subscription.plan_code)

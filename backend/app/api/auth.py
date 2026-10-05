@@ -10,17 +10,18 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_authenticated_session, get_current_user, issue_token, require_admin_access, token_hash
-from app.auth.passwords import verify_password
+from app.auth.dependencies import AUTH_TTL_SECONDS, get_authenticated_session, get_current_user, issue_token, require_admin_access, token_hash
+from app.auth.passwords import hash_password, validate_signup_password, verify_password
 from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models.audit_log import AuditLog
 from app.models.auth_session import AuthSession
 from app.models.business import Business, User
 from app.models.saas import PlatformMembership
+from app.models.signup import SignupEmailChallenge
 from app.models.user_email_change import UserEmailChangeChallenge
 from app.middleware.security import LoginRateLimiter, RateLimitBackendUnavailable
-from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, EmailChangeRequest, EmailChangeRequestOut, EmailChangeVerify, EmailChangeVerifyOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut, MfaVerifyOut, MfaVerifyRequest
+from app.schemas.auth import AuditLogOut, AuthSessionOut, AuthUserOut, EmailChangeRequest, EmailChangeRequestOut, EmailChangeVerify, EmailChangeVerifyOut, LoginOut, LoginRequest, MfaDisableRequest, MfaPrepareOut, MfaVerifyOut, MfaVerifyRequest, PasswordResetComplete, PasswordResetCompleteOut, PasswordResetRequest, PasswordResetRequestOut
 from app.services.audit_service import record_audit
 from app.services.customer_collection import contact_hash, generate_verification_code, hash_verification_code, mask_contact
 from app.services.mfa_service import disable_mfa, enable_mfa, prepare_mfa, verify_mfa_code
@@ -165,6 +166,7 @@ def login(
         user.id,
         business_id=user.business_id,
         role=user.role,
+        ttl_seconds=30 * 24 * 60 * 60 if payload.remember_me else AUTH_TTL_SECONDS,
     )
     db.add(AuthSession(
         user_id=user.id,
@@ -192,6 +194,157 @@ def login(
         user=AuthUserOut.model_validate(user),
         mfa_required=user.mfa_status == "enabled",
     )
+
+
+@router.post("/password-reset/request", status_code=202, response_model=PasswordResetRequestOut)
+def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+    """Send a short-lived email code without disclosing whether an account exists."""
+    email = payload.email
+    query = db.query(User).filter(func.lower(User.email) == email, User.is_active.is_(True))
+    if payload.shop_slug:
+        query = query.join(Business, Business.id == User.business_id).filter(Business.slug == payload.shop_slug.strip().lower())
+    users = query.with_for_update().limit(2).all()
+    if len(users) != 1:
+        return {"status": "accepted", "expires_in": 600, "retry_after": 60}
+
+    user = users[0]
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    scope = (
+        SignupEmailChallenge.business_id.is_(None)
+        if user.business_id is None
+        else SignupEmailChallenge.business_id == user.business_id
+    )
+    latest = db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == email,
+        SignupEmailChallenge.purpose == "password_reset",
+        scope,
+        SignupEmailChallenge.status.in_(("pending", "pending_delivery")),
+    ).order_by(SignupEmailChallenge.created_at.desc(), SignupEmailChallenge.id.desc()).first()
+    if latest is not None and latest.created_at is not None and (now - latest.created_at).total_seconds() < 60:
+        return {"status": "accepted", "expires_in": 600, "retry_after": 60}
+
+    recent_count = db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == email,
+        SignupEmailChallenge.purpose == "password_reset",
+        scope,
+        SignupEmailChallenge.created_at >= now - timedelta(hours=1),
+    ).count()
+    if recent_count >= 5:
+        return {"status": "accepted", "expires_in": 600, "retry_after": 60}
+
+    code = generate_verification_code()
+    challenge = SignupEmailChallenge(
+        email=email,
+        purpose="password_reset",
+        business_id=user.business_id,
+        role=user.role,
+        code_hash=hash_verification_code(code),
+        status="pending_delivery",
+        expires_at=now + timedelta(minutes=10),
+        created_at=now,
+    )
+    db.add(challenge)
+    db.commit()
+
+    try:
+        delivery = deliver_otp(channel="email", destination=email, code=code)
+        if not delivery.delivered or delivery.provider != "smtp":
+            raise OtpDeliveryNotConfigured("Password reset requires email OTP delivery.")
+    except (OtpDeliveryNotConfigured, OtpDeliveryError, ValueError, OSError):
+        challenge.status = "delivery_failed"
+        db.commit()
+        return {"status": "accepted", "expires_in": 600, "retry_after": 60}
+
+    challenge.status = "pending"
+    for pending in db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == email,
+        SignupEmailChallenge.purpose == "password_reset",
+        scope,
+        SignupEmailChallenge.id != challenge.id,
+        SignupEmailChallenge.status.in_(("pending", "pending_delivery")),
+    ).all():
+        pending.status = "superseded"
+    db.commit()
+    return {"status": "accepted", "expires_in": 600, "retry_after": 60}
+
+
+@router.post("/password-reset/complete", response_model=PasswordResetCompleteOut)
+def complete_password_reset(payload: PasswordResetComplete, db: Session = Depends(get_db)):
+    try:
+        validate_signup_password(payload.new_password)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    query = db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == payload.email,
+        SignupEmailChallenge.purpose == "password_reset",
+        SignupEmailChallenge.status == "pending",
+    )
+    if payload.shop_slug:
+        query = query.join(Business, Business.id == SignupEmailChallenge.business_id).filter(Business.slug == payload.shop_slug.strip().lower())
+    challenge = query.order_by(SignupEmailChallenge.created_at.desc(), SignupEmailChallenge.id.desc()).with_for_update().first()
+    invalid_code = HTTPException(status_code=422, detail="Mã không hợp lệ hoặc đã hết hạn. Hãy yêu cầu mã mới.")
+    if challenge is None:
+        raise invalid_code
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if challenge.expires_at <= now or challenge.attempts >= challenge.max_attempts:
+        challenge.status = "expired" if challenge.expires_at <= now else "locked"
+        db.commit()
+        raise invalid_code
+    challenge.attempts += 1
+    if not hmac.compare_digest(hash_verification_code(payload.otp), challenge.code_hash):
+        if challenge.attempts >= challenge.max_attempts:
+            challenge.status = "locked"
+        db.commit()
+        raise invalid_code
+
+    user_query = db.query(User).filter(func.lower(User.email) == payload.email, User.is_active.is_(True))
+    if challenge.business_id is None:
+        user_query = user_query.filter(User.business_id.is_(None))
+    else:
+        user_query = user_query.filter(User.business_id == challenge.business_id)
+    if payload.shop_slug:
+        user_query = user_query.join(Business, Business.id == User.business_id).filter(Business.slug == payload.shop_slug.strip().lower())
+    users = user_query.with_for_update().limit(2).all()
+    if len(users) != 1:
+        challenge.status = "invalid"
+        db.commit()
+        raise invalid_code
+
+    user = users[0]
+    user.password_hash = hash_password(payload.new_password)
+    challenge.status = "verified"
+    challenge.verified_at = now
+    session_count = db.query(AuthSession).filter(
+        AuthSession.user_id == user.id,
+        AuthSession.revoked_at.is_(None),
+    ).update({AuthSession.revoked_at: now}, synchronize_session=False)
+    user_scope = (
+        SignupEmailChallenge.business_id.is_(None)
+        if user.business_id is None
+        else SignupEmailChallenge.business_id == user.business_id
+    )
+    for pending in db.query(SignupEmailChallenge).filter(
+        SignupEmailChallenge.email == payload.email,
+        SignupEmailChallenge.purpose == "password_reset",
+        user_scope,
+        SignupEmailChallenge.id != challenge.id,
+        SignupEmailChallenge.status.in_(("pending", "pending_delivery")),
+    ).all():
+        pending.status = "superseded"
+    if user.business_id is not None:
+        record_audit(
+            db,
+            business_id=user.business_id,
+            user_id=user.id,
+            action="password_reset",
+            resource_type="user_credential",
+            resource_id=user.id,
+            metadata={"active_sessions_revoked": int(session_count)},
+        )
+    db.commit()
+    return {"status": "password_reset"}
 
 
 @router.post("/email-change/request", status_code=202, response_model=EmailChangeRequestOut)
@@ -507,8 +660,10 @@ def verify_mfa_enrollment(
     db: Session = Depends(get_db),
 ):
     user = db.get(User, session.user_id)
-    if user is None or not verify_mfa_code(user, payload.code):
+    if user is None:
         raise HTTPException(status_code=401, detail="Mã MFA không đúng hoặc đã hết hạn.")
+    if not verify_mfa_code(user, payload.code):
+        raise HTTPException(status_code=422, detail="Mã MFA không đúng hoặc đã hết hạn.")
     enable_mfa(user)
     session.mfa_verified = True
     if user.business_id is not None:

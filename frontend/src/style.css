@@ -12516,6 +12516,16 @@ body.crm-dark .service-success-dialog p { color: #c1ced2; }
 .signup-otp-input:disabled { cursor: not-allowed; opacity: .62; background: #f1f5f7; }
 .signup-otp-note { padding: 10px 12px; border: 1px solid #c8e0e4; border-radius: 10px; color: #4c697b; background: #f0fbfa; font-size: 12px; line-height: 1.5; }
 .signup-otp-input { letter-spacing: .32em; text-align: center; font-size: 18px !important; font-weight: 800 !important; }
+.signup-card .login-card-heading { margin: 26px 0 22px; }
+.signup-card .login-card-heading h2 { font-size: clamp(30px, 4vw, 38px); }
+.signup-card .login-card-heading p { font-size: 15px; line-height: 1.65; }
+.signup-card .login-form { gap: 16px; }
+.signup-card .login-form label { font-size: 13px; }
+.signup-card .login-form input { min-height: 50px; font-size: 15px; }
+.signup-card .signup-otp-input { width: min(100%, 340px); min-height: 56px; letter-spacing: .4em; font-size: 20px !important; }
+.signup-card .signup-otp-input:disabled { color: #526875; opacity: 1; }
+.signup-card .signup-submit { min-height: 54px; justify-content: center; font-size: 15px; }
+.signup-card .login-footer-note { font-size: 13px; line-height: 1.6; }
 .login-notice { margin-top: 12px; padding: 10px 12px; border: 1px solid #b7deda; border-radius: 10px; color: #246e70; background: #f0fbfa; font-size: 12px; line-height: 1.45; }
 .login-service-link:disabled { cursor: not-allowed; opacity: .6; }
 
@@ -12573,10 +12583,6 @@ body.crm-dark .service-request-error { color: #ffe3e6 !important; background: #3
 body.crm-dark .service-request-success p strong { color: #8bd8d7 !important; }
 body.crm-dark .signup-otp-note,
 body.crm-dark .login-notice { color: #d8ffff !important; background: #173f43 !important; border-color: #3c777a !important; }
-body.crm-dark .signup-card .login-card-heading h2 { color: #1f2d43 !important; }
-body.crm-dark .signup-card .login-card-heading p,
-body.crm-dark .signup-card .login-form label { color: #43566f !important; }
-body.crm-dark .signup-card .login-card-heading p { color: #71849b !important; }
 body.crm-dark .channel-plan-locked { color: #ffe3b0 !important; background: #3b3020 !important; border-color: #80632e !important; }
 
 @media (max-width: 880px) {
@@ -14354,24 +14360,6 @@ body.crm-dark .service-plan-option small + small { color: #d8ffff; background: #
 .channel-capacity-alert span { min-width: 0; overflow-wrap: anywhere; }
 .channel-capacity-alert button { flex: 0 0 auto; }
 
-.signup-stepper {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0 0 18px;
-  padding: 0;
-  list-style: none;
-}
-.signup-stepper li { display: flex; gap: 7px; min-width: 0; color: #788491; font-size: .7rem; line-height: 1.25; }
-.signup-stepper li > span { display: grid; flex: 0 0 22px; width: 22px; height: 22px; place-items: center; border: 1px solid #c9d5df; border-radius: 50%; font-weight: 800; }
-.signup-stepper strong,
-.signup-stepper small { display: block; overflow-wrap: anywhere; }
-.signup-stepper small { margin-top: 2px; font-size: .64rem; }
-.signup-stepper li.active,
-.signup-stepper li.complete { color: #1d697b; }
-.signup-stepper li.active > span,
-.signup-stepper li.complete > span { color: #fff; border-color: #2b9b99; background: #2b9b99; }
-
 body.crm-dark .platform-admin-tenant-card,
 body.crm-dark .platform-tenant-summary > div,
 body.crm-dark .platform-tenant-detail-grid > div,
@@ -14400,7 +14388,6 @@ body.crm-dark .channel-capacity-alert { color: #ffe3a5; border-color: #816725; b
   .platform-tenant-summary,
   .platform-tenant-detail-grid,
   .platform-quota-card-grid,
-  .signup-stepper { grid-template-columns: minmax(0, 1fr); }
   .platform-admin-panel { padding: 14px; }
 }
 
@@ -15699,3 +15686,425 @@ body.crm-dark .customer-rfm-chip b { color: #fff; }
 @media(max-width:820px) { .marketing-container { width: min(100% - 42px,680px); }.marketing-header { min-height: 68px; padding-inline: 21px; }.marketing-menu-toggle { display: block; }.marketing-nav { display: none; position: absolute; top: 100%; left: 0; right: 0; align-items: stretch; flex-direction: column; gap: 0; padding: 10px 21px 20px; border-bottom: 1px solid #dbe9e4; background: #f7faf8; box-shadow: 0 14px 24px #17464b18; }.marketing-nav.is-open { display: flex; }.marketing-nav > a, .marketing-login { padding: 12px 2px; text-align: left; }.marketing-language { padding-block: 7px; }.marketing-nav-cta { justify-content: center; margin-top: 9px; }.marketing-hero { grid-template-columns: 1fr; gap: 30px; padding-block: 66px 75px; }.marketing-hero-copy { max-width: 610px; }.marketing-visual { width: min(100%,590px); margin-inline: auto; }.marketing-feature-grid { grid-template-columns: 1fr; }.marketing-feature-grid article { min-height: 0; }.marketing-process-inner { grid-template-columns: 1fr; gap: 30px; } }
 @media(max-width:520px) { .marketing-topline { font-size: 9px; }.marketing-brand strong { font-size: 13px; }.marketing-brand small { font-size: 8px; }.marketing-container { width: calc(100% - 36px); }.marketing-hero { padding-block: 52px 65px; }.marketing-hero h1 { font-size: clamp(43px,11vw,60px); }.marketing-hero-copy > p { font-size: 14px; }.marketing-hero-actions { align-items: stretch; flex-direction: column; }.marketing-hero-actions button { justify-content: center; }.marketing-demo-body { height: 284px; }.marketing-demo-contact:nth-child(3) { display: none; }.marketing-demo-messages { padding: 8px; gap: 5px; }.marketing-demo-message { max-width: 96%; padding: 7px; font-size: 8px; }.marketing-floating-note { bottom: 8px; padding: 8px; }.marketing-floating-note > span:first-child { width: 26px; height: 26px; }.marketing-floating-note strong { font-size: 9px; }.marketing-floating-note small { font-size: 8px; }.marketing-separator { gap: 9px; padding: 8px 12px; font-size: 8px; }.marketing-features, .marketing-final { padding-block: 73px; }.marketing-feature-grid { margin-top: 27px; }.marketing-process { padding-block: 68px; }.marketing-footer > div { flex-wrap: wrap; }.marketing-footer > div > span { order: 3; width: 100%; } }
 @media(prefers-reduced-motion:reduce) { .marketing-page *, .marketing-page *::before, .marketing-page *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+
+/* Final readability pass for dense CRM settings, imports, and setup flows. */
+.customer-identity-help { margin: 8px 0 12px; padding: 10px 12px; border-left: 3px solid #15908d; border-radius: 0 9px 9px 0; color: #365d62; background: #edf7f5; font-size: 13px; line-height: 1.6; }
+.learning-options { gap: 9px; }
+.learning-options .checkbox-field { min-height: 46px; padding: 11px 13px; border: 1px solid #cadbd7; border-radius: 10px; color: #24494a; background: #f3f8f6; font-size: 14px; line-height: 1.45; }
+.learning-options .checkbox-field input { width: 17px; height: 17px; flex: 0 0 auto; accent-color: #128b88; }
+.learning-topic { min-height: 104px; padding: 14px; border: 1px solid #cfdfda; border-radius: 12px; color: #26484a; background: #f4f8f7; }
+.learning-topic strong { color: #183f43; font-size: 14px; }
+.learning-topic span, .learning-topic small { color: #526d70; font-size: 12px; line-height: 1.5; }
+.learning-topic small { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.learning-signal-summary { font-size: 13px; line-height: 1.55; }
+.learning-method-note { display: block; color: #566e70; font-size: 12px; line-height: 1.55; }
+.permission-form { display: grid; grid-template-columns: repeat(5, minmax(135px, 1fr)) minmax(145px, auto); align-items: end; gap: 10px; }
+.permission-form label { display: grid; min-width: 0; gap: 7px; color: #35585d; font-size: 13px; font-weight: 700; }
+.permission-form select, .permission-form input { width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; color: #1e393d; background: #fbfdfc; font: inherit; font-size: 13px; }
+.permission-form > button { min-height: 44px; white-space: normal; }
+.permission-list { gap: 9px; }
+.permission-list li { display: grid; grid-template-columns: minmax(150px, 1fr) auto minmax(140px, .8fr) auto; align-items: center; gap: 10px; padding: 12px; border: 1px solid #d5e1de; border-radius: 10px; background: #fbfdfc; }
+.permission-list li > strong { font-size: 13px; line-height: 1.45; }
+.permission-list li > small { color: #536d70; font-size: 12px; }
+.permission-allow, .permission-deny { padding: 5px 9px; border-radius: 999px; font-size: 12px; font-weight: 750; }
+.conversation-actions-popover { min-width: 232px; padding: 7px; border-color: #a8c8c4; background: #fff; box-shadow: 0 14px 32px rgba(20, 59, 62, .18); }
+.conversation-actions-popover button { min-height: 38px; padding: 9px 11px; color: #24494d; font-size: 13px; }
+.conversation-actions-popover button:hover, .conversation-actions-popover button:focus-visible { color: #0c6266; background: #e8f5f2; }
+.chat-shell .chat-tool-actions > button[aria-haspopup="menu"] { width: 38px; height: 38px; flex-basis: 38px; color: #305960; }
+.chat-shell .chat-tool-actions > button[aria-haspopup="menu"] svg { width: 17px; height: 17px; fill: currentColor; }
+.chat-shell .chat-tool-actions > button[aria-haspopup="menu"]:focus-visible { outline: 3px solid #199a9a; outline-offset: 2px; }
+.mfa-qr-setup { display: grid; grid-template-columns: 180px minmax(0, 1fr); align-items: center; gap: 18px; width: min(100%, 560px); margin-top: 14px; padding: 16px; border: 1px solid #cbded9; border-radius: 14px; background: #f4f9f7; }
+.mfa-qr-setup > img { display: block; width: 180px; height: 180px; padding: 8px; border: 1px solid #d9e5e1; border-radius: 10px; background: #fff; }
+.mfa-qr-setup p { margin: 6px 0 12px; color: #526d70; font-size: 13px; line-height: 1.55; }
+.mfa-qr-setup details summary { cursor: pointer; color: #146e70; font-size: 13px; font-weight: 700; }
+.mfa-uri { display: block; max-width: 100%; margin-top: 8px; overflow-wrap: anywhere; color: #365457; font-size: 12px; white-space: normal; }
+.signup-email-error { display: block; margin-top: 6px; color: #a13243; font-size: 12px; line-height: 1.45; }
+.signup-email-control input[aria-invalid="true"] { border-color: #c65260; box-shadow: 0 0 0 3px rgba(198, 82, 96, .12); }
+.signup-otp-button { min-width: 112px; min-height: 44px; font-size: 13px; }
+.selected-plan-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 18px; padding: 15px; border: 1px solid #c8ded9; border-radius: 12px; color: #21474a; background: #f1f8f6; }
+.selected-plan-summary > div { display: grid; gap: 5px; }
+.selected-plan-summary strong { color: #173f43; font-size: 15px; }
+.selected-plan-summary span { color: #526d70; font-size: 13px; }
+.selected-plan-change { min-height: 38px; padding: 7px 12px; border: 1px solid #8bbdba; border-radius: 9px; color: #176b6e; background: #fff; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; }
+.segment-campaign-form { grid-template-columns: minmax(170px, .9fr) minmax(250px, 1.5fr) minmax(210px, .9fr) minmax(160px, auto); gap: 14px; padding: 16px; }
+.segment-campaign-form label { gap: 7px; color: #36575b; font-size: 13px; font-weight: 700; }
+.segment-campaign-form select, .segment-campaign-form input, .segment-campaign-form textarea { min-height: 44px; padding: 9px 11px; border: 1px solid #bacfca; border-radius: 9px; color: #203e42; background: #fff; font: inherit; font-size: 13px; }
+.segment-campaign-form textarea { min-height: 70px; }
+.segment-campaign-form > button { min-height: 44px; white-space: normal; }
+.followup-status-filter { gap: 10px; color: #36575b; font-size: 13px; }
+.followup-status-filter select { min-height: 40px; padding: 7px 10px; border: 1px solid #bacfca; border-radius: 9px; color: #203e42; background: #fff; font: inherit; }
+.rag-header-panel, .workflow-layout > .products-header, .channels-layout > .settings-card-header, .webhooks-layout > .settings-card-header { line-height: 1.6; }
+.rag-header-panel p, .workflow-layout > .products-header p, .channels-layout .settings-card-header p, .webhooks-layout .settings-card-header p { max-width: 760px; font-size: 14px; line-height: 1.65; }
+.workflow-form .product-form-grid label, .channels-layout .settings-card label, .webhooks-layout .settings-card label { font-size: 13px; line-height: 1.45; }
+.workflow-form .product-form-grid input, .workflow-form .product-form-grid select, .channels-layout input, .channels-layout select, .channels-layout textarea { min-height: 42px; font-size: 14px; }
+.settings-layout .settings-card-header h2, .learning-card h2, .followup-card h2 { font-size: clamp(20px, 2vw, 24px); line-height: 1.25; }
+.settings-layout .settings-card-header p, .settings-layout .settings-muted { font-size: 13px; line-height: 1.6; }
+
+body.crm-dark .customer-identity-help { color: #c7e7e3; background: #203536; border-color: #48aaa6; }
+body.crm-dark .learning-options .checkbox-field { color: #e0eeec; background: #20292b; border-color: #46585c; }
+body.crm-dark .learning-topic { color: #e5eeee; background: #20292b; border-color: #46585c; }
+body.crm-dark .learning-topic strong { color: #f0fbf9; }
+body.crm-dark .learning-topic span, body.crm-dark .learning-topic small, body.crm-dark .learning-method-note { color: #c1d0d2; }
+body.crm-dark .permission-form label, body.crm-dark .permission-list li > small { color: #c8d8d9; }
+body.crm-dark .permission-form select, body.crm-dark .permission-form input, body.crm-dark .followup-status-filter select { color: #edf5f5; background: #1a1e20; border-color: #526166; }
+body.crm-dark .permission-list li { color: #edf5f5; background: #202729; border-color: #465357; }
+body.crm-dark .conversation-actions-popover { color: #eef7f7; background: #202729; border-color: #48666a; box-shadow: 0 16px 32px rgba(0, 0, 0, .4); }
+body.crm-dark .conversation-actions-popover button { color: #deeeee; }
+body.crm-dark .conversation-actions-popover button:hover, body.crm-dark .conversation-actions-popover button:focus-visible { color: #fff; background: #174448; }
+body.crm-dark .chat-shell .chat-tool-actions > button[aria-haspopup="menu"] { color: #d8ffff; }
+body.crm-dark .mfa-qr-setup { color: #edf5f5; background: #202729; border-color: #465357; }
+body.crm-dark .mfa-qr-setup p, body.crm-dark .mfa-uri { color: #c1d0d2; }
+body.crm-dark .mfa-qr-setup details summary { color: #8bd8d7; }
+body.crm-dark .selected-plan-summary { color: #edf5f5; background: #202729; border-color: #465357; }
+body.crm-dark .selected-plan-summary strong { color: #f3f8f8; }
+body.crm-dark .selected-plan-summary span { color: #c1d0d2; }
+body.crm-dark .selected-plan-change { color: #d8ffff; background: #253b3d; border-color: #3c777a; }
+body.crm-dark .segment-campaign-form label, body.crm-dark .followup-status-filter { color: #dce9ea; }
+body.crm-dark .segment-campaign-form select, body.crm-dark .segment-campaign-form input, body.crm-dark .segment-campaign-form textarea { color: #edf5f5; background: #1a1e20; border-color: #526166; }
+body.crm-dark .signup-email-error { color: #ffb8c0; }
+
+@media (max-width: 1050px) {
+  .permission-form { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
+  .permission-form > button { grid-column: 1 / -1; justify-self: start; min-width: 180px; }
+  .permission-list li { grid-template-columns: minmax(140px, 1fr) auto; }
+  .segment-campaign-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .permission-form, .permission-list li, .segment-campaign-form { grid-template-columns: 1fr; }
+  .permission-form > button { grid-column: auto; width: 100%; }
+  .permission-list li > button { justify-self: start; }
+  .mfa-qr-setup { grid-template-columns: 1fr; }
+  .mfa-qr-setup > img { width: min(100%, 220px); height: auto; aspect-ratio: 1; }
+  .signup-email-control { grid-template-columns: 1fr; }
+  .signup-otp-button { justify-self: start; }
+  .selected-plan-summary { align-items: stretch; flex-direction: column; }
+  .selected-plan-change { align-self: start; }
+}
+
+/* Login and signup share the public light/dark theme instead of mixed surfaces. */
+body:not(.crm-dark) .login-page { color: #183c36; background: #f4f7f2; }
+body:not(.crm-dark) .login-shell { border-color: #d5e2d9; background: #fff; box-shadow: 0 28px 80px rgba(26, 55, 45, .12); }
+body:not(.crm-dark) .login-showcase { color: #183c36; background: linear-gradient(145deg, #e9efe5, #e1ebe2 62%, #d9e7df); }
+body:not(.crm-dark) .login-brand-mark { border-color: #c9ddd2; color: #087e77; background: rgba(255,255,255,.75); }
+body:not(.crm-dark) .login-brand-lockup span,body:not(.crm-dark) .login-showcase-copy,body:not(.crm-dark) .login-feature-list small { color: #4b6960; }
+body:not(.crm-dark) .login-eyebrow,body:not(.crm-dark) .login-card-kicker,body:not(.crm-dark) .login-showcase h1 em,body:not(.crm-dark) .login-feature-icon { color: #087e77; }
+body:not(.crm-dark) .login-feature-icon { border-color: #99c7bd; }
+body:not(.crm-dark) .login-card { color: #1c3732; border-color: #d5e2d9; background: #fff; box-shadow: 0 12px 35px rgba(26,55,45,.07); }
+body:not(.crm-dark) .login-card-heading h2 { color: #173a35; }
+body:not(.crm-dark) .login-card-heading p { color: #526d65; }
+body:not(.crm-dark) .login-form label { color: #294b43; }
+body:not(.crm-dark) .login-form label > span { color: #617a72; }
+body:not(.crm-dark) .login-form input { color: #183b35; border-color: #c9dad2; background: #f8fbf9; }
+body:not(.crm-dark) .login-form input::placeholder { color: #718a81; }
+body:not(.crm-dark) .login-form input:focus { border-color: #16877d; background: #fff; box-shadow: 0 0 0 4px rgba(22,135,125,.13); }
+body:not(.crm-dark) .login-security-pill { color: #17645d; background: #e7f3ed; }
+body:not(.crm-dark) .login-footer-note { color: #526a62; }
+body:not(.crm-dark) .login-service-link { color: #087e77; }
+body:not(.crm-dark) .signup-card .signup-form > p.signup-full-width { color: #425d53; }
+.login-submit { color: #fff; background: linear-gradient(110deg, #0d7f75, #176f78); box-shadow: 0 10px 20px rgba(13,127,117,.2); }
+.login-submit:hover:not(:disabled) { box-shadow: 0 14px 24px rgba(13,127,117,.25); }
+
+body.crm-dark .login-page { color: #edf5f1; background: radial-gradient(circle at 12% 16%, rgba(49,112,102,.14), transparent 34%), #15191b; }
+body.crm-dark .login-shell { color: #edf5f1; border-color: #39484a; background: #202729; box-shadow: 0 28px 80px rgba(0,0,0,.35); }
+body.crm-dark .login-showcase { color: #eff6f2; background: linear-gradient(145deg, #172326, #1c3336 62%, #1d3f41); }
+body.crm-dark .login-brand-mark { color: #a8e4d8; border-color: #496263; background: #243638; }
+body.crm-dark .login-brand-lockup span,body.crm-dark .login-showcase-copy,body.crm-dark .login-feature-list small { color: #c1d2cc; }
+body.crm-dark .login-eyebrow,body.crm-dark .login-card-kicker,body.crm-dark .login-showcase h1 em,body.crm-dark .login-feature-icon { color: #83ded0; }
+body.crm-dark .login-feature-icon { border-color: #578f85; }
+body.crm-dark .login-card { color: #edf5f1; border-color: #3a4a4d; background: #202729; box-shadow: 0 12px 35px rgba(0,0,0,.2); }
+body.crm-dark .login-security-pill { color: #c4eee5; background: #203f40; }
+body.crm-dark .login-card-heading h2 { color: #f1f6f3; }
+body.crm-dark .login-card-heading p { color: #c1cfca; }
+body.crm-dark .login-form label { color: #e4ede8; }
+body.crm-dark .login-form label > span { color: #bdcbc5; }
+body.crm-dark .login-form input { color: #f1f6f4; border-color: #46575b; background: #171d1f; }
+body.crm-dark .login-form input::placeholder { color: #a2b2ae; }
+body.crm-dark .login-form input:focus { border-color: #73d6ca; background: #1a2527; box-shadow: 0 0 0 4px rgba(115,214,202,.16); }
+body.crm-dark .login-footer-note { color: #c1d0ca; }
+body.crm-dark .login-service-link { color: #8ce0d5; }
+body.crm-dark .login-service-link:hover { color: #b8f3e9; background: #29393a; }
+body.crm-dark .signup-card .signup-form > p.signup-full-width { color: #d5e3dd; }
+body.crm-dark .login-alert { color: #ffe3e6; background: #3a2025; border-color: #7f414d; }
+body.crm-dark .login-rate-limit { color: #ffe6b8; background: #3b3020; border-color: #80632e; }
+body.crm-dark .signup-otp-button { color: #c8f3eb; background: #1c4545; border-color: #427e7a; }
+body.crm-dark .signup-otp-note,body.crm-dark .login-notice { color: #d8ffff; background: #173f43; border-color: #3c777a; }
+
+/* Keep long auth forms reachable in short viewports and make helper text legible in both themes. */
+.crm-app.auth-locked {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.crm-app.auth-locked .login-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: visible;
+}
+
+.login-brand-lockup span { font-size: 12px; }
+.login-eyebrow,
+.login-card-kicker { font-size: 11px; }
+.login-card-heading p { font-size: 14px; }
+.login-form label { font-size: 13px; }
+.login-form label > span { font-size: 12px; }
+.login-footer-note { font-size: 13px; line-height: 1.6; }
+.login-alert,
+.login-rate-limit,
+.signup-otp-note,
+.login-notice { font-size: 13px; }
+.login-service-link { font-size: 13px; }
+.signup-otp-button { font-size: 12px; }
+.signup-password-hint,
+.signup-email-error { font-size: 12px; }
+.signup-brand-scene > p { margin-top: 20px; font-size: 15px; font-weight: 600; }
+
+body:not(.crm-dark) .signup-brand-scene > p { color: #345951; }
+body.crm-dark .signup-brand-scene > p { color: #d1e5df; }
+
+body.crm-dark .notification-popover {
+  border-radius: 14px !important;
+  background-clip: padding-box;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, .42);
+}
+body.crm-dark .notification-item strong { color: #edf5f5 !important; }
+
+.chat-shell .chat-tools .conversation-actions-popover {
+  z-index: 40;
+  right: 0;
+  width: min(320px, calc(100vw - 32px));
+  min-width: min(260px, calc(100vw - 32px));
+  border-radius: 14px;
+}
+.chat-shell .chat-tools .conversation-actions-popover button {
+  display: block;
+  flex: none;
+  width: 100%;
+  height: auto;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+}
+.chat-shell .chat-tools .conversation-actions-popover button:hover,
+.chat-shell .chat-tools .conversation-actions-popover button:focus-visible {
+  color: #0c6266;
+  background: #e8f5f2;
+}
+body.crm-dark .chat-shell .chat-tools .conversation-actions-popover button:hover,
+body.crm-dark .chat-shell .chat-tools .conversation-actions-popover button:focus-visible {
+  color: #fff;
+  background: #174448;
+}
+
+.settings-layout .followup-card { border-radius: 16px !important; }
+
+.notification-popover-head { gap: 10px; }
+.notification-popover-summary { display: grid; gap: 3px; }
+.notification-popover-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.notification-mark-all { flex: 0 0 auto; min-height: 30px; border: 1px solid #b8dcd7; border-radius: 7px; padding: 5px 9px; color: #126b70; background: #f0f9f7; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.notification-mark-all:hover:not(:disabled) { background: #e3f4f1; }
+.notification-mark-all:disabled { cursor: wait; opacity: .65; }
+body.crm-dark .notification-mark-all { color: #d8ffff; background: #173f43; border-color: #3c777a; }
+body.crm-dark .notification-mark-all:hover:not(:disabled) { background: #20565a; }
+.notification-mark-all:focus-visible { outline: 2px solid #16877d; outline-offset: 2px; }
+.notification-clear-all { min-height: 30px; border: 1px solid #e2c2c5; border-radius: 7px; padding: 5px 9px; color: #9d3e49; background: #fff6f6; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.notification-clear-all:hover:not(:disabled) { background: #fdebed; }
+.notification-clear-all:disabled { cursor: wait; opacity: .65; }
+body.crm-dark .notification-clear-all { color: #ffd5d8; background: #39282a; border-color: #684348; }
+body.crm-dark .notification-clear-all:hover:not(:disabled) { background: #4a3034; }
+.notification-clear-all:focus-visible { outline: 2px solid #c35d69; outline-offset: 2px; }
+
+.login-options-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -2px 0 2px; }
+.login-form .login-options-row label.login-remember { display: inline-flex; width: auto; min-width: 0; flex: 1 1 auto; grid-template-columns: none; align-items: center; gap: 8px; margin: 0; color: #405b54; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.crm-app.auth-locked .login-form .login-options-row input[type="checkbox"] { appearance: auto; display: block; width: 17px !important; min-width: 17px; max-width: 17px; height: 17px !important; min-height: 17px !important; flex: 0 0 17px; margin: 0; padding: 0; accent-color: #087e77; cursor: pointer; }
+.login-form .login-options-row .login-remember span { display: inline; flex: 0 0 auto; color: inherit; font-size: inherit; font-weight: inherit; line-height: 1.35; white-space: nowrap; }
+.login-forgot-link, .password-reset-resend { border: 0; padding: 4px 0; color: #087e77; background: transparent; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.login-options-row .login-forgot-link { flex: 0 0 auto; white-space: nowrap; }
+.login-forgot-link:hover, .password-reset-resend:hover { text-decoration: underline; }
+.login-forgot-link:focus-visible, .password-reset-resend:focus-visible, .login-remember input:focus-visible { outline: 2px solid #16877d; outline-offset: 3px; }
+.password-reset-form { gap: 16px; }
+.password-reset-form label { font-size: 13px; }
+.password-reset-form input:not([type="checkbox"]) { min-height: 48px; font-size: 14px; }
+.password-reset-form .login-submit { width: 100%; justify-content: center; margin-top: 1px; }
+.password-reset-form .password-reset-resend { justify-self: start; }
+.password-reset-form .password-reset-email { margin: 0; color: #526d65; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.password-reset-page .login-card-heading { margin: 30px 0 24px; }
+.password-reset-page .password-reset-back { margin-top: 18px; }
+body.crm-dark .login-form .login-options-row label.login-remember { color: #dce9e4; }
+body.crm-dark .login-forgot-link, body.crm-dark .password-reset-resend { color: #8ce0d5; }
+body.crm-dark .password-reset-form .password-reset-email { color: #c1cfca; }
+@media (max-width: 480px) {
+  .login-options-row { align-items: flex-start; flex-direction: column; gap: 6px; }
+}
+
+/* Keep the bell shape tied to the app's own theme state. The dark theme can
+   be applied on .crm-app before the document-level class is synchronized. */
+.crm-app.crm-dark .top-actions .notification-menu {
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.crm-app.crm-dark .top-actions .notification-menu > button.bell {
+  width: 42px !important;
+  height: 42px !important;
+  min-width: 42px !important;
+  flex: 0 0 42px;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 12px !important;
+}
+.crm-app.crm-dark .top-actions .notification-menu > button.bell:hover:not(:disabled) {
+  color: #d8ffff !important;
+  border-color: #2d8088 !important;
+  background: #173f43 !important;
+}
+
+/* A restrained pressed state shared by clickable controls across the app. */
+.crm-app :where(button, a, [role="button"]):active:not(:disabled) {
+  transform: translateY(1px) scale(.985);
+}
+
+/* Quiet the chat frame in dark mode; keep a single, normal-weight divider. */
+body.crm-dark .crm-app:not(.platform-admin-workspace) .chat-shell {
+  border-width: 1px !important;
+  border-color: #303538 !important;
+  box-shadow: 0 7px 22px rgba(0, 0, 0, .18) !important;
+}
+body.crm-dark .crm-app:not(.platform-admin-workspace) .chat-shell .chat-head {
+  border-color: #303538 !important;
+  border-bottom-width: 1px !important;
+  box-shadow: none !important;
+}
+
+/* ChatGPT-style segmented service picker. */
+.service-mode-switch {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  width: min(100%, 410px);
+  max-width: 100%;
+  margin: 0 auto 28px;
+  padding: 4px;
+  gap: 0;
+  border: 1px solid #dce4df;
+  border-radius: 999px;
+  background: #edf1ef;
+}
+.service-mode-switch::before {
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(19, 40, 32, .14), 0 0 0 1px #d8e1dc;
+  content: "";
+  transition: transform .32s cubic-bezier(.22,.8,.2,1), background-color .2s ease, box-shadow .2s ease;
+}
+.service-mode-switch.is-chatbot::before { transform: translateX(100%); }
+.service-mode-option {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 48px;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 999px;
+  color: #526461;
+  background: transparent;
+  box-shadow: none;
+  font-size: 14px;
+  font-weight: 650;
+  text-align: center;
+  white-space: nowrap;
+  transition: color .2s ease;
+}
+.service-mode-option:hover {
+  color: #254c48;
+  background: transparent !important;
+  box-shadow: none;
+  transform: none;
+}
+.service-mode-option.selected {
+  color: #153b38 !important;
+  background: transparent !important;
+  border-color: transparent;
+  box-shadow: none !important;
+}
+body.crm-dark .service-mode-switch,
+.crm-app.crm-dark .service-mode-switch {
+  border-color: #454b4e !important;
+  background: #383d40 !important;
+}
+body.crm-dark .service-mode-switch::before,
+.crm-app.crm-dark .service-mode-switch::before {
+  background: #1d2224;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .4), 0 0 0 1px #4b5558;
+}
+body.crm-dark .service-mode-option,
+.crm-app.crm-dark .service-mode-option {
+  color: #c6d0d3 !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+body.crm-dark .service-mode-option:hover,
+.crm-app.crm-dark .service-mode-option:hover {
+  color: #f3f5f6 !important;
+  background: transparent !important;
+}
+body.crm-dark .service-mode-option.selected,
+.crm-app.crm-dark .service-mode-option.selected {
+  color: #f3f5f6 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.service-request-heading { align-items: center; }
+.service-request-dismiss {
+  display: grid;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  margin-left: 2px;
+  border: 1px solid #d8e3df;
+  border-radius: 50%;
+  color: #526461;
+  background: #f4f7f5;
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.service-request-dismiss:hover { color: #173f43; background: #e7efeb; }
+body.crm-dark .service-request-dismiss { color: #d2dfe1; background: #252a2d; border-color: #454f53; }
+body.crm-dark .service-request-dismiss:hover { color: #fff; background: #303a3e; }
+
+@media (max-width: 560px) {
+  .service-mode-switch { width: min(100%, 410px); }
+  .service-mode-option { padding-inline: 8px; font-size: 12px; white-space: normal; line-height: 1.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .service-mode-switch::before { transition: none; }
+}

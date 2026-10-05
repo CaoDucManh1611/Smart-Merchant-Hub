@@ -24,16 +24,26 @@
 .crm-app:not(.platform-admin-workspace) .layout .chat-composer .composer-bottom { margin: 0 !important; align-items: center; }
 .crm-app:not(.platform-admin-workspace) .layout .chat-composer:not(:focus-within):not(.has-composer-content) .composer-delivery-warning { display: none; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee) {
+  box-sizing: border-box;
   width: 20px !important;
   height: 20px !important;
   min-width: 20px;
-  background-color: #fff !important;
+  background-color: var(--inbox-brand-logo-surface) !important;
   background-position: center !important;
   background-repeat: no-repeat !important;
-  background-size: 17px 17px !important;
-  border-radius: 4px;
+  background-size: 13px 13px !important;
+  border: 1px solid var(--inbox-brand-logo-outline) !important;
+  border-radius: 6px !important;
   font-size: 0 !important;
   transform: none !important;
+  box-shadow: 0 1px 3px rgba(15, 35, 43, .12) !important;
+}
+.crm-app:not(.platform-admin-workspace) .layout .conversation-channel-pill .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee) {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px;
+  background-size: 10px 10px !important;
+  border-radius: 5px !important;
 }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee) :is(svg, img) { display: none !important; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee)::before,
@@ -94,6 +104,8 @@
   --inbox-line: #dce5e8;
   --inbox-selected: #eaf6f3;
   --inbox-accent: #087f7b;
+  --inbox-brand-logo-surface: #f3f6f7;
+  --inbox-brand-logo-outline: rgba(36, 56, 67, .12);
   gap: 12px;
 }
 body.crm-dark .crm-app:not(.platform-admin-workspace) .layout {
@@ -104,6 +116,7 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) .layout {
   --inbox-line: #3a484f;
   --inbox-selected: #213f40;
   --inbox-accent: #86d8ce;
+  --inbox-brand-logo-outline: rgba(10, 24, 30, .22);
 }
 @media (min-width: 1181px) {
   .crm-app:not(.platform-admin-workspace) .layout {

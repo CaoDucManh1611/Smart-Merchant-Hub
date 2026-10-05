@@ -23,13 +23,9 @@ test("shop settings can save a private SMTP sender for staff OTP", () => {
   assert.match(i18nSource, /OTP sender email/);
 });
 
-test("account email changes require OTP verification before switching the sign-in address", () => {
-  assert.match(appSource, /auth\/email-change\/request/);
-  assert.match(appSource, /auth\/email-change\/verify/);
-  assert.match(appSource, /async function requestAccountEmailChange/);
-  assert.match(appSource, /async function verifyAccountEmailChange/);
-  assert.match(templateSource, /accountEmailChange\.current_password/);
-  assert.match(templateSource, /accountEmailChange\.otp/);
-  assert.match(appSource, /Email hiện tại vẫn được giữ cho đến khi xác minh xong/);
+test("account verification email editor is not shown in shop settings", () => {
+  assert.doesNotMatch(appSource, /auth-email-change-card/);
+  assert.doesNotMatch(templateSource, /Email tài khoản nhận xác minh/);
+  assert.doesNotMatch(templateSource, /accountEmailChange/);
   assert.match(i18nSource, /Account email for OTP/);
 });

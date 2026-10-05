@@ -55,12 +55,12 @@ class OnboardingShopCreate(BaseModel):
 
 
 class SignupOtpRequest(BaseModel):
-    """Details collected before an email address is verified."""
+    """Start email verification before collecting the remaining signup details."""
 
-    owner_name: str = Field(..., min_length=2, max_length=255)
     email: str = Field(..., min_length=3, max_length=255)
-    shop_name: str = Field(..., min_length=2, max_length=255)
-    password: str = Field(..., min_length=8, max_length=256)
+    owner_name: str | None = Field(default=None, min_length=2, max_length=255)
+    shop_name: str | None = Field(default=None, min_length=2, max_length=255)
+    password: str | None = Field(default=None, min_length=8, max_length=256)
 
     @field_validator("email")
     @classmethod
@@ -72,13 +72,16 @@ class SignupOtpRequest(BaseModel):
 
     @field_validator("password")
     @classmethod
-    def validate_password_strength(cls, value: str) -> str:
-        return validate_signup_password(value)
+    def validate_password_strength(cls, value: str | None) -> str | None:
+        return validate_signup_password(value) if value is not None else None
 
 
 class SignupOtpVerify(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     otp: str = Field(..., min_length=6, max_length=6)
+    owner_name: str | None = Field(default=None, min_length=2, max_length=255)
+    shop_name: str | None = Field(default=None, min_length=2, max_length=255)
+    password: str | None = Field(default=None, min_length=8, max_length=256)
     plan_code: str = Field(default="demo", min_length=2, max_length=50)
     service_type: Literal["package", "chatbot"] = "package"
 
@@ -97,6 +100,11 @@ class SignupOtpVerify(BaseModel):
         if not normalized.isdigit():
             raise ValueError("Mã OTP phải gồm 6 chữ số.")
         return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, value: str | None) -> str | None:
+        return validate_signup_password(value) if value is not None else None
 
 
 class SignupOtpOut(BaseModel):

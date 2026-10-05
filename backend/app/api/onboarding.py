@@ -615,7 +615,7 @@ def get_shop_subscription_summary(
         )
         .order_by(Subscription.id.desc())
     )
-    chatbot_subscription = db.scalar(
+    chatbot_subscription = _active_subscription_for(db, business_id, service_type="chatbot") or db.scalar(
         select(Subscription)
         .where(
             Subscription.business_id == business_id,
@@ -699,9 +699,9 @@ def request_signup_otp(payload: SignupOtpRequest, db: Session = Depends(get_db))
     code = generate_verification_code()
     challenge = SignupEmailChallenge(
         email=email,
-        owner_name=payload.owner_name.strip(),
-        shop_name=payload.shop_name.strip(),
-        password_hash=hash_password(payload.password),
+        owner_name=payload.owner_name.strip() if payload.owner_name else None,
+        shop_name=payload.shop_name.strip() if payload.shop_name else None,
+        password_hash=hash_password(payload.password) if payload.password else None,
         code_hash=hash_verification_code(code),
         status="pending",
         expires_at=now + timedelta(minutes=10),
@@ -746,6 +746,15 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=422, detail="Mã OTP đã bị khóa. Hãy yêu cầu mã mới.")
 
+    owner_name = (payload.owner_name or challenge.owner_name or "").strip()
+    shop_name = (payload.shop_name or challenge.shop_name or "").strip()
+    password_hash = challenge.password_hash or (hash_password(payload.password) if payload.password else None)
+    if len(owner_name) < 2 or len(shop_name) < 2 or password_hash is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Hãy nhập người đại diện, tên shop và mật khẩu trước khi xác minh email.",
+        )
+
     challenge.attempts += 1
     if not hmac.compare_digest(hash_verification_code(payload.otp), challenge.code_hash):
         if challenge.attempts >= challenge.max_attempts:
@@ -762,11 +771,11 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
     try:
         business, owner, subscription, plan, token, expires_at = _create_shop_records(
             db,
-            shop_name=challenge.shop_name,
+            shop_name=shop_name,
             requested_slug=None,
-            owner_name=challenge.owner_name,
+            owner_name=owner_name,
             owner_email=email,
-            password_hash=challenge.password_hash,
+            password_hash=password_hash,
             plan_code=payload.plan_code,
             service_type=payload.service_type,
         )

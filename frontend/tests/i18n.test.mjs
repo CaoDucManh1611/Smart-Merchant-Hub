@@ -205,13 +205,13 @@ test("English localizes dynamic CRM and chatbot plan names and descriptions", ()
   setLocale("vi");
 });
 
-test("English localizes RFM labels and the compact service request introduction", () => {
+test("English localizes plain-language customer groups and the compact service request introduction", () => {
   const copy = [
-    ["Phân loại RFM", "RFM customer groups"],
-    ["Lần mua gần nhất · số đơn · chi tiêu", "Recent purchase · order count · spend"],
-    ["Phân loại & gắn nhãn", "Classify & tag"],
-    ["Phân loại RFM + học nhóm AI", "Classify RFM + learn AI segments"],
-    ["RFM · AI nhóm 1", "RFM · AI group 1"],
+    ["Chia nhóm khách hàng", "Customer groups"],
+    ["Dựa trên lần mua gần đây, số đơn và tổng tiền mua", "Based on recent purchases, order count, and total spend"],
+    ["Tự động chia nhóm", "Group customers"],
+    ["Khách quen", "Regular customer"],
+    ["Nhóm 1", "Group 1"],
     ["Tối đa", "Up to"],
     ["kênh. Kết nối sau khi gói được duyệt.", "channels. Connect after plan approval."],
     ["RFM · Chưa mua", "RFM · No purchases"],

@@ -2,18 +2,31 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 const source = name => fs.readFileSync(new URL('../src/' + name, import.meta.url), 'utf8');
-test('shared branding uses approved artwork in application and public landing', () => {
+test('shared branding uses transparent logo marks in application and public landing', () => {
   assert.match(source('BrandLogo.vue'), /\/brand\/logo-mark\.svg/);
   assert.match(source('BrandLogo.vue'), /\/brand\/logo-full\.svg/);
   assert.match(source('App.vue'), /<BrandLogo icon \/>/);
-  assert.match(source('MarketingLanding.vue'), /<BrandLogo \/>/);
+  assert.match(source('MarketingLanding.vue'), /<BrandLogo icon\/>/);
+  assert.doesNotMatch(source('MarketingLanding.vue'), /<BrandLogo \/>/);
   assert.doesNotMatch(source('App.vue'), />SM<\/span>/);
 });
 test('pricing uses the current catalogue and existing selection handlers', () => {
-  assert.match(source('App.vue'), /<ServicePricing :plans="activeServicePlans"/);
+  assert.match(source('App.vue'), /<ServicePricing :plans="activeServicePlans"[^>]*:current-plan="currentServicePlanCode"/);
   assert.match(source('App.vue'), /@select="selectServicePlan"/);
   assert.match(source('ServicePricing.vue'), /plan\.price/);
   assert.match(source('ServicePricing.vue'), /plan\.max_channels/);
+  assert.match(source('ServicePricing.vue'), /const referenceCode = props\.currentPlan \|\| props\.selected/);
+  assert.match(source('ServicePricing.vue'), /return `\$\{targetIndex > referenceIndex \? copy\.value\.upgradeChatbot : copy\.value\.switchChatbot\} \$\{targetName\}`/);
+  assert.match(source('ServicePricing.vue'), /if \(referenceIndex < 0\) return `\$\{copy\.value\.chooseChatbot\} \$\{targetName\}`/);
+  assert.match(source('ServicePricing.vue'), /selectedChatbot:'Bot đang chọn'/);
+  assert.match(source('ServicePricing.vue'), /if \(isChatbot && props\.selected === plan\.code\) return copy\.value\.selectedChatbot/);
+  assert.match(source('ServicePricing.vue'), /upgradeChatbot:'Nâng cấp trợ lý'/);
+  assert.match(source('ServicePricing.vue'), /switchChatbot:'Chuyển sang trợ lý'/);
+  assert.match(source('ServicePricing.vue'), /const selectedLabel = computed\(\(\)=>props\.mode === 'chatbot' \? copy\.value\.selectedChatbot : copy\.value\.selected\)/);
+  assert.match(source('ServicePricing.vue'), /props\.mode === 'chatbot' \? 'Choose a chatbot plan'/);
+  assert.match(source('ServicePricing.vue'), /props\.mode === 'chatbot' \? 'Chọn chatbot phù hợp'/);
+  assert.match(source('ServicePricing.vue'), /class="current-plan-label">\{\{ currentLabel \}\}/);
+  assert.match(source('ServicePricing.vue'), /:disabled="authenticated && currentPlan === plan\.code"/);
   assert.match(source('ServicePricing.vue'), /:aria-pressed=/);
   assert.match(source('ServicePricing.vue'), /@media\(max-width:600px\)/);
 });

@@ -187,6 +187,40 @@ class OnboardingApiTests(unittest.TestCase):
             self.assertEqual(1, db.query(Business).filter(Business.name == request_payload["shop_name"]).count())
             self.assertEqual("verified", db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == request_payload["email"]).one().status)
 
+    def test_email_can_be_verified_before_collecting_signup_details(self):
+        email = "email-first@onboarding.test"
+        with patch("app.api.onboarding.generate_verification_code", return_value="654321"), patch(
+            "app.api.onboarding.deliver_otp",
+            return_value=OtpDeliveryResult(provider="smtp", delivered=True),
+        ):
+            requested = self.client.post("/api/onboarding/signup/request", json={"email": email})
+        self.assertEqual(202, requested.status_code, requested.text)
+        with Session(self.engine) as db:
+            challenge = db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == email).one()
+            self.assertIsNone(challenge.password_hash)
+            self.assertIsNone(challenge.owner_name)
+            self.assertIsNone(challenge.shop_name)
+
+        incomplete = self.client.post("/api/onboarding/signup/verify", json={"email": email, "otp": "654321"})
+        self.assertEqual(422, incomplete.status_code, incomplete.text)
+        with Session(self.engine) as db:
+            challenge = db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == email).one()
+            self.assertEqual(0, challenge.attempts)
+
+        with patch("app.api.onboarding._start_platform_provisioning", return_value="ready"):
+            verified = self.client.post(
+                "/api/onboarding/signup/verify",
+                json={
+                    "email": email,
+                    "otp": "654321",
+                    "owner_name": "Email First Owner",
+                    "shop_name": "Email First Shop",
+                    "password": "Strong-pass-2026",
+                },
+            )
+        self.assertEqual(201, verified.status_code, verified.text)
+        self.assertEqual("Email First Shop", verified.json()["shop_name"])
+
     def test_otp_signup_preserves_selected_paid_plan_and_waits_for_approval(self):
         for service_type in ("package", "chatbot"):
             email = f"selected-{service_type}@onboarding.test"

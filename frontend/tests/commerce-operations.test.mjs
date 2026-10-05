@@ -38,3 +38,11 @@ test("invoice collection retries reuse a durable idempotency key until saved", (
   assert.match(industry, /paymentAttempts\[invoice\.id\]/);
   assert.match(industry, /delete paymentAttempts\[invoice\.id\]/);
 });
+
+test("appointments, commercial modules, and sales orders share the knowledge-base outer frame", () => {
+  assert.match(industry, /<section ref="workspace" class="industry-workspace"/);
+  assert.match(app, /class="products-layout orders-layout"/);
+  const outerFrame = app.slice(app.indexOf("Give the main operational views one consistent outer surface."));
+  assert.match(outerFrame, /\.orders-layout/);
+  assert.match(outerFrame, /\.industry-workspace/);
+});

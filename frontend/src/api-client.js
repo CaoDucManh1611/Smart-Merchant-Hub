@@ -25,8 +25,14 @@ export async function apiFetch(input, init = {}) {
   try {
     const response = await fetch(input, { ...init, headers });
     if (response.status === 401 && token) {
-      clearAuthToken();
-      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+      // An MFA-protected session is still valid while it waits for its code.
+      // Do not erase that token just because an endpoint asks for this step.
+      const detail = await response.clone().json().catch(() => ({}));
+      const code = detail?.detail?.code;
+      if (code !== "mfa_required") {
+        clearAuthToken();
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+      }
     }
     return response;
   } catch (error) {
