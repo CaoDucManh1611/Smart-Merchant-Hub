@@ -188,7 +188,9 @@ class ZaloWebhookApiTests(unittest.TestCase):
             },
         ), patch(
             "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
-        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"):
+        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"), patch(
+            "app.api.zalo._sync_zalo_oa_user_history"
+        ):
             response = self.client.post(
                 "/api/webhooks/zalo",
                 headers={

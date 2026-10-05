@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from threading import Lock, Thread
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -742,6 +743,23 @@ def _is_product_attribute_question(text: str) -> bool:
     ))
 
 
+def _is_product_link_question(text: str) -> bool:
+    folded = _fold_text(text)
+    return _has_any_term(folded, ("link", "lien ket", "duong dan", "url", "product page"))
+
+
+def _is_product_link_followup(text: str) -> bool:
+    """Tell a pronoun-only link request from a new, unmatched product name."""
+    fillers = {
+        "toi", "minh", "muon", "xem", "gui", "lay", "cho", "xin", "tim",
+        "link", "lien", "ket", "url", "duong", "dan", "cua", "no", "nay",
+        "do", "ay", "vay", "san", "pham", "ma", "it", "this", "that", "the",
+        "of", "please", "show", "send", "me", "product", "page", "i", "want",
+        "to", "see", "its", "for", "one", "you",
+    }
+    return not (set(_fold_text(text).split()) - fillers)
+
+
 def _product_hint(text: str) -> str:
     """Extract a human-readable product hint without guessing a product."""
     original = " ".join(str(text or "").strip().split())
@@ -1104,6 +1122,52 @@ def _deterministic_customer_reply(
     # sends the explicit missing-policy reply instead of a product catalogue.
     if _policy_kind(query_text):
         return None
+
+    if _is_product_link_question(query_text):
+        product, hint = _find_exact_product(
+            db,
+            business_id,
+            query_text,
+            conversation_id=conversation_id,
+        )
+        if product is None and _is_product_link_followup(query_text):
+            try:
+                product = resolve_product(
+                    db,
+                    business_id=business_id,
+                    text=query_text,
+                    conversation_id=conversation_id,
+                )
+            except Exception:
+                logger.debug("Could not resolve product link follow-up", exc_info=True)
+        if product is not None:
+            english = detect_reply_language(query_text) == "en"
+            name = product_display_name(product, "en" if english else "vi")
+            raw_url = str(getattr(product, "product_url", None) or "").strip()
+            try:
+                parsed_url = urlsplit(raw_url)
+                valid_url = (
+                    parsed_url.scheme.lower() in {"http", "https"}
+                    and bool(parsed_url.hostname)
+                    and parsed_url.username is None
+                    and parsed_url.password is None
+                )
+            except ValueError:
+                valid_url = False
+            if valid_url:
+                if english:
+                    return f"Here is the link for {name}: {raw_url}", "product_link"
+                return f"Đây là liên kết của {name}: {raw_url}", "product_link"
+            if english:
+                return f"The shop has not added a link for {name} yet. Please ask the shop for the product link.", "product_link_unavailable"
+            return f"Shop chưa cập nhật liên kết cho {name}. Bạn nhắn shop để được gửi link sản phẩm nhé.", "product_link_unavailable"
+        if hint:
+            if detect_reply_language(query_text) == "en":
+                return f'I could not find "{hint}" in the shop catalog. Please check the exact name or SKU.', "product_not_found"
+            return PRODUCT_NOT_FOUND_REPLY, "product_not_found"
+        if detect_reply_language(query_text) == "en":
+            return "Which product link would you like? Send the product name or SKU and I’ll find it.", "product_link_clarification"
+        return "Bạn muốn xem link sản phẩm nào? Gửi mình tên hoặc mã sản phẩm nhé.", "product_link_clarification"
 
     # The deterministic catalogue path has verified price/stock only. Attribute
     # questions should retain the conversation and continue through sourced RAG.

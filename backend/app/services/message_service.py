@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -1160,6 +1161,8 @@ def normalize_instagram_message(
 def process_and_save_message(
     db: Session,
     message: dict[str, Any],
+    *,
+    history_import: bool = False,
 ) -> bool:
 
     channel = message.get(
@@ -1557,9 +1560,11 @@ def process_and_save_message(
     ] = conversation_id
 
 
-    message[
-        "direction"
-    ] = "inbound"
+    message["direction"] = (
+        "outbound" if history_import and message.get("direction") == "outbound" else "inbound"
+    )
+    if history_import:
+        message["sender_type"] = "staff" if message["direction"] == "outbound" else "customer"
 
 
     # =====================================================
@@ -1577,6 +1582,44 @@ def process_and_save_message(
     # emits a second workflow, profile extraction or bot reply.
     if saved_message is not None and not saved_message.get("_created", True):
         logger.info("Inbound provider delivery already persisted")
+        return saved_message
+
+    # Backfilled messages are historical context, not new customer turns.
+    # Persist their original timestamp/direction and attachments, but do not
+    # notify staff, emit workflows, extract facts, or enqueue an AI response.
+    if history_import:
+        if saved_message and message.get("attachments") and message.get("channel_id"):
+            try:
+                from app.services.media_service import save_message_attachments
+
+                save_message_attachments(
+                    db,
+                    message_id=int(saved_message["message_id"]),
+                    business_id=int(business_id),
+                    channel_id=int(message["channel_id"]),
+                    attachments=message.get("attachments") or [],
+                )
+            except Exception:
+                logger.warning("History import attachment persistence failed")
+        db.execute(
+            text("""
+                UPDATE conversations
+                SET updated_at = CASE
+                        WHEN updated_at IS NULL OR updated_at < :occurred_at THEN :occurred_at
+                        ELSE updated_at
+                    END,
+                    last_message_at = CASE
+                        WHEN last_message_at IS NULL OR last_message_at < :occurred_at THEN :occurred_at
+                        ELSE last_message_at
+                    END
+                WHERE id = :conversation_id
+            """),
+            {
+                "conversation_id": conversation_id,
+                "occurred_at": message.get("received_at") or datetime.now(timezone.utc).replace(tzinfo=None),
+            },
+        )
+        db.commit()
         return saved_message
 
     # Every outbound workflow spawned by this inbound event receives a

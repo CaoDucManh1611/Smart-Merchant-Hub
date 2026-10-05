@@ -49,6 +49,7 @@ def _db():
             price=349000,
             stock_quantity=46,
             reserved_quantity=0,
+            product_url=None,
             status="active",
             metadata_={},
         ),
@@ -108,6 +109,49 @@ def test_known_product_price_and_stock_are_read_from_live_catalogue():
     )
 
     assert reply == ("Dạ, Điện gia dụng mẫu 01 đang có giá 349.000 đồng và hiện còn 46 sản phẩm ạ.", "product_fact")
+
+
+def test_product_link_question_returns_catalogue_url():
+    product = _db().rows[0]
+    product.product_url = "https://shop.example/products/appliance-01"
+
+    reply = _deterministic_customer_reply(
+        _DB([product]), business_id=1, conversation_id=1,
+        query_text="Tôi muốn xem liên kết của sản phẩm điện gia dụng mẫu 01",
+    )
+
+    assert reply == (
+        "Đây là liên kết của Điện gia dụng mẫu 01: https://shop.example/products/appliance-01",
+        "product_link",
+    )
+
+
+def test_product_link_pronoun_followup_resolves_last_mentioned_product(monkeypatch):
+    product = _db().rows[0]
+    product.product_url = "https://shop.example/products/appliance-01"
+    monkeypatch.setattr(auto_reply_service, "resolve_product", lambda *_args, **_kwargs: product)
+
+    reply = _deterministic_customer_reply(
+        _DB([product]), business_id=1, conversation_id=55,
+        query_text="Tôi muốn xem liên kết của nó",
+    )
+
+    assert reply == (
+        "Đây là liên kết của Điện gia dụng mẫu 01: https://shop.example/products/appliance-01",
+        "product_link",
+    )
+
+
+def test_product_link_request_explains_when_shop_has_not_added_a_url():
+    reply = _deterministic_customer_reply(
+        _db(), business_id=1, conversation_id=1,
+        query_text="Cho mình link Điện gia dụng mẫu 01",
+    )
+
+    assert reply == (
+        "Shop chưa cập nhật liên kết cho Điện gia dụng mẫu 01. Bạn nhắn shop để được gửi link sản phẩm nhé.",
+        "product_link_unavailable",
+    )
 
 
 def test_two_bottle_comparison_reads_both_live_prices_without_guessing():

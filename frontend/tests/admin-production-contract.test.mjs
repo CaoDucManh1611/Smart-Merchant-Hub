@@ -17,12 +17,35 @@ test("platform admin loads shop subscription, payment and quota details through 
   assert.match(appSource, /createLocalConnectorPairingCode/);
   assert.match(appSource, /connector-app/);
   assert.match(templateSource, /Shopee Seller Chat/);
-  assert.match(templateSource, /Tải ứng dụng Shopee \(\.exe\)/);
-  assert.match(templateSource, /Tải ứng dụng TikTok \(\.exe\)/);
+  assert.match(templateSource, /Tải bộ ZIP Shopee/);
+  assert.match(templateSource, /Tải bộ ZIP TikTok/);
+  assert.match(templateSource, /Giải nén ZIP rồi chạy SmartMerchantTikTok\.exe/);
+  assert.match(templateSource, /Giải nén ZIP rồi chạy SmartMerchantShopee\.exe/);
   assert.match(templateSource, /Gói đang dùng/);
   assert.match(templateSource, /Trạng thái thanh toán/);
   assert.match(templateSource, /Dung lượng tra cứu/);
   assert.match(templateSource, /aria-expanded/);
+});
+
+test("connector downloads make one ZIP save through the browser", () => {
+  const start = appSource.indexOf("async function downloadLocalConnectorApp()");
+  const end = appSource.indexOf("async function copyLocalConnectorPairingCode()", start);
+  const downloadFunction = appSource.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(downloadFunction, /connector-app\/download-ticket.*method: "POST"/);
+  assert.match(downloadFunction, /connector-app\/file\?ticket=/);
+  assert.match(downloadFunction, /encodeURIComponent\(ticketDetail\.ticket/);
+  assert.match(downloadFunction, /headers\.get\("content-type"\)/);
+  assert.match(downloadFunction, /filename\\s\*=\\s\*/);
+  assert.match(downloadFunction, /showSaveFilePicker/);
+  assert.match(downloadFunction, /\.zip/);
+  assert.match(downloadFunction, /application\/zip/);
+  assert.match(downloadFunction, /fileResponse\.body\.pipeTo\(writable\)/);
+  assert.match(downloadFunction, /link\.click\(\)/);
+  assert.match(downloadFunction, /URL\.createObjectURL\(blob\)/);
+  assert.match(downloadFunction, /signature\[0\] !== 0x50/);
+  assert.match(downloadFunction, /setTimeout\(\(\) => URL\.revokeObjectURL\(blobUrl\), 60_000\)/);
+  assert.doesNotMatch(downloadFunction, /SmartMerchant\$\{[^}]+\}\.exe/);
 });
 test("shop lifecycle actions expose confirmation, busy and result states", () => {
   assert.match(appSource, /platformShopMutatingIds/);

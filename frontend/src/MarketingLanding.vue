@@ -15,7 +15,6 @@ const tourButtons = ref([]);
 let observer;
 let motionPreference;
 const text = computed(() => locale.value === 'en' ? {
-  announcement: 'More time for customers. More room for your business to grow.',
   nav: ['Product', 'Solutions', 'Connections', 'Questions'], login: 'Sign in', signup: 'Start for free', plans: 'Explore plans', language: 'Interface language', menu: 'Open navigation', close: 'Close navigation', themeDark: 'Switch to dark mode', themeLight: 'Switch to light mode',
   eyebrow: 'A CONNECTED WORKSPACE FOR YOUR SHOP', title: 'Good conversations.', titleAccent: 'Better relationships.',
   intro: 'Bring messages, customer knowledge, and daily work together. Give your team the context to make every customer feel understood.',
@@ -53,7 +52,6 @@ const text = computed(() => locale.value === 'en' ? {
   ],
   finalTitle: 'Make room for', finalAccent: 'better customer care.', finalCopy: 'Start with your shop. Build a workspace your team can make its own.', footerCopy: 'Customer conversations, connected.', footerProduct: 'Explore', footerAccount: 'Your workspace', footerNote: 'Smart Merchant Hub · Customer management & sales support',
 } : {
-  announcement: 'Thêm thời gian cho khách hàng. Thêm không gian để shop phát triển.',
   nav: ['Sản phẩm', 'Giải pháp', 'Kết nối', 'Giải đáp'], login: 'Đăng nhập', signup: 'Bắt đầu miễn phí', plans: 'Khám phá các gói', language: 'Ngôn ngữ giao diện', menu: 'Mở menu điều hướng', close: 'Đóng menu điều hướng', themeDark: 'Bật chế độ tối', themeLight: 'Tắt chế độ tối',
   eyebrow: 'KHÔNG GIAN LÀM VIỆC CHO SHOP CỦA BẠN', title: 'Trò chuyện gần gũi.', titleAccent: 'Chăm khách dài lâu.',
   intro: 'Tin nhắn, thông tin khách hàng và công việc cùng ở một nơi. Để đội ngũ của bạn hiểu khách hơn và tiếp nối mỗi cuộc trò chuyện thật tự nhiên.',
@@ -156,17 +154,25 @@ onUnmounted(() => {
       <symbol id="smh-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
       <symbol id="smh-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
       <symbol id="smh-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="smh-translate" viewBox="0 0 24 24"><path d="M4 5h10M9 3v2m3 0c-.7 4.5-3.3 7.5-7 9m1-6c1 2.4 3.4 4.5 6.4 5.7M14 20l4-9 4 9m-6.3-3h4.6"/></symbol>
     </svg>
-    <div class="smh-announcement">{{ text.announcement }}</div>
-    <header class="smh-header">
+    <header class="smh-header" :class="{ 'menu-open': menuOpen }">
       <a class="smh-brand" href="#smh-home" aria-label="Smart Merchant Hub"><BrandLogo icon/><span><strong>Smart Merchant Hub</strong><small>{{ text.footerCopy }}</small></span></a>
+      <div class="smh-header-quick-tools">
+        <label class="smh-language"><span class="smh-sr-only">{{ text.language }}</span><svg class="smh-language-icon" aria-hidden="true"><use href="#smh-translate"/></svg><select :value="locale" :aria-label="text.language" @change="changeLocale($event.target.value)"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
+        <button class="smh-theme-toggle" type="button" :aria-label="props.darkMode ? text.themeLight : text.themeDark" :aria-pressed="props.darkMode" @click="emit('toggle-dark-mode')">{{ props.darkMode ? '☀' : '☾' }}</button>
+      </div>
       <button class="smh-menu-button" type="button" :aria-label="menuOpen ? text.close : text.menu" :aria-expanded="menuOpen" aria-controls="smh-navigation" @click="menuOpen = !menuOpen"><svg aria-hidden="true"><use :href="menuOpen ? '#smh-close' : '#smh-menu'"/></svg></button>
       <nav id="smh-navigation" class="smh-nav" :class="{ 'is-open': menuOpen }" :aria-label="text.menu">
-        <div class="smh-nav-links"><a v-for="(target, index) in ['smh-product', 'smh-solutions', 'smh-channels', 'smh-faq']" :key="target" :href="`#${target}`" @click.prevent="scrollToSection(target)">{{ text.nav[index] }}</a></div>
-        <div class="smh-nav-tools">
-          <button class="smh-theme-toggle" type="button" :aria-label="props.darkMode ? text.themeLight : text.themeDark" :aria-pressed="props.darkMode" @click="emit('toggle-dark-mode')">{{ props.darkMode ? '☀' : '☾' }}</button>
-          <label class="smh-language"><span class="smh-sr-only">{{ text.language }}</span><select :value="locale" :aria-label="text.language" @change="changeLocale($event.target.value)"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
+        <div class="smh-mobile-menu-head">
+          <a class="smh-brand smh-mobile-brand" href="#smh-home" aria-label="Smart Merchant Hub" @click="menuOpen = false"><BrandLogo icon/><span><strong>Smart Merchant Hub</strong></span></a>
+          <div class="smh-nav-tools">
+            <label class="smh-language"><span class="smh-sr-only">{{ text.language }}</span><svg class="smh-language-icon" aria-hidden="true"><use href="#smh-translate"/></svg><select :value="locale" :aria-label="text.language" @change="changeLocale($event.target.value)"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
+            <button class="smh-theme-toggle" type="button" :aria-label="props.darkMode ? text.themeLight : text.themeDark" :aria-pressed="props.darkMode" @click="emit('toggle-dark-mode')">{{ props.darkMode ? '☀' : '☾' }}</button>
+          </div>
+          <button class="smh-menu-close" type="button" :aria-label="text.close" @click="menuOpen = false"><svg aria-hidden="true"><use href="#smh-close"/></svg></button>
         </div>
+        <div class="smh-nav-links"><a v-for="(target, index) in ['smh-product', 'smh-solutions', 'smh-channels', 'smh-faq']" :key="target" :href="`#${target}`" @click.prevent="scrollToSection(target)"><svg aria-hidden="true"><use :href="['#smh-bag', '#smh-people', '#smh-chat', '#smh-book'][index]"/></svg>{{ text.nav[index] }}</a></div>
         <div class="smh-nav-account">
           <button class="smh-login" type="button" @click="act('login')">{{ text.login }}</button>
           <button class="smh-button smh-button-primary smh-nav-cta" type="button" @click="act('signup')">{{ text.signup }}</button>
@@ -411,5 +417,80 @@ onUnmounted(() => {
   .smh-site .smh-footer-main > div > strong { font-size:16px; }
   .smh-site .smh-footer-main > div > a:not(.smh-brand),.smh-site .smh-footer-main button { font-size:15px; }
   .smh-site .smh-footer-bottom { font-size:13px; }
+}
+
+/* Compact desktop bar and a full-width, app-like menu on smaller screens. */
+.smh-header { min-height:76px; }
+.smh-header .smh-nav { gap:14px; }
+.smh-mobile-menu-head { display:contents; }
+.smh-mobile-brand,.smh-menu-close,.smh-header-quick-tools { display:none; }
+.smh-language-icon { display:block; width:22px; height:22px; }
+.smh-nav-links { order:0; gap:5px; padding:6px 10px; border:1px solid var(--smh-line); border-radius:999px; background:rgba(255,255,255,.045); }
+.smh-nav-links > a > svg { display:none; }
+.smh-nav-links > a { padding:8px 7px; color:var(--smh-ink); }
+.smh-nav-links > a::after { display:none; }
+.smh-nav-links > a:hover { color:var(--smh-teal); }
+.smh-nav-tools { order:1; gap:8px; }
+.smh-nav-tools .smh-language { position:relative; display:grid; place-items:center; width:42px; height:42px; margin:0; padding:0; border:1px solid var(--smh-line); border-radius:13px; background:transparent; }
+.smh-nav-tools .smh-language::after { display:none; }
+.smh-nav-tools .smh-language select { position:absolute; inset:0; z-index:1; width:100%; height:100%; min-width:0; min-height:0; padding:0; opacity:0; cursor:pointer; }
+.smh-theme-toggle { width:42px; height:42px; border:1px solid var(--smh-line); border-radius:13px; background:transparent; }
+.smh-nav-account { order:2; gap:12px; }
+.crm-app.public-home.crm-dark .smh-header { color:#edf1ee; background:rgba(22,24,25,.96); border-color:#303538; }
+.crm-app.public-home.crm-dark .smh-nav-links { border-color:#363a3d; background:#202225; }
+.crm-app.public-home.crm-dark .smh-nav-links > a { color:#e2e5e3; }
+.crm-app.public-home.crm-dark .smh-nav-links > a:hover { color:#fff; }
+.crm-app.public-home.crm-dark .smh-theme-toggle,.crm-app.public-home.crm-dark .smh-nav-tools .smh-language { color:#edf1ee; background:#17191b; border-color:#3a4144; }
+
+@media(max-width:1000px) {
+  .smh-header { min-height:74px; padding:10px 22px; }
+  .smh-header-quick-tools { display:flex; align-items:center; gap:9px; margin-left:auto; }
+  .smh-menu-button { display:grid; width:46px; height:46px; border-radius:15px; }
+  .smh-nav-links { display:grid; order:1; gap:0; padding:0; border:0; border-radius:0; background:transparent; }
+  .smh-nav-links > a { display:flex; align-items:center; gap:17px; min-height:54px; padding:6px 12px; border-radius:12px; font-size:19px; font-weight:600; }
+  .smh-nav-links > a::after { display:none; }
+  .smh-nav-links > a > svg { display:block; width:27px; height:27px; color:#8d9097; }
+  .smh-nav-links > a:nth-child(3) { margin-top:18px; padding-top:22px; border-top:1px solid var(--smh-line); border-radius:0; }
+  .smh-nav-links > a:hover { color:var(--smh-teal); background:transparent; }
+  .smh-mobile-menu-head { display:flex; order:0; align-items:center; gap:10px; width:100%; margin-bottom:22px; }
+  .smh-mobile-brand { display:flex; gap:10px; align-items:center; color:var(--smh-ink); }
+  .smh-mobile-brand .smh-logo-icon { width:40px; height:40px; }
+  .smh-mobile-brand strong { font-size:19px; letter-spacing:-.035em; }
+  .smh-header .smh-nav-tools { display:flex; gap:11px; margin-left:auto; padding:0; border:0; }
+  .smh-language { display:grid; position:relative; place-items:center; width:50px; height:50px; margin:0; padding:0; border:1px solid var(--smh-line); border-radius:16px; background:rgba(0,0,0,.04); }
+  .smh-language::after { display:none; }
+  .smh-language-icon { display:block; width:24px; height:24px; }
+  .smh-language select { position:absolute; inset:0; z-index:1; width:100%; height:100%; min-width:0; min-height:0; padding:0; opacity:0; cursor:pointer; }
+  .smh-header .smh-theme-toggle { display:grid; place-items:center; width:50px; height:50px; padding:0; border:1px solid var(--smh-line); border-radius:16px; background:rgba(0,0,0,.18); font-size:21px; }
+  .smh-menu-close { display:grid; place-items:center; flex:0 0 50px; width:50px; height:50px; border:1px solid var(--smh-line); border-radius:16px; color:var(--smh-ink); background:rgba(0,0,0,.18); }
+  .smh-header .smh-nav { display:none; position:fixed; top:0; left:0; right:0; z-index:1; flex-direction:column; align-items:stretch; gap:0; max-height:calc(100dvh - env(safe-area-inset-top)); margin:0; padding:calc(25px + env(safe-area-inset-top)) clamp(20px,5vw,38px) 30px; overflow-y:auto; border:1px solid var(--smh-line); border-top:0; border-radius:0 0 28px 28px; background:var(--smh-cream); box-shadow:0 24px 70px #0005; }
+  .smh-header .smh-nav.is-open { display:flex; }
+  .smh-header.menu-open { background:transparent; border-color:transparent; backdrop-filter:none; }
+  .smh-header.menu-open::before { position:fixed; inset:0; z-index:0; background:rgba(5,7,8,.62); content:""; }
+  .smh-header.menu-open > .smh-brand,.smh-header.menu-open > .smh-header-quick-tools,.smh-header.menu-open > .smh-menu-button { display:none; }
+  .smh-nav-account { display:grid; order:2; grid-template-columns:auto minmax(0,1fr); gap:10px; margin-top:19px; padding-top:18px; border-top:1px solid var(--smh-line); }
+  .smh-login { display:flex; align-items:center; justify-content:center; min-height:48px; padding:0 14px; border:1px solid var(--smh-line); border-radius:14px; }
+  .smh-nav-cta { width:100%; min-height:48px; margin:0; border-radius:14px; }
+  .crm-app.public-home.crm-dark .smh-header.menu-open::before { background:rgba(0,0,0,.68); }
+  .crm-app.public-home.crm-dark .smh-header .smh-nav { color:#eff1f0; border-color:#303235; background:#171719; box-shadow:0 24px 70px #0009; }
+  .crm-app.public-home.crm-dark .smh-mobile-brand,.crm-app.public-home.crm-dark .smh-nav-links > a { color:#eff1f0; }
+  .crm-app.public-home.crm-dark .smh-nav-links > a > svg { color:#a6a8ad; }
+  .crm-app.public-home.crm-dark .smh-language,.crm-app.public-home.crm-dark .smh-header .smh-theme-toggle,.crm-app.public-home.crm-dark .smh-menu-close { color:#f1f2f2; border-color:#242629; background:#101113; }
+  .crm-app.public-home.crm-dark .smh-nav-account { border-color:#383a3e; }
+  .crm-app.public-home.crm-dark .smh-login { color:#f1f2f2; border-color:#393b40; }
+}
+@media(max-width:480px) {
+  .smh-header { gap:8px; padding-inline:16px; }
+  .smh-header .smh-brand { gap:8px; }
+  .smh-header .smh-brand .smh-logo-icon { width:34px; height:32px; }
+  .smh-header .smh-brand strong { font-size:14px; }
+  .smh-header .smh-brand small { display:none; }
+  .smh-header-quick-tools { gap:6px; }
+  .smh-header .smh-header-quick-tools .smh-language,.smh-header .smh-header-quick-tools .smh-theme-toggle,.smh-header .smh-menu-button { width:40px; height:40px; }
+  .smh-mobile-menu-head { gap:6px; }
+  .smh-header .smh-mobile-brand .smh-logo-icon { width:34px; height:32px; }
+  .smh-header .smh-mobile-brand strong { font-size:14px; }
+  .smh-header .smh-nav-tools { gap:6px; }
+  .smh-header .smh-nav-tools .smh-language,.smh-header .smh-nav-tools .smh-theme-toggle,.smh-menu-close { flex-basis:40px; width:40px; height:40px; }
 }
 </style>

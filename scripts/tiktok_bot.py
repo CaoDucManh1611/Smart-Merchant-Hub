@@ -1,690 +1,928 @@
+"""Forward TikTok Shop Seller Center inbox messages through a local Edge session."""
+
 from __future__ import annotations
-import asyncio, importlib, json, os, shutil, subprocess, sys
-from pathlib import Path
-from connector_pairing import configure_local_connector, report_connector_status
-try:
-    sys.stdout.reconfigure(encoding="utf-8",errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8",errors="replace")
-except Exception: pass
 
-IS_FROZEN=bool(getattr(sys,"frozen",False))
-BASE=Path(sys.executable).resolve().parent if IS_FROZEN else Path(__file__).resolve().parent
-CONFIG_FILE=BASE/"tiktok_config.json"
-if CONFIG_FILE.exists():
-    try:
-        _config=json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        if isinstance(_config,dict):
-            for _key,_value in _config.items():
-                if isinstance(_key,str) and _value is not None:
-                    os.environ.setdefault(_key,str(_value))
-    except (OSError,ValueError,TypeError):
-        pass
-
-_frozen_root=Path(getattr(sys,"_MEIPASS",str(BASE)))
-PACKAGE_DIR=_frozen_root if IS_FROZEN else BASE
-_user_root=Path(os.getenv("LOCALAPPDATA",str(Path.home())))/"SmartMerchantTikTok"
-if IS_FROZEN:
-    LTTK=Path(os.getenv("TIKTOK_LTTK_DIR",str(_user_root/"lttk"))).resolve()
-    _bundled_lttk=_frozen_root/"lttk"
-    if _bundled_lttk.is_dir():
-        LTTK.parent.mkdir(parents=True,exist_ok=True)
-        shutil.copytree(
-            _bundled_lttk,
-            LTTK,
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns("sesion", "__pycache__", ".git", ".uid_cache.json", "messages.db"),
-        )
-    RUNTIME=Path(os.getenv("TIKTOK_RUNTIME_DIR",str(_user_root/"data-runtime"))).resolve()
-else:
-    LTTK=Path(os.getenv("TIKTOK_LTTK_DIR",str(BASE/"lttk"))).resolve()
-    RUNTIME=Path(os.getenv("TIKTOK_RUNTIME_DIR",str(BASE/"data-runtime"))).resolve()
-COOKIE=Path(os.getenv("TIKTOK_COOKIE_FILE",str(RUNTIME/"tiktok_cookies.json"))).resolve()
-BROWSER=os.getenv("TIKTOK_BROWSER","").strip().lower()
-PLUGIN=LTTK/"plugins"/"smart_merchant_bridge.py"
-SESSION=LTTK/"sesion"
-REPO="https://github.com/Linkmail16/ReLttk-TikTok-Client-Bot.git"
-
-SESSION_CHECK_CODE=r'''
-import urllib.request
-from lttk.qrlogin import load_session
-
-cookies=load_session("_temp")
-if not cookies.get("sessionid"):
-    print("[session] missing sessionid")
-    raise SystemExit(1)
-cookie="; ".join(f"{k}={v}" for k,v in cookies.items())
-req=urllib.request.Request(
-    "https://www.tiktok.com/messages?lang=es-419",
-    headers={"User-Agent":"Mozilla/5.0", "Cookie":cookie},
-)
-with urllib.request.urlopen(req, timeout=15) as response:
-    final_url=response.geturl()
-if "/login" in final_url:
-    print("[session] TikTok redirected to login; cookie expired or invalid")
-    raise SystemExit(1)
-print("[session] TikTok session valid")
-'''
-
-# The ReLttk process owns the live websocket session, so the API cannot send
-# a TikTok DM directly.  A tiny localhost control endpoint lets the CRM ask
-# this already-authenticated process to send on a specific conversation.
-CONTROL_CODE=r'''
+import asyncio
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
+import os
+import subprocess
+import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
-import hmac as _hmac
+from pathlib import Path
+from threading import Lock, Thread
+from urllib.error import HTTPError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
-CONTROL_SERVER=None
-CONTROL_LOOP=None
-CONTROL_BOT=None
+from connector_pairing import (
+    configure_local_connector,
+    history_checkpoint_path,
+    load_history_checkpoint,
+    mark_history_thread_complete,
+    post_history_batch,
+    report_connector_status,
+)
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+BASE = Path(__file__).resolve().parent
+PACKAGE_DIR = Path(getattr(sys, "_MEIPASS", str(BASE)))
+RUNTIME = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantTikTok"
+HISTORY_CHECKPOINT: Path | None = None
+EDGE_PROFILE = RUNTIME / "seller-center-edge-profile"
+CDP_PORT = int(os.getenv("TIKTOK_CDP_PORT", "9223"))
+CDP = os.getenv("TIKTOK_CDP_URL", f"http://127.0.0.1:{CDP_PORT}").rstrip("/")
+SELLER_INBOX = os.getenv(
+    "TIKTOK_SELLER_INBOX_URL",
+    "https://seller-vn.tiktok.com/chat/inbox/current?shop_region=VN&lang=en",
+).strip()
+BACKEND_URL = ""
+CONNECTOR_TOKEN = ""
+CONTROL_SECRET = ""
+CONTROL_PORT = int(os.getenv("TIKTOK_BRIDGE_CONTROL_PORT", "8091"))
+CONTROL_PAGE = None
+CONTROL_CONTEXT = None
+CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
+CONTROL_SERVER: ThreadingHTTPServer | None = None
+CONTROL_SEND_LOCK = Lock()
+SEEN_MESSAGE_IDS: dict[str, float] = {}
+IN_FLIGHT_MESSAGE_IDS: set[str] = set()
+RECENT_OUTBOUND: dict[tuple[str, str], float] = {}
+SELLER_PROFILE_CACHE: dict[str, dict] = {}
+SELLER_PROFILE_SYNCED: set[tuple[str, str]] = set()
+CONNECTOR_STARTED_AT = time.time()
+CAPTURE_PROBE_UNTIL = 0.0
+CAPTURE_PROBE_REMAINING = 0
+
+
+class TikTokDeliveryUnknown(RuntimeError):
+    """The click may have reached Seller Center, but its UI did not confirm it."""
+
+
+def await_bridge_result(future, timeout: float = 25) -> dict:
+    try:
+        return future.result(timeout=timeout)
+    except FutureTimeoutError as exc:
+        raise TikTokDeliveryUnknown(
+            "TikTok Shop chưa xác nhận tin đã gửi; hãy kiểm tra hội thoại trước khi thử lại."
+        ) from exc
+
+
+def _first(mapping: dict, *keys: str):
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _as_text(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, dict):
+        return _as_text(_first(value, "text", "content", "message", "value"))
+    return ""
+
+
+def _is_true(value: object) -> bool:
+    return value is True or value == 1 or str(value or "").strip().lower() in {"1", "true", "yes"}
+
+
+def _is_outgoing(message: dict) -> bool:
+    flags = (
+        "send_by_yourself", "is_self", "is_self_message", "is_from_shop",
+        "isFromShop", "from_me", "fromMe", "is_outgoing", "isOutgoing",
+        "is_sender_shop", "isSellerMessage", "self_message",
+    )
+    if any(_is_true(message.get(key)) for key in flags):
+        return True
+    sender_type = str(_first(message, "sender_type", "senderType", "from_type", "role") or "").lower()
+    return any(word in sender_type for word in ("seller", "shop", "merchant", "agent", "system"))
+
+
+def _parse_json(value: object):
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text[:1] in "[{\"":
+            try:
+                return json.loads(text)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _message_is_fresh(message: dict, since: float) -> bool:
+    value = str(message.get("createdAt") or "").strip()
+    if not value:
+        return False
+    try:
+        timestamp = float(value)
+        if timestamp > 100_000_000_000:
+            timestamp /= 1000
+    except ValueError:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            timestamp = parsed.timestamp()
+        except ValueError:
+            return False
+    return since - 5 <= timestamp <= time.time() + 300
+
+
+def normalize_seller_message(message: object, inherited: dict | None = None) -> dict | None:
+    """Map a Seller Center message-like record to the CRM connector contract."""
+    if not isinstance(message, dict):
+        return None
+    data = {**(inherited or {}), **message}
+    raw_content = _first(data, "message_content", "messageContent", "content", "message")
+    nested = _parse_json(raw_content)
+    if isinstance(nested, dict):
+        data = {**data, **nested}
+    message_id = _as_text(_first(data, "message_id", "messageId", "msg_id", "msgId", "id"))
+    thread_id = _as_text(_first(
+        data, "conversation_id", "conversationId", "conv_id", "convId",
+        "thread_id", "threadId", "chat_id", "chatId",
+    ))
+    sender = _first(data, "sender", "from_user", "fromUser", "author", "buyer")
+    sender = sender if isinstance(sender, dict) else {}
+    sender_id = _as_text(_first(
+        data, "sender_id", "senderId", "from_id", "fromId", "author_id", "authorId",
+        "from_user_id", "fromUserId", "buyer_id", "buyerId", "customer_id", "customerId",
+    ) or _first(sender, "id", "user_id", "userId", "uid", "sec_uid"))
+    text = _as_text(_first(data, "text", "content_text", "contentText", "body", "message_text", "messageText"))
+    if not text and isinstance(raw_content, str):
+        text = raw_content.strip()
+    message_type = str(_first(data, "message_type", "messageType", "msg_type", "type") or "text").strip().lower()
+    allowed_types = {"text", "image", "video", "audio", "file", "sticker"}
+    if message_type not in allowed_types:
+        return None
+    if not message_id or not thread_id or not sender_id or _is_outgoing(data):
+        return None
+    if not text and message_type == "text":
+        return None
+    if not text:
+        text = f"[{message_type}]"
+    avatar = _as_text(_first(data, "avatar_url", "avatarUrl", "avatar", "profile_image", "profileImage") or
+                      _first(sender, "avatar_url", "avatarUrl", "avatar", "profile_image", "profileImage"))
+    display_name = _as_text(_first(data, "display_name", "displayName", "nickname", "nick_name", "name") or
+                            _first(sender, "display_name", "displayName", "nickname", "nick_name", "name"))
+    username = _as_text(_first(data, "username", "unique_id", "uniqueId", "handle") or
+                        _first(sender, "username", "unique_id", "uniqueId", "handle"))
+    profile = SELLER_PROFILE_CACHE.get(sender_id, {})
+    if not avatar.startswith(("https://", "http://")):
+        avatar = str(profile.get("avatarUrl") or "")
+    display_name = display_name or str(profile.get("displayName") or "")
+    username = username or str(profile.get("username") or "")
+    media_url = _as_text(_first(data, "media_url", "mediaUrl", "url", "origin_url", "originUrl"))
+    return {
+        "authorId": sender_id[:255],
+        "displayName": (display_name or username or sender_id)[:255],
+        "username": username[:255],
+        "avatarUrl": avatar[:2000] if avatar.startswith(("https://", "http://")) else "",
+        "threadId": thread_id[:255],
+        "messageId": message_id[:255],
+        "message": text[:10000],
+        "messageType": message_type,
+        "createdAt": _as_text(_first(data, "created_at", "createdAt", "timestamp", "create_time", "createTime"))[:100],
+        "source": "tiktok_seller_center",
+        "mediaUrl": media_url[:2000] if media_url.startswith(("https://", "http://")) else "",
+    }
+
+
+def extract_seller_messages(payload: object) -> list[dict]:
+    """Find message records in JSON response/event envelopes without retaining them."""
+    root = _parse_json(payload)
+    if root is None:
+        return []
+    found: dict[str, dict] = {}
+    visited = 0
+
+    def walk(value, context: dict, depth: int) -> None:
+        nonlocal visited
+        if depth > 8 or visited > 12000:
+            return
+        if isinstance(value, list):
+            for item in value[:2000]:
+                walk(item, context, depth + 1)
+            return
+        if not isinstance(value, dict):
+            return
+        visited += 1
+        normalized = normalize_seller_message(value, context)
+        if normalized:
+            found[normalized["messageId"]] = normalized
+        # Propagate only identifiers that can describe a message or conversation.
+        next_context = dict(context)
+        for key in (
+            "conversation_id", "conversationId", "conv_id", "convId", "thread_id", "threadId",
+            "chat_id", "chatId", "sender_id", "senderId", "from_id", "fromId", "author_id",
+            "authorId", "from_user_id", "fromUserId", "buyer_id", "buyerId", "customer_id",
+            "customerId", "sender_type", "senderType", "is_self", "is_from_shop", "is_outgoing",
+        ):
+            if key in value:
+                next_context[key] = value[key]
+        sender = _first(value, "sender", "from_user", "fromUser", "author", "buyer")
+        if isinstance(sender, dict):
+            sender_id = _first(sender, "id", "user_id", "userId", "uid", "sec_uid")
+            if sender_id not in (None, "", [], {}):
+                next_context.setdefault("sender_id", sender_id)
+            next_context.setdefault("sender", sender)
+        conversation = _first(value, "conversation", "chat", "thread")
+        if isinstance(conversation, dict):
+            conversation_id = _first(conversation, "conversation_id", "conversationId", "id", "thread_id", "threadId")
+            if conversation_id not in (None, "", [], {}):
+                next_context.setdefault("conversation_id", conversation_id)
+        for child in value.values():
+            parsed = _parse_json(child)
+            if isinstance(parsed, (dict, list)):
+                walk(parsed, next_context, depth + 1)
+
+    walk(root, {}, 0)
+    return list(found.values())
+
+
+def _seller_inbox_url() -> str:
+    parsed = urlparse(SELLER_INBOX)
+    if parsed.scheme != "https" or parsed.hostname != "seller-vn.tiktok.com" or not parsed.path.startswith("/chat/inbox/"):
+        raise RuntimeError("Địa chỉ phải là hộp thư TikTok Shop Seller Center Việt Nam (/chat/inbox/...).")
+    return SELLER_INBOX
+
+
+def _find_edge() -> Path | None:
+    for root in (os.getenv("PROGRAMFILES(X86)", ""), os.getenv("PROGRAMFILES", ""), os.getenv("LOCALAPPDATA", "")):
+        candidate = Path(root) / "Microsoft/Edge/Application/msedge.exe"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _cdp_browser_ready() -> bool:
+    try:
+        with urlopen(CDP + "/json/version", timeout=1.5) as response:
+            version = json.loads(response.read().decode("utf-8"))
+            return response.status == 200 and str(version.get("Browser", "")).startswith("Edg/")
+    except Exception:
+        return False
+
+
+def _start_edge() -> None:
+    edge = _find_edge()
+    if not edge:
+        raise RuntimeError("Không tìm thấy Microsoft Edge.")
+    EDGE_PROFILE.mkdir(parents=True, exist_ok=True)
+    subprocess.Popen(
+        [
+            str(edge), "--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={CDP_PORT}",
+            f"--user-data-dir={EDGE_PROFILE}", "--no-first-run", "--no-default-browser-check", _seller_inbox_url(),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print("Đã mở Edge riêng cho TikTok Shop Seller Center. Hãy đăng nhập thủ công nếu được yêu cầu.", flush=True)
+    for _ in range(180):
+        if _cdp_browser_ready():
+            return
+        time.sleep(0.5)
+    raise RuntimeError("Edge Seller Center chưa sẵn sàng sau 90 giây.")
+
+
+def _ensure_edge() -> None:
+    if not _cdp_browser_ready():
+        _start_edge()
+
+
+def _post_message(message: dict) -> tuple[int, str]:
+    payload = {key: value for key, value in message.items() if key not in {"channel"}}
+    request = Request(
+        BACKEND_URL + "/api/channels/tiktok/incoming",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {CONNECTOR_TOKEN}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")[:300]
+    except Exception as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
+
+
+def _post_profiles(profiles: list[dict]) -> tuple[int, str]:
+    request = Request(
+        BACKEND_URL + "/api/channels/tiktok/profiles",
+        data=json.dumps({"profiles": profiles}, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {CONNECTOR_TOKEN}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")[:300]
+    except Exception as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
+
+
+def _remember_seller_profiles(rows: list[dict]) -> list[dict]:
+    pending: dict[str, dict] = {}
+    for row in rows:
+        customer_id = str(row.get("customerId") or "").strip()
+        avatar_url = str(row.get("avatarUrl") or "").strip()
+        if avatar_url.startswith("//"):
+            avatar_url = "https:" + avatar_url
+        if not customer_id or not avatar_url.startswith(("https://", "http://")):
+            continue
+        profile = {
+            "externalUserId": customer_id[:255],
+            "avatarUrl": avatar_url[:2000],
+        }
+        display_name = str(row.get("displayName") or "").strip()
+        if display_name:
+            profile["displayName"] = display_name[:255]
+        SELLER_PROFILE_CACHE[customer_id] = profile
+        key = (customer_id, avatar_url)
+        if key not in SELLER_PROFILE_SYNCED:
+            pending[customer_id] = profile
+    return list(pending.values())
+
+
+async def _sync_seller_profiles(rows: list[dict]) -> None:
+    profiles = _remember_seller_profiles(rows)
+    for start in range(0, len(profiles), 200):
+        batch = profiles[start:start + 200]
+        status, detail = await asyncio.to_thread(_post_profiles, batch)
+        if not 200 <= status < 300:
+            print(f"⚠️ Chưa đồng bộ được {len(batch)} avatar TikTok vào CRM (HTTP {status}).", flush=True)
+            if detail:
+                print(detail, flush=True)
+            return
+        SELLER_PROFILE_SYNCED.update(
+            (profile["externalUserId"], profile["avatarUrl"]) for profile in batch
+        )
+
+
+async def _deliver(message: dict | None) -> None:
+    if not message:
+        return
+    now = time.monotonic()
+    if len(SEEN_MESSAGE_IDS) > 10000:
+        SEEN_MESSAGE_IDS.clear()
+    if message["messageId"] in SEEN_MESSAGE_IDS and now - SEEN_MESSAGE_IDS[message["messageId"]] < 3600:
+        return
+    if message["messageId"] in IN_FLIGHT_MESSAGE_IDS:
+        return
+    outbound_key = (message["threadId"], message["message"])
+    if now - RECENT_OUTBOUND.get(outbound_key, 0) < 120:
+        return
+    IN_FLIGHT_MESSAGE_IDS.add(message["messageId"])
+    try:
+        status, detail = await asyncio.to_thread(_post_message, message)
+        if 200 <= status < 300:
+            SEEN_MESSAGE_IDS[message["messageId"]] = now
+    finally:
+        IN_FLIGHT_MESSAGE_IDS.discard(message["messageId"])
+    print(
+        f"{'✅' if 200 <= status < 300 else '❌'} TikTok Shop Seller Chat message {message['messageId']} → CRM HTTP {status}",
+        flush=True,
+    )
+    if not 200 <= status < 300 and detail:
+        print(detail, flush=True)
+
+
+async def _inspect_payload(payload: object, *, recent_only: bool = False, source: str = "websocket") -> None:
+    messages = extract_seller_messages(payload)
+    global CAPTURE_PROBE_REMAINING
+    if CAPTURE_PROBE_REMAINING and time.monotonic() <= CAPTURE_PROBE_UNTIL and (
+        messages or any(part in source.lower() for part in ("message", "conversation", "chat"))
+    ):
+        root = _parse_json(payload)
+        fields = {"root": list(root)[:16]} if isinstance(root, dict) else {"root_type": type(root).__name__}
+        if isinstance(root, dict):
+            for key in ("data", "payload", "message", "messages", "result"):
+                nested = _parse_json(root.get(key))
+                if isinstance(nested, dict):
+                    fields[key] = list(nested)[:16]
+                elif isinstance(nested, list) and nested and isinstance(nested[0], dict):
+                    fields[f"{key}[]"] = list(nested[0])[:16]
+        print(f"🔎 Seller Center {source}: parser thấy {len(messages)} tin; tên trường {json.dumps(fields, ensure_ascii=False)}", flush=True)
+        CAPTURE_PROBE_REMAINING -= 1
+    if recent_only and messages:
+        fresh_messages = [message for message in messages if _message_is_fresh(message, CONNECTOR_STARTED_AT)]
+        if not fresh_messages:
+            print(f"ℹ️ Seller Center có {len(messages)} tin trong lịch sử; bỏ qua vì tin cũ hoặc thiếu thời gian.", flush=True)
+        messages = fresh_messages
+    for message in messages:
+        await _deliver(message)
+
+
+async def _seller_conversation_rows(page) -> list[dict]:
+    return await page.evaluate(
+        r"""() => [...document.querySelectorAll('[data-testid="chat.chatroom.conversation_card"]')]
+          .map(row => {
+            const usernameNode = row.querySelector('[data-testid="chat.chatroom.conversation_card_username"]');
+            const username = usernameNode?.innerText?.trim() || '';
+            const preview = usernameNode?.parentElement?.parentElement?.nextElementSibling?.querySelector('span')?.innerText?.trim() || '';
+            const avatar = row.querySelector('img')?.currentSrc || row.querySelector('img')?.getAttribute('src') || '';
+            const unread = Number.parseInt(row.querySelector('.p-badge-number')?.innerText?.trim() || '0', 10) || 0;
+            const handlersKey = Object.getOwnPropertyNames(row).find(key => key.startsWith('__reactEventHandlers$'));
+            const children = row[handlersKey]?.children;
+            const childNodes = Array.isArray(children) ? children : Object.values(children || {});
+            const contact = childNodes.map(child => child?.props?.contact).find(Boolean) || {};
+            return {
+              id: row.id,
+              key: JSON.stringify([username, avatar]),
+              activity: JSON.stringify([preview, row.querySelector('time')?.innerText?.trim() || '']),
+              threadId: String(contact.conversationId || ''),
+              customerId: String(contact.pigeonUid || ''),
+              displayName: username,
+              avatarUrl: avatar,
+              unread,
+            };
+          }).filter(row => row.id && row.key !== '["",""]')"""
+    )
+
+
+async def _seller_visible_messages(page, row: dict, *, include_outbound: bool = False) -> list[dict]:
+    return await page.evaluate(
+        r"""({threadId, customerId, displayName, avatarUrl, includeOutbound}) =>
+          [...document.querySelectorAll('[data-testid="chat.chatroom.message_card"]')]
+            .filter(card => card.getClientRects().length)
+            .map(card => {
+              const node = card.querySelector('.chatd-message');
+              const bubble = node?.querySelector(includeOutbound ? '[class*="chatd-bubble-main--"]' : '.chatd-bubble-main--other');
+              if (!node || !bubble) return null;
+              const instanceKey = Object.getOwnPropertyNames(card).find(key => key.startsWith('__reactInternalInstance$'));
+              let fiber = instanceKey && card[instanceKey];
+              let message = null;
+              for (let depth = 0; fiber && depth < 18; depth++, fiber = fiber.return) {
+                for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
+                  if (props?.message && typeof props.message === 'object') {
+                    message = props.message;
+                    break;
+                  }
+                }
+                if (message) break;
+              }
+              const text = bubble.innerText?.trim() || '';
+              const messageId = String(message?.messageServerId || message?.messageId || message?.rawMessage?.serverId || '');
+              const senderId = String(message?.sender || customerId || '');
+              const actualThreadId = String(message?.rawMessage?.conversationId || threadId || '');
+              const direction = bubble.className.includes('--other') ? 'inbound' : 'outbound';
+              if (!message || message.msgType !== 1000 || !messageId || !senderId || !actualThreadId || !text) return null;
+              if (!includeOutbound && direction !== 'inbound') return null;
+              return {
+                messageId,
+                threadId: actualThreadId,
+                customerId,
+                direction,
+                message: text,
+                messageType: 'text',
+                createdAt: String(message.createTime || ''),
+                displayName,
+                avatarUrl,
+              };
+            }).filter(Boolean)""",
+        {**row, "includeOutbound": include_outbound},
+    )
+
+
+async def _select_all_seller_conversations(page) -> list[dict]:
+    candidates = []
+    viewport_width = (page.viewport_size or {}).get("width", 1920)
+    for label in ("Tất cả", "All"):
+        locator = page.get_by_text(label, exact=False)
+        for index in range(await locator.count()):
+            item = locator.nth(index)
+            if not await item.is_visible():
+                continue
+            text = " ".join((await item.inner_text()).split())
+            folded_text, folded_label = text.casefold(), label.casefold()
+            if folded_text != folded_label and not (
+                folded_text.startswith(folded_label + " ")
+                and folded_text[len(folded_label):].strip().isdigit()
+            ):
+                continue
+            box = await item.bounding_box()
+            if box and box["x"] < viewport_width * 0.4:
+                candidates.append((box["x"], box["y"], box["width"] * box["height"], item))
+    if not candidates:
+        raise RuntimeError("Không tìm thấy mục Tất cả trong hộp thư Seller Center.")
+    await min(candidates, key=lambda candidate: (candidate[0], candidate[2], candidate[1]))[3].click(timeout=5000)
+    await page.wait_for_timeout(400)
+    return await _seller_conversation_rows(page)
+
+
+async def _loaded_seller_history(page, row: dict) -> list[dict]:
+    """Read message cards already rendered by Seller Center; never scroll either pane."""
+    await page.wait_for_timeout(350)
+    messages = await _seller_visible_messages(page, row, include_outbound=True)
+    unique = {
+        str(message["messageId"]): message
+        for message in messages
+        if message.get("messageId")
+        and message.get("threadId") == row.get("threadId")
+        and message.get("customerId") == row.get("customerId")
+    }
+    return sorted(unique.values(), key=lambda item: str(item.get("createdAt") or ""))
+
+
+async def _sync_initial_seller_history(page, visible_rows: list[dict]) -> None:
+    checkpoint = load_history_checkpoint(HISTORY_CHECKPOINT)
+    rows = [row for row in visible_rows if row.get("threadId") and row.get("customerId")]
+    if not rows:
+        raise RuntimeError("Seller Center chưa cung cấp được mã khách cho danh sách chat; chưa đánh dấu đồng bộ hoàn tất.")
+    print(f"📚 Đang kiểm tra {len(rows)} hội thoại đang tải trong mục Tất cả…", flush=True)
+    await _sync_seller_profiles(rows)
+    completed = set(str(value) for value in checkpoint.get("completed_threads", []))
+    for original in rows:
+        thread_id = str(original["threadId"])
+        if thread_id in completed:
+            continue
+        row = next((
+            candidate for candidate in await _seller_conversation_rows(page)
+            if candidate.get("threadId") == thread_id
+            and candidate.get("customerId") == original.get("customerId")
+        ), None)
+        if row is None:
+            raise RuntimeError("Hội thoại không còn trong danh sách Tất cả đang tải; sẽ thử lại sau.")
+        await _open_seller_conversation(page, row)
+        history = await _loaded_seller_history(page, row)
+        for start in range(0, len(history), 100):
+            status, detail = await asyncio.to_thread(
+                post_history_batch, "tiktok", BACKEND_URL, CONNECTOR_TOKEN, history[start:start + 100]
+            )
+            if not 200 <= status < 300:
+                raise RuntimeError(f"CRM từ chối lô lịch sử TikTok (HTTP {status}): {detail[:160]}")
+        checkpoint = mark_history_thread_complete(HISTORY_CHECKPOINT, checkpoint, thread_id)
+        completed.add(thread_id)
+        print(f"✅ Đã kiểm tra {row.get('displayName') or thread_id}: {len(history)} tin đang tải; CRM tự bỏ tin trùng.", flush=True)
+
+
+def _track_seller_conversation_changes(rows: list[dict], seen: dict, *, baseline: bool = False) -> list[dict]:
+    changed = []
+    for row in rows:
+        key = row["key"]
+        current = (row["activity"], int(row["unread"]))
+        previous = seen.get(key)
+        if baseline:
+            seen[key] = current
+        elif previous is None:
+            if current[1] > 0:
+                changed.append(row)
+            else:
+                seen[key] = current
+        elif current != previous:
+            if current[1] > 0 or current[0] != previous[0]:
+                changed.append(row)
+            else:
+                seen[key] = current
+    return changed
+
+
+async def _open_seller_conversation(page, row: dict) -> None:
+    global CAPTURE_PROBE_UNTIL, CAPTURE_PROBE_REMAINING
+    row_id = str(row.get("id") or "")
+    row_prefix = "chat-room-conversation-list-item-"
+    if not row_id.startswith(row_prefix) or not row_id[len(row_prefix):].isdigit():
+        raise RuntimeError("Không xác định được dòng hội thoại Seller Center.")
+    card = page.locator(f"#{row_id}")
+    current = await card.evaluate(
+        r"""row => {
+          const username = row.querySelector('[data-testid="chat.chatroom.conversation_card_username"]')?.innerText?.trim() || '';
+          const avatar = row.querySelector('img')?.currentSrc || row.querySelector('img')?.getAttribute('src') || '';
+          return JSON.stringify([username, avatar]);
+        }"""
+    )
+    if current != row["key"]:
+        raise RuntimeError("Danh sách hội thoại vừa thay đổi; bỏ qua lần mở không an toàn.")
+    CAPTURE_PROBE_UNTIL = time.monotonic() + 12
+    CAPTURE_PROBE_REMAINING = 8
+    await card.click(timeout=5000)
+    await page.wait_for_selector("#chat-input-send-button", state="visible", timeout=8000)
+
+
+async def _strict_id_match(page, thread_id: str, recipient_id: str) -> dict | None:
+    # Reuse the exact React event-handler contact fields already used by the inbox monitor.
+    for row in await _seller_conversation_rows(page):
+        if row["threadId"] == thread_id:
+            return {
+                "rowId": row["id"],
+                "recipientMatches": not recipient_id or row["customerId"] == recipient_id,
+            }
+    return None
+
+
+async def _send_seller_message(thread_id: str, text: str, recipient_id: str = "") -> dict:
+    global CONTROL_PAGE
+    if CONTROL_PAGE is None or CONTROL_PAGE.is_closed():
+        CONTROL_PAGE = next(
+            (page for page in (CONTROL_CONTEXT.pages if CONTROL_CONTEXT else [])
+             if not page.is_closed() and _is_seller_chat_url(page.url)),
+            None,
+        )
+    if CONTROL_PAGE is None or CONTROL_PAGE.is_closed():
+        raise RuntimeError("Edge TikTok Shop Seller Center chưa sẵn sàng.")
+    thread_id, text, recipient_id = str(thread_id or "").strip(), str(text or "").strip(), str(recipient_id or "").strip()
+    if not thread_id or not text:
+        raise ValueError("Thiếu threadId hoặc nội dung tin nhắn.")
+    if len(text) > 2000:
+        raise ValueError("Tin nhắn TikTok Shop vượt quá 2.000 ký tự.")
+    row = await _strict_id_match(CONTROL_PAGE, thread_id, recipient_id)
+    if not row:
+        raise RuntimeError("Không tìm thấy đúng hội thoại đã đồng bộ trong Seller Center; mở hội thoại đó trong Edge rồi thử lại.")
+    if not row.get("recipientMatches"):
+        raise RuntimeError("Mã khách không khớp hội thoại Seller Center; đã hủy gửi để tránh nhầm khách.")
+    item = CONTROL_PAGE.locator(f"#{row['rowId']}")
+    before = await CONTROL_PAGE.get_by_text(text, exact=True).count()
+    await item.click()
+    await CONTROL_PAGE.wait_for_timeout(350)
+
+    send_button = CONTROL_PAGE.locator("#chat-input-send-button")
+    if await send_button.count() != 1 or not await send_button.is_visible() or await send_button.is_disabled():
+        raise RuntimeError("Không tìm thấy nút gửi đang hoạt động trong Seller Center.")
+    # Narrow to the editor sharing a parent work area with TikTok's send button.
+    editor_index = await CONTROL_PAGE.evaluate(
+        r"""() => {
+          const send = document.querySelector('#chat-input-send-button');
+          if (!send) return -1;
+          for (let node = send.parentElement, depth = 0; node && depth < 8; node = node.parentElement, depth++) {
+            const editors = [...node.querySelectorAll('[contenteditable="true"],textarea')]
+              .filter(el => el.getClientRects().length && !el.disabled && !el.readOnly);
+            if (editors.length === 1) return [...document.querySelectorAll('[contenteditable="true"]:not([disabled]), textarea:not([disabled])')].indexOf(editors[0]);
+          }
+          return -1;
+        }"""
+    )
+    if editor_index < 0:
+        raise RuntimeError("Không tìm thấy ô nhập tin nhắn trong Seller Center.")
+    all_editors = CONTROL_PAGE.locator("[contenteditable='true']:not([disabled]), textarea:not([disabled])")
+    composer = all_editors.nth(editor_index)
+    await composer.fill(text)
+    await send_button.click()
+    try:
+        await CONTROL_PAGE.wait_for_function(
+            "() => { const e=document.querySelector('[contenteditable=\"true\"],textarea'); return !e || !String(e.value ?? e.innerText ?? '').trim(); }",
+            timeout=10000,
+        )
+        await CONTROL_PAGE.wait_for_function(
+            "({text,before}) => [...document.querySelectorAll('body *')].filter(e => e.childElementCount === 0 && e.textContent.trim() === text).length > before",
+            arg={"text": text, "before": before}, timeout=10000,
+        )
+    except Exception as exc:
+        raise TikTokDeliveryUnknown(
+            "Seller Center chưa xác nhận tin đã gửi; hãy kiểm tra hội thoại trước khi thử lại."
+        ) from exc
+    RECENT_OUTBOUND[(thread_id, text)] = time.monotonic()
+    return {"status": "sent", "message_id": f"tiktok-seller-ui:{thread_id}:{time.time_ns()}", "threadId": thread_id}
+
+
+def _is_seller_chat_url(value: str) -> bool:
+    parsed = urlparse(str(value or ""))
+    return parsed.scheme == "https" and parsed.hostname == "seller-vn.tiktok.com" and parsed.path.startswith("/chat/inbox/")
+
 
 class _TikTokControlHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
+    def log_message(self, _format: str, *_args) -> None:
         return
 
-    def _reply(self, status, payload):
-        body=json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    def _reply(self, status: int, payload: dict) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         if self.path.rstrip("/") != "/send":
-            self._reply(404, {"detail":"TikTok bridge route not found"})
+            self._reply(404, {"detail": "TikTok Seller Center bridge route not found"})
             return
-        provided=self.headers.get("X-TikTok-Bridge-Secret", "")
-        bridge_secret=(os.getenv("TIKTOK_BRIDGE_SECRET") or os.getenv("TIKTOK_CONNECTOR_TOKEN") or "").strip()
-        if not bridge_secret or not _hmac.compare_digest(str(provided), bridge_secret):
-            self._reply(401, {"detail":"TikTok bridge secret không đúng"})
+        provided = self.headers.get("X-TikTok-Bridge-Secret", "")
+        if not CONTROL_SECRET or not hmac.compare_digest(str(provided), str(CONTROL_SECRET)):
+            self._reply(401, {"detail": "TikTok bridge secret không đúng"})
             return
         try:
-            length=int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > 1024 * 1024:
-                raise ValueError("Payload TikTok không hợp lệ")
-            payload=json.loads(self.rfile.read(length).decode("utf-8"))
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 65536:
+                raise ValueError("Payload TikTok Shop không hợp lệ.")
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
-                raise ValueError("Payload TikTok không hợp lệ")
-            conv=str(payload.get("threadId") or payload.get("conv_id") or "").strip()
-            message=str(payload.get("message") or payload.get("text") or "").strip()
-            if not conv or not message:
-                raise ValueError("Thiếu threadId hoặc message")
-            if CONTROL_BOT is None or CONTROL_LOOP is None:
-                self._reply(503, {"detail":"TikTok bridge chưa sẵn sàng"})
+                raise ValueError("Payload TikTok Shop không hợp lệ.")
+            if CONTROL_LOOP is None:
+                self._reply(503, {"detail": "TikTok Seller Center connector chưa sẵn sàng."})
                 return
-            future=asyncio.run_coroutine_threadsafe(
-                CONTROL_BOT.send_message(conv_id=conv, text=message),
-                CONTROL_LOOP,
-            )
-            result=future.result(timeout=30)
-            client_id=None
-            if isinstance(result, (tuple, list)) and len(result) > 1:
-                client_id=result[1]
-            elif result is not None:
-                client_id=result
-            self._reply(200, {
-                "status":"sent",
-                "message_id":"tiktok-bridge:" + s(client_id or time.time_ns()),
-                "threadId":conv,
-            })
+            with CONTROL_SEND_LOCK:
+                future = asyncio.run_coroutine_threadsafe(
+                    _send_seller_message(payload.get("threadId"), payload.get("message"), payload.get("recipientId")),
+                    CONTROL_LOOP,
+                )
+                result = await_bridge_result(future)
+            self._reply(200, result)
+        except TikTokDeliveryUnknown as exc:
+            self._reply(409, {"code": "delivery_unknown", "detail": str(exc)})
         except ValueError as exc:
-            self._reply(400, {"detail":str(exc)})
+            self._reply(400, {"detail": str(exc)})
         except Exception as exc:
-            log("❌ TikTok outbound control: "+type(exc).__name__+": "+s(exc))
-            self._reply(502, {"detail":"Không thể gửi tin TikTok qua bridge"})
+            print(f"❌ TikTok Seller Center outbound: {type(exc).__name__}: {exc}", flush=True)
+            self._reply(502, {"detail": str(exc)[:300] or "Không thể gửi tin TikTok Shop."})
 
-def start_control_server(bot):
-    global CONTROL_SERVER, CONTROL_LOOP, CONTROL_BOT
-    CONTROL_LOOP=asyncio.get_running_loop()
-    CONTROL_BOT=bot
+
+def _start_control_server(page) -> None:
+    global CONTROL_SERVER, CONTROL_LOOP, CONTROL_PAGE, CONTROL_CONTEXT
+    CONTROL_LOOP = asyncio.get_running_loop()
+    CONTROL_PAGE = page
+    CONTROL_CONTEXT = page.context
     if CONTROL_SERVER is not None:
         return
-    # Docker reaches the host via host.docker.internal; every request still requires the shop secret.
-    host=os.getenv("TIKTOK_BRIDGE_CONTROL_HOST", "0.0.0.0")
+    host = os.getenv("TIKTOK_BRIDGE_CONTROL_HOST", "0.0.0.0")
     try:
-        port=int(os.getenv("TIKTOK_BRIDGE_CONTROL_PORT", "8091"))
-        CONTROL_SERVER=ThreadingHTTPServer((host, port), _TikTokControlHandler)
-        CONTROL_SERVER.daemon_threads=True
+        CONTROL_SERVER = ThreadingHTTPServer((host, CONTROL_PORT), _TikTokControlHandler)
+        CONTROL_SERVER.daemon_threads = True
         Thread(target=CONTROL_SERVER.serve_forever, daemon=True).start()
-        log(f"🎛 TikTok outbound bridge: http://{host}:{port}/send")
-    except Exception as exc:
-        CONTROL_SERVER=None
-        log("⚠️ Không mở được TikTok outbound bridge: "+type(exc).__name__+": "+s(exc))
-'''
+        print(f"TikTok Shop outbound bridge: http://{host}:{CONTROL_PORT}/send", flush=True)
+    except OSError as exc:
+        print(f"⚠️ Không mở được TikTok outbound bridge: {type(exc).__name__}: {exc}", flush=True)
 
-# Normalize TikTok's non-text events before they reach the CRM.  ReLttk
-# exposes sticker URLs and video/photo IDs, while the exact playable URL is
-# optional because TikTok may reject a detail lookup for an expired share.
-TIKTOK_MEDIA_CODE=r'''
-async def resolve_tiktok_media(bot, msg):
+
+def _handle_page_events(page) -> None:
+    loop = asyncio.get_running_loop()
+
+    def schedule(payload, source: str) -> None:
+        asyncio.run_coroutine_threadsafe(_inspect_payload(payload, source=source), loop)
+
+    def on_websocket(websocket) -> None:
+        source = f"WebSocket {urlparse(websocket.url).path}"
+        websocket.on("framereceived", lambda frame: schedule(frame.get("payload") if isinstance(frame, dict) else frame, source))
+
+    async def on_response(response) -> None:
+        try:
+            parsed = urlparse(response.url)
+            if parsed.scheme != "https" or "tiktok" not in (parsed.hostname or ""):
+                return
+            if "application/json" not in str(response.headers.get("content-type", "")).lower():
+                return
+            # HTTP chat responses may include a page of old history. Only relay
+            # messages created after this connector started to avoid replaying
+            # old customer questions into the chatbot queue.
+            await _inspect_payload(await response.json(), recent_only=True, source=parsed.path)
+        except Exception:
+            return
+
+    page.on("websocket", on_websocket)
+    page.on("response", lambda response: asyncio.create_task(on_response(response)))
+
+
+async def run() -> None:
+    global BACKEND_URL, CONNECTOR_TOKEN, CONTROL_SECRET, CONTROL_PAGE, CONTROL_CONTEXT, CONNECTOR_STARTED_AT, HISTORY_CHECKPOINT
+    print("SmartMerchantTikTok build: TikTok Shop Seller Center inbox bridge", flush=True)
     try:
-        awe = int(msg.get("awe_type") or 0)
-    except (TypeError, ValueError):
-        awe = 0
-    media_type = ""
-    media_url = ""
-    external_id = ""
-    metadata = {"awe_type": awe}
-    summary = ""
-
-    if awe == 1805:
-        media_type = "sticker"
-        external_id = s(msg.get("sticker_id") or "").strip()
-        media_url = s(msg.get("sticker_url") or msg.get("comment_sticker_url") or "").strip()
-        summary = "Khách gửi một sticker trên TikTok."
-    elif awe in (800, 810):
-        media_type = "video" if awe == 800 else "image"
-        external_id = s(msg.get("video_id") or "").strip()
-        creator = s(msg.get("video_creator") or "").strip()
-        if external_id:
-            metadata["video_id"] = external_id
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise SystemExit("Thiếu Playwright. Chạy: python -m pip install playwright") from exc
+    BACKEND_URL, CONNECTOR_TOKEN = configure_local_connector("tiktok", RUNTIME, PACKAGE_DIR)
+    HISTORY_CHECKPOINT = history_checkpoint_path(RUNTIME, "tiktok", CONNECTOR_TOKEN)
+    CONTROL_SECRET = CONNECTOR_TOKEN
+    CONNECTOR_STARTED_AT = time.time()
+    next_history_scan_at = 0.0
+    async with async_playwright() as playwright:
+        while True:
             try:
-                detail = await bot.get_item(external_id)
-                item = detail.get("itemInfo", {}).get("itemStruct", detail) if isinstance(detail, dict) else {}
-                video = item.get("video") if isinstance(item, dict) else {}
-                if isinstance(video, dict):
-                    if media_type == "video":
-                        media_url = s(video.get("playAddr") or video.get("downloadAddr") or "").strip()
-                    else:
-                        media_url = s(video.get("cover") or video.get("originCover") or video.get("dynamicCover") or "").strip()
+                await asyncio.to_thread(_ensure_edge)
+                browser = await playwright.chromium.connect_over_cdp(CDP)
+                if not browser.contexts:
+                    raise RuntimeError("Edge chưa có browser context.")
+                context = browser.contexts[0]
+                page = next((item for item in context.pages if _is_seller_chat_url(item.url)), None)
+                if page is None:
+                    page = await context.new_page()
+                    _handle_page_events(page)
+                    await page.goto(_seller_inbox_url(), wait_until="domcontentloaded", timeout=120000)
+                else:
+                    _handle_page_events(page)
+                    try:
+                        await page.goto(_seller_inbox_url(), wait_until="domcontentloaded", timeout=120000)
+                    except Exception:
+                        pass
+                _start_control_server(page)
+                print("TikTok Shop bridge đang theo dõi Seller Center. Đăng nhập thủ công trong Edge nếu được yêu cầu; Ctrl+C để dừng.", flush=True)
+                if not _is_seller_chat_url(page.url):
+                    print("⚠️ Trang Seller Center chưa ở Hộp thư đến (/chat/inbox/); bridge chưa đọc được hội thoại.", flush=True)
+                else:
+                    print("✅ Đang ở trang Hộp thư đến của TikTok Shop Seller Center.", flush=True)
+                observed_conversations = {}
+                conversation_baseline_ready = False
+                all_inbox_selected = False
+                last_conversation_watch_error = 0.0
+                while _cdp_browser_ready() and not page.is_closed():
+                    if not _is_seller_chat_url(page.url):
+                        print("⚠️ Seller Center đang ở ngoài Hộp thư đến; mở đúng mục Chat để bridge tiếp tục.", flush=True)
+                        await asyncio.sleep(5)
+                        continue
+                    try:
+                        rows = await _select_all_seller_conversations(page) if not all_inbox_selected else await _seller_conversation_rows(page)
+                        all_inbox_selected = True
+                        await _sync_seller_profiles(rows)
+                        if rows and not conversation_baseline_ready:
+                            _track_seller_conversation_changes(rows, observed_conversations, baseline=True)
+                            conversation_baseline_ready = True
+                            print(f"✅ Đang theo dõi {len(rows)} hội thoại Seller Center để tự đồng bộ tin mới.", flush=True)
+                        if rows and conversation_baseline_ready and time.monotonic() >= next_history_scan_at:
+                            try:
+                                await _sync_initial_seller_history(page, rows)
+                                next_history_scan_at = time.monotonic() + 60
+                            except Exception as history_error:
+                                next_history_scan_at = time.monotonic() + 60
+                                print(f"⚠️ Đồng bộ hội thoại đang tải chưa xong; bridge sẽ tự thử lại sau 1 phút: {type(history_error).__name__}: {str(history_error)[:180]}", flush=True)
+                        if conversation_baseline_ready:
+                            changed = _track_seller_conversation_changes(rows, observed_conversations)
+                            if changed:
+                                row = changed[0]
+                                previous = observed_conversations.get(row["key"])
+                                try:
+                                    await _open_seller_conversation(page, row)
+                                    observed_conversations[row["key"]] = (row["activity"], int(row["unread"]))
+                                    print("🔔 Có hoạt động chat mới; đã mở đúng khung hội thoại, đang đọc tin để chuyển vào CRM.", flush=True)
+                                    candidates = await _seller_visible_messages(page, row)
+                                    fresh_count = 0
+                                    for candidate in candidates:
+                                        message = normalize_seller_message(candidate)
+                                        if message and _message_is_fresh(message, CONNECTOR_STARTED_AT):
+                                            fresh_count += 1
+                                            await _deliver(message)
+                                    if not fresh_count:
+                                        print("ℹ️ Hội thoại đã mở nhưng chưa thấy tin nhắn văn bản mới của khách để đồng bộ.", flush=True)
+                                except Exception as exc:
+                                    if previous is None:
+                                        observed_conversations.pop(row["key"], None)
+                                    else:
+                                        observed_conversations[row["key"]] = previous
+                                    if time.monotonic() - last_conversation_watch_error > 30:
+                                        print(f"⚠️ Chưa tự mở được hội thoại mới: {type(exc).__name__}.", flush=True)
+                                        last_conversation_watch_error = time.monotonic()
+                    except Exception as exc:
+                        if time.monotonic() - last_conversation_watch_error > 30:
+                            print(f"⚠️ Chưa đọc được danh sách hội thoại Seller Center: {type(exc).__name__}: {str(exc)[:180]}", flush=True)
+                            last_conversation_watch_error = time.monotonic()
+                    await asyncio.sleep(2)
+                print("⚠️ Edge Seller Center bị ngắt; đang thử nối lại.", flush=True)
+                report_connector_status("tiktok", BACKEND_URL, CONNECTOR_TOKEN, state="error", error_code="edge_disconnected")
             except Exception as exc:
-                log(f"⚠️ TikTok media lookup: {type(exc).__name__}")
-        summary = "Khách gửi một video trên TikTok." if media_type == "video" else "Khách gửi một hình ảnh trên TikTok."
-    elif awe == 1813:
-        media_type = "audio"
-        external_id = s(msg.get("voice_id") or "").strip()
-        summary = "Khách gửi một tin nhắn thoại trên TikTok."
-    elif awe == 22:
-        media_type = "file"
-        external_id = s(msg.get("music_id") or "").strip()
-        summary = "Khách gửi một nội dung nhạc trên TikTok."
-    elif awe == 1814:
-        media_type = "sticker"
-        summary = "Khách gửi một thiệp trên TikTok."
-    elif awe == 1021:
-        media_type = "file"
-        summary = "Khách chia sẻ một livestream TikTok."
-    elif awe == 1025:
-        media_type = "file"
-        summary = "Khách chia sẻ một story TikTok."
-    elif awe == 1823:
-        media_type = "file"
-        summary = "Khách gửi một sự kiện cuộc gọi TikTok."
+                print(f"⚠️ TikTok Seller Center connector chưa nối lại được Edge: {type(exc).__name__}: {exc}", flush=True)
+                report_connector_status("tiktok", BACKEND_URL, CONNECTOR_TOKEN, state="error", error_code="edge_reconnect_failed")
+                await asyncio.sleep(10)
+            finally:
+                CONTROL_PAGE = None
+                CONTROL_CONTEXT = None
 
-    attachments = []
-    # Only persist a browser attachment when a real provider URL is available.
-    # An ID without a URL still reaches the CRM as media_type and gets a safe
-    # icon/description instead of a broken image or player.
-    if media_type and media_url:
-        attachments.append({
-            "media_type": media_type,
-            "url": media_url or None,
-            "external_attachment_id": external_id or None,
-            "metadata": metadata,
-        })
-    return media_type, media_url, summary, attachments
-'''
 
-PLUGIN_CODE='# -*- coding: utf-8 -*-\nimport asyncio, json, os, time, traceback\nfrom urllib import request as UREQ\nfrom urllib import error as UERR\n\nBACKEND=(os.getenv("SALONDESK_APP_URL") or os.getenv("NEXT_PUBLIC_APP_URL") or "http://127.0.0.1:3000").rstrip("/")\nENDPOINT=os.getenv("TIKTOK_BACKEND_ENDPOINT","/api/channels/tiktok/incoming")\nECHO=os.getenv("TIKTOK_ECHO_TEST","0")=="1"\nDEBUG=os.getenv("TIKTOK_DEBUG_RAW_EVENT","0")=="1"\nAUTO_REPLY=os.getenv("TIKTOK_AUTO_REPLY","0")=="1"\nseen={}\n\ndef log(x=""): print(x,flush=True)\ndef s(x): return "" if x is None else str(x)\n\ndef key(m):\n    return s(m.get("msg_id")) or "|".join([s(m.get("conv_id")),s(m.get("sender_id")),s(m.get("awe_type")),s(m.get("text"))])\n\ndef cleanup():\n    now=time.monotonic()\n    for k,t in list(seen.items()):\n        if now-t>3600: seen.pop(k,None)\n\ndef post(payload):\n    url=BACKEND+ENDPOINT\n    try:\n        req=UREQ.Request(url,data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),\n            headers={"Content-Type":"application/json; charset=utf-8","Accept":"application/json"},method="POST")\n        with UREQ.urlopen(req,timeout=30) as r:\n            raw=r.read().decode("utf-8","replace")\n            d=json.loads(raw)\n            reply=d.get("response") or d.get("reply") or d.get("message") or d.get("text")\n            if isinstance(reply,dict):\n                reply=reply.get("text") or reply.get("content") or reply.get("message")\n            return (s(reply).strip(),None) if reply else (None,"Backend không có response/reply/message/text")\n    except UERR.HTTPError as e:\n        try: body=e.read().decode("utf-8","replace")\n        except: body=""\n        return None,f"HTTP {e.code}: {body[:300]}"\n    except Exception as e:\n        return None,f"{type(e).__name__}: {e}"\n\nasync def backend(payload):\n    return await asyncio.get_running_loop().run_in_executor(None,post,payload)\n\nasync def on_start(bot):\n    log("\\n"+"="*72)\n    log("🟢 TIKTOK REALTIME EVENT LISTENER READY")\n    log("📡 Hook: on_message(bot, msg)")\n    log("🧪 Echo: "+("ON" if ECHO else "OFF"))\n    log("🤖 Auto reply: "+("ON" if AUTO_REPLY else "OFF"))\n    log("🌐 Backend: "+BACKEND+ENDPOINT)\n    log("👉 Dùng ACCOUNT KHÁC gửi DM vào account bot.")\n    log("="*72+"\\n")\n\nasync def on_message(bot,msg):\n    try:\n        if not isinstance(msg,dict):\n            log("⚠️ Event lạ: "+repr(msg)); return\n        cleanup()\n        k=key(msg)\n        if k in seen: return\n        seen[k]=time.monotonic()\n\n        sender=s(msg.get("sender_id")).strip()\n        conv=s(msg.get("conv_id")).strip()\n\n        # Some realtime packets from TikTok are partially decoded by ReLttk:\n        # sender/conv are correct but text/msg_id are empty and awe_type is actually\n        # a large ID. Recover the newest matching message through ReLttk history.\n        if conv and (not s(msg.get("text")).strip() or not s(msg.get("msg_id")).strip()):\n            try:\n                await asyncio.sleep(0.35)\n                hist=await bot.fetch_history(conv,count=8)\n                if isinstance(hist,list):\n                    candidates=[x for x in hist if isinstance(x,dict) and s(x.get("sender_id")).strip()==sender]\n                    candidates=[x for x in candidates if s(x.get("text")).strip()]\n                    if candidates:\n                        best=candidates[0]\n                        # Prefer a candidate with a real message id.\n                        for x in candidates:\n                            if s(x.get("msg_id")).strip():\n                                best=x\n                                break\n                        for fld in ("text","msg_id","msg_type","awe_type","sec_uid","is_group","proto"):\n                            if best.get(fld) not in (None,"",[],{}):\n                                msg[fld]=best[fld]\n                        log("🛟 Recovered text/msg_id from conversation history")\n            except Exception as e:\n                log(f"⚠️ History recovery: {type(e).__name__}: {e}")\n\n        mid=s(msg.get("msg_id")).strip()\n        text=s(msg.get("text")).strip()\n        awe=msg.get("awe_type")\n        own=s(getattr(bot,"_own_user_id","")).strip()\n        if own and sender==own: return\n\n        name=sender or "Unknown"; username=""\n        if sender:\n            try:\n                p=await bot.get_user(sender)\n                if isinstance(p,dict):\n                    username=s(p.get("unique_id") or p.get("username")).strip()\n                    name=s(p.get("nick_name") or p.get("nickname") or username or sender).strip()\n            except Exception as e:\n                log(f"⚠️ get_user: {e}")\n\n        log("\\n"+"="*72)\n        log("📩 TIKTOK INCOMING MESSAGE EVENT")\n        log(f"👤 Tên        : {name}")\n        if username: log(f"🔖 Username   : @{username}")\n        log(f"🆔 User ID    : {sender or \'(none)\'}")\n        log(f"💬 Thread ID  : {conv or \'(none)\'}")\n        log(f"🔑 Message ID : {mid or \'(none)\'}")\n        log(f"📦 awe_type   : {awe}")\n        log(f"📝 Nội dung   : {text or \'(event không có text)\'}")\n        log("="*72)\n        if DEBUG:\n            log("🧪 RAW/FINAL EVENT:")\n            log(json.dumps(msg,ensure_ascii=False,indent=2,default=str))\n\n        effective=text or f"[TikTok event awe_type={awe}]"\n        if ECHO:\n            log("✅ Đã nhận tin nhắn. Auto reply đang TẮT.")\n            return\n\n        log("🌐 POST "+BACKEND+ENDPOINT)\n        reply,err=await backend({\n            "authorId":sender,"threadId":conv,"messageId":mid,"message":effective,\n            "displayName":name,"username":username,"channel":"tiktok",\n            "isGroup":bool(msg.get("is_group",False)),"aweType":awe\n        })\n        if err:\n            log("❌ Backend: "+err)\n            return\n\n        log("🤖 AI response: "+reply)\n\n        if not AUTO_REPLY:\n            log("🚫 Không gửi reply về TikTok vì TIKTOK_AUTO_REPLY=0")\n            return\n\n        try:\n            await bot.send_message(text=reply,msg=msg)\n            log("✅ Đã gửi TikTok reply: "+reply)\n        except Exception as e:\n            log(f"❌ send_message: {type(e).__name__}: {e}")\n            traceback.print_exc()\n    except Exception as e:\n        log(f"❌ on_message CRASH: {type(e).__name__}: {e}")\n        traceback.print_exc()\n\nasync def on_reaction(bot,rxn):\n    log("❤️ TIKTOK REACTION EVENT: "+s(rxn))\n\nasync def on_delete(bot,deleted):\n    log("🗑️ TIKTOK DELETE EVENT: "+s(deleted))\n'
-RECONNECT_OLD='                    startup_tasks = []\n                    for name, plugin in list(self._plugins.items()):\n                        if hasattr(plugin, "on_start"):\n                            startup_tasks.append(asyncio.create_task(plugin.on_start(self)))\n                    tasks = [\n                        asyncio.create_task(self._heartbeat()),\n                        asyncio.create_task(self._receiver()),\n                        asyncio.create_task(self._watch_plugins()),\n                        asyncio.create_task(self._stranger_loop()),\n                        *([asyncio.create_task(self._console())] if not self._managed else []),\n                        *startup_tasks,\n                    ]'
-RECONNECT_NEW='                    for name, plugin in list(self._plugins.items()):\n                        if hasattr(plugin, "on_start"):\n                            try:\n                                await plugin.on_start(self)\n                            except Exception as e:\n                                _log.error("lttk", f"error en plugin {name} (start): {e}")\n                    tasks = [\n                        asyncio.create_task(self._heartbeat()),\n                        asyncio.create_task(self._receiver()),\n                        asyncio.create_task(self._watch_plugins()),\n                        asyncio.create_task(self._stranger_loop()),\n                        *([asyncio.create_task(self._console())] if not self._managed else []),\n                    ]'
-QUOTE_OLD='            if quote is None:\n                quote = {\n                    "text":     msg["text"],\n                    "uid":      msg["sender_id"],\n                    "sec_uid":  msg["sec_uid"],\n                    "awe_type": msg["awe_type"],\n                    "msg_id":   msg["msg_id"],\n                    "msg_type": msg["msg_type"],\n                }'
-QUOTE_NEW='            if quote is None:\n                raw_msg_id = str(msg.get("msg_id") or "").strip()\n                if raw_msg_id.isdigit():\n                    quote = {\n                        "text":     msg.get("text", ""),\n                        "uid":      msg.get("sender_id", ""),\n                        "sec_uid":  msg.get("sec_uid", ""),\n                        "awe_type": msg.get("awe_type", 0),\n                        "msg_id":   raw_msg_id,\n                        "msg_type": msg.get("msg_type", 0),\n                    }\n                else:\n                    quote = None'
-CLOSE_OLD='            except websockets.exceptions.ConnectionClosed:\n                _log.warn("lttk", "conexion cerrada")\n                break'
-CLOSE_NEW='            except websockets.exceptions.ConnectionClosed as e:\n                _log.warn("lttk", f"conexion cerrada (code={getattr(e, \'code\', None)}, reason={getattr(e, \'reason\', \'\')})")\n                break'
-HASHLIB_IMPORT_OLD="import json\n"
-HASHLIB_IMPORT_NEW="import hashlib\nimport json\n"
-
-def log(x=""): print(x,flush=True)
-def run(args,cwd=None,check=True,env=None):
-    log("▶ "+subprocess.list2cmdline([str(x) for x in args]))
-    r=subprocess.run([str(x) for x in args],cwd=str(cwd) if cwd else None,env=env)
-    if check and r.returncode: raise SystemExit(r.returncode)
-    return r.returncode
-
-def ensure_lttk():
-    if (LTTK/"main.py").exists():
-        log("✅ ReLttk OK"); return
-    if not shutil.which("git"): raise SystemExit("❌ Không tìm thấy git trong PATH")
-    log("📦 Clone ReLttk...")
-    run(["git","clone",REPO,str(LTTK)],BASE)
-    req=LTTK/"requirements.txt"
-    if req.exists(): run([sys.executable,"-m","pip","install","-r",str(req)],LTTK)
-
-def patch_client():
-    p=LTTK/"client.py"
-    s=p.read_text(encoding="utf-8")
-    before=s
-    if RECONNECT_OLD in s:
-        s=s.replace(RECONNECT_OLD,RECONNECT_NEW,1); log("🔧 Fix reconnect loop")
-    if QUOTE_OLD in s:
-        s=s.replace(QUOTE_OLD,QUOTE_NEW,1); log("🔧 Fix reply msg_id rỗng")
-    if CLOSE_OLD in s:
-        s=s.replace(CLOSE_OLD,CLOSE_NEW,1); log("🔧 Thêm mã lỗi websocket")
-    compile(s,str(p),"exec")
-    if s!=before:
-        bak=p.with_suffix(".py.smartmerchant.bak")
-        if not bak.exists(): shutil.copy2(p,bak)
-        p.write_text(s,encoding="utf-8")
-    log("✅ client.py OK")
-
-def patch_api():
-    p=LTTK/"core"/"api.py"
-    if not p.exists():
-        return
-    s=p.read_text(encoding="utf-8")
-    if "import hashlib\n" not in s:
-        s=s.replace(HASHLIB_IMPORT_OLD,HASHLIB_IMPORT_NEW,1)
-        compile(s,str(p),"exec")
-        p.write_text(s,encoding="utf-8")
-        log("🔧 Fix thiếu hashlib trong core/api.py")
-
-def install_plugin(path: Path = PLUGIN):
-    path.parent.mkdir(parents=True,exist_ok=True)
-    # Keep the imported bridge compatible with this CRM's tenant-scoped API.
-    # The source plugin is embedded above so ReLttk can still run standalone.
-    code=PLUGIN_CODE
-    code=code.replace(
-        'BACKEND=(os.getenv("SALONDESK_APP_URL") or os.getenv("NEXT_PUBLIC_APP_URL") or "http://127.0.0.1:3000").rstrip("/")',
-        'BACKEND=(os.getenv("TIKTOK_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")\nCONNECTOR_TOKEN=os.getenv("TIKTOK_CONNECTOR_TOKEN","").strip()',
-    )
-    code=code.replace(
-        'headers={"Content-Type":"application/json; charset=utf-8","Accept":"application/json"}',
-        'headers={"Content-Type":"application/json; charset=utf-8","Accept":"application/json","Authorization":"Bearer "+CONNECTOR_TOKEN}',
-    )
-    code=code.replace(
-        'return (s(reply).strip(),None) if reply else (None,"Backend không có response/reply/message/text")',
-        'return (s(reply).strip(),None) if reply else (None,None)',
-    )
-    code=code.replace('AUTO_REPLY=os.getenv("TIKTOK_AUTO_REPLY","0")=="1"\n', "")
-    code=code.replace(
-        'log("🤖 Auto reply: "+("ON" if AUTO_REPLY else "OFF"))',
-        'log("🤖 RAG auto reply: CRM xử lý và gửi qua bridge theo cấu hình shop")',
-    )
-    code=code.replace('seen={}\n', CONTROL_CODE+'\nseen={}\n', 1)
-    # A failed CRM POST must remain retryable when TikTok repeats the event.
-    code=code.replace('        seen[k]=time.monotonic()\n', '', 1)
-    code=code.replace(
-        '        if err:\n            log("❌ Backend: "+err)\n            return\n',
-        '        if err:\n            log("❌ Backend: "+err)\n            return\n'
-        '        seen[k]=time.monotonic()\n',
-        1,
-    )
-    code=code.replace(
-        'async def on_start(bot):\n',
-        'async def on_start(bot):\n    start_control_server(bot)\n',
-        1,
-    )
-    code=code.replace(
-        '        log("🤖 AI response: "+reply)\n\n        if not AUTO_REPLY:\n            log("🚫 Không gửi reply về TikTok vì TIKTOK_AUTO_REPLY=0")\n            return\n\n        try:\n            await bot.send_message(text=reply,msg=msg)\n            log("✅ Đã gửi TikTok reply: "+reply)\n        except Exception as e:\n            log(f"❌ send_message: {type(e).__name__}: {e}")\n            traceback.print_exc()',
-        '        if reply:\n            log("🤖 AI response: "+reply)\n        else:\n            log("✅ Backend đã lưu tin TikTok; CRM xử lý RAG và gửi trả lời qua bridge nếu bot đang bật.")',
-    )
-    # Forward the profile photo returned by ReLttk when available. TikTok
-    # does not guarantee this field, so the CRM keeps initials as fallback.
-    code=code.replace(
-        '        name=sender or "Unknown"; username=""\n',
-        '        name=sender or "Unknown"; username=""; avatar_url=profile_avatar(msg.get("avatar_url") or msg.get("avatar_larger") or msg.get("avatar_medium") or msg.get("avatar_thumb") or "")\n',
-        1,
-    )
-    code=code.replace(
-        'async def on_start(bot):\n',
-        'def profile_avatar(value):\n'
-        '    if isinstance(value, str):\n        value=value.strip()\n        return value if value.startswith(("https://", "http://")) else ""\n'
-        '    if isinstance(value, dict):\n'
-        '        for key in ("url_list", "url", "uri"):\n            found=profile_avatar(value.get(key))\n            if found: return found\n'
-        '        for nested in value.values():\n            found=profile_avatar(nested)\n            if found: return found\n'
-        '    if isinstance(value, list):\n'
-        '        for item in value:\n            found=profile_avatar(item)\n            if found: return found\n'
-        '    return ""\n\n'
-        'async def on_start(bot):\n',
-        1,
-    )
-    code=code.replace(
-        '                    username=s(p.get("unique_id") or p.get("username")).strip()\n',
-        '                    username=s(p.get("unique_id") or p.get("username")).strip()\n',
-        1,
-    )
-    code=code.replace(
-        '                    name=s(p.get("nick_name") or p.get("nickname") or username or sender).strip()\n'
-        '            except Exception as e:\n',
-        '                    name=s(p.get("nick_name") or p.get("nickname") or username or sender).strip()\n'
-        '                    avatar_url=profile_avatar(p.get("avatar_url") or p.get("avatar") or p.get("avatar_larger") or p.get("avatar_medium") or p.get("avatar_thumb") or p.get("avatars"))\n'
-        '                else:\n'
-        '                    username=s(getattr(p,"unique_id",None) or getattr(p,"username",None)).strip()\n'
-        '                    name=s(getattr(p,"nick_name",None) or getattr(p,"nickname",None) or username or sender).strip()\n'
-        '                    avatar_url=profile_avatar(getattr(p,"avatar_url",None) or getattr(p,"avatar_larger",None) or getattr(p,"avatar_medium",None) or getattr(p,"avatar_thumb",None) or getattr(p,"avatar",None) or getattr(p,"avatars",None))\n'
-        '            except Exception as e:\n',
-        1,
-    )
-    code=code.replace(
-        '            except Exception as e:\n                log(f"⚠️ get_user: {e}")\n',
-        '            except Exception as e:\n                log(f"⚠️ get_user: {e}")\n\n'
-        '        if not avatar_url.startswith(("https://", "http://")):\n            avatar_url=""\n',
-        1,
-    )
-    code=code.replace(
-        '        if username: log(f"🔖 Username   : @{username}")\n',
-        '        if username: log(f"🔖 Username   : @{username}")\n'
-        '        log(f"🖼 Avatar URL : {avatar_url or \'(none)\'}")\n',
-        1,
-    )
-    code=code.replace(
-        '                        for fld in ("text","msg_id","msg_type","awe_type","sec_uid","is_group","proto"):',
-        '                        for fld in ("text","msg_id","msg_type","awe_type","sec_uid","is_group","proto","video_id","video_creator","sticker_id","sticker_url","voice_id","music_id","avatar_url","avatar_larger","avatar_medium","avatar_thumb"):',
-        1,
-    )
-    code=code.replace(
-        '            "displayName":name,"username":username,"channel":"tiktok",',
-        '            "displayName":name,"username":username,"avatarUrl":avatar_url,"channel":"tiktok",',
-        1,
-    )
-    code=code.replace(
-        '            "displayName":name,"username":username,"avatarUrl":avatar_url,"channel":"tiktok",',
-        '            "displayName":name,"username":username,"avatarUrl":avatar_url,"mediaType":media_type,"mediaUrl":media_url,"attachments":media_attachments,"channel":"tiktok",',
-        1,
-    )
-    code=code.replace(
-        'async def on_message(bot,msg):\n',
-        TIKTOK_MEDIA_CODE + '\nasync def on_message(bot,msg):\n',
-        1,
-    )
-    code=code.replace(
-        '        effective=text or f"[TikTok event awe_type={awe}]"\n',
-        '        media_type, media_url, media_text, media_attachments = await resolve_tiktok_media(bot, msg)\n'
-        '        effective=text or media_text or ""\n',
-        1,
-    )
-    compile(code,str(path),"exec")
-    path.write_text(code,encoding="utf-8")
-    log("✅ TikTok realtime bridge OK")
-
-def sessions():
-    return list(SESSION.glob("*.json")) if SESSION.exists() else []
-
-def _cookie_file_is_usable():
-    try:
-        data=json.loads(COOKIE.read_text(encoding="utf-8"))
-        if isinstance(data,list):
-            return any(c.get("name")=="sessionid" and c.get("value") for c in data if isinstance(c,dict))
-        return bool(data.get("sessionid")) if isinstance(data,dict) else False
-    except (OSError,ValueError,TypeError):
-        return False
-
-def _parse_cookie_input(raw):
-    raw=raw.strip()
-    if not raw:
-        raise ValueError("Hãy dán Cookie header hoặc nội dung JSON.")
-    cookies={}
-    if raw[0] in "[{":
-        try:
-            data=json.loads(raw)
-        except ValueError as exc:
-            raise ValueError("JSON cookie không hợp lệ.") from exc
-        if isinstance(data,dict) and isinstance(data.get("cookies"),list):
-            data=data["cookies"]
-        if isinstance(data,list):
-            for item in data:
-                if not isinstance(item,dict) or not item.get("name") or item.get("value") is None:
-                    continue
-                domain=str(item.get("domain") or "").lower()
-                if not domain or "tiktok.com" in domain:
-                    cookies[str(item["name"])]=str(item["value"])
-        elif isinstance(data,dict):
-            cookies={str(key):str(value) for key,value in data.items() if value is not None}
-        else:
-            raise ValueError("JSON cần là danh sách cookie hoặc object tên/giá trị.")
-    else:
-        if raw.lower().startswith("cookie:"):
-            raw=raw.split(":",1)[1].strip()
-        for part in raw.split(";"):
-            name,separator,value=part.strip().partition("=")
-            if separator and name.strip():
-                cookies[name.strip()]=value.strip()
-    if not cookies.get("sessionid"):
-        raise ValueError("Không tìm thấy cookie sessionid của TikTok.")
-    return cookies
-
-def _show_cookie_setup_ui(error=""):
-    import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
-
-    root=tk.Tk()
-    root.title("Smart Merchant — Kết nối TikTok")
-    root.geometry("760x590")
-    root.minsize(650,520)
-    root.configure(bg="#f3f7f8")
-    style=ttk.Style(root)
-    style.configure("Title.TLabel",font=("Segoe UI",18,"bold"),foreground="#17354a")
-    style.configure("Body.TLabel",font=("Segoe UI",10),foreground="#38566b")
-    style.configure("Accent.TButton",font=("Segoe UI",10,"bold"),padding=(14,9))
-    outer=ttk.Frame(root,padding=22)
-    outer.pack(fill="both",expand=True)
-    ttk.Label(outer,text="Kết nối TikTok",style="Title.TLabel").pack(anchor="w")
-    ttk.Label(outer,text="Chọn cách lấy phiên đăng nhập để bật TikTok Bridge.",style="Body.TLabel").pack(anchor="w",pady=(4,14))
-    tabs=ttk.Notebook(outer)
-    tabs.pack(fill="both",expand=True)
-
-    guide=ttk.Frame(tabs,padding=20)
-    tabs.add(guide,text="Hướng dẫn lấy cookie")
-    guide_text=(
-        "Lấy Cookie header từ đúng hồ sơ Edge đang đăng nhập TikTok:\n\n"
-        "1. Mở TikTok trong hồ sơ Edge muốn kết nối.\n"
-        "2. Nhấn F12, chọn Network (Mạng), rồi tải lại trang TikTok.\n"
-        "3. Chọn một yêu cầu tới tiktok.com, mở Headers (Tiêu đề).\n"
-        "4. Trong Request Headers, tìm Cookie và sao chép phần giá trị.\n"
-        "5. Mở tab Nhập cookie, dán vào ô hoặc chọn file JSON, rồi bấm Nhập & tiếp tục.\n\n"
-        "Cookie giống mật khẩu: chỉ dán vào ứng dụng trên máy của bạn. Ứng dụng lưu phiên cục bộ; không gửi cookie lên CRM."
-    )
-    ttk.Label(guide,text=guide_text,style="Body.TLabel",justify="left",wraplength=660).pack(anchor="nw",fill="x")
-    if error:
-        ttk.Label(guide,text=error,foreground="#a33030",wraplength=660,justify="left").pack(anchor="w",pady=(18,0))
-
-    importer=ttk.Frame(tabs,padding=20)
-    tabs.add(importer,text="Nhập cookie")
-    ttk.Label(importer,text="Dán Cookie header hoặc JSON cookie TikTok:",style="Body.TLabel").pack(anchor="w")
-    field_wrap=ttk.Frame(importer)
-    field_wrap.pack(fill="both",expand=True,pady=(8,10))
-    field=tk.Text(field_wrap,height=14,wrap="word",font=("Consolas",10),undo=True)
-    scroll=ttk.Scrollbar(field_wrap,orient="vertical",command=field.yview)
-    field.configure(yscrollcommand=scroll.set)
-    field.pack(side="left",fill="both",expand=True)
-    scroll.pack(side="right",fill="y")
-    show_value=tk.BooleanVar(value=False)
-    field.tag_configure("secret",elide=True)
-    def update_mask(_event=None):
-        field.tag_configure("secret",elide=not show_value.get())
-        field.tag_add("secret","1.0","end-1c")
-        if show_value.get():
-            field.tag_remove("secret","1.0","end-1c")
-        field.edit_modified(False)
-    field.bind("<<Modified>>",update_mask)
-    ttk.Checkbutton(importer,text="Hiện nội dung cookie",variable=show_value,command=update_mask).pack(anchor="w")
-    ttk.Label(importer,text="Cookie chỉ được xử lý trên máy này, không gửi lên CRM.",style="Body.TLabel",wraplength=660).pack(anchor="w",pady=(8,0))
-    result={"ready":False}
-    def choose_file():
-        path=filedialog.askopenfilename(parent=root,title="Chọn file JSON cookie",filetypes=[("JSON","*.json"),("Tất cả file","*.*")])
-        if not path:
-            return
-        try:
-            contents=Path(path).read_text(encoding="utf-8-sig")
-        except OSError as exc:
-            messagebox.showerror("Không đọc được file",str(exc),parent=root)
-            return
-        field.delete("1.0","end")
-        field.insert("1.0",contents)
-        update_mask()
-        tabs.select(importer)
-    def import_and_continue():
-        try:
-            cookies=_parse_cookie_input(field.get("1.0","end-1c"))
-            _lttk_module("qrlogin")._write_cookies(cookies)
-        except (ValueError,OSError,ImportError,AttributeError) as exc:
-            messagebox.showerror("Cookie chưa hợp lệ",str(exc),parent=root)
-            return
-        result["ready"]=True
-        root.destroy()
-    actions=ttk.Frame(importer)
-    actions.pack(fill="x",pady=(12,0))
-    ttk.Button(actions,text="Chọn file JSON",command=choose_file).pack(side="left")
-    ttk.Button(actions,text="Nhập & tiếp tục",style="Accent.TButton",command=import_and_continue).pack(side="right")
-    ttk.Button(outer,text="Hủy",command=root.destroy).pack(anchor="e",pady=(12,0))
-    root.mainloop()
-    return result["ready"]
-
-def _import_cookie_file():
-    if not COOKIE.exists() or not _cookie_file_is_usable():
-        return False
-    log(f"🍪 Import cookie: {COOKIE}")
-    if IS_FROZEN:
-        try:
-            data=json.loads(COOKIE.read_text(encoding="utf-8"))
-            cookies={item["name"]:item["value"] for item in data if isinstance(item,dict) and item.get("name") and item.get("value")} if isinstance(data,list) else data
-            _lttk_module("qrlogin")._write_cookies(cookies)
-            return True
-        except (OSError,ValueError,TypeError,AttributeError) as exc:
-            log(f"⚠️ Không nạp được cookie: {type(exc).__name__}")
-            return False
-    return run([sys.executable,"main.py","cookies",str(COOKIE)],LTTK,check=False)==0
-
-def _lttk_module(name):
-    parent=str(LTTK.parent)
-    if parent not in sys.path:
-        sys.path.insert(0,parent)
-    return importlib.import_module(f"{LTTK.name}.{name}")
-
-def _import_browser_cookie():
-    supported={"chrome","edge","brave","firefox"}
-    browsers=[BROWSER] if BROWSER else ["chrome","edge","brave","firefox"]
-    if any(browser not in supported for browser in browsers):
-        log(f"⚠️ TIKTOK_BROWSER không hợp lệ: {BROWSER}. Dùng chrome/edge/brave/firefox.")
-        return False
-    bc=_lttk_module("browsercookies")
-    qr=_lttk_module("qrlogin")
-    found=[]
-    browser_names={"chrome":"Chrome", "edge":"Microsoft Edge", "brave":"Brave", "firefox":"Firefox"}
-    for browser in browsers:
-        log(f"🌐 Lấy phiên TikTok trực tiếp từ {browser}; không dùng QR/2FA.")
-        try:
-            found.extend((browser, profile, cookies) for profile, cookies in bc.get_tiktok_cookie_profiles(browser))
-        except Exception as exc:
-            log(f"[browser] {browser}: {exc}")
-    if not found:
-        log("ℹ️ Không tìm thấy phiên TikTok đã đăng nhập trong các hồ sơ trình duyệt.")
-        return False
-    if len(found) == 1:
-        browser, profile, cookies = found[0]
-    else:
-        print("\nTìm thấy phiên TikTok ở nhiều hồ sơ. Chọn hồ sơ muốn liên kết:")
-        for index, (browser, profile, _) in enumerate(found, 1):
-            print(f"{index}. {browser_names[browser]} — {profile}")
-        try:
-            choice = int(input("Nhập số hồ sơ: ").strip())
-            browser, profile, cookies = found[choice - 1] if 1 <= choice <= len(found) else (None, None, None)
-        except (ValueError, EOFError):
-            browser = profile = cookies = None
-        if not cookies:
-            log("Chưa chọn hồ sơ TikTok hợp lệ.")
-            return False
-    qr._write_cookies(cookies)
-    log(f"✅ Đã dùng phiên TikTok từ {browser_names[browser]} — {profile}.")
-    return True
-
-def verify_session():
-    if IS_FROZEN:
-        try:
-            import urllib.request
-            cookies=_lttk_module("qrlogin").load_session("_temp")
-            if not cookies.get("sessionid"):
-                log("[session] missing sessionid")
-                return False
-            cookie="; ".join(f"{key}={value}" for key,value in cookies.items())
-            request=urllib.request.Request(
-                "https://www.tiktok.com/messages?lang=es-419",
-                headers={"User-Agent":"Mozilla/5.0","Cookie":cookie},
-            )
-            with urllib.request.urlopen(request,timeout=15) as response:
-                if "/login" in response.geturl():
-                    log("[session] TikTok redirected to login; cookie expired or invalid")
-                    return False
-            log("[session] TikTok session valid")
-            return True
-        except Exception as exc:
-            log(f"[session] {type(exc).__name__}: {exc}")
-            return False
-    child_env=os.environ.copy()
-    child_env["PYTHONPATH"]=str(LTTK.parent)+(os.pathsep+child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else "")
-    return run([sys.executable,"-c",SESSION_CHECK_CODE],LTTK,check=False,env=child_env)==0
-
-def ensure_session():
-    if _import_cookie_file():
-        log("✅ Đã nạp lại session từ tiktok_cookies.json.")
-        return True
-    ss=sessions()
-    if ss:
-        log("✅ Session: "+ss[0].name)
-        return True
-    if _import_browser_cookie():
-        log("✅ Đã sẵn sàng phiên TikTok từ cookie.")
-        return True
-    log("⚠️ Chưa lấy được phiên từ file hoặc hồ sơ trình duyệt.")
-    return False
-
-def main():
-    RUNTIME.mkdir(parents=True,exist_ok=True)
-    configure_local_connector("tiktok", RUNTIME, PACKAGE_DIR)
-    log("="*72)
-    log("🚀 SMART MERCHANT - ONE FILE TIKTOK BOT")
-    log("="*72)
-    ensure_lttk()
-    patch_api()
-    patch_client()
-    install_plugin()
-    if "--import-browser-cookie" in sys.argv:
-        raise SystemExit(0 if _import_browser_cookie() else 1)
-    if not ensure_session() and not _show_cookie_setup_ui():
-        log("❌ Chưa có phiên TikTok. Mở lại ứng dụng để nhập cookie hoặc thử tự đọc hồ sơ trình duyệt.")
-        raise SystemExit(1)
-    if not verify_session():
-        # TikTok may redirect this lightweight web check even while ReLttk's
-        # realtime session is still valid. Let the actual client decide.
-        log("⚠️ Không xác minh được phiên qua web; đang thử kết nối realtime bằng phiên đã lưu.")
-    log("🧪 Echo="+os.getenv("TIKTOK_ECHO_TEST","0"))
-    log("🤖 RAG auto reply do CRM quản lý; không gửi reply trực tiếp từ plugin.")
-    log("👉 Gửi DM từ account TikTok khác để test. Ctrl+C để dừng.\n")
-    try:
-        if IS_FROZEN:
-            raise SystemExit(asyncio.run(_lttk_module("main")._run_all()))
-        result=subprocess.call([sys.executable,"main.py"],cwd=str(LTTK))
-        if result:
-            report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code="client_exit")
-        raise SystemExit(result)
-    except KeyboardInterrupt:
-        log("\n👋 Stop")
-    except SystemExit as exc:
-        if exc.code not in (None, 0):
-            report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code="startup_exit")
-        raise
-    except Exception as exc:
-        report_connector_status("tiktok", os.getenv("TIKTOK_BACKEND_URL", ""), os.getenv("TIKTOK_CONNECTOR_TOKEN", ""), state="error", error_code=type(exc).__name__.lower())
-        raise
-
-def self_test():
-    import sqlite3
+def self_test() -> None:
     import tkinter
     from tkinter import ttk
-    if not (LTTK/"main.py").is_file():
-        raise SystemExit("Thiếu TikTok runtime trong ứng dụng.")
-    browsercookies=_lttk_module("browsercookies")
-    if not hasattr(browsercookies,"get_tiktok_cookie_profiles"):
-        raise SystemExit("TikTok runtime bị cũ; hãy tải lại ứng dụng.")
-    _lttk_module("qrlogin")
-    sqlite3.connect(":memory:").close()
-    if not hasattr(ttk,"Notebook"):
-        raise SystemExit("Thiếu giao diện thiết lập cookie.")
-    print("Smart Merchant TikTok: ứng dụng và thư viện đã sẵn sàng.")
+    from playwright.async_api import async_playwright
 
-if __name__=="__main__":
-    if "--self-test" in sys.argv:
-        self_test()
-    else:
-        main()
+    if async_playwright is None or ttk is None:
+        raise SystemExit("Thiếu runtime chạy TikTok Seller Center.")
+    driver = Path(__import__("playwright").__file__).parent / "driver" / "node.exe"
+    if not driver.is_file():
+        raise SystemExit("Thiếu runtime Playwright trong ứng dụng.")
+    _seller_inbox_url()
+    print("Smart Merchant TikTok Shop: ứng dụng và runtime đã sẵn sàng.")
+
+
+if __name__ == "__main__" and "--self-test" in sys.argv:
+    self_test()
+elif __name__ == "__main__":
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("Đã dừng TikTok Shop Seller Center connector.", flush=True)
+    except Exception as exc:
+        report_connector_status("tiktok", BACKEND_URL, CONNECTOR_TOKEN, state="error", error_code=type(exc).__name__.lower())
+        raise

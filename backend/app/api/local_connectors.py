@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from io import BytesIO
 import json
 import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from zipfile import ZIP_STORED, ZipFile
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -313,6 +314,136 @@ async def receive_local_connector_message(
         return {"status": "received", "processed": 1 if saved.get("_created", True) else 0}
 
 
+def _history_datetime(value: object) -> datetime | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            timestamp = float(value)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc).replace(tzinfo=None)
+        except (OverflowError, OSError, ValueError):
+            return None
+    text_value = str(value or "").strip()
+    if not text_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text_value.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    except ValueError:
+        return None
+
+
+def _normalize_history_message(channel_type: str, item: object) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    thread_id = str(item.get("threadId") or item.get("conversationId") or "").strip()[:255]
+    customer_id = str(item.get("customerId") or item.get("externalUserId") or "").strip()[:255]
+    message_id = str(item.get("messageId") or item.get("message_id") or "").strip()[:255]
+    direction = str(item.get("direction") or "inbound").strip().lower()
+    content = str(item.get("message") or item.get("text") or "").strip()[:10000]
+    message_type = str(item.get("messageType") or item.get("message_type") or "text").strip().lower()
+    if direction not in {"inbound", "outbound"}:
+        return None
+    if not thread_id or not customer_id or not message_id:
+        return None
+    if message_type not in {"text", "image", "video", "audio", "file", "sticker"}:
+        return None
+    if not content and message_type == "text":
+        return None
+    return {
+        "thread_id": thread_id,
+        "customer_id": customer_id,
+        "message_id": message_id,
+        "direction": direction,
+        "content": content or f"[{message_type}]",
+        "message_type": message_type,
+        "display_name": str(item.get("displayName") or item.get("display_name") or "")[:255] or None,
+        "username": str(item.get("username") or "")[:255] or None,
+        "avatar_url": str(item.get("avatarUrl") or item.get("avatar_url") or "")[:2000] or None,
+        "media_url": str(item.get("mediaUrl") or item.get("media_url") or "")[:2000] or None,
+        "attachments": item.get("attachments") if isinstance(item.get("attachments"), list) else [],
+        "created_at": _history_datetime(item.get("createdAt") or item.get("created_at") or item.get("timestamp")),
+    }
+
+
+def receive_local_connector_history(
+    channel_type: str,
+    payload: dict,
+    authorization: str | None,
+    platform_db: Session,
+):
+    """Safely import an idempotent batch of prior chat messages without automation."""
+    if channel_type not in _SUPPORTED:
+        raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
+    if len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")) > 1_500_000:
+        raise HTTPException(status_code=413, detail="Lô lịch sử vượt quá dung lượng cho phép.")
+    items = payload.get("messages")
+    if not isinstance(items, list) or not items or len(items) > 100:
+        raise HTTPException(status_code=422, detail="Mỗi lô lịch sử phải có từ 1 đến 100 tin nhắn.")
+    business_id, channel_id = _connector_channel(channel_type, authorization, platform_db)
+    schema = _tenant_schema(platform_db, business_id)
+    imported = duplicates = skipped = 0
+    with tenant_session(schema) as tenant_db:
+        channel = tenant_db.get(Channel, channel_id)
+        if not channel or channel.business_id != business_id or channel.channel_type != channel_type or channel.status != "active":
+            raise HTTPException(status_code=401, detail="Kênh đã bị ngắt hoặc không còn hợp lệ.")
+        for item in items:
+            normalized = _normalize_history_message(channel_type, item)
+            if normalized is None:
+                skipped += 1
+                continue
+            thread_id = normalized["thread_id"]
+            message_type = normalized["message_type"]
+            saved = process_and_save_message(
+                db=tenant_db,
+                history_import=True,
+                message={
+                    "channel": channel_type,
+                    "external_account_id": channel.external_account_id,
+                    # Outbound cards still belong to the buyer's conversation.
+                    "external_user_id": normalized["customer_id"],
+                    "external_message_id": normalized["message_id"],
+                    "direction": normalized["direction"],
+                    "content": normalized["content"],
+                    "name": normalized["display_name"],
+                    "display_name": normalized["display_name"],
+                    "username": normalized["username"],
+                    "avatar_url": normalized["avatar_url"],
+                    "media_type": message_type if message_type in {"image", "video", "audio", "file", "sticker"} else None,
+                    "media_url": normalized["media_url"],
+                    "attachments": normalized["attachments"][:20],
+                    "received_at": normalized["created_at"],
+                    "raw_payload": {
+                        "threadId": thread_id,
+                        "history_import": True,
+                        "message_type": message_type,
+                        "created_at": normalized["created_at"].isoformat() if normalized["created_at"] else None,
+                    },
+                    "business_id": business_id,
+                    "channel_id": channel_id,
+                },
+            )
+            if not isinstance(saved, dict):
+                raise HTTPException(status_code=500, detail="Không thể lưu tin nhắn lịch sử.")
+            if saved.get("_created", True):
+                imported += 1
+            else:
+                duplicates += 1
+    return {"status": "received", "imported": imported, "duplicates": duplicates, "skipped": skipped}
+
+
+@router.post("/channels/{channel_type}/history")
+def receive_shopee_tiktok_history(
+    channel_type: str,
+    payload: dict,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    return receive_local_connector_history(channel_type, payload, authorization, platform_db)
+
+
 @router.post("/channels/shopee/incoming")
 async def receive_shopee_connector_message(
     payload: dict,
@@ -328,10 +459,28 @@ def sync_shopee_customer_avatars(
     authorization: str | None = Header(default=None, alias="Authorization"),
     platform_db: Session = Depends(get_platform_db),
 ):
-    """Fill missing avatars for already-known Shopee identities; never create customers."""
+    return _sync_local_connector_customer_avatars("shopee", payload, authorization, platform_db)
+
+
+@router.post("/channels/tiktok/profiles")
+def sync_tiktok_customer_avatars(
+    payload: dict,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    return _sync_local_connector_customer_avatars("tiktok", payload, authorization, platform_db)
+
+
+def _sync_local_connector_customer_avatars(
+    channel_type: str,
+    payload: dict,
+    authorization: str | None,
+    platform_db: Session,
+):
+    """Fill missing avatars for known connector identities; never create customers."""
     profiles = payload.get("profiles")
     if not isinstance(profiles, list) or len(profiles) > 200:
-        raise HTTPException(status_code=422, detail="Danh sách hồ sơ Shopee không hợp lệ.")
+        raise HTTPException(status_code=422, detail="Danh sách hồ sơ connector không hợp lệ.")
     avatars = {}
     for profile in profiles:
         if not isinstance(profile, dict):
@@ -343,9 +492,10 @@ def sync_shopee_customer_avatars(
     if not avatars:
         return {"status": "unchanged", "updated": 0}
 
-    business_id, channel_id = _connector_channel("shopee", authorization, platform_db)
+    business_id, channel_id = _connector_channel(channel_type, authorization, platform_db)
     schema = _tenant_schema(platform_db, business_id)
     updated = 0
+    matched_external_user_ids: set[str] = set()
     with tenant_session(schema) as tenant_db:
         channel = tenant_db.get(Channel, channel_id)
         if channel is None:
@@ -353,12 +503,13 @@ def sync_shopee_customer_avatars(
         identities = tenant_db.scalars(
             select(CustomerIdentity).where(
                 CustomerIdentity.business_id == business_id,
-                CustomerIdentity.channel == "shopee",
+                CustomerIdentity.channel == channel_type,
                 CustomerIdentity.external_account_id == str(channel.external_account_id or ""),
                 CustomerIdentity.external_user_id.in_(avatars),
             )
         ).all()
         for identity in identities:
+            matched_external_user_ids.add(identity.external_user_id)
             customer = identity.customer
             avatar_url = avatars.get(identity.external_user_id)
             if customer.business_id != business_id or not avatar_url or customer.avatar_url:
@@ -371,11 +522,15 @@ def sync_shopee_customer_avatars(
                 resource_type="customer",
                 resource_id=customer.id,
                 actor_type="system",
-                metadata={"fields": ["avatar_url"], "source": "shopee_connector"},
+                metadata={"fields": ["avatar_url"], "source": f"{channel_type}_connector"},
             )
             updated += 1
         tenant_db.commit()
-    return {"status": "synced", "updated": updated}
+    return {
+        "status": "synced",
+        "updated": updated,
+        "matchedExternalUserIds": sorted(matched_external_user_ids),
+    }
 
 
 def _connector_exe_path(channel_type: str) -> Path | None:
@@ -390,8 +545,7 @@ def _connector_exe_path(channel_type: str) -> Path | None:
     return next((path for path in candidates if path.is_file()), None)
 
 
-@router.get("/channels/{channel_type}/connector-app", dependencies=[Depends(require_admin_access)])
-def download_local_connector_app(channel_type: str):
+def _validated_connector_exe(channel_type: str) -> tuple[Path, str]:
     if channel_type not in _SUPPORTED:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
     app_path = _connector_exe_path(channel_type)
@@ -402,18 +556,59 @@ def download_local_connector_app(channel_type: str):
             raise HTTPException(status_code=503, detail="Ứng dụng connector trên máy chủ không hợp lệ.")
     except OSError as exc:
         raise HTTPException(status_code=503, detail="Không thể đọc ứng dụng connector trên máy chủ.") from exc
-
     app_name = "TikTok" if channel_type == "tiktok" else "Shopee"
-    return FileResponse(
-        app_path,
-        media_type="application/vnd.microsoft.portable-executable",
-        filename=f"SmartMerchant{app_name}.exe",
-        headers={"Cache-Control": "no-store"},
+    return app_path, app_name
+
+
+@router.get("/channels/{channel_type}/connector-app", dependencies=[Depends(require_admin_access)])
+def download_local_connector_app(channel_type: str):
+    return _connector_app_response(channel_type)
+
+
+def _connector_app_response(channel_type: str, *, include_download_header: bool = True):
+    app_path, app_name = _validated_connector_exe(channel_type)
+    filename = f"SmartMerchant{app_name}.exe"
+    archive = BytesIO()
+    with ZipFile(archive, "w", compression=ZIP_STORED) as bundle:
+        bundle.write(app_path, filename)
+        bundle.writestr("HUONG-DAN.txt", f"Giải nén file ZIP, sau đó chạy {filename}.\n")
+    headers = {"Cache-Control": "no-store"}
+    if include_download_header:
+        headers["Content-Disposition"] = f'attachment; filename="SmartMerchant{app_name}.zip"'
+    return Response(archive.getvalue(), media_type="application/zip", headers=headers)
+
+
+@router.post("/channels/{channel_type}/connector-app/download-ticket", dependencies=[Depends(require_admin_access)])
+def create_connector_app_download_ticket(channel_type: str):
+    _validated_connector_exe(channel_type)
+    ticket = encrypt_token(
+        json.dumps(
+            {"purpose": "connector_app", "channel_type": channel_type, "expires_at": int(time.time()) + 300},
+            separators=(",", ":"),
+        ),
+        settings.CHANNEL_ENCRYPTION_KEY,
     )
+    return {"ticket": ticket}
+
+
+@router.get("/channels/{channel_type}/connector-app/file")
+def download_connector_app_with_ticket(channel_type: str, ticket: str):
+    try:
+        payload = json.loads(decrypt_token(ticket, settings.CHANNEL_ENCRYPTION_KEY))
+        valid = (
+            payload.get("purpose") == "connector_app"
+            and payload.get("channel_type") == channel_type
+            and int(payload.get("expires_at", 0)) > int(time.time())
+        )
+    except Exception:
+        valid = False
+    if not valid:
+        raise HTTPException(status_code=404, detail="Liên kết tải file không hợp lệ hoặc đã hết hạn.")
+    # This ticket route is consumed through fetch() and saved as a ZIP by the
+    # browser. An attachment header lets download managers hijack that fetch.
+    return _connector_app_response(channel_type, include_download_header=False)
 
 
 @router.get("/channels/{channel_type}/connector-bundle", include_in_schema=False, dependencies=[Depends(require_admin_access)])
 def download_local_connector_bundle_legacy(channel_type: str):
-    if channel_type not in _SUPPORTED:
-        raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
-    raise HTTPException(status_code=410, detail="Bản tải ZIP đã được thay bằng ứng dụng .exe. Hãy tải lại từ Liên kết mạng xã hội.")
+    return _connector_app_response(channel_type)

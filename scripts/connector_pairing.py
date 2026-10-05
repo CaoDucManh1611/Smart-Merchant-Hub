@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from threading import Event, Thread
 from urllib.error import HTTPError, URLError
@@ -14,6 +16,82 @@ from urllib.parse import urlparse
 
 
 _HEARTBEAT_THREADS: set[str] = set()
+
+
+def history_checkpoint_path(runtime_dir: Path, channel_type: str, connector_token: str) -> Path:
+    """Keep resumable import state isolated per paired shop without storing its token."""
+    fingerprint = hashlib.sha256(str(connector_token).encode("utf-8")).hexdigest()[:16]
+    return runtime_dir / f"{channel_type}-history-{fingerprint}.json"
+
+
+def post_history_batch(channel_type: str, backend_url: str, connector_token: str, messages: list[dict]) -> tuple[int, str]:
+    """Send one bounded historical batch to the automation-free CRM import route."""
+    request = Request(
+        f"{backend_url.rstrip('/')}/api/channels/{channel_type}/history",
+        data=json.dumps({"messages": messages}, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {connector_token}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=45) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")[:300]
+    except Exception as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
+
+
+def load_history_checkpoint(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(value, dict) and value.get("version") == 1:
+            return value
+    except (OSError, ValueError, TypeError):
+        pass
+    return {"version": 1, "completed_threads": [], "complete": False}
+
+
+def mark_history_thread_complete(path: Path, checkpoint: dict, thread_id: str) -> dict:
+    """Atomically persist only thread IDs; a crash before this safely replays via DB dedupe."""
+    done = set(str(value) for value in checkpoint.get("completed_threads", []))
+    done.add(str(thread_id))
+    updated = {"version": 1, "completed_threads": sorted(done), "complete": False}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary_name = tempfile.mkstemp(prefix="history-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as temporary:
+            json.dump(updated, temporary, ensure_ascii=False, separators=(",", ":"))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+    return updated
+
+
+def mark_history_complete(path: Path) -> None:
+    checkpoint = load_history_checkpoint(path)
+    checkpoint["complete"] = True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary_name = tempfile.mkstemp(prefix="history-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as temporary:
+            json.dump(checkpoint, temporary, ensure_ascii=False, separators=(",", ":"))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
 
 
 def report_connector_status(

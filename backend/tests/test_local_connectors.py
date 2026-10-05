@@ -1,13 +1,16 @@
 import asyncio
 from concurrent.futures import Future
+import json
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 from fastapi import HTTPException
-from starlette.responses import FileResponse
+from starlette.responses import Response
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import shopee_bot
@@ -22,7 +25,28 @@ def test_shopee_bridge_timeout_is_delivery_unknown_not_send_failure():
     pending.cancel()
 
 from app.api import conversations, local_connectors, onboarding
-from app.api.local_connectors import _code_parts, download_local_connector_app, download_local_connector_bundle_legacy
+from app.api.local_connectors import (
+    _code_parts,
+    create_connector_app_download_ticket,
+    download_connector_app_with_ticket,
+    download_local_connector_app,
+    download_local_connector_bundle_legacy,
+)
+from app.services.channel_credentials import decrypt_token
+
+
+def _assert_connector_zip(response, executable_name, *, include_download_header=True):
+    assert isinstance(response, Response)
+    assert response.media_type == "application/zip"
+    if include_download_header:
+        assert executable_name.removesuffix(".exe") + ".zip" in response.headers["content-disposition"]
+    else:
+        assert "content-disposition" not in response.headers
+    assert response.headers["cache-control"] == "no-store"
+    with ZipFile(BytesIO(response.body)) as bundle:
+        assert executable_name in bundle.namelist()
+        assert bundle.read(executable_name).startswith(b"MZ")
+        assert "HUONG-DAN.txt" in bundle.namelist()
 
 
 @pytest.mark.parametrize("channel", ["tiktok", "shopee"])
@@ -271,19 +295,14 @@ def test_connector_rejects_wrong_type_and_malformed_tokens():
     ("channel", "filename"),
     [("tiktok", "SmartMerchantTikTok.exe"), ("shopee", "SmartMerchantShopee.exe")],
 )
-def test_connector_download_serves_the_executable(channel, filename, tmp_path, monkeypatch):
+def test_connector_download_serves_zip_with_the_executable(channel, filename, tmp_path, monkeypatch):
     executable = tmp_path / filename
     executable.write_bytes(b"MZ" + b"0" * (1024 * 1024))
     monkeypatch.setattr(local_connectors, "_connector_exe_path", lambda _: executable)
 
     response = download_local_connector_app(channel)
 
-    assert isinstance(response, FileResponse)
-    assert response.path == executable
-    assert response.media_type == "application/vnd.microsoft.portable-executable"
-    assert response.filename == filename
-    assert filename in response.headers["content-disposition"]
-    assert response.headers["cache-control"] == "no-store"
+    _assert_connector_zip(response, filename)
 
 
 def test_connector_download_reports_missing_executable(monkeypatch):
@@ -295,11 +314,37 @@ def test_connector_download_reports_missing_executable(monkeypatch):
     assert missing.value.status_code == 503
 
 
-def test_old_zip_download_route_returns_gone():
-    with pytest.raises(HTTPException) as removed:
-        download_local_connector_bundle_legacy("tiktok")
+def test_connector_download_ticket_is_expiring_and_channel_scoped(tmp_path, monkeypatch):
+    executable = tmp_path / "SmartMerchantTikTok.exe"
+    executable.write_bytes(b"MZ" + b"0" * (1024 * 1024))
+    monkeypatch.setattr(local_connectors, "_connector_exe_path", lambda _: executable)
+    monkeypatch.setattr(local_connectors.settings, "CHANNEL_ENCRYPTION_KEY", "test-download-key")
+    now = 1_800_000_000
+    monkeypatch.setattr(local_connectors.time, "time", lambda: now)
 
-    assert removed.value.status_code == 410
+    ticket = create_connector_app_download_ticket("tiktok")["ticket"]
+    payload = json.loads(decrypt_token(ticket, "test-download-key"))
+
+    assert payload == {"purpose": "connector_app", "channel_type": "tiktok", "expires_at": now + 300}
+    response = download_connector_app_with_ticket("tiktok", ticket)
+    _assert_connector_zip(response, "SmartMerchantTikTok.exe", include_download_header=False)
+
+    with pytest.raises(HTTPException) as wrong_channel:
+        download_connector_app_with_ticket("shopee", ticket)
+    assert wrong_channel.value.status_code == 404
+
+    monkeypatch.setattr(local_connectors.time, "time", lambda: now + 300)
+    with pytest.raises(HTTPException) as expired:
+        download_connector_app_with_ticket("tiktok", ticket)
+    assert expired.value.status_code == 404
+
+
+def test_legacy_bundle_download_also_serves_the_zip(tmp_path, monkeypatch):
+    executable = tmp_path / "SmartMerchantTikTok.exe"
+    executable.write_bytes(b"MZ" + b"0" * (1024 * 1024))
+    monkeypatch.setattr(local_connectors, "_connector_exe_path", lambda _: executable)
+
+    _assert_connector_zip(download_local_connector_bundle_legacy("tiktok"), "SmartMerchantTikTok.exe")
 
 
 def test_shopee_incoming_new_webchat_message_is_not_dropped():
@@ -379,7 +424,14 @@ def test_local_connector_persists_thread_id_for_outbound_replies(monkeypatch):
     assert captured["avatar_url"] == "https://cdn.example/buyer.png"
 
 
-def test_shopee_avatar_sync_only_fills_avatar_for_existing_shop_customer(monkeypatch):
+@pytest.mark.parametrize(
+    ("channel_type", "sync_profiles"),
+    [
+        ("shopee", local_connectors.sync_shopee_customer_avatars),
+        ("tiktok", local_connectors.sync_tiktok_customer_avatars),
+    ],
+)
+def test_connector_avatar_sync_only_fills_avatar_for_existing_shop_customer(monkeypatch, channel_type, sync_profiles):
     channel = type("ChannelRow", (), {"external_account_id": "shop-7"})()
     customer = type("CustomerRow", (), {"id": 10, "business_id": 7, "avatar_url": None})()
     identity = type("IdentityRow", (), {"external_user_id": "buyer-1", "customer": customer})()
@@ -410,18 +462,22 @@ def test_shopee_avatar_sync_only_fills_avatar_for_existing_shop_customer(monkeyp
     def tenant_session(_schema):
         yield TenantDb()
 
-    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda actual, *_args: (7, 11) if actual == channel_type else pytest.fail("wrong channel"))
     monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
     monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
 
-    result = local_connectors.sync_shopee_customer_avatars(
-        {"profiles": [{"externalUserId": "buyer-1", "avatarUrl": "https://cf.shopee.vn/file/buyer"}]},
+    result = sync_profiles(
+        {"profiles": [{"externalUserId": "buyer-1", "avatarUrl": "https://cdn.example/buyer"}]},
         "Bearer connector-token",
         object(),
     )
 
-    assert result == {"status": "synced", "updated": 1}
-    assert customer.avatar_url == "https://cf.shopee.vn/file/buyer"
+    assert result == {
+        "status": "synced",
+        "updated": 1,
+        "matchedExternalUserIds": ["buyer-1"],
+    }
+    assert customer.avatar_url == "https://cdn.example/buyer"
 
 
 def test_shopee_normalizer_accepts_string_content_and_sender_aliases():
@@ -514,18 +570,27 @@ def test_shopee_send_uses_shop_connector_and_platform_thread(monkeypatch):
 
 
 def test_shopee_outbound_refuses_when_exact_thread_is_not_found(monkeypatch):
+    actions = []
+
     class Page:
         @staticmethod
         def is_closed():
             return False
 
-        @staticmethod
-        async def evaluate(_script, _thread_id):
-            return False
-
     monkeypatch.setattr(shopee_bot, "CONTROL_PAGE", Page())
-    with pytest.raises(RuntimeError, match="chưa được tải"):
+    async def select_all(_page):
+        actions.append("all")
+        return True
+
+    async def select_exact(_page, row):
+        actions.append(row)
+        return False
+
+    monkeypatch.setattr(shopee_bot, "select_all_conversations_tab", select_all)
+    monkeypatch.setattr(shopee_bot, "_select_shopee_conversation", select_exact)
+    with pytest.raises(RuntimeError, match="danh sách Tất cả"):
         asyncio.run(shopee_bot.send_shopee_message("thread-1", "Chào bạn"))
+    assert actions == ["all", {"threadId": "thread-1", "customerId": ""}]
 
 
 def test_shopee_outbound_refuses_until_exact_thread_is_selected(monkeypatch):
@@ -544,7 +609,16 @@ def test_shopee_outbound_refuses_until_exact_thread_is_selected(monkeypatch):
             pass
 
     monkeypatch.setattr(shopee_bot, "CONTROL_PAGE", Page())
-    with pytest.raises(RuntimeError, match="chưa xác nhận"):
+
+    async def select_all(_page):
+        return True
+
+    async def select_exact(_page, _row):
+        return False
+
+    monkeypatch.setattr(shopee_bot, "select_all_conversations_tab", select_all)
+    monkeypatch.setattr(shopee_bot, "_select_shopee_conversation", select_exact)
+    with pytest.raises(RuntimeError, match="danh sách Tất cả"):
         asyncio.run(shopee_bot.send_shopee_message("thread-1", "Chào bạn"))
 
 
@@ -565,7 +639,9 @@ def test_shopee_avatar_scripts_include_the_current_conversation(monkeypatch):
 
     posted = []
     monkeypatch.setattr(shopee_bot, "SYNCED_AVATAR_IDS", set())
-    monkeypatch.setattr(shopee_bot, "post_profiles", lambda profiles: (posted.extend(profiles) or (200, '{"updated":1}')))
+    monkeypatch.setattr(shopee_bot, "post_profiles", lambda profiles: (
+        posted.extend(profiles) or (200, '{"updated":1,"matchedExternalUserIds":["buyer-1"]}')
+    ))
     asyncio.run(shopee_bot.sync_visible_avatars(Page()))
     avatar = asyncio.run(shopee_bot.enrich_avatar_from_edge(
         Page(), {"threadId": "thread-1", "authorId": "buyer-1"}
@@ -573,6 +649,30 @@ def test_shopee_avatar_scripts_include_the_current_conversation(monkeypatch):
 
     assert posted == [{"externalUserId": "buyer-1", "avatarUrl": "https://cdn.example/avatar.png"}]
     assert avatar == "https://cdn.example/avatar.png"
+    assert "buyer-1" in shopee_bot.SYNCED_AVATAR_IDS
+
+
+def test_shopee_avatar_ids_are_not_cached_before_customer_exists(monkeypatch):
+    class Page:
+        async def evaluate(self, _script):
+            return [{"externalUserId": "buyer-2", "avatar": "https://cdn.example/avatar.png"}]
+
+    monkeypatch.setattr(shopee_bot, "SYNCED_AVATAR_IDS", set())
+    monkeypatch.setattr(
+        shopee_bot,
+        "post_profiles",
+        lambda _profiles: (200, '{"updated":0,"matchedExternalUserIds":[]}'),
+    )
+
+    asyncio.run(shopee_bot.sync_visible_avatars(Page()))
+
+    assert "buyer-2" not in shopee_bot.SYNCED_AVATAR_IDS
+
+
+def test_shopee_avatar_extractor_accepts_json_encoded_url_lists():
+    assert shopee_bot.extract_avatar_url('{"url_list":["//cf.shopee.vn/file/avatar"]}') == (
+        "https://cf.shopee.vn/file/avatar"
+    )
 
 
 def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
@@ -642,6 +742,14 @@ def test_shopee_outbound_clicks_the_seller_chat_send_icon(monkeypatch):
             return NoWarning()
 
     monkeypatch.setattr(shopee_bot, "CONTROL_PAGE", Page())
+    async def select_all(_page):
+        return True
+
+    async def select_exact(_page, _row):
+        return True
+
+    monkeypatch.setattr(shopee_bot, "select_all_conversations_tab", select_all)
+    monkeypatch.setattr(shopee_bot, "_select_shopee_conversation", select_exact)
     result = asyncio.run(shopee_bot.send_shopee_message("thread-1", "Xin chào"))
 
     assert result["status"] == "sent"
@@ -708,6 +816,14 @@ def test_shopee_outbound_does_not_report_success_when_chat_does_not_acknowledge(
             return NoWarning()
 
     monkeypatch.setattr(shopee_bot, "CONTROL_PAGE", Page())
+    async def select_all(_page):
+        return True
+
+    async def select_exact(_page, _row):
+        return True
+
+    monkeypatch.setattr(shopee_bot, "select_all_conversations_tab", select_all)
+    monkeypatch.setattr(shopee_bot, "_select_shopee_conversation", select_exact)
     with pytest.raises(shopee_bot.ShopeeDeliveryUnknown, match="trạng thái gửi chưa xác nhận"):
         asyncio.run(shopee_bot.send_shopee_message("thread-1", "Xin chào"))
 
@@ -763,6 +879,14 @@ def test_shopee_outbound_surfaces_platform_moderation_warning(monkeypatch):
             return Warning()
 
     monkeypatch.setattr(shopee_bot, "CONTROL_PAGE", Page())
+    async def select_all(_page):
+        return True
+
+    async def select_exact(_page, _row):
+        return True
+
+    monkeypatch.setattr(shopee_bot, "select_all_conversations_tab", select_all)
+    monkeypatch.setattr(shopee_bot, "_select_shopee_conversation", select_exact)
     with pytest.raises(RuntimeError, match="Shopee cảnh báo phản hồi"):
         asyncio.run(shopee_bot.send_shopee_message("thread-1", "Trả lời"))
 
@@ -849,6 +973,45 @@ def test_shopee_connector_selects_visible_all_conversations_tab():
     assert actions == ["all", "all buyers"]
 
 
+def test_shopee_optional_buyer_group_does_not_block_selected_all_tab():
+    class Tab:
+        async def is_visible(self):
+            return True
+
+        async def evaluate(self, script):
+            if script == shopee_bot.SHOPEE_ALL_BUYERS_EXPANDED_JS:
+                raise RuntimeError("Seller Chat markup changed")
+            return True
+
+        def locator(self, _selector):
+            return self
+
+        async def click(self):
+            pass
+
+    class Tabs:
+        def __init__(self, items):
+            self.items = items
+
+        async def count(self):
+            return len(self.items)
+
+        def nth(self, index):
+            return self.items[index]
+
+    class Page:
+        @staticmethod
+        def get_by_text(text, exact):
+            assert exact is True
+            return Tabs([Tab()])
+
+        @staticmethod
+        async def wait_for_timeout(_milliseconds):
+            pass
+
+    assert asyncio.run(shopee_bot.select_all_conversations_tab(Page()))
+
+
 def test_shopee_connector_does_not_claim_all_conversations_without_selection():
     class Tab:
         def __init__(self):
@@ -885,6 +1048,62 @@ def test_shopee_connector_does_not_claim_all_conversations_without_selection():
             pass
 
     assert not asyncio.run(shopee_bot.select_all_conversations_tab(Page()))
+
+
+def test_shopee_history_uses_loaded_all_chat_rows_when_scroll_container_is_not_exposed(monkeypatch):
+    row = {
+        "id": "thread-1", "threadId": "thread-1", "customerId": "buyer-1",
+        "displayName": "Buyer", "avatar": "https://cdn.example/avatar.png",
+    }
+
+    class Page:
+        async def evaluate(self, script, *_args):
+            if "webchat-conversation-cell-root" in script and "conversation.to_id" in script:
+                return [row.copy()]
+            if "direction" in script:
+                return None
+            return []
+
+        @staticmethod
+        async def wait_for_timeout(_milliseconds):
+            pass
+
+    monkeypatch.setattr(shopee_bot, "SHOPEE_CONVERSATION_SCAN_COMPLETE", True)
+    rows = asyncio.run(shopee_bot._all_shopee_conversations(Page()))
+
+    expected_row = {key: value for key, value in row.items() if key != "avatar"}
+    expected_row["avatarUrl"] = "https://cdn.example/avatar.png"
+    assert rows == [expected_row]
+    assert not shopee_bot.SHOPEE_CONVERSATION_SCAN_COMPLETE
+
+
+def test_shopee_history_returns_loaded_messages_when_scroll_area_is_not_exposed(monkeypatch):
+    message = {"messageId": "message-1", "threadId": "thread-1", "content": "old message"}
+
+    class Page:
+        async def evaluate(self, script, *_args):
+            if "window.__SMH_SHOPEE_HISTORY_CAPTURE__ = true" in script:
+                shopee_bot.HISTORY_CAPTURE_MESSAGES = {"message-1": message}
+                return None
+            if "const list = document.querySelector('#message-virtualized-list')" in script:
+                return None
+            if "area =>" in script:
+                return {"x": 10, "y": 10, "signature": "loaded"}
+            return None
+
+        async def wait_for_selector(self, *_args, **_kwargs):
+            pass
+
+        @staticmethod
+        async def wait_for_timeout(_milliseconds):
+            pass
+
+    row = {"threadId": "thread-1", "customerId": "buyer-1"}
+    messages, complete = asyncio.run(shopee_bot._capture_shopee_history(Page(), row))
+
+    assert messages == [message]
+    assert not complete
+    assert not shopee_bot.HISTORY_CAPTURE_ENABLED
 
 
 def test_shopee_cdp_ready_uses_fixed_port_without_active_port_file(tmp_path, monkeypatch):

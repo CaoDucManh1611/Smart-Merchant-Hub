@@ -17,7 +17,14 @@ def save_message(
     - attachment
     """
 
-    query = text("""
+    dialect_name = getattr(getattr(db.get_bind(), "dialect", None), "name", "postgresql")
+    raw_payload_value = "CAST(:raw_payload AS JSONB)" if dialect_name == "postgresql" else ":raw_payload"
+    received_at_value = (
+        "COALESCE(CAST(:received_at AS TIMESTAMP), CURRENT_TIMESTAMP)"
+        if dialect_name == "postgresql"
+        else "COALESCE(:received_at, CURRENT_TIMESTAMP)"
+    )
+    query = text(f"""
         INSERT INTO messages (
             conversation_id,
             channel,
@@ -28,7 +35,8 @@ def save_message(
             content,
             media_type,
             media_url,
-            raw_payload
+            raw_payload,
+            received_at
         )
         VALUES (
             :conversation_id,
@@ -40,7 +48,8 @@ def save_message(
             :content,
             :media_type,
             :media_url,
-            CAST(:raw_payload AS JSONB)
+            {raw_payload_value},
+            {received_at_value}
         )
         ON CONFLICT (
             external_message_id
@@ -116,6 +125,8 @@ def save_message(
                         "raw_payload"
                     )
                 ),
+
+            "received_at": message.get("received_at"),
         },
     )
 

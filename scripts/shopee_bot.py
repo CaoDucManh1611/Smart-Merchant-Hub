@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from datetime import datetime
 import hmac
 import json
 import os
@@ -16,7 +17,15 @@ from threading import Lock, Thread
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from connector_pairing import configure_local_connector, report_connector_status
+from connector_pairing import (
+    configure_local_connector,
+    history_checkpoint_path,
+    load_history_checkpoint,
+    mark_history_complete,
+    mark_history_thread_complete,
+    post_history_batch,
+    report_connector_status,
+)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -26,6 +35,7 @@ except Exception:
 BASE = Path(__file__).resolve().parent
 PACKAGE_DIR = Path(getattr(sys, "_MEIPASS", str(BASE)))
 RUNTIME = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantShopee"
+HISTORY_CHECKPOINT: Path | None = None
 EDGE_PROFILE = RUNTIME / "edge-profile"
 CDP = os.getenv("SHOPEE_CDP_URL", "http://127.0.0.1:9222")
 SELLER_CHAT = "https://banhang.shopee.vn/new-webchat/conversations"
@@ -34,12 +44,17 @@ CONNECTOR_TOKEN = ""
 SEEN_MESSAGE_IDS: dict[str, float] = {}
 IN_FLIGHT_MESSAGE_IDS: set[str] = set()
 SYNCED_AVATAR_IDS: set[str] = set()
+SHOPEE_CONVERSATION_SCAN_COMPLETE = False
 CONTROL_SERVER: ThreadingHTTPServer | None = None
 CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
 CONTROL_PAGE = None
 CONTROL_CONTEXT = None
 CONTROL_SECRET = ""
 CONTROL_SEND_LOCK = Lock()
+HISTORY_CAPTURE_ENABLED = False
+HISTORY_CAPTURE_THREAD: dict | None = None
+HISTORY_CAPTURE_MESSAGES: dict[str, dict] = {}
+CONNECTOR_STARTED_AT = time.time()
 
 class ShopeeDeliveryUnknown(RuntimeError):
     """The click may have reached Shopee, but the chat did not confirm it."""
@@ -62,6 +77,11 @@ def extract_avatar_url(value: object, depth: int = 0) -> str:
         value = value.strip()
         if value.startswith("//"):
             return "https:" + value
+        if value.startswith(("{", "[")):
+            try:
+                return extract_avatar_url(json.loads(value), depth + 1)
+            except (TypeError, ValueError):
+                pass
         return value if value.startswith(("https://", "http://")) else ""
     if isinstance(value, dict):
         for key in ("url", "url_list", "avatar_url", "avatarUrl", "portrait", "src", "image_url", "imageUrl", "avatar"):
@@ -193,6 +213,59 @@ def normalize_message(message: object) -> dict | None:
     }
 
 
+def _truthy(value: object) -> bool:
+    return value is True or value == 1 or str(value or "").strip().lower() in {"1", "true", "yes"}
+
+
+def normalize_history_message(message: object, conversation: dict) -> dict | None:
+    """Normalize both sides of a Shopee chat while pinning them to its buyer."""
+    if not isinstance(message, dict):
+        return None
+    message_id = str(message.get("id") or message.get("message_id") or message.get("msg_id") or "").strip()
+    thread_id = str(message.get("conversation_id") or message.get("conv_id") or "").strip()
+    customer_id = str(conversation.get("customerId") or "").strip()
+    if not message_id or not thread_id or thread_id != str(conversation.get("threadId") or "") or not customer_id:
+        return None
+    raw_content = message.get("content")
+    try:
+        content = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
+    except ValueError:
+        content = raw_content
+    message_type = str(message.get("type") or message.get("message_type") or "text").strip().lower()
+    text = str((content.get("text") if isinstance(content, dict) else "") or
+               (raw_content if isinstance(raw_content, str) else "") or message.get("text") or "").strip()
+    if message_type not in {"text", "image", "video", "audio", "file", "sticker"}:
+        return None
+    if not text and message_type == "text":
+        return None
+    return {
+        "threadId": thread_id,
+        "customerId": customer_id,
+        "messageId": message_id,
+        "direction": "outbound" if _truthy(message.get("send_by_yourself")) else "inbound",
+        "message": text or f"[{message_type}]",
+        "messageType": message_type,
+        "displayName": str(conversation.get("displayName") or customer_id)[:255],
+        "avatarUrl": str(conversation.get("avatarUrl") or "")[:2000],
+        "createdAt": str(message.get("created_at") or message.get("create_time") or "")[:100],
+        "mediaUrl": str(message.get("media_url") or "")[:2000],
+    }
+
+
+def _is_recent_message(message: dict, since: float) -> bool:
+    value = str(message.get("createdAt") or "").strip()
+    try:
+        timestamp = float(value)
+        if timestamp > 100_000_000_000:
+            timestamp /= 1000
+    except ValueError:
+        try:
+            timestamp = datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return False
+    return since - 5 <= timestamp <= time.time() + 300
+
+
 def post_message(message: dict) -> tuple[int, str]:
     payload = {key: value for key, value in message.items() if key != "channel"}
     request = Request(
@@ -245,7 +318,10 @@ async def sync_visible_avatars(page) -> None:
                   const candidate = fiber.memoizedProps?.conversation;
                   if (candidate) { conversation = candidate; break; }
                 }
-                return conversation ? {externalUserId: String(conversation.to_id || ''), avatar: conversation.to_avatar} : null;
+                return conversation ? {
+                  externalUserId: String(conversation.to_id || ''),
+                  avatar: conversation.to_avatar || root.querySelector('img')?.currentSrc || ''
+                } : null;
               }).filter(Boolean)"""
         )
     except Exception:
@@ -266,7 +342,11 @@ async def sync_visible_avatars(page) -> None:
             if detail:
                 print(f"⚠️ Chưa đồng bộ được avatar Shopee (HTTP {status}).", flush=True)
             return
-        SYNCED_AVATAR_IDS.update(profile["externalUserId"] for profile in batch)
+        try:
+            matched_ids = json.loads(detail).get("matchedExternalUserIds", [])
+        except (AttributeError, TypeError, ValueError):
+            matched_ids = []
+        SYNCED_AVATAR_IDS.update(str(value) for value in matched_ids if value)
         try:
             updated += int(json.loads(detail).get("updated", 0))
         except (TypeError, ValueError):
@@ -319,13 +399,279 @@ async def select_all_conversations_tab(page) -> bool:
     buyers = page.get_by_text("Tất cả Người mua", exact=True)
     for index in range(await buyers.count()):
         group = buyers.nth(index)
-        if not await group.is_visible():
-            continue
-        if not await group.evaluate(SHOPEE_ALL_BUYERS_EXPANDED_JS):
-            await group.click()
-            await page.wait_for_timeout(300)
-        return bool(await group.evaluate(SHOPEE_ALL_BUYERS_EXPANDED_JS))
+        try:
+            if not await group.is_visible():
+                continue
+            if not await group.evaluate(SHOPEE_ALL_BUYERS_EXPANDED_JS):
+                await group.click()
+                await page.wait_for_timeout(300)
+        except Exception as exc:
+            # The main tab is already selected. Seller Chat changes this
+            # optional group's markup often; it must not block syncing/replies.
+            print(f"ℹ️ Không cần mở nhóm ‘Tất cả Người mua’ để tiếp tục: {type(exc).__name__}.", flush=True)
+        break
     return True
+
+
+async def _shopee_conversation_rows(page) -> list[dict]:
+    rows = await page.evaluate(
+        r"""() => [...document.querySelectorAll('[data-cy^="webchat-conversation-cell-root"]')]
+          .map(root => {
+            const key = Object.getOwnPropertyNames(root).find(name => name.startsWith('__reactFiber$'));
+            let fiber = key && root[key], conversation = null;
+            for (let depth = 0; fiber && depth < 12; depth++, fiber = fiber.return) {
+              const candidate = fiber.memoizedProps?.conversation;
+              if (candidate) { conversation = candidate; break; }
+            }
+            if (!conversation?.id || !conversation?.to_id) return null;
+            return {
+              id: String(conversation.id), threadId: String(conversation.id),
+              customerId: String(conversation.to_id),
+              displayName: String(conversation.to_name || conversation.to_nickname || conversation.to_id),
+              avatar: conversation.to_avatar || root.querySelector('img')?.currentSrc || ''
+            };
+          }).filter(Boolean)"""
+    )
+    for row in rows:
+        row["avatarUrl"] = extract_avatar_url(row.pop("avatar", ""))
+    return rows
+
+
+async def _scroll_conversation_list(page, direction: str) -> dict | None:
+    return await page.evaluate(
+        r"""({direction}) => {
+          const item = document.querySelector('[data-cy^="webchat-conversation-cell-root"]');
+          if (!item) return null;
+          let scroller = item;
+          while (scroller && scroller !== document.body) {
+            // Seller Chat has shipped list wrappers with overflow-y:hidden that
+            // still accept scrollTop updates. Check actual scroll dimensions,
+            // not only the CSS overflow keyword.
+            if (scroller.scrollHeight > scroller.clientHeight + 8) break;
+            scroller = scroller.parentElement;
+          }
+          if (!scroller || scroller === document.body) {
+            const documentScroller = document.scrollingElement;
+            if (documentScroller && documentScroller.scrollHeight > documentScroller.clientHeight + 8) scroller = documentScroller;
+            else return null;
+          }
+          const before = scroller.scrollTop;
+          const delta = Math.max(180, scroller.clientHeight * 0.75);
+          scroller.scrollTop = direction === 'reset' ? 0 : direction === 'top' ? Math.max(0, before - delta) : Math.min(scroller.scrollHeight, before + delta);
+          return {before, after: scroller.scrollTop, height: scroller.scrollHeight, client: scroller.clientHeight};
+        }""",
+        {"direction": direction},
+    )
+
+
+async def _wheel_shopee_area(page, area: str, delta_y: int) -> bool:
+    """Scroll Seller Chat's virtualized list when its wrapper hides scrollTop."""
+    probe = r"""area => {
+      const list = area === 'conversations'
+        ? document.querySelector('[data-cy^="webchat-conversation-cell-root"]')?.parentElement
+        : document.querySelector('#message-virtualized-list') ||
+          document.querySelector('[data-cy="webchat-conversation-detail-message-container"]');
+      if (!list) return null;
+      const bounds = list.getBoundingClientRect();
+      const x = Math.max(1, Math.min(innerWidth - 1, bounds.left + bounds.width / 2));
+      const y = Math.max(1, Math.min(innerHeight - 1, bounds.top + bounds.height / 2));
+      const nodes = area === 'conversations'
+        ? [...document.querySelectorAll('[data-cy^="webchat-conversation-cell-root"]')]
+        : [...list.querySelectorAll('[data-cy*="message"], [data-cy*="msg"]')];
+      const signature = nodes.map(node => {
+        const rect = node.getBoundingClientRect();
+        return `${node.getAttribute('data-cy') || ''}:${Math.round(rect.top)}:${(node.innerText || '').slice(0, 120)}`;
+      }).join('|') || `${list.scrollTop}:${list.scrollHeight}:${(list.innerText || '').slice(0, 500)}`;
+      return {x, y, signature};
+    }"""
+    try:
+        before = await page.evaluate(probe, area)
+        mouse = getattr(page, "mouse", None)
+        if not before or mouse is None:
+            return False
+        await mouse.move(before["x"], before["y"])
+        await mouse.wheel(0, delta_y)
+        await page.wait_for_timeout(350)
+        after = await page.evaluate(probe, area)
+        return bool(after and after["signature"] != before["signature"])
+    except Exception:
+        return False
+
+
+async def _all_shopee_conversations(page) -> list[dict]:
+    global SHOPEE_CONVERSATION_SCAN_COMPLETE
+    SHOPEE_CONVERSATION_SCAN_COMPLETE = False
+    rows: dict[str, dict] = {}
+    still = 0
+    reached_end = False
+    moved_at_least_once = False
+    await _scroll_conversation_list(page, "reset")
+    for _ in range(300):
+        for row in await _shopee_conversation_rows(page):
+            rows[row["threadId"]] = row
+        before_count = len(rows)
+        state = await _scroll_conversation_list(page, "bottom")
+        moved = bool(state and state["after"] != state["before"])
+        if not moved:
+            moved = await _wheel_shopee_area(page, "conversations", 650)
+        if moved:
+            moved_at_least_once = True
+            still = 0
+        else:
+            still += 1
+        await page.wait_for_timeout(180)
+        if still >= 3:
+            # A stalled wheel after observable movement means the virtual list
+            # reached its end. With no movement evidence, keep the checkpoint
+            # incomplete rather than claiming the current 10 rows are all chats.
+            reached_end = bool(
+                (state and state["after"] >= state["height"] - state["client"] - 4)
+                or moved_at_least_once
+            )
+            break
+    SHOPEE_CONVERSATION_SCAN_COMPLETE = reached_end
+    if not reached_end:
+        print(
+            f"ℹ️ Đã đọc {len(rows)} hội thoại đang tải; danh sách Shopee còn có thể tải thêm, sẽ tiếp tục kiểm tra.",
+            flush=True,
+        )
+    return list(rows.values())
+
+
+async def _select_shopee_conversation(page, row: dict) -> bool:
+    reset = await _scroll_conversation_list(page, "reset")
+    if not reset:
+        for _ in range(120):
+            if not await _wheel_shopee_area(page, "conversations", -650):
+                break
+    for _ in range(300):
+        result = await page.evaluate(
+            SHOPEE_CONVERSATION_JS,
+            {"threadId": row["threadId"], "recipientId": row["customerId"], "click": True},
+        )
+        if result and result.get("found"):
+            for _ in range(20):
+                selected = await page.evaluate(
+                    SHOPEE_CONVERSATION_JS,
+                    {"threadId": row["threadId"], "recipientId": row["customerId"], "click": False},
+                )
+                if selected and selected.get("selected"):
+                    return True
+                await page.wait_for_timeout(200)
+            return False
+        state = await _scroll_conversation_list(page, "bottom")
+        moved = bool(state and state["after"] != state["before"])
+        if not moved:
+            moved = await _wheel_shopee_area(page, "conversations", 650)
+        if not moved:
+            return False
+        await page.wait_for_timeout(180)
+    return False
+
+
+async def _capture_shopee_history(page, row: dict) -> tuple[list[dict], bool]:
+    global HISTORY_CAPTURE_ENABLED, HISTORY_CAPTURE_THREAD, HISTORY_CAPTURE_MESSAGES
+    HISTORY_CAPTURE_MESSAGES = {}
+    HISTORY_CAPTURE_THREAD = row
+    HISTORY_CAPTURE_ENABLED = True
+    try:
+        await page.evaluate("window.__SMH_SHOPEE_HISTORY_CAPTURE__ = true")
+        await page.wait_for_selector(
+            "#message-virtualized-list, [data-cy='webchat-conversation-detail-message-container']",
+            state="visible",
+            timeout=10000,
+        )
+        await page.wait_for_timeout(700)
+        moved_from_newest = False
+        no_movement = 0
+        complete = False
+        for _ in range(120):
+            state = await page.evaluate(
+                r"""() => {
+                  const list = document.querySelector('#message-virtualized-list') ||
+                    document.querySelector('[data-cy="webchat-conversation-detail-message-container"]');
+                  if (!list) return null;
+                  let scroller = list;
+                  while (scroller && scroller !== document.body) {
+                    if (scroller.scrollHeight > scroller.clientHeight + 8) break;
+                    scroller = scroller.parentElement;
+                  }
+                  if (!scroller || scroller === document.body || scroller.scrollHeight <= scroller.clientHeight + 8) return null;
+                  const before = scroller.scrollTop;
+                  scroller.scrollTop = Math.max(0, before - Math.max(160, scroller.clientHeight * 0.75));
+                  return {before, after: scroller.scrollTop, height: scroller.scrollHeight, client: scroller.clientHeight};
+                }"""
+            )
+            moved = bool(state and state["after"] != state["before"])
+            if state and state["after"] <= 1:
+                complete = True
+                break
+            if not moved:
+                moved = await _wheel_shopee_area(page, "messages", -700)
+            if moved:
+                moved_from_newest = True
+                no_movement = 0
+            else:
+                no_movement += 1
+                if moved_from_newest and no_movement >= 3:
+                    # The scroll gesture worked, then stopped at the top.
+                    complete = True
+                    break
+                if no_movement >= 5:
+                    break
+            await page.wait_for_timeout(400)
+        await page.evaluate("window.__SMH_SHOPEE_HISTORY_CAPTURE__ = false")
+        messages = sorted(HISTORY_CAPTURE_MESSAGES.values(), key=lambda item: str(item.get("createdAt") or ""))
+        return messages, complete
+    finally:
+        try:
+            await page.evaluate("window.__SMH_SHOPEE_HISTORY_CAPTURE__ = false")
+        except Exception:
+            pass
+        HISTORY_CAPTURE_ENABLED = False
+        HISTORY_CAPTURE_THREAD = None
+
+
+async def _sync_initial_shopee_history(page) -> None:
+    checkpoint = load_history_checkpoint(HISTORY_CHECKPOINT)
+    if checkpoint.get("complete"):
+        return
+    print("📚 Đang quét lịch sử Shopee Seller Chat để nhập an toàn vào CRM…", flush=True)
+    rows = await _all_shopee_conversations(page)
+    if not rows:
+        raise RuntimeError("Chưa đọc được danh sách hội thoại Shopee; lịch sử chưa được đánh dấu hoàn tất.")
+    completed = set(str(value) for value in checkpoint.get("completed_threads", []))
+    every_thread_complete = True
+    for row in rows:
+        if row["threadId"] in completed:
+            continue
+        if not await _select_shopee_conversation(page, row):
+            every_thread_complete = False
+            print(f"⚠️ Chưa mở được hội thoại Shopee {row['displayName']}; sẽ thử lại ở lần quét sau.", flush=True)
+            continue
+        messages, history_complete = await _capture_shopee_history(page, row)
+        if not messages:
+            every_thread_complete = False
+            print(f"⚠️ Chưa tải được tin cũ của {row['displayName']}; hội thoại chưa được đánh dấu hoàn tất.", flush=True)
+            continue
+        for start in range(0, len(messages), 100):
+            status, detail = await asyncio.to_thread(
+                post_history_batch, "shopee", BACKEND_URL, CONNECTOR_TOKEN, messages[start:start + 100]
+            )
+            if not 200 <= status < 300:
+                raise RuntimeError(f"CRM từ chối lô lịch sử Shopee (HTTP {status}): {detail[:160]}")
+        if history_complete:
+            checkpoint = mark_history_thread_complete(HISTORY_CHECKPOINT, checkpoint, row["threadId"])
+            completed.add(row["threadId"])
+            print(f"✅ Đã nhập lịch sử Shopee của {row['displayName']} ({len(messages)} tin).", flush=True)
+        else:
+            every_thread_complete = False
+            print(f"ℹ️ Đã nhập {len(messages)} tin Shopee đang tải của {row['displayName']}; còn lịch sử cũ, sẽ tiếp tục quét.", flush=True)
+    if SHOPEE_CONVERSATION_SCAN_COMPLETE and every_thread_complete and all(row["threadId"] in completed for row in rows):
+        mark_history_complete(HISTORY_CHECKPOINT)
+        print("✅ Đã quét xong các hội thoại lịch sử Shopee hiện có.", flush=True)
+    else:
+        print("✅ Đã nhập lịch sử các hội thoại Shopee hiện đang tải; sẽ tiếp tục khi Seller Chat hiện thêm hội thoại.", flush=True)
 
 
 async def deliver(message: dict | None) -> None:
@@ -383,7 +729,7 @@ PROBE_JS = r"""
     const conversationId = message.conversation_id || message.conv_id;
     const senderId = message.from_id || message.sender_id || message.from_user_id;
     if (!messageId || !conversationId || !senderId) return;
-    if ([true, 1, '1', 'true', 'yes'].includes(message.send_by_yourself)) return;
+    const isSelf = [true, 1, 'true', 'yes'].includes(message.send_by_yourself) || message.send_by_yourself === '1';
     const rawContent = message.content;
     const content = parse(rawContent);
     const messageText = (content && typeof content === 'object' ? content.text : '') ||
@@ -398,9 +744,11 @@ PROBE_JS = r"""
         message.avatar_url || message.avatarUrl || message.avatar || sender.avatar_url ||
         sender.avatarUrl || sender.avatar || sender.portrait || ''),
       type, content: {text: String(messageText)}, created_at: String(message.created_at || ''),
-      source: String(message.source || ''), send_by_yourself: Boolean(message.send_by_yourself),
+      source: String(message.source || ''), send_by_yourself: isSelf,
       media_url: String(message.media_url || '')
     };
+    if (window.__SMH_SHOPEE_HISTORY_CAPTURE__) console.log('__SMH_SHOPEE_HISTORY__' + JSON.stringify(safe));
+    if (isSelf) return;
     console.log('__SMH_SHOPEE__' + JSON.stringify(safe));
   };
   const inspect = (data) => {
@@ -537,25 +885,14 @@ async def send_shopee_message(thread_id: str, text: str, recipient_id: str = "")
     if len(text) > 10000:
         raise ValueError("Tin nhắn Shopee vượt quá 10.000 ký tự.")
 
-    selection = await CONTROL_PAGE.evaluate(
-        SHOPEE_CONVERSATION_JS,
-        {"threadId": thread_id, "recipientId": str(recipient_id or "").strip(), "click": True},
-    )
-    if selection and selection.get("mismatch"):
-        raise RuntimeError("Mã khách trong Shopee không khớp hội thoại CRM; không gửi để tránh nhầm khách.")
-    if not selection or not selection.get("found"):
-        raise RuntimeError("Hội thoại Shopee chưa được tải trong Edge. Hãy mở đúng hội thoại một lần rồi thử lại.")
-
-    for _ in range(20):
-        selection = await CONTROL_PAGE.evaluate(
-            SHOPEE_CONVERSATION_JS,
-            {"threadId": thread_id, "recipientId": str(recipient_id or "").strip(), "click": False},
+    if not await select_all_conversations_tab(CONTROL_PAGE):
+        raise RuntimeError("Không mở được tab Tất cả cuộc trò chuyện Shopee; tin chưa được gửi.")
+    row = {"threadId": thread_id, "customerId": str(recipient_id or "").strip()}
+    if not await _select_shopee_conversation(CONTROL_PAGE, row):
+        raise RuntimeError(
+            "Không tìm thấy đúng hội thoại trong danh sách Tất cả của Shopee. "
+            "Đã kiểm tra theo ID để tránh gửi nhầm khách; hãy xác nhận shop đang đăng nhập đúng."
         )
-        if selection and selection.get("selected"):
-            break
-        await CONTROL_PAGE.wait_for_timeout(250)
-    else:
-        raise RuntimeError("Shopee chưa xác nhận đã mở đúng hội thoại; không gửi để tránh nhầm khách.")
 
     await CONTROL_PAGE.wait_for_timeout(500)
     previous_message_count = await wait_for_message_list(CONTROL_PAGE, text)
@@ -677,13 +1014,14 @@ def start_control_server(page) -> None:
 
 
 async def run() -> None:
-    global BACKEND_URL, CONNECTOR_TOKEN, CONTROL_SECRET, CONTROL_PAGE, CONTROL_CONTEXT
+    global BACKEND_URL, CONNECTOR_TOKEN, CONTROL_SECRET, CONTROL_PAGE, CONTROL_CONTEXT, HISTORY_CHECKPOINT
     print("SmartMerchantShopee build: two-way replies + Shopee avatars", flush=True)
     try:
         from playwright.async_api import async_playwright
     except ImportError as exc:
         raise SystemExit("Thiếu Playwright. Chạy: python -m pip install playwright") from exc
     BACKEND_URL, CONNECTOR_TOKEN = configure_local_connector("shopee", RUNTIME, PACKAGE_DIR)
+    HISTORY_CHECKPOINT = history_checkpoint_path(RUNTIME, "shopee", CONNECTOR_TOKEN)
     CONTROL_SECRET = CONNECTOR_TOKEN
     async with async_playwright() as playwright:
         while True:
@@ -701,7 +1039,17 @@ async def run() -> None:
                     attached.add(id(page))
 
                     async def on_console(console_message) -> None:
+                        global HISTORY_CAPTURE_MESSAGES
                         raw = console_message.text
+                        history_prefix = "__SMH_SHOPEE_HISTORY__"
+                        if raw.startswith(history_prefix) and HISTORY_CAPTURE_ENABLED and HISTORY_CAPTURE_THREAD:
+                            try:
+                                parsed_history = json.loads(raw[len(history_prefix):])
+                            except ValueError:
+                                parsed_history = None
+                            historical = normalize_history_message(parsed_history, HISTORY_CAPTURE_THREAD)
+                            if historical:
+                                HISTORY_CAPTURE_MESSAGES[historical["messageId"]] = historical
                         if not raw.startswith("__SMH_SHOPEE__"):
                             return
                         try:
@@ -709,6 +1057,8 @@ async def run() -> None:
                         except ValueError:
                             return
                         incoming = normalize_message(parsed)
+                        if incoming and HISTORY_CAPTURE_ENABLED and not _is_recent_message(incoming, CONNECTOR_STARTED_AT):
+                            return
                         if incoming and not incoming["avatarUrl"]:
                             incoming["avatarUrl"] = await enrich_avatar_from_edge(page, incoming)
                         await deliver(incoming)
@@ -746,14 +1096,23 @@ async def run() -> None:
                 start_control_server(page)
                 print("Shopee connector đang chạy. Hãy đăng nhập thủ công trong Edge nếu cần; Ctrl+C để dừng.", flush=True)
                 last_avatar_sync = 0.0
+                last_history_scan = 0.0
                 all_conversations_selected = False
                 while cdp_ready() and not page.is_closed():
                     try:
                         selected = await select_all_conversations_tab(page)
                         if selected and not all_conversations_selected:
                             print("✅ Shopee đang theo dõi tab Tất cả cuộc trò chuyện.", flush=True)
+                        if selected and time.monotonic() - last_history_scan >= 30:
+                            last_history_scan = time.monotonic()
+                            try:
+                                await _sync_initial_shopee_history(page)
+                            except Exception as history_error:
+                                print(f"⚠️ Đồng bộ lịch sử Shopee đang dở; đã lưu checkpoint để tiếp tục khi chạy lại: {type(history_error).__name__}: {history_error}", flush=True)
                         all_conversations_selected = selected
-                    except Exception:
+                    except Exception as exc:
+                        if time.monotonic() - last_avatar_sync > 30:
+                            print(f"⚠️ Chưa kiểm tra được hội thoại Shopee: {type(exc).__name__}.", flush=True)
                         all_conversations_selected = False
                     if time.monotonic() - last_avatar_sync >= 30:
                         await sync_visible_avatars(page)

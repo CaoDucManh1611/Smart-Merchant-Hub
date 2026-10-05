@@ -229,10 +229,9 @@ test("anonymous visitors see the public landing page before choosing login or si
   assert.match(landingSource, /overflow-y:auto/);
 });
 
-test("login, recovery, and signup surfaces follow the selected theme and use a styled language picker", () => {
-  assert.equal((appSource.match(/class="ui-language-control login-language-control"/g) || []).length, 3);
-  assert.match(appSource, /\.login-language-control select \{[^}]*appearance: none;/);
-  assert.match(appSource, /:global\(body\.crm-dark\) \.login-language-control select \{[^}]*background: #1a2628/);
+test("login, recovery, and signup surfaces follow the selected theme without a language picker", () => {
+  assert.doesNotMatch(appSource, /login-language-control/);
+  assert.doesNotMatch(appSource, /class="ui-language-control login-language-control"/);
   assert.match(styleSource, /body:not\(\.crm-dark\) \.login-showcase \{[^}]*background:/);
   assert.match(styleSource, /body\.crm-dark \.login-page \{[^}]*background:/);
   assert.match(styleSource, /body\.crm-dark \.login-card \{[^}]*background: #202729/);

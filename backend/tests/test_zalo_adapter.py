@@ -6,6 +6,30 @@ from app.integrations.zalo import ZaloAdapter
 
 class ZaloAdapterTests(unittest.TestCase):
     @patch("app.integrations.zalo.httpx.get")
+    def test_fetch_conversation_history_uses_official_ten_message_page(self, get):
+        response = get.return_value
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"error": 0, "data": [{"message_id": "msg-1", "src": 1}]}
+
+        records = ZaloAdapter().fetch_conversation_history(
+            user_id="z-user-1", access_token="oa-access-token", offset=20, count=10
+        )
+
+        self.assertEqual("msg-1", records[0]["message_id"])
+        self.assertIn("openapi.zalo.me/v2.0/oa/conversation", get.call_args.args[0])
+        self.assertEqual("oa-access-token", get.call_args.kwargs["headers"]["access_token"])
+        self.assertEqual(
+            '{"user_id":"z-user-1","offset":20,"count":10}',
+            get.call_args.kwargs["params"]["data"],
+        )
+
+    def test_history_api_rejects_pages_above_official_limit(self):
+        with self.assertRaises(ValueError):
+            ZaloAdapter().fetch_conversation_history(
+                user_id="z-user-1", access_token="oa-access-token", count=11
+            )
+
+    @patch("app.integrations.zalo.httpx.get")
     def test_fetch_user_profile_returns_name_and_avatar_from_oa_api(self, get):
         response = get.return_value
         response.raise_for_status.return_value = None
