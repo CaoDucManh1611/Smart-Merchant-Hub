@@ -23,9 +23,15 @@ from connector_pairing import (
     configure_local_connector,
     history_checkpoint_path,
     load_history_checkpoint,
+    load_order_checkpoint,
+    marketplace_orders_pending,
     mark_history_thread_complete,
+    order_checkpoint_path,
+    post_marketplace_orders,
     post_history_batch,
+    read_visible_marketplace_orders,
     report_connector_status,
+    save_order_checkpoint,
 )
 
 try:
@@ -43,6 +49,10 @@ CDP = os.getenv("TIKTOK_CDP_URL", f"http://127.0.0.1:{CDP_PORT}").rstrip("/")
 SELLER_INBOX = os.getenv(
     "TIKTOK_SELLER_INBOX_URL",
     "https://seller-vn.tiktok.com/chat/inbox/current?shop_region=VN&lang=en",
+).strip()
+SELLER_ORDERS = os.getenv(
+    "TIKTOK_SELLER_ORDER_URL",
+    "https://seller-vn.tiktok.com/order",
 ).strip()
 BACKEND_URL = ""
 CONNECTOR_TOKEN = ""
@@ -708,6 +718,37 @@ def _is_seller_chat_url(value: str) -> bool:
     return parsed.scheme == "https" and parsed.hostname == "seller-vn.tiktok.com" and parsed.path.startswith("/chat/inbox/")
 
 
+def _is_seller_order_url(value: str) -> bool:
+    parsed = urlparse(str(value or ""))
+    return parsed.scheme == "https" and parsed.hostname == "seller-vn.tiktok.com" and parsed.path.startswith("/order")
+
+
+async def _sync_visible_tiktok_orders(page, checkpoint_path: Path, checkpoint: dict) -> dict:
+    state, orders = await read_visible_marketplace_orders(page, "tiktok")
+    if state != "ready" or not orders:
+        return checkpoint
+    pending_orders = marketplace_orders_pending(checkpoint, orders)
+    if not pending_orders:
+        return checkpoint
+    status, detail = await asyncio.to_thread(
+        post_marketplace_orders, "tiktok", BACKEND_URL, CONNECTOR_TOKEN, pending_orders
+    )
+    if not 200 <= status < 300:
+        raise RuntimeError(f"CRM từ chối lô đơn TikTok Shop (HTTP {status}): {detail[:180]}")
+    checkpoint = save_order_checkpoint(
+        checkpoint_path, checkpoint, pending_orders
+    )
+    try:
+        result = json.loads(detail)
+    except (TypeError, ValueError):
+        result = {}
+    print(
+        f"🧾 TikTok Shop: đã đồng bộ {len(pending_orders)} đơn mới/thay đổi "
+        f"(mới {result.get('created', 0)}, cập nhật {result.get('updated', 0)}).", flush=True
+    )
+    return checkpoint
+
+
 class _TikTokControlHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args) -> None:
         return
@@ -808,6 +849,8 @@ async def run() -> None:
         raise SystemExit("Thiếu Playwright. Chạy: python -m pip install playwright") from exc
     BACKEND_URL, CONNECTOR_TOKEN = configure_local_connector("tiktok", RUNTIME, PACKAGE_DIR)
     HISTORY_CHECKPOINT = history_checkpoint_path(RUNTIME, "tiktok", CONNECTOR_TOKEN)
+    orders_checkpoint_file = order_checkpoint_path(RUNTIME, "tiktok", CONNECTOR_TOKEN)
+    orders_checkpoint = load_order_checkpoint(orders_checkpoint_file)
     CONTROL_SECRET = CONNECTOR_TOKEN
     CONNECTOR_STARTED_AT = time.time()
     next_history_scan_at = 0.0
@@ -830,6 +873,10 @@ async def run() -> None:
                         await page.goto(_seller_inbox_url(), wait_until="domcontentloaded", timeout=120000)
                     except Exception:
                         pass
+                order_page = next((item for item in context.pages if _is_seller_order_url(item.url)), None)
+                if order_page is None:
+                    order_page = await context.new_page()
+                    await order_page.goto(SELLER_ORDERS, wait_until="domcontentloaded", timeout=120000)
                 _start_control_server(page)
                 print("TikTok Shop bridge đang theo dõi Seller Center. Đăng nhập thủ công trong Edge nếu được yêu cầu; Ctrl+C để dừng.", flush=True)
                 if not _is_seller_chat_url(page.url):
@@ -840,6 +887,10 @@ async def run() -> None:
                 conversation_baseline_ready = False
                 all_inbox_selected = False
                 last_conversation_watch_error = 0.0
+                next_order_scan_at = 0.0
+                order_login_notice = False
+                order_challenge_notice = False
+                order_unrecognized_notice = False
                 while _cdp_browser_ready() and not page.is_closed():
                     if not _is_seller_chat_url(page.url):
                         print("⚠️ Seller Center đang ở ngoài Hộp thư đến; mở đúng mục Chat để bridge tiếp tục.", flush=True)
@@ -886,6 +937,39 @@ async def run() -> None:
                                     if time.monotonic() - last_conversation_watch_error > 30:
                                         print(f"⚠️ Chưa tự mở được hội thoại mới: {type(exc).__name__}.", flush=True)
                                         last_conversation_watch_error = time.monotonic()
+                        if time.monotonic() >= next_order_scan_at:
+                            next_order_scan_at = time.monotonic() + 60
+                            if order_page is None or order_page.is_closed():
+                                order_page = await context.new_page()
+                                await order_page.goto(SELLER_ORDERS, wait_until="domcontentloaded", timeout=120000)
+                            order_state, visible_orders = await read_visible_marketplace_orders(order_page, "tiktok")
+                            if order_state == "login":
+                                if not order_login_notice:
+                                    print("🔐 Đơn TikTok Shop: hãy đăng nhập thủ công trong tab đơn hàng của Edge; bridge sẽ chờ.", flush=True)
+                                order_login_notice = True
+                                order_challenge_notice = False
+                                order_unrecognized_notice = False
+                            elif order_state == "challenge":
+                                if not order_challenge_notice:
+                                    print("⚠️ TikTok Shop yêu cầu CAPTCHA/xác minh ở tab đơn hàng; hãy xử lý thủ công, bridge không vượt CAPTCHA.", flush=True)
+                                order_challenge_notice = True
+                                order_login_notice = False
+                                order_unrecognized_notice = False
+                            elif order_state == "unrecognized":
+                                if not order_unrecognized_notice:
+                                    print("⚠️ Không nhận diện được danh sách đơn TikTok Shop trên Seller Center; chưa đồng bộ đơn nào. Có thể giao diện sàn đã đổi.", flush=True)
+                                order_unrecognized_notice = True
+                                order_login_notice = order_challenge_notice = False
+                            else:
+                                order_login_notice = order_challenge_notice = False
+                                order_unrecognized_notice = False
+                                if visible_orders:
+                                    try:
+                                        orders_checkpoint = await _sync_visible_tiktok_orders(
+                                            order_page, orders_checkpoint_file, orders_checkpoint
+                                        )
+                                    except Exception as order_error:
+                                        print(f"⚠️ Đồng bộ đơn TikTok Shop đang dở; sẽ thử lại: {type(order_error).__name__}: {str(order_error)[:160]}", flush=True)
                     except Exception as exc:
                         if time.monotonic() - last_conversation_watch_error > 30:
                             print(f"⚠️ Chưa đọc được danh sách hội thoại Seller Center: {type(exc).__name__}: {str(exc)[:180]}", flush=True)

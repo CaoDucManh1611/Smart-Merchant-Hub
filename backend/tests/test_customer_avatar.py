@@ -15,6 +15,7 @@ from app.services.channel_credentials import encrypt_token
 from app.services import customer_avatar
 from app.services.customer_avatar import (
     build_customer_avatar_url,
+    is_trusted_meta_avatar_url,
     verify_customer_avatar_url,
 )
 
@@ -92,6 +93,16 @@ class CustomerAvatarUrlTests(unittest.TestCase):
             base_url="https://crm.example.test",
         )
         self.assertTrue(refreshed.startswith("https://crm.example.test/api/customers/7/avatar?"))
+
+    def test_meta_cdn_avatar_url_is_trusted_only_over_https(self):
+        self.assertTrue(
+            is_trusted_meta_avatar_url(
+                "https://scontent-iad3-1.cdninstagram.com/v/t51/avatar.jpg"
+            )
+        )
+        self.assertTrue(is_trusted_meta_avatar_url("https://lookaside.fbsbx.com/avatar.jpg"))
+        self.assertFalse(is_trusted_meta_avatar_url("http://cdninstagram.com/avatar.jpg"))
+        self.assertFalse(is_trusted_meta_avatar_url("https://cdninstagram.com.attacker.test/avatar.jpg"))
 
 
 class CustomerAvatarApiTests(unittest.TestCase):
@@ -264,6 +275,34 @@ class CustomerAvatarApiTests(unittest.TestCase):
         self.assertEqual(b"instagram-jpeg", response.content)
         self.assertEqual("instagram-token-secret", profile.call_args.kwargs["access_token"])
         self.assertEqual("https://cdn.instagram.test/avatar.jpg", download.call_args.args[0])
+
+    def test_signed_avatar_route_uses_bridge_captured_instagram_cdn_without_meta_oauth(self):
+        customer_id = self._create_provider_customer("instagram", "bridge-cdn")
+        avatar_url = "https://scontent.cdninstagram.com/avatar/bridge-captured.jpg"
+        with Session(self.engine) as db:
+            customer = db.get(Customer, customer_id)
+            customer.avatar_url = avatar_url
+            db.commit()
+
+        signed = build_customer_avatar_url(
+            customer_id=customer_id,
+            business_id=self.business_id,
+            base_url="http://testserver",
+        )
+        provider_response = Mock()
+        provider_response.content = b"bridge-instagram-jpeg"
+        provider_response.headers = {"content-type": "image/jpeg"}
+        provider_response.raise_for_status.return_value = None
+
+        with patch("app.api.customer_avatar.httpx.get", return_value=provider_response) as download, patch(
+            "app.api.customer_avatar.fetch_instagram_customer_profile",
+            side_effect=AssertionError("bridge CDN URL should not require Meta OAuth"),
+        ):
+            response = self.client.get(signed.removeprefix("http://testserver"))
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(b"bridge-instagram-jpeg", response.content)
+        self.assertEqual(avatar_url, download.call_args.args[0])
 
 
 if __name__ == "__main__":

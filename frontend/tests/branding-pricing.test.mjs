@@ -16,7 +16,7 @@ test('pricing uses the current catalogue and existing selection handlers', () =>
   assert.match(source('ServicePricing.vue'), /plan\.price/);
   assert.match(source('ServicePricing.vue'), /plan\.max_channels/);
   assert.match(source('ServicePricing.vue'), /const referenceCode = props\.currentPlan \|\| props\.selected/);
-  assert.match(source('ServicePricing.vue'), /return `\$\{targetIndex > referenceIndex \? copy\.value\.upgradeChatbot : copy\.value\.switchChatbot\} \$\{targetName\}`/);
+  assert.match(source('ServicePricing.vue'), /return `\$\{targetIndex > referenceIndex \? copy\.value\.upgradeChatbot : copy\.value\.downgradeChatbot\} \$\{targetName\}`/);
   assert.match(source('ServicePricing.vue'), /if \(referenceIndex < 0\) return `\$\{copy\.value\.chooseChatbot\} \$\{targetName\}`/);
   assert.match(source('ServicePricing.vue'), /selectedChatbot:'Bot đang chọn'/);
   assert.match(source('ServicePricing.vue'), /if \(isChatbot && props\.selected === plan\.code\) return copy\.value\.selectedChatbot/);

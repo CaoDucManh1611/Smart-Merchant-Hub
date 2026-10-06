@@ -1179,7 +1179,7 @@ def retry_local_connector(
     """Queue one restart for a live local connector; the server cannot start an offline device."""
     _require_shop_admin(db, business_id, actor)
     channel_type = str(channel_type or "").strip().lower()
-    if channel_type not in {"tiktok", "shopee"}:
+    if channel_type not in {"tiktok", "shopee", "facebook", "instagram"}:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
 
     now = datetime.now(timezone.utc)
@@ -1254,19 +1254,19 @@ def create_local_connector_pairing_code(
     platform_db: Session = Depends(get_platform_db),
     actor: User | None = Depends(require_admin_access),
 ):
-    """Create a short-lived, single-use code for a local TikTok/Shopee connector."""
+    """Create a short-lived, single-use code for a local channel connector."""
 
     _require_shop_admin(db, business_id, actor)
     channel_type = str(channel_type or "").strip().lower()
-    if channel_type not in {"tiktok", "shopee"}:
+    if channel_type not in {"tiktok", "shopee", "facebook", "instagram"}:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
 
-    external_account_id = (
-        f"tiktok-bridge-{business_id}"
-        if channel_type == "tiktok"
-        else f"shopee-connector-{business_id}"
-    )
-    connector_name = "TikTok Connector" if channel_type == "tiktok" else "Shopee Connector"
+    external_account_id, connector_name = {
+        "tiktok": (f"tiktok-bridge-{business_id}", "TikTok Connector"),
+        "shopee": (f"shopee-connector-{business_id}", "Shopee Connector"),
+        "facebook": (f"facebook-business-suite-{business_id}", "Meta Business Suite · Messenger"),
+        "instagram": (f"instagram-business-suite-{business_id}", "Meta Business Suite · Instagram"),
+    }[channel_type]
     endpoint = f"/api/channels/{channel_type}/incoming"
     expires_at = int(time.time()) + 600
 
@@ -1423,9 +1423,11 @@ def disconnect_bot_channel(
     _require_shop_admin(db, business_id, actor)
     with tenant_session(schema_name_for(business_id)) as tenant_db:
         channel = tenant_db.get(Channel, channel_id)
-        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo", "tiktok", "shopee"}:
+        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo", "tiktok", "shopee", "facebook", "instagram"}:
             raise HTTPException(status_code=404, detail="Kênh bot không tồn tại.")
         config = channel.config if isinstance(channel.config, dict) else {}
+        if channel.channel_type in {"facebook", "instagram"} and config.get("provider") != f"{channel.channel_type}_local_connector":
+            raise HTTPException(status_code=404, detail="Chỉ có thể ngắt connector Business Suite tại đây.")
         if channel.status in {"active", "pending_pairing"}:
             was_active = channel.status == "active"
             channel.status = "disconnected"

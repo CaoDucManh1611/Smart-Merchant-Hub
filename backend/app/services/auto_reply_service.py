@@ -40,8 +40,6 @@ from app.rag.prompt_builder import (
 from app.rag.llm_caller import call_llm
 from app.rag.run_logger import RagRunLog, query_metadata
 from app.rag.topics import infer_query_topic
-from app.services.facebook_service import send_facebook_message
-from app.services.instagram_service import send_instagram_message
 from app.services.telegram_service import send_telegram_message
 from app.services.zalo_service import send_zalo_message
 from app.services.customer_collection_flow import is_browsing_request, is_greeting
@@ -373,20 +371,23 @@ def _send_channel_reply(
     business_id: int,
 ) -> dict:
     """Send one reply through the tenant-owned channel connection."""
-    if channel == "facebook":
-        return send_facebook_message(
-            recipient_id=recipient_id,
-            text=text,
+    if channel in {"facebook", "instagram"}:
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id,
+            Conversation.business_id == business_id,
+        ).first()
+        if conversation is None:
+            raise ValueError(f"Không tìm thấy hội thoại {conversation_id} trong shop.")
+        from app.api.conversations import send_meta_text
+
+        response, _ = send_meta_text(
             db=db,
+            conversation={"id": conversation.id, "channel_id": conversation.channel_id, "channel": channel},
+            recipient_id=recipient_id,
+            text_content=text,
             business_id=business_id,
         )
-    if channel == "instagram":
-        return send_instagram_message(
-            recipient_id=recipient_id,
-            text=text,
-            db=db,
-            business_id=business_id,
-        )
+        return response
     if channel == "telegram":
         return send_telegram_message(
             db=db,

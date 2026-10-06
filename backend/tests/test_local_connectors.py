@@ -49,13 +49,27 @@ def _assert_connector_zip(response, executable_name, *, include_download_header=
         assert "HUONG-DAN.txt" in bundle.namelist()
 
 
-@pytest.mark.parametrize("channel", ["tiktok", "shopee"])
+@pytest.mark.parametrize("channel", ["tiktok", "shopee", "facebook", "instagram"])
 def test_pairing_and_connector_codes_are_shop_scoped(channel):
     code = f"PAIR.{channel}.12.34.abcdEFGHijkl_1234"
     assert _code_parts(code, "PAIR") == (channel, 12, 34, "abcdEFGHijkl_1234")
 
     token = f"CONN.{channel}.12.34.abcdEFGHijkl_1234"
     assert _code_parts(token, "CONN", channel) == (channel, 12, 34, "abcdEFGHijkl_1234")
+
+
+@pytest.mark.parametrize("channel", ["facebook", "instagram"])
+def test_meta_chat_connectors_do_not_enable_marketplace_order_import(channel):
+    payload = local_connectors.ConnectorOrderBatch.model_validate({"orders": [{
+        "external_order_id": "meta-order-1",
+        "total_amount": 10,
+        "items": [{"name": "placeholder", "quantity": 1, "unit_price": 10}],
+    }]})
+
+    with pytest.raises(HTTPException) as error:
+        local_connectors.receive_local_connector_orders(channel, payload, None, object())
+
+    assert error.value.status_code == 404
 
 
 def test_connector_heartbeat_updates_only_the_authenticated_shop(monkeypatch):
@@ -129,6 +143,129 @@ def test_connector_status_report_sends_only_bounded_error_code(monkeypatch):
     assert captured["auth"] == "Bearer secret-token"
     assert captured["body"] == b'{"state": "error", "error_code": "edge_locked"}'
     assert captured["timeout"] == 3
+
+
+def test_visible_marketplace_order_parser_keeps_order_and_item_without_buyer_pii():
+    order = connector_pairing.normalize_visible_order_card("shopee", {
+        "orderId": "250101ABCDEF",
+        "status": "Chờ lấy hàng",
+        "text": "Mã đơn hàng\n250101ABCDEF\nTổng số tiền Người mua thanh toán\n₫349.000\nChờ lấy hàng",
+        "productBlocks": ["AULA F75 Pro\nSKU: F75-PRO\nx1\n₫349.000"],
+        "createdAt": "2026-10-06T10:15:00Z",
+    })
+
+    assert order["external_order_id"] == "250101ABCDEF"
+    assert order["source_status"] == "Chờ lấy hàng"
+    assert order["total_amount"] == 349000
+    assert order["items"] == [{
+        "external_product_id": None,
+        "sku": "F75-PRO",
+        "name": "AULA F75 Pro",
+        "quantity": 1,
+        "unit_price": 349000,
+    }]
+    assert "buyer_name" not in order and "phone" not in order
+
+
+def test_order_checkpoint_is_shop_scoped_and_atomic(tmp_path):
+    first = connector_pairing.order_checkpoint_path(tmp_path, "shopee", "CONN.shopee.shop-1.secret")
+    second = connector_pairing.order_checkpoint_path(tmp_path, "shopee", "CONN.shopee.shop-2.secret")
+    checkpoint = connector_pairing.load_order_checkpoint(first)
+
+    orders = [
+        {"external_order_id": "order-1", "source_status": "pending"},
+        {"external_order_id": "order-2", "source_status": "pending"},
+    ]
+    assert connector_pairing.marketplace_orders_pending(checkpoint, orders) == orders
+    saved = connector_pairing.save_order_checkpoint(first, checkpoint, orders)
+
+    assert first != second
+    assert connector_pairing.load_order_checkpoint(first) == saved
+    assert saved["synced_order_ids"] == ["order-1", "order-2"]
+    assert connector_pairing.marketplace_orders_pending(saved, orders) == []
+    changed = [{**orders[0], "source_status": "shipped"}]
+    assert connector_pairing.marketplace_orders_pending(saved, changed) == changed
+
+
+def test_marketplace_orders_import_as_drafts_and_repeat_sync_is_idempotent(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "business_id": 7,
+        "channel_type": "shopee",
+        "status": "active",
+        "external_account_id": "shop-1",
+    })()
+
+    class TenantDb:
+        def __init__(self):
+            self.added = []
+            self.next_id = 1
+
+        @staticmethod
+        def get(_model, _key):
+            return channel
+
+        def scalar(self, statement):
+            sql = str(statement)
+            if "FROM orders" in sql:
+                key = statement.compile().params.get("order_number_1")
+                return next((row for row in self.added if isinstance(row, local_connectors.Order) and row.order_number == key), None)
+            if "FROM customers" in sql:
+                key = statement.compile().params.get("external_user_id_1")
+                return next((row for row in self.added if isinstance(row, local_connectors.Customer) and row.external_user_id == key), None)
+            return None
+
+        def add(self, row):
+            if getattr(row, "id", None) is None:
+                row.id = self.next_id
+                self.next_id += 1
+            self.added.append(row)
+
+        @staticmethod
+        def flush():
+            pass
+
+        @staticmethod
+        def commit():
+            pass
+
+    tenant_db = TenantDb()
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield tenant_db
+
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+    payload = local_connectors.ConnectorOrderBatch.model_validate({"orders": [{
+        "external_order_id": "250101ABCDEF",
+        "source_status": "Chờ lấy hàng",
+        "total_amount": "349000",
+        "items": [{"sku": "F75-PRO", "name": "AULA F75 Pro", "quantity": 1, "unit_price": "349000"}],
+    }]})
+
+    first = local_connectors.receive_local_connector_orders("shopee", payload, "Bearer token", object())
+    second = local_connectors.receive_local_connector_orders("shopee", payload, "Bearer token", object())
+    another_order = local_connectors.ConnectorOrderBatch.model_validate({"orders": [{
+        "external_order_id": "250101SECOND",
+        "total_amount": "1000",
+        "items": [{"name": "Sản phẩm khác", "quantity": 1, "unit_price": "1000"}],
+    }]})
+    third = local_connectors.receive_local_connector_orders("shopee", another_order, "Bearer token", object())
+
+    order = next(row for row in tenant_db.added if isinstance(row, local_connectors.Order))
+    customer = next(row for row in tenant_db.added if isinstance(row, local_connectors.Customer))
+    product = next(row for row in tenant_db.added if isinstance(row, local_connectors.Product))
+    item = next(row for row in tenant_db.added if isinstance(row, local_connectors.OrderItem))
+    assert first == {"status": "received", "created": 1, "updated": 0, "duplicates": 0}
+    assert second == {"status": "received", "created": 0, "updated": 1, "duplicates": 0}
+    assert third["created"] == 1
+    assert order.status == "draft" and order.metadata_["external_order_id"] == "250101ABCDEF"
+    assert customer.phone is None and customer.address is None
+    assert len([row for row in tenant_db.added if isinstance(row, local_connectors.Customer)]) == 1
+    assert product.status == "external" and product.stock_quantity == 0
+    assert item.product_name_snapshot == "AULA F75 Pro" and item.line_total == 349000
 
 
 def test_connector_retry_is_acknowledged_only_for_the_current_request(monkeypatch):
@@ -293,7 +430,12 @@ def test_connector_rejects_wrong_type_and_malformed_tokens():
 
 @pytest.mark.parametrize(
     ("channel", "filename"),
-    [("tiktok", "SmartMerchantTikTok.exe"), ("shopee", "SmartMerchantShopee.exe")],
+    [
+        ("tiktok", "SmartMerchantTikTok.exe"),
+        ("shopee", "SmartMerchantShopee.exe"),
+        ("facebook", "SmartMerchantMessenger.exe"),
+        ("instagram", "SmartMerchantInstagram.exe"),
+    ],
 )
 def test_connector_download_serves_zip_with_the_executable(channel, filename, tmp_path, monkeypatch):
     executable = tmp_path / filename
@@ -303,6 +445,12 @@ def test_connector_download_serves_zip_with_the_executable(channel, filename, tm
     response = download_local_connector_app(channel)
 
     _assert_connector_zip(response, filename)
+    if channel in {"facebook", "instagram"}:
+        with ZipFile(BytesIO(response.body)) as bundle:
+            instructions = bundle.read("HUONG-DAN.txt").decode("utf-8")
+        assert "chỉ nhập lịch sử lần đầu hoặc phần còn thiếu" in instructions
+        assert "sau khi lịch sử hoàn tất sẽ chỉ đồng bộ tin mới" in instructions
+        assert "ứng dụng hỏi trước" not in instructions
 
 
 def test_connector_download_reports_missing_executable(monkeypatch):
@@ -361,6 +509,24 @@ def test_shopee_incoming_new_webchat_message_is_not_dropped():
     assert message["messageId"] == "msg-1"
     assert message["threadId"] == "conversation-1"
     assert message["message"] == "Hello shop"
+
+
+def test_shopee_realtime_message_during_history_scan_is_importable_as_history():
+    conversation = {
+        "threadId": "conversation-1", "customerId": "customer-1", "displayName": "Buyer",
+    }
+    realtime_message = {
+        "threadId": "conversation-1", "messageId": "msg-old", "message": "Tin cũ",
+        "messageType": "text", "createdAt": "2026-10-01T10:00:00Z",
+    }
+
+    history_message = shopee_bot.normalize_live_message_as_history(realtime_message, conversation)
+
+    assert history_message["threadId"] == "conversation-1"
+    assert history_message["customerId"] == "customer-1"
+    assert history_message["messageId"] == "msg-old"
+    assert history_message["direction"] == "inbound"
+    assert history_message["message"] == "Tin cũ"
 
 
 def test_shopee_system_card_does_not_become_customer_question(monkeypatch):
@@ -480,6 +646,57 @@ def test_connector_avatar_sync_only_fills_avatar_for_existing_shop_customer(monk
     assert customer.avatar_url == "https://cdn.example/buyer"
 
 
+def test_meta_instagram_profile_sync_repairs_an_existing_avatar(monkeypatch):
+    channel = type("ChannelRow", (), {"external_account_id": "meta-ig-account"})()
+    customer = type("CustomerRow", (), {
+        "id": 31, "business_id": 7, "avatar_url": "https://old-cdn.example/expired.jpg",
+    })()
+    identity = type("IdentityRow", (), {"external_user_id": "ig-thread-31", "customer": customer})()
+
+    class Rows:
+        @staticmethod
+        def all():
+            return [identity]
+
+    class TenantDb:
+        @staticmethod
+        def get(_model, _channel_id):
+            return channel
+
+        @staticmethod
+        def scalars(_query):
+            return Rows()
+
+        @staticmethod
+        def commit():
+            pass
+
+        @staticmethod
+        def add(_row):
+            pass
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda actual, *_args: (7, 12) if actual == "instagram" else pytest.fail("wrong channel"))
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+
+    result = local_connectors.sync_meta_instagram_customer_avatars(
+        {"profiles": [{"externalUserId": "ig-thread-31", "avatarUrl": "https://new-cdn.example/profile.jpg"}]},
+        "Bearer connector-token",
+        object(),
+    )
+
+    assert result == {
+        "status": "synced",
+        "updated": 1,
+        "matchedExternalUserIds": ["ig-thread-31"],
+    }
+    assert customer.avatar_url == "https://new-cdn.example/profile.jpg"
+
+
 def test_shopee_normalizer_accepts_string_content_and_sender_aliases():
     message = normalize_message({
         "msg_id": "msg-3",
@@ -567,6 +784,87 @@ def test_shopee_send_uses_shop_connector_and_platform_thread(monkeypatch):
     assert sent["url"] == "http://host.docker.internal:8092/send"
     assert sent["headers"]["X-Shopee-Bridge-Secret"] == "connector-token"
     assert sent["json"] == {"threadId": "thread-1", "message": "Chào bạn", "recipientId": "buyer-1"}
+
+
+@pytest.mark.parametrize(
+    ("channel_type", "setting_name", "port"),
+    [
+        ("facebook", "META_MESSENGER_BRIDGE_CONTROL_URL", 8093),
+        ("instagram", "META_INSTAGRAM_BRIDGE_CONTROL_URL", 8094),
+    ],
+)
+def test_meta_local_connector_sends_reply_to_channel_specific_bridge(monkeypatch, channel_type, setting_name, port):
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "access_token_encrypted": "encrypted-token",
+        "config": {"provider": f"{channel_type}_local_connector"},
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query):
+            return channel
+
+    response = type("Response", (), {
+        "status_code": 200,
+        "json": lambda _self: {"status": "sent", "message_id": "meta-ui:thread-1:123"},
+    })()
+    sent = {}
+    monkeypatch.setattr(conversations, "_local_connector_thread_id", lambda *_args: "thread-1")
+    monkeypatch.setattr(conversations, "decrypt_token", lambda *_args: "connector-token")
+    monkeypatch.setattr(conversations.settings, setting_name, f"http://host.docker.internal:{port}")
+    monkeypatch.setattr(conversations.httpx, "post", lambda url, **kwargs: (sent.update(url=url, **kwargs) or response))
+
+    result, returned_channel = conversations.send_meta_text(
+        db=TenantDb(),
+        conversation={"id": 22, "channel_id": 11, "channel": channel_type},
+        recipient_id="buyer-1",
+        text_content="Chào bạn",
+        business_id=7,
+    )
+
+    assert result["status"] == "sent"
+    assert returned_channel is channel
+    assert sent["url"] == f"http://host.docker.internal:{port}/send"
+    assert sent["headers"]["X-Meta-Bridge-Secret"] == "connector-token"
+    assert sent["json"] == {"threadId": "thread-1", "message": "Chào bạn", "recipientId": "buyer-1"}
+
+
+def test_conversation_inbox_orders_preview_fields_by_each_message_timestamp():
+    statements = []
+
+    class QueryResult:
+        def __init__(self, statement):
+            self.statement = str(statement)
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+        def scalar_one(self):
+            return 0
+
+    class TenantDb:
+        @staticmethod
+        def execute(statement, _params):
+            statements.append(str(statement))
+            return QueryResult(statement)
+
+    result = conversations.get_conversations(
+        limit=None,
+        offset=0,
+        customer_id=None,
+        unassigned_only=False,
+        db=TenantDb(),
+        tenant=type("Tenant", (), {"business_id": 4})(),
+    )
+
+    assert result["items"] == []
+    inbox_sql = statements[0]
+    assert inbox_sql.count("m.received_at DESC NULLS LAST") == 5
+    assert "last_message_at DESC" in inbox_sql
 
 
 def test_shopee_outbound_refuses_when_exact_thread_is_not_found(monkeypatch):
@@ -919,7 +1217,7 @@ def test_shopee_edge_startup_waits_for_slow_debug_endpoint(tmp_path, monkeypatch
 def test_shopee_connector_selects_visible_all_conversations_tab():
     actions = []
     selected = {"value": False}
-    buyers_expanded = {"value": False}
+    expanded = {"pre-sale": {"value": False}, "buyers": {"value": False}}
 
     class Tab:
         def __init__(self, kind, visible=True):
@@ -931,7 +1229,7 @@ def test_shopee_connector_selects_visible_all_conversations_tab():
 
         async def evaluate(self, _script):
             if _script == shopee_bot.SHOPEE_ALL_BUYERS_EXPANDED_JS:
-                return buyers_expanded["value"]
+                return expanded[self.kind]["value"]
             return selected["value"]
 
         def locator(self, selector):
@@ -943,8 +1241,8 @@ def test_shopee_connector_selects_visible_all_conversations_tab():
                 actions.append("all")
                 selected["value"] = True
             else:
-                actions.append("all buyers")
-                buyers_expanded["value"] = True
+                actions.append("pre-sale" if self.kind == "pre-sale" else "all buyers")
+                expanded[self.kind]["value"] = True
 
     class Tabs:
         def __init__(self, items):
@@ -959,18 +1257,21 @@ def test_shopee_connector_selects_visible_all_conversations_tab():
     class Page:
         @staticmethod
         def get_by_text(text, exact):
-            assert exact is True
-            assert text in {"Tất cả cuộc trò chuyện", "Tất cả Người mua"}
+            assert (text, exact) in {
+                ("Tất cả cuộc trò chuyện", True),
+                ("Khách hỏi chưa mua", False),
+                ("Tất cả Người mua", True),
+            }
             if text == "Tất cả cuộc trò chuyện":
                 return Tabs([Tab("tab", False), Tab("tab")])
-            return Tabs([Tab("buyers")])
+            return Tabs([Tab("pre-sale" if text == "Khách hỏi chưa mua" else "buyers")])
 
         @staticmethod
         async def wait_for_timeout(_milliseconds):
             pass
 
     assert asyncio.run(shopee_bot.select_all_conversations_tab(Page()))
-    assert actions == ["all", "all buyers"]
+    assert actions == ["all", "pre-sale", "all buyers"]
 
 
 def test_shopee_optional_buyer_group_does_not_block_selected_all_tab():
@@ -1002,7 +1303,11 @@ def test_shopee_optional_buyer_group_does_not_block_selected_all_tab():
     class Page:
         @staticmethod
         def get_by_text(text, exact):
-            assert exact is True
+            assert (text, exact) in {
+                ("Tất cả cuộc trò chuyện", True),
+                ("Khách hỏi chưa mua", False),
+                ("Tất cả Người mua", True),
+            }
             return Tabs([Tab()])
 
         @staticmethod
@@ -1077,13 +1382,64 @@ def test_shopee_history_uses_loaded_all_chat_rows_when_scroll_container_is_not_e
     assert not shopee_bot.SHOPEE_CONVERSATION_SCAN_COMPLETE
 
 
+def test_shopee_conversation_scan_wheels_through_lazy_loaded_rows(monkeypatch):
+    all_rows = [
+        {
+            "id": f"thread-{index}", "threadId": f"thread-{index}",
+            "customerId": f"buyer-{index}", "displayName": f"Buyer {index}",
+            "avatar": "",
+        }
+        for index in range(3)
+    ]
+
+    class Mouse:
+        def __init__(self):
+            self.position = 0
+
+        async def move(self, _x, _y):
+            pass
+
+        async def wheel(self, _x, delta_y):
+            assert delta_y > 0
+            self.position = min(2, self.position + 1)
+
+    class Page:
+        def __init__(self):
+            self.mouse = Mouse()
+
+        async def evaluate(self, script, *_args):
+            if "webchat-conversation-cell-root" in script and "conversation.to_id" in script:
+                return [row.copy() for row in all_rows[:self.mouse.position + 1]]
+            if "direction" in script:
+                return None
+            if "area =>" in script:
+                return {"x": 20, "y": 20, "signature": str(self.mouse.position)}
+            return None
+
+        @staticmethod
+        async def wait_for_timeout(_milliseconds):
+            pass
+
+    monkeypatch.setattr(shopee_bot, "SHOPEE_CONVERSATION_SCAN_COMPLETE", False)
+    rows = asyncio.run(shopee_bot._all_shopee_conversations(Page()))
+
+    assert [row["threadId"] for row in rows] == ["thread-0", "thread-1", "thread-2"]
+    assert shopee_bot.SHOPEE_CONVERSATION_SCAN_COMPLETE
+
+
 def test_shopee_history_returns_loaded_messages_when_scroll_area_is_not_exposed(monkeypatch):
     message = {"messageId": "message-1", "threadId": "thread-1", "content": "old message"}
 
     class Page:
+        def __init__(self):
+            self.history_capture = False
+
         async def evaluate(self, script, *_args):
             if "window.__SMH_SHOPEE_HISTORY_CAPTURE__ = true" in script:
-                shopee_bot.HISTORY_CAPTURE_MESSAGES = {"message-1": message}
+                self.history_capture = True
+                return None
+            if "window.__SMH_SHOPEE_HISTORY_CAPTURE__ = false" in script:
+                self.history_capture = False
                 return None
             if "const list = document.querySelector('#message-virtualized-list')" in script:
                 return None
@@ -1098,12 +1454,31 @@ def test_shopee_history_returns_loaded_messages_when_scroll_area_is_not_exposed(
         async def wait_for_timeout(_milliseconds):
             pass
 
+    page = Page()
+
+    async def select_conversation(_page, _row):
+        # Seller Chat fetches its old messages as the conversation opens. The
+        # history listener must already be armed before this action.
+        assert shopee_bot.HISTORY_CAPTURE_ENABLED
+        assert page.history_capture
+        shopee_bot.HISTORY_CAPTURE_MESSAGES = {"message-1": message}
+        return True
+
+    monkeypatch.setattr(shopee_bot, "_select_shopee_conversation", select_conversation)
     row = {"threadId": "thread-1", "customerId": "buyer-1"}
-    messages, complete = asyncio.run(shopee_bot._capture_shopee_history(Page(), row))
+    messages, complete = asyncio.run(shopee_bot._capture_shopee_history(page, row))
 
     assert messages == [message]
     assert not complete
     assert not shopee_bot.HISTORY_CAPTURE_ENABLED
+
+
+def test_shopee_challenge_detector_reports_visible_verification():
+    class Page:
+        async def evaluate(self, _script):
+            return True
+
+    assert asyncio.run(shopee_bot._shopee_challenge_visible(Page()))
 
 
 def test_shopee_cdp_ready_uses_fixed_port_without_active_port_file(tmp_path, monkeypatch):

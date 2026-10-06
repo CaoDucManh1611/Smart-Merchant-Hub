@@ -94,9 +94,10 @@ class Message(TenantBase):
 
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
-    received_at: Mapped[datetime] = mapped_column(
+    received_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         server_default=func.now(),
+        nullable=True,
     )
 
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

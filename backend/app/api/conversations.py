@@ -1145,6 +1145,79 @@ def send_shopee_text(
     return payload if isinstance(payload, dict) else {"status": "sent"}, channel
 
 
+def send_meta_text(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    text_content: str,
+    business_id: int,
+) -> tuple[dict, Channel]:
+    """Send a Meta reply through the shop's authenticated local Edge bridge."""
+    channel_type = str(conversation.get("channel") or "").strip().lower()
+    if channel_type not in {"facebook", "instagram"}:
+        raise HTTPException(status_code=400, detail="Meta bridge chỉ hỗ trợ Messenger và Instagram.")
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(conversation.get("channel_id") or 0),
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        )
+    )
+    config = channel.config if channel and isinstance(channel.config, dict) else {}
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f"Active {channel_type.title()} channel not found for this tenant")
+    if config.get("provider") != f"{channel_type}_local_connector":
+        sender = send_instagram_message if channel_type == "instagram" else send_facebook_message
+        return sender(
+            recipient_id=recipient_id,
+            text=text_content,
+            db=db,
+            business_id=business_id,
+        ), channel
+    if not channel.access_token_encrypted:
+        raise HTTPException(status_code=503, detail="Meta connector chưa có thông tin xác thực.")
+    try:
+        connector_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Meta connector credentials could not be decrypted") from exc
+
+    thread_id = _local_connector_thread_id(db, int(conversation["id"]), channel_type)
+    if not thread_id:
+        raise HTTPException(status_code=409, detail="Meta conversation chưa có thread_id để gửi tin")
+    control_url = str(
+        settings.META_INSTAGRAM_BRIDGE_CONTROL_URL
+        if channel_type == "instagram"
+        else settings.META_MESSENGER_BRIDGE_CONTROL_URL
+    ).strip().rstrip("/")
+    if not control_url:
+        raise HTTPException(status_code=503, detail=f"{channel_type.title()} outbound bridge chưa được cấu hình")
+    try:
+        response = httpx.post(
+            f"{control_url}/send",
+            json={"threadId": thread_id, "message": text_content or "", "recipientId": str(recipient_id or "")},
+            headers={"X-Meta-Bridge-Secret": connector_token},
+            timeout=30,
+        )
+    except httpx.RequestError as exc:
+        inbox_name = "Instagram" if channel_type == "instagram" else "Messenger"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Không thể kết nối {inbox_name} bridge. Hãy mở connector trên máy đang đăng nhập Meta Business Suite.",
+        ) from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code >= 400:
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        if response.status_code == 409 and isinstance(payload, dict) and payload.get("code") == "delivery_unknown":
+            raise HTTPException(status_code=409, detail=payload)
+        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi tin")
+    return payload if isinstance(payload, dict) else {"status": "sent"}, channel
+
+
 def telegram_external_message_id(result: dict, channel: Channel) -> str | None:
     """Build a collision-resistant local id from Telegram's response."""
     message_id = result.get("message_id")
@@ -1546,20 +1619,20 @@ async def send_and_save_outbound(
     else:
         logger.info("Outbound channel send started: channel=%s operation=text", channel)
 
-        if channel == "facebook":
-            result = await run_in_threadpool(
-                send_facebook_message,
-                recipient_id=recipient_id,
-                text=text_content or "",
+        if channel in {"facebook", "instagram"}:
+            if business_id is None:
+                raise HTTPException(status_code=400, detail="Tenant context is required")
+            meta_conversation = get_conversation_target(
                 db=db,
+                conversation_id=conversation_id,
                 business_id=business_id,
             )
-        elif channel == "instagram":
-            result = await run_in_threadpool(
-                send_instagram_message,
-                recipient_id=recipient_id,
-                text=text_content or "",
+            result, _ = await run_in_threadpool(
+                send_meta_text,
                 db=db,
+                conversation=meta_conversation,
+                recipient_id=recipient_id,
+                text_content=text_content or "",
                 business_id=business_id,
             )
         elif channel == "telegram":
@@ -1715,6 +1788,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1731,6 +1805,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1747,6 +1822,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1763,6 +1839,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1779,6 +1856,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1

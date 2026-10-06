@@ -142,16 +142,26 @@ def test_auto_reply_dispatches_zalo_through_tenant_channel():
     )
 
 
-def test_auto_reply_dispatches_facebook_and_instagram_through_mocked_meta_adapters():
+def test_auto_reply_dispatches_facebook_and_instagram_through_meta_send_helper():
     db = Mock()
-    for channel, sender_name in (("facebook", "send_facebook_message"), ("instagram", "send_instagram_message")):
-        with patch(f"app.services.auto_reply_service.{sender_name}", return_value={"message_id": f"{channel}:out-1"}) as send:
+    db.query.return_value.filter.return_value.first.return_value = Mock(id=11, channel_id=5)
+    for channel in ("facebook", "instagram"):
+        with patch(
+            "app.api.conversations.send_meta_text",
+            return_value=({"message_id": f"{channel}:out-1"}, Mock()),
+        ) as send:
             response = _send_channel_reply(
                 db=db, conversation_id=11, channel=channel, recipient_id="customer-1",
                 text="Hello!", business_id=4,
             )
         assert response["message_id"] == f"{channel}:out-1"
-        send.assert_called_once_with(recipient_id="customer-1", text="Hello!", db=db, business_id=4)
+        send.assert_called_once_with(
+            db=db,
+            conversation={"id": 11, "channel_id": 5, "channel": channel},
+            recipient_id="customer-1",
+            text_content="Hello!",
+            business_id=4,
+        )
 
 
 def test_auto_reply_dispatches_shopee_and_tiktok_through_existing_connectors():

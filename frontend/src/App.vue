@@ -29,6 +29,7 @@ import WorkQueue from "./WorkQueue.vue";
 import MarketingLanding from "./MarketingLanding.vue";
 import BrandLogo from "./BrandLogo.vue";
 import ServicePricing from "./ServicePricing.vue";
+import ServiceCheckout from "./ServiceCheckout.vue";
 import {
   channelCapacityState,
   connectionStateMeta,
@@ -208,7 +209,7 @@ function crmErrorText(message, fallback = "Chưa thể hoàn tất yêu cầu. V
 ========================================================= */
 
 const conversations = ref([]);
-const INBOX_PAGE_SIZE = 10;
+const INBOX_PAGE_SIZE = 50;
 const inboxConversationTotal = ref(0);
 const inboxHasMore = ref(false);
 const inboxLoadingMore = ref(false);
@@ -385,6 +386,10 @@ let pollingTimer = null;
 let platformRequestPollingTimer = null;
 let tenantProvisioningPollingTimer = null;
 let platformRequestRefreshInFlight = false;
+let workspaceRefreshInFlight = false;
+let conversationsLoadVersion = 0;
+let activeMessagesLoadVersion = 0;
+let activeMessageLoadingVersion = 0;
 let socket = null;
 let reconnectTimer = null;
 
@@ -1112,10 +1117,7 @@ const serviceRequestForm = ref({
 });
 const servicePlanSelectionTouched = ref(false);
 const serviceRequestSubmitted = ref(false);
-const serviceRequestOpen = ref(false);
-const serviceSuccessDialogOpen = ref(false);
-const serviceSuccessCloseButton = ref(null);
-const serviceSuccessStatusButton = ref(null);
+const serviceCheckoutOpen = ref(false);
 const serviceRequestReference = ref("");
 const serviceRequestError = ref("");
 const serviceMode = ref("package");
@@ -1175,6 +1177,16 @@ const currentServicePlanCode = computed(() => {
   const code = servicePlanCodeForPurchase(currentSubscription?.plan_code);
   return activeServicePlans.value.some((plan) => plan.code === code) ? code : "";
 });
+const currentServicePlan = computed(() => (
+  activeServicePlans.value.find((plan) => plan.code === currentServicePlanCode.value) || null
+));
+const servicePlanChangeKind = computed(() => {
+  if (!currentServicePlanCode.value) return "new";
+  const currentIndex = activeServicePlans.value.findIndex((plan) => plan.code === currentServicePlanCode.value);
+  const selectedIndex = activeServicePlans.value.findIndex((plan) => plan.code === servicePlanCodeForPurchase(serviceRequestForm.value.plan_code));
+  if (currentIndex < 0 || selectedIndex < 0 || currentIndex === selectedIndex) return "switch";
+  return selectedIndex < currentIndex ? "downgrade" : "upgrade";
+});
 const serviceChannelLimit = computed(() => {
   const selectedLimit = Number(selectedServicePlan.value?.max_channels);
   if (Number.isFinite(selectedLimit)) return Math.max(0, selectedLimit);
@@ -1213,6 +1225,7 @@ const metaStatus = ref({
 });
 const metaLoading = ref(false);
 const metaNotice = ref("");
+const metaNoticeIsError = ref(false);
 const botConnections = ref([]);
 const botConnectionLoading = ref(false);
 const botConnectionSaving = ref(false);
@@ -1221,9 +1234,11 @@ const botConnectionNotice = ref("");
 const botTokenVisible = ref(false);
 const botConnectionForm = ref({ channel_type: "telegram", access_token: "" });
 const localConnectorPairingCode = ref("");
+const localConnectorPairingChannel = ref("");
 const localConnectorLoading = ref(false);
 const localConnectorRetryingId = ref(null);
 const localConnectorDownloading = ref(false);
+const localConnectorDownloadChannel = ref("");
 const localConnectorError = ref("");
 const localConnectorNotice = ref("");
 const notificationError = ref("");
@@ -1233,6 +1248,8 @@ const activeBotConnections = computed(() => botConnections.value.filter((item) =
 const activeTikTokConnection = computed(() => activeBotConnections.value.find((item) => item.channel_type === "tiktok"));
 const tiktokChannelConnection = computed(() => botConnections.value.find((item) => item.channel_type === "tiktok"));
 const shopeeChannelConnection = computed(() => botConnections.value.find((item) => item.channel_type === "shopee"));
+const facebookConnectorConnection = computed(() => botConnections.value.find((item) => item.channel_type === "facebook" && item.requires_local_device));
+const instagramConnectorConnection = computed(() => botConnections.value.find((item) => item.channel_type === "instagram" && item.requires_local_device));
 const channelCapacity = computed(() => channelCapacityState(quotaSnapshot.value));
 const demoChannelsLocked = computed(() => channelCapacity.value.blocked);
 
@@ -1250,16 +1267,19 @@ async function fetchMetaStatus() {
   } catch (e) {
     console.error("Fetch Meta OAuth status error:", e);
     metaNotice.value = "Chưa thể kiểm tra kết nối Facebook/Instagram lúc này. Vui lòng thử lại sau.";
+    metaNoticeIsError.value = true;
   }
 }
 
 async function connectMeta() {
   if (demoChannelsLocked.value) {
     metaNotice.value = channelCapacity.value.reason;
+    metaNoticeIsError.value = false;
     return;
   }
   metaLoading.value = true;
   metaNotice.value = "";
+  metaNoticeIsError.value = false;
   try {
     // The authenticated request creates a state bound to this tenant.  A
     // direct location change cannot include the bearer token required in
@@ -1276,6 +1296,7 @@ async function connectMeta() {
     window.location.assign(payload.authorization_url);
   } catch (error) {
     metaNotice.value = "Chưa thể bắt đầu kết nối Facebook/Instagram. Vui lòng thử lại sau.";
+    metaNoticeIsError.value = true;
   } finally {
     metaLoading.value = false;
   }
@@ -1454,8 +1475,9 @@ function openChannelModal(tab = "meta") {
     botConnectionNotice.value = "";
     botConnectionError.value = "";
   }
-  if (["tiktok", "shopee"].includes(channelModalTab.value)) {
+  if (["tiktok", "shopee", "facebook", "instagram"].includes(channelModalTab.value)) {
     localConnectorPairingCode.value = "";
+    localConnectorPairingChannel.value = "";
     localConnectorError.value = "";
     localConnectorNotice.value = "";
   }
@@ -1466,6 +1488,7 @@ function openChannelModal(tab = "meta") {
 function closeChannelModal() {
   channelModalOpen.value = false;
   localConnectorPairingCode.value = "";
+  localConnectorPairingChannel.value = "";
 }
 
 function openServicePageFromChannelLimit() {
@@ -1812,8 +1835,7 @@ function resetServiceRequestForm() {
     notes: "",
   };
   serviceRequestSubmitted.value = false;
-  serviceRequestOpen.value = false;
-  serviceSuccessDialogOpen.value = false;
+  serviceCheckoutOpen.value = false;
   serviceRequestReference.value = "";
   serviceRequestError.value = "";
   serviceRequestNotice.value = "";
@@ -1843,29 +1865,21 @@ function selectServicePlan(planCode) {
   serviceRequestForm.value.plan_code = planCode;
   normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
-  serviceSuccessDialogOpen.value = false;
   serviceRequestError.value = "";
   servicePurchaseNotice.value = "";
   servicePurchaseError.value = "";
   servicePurchaseStatus.value = "";
-  serviceRequestOpen.value = Boolean(authUser.value);
-  if (serviceRequestOpen.value) {
-    nextTick(() => document.querySelector(".service-request-card")?.scrollIntoView({ behavior: "smooth", block: "center" }));
-  }
-}
-
-function scrollToServicePlans() {
-  document.querySelector(".smh-pricing")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  serviceCheckoutOpen.value = Boolean(authUser.value);
+  if (authUser.value && !serviceAccountSummary.value) void fetchServiceAccountSummary();
 }
 
 function selectServiceMode(mode) {
   serviceMode.value = mode === "chatbot" ? "chatbot" : "package";
-  serviceRequestOpen.value = false;
+  serviceCheckoutOpen.value = false;
   servicePlanSelectionTouched.value = false;
   serviceRequestForm.value.plan_code = preferredServicePlanCode();
   normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
-  serviceSuccessDialogOpen.value = false;
   serviceRequestReference.value = "";
   serviceRequestError.value = "";
   serviceRequestNotice.value = "";
@@ -1877,7 +1891,7 @@ function selectServiceMode(mode) {
 function openServicePage() {
   serviceLandingOpen.value = false;
   currentTab.value = "service";
-  serviceRequestOpen.value = false;
+  serviceCheckoutOpen.value = false;
   void fetchPublicServicePlans();
   if (!serviceRequestForm.value.contact_name && authUser.value) resetServiceRequestForm();
   if (authUser.value) {
@@ -1889,19 +1903,16 @@ function openServicePage() {
 function openPublicServicePage() {
   serviceLandingOpen.value = true;
   currentTab.value = "service";
+  serviceCheckoutOpen.value = false;
   void fetchPublicServicePlans();
   resetServiceRequestForm();
 }
 
 function closePublicServicePage() {
   serviceLandingOpen.value = false;
+  serviceCheckoutOpen.value = false;
   currentTab.value = "inbox";
   if (!authUser.value) publicView.value = "home";
-}
-
-function closeServiceSuccessDialog() {
-  serviceSuccessDialogOpen.value = false;
-  nextTick(() => serviceSuccessStatusButton.value?.focus());
 }
 
 function toggleServiceChannel(channel) {
@@ -1912,31 +1923,12 @@ function toggleServiceChannel(channel) {
 }
 
 async function submitServiceRequest() {
-  const form = serviceRequestForm.value;
-  const contactName = String(form.contact_name || "").trim();
-  const email = String(form.email || "").trim().toLowerCase();
-  const shopName = String(form.shop_name || "").trim();
-  if (!contactName || !email || !shopName) {
-    serviceRequestError.value = "Vui lòng nhập tên, email và tên shop để được tư vấn.";
-    return;
-  }
-  if (!/^\S+@\S+\.\S+$/.test(email)) {
-    serviceRequestError.value = "Email chưa đúng định dạng. Hãy kiểm tra lại.";
-    return;
-  }
-  if (!authUser.value?.business_id) {
-    serviceRequestError.value = "Hãy đăng nhập vào tài khoản shop để gửi yêu cầu cho quản trị viên duyệt.";
-    return;
-  }
-
   serviceRequestError.value = "";
   const detail = await purchaseServicePlan();
   if (!detail) return;
 
   serviceRequestReference.value = `SMH-${detail.id}`;
   serviceRequestSubmitted.value = true;
-  serviceSuccessDialogOpen.value = true;
-  nextTick(() => serviceSuccessCloseButton.value?.focus());
   serviceRequestNotice.value = detail.status === "pending"
     ? "Yêu cầu đã được chuyển tới quản trị viên nền tảng để duyệt."
     : "Gói Demo đã được kích hoạt cho shop.";
@@ -1978,10 +1970,10 @@ async function purchaseServicePlan() {
       body: JSON.stringify({
         plan_code: planCode,
         service_type: serviceMode.value,
-        contact_name: String(serviceRequestForm.value.contact_name || "").trim(),
-        contact_email: String(serviceRequestForm.value.email || "").trim().toLowerCase(),
+        contact_name: String(serviceRequestForm.value.contact_name || serviceAccountSummary.value?.buyer?.name || authUser.value.full_name || "").trim(),
+        contact_email: String(serviceRequestForm.value.email || serviceAccountSummary.value?.buyer?.email || authUser.value.email || "").trim().toLowerCase(),
         contact_phone: String(serviceRequestForm.value.phone || "").trim() || null,
-        shop_name: String(serviceRequestForm.value.shop_name || "").trim(),
+        shop_name: String(serviceRequestForm.value.shop_name || serviceAccountSummary.value?.buyer?.shop_name || authUser.value.business?.name || authUser.value.business_name || "").trim(),
         channels: [...serviceRequestForm.value.channels],
         notes: String(serviceRequestForm.value.notes || "").trim() || null,
       }),
@@ -2250,8 +2242,8 @@ async function activateNotification(notification) {
 }
 
 async function disconnectMeta() {
-  if (!(await requestConfirmation("Ngắt kết nối Facebook/Instagram khỏi hệ thống?", {
-    title: "Ngắt kết nối Facebook/Instagram",
+  if (!(await requestConfirmation("Ngắt liên kết Meta API? Messenger và Instagram dùng chung lần cấp quyền này.", {
+    title: "Ngắt liên kết Meta API",
     confirmLabel: "Ngắt kết nối",
     tone: "danger",
   }))) return;
@@ -2265,9 +2257,11 @@ async function disconnectMeta() {
       throw new Error(detail.detail || `HTTP ${res.status}`);
     }
     metaStatus.value = { connected: false };
-    metaNotice.value = "Đã ngắt kết nối Facebook/Instagram.";
+    metaNotice.value = "Đã ngắt liên kết Meta API.";
+    metaNoticeIsError.value = false;
   } catch (e) {
-    metaNotice.value = "Chưa thể ngắt kết nối Facebook/Instagram. Vui lòng thử lại sau.";
+    metaNotice.value = "Chưa thể ngắt liên kết Meta API. Vui lòng thử lại sau.";
+    metaNoticeIsError.value = true;
   } finally {
     metaLoading.value = false;
   }
@@ -3612,10 +3606,8 @@ function handleRealtimeEvent(event) {
     return;
   }
 
-  if (
-    event.conversation_id
-    === selectedId.value
-  ) {
+  const eventConversationId = Number(event.conversation_id);
+  if (eventConversationId > 0 && eventConversationId === Number(selectedId.value)) {
     upsertMessage(
       event.message
     );
@@ -3623,11 +3615,13 @@ function handleRealtimeEvent(event) {
     nextTick(
       scrollToBottom
     );
+    // The event is a low-latency hint. Reconcile with the canonical API list
+    // so a delayed history batch or an optimistic message cannot leave this
+    // open chat stale.
+    void loadMessages(eventConversationId, false, true);
   }
 
-  loadConversations(
-    false
-  );
+  void loadConversations(false);
   void fetchOperationalNotifications();
 
 }
@@ -4350,8 +4344,14 @@ async function loadConversations(showLoading = true, {
   customerId = inboxCustomerFilterId.value,
 } = {}) {
 
+  const requestVersion = ++conversationsLoadVersion;
+
   if (showLoading && !append) {
     loading.value = true;
+  }
+  if (!append) {
+    inboxHasMore.value = false;
+    inboxLoadingMore.value = false;
   }
   if (append) inboxLoadingMore.value = true;
 
@@ -4360,26 +4360,20 @@ async function loadConversations(showLoading = true, {
     error.value = "";
 
     const offset = append ? conversations.value.length : 0;
-    // Refreshes retain the number of rows that the operator has already
-    // loaded, while a first visit deliberately starts with a short list.
-    const limit = append
-      ? INBOX_PAGE_SIZE
-      : Math.min(50, Math.max(INBOX_PAGE_SIZE, conversations.value.length || 0));
-    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    // Opening or refreshing the inbox requests the full list. Keep paging only
+    // as a fallback for older servers that still return has_more.
+    const params = new URLSearchParams();
+    if (append) {
+      params.set("limit", String(INBOX_PAGE_SIZE));
+      params.set("offset", String(offset));
+    }
     if (customerId) params.set("customer_id", String(customerId));
 
-    const response = await apiFetch(
-      `${API_BASE}/conversations?${params}`
-    );
-
-
+    const response = await apiFetch(`${API_BASE}/conversations?${params}`, { cache: "no-store" });
     const data = await response.json().catch(() => ({}));
+    if (requestVersion !== conversationsLoadVersion) return;
     if (!response.ok) {
-      throw apiResponseError(
-        response,
-        data,
-        `HTTP ${response.status}`,
-      );
+      throw apiResponseError(response, data, `HTTP ${response.status}`);
     }
 
     const page = Array.isArray(data) ? data : data.items || [];
@@ -4387,22 +4381,17 @@ async function loadConversations(showLoading = true, {
       && Object.prototype.hasOwnProperty.call(data, "has_more");
     if (!supportsServerPaging) {
       inboxUsesLocalPaging.value = true;
-      if (!append) {
-        // Older deployments may not understand customer_id yet. Keep this
-        // client-side guard so the linked-account view is still exact.
-        inboxLegacyPageCache.value = customerId
-          ? page.filter((item) => Number(item.customer_id) === Number(customerId))
-          : page;
-      }
-      const cache = inboxLegacyPageCache.value;
-      conversations.value = cache.slice(0, offset + (append ? INBOX_PAGE_SIZE : limit));
-      inboxConversationTotal.value = cache.length;
-      inboxHasMore.value = conversations.value.length < cache.length;
+      inboxLegacyPageCache.value = customerId
+        ? page.filter((item) => Number(item.customer_id) === Number(customerId))
+        : page;
+      conversations.value = inboxLegacyPageCache.value;
+      inboxConversationTotal.value = conversations.value.length;
+      inboxHasMore.value = false;
       return;
     }
 
     inboxUsesLocalPaging.value = false;
-    if (append) {
+    if (offset > 0) {
       const knownIds = new Set(conversations.value.map((item) => Number(item.conversation_id)));
       conversations.value = [...conversations.value, ...page.filter((item) => !knownIds.has(Number(item.conversation_id)))];
     } else {
@@ -4414,6 +4403,7 @@ async function loadConversations(showLoading = true, {
 
   } catch (err) {
 
+    if (requestVersion !== conversationsLoadVersion) return;
     console.error(err);
 
     if (showLoading) {
@@ -4436,10 +4426,10 @@ async function loadConversations(showLoading = true, {
 
   } finally {
 
-    if (showLoading && !append) {
+    if (requestVersion === conversationsLoadVersion && showLoading && !append) {
       loading.value = false;
     }
-    if (append) inboxLoadingMore.value = false;
+    if (requestVersion === conversationsLoadVersion && append) inboxLoadingMore.value = false;
 
   }
 
@@ -4476,9 +4466,18 @@ async function loadMessages(
     return;
   }
 
+  const requestVersion = ++activeMessagesLoadVersion;
+  const requestedConversationId = Number(conversationId);
+
 
   if (showLoading) {
     loading.value = true;
+    activeMessageLoadingVersion = requestVersion;
+  } else if (activeMessageLoadingVersion > 0 && activeMessageLoadingVersion < requestVersion) {
+    // A realtime refresh superseded the initial visible load; do not leave
+    // the shared inbox spinner running after the newer request finishes.
+    activeMessageLoadingVersion = 0;
+    loading.value = false;
   }
 
 
@@ -4490,7 +4489,8 @@ async function loadMessages(
 
 
     const response = await apiFetch(
-      `${API_BASE}/conversations/${conversationId}/messages`
+      `${API_BASE}/conversations/${conversationId}/messages`,
+      { cache: "no-store" },
     );
 
 
@@ -4506,7 +4506,21 @@ async function loadMessages(
     const data =
       await response.json();
 
+    if (
+      requestVersion !== activeMessagesLoadVersion
+      || requestedConversationId !== Number(selectedId.value)
+    ) {
+      return;
+    }
+
     await loadOutboundDeliveryAttempts(conversationId);
+
+    if (
+      requestVersion !== activeMessagesLoadVersion
+      || requestedConversationId !== Number(selectedId.value)
+    ) {
+      return;
+    }
 
 
     const rawMessages =
@@ -4571,6 +4585,12 @@ async function loadMessages(
 
   } catch (err) {
 
+    if (
+      requestVersion !== activeMessagesLoadVersion
+      || requestedConversationId !== Number(selectedId.value)
+    ) {
+      return;
+    }
     console.error(err);
 
 
@@ -4584,8 +4604,14 @@ async function loadMessages(
 
   } finally {
 
-    if (showLoading) {
+    if (
+      requestVersion === activeMessagesLoadVersion
+      && requestedConversationId === Number(selectedId.value)
+      && showLoading
+      && activeMessageLoadingVersion === requestVersion
+    ) {
       loading.value = false;
+      activeMessageLoadingVersion = 0;
     }
 
   }
@@ -5807,6 +5833,8 @@ async function verifySignupOtp() {
     servicePurchaseNotice.value = detail.subscription?.status === "pending"
       ? "Đã gửi gói đã chọn tới admin. Chờ duyệt để kích hoạt; đăng ký chưa ghi nhận thanh toán."
       : "Đã tạo shop với gói đã chọn.";
+    serviceRequestSubmitted.value = ["pending", "active"].includes(servicePurchaseStatus.value);
+    serviceRequestReference.value = detail.subscription?.id ? `SMH-${detail.subscription.id}` : "";
     loadBusinessProfile();
     loadThemePreference();
     loadSavedInboxViews();
@@ -7480,8 +7508,8 @@ async function toggleTeamMember(member) {
   }
 }
 
-async function createLocalConnectorPairingCode() {
-  const channelType = channelModalTab.value;
+async function createLocalConnectorPairingCode(requestedChannelType = channelModalTab.value) {
+  const channelType = String(requestedChannelType || channelModalTab.value).trim().toLowerCase();
   const alreadyConnected = activeBotConnections.value.some((item) => item.channel_type === channelType);
   if (demoChannelsLocked.value && !alreadyConnected) {
     localConnectorError.value = channelCapacity.value.reason;
@@ -7491,12 +7519,14 @@ async function createLocalConnectorPairingCode() {
   localConnectorError.value = "";
   localConnectorNotice.value = "";
   localConnectorPairingCode.value = "";
+  localConnectorPairingChannel.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/channels/${channelType}/pairing-code`, { method: "POST" });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
     localConnectorPairingCode.value = String(detail.pairing_code || "");
     if (!localConnectorPairingCode.value) throw new Error("Máy chủ chưa trả pairing code.");
+    localConnectorPairingChannel.value = channelType;
     localConnectorNotice.value = crmUiText("Mã chỉ dùng một lần và hết hạn sau 10 phút. Nhập mã trong ứng dụng trên máy của shop.");
     await fetchBotConnections();
   } catch (err) {
@@ -7524,8 +7554,12 @@ async function retryLocalConnector(connection) {
 }
 
 async function downloadLocalConnectorApp() {
-  const channelType = channelModalTab.value;
-  const filename = `SmartMerchant${channelType === "tiktok" ? "TikTok" : "Shopee"}.zip`;
+  const channelType = String(localConnectorDownloadChannel.value || channelModalTab.value || "").trim().toLowerCase();
+  const filename = channelType === "facebook"
+    ? "SmartMerchantMessenger.zip"
+    : channelType === "instagram"
+      ? "SmartMerchantInstagram.zip"
+      : `SmartMerchant${channelType === "tiktok" ? "TikTok" : "Shopee"}.zip`;
   localConnectorDownloading.value = true;
   localConnectorError.value = "";
   try {
@@ -7571,8 +7605,19 @@ async function downloadLocalConnectorApp() {
     if (err?.name === "AbortError") return;
     localConnectorError.value = crmErrorText(botConnectionErrorMessage(err?.payload, err?.message || ""), "Chưa tải được ứng dụng connector. Vui lòng thử lại.");
   } finally {
+    localConnectorDownloadChannel.value = "";
     localConnectorDownloading.value = false;
   }
+}
+
+async function downloadMessengerConnectorApp() {
+  localConnectorDownloadChannel.value = "facebook";
+  await downloadLocalConnectorApp();
+}
+
+async function downloadInstagramConnectorApp() {
+  localConnectorDownloadChannel.value = "instagram";
+  await downloadLocalConnectorApp();
 }
 
 async function copyLocalConnectorPairingCode() {
@@ -9245,18 +9290,27 @@ async function initializeTenantWorkspace() {
     const metaResult = new URLSearchParams(window.location.search).get("meta");
     if (metaResult === "connected") {
       metaNotice.value = "Kết nối Facebook/Instagram thành công.";
+      metaNoticeIsError.value = false;
       fetchMetaStatus();
     } else if (metaResult === "error") {
       metaNotice.value = "Kết nối Facebook/Instagram thất bại. Hãy kiểm tra cấu hình rồi thử lại.";
+      metaNoticeIsError.value = true;
     }
 
     if (!pollingTimer) {
       pollingTimer = setInterval(async () => {
-        await loadConversations(false);
-        if (selectedId.value) await loadMessages(selectedId.value, false, true);
-        void fetchOperationalNotifications();
-      // WebSocket is the primary realtime path.  Keep a short fallback so a
-      // reconnecting browser does not hide a bot reply for 25 seconds.
+        if (workspaceRefreshInFlight || document.hidden) return;
+        workspaceRefreshInFlight = true;
+        try {
+          await loadConversations(false);
+          const activeConversationId = selectedId.value;
+          if (activeConversationId) await loadMessages(activeConversationId, false, true);
+          void fetchOperationalNotifications();
+        } finally {
+          workspaceRefreshInFlight = false;
+        }
+      // WebSocket is the primary realtime path. Keep one serialized fallback
+      // so slower API responses cannot overwrite newer inbox/message state.
       }, 5000);
     }
   } catch (err) {
@@ -12653,7 +12707,7 @@ function followupRecommendationLabel(item) {
 
         <div class="operation-mode-banner" data-testid="orders-processing-only">
           <strong>Chế độ xử lý đơn bán</strong>
-          <span>Đơn được tạo từ hộp thư hoặc luồng trợ lý. Màn hình này chỉ xử lý trạng thái, thanh toán, vận chuyển và lịch sử.</span>
+          <span>Đơn từ Seller Center được nhập ở trạng thái nháp để bạn kiểm tra trước khi xử lý tồn kho.</span>
         </div>
 
         <details class="report-panel order-import-panel">
@@ -12683,15 +12737,16 @@ function followupRecommendationLabel(item) {
             <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>SĐT khách</th><th>Sản phẩm</th><th>Kênh</th><th>Trạng thái</th><th>Quy trình</th><th>Thanh toán</th><th>Tổng tiền</th><th>Ngày tạo</th></tr></thead>
             <tbody>
               <tr v-for="order in orders" :key="order.id">
-                <td><strong>{{ order.order_number }}</strong></td>
+                <td><strong>{{ order.order_number }}</strong><small v-if="order.metadata?.external_order_id">Mã sàn: {{ order.metadata.external_order_id }}</small></td>
                 <td>#{{ order.customer_id }}<small>{{ orderCustomerName(order.customer_id) }}</small></td>
                 <td class="order-phone-cell">{{ orderCustomerPhone(order.customer_id) }}</td>
                 <td><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}<small v-if="order.status === 'draft'"> (còn {{ availableProductQuantity(item.product_id) }})</small></span></td>
-                <td>{{ order.channel || 'Không gắn kênh' }}</td>
+                <td>{{ order.channel || (order.metadata?.marketplace_source === 'shopee' ? 'Shopee Seller Center' : order.metadata?.marketplace_source === 'tiktok' ? 'TikTok Shop Seller Center' : 'Không gắn kênh') }}</td>
                 <td>
                   <select class="inline-stage" :value="order.status" :disabled="orderTransitionSaving[order.id]" @change="transitionSalesOrder(order, $event.target.value)">
                     <option v-for="status in salesStatusOptions(order)" :key="status" :value="status">{{ salesOrderStatusLabel(status) }}</option>
                   </select>
+                  <small v-if="order.metadata?.marketplace_source">Trạng thái sàn: {{ order.metadata.external_status || '—' }}</small>
                   <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order) || orderTransitionSaving[order.id]" @click.stop="transitionSalesOrder(order, 'confirmed')">{{ orderTransitionSaving[order.id] ? 'Đang cập nhật...' : 'Xác nhận đơn' }}</button>
                   <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">Thiếu tồn khả dụng</small>
                 </td>
@@ -13494,13 +13549,13 @@ function followupRecommendationLabel(item) {
 
         <div v-if="authUser" class="channel-summary-grid channel-summary-grid-six">
           <article class="settings-card channel-summary-card">
-            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon facebook-channel-icon" aria-hidden="true">f</span><span>Facebook</span></h2><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected }">{{ metaStatus.connected ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
-            <p class="settings-muted">Cấp quyền một lần để nhận tin từ Trang Facebook.</p>
+            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon facebook-channel-icon" aria-hidden="true">f</span><span>Facebook</span></h2><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected || localConnectorIsOnline(facebookConnectorConnection) }">{{ metaStatus.connected ? 'META API' : localConnectorIsOnline(facebookConnectorConnection) ? 'BRIDGE ĐANG CHẠY' : 'CHƯA KẾT NỐI' }}</span></div>
+            <p class="settings-muted">Có thể dùng Meta API hoặc đăng nhập Business Suite qua bridge cục bộ.</p>
             <div class="channel-summary-actions"><button type="button" class="primary-btn" @click="openChannelModal('facebook')">{{ metaStatus.connected ? 'Xem Facebook' : 'Kết nối Facebook' }}</button></div>
           </article>
           <article class="settings-card channel-summary-card">
-            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon instagram-channel-icon" aria-hidden="true">◎</span><span>Instagram</span></h2><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
-            <p class="settings-muted">Dùng chung lần cấp quyền Facebook nhưng theo dõi riêng.</p>
+            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon instagram-channel-icon" aria-hidden="true">◎</span><span>Instagram</span></h2><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: (metaStatus.connected && metaStatus.instagram_account_id) || localConnectorIsOnline(instagramConnectorConnection) }">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'META API' : localConnectorIsOnline(instagramConnectorConnection) ? 'BRIDGE ĐANG CHẠY' : 'CHƯA KẾT NỐI' }}</span></div>
+            <p class="settings-muted">Có thể dùng Meta API hoặc đăng nhập Business Suite qua bridge cục bộ.</p>
             <div class="channel-summary-actions"><button type="button" class="secondary-btn" @click="openChannelModal('instagram')">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'Xem Instagram' : 'Kết nối Instagram' }}</button></div>
           </article>
           <article class="settings-card channel-summary-card">
@@ -13527,25 +13582,42 @@ function followupRecommendationLabel(item) {
         <div v-if="authUser" class="settings-card channel-connect-card" aria-hidden="true"></div>
 
         <div v-if="channelModalOpen" class="app-dialog-backdrop channel-modal-backdrop" @click.self="closeChannelModal">
-          <section class="channel-modal app-dialog" role="dialog" aria-modal="true" aria-label="Kết nối kênh bán hàng" tabindex="-1" @keydown.esc="closeChannelModal">
-            <div class="settings-card-header"><div><span class="card-eyebrow">KÊNH CỦA SHOP</span><h2>{{ ['meta', 'facebook', 'instagram'].includes(channelModalTab) ? 'Kết nối Facebook & Instagram' : `Kết nối ${channelModalTab === 'zalo' ? 'Zalo' : channelModalTab === 'tiktok' ? 'TikTok' : channelModalTab === 'shopee' ? 'Shopee' : 'Telegram'}` }}</h2><p>{{ ['tiktok', 'shopee'].includes(channelModalTab) ? 'Pairing code chỉ dùng một lần, thuộc về shop này và hết hạn sau 10 phút.' : 'Mã kết nối chỉ dùng cho shop này và không chia sẻ giữa các không gian.' }}</p></div><button type="button" class="quick-action-close" aria-label="Đóng" @click="closeChannelModal">×</button></div>
+          <section class="channel-modal app-dialog" :class="`channel-modal--${channelModalTab}`" role="dialog" aria-modal="true" aria-label="Kết nối kênh bán hàng" tabindex="-1" @keydown.esc="closeChannelModal">
+            <div class="settings-card-header">
+              <div class="channel-modal-heading">
+                <span class="channel-modal-mark" aria-hidden="true">{{ channelModalTab === 'meta' || channelModalTab === 'facebook' ? 'M' : channelModalTab === 'instagram' ? '◎' : channelModalTab === 'telegram' ? '✈' : channelModalTab === 'zalo' ? 'Z' : channelModalTab === 'tiktok' ? '♪' : 'S' }}</span>
+                <div class="channel-modal-title-copy"><span class="card-eyebrow">KÊNH CỦA SHOP <i>·</i> {{ channelModalTab === 'meta' || channelModalTab === 'facebook' ? 'META' : channelModalTab.toUpperCase() }}</span><h2>{{ channelModalTab === 'facebook' ? 'Kết nối Meta' : channelModalTab === 'instagram' ? 'Kết nối Instagram' : channelModalTab === 'meta' ? 'Kết nối Meta & Instagram' : `Kết nối ${channelModalTab === 'zalo' ? 'Zalo' : channelModalTab === 'tiktok' ? 'TikTok' : channelModalTab === 'shopee' ? 'Shopee' : 'Telegram'}` }}</h2><p>{{ ['tiktok', 'shopee'].includes(channelModalTab) ? 'Pairing code chỉ dùng một lần, thuộc về shop này và hết hạn sau 10 phút.' : 'Mã kết nối chỉ dùng cho shop này và không chia sẻ giữa các không gian.' }}</p></div>
+              </div>
+              <button type="button" class="quick-action-close" aria-label="Đóng" @click="closeChannelModal">×</button>
+            </div>
             <span class="visually-hidden">Kết nối Telegram/Zalo · Quét QR để tạo bot · BotFather · Zalo Bot Manager</span>
             <template v-if="['meta', 'facebook', 'instagram'].includes(channelModalTab)">
-              <div v-if="metaNotice" class="settings-notice team-error">{{ metaNotice }}</div>
+              <div v-if="metaNotice" class="settings-notice" :class="metaNoticeIsError ? 'team-error' : 'channel-notice-success'" :role="metaNoticeIsError ? 'alert' : 'status'">{{ metaNotice }}</div>
               <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked"><span>{{ channelCapacity.reason }}</span><button type="button" class="settings-refresh" @click="openServicePageFromChannelLimit">Nâng cấp gói</button></div>
-              <div class="meta-channel-grid">
-                <article class="meta-channel-card meta-facebook" :class="{ active: channelModalTab === 'facebook' }"><div><span class="channel-card-icon">f</span><h3>Facebook</h3><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected }">{{ metaStatus.connected ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Trang:</strong> {{ metaStatus.facebook_page_name || 'Đã kết nối' }}</div><div><strong>Mã trang:</strong> {{ metaStatus.facebook_page_id || '—' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading || demoChannelsLocked" @click="connectMeta">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : metaLoading ? 'Đang kết nối...' : 'Kết nối Facebook' }}</button></article>
-                <article class="meta-channel-card meta-instagram" :class="{ active: channelModalTab === 'instagram' }"><div><span class="channel-card-icon">◎</span><h3>Instagram</h3><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span><div v-if="metaStatus.connected" class="meta-connection-details"><div><strong>Tài khoản:</strong> {{ metaStatus.instagram_account_id || 'Chưa liên kết' }}</div><div><strong>Nhận tin:</strong> {{ metaStatus.subscription_status || 'Chưa kiểm tra' }}</div></div><button v-if="!metaStatus.connected" class="btn-meta-connect" type="button" :disabled="metaLoading || demoChannelsLocked" @click="connectMeta">{{ demoChannelsLocked ? 'Không thể kết nối thêm' : metaLoading ? 'Đang kết nối...' : 'Kết nối Instagram' }}</button></article>
+              <div v-if="metaStatus.connected" class="meta-oauth-footer"><p class="meta-oauth-note">Meta API đang liên kết. Ngắt mục này chỉ gỡ quyền Meta API, không ngắt connector Edge bên dưới.</p><button type="button" class="btn-meta-disconnect" :disabled="metaLoading" @click="disconnectMeta">{{ metaLoading ? 'Đang ngắt liên kết…' : 'Ngắt liên kết Meta API' }}</button></div>
+              <div class="settings-card meta-business-suite-bridge-card">
+                <div class="meta-bridge-heading">
+                  <span class="meta-bridge-icon" aria-hidden="true">↔</span>
+                  <div class="meta-bridge-title"><span class="meta-bridge-eyebrow">ĐỒNG BỘ CỤC BỘ QUA EDGE</span><h3>{{ channelModalTab === 'facebook' ? 'Meta connector' : channelModalTab === 'instagram' ? 'Instagram connector' : 'Meta Business Suite connector' }}</h3><p>Không cần Meta API · phiên đăng nhập được giữ trên máy chạy bridge</p></div>
+                  <span class="meta-bridge-auto-badge"><i aria-hidden="true"></i>TỰ ĐỘNG</span>
+                </div>
+                <div class="meta-bridge-note" role="note"><span aria-hidden="true">i</span><p>Chỉ nhập lịch sử một lần (tiếp tục phần dở khi mở lại); khi hoàn tất chỉ đồng bộ tin mới. Lịch sử chạy nền nên không chặn tin mới. Meta có thể đánh dấu chat chưa đọc thành đã đọc; CAPTCHA/xác minh cần xử lý thủ công trong Edge.</p></div>
+                <div v-if="localConnectorError" class="settings-notice team-error" role="alert">{{ localConnectorError }}</div>
+                <div v-if="localConnectorNotice" class="settings-notice" role="status">{{ localConnectorNotice }}</div>
+                <div class="tiktok-bridge-actions" :class="{ single: channelModalTab !== 'meta' }"><button v-if="channelModalTab !== 'instagram'" class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadMessengerConnectorApp">{{ localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải ZIP Meta' }}</button><button v-if="channelModalTab !== 'facebook'" class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadInstagramConnectorApp">{{ localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải ZIP Instagram' }}</button></div>
+                <div class="tiktok-bridge-actions" :class="{ single: channelModalTab !== 'meta' }"><button v-if="channelModalTab !== 'instagram'" class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !facebookConnectorConnection?.connector_paired)" @click="createLocalConnectorPairingCode('facebook')">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Ghép nối Meta' }}</button><button v-if="channelModalTab !== 'facebook'" class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !instagramConnectorConnection?.connector_paired)" @click="createLocalConnectorPairingCode('instagram')">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Ghép nối Instagram' }}</button></div>
+                <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>{{ localConnectorPairingChannel === 'instagram' ? 'Pairing code Instagram' : 'Pairing code Meta' }}<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">Sao chép mã</button></div>
+                <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái connector...</div>
+                <ul v-else-if="[facebookConnectorConnection, instagramConnectorConnection].filter((connection) => connection && (channelModalTab === 'meta' || connection.channel_type === channelModalTab)).length" class="bot-connection-list"><li v-for="connection in [facebookConnectorConnection, instagramConnectorConnection].filter((item) => item && (channelModalTab === 'meta' || item.channel_type === channelModalTab))" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ connection.channel_type === 'instagram' ? 'Instagram' : 'Meta' }} · {{ localConnectorStatus(connection) }}</small><small v-if="connection.connector_last_error_code" role="alert">{{ t('Mã lỗi connector') }}: {{ connection.connector_last_error_code }}</small></div><button v-if="connection.connector_paired" type="button" class="team-toggle" :disabled="localConnectorRetryingId === connection.id" @click="retryLocalConnector(connection)">{{ localConnectorRetryingId === connection.id ? t('Đang gửi...') : t('Thử kết nối lại') }}</button><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt connector</button></li></ul>
+                <p v-if="channelModalTab === 'meta'" class="bot-connect-note">Để kết nối Meta và Instagram cùng lúc, chạy cùng một ZIP hai lần, chọn kênh tương ứng và dùng mã ghép nối riêng. Không gửi phản hồi qua bridge ở phiên bản này; phản hồi từ CRM cần cấu hình kênh gửi riêng.</p><p v-else class="bot-connect-note">Không gửi phản hồi qua bridge ở phiên bản này; phản hồi từ CRM cần cấu hình kênh gửi riêng.</p>
               </div>
-              <p class="settings-muted meta-oauth-note">Facebook và Instagram dùng chung một lần cấp quyền; CRM vẫn tách riêng dữ liệu và trạng thái hiển thị cho từng kênh.</p>
-              <div v-if="metaStatus.connected" class="settings-actions"><button class="btn-meta-disconnect" type="button" :disabled="metaLoading" @click="disconnectMeta">Ngắt kết nối Facebook/Instagram</button></div>
             </template>
             <template v-else-if="['tiktok', 'shopee'].includes(channelModalTab)">
               <div v-if="localConnectorError" class="settings-notice team-error" role="alert">{{ localConnectorError }}</div>
               <div v-if="localConnectorNotice" class="settings-notice" role="status">{{ localConnectorNotice }}</div>
               <template v-if="channelModalTab === 'tiktok'">
               <div class="bot-provider-heading"><span class="channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><div><h3>TikTok Bridge</h3><p>Nhận tin TikTok qua tệp bridge đang chạy trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: localConnectorIsOnline(tiktokChannelConnection) }">{{ localConnectorStatus(tiktokChannelConnection) }}</span></div>
-              <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap tiktok-channel-icon">T</div><div><ol><li>Tải bộ ZIP connector TikTok Shop về máy cần chạy bridge.</li><li>Giải nén ZIP rồi chạy SmartMerchantTikTok.exe.</li><li>Tạo mã ghép nối, nhập mã vào ứng dụng rồi đăng nhập Seller Center trong Edge.</li></ol><p class="bot-connect-note">Phiên đăng nhập được giữ trong hồ sơ Edge cục bộ; connector chỉ chuyển hội thoại giữa Seller Center và CRM.</p></div></div>
+              <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap tiktok-channel-icon">T</div><div><ol><li>Tải bộ ZIP connector TikTok Shop về máy cần chạy bridge.</li><li>Giải nén ZIP rồi chạy SmartMerchantTikTok.exe.</li><li>Tạo mã ghép nối, nhập mã vào ứng dụng rồi đăng nhập Seller Center trong Edge.</li></ol><p class="bot-connect-note">Connector đồng bộ tin nhắn và đơn đang hiển thị về CRM; đơn ở trạng thái nháp để kiểm tra. Hồ sơ Edge ở lại trên máy chạy bridge. Nếu gặp CAPTCHA, xử lý thủ công trong Edge.</p></div></div>
               <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ crmUiText(localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải bộ ZIP TikTok') }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeTikTokConnection)" @click="createLocalConnectorPairingCode">{{ crmUiText(localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối') }}</button></div>
               <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>{{ crmUiText('Pairing code') }}<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">{{ crmUiText('Sao chép mã') }}</button></div>
               <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === 'tiktok').length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'tiktok')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>TikTok bridge · {{ localConnectorStatus(connection) }}</small><small v-if="connection.connector_last_error_code" role="alert">{{ t('Mã lỗi connector') }}: {{ connection.connector_last_error_code }}</small></div><button v-if="connection.connector_paired" type="button" class="team-toggle" :disabled="localConnectorRetryingId === connection.id" @click="retryLocalConnector(connection)">{{ localConnectorRetryingId === connection.id ? t('Đang gửi...') : t('Thử kết nối lại') }}</button><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul>
@@ -13553,7 +13625,7 @@ function followupRecommendationLabel(item) {
               </template>
               <template v-else>
                 <div class="bot-provider-heading"><span class="channel-card-icon shopee-channel-icon">S</span><div><h3>Shopee Seller Chat</h3><p>Nhận tin realtime từ Seller Chat trong Edge cục bộ.</p></div><span class="connection-badge" :class="{ connected: localConnectorIsOnline(shopeeChannelConnection) }">{{ localConnectorStatus(shopeeChannelConnection) }}</span></div>
-                <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon shopee-channel-icon">S</div><div><ol><li>Tải bộ ZIP connector Shopee về máy dùng Seller Chat.</li><li>Giải nén ZIP rồi chạy SmartMerchantShopee.exe.</li><li>Tạo mã ghép nối bên dưới, nhập mã rồi đăng nhập Shopee trong Edge.</li></ol><p class="bot-connect-note">Ứng dụng chỉ chuyển tin nhắn; cookie và phiên Edge không rời khỏi máy này.</p></div></div>
+                <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon shopee-channel-icon">S</div><div><ol><li>Tải bộ ZIP connector Shopee về máy dùng Seller Chat.</li><li>Giải nén ZIP rồi chạy SmartMerchantShopee.exe.</li><li>Tạo mã ghép nối bên dưới, nhập mã rồi đăng nhập Shopee trong Edge.</li></ol><p class="bot-connect-note">Connector đồng bộ tin nhắn và đơn đang hiển thị về CRM; đơn ở trạng thái nháp để kiểm tra. Hồ sơ Edge ở lại trên máy chạy bridge. Nếu gặp CAPTCHA, xử lý thủ công trong Edge.</p></div></div>
                 <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải bộ ZIP Shopee' }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeBotConnections.some((item) => item.channel_type === 'shopee'))" @click="createLocalConnectorPairingCode">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối' }}</button></div>
                 <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>Pairing code<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">Sao chép mã</button></div>
                 <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.some((item) => item.channel_type === 'shopee')" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'shopee')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ localConnectorStatus(connection) }}</small><small v-if="connection.connector_last_error_code" role="alert">{{ t('Mã lỗi connector') }}: {{ connection.connector_last_error_code }}</small></div><button v-if="connection.connector_paired" type="button" class="team-toggle" :disabled="localConnectorRetryingId === connection.id" @click="retryLocalConnector(connection)">{{ localConnectorRetryingId === connection.id ? t('Đang gửi...') : t('Thử kết nối lại') }}</button><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có Shopee connector nào.</div>
@@ -13581,11 +13653,11 @@ function followupRecommendationLabel(item) {
             <div><h2>Nhận sự kiện</h2><p>Kiểm tra trạng thái nhận tin nhắn từ Facebook, Instagram, Telegram, Zalo, TikTok và Shopee.</p></div>
             <button type="button" class="settings-refresh" :disabled="botConnectionLoading || metaLoading" @click="refreshWebhookStatus">{{ botConnectionLoading || metaLoading ? 'Đang kiểm tra...' : 'Làm mới' }}</button>
           </div>
-          <div v-if="botConnectionError || metaNotice" class="settings-notice team-error">{{ botConnectionError || metaNotice }}</div>
+          <div v-if="botConnectionError" class="settings-notice team-error" role="alert">{{ botConnectionError }}</div>
           <div class="webhook-grid">
             <article class="webhook-item"><div><strong>Facebook</strong><span class="webhook-status" :class="{ connected: metaStatus.connected && metaStatus.subscription_status }">{{ metaStatus.connected ? (metaStatus.subscription_status || 'Đã kết nối') : 'Chưa kết nối' }}</span></div><small>Nhận tin tự động từ Trang Facebook của shop.</small></article>
             <article class="webhook-item"><div><strong>Instagram</strong><span class="webhook-status" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.instagram_account_id ? 'Đã kết nối' : 'Chưa kết nối' }}</span></div><small>Nhận tin Instagram riêng, dùng cùng lần cấp quyền Facebook.</small></article>
-            <article v-for="connection in botConnections" :key="`webhook-${connection.id}`" class="webhook-item"><div><strong>{{ connection.channel_type === 'zalo' ? 'Zalo' : connection.channel_type === 'tiktok' ? 'TikTok' : connection.channel_type === 'shopee' ? 'Shopee' : 'Telegram' }}</strong><span class="webhook-status" :class="{ connected: connection.webhook_status === 'connected' }">{{ connection.webhook_status === 'connected' ? 'Đang hoạt động' : connection.webhook_status === 'disconnected' ? 'Đã ngắt' : 'Cần kiểm tra' }}</span></div><small>{{ connection.name }} · nhận tin riêng cho shop.</small></article>
+            <article v-for="connection in botConnections" :key="`webhook-${connection.id}`" class="webhook-item"><div><strong>{{ connection.channel_type === 'facebook' ? 'Facebook Messenger' : connection.channel_type === 'instagram' ? 'Instagram' : connection.channel_type === 'zalo' ? 'Zalo' : connection.channel_type === 'tiktok' ? 'TikTok' : connection.channel_type === 'shopee' ? 'Shopee' : 'Telegram' }}</strong><span class="webhook-status" :class="{ connected: connection.webhook_status === 'connected' }">{{ connection.webhook_status === 'connected' ? 'Đang hoạt động' : connection.webhook_status === 'disconnected' ? 'Đã ngắt' : 'Cần kiểm tra' }}</span></div><small>{{ connection.name }} · nhận tin riêng cho shop.</small></article>
           </div>
           <div v-if="!botConnections.length && !metaStatus.connected" class="settings-empty">Chưa có điểm nhận sự kiện nào được đăng ký.</div>
         </div>
@@ -14122,7 +14194,26 @@ function followupRecommendationLabel(item) {
         </div>
       </section>
 
-      <section v-if="currentTab === 'service'" class="service-page-layout" aria-label="Gói dịch vụ">
+      <section v-if="currentTab === 'service' && authUser && serviceCheckoutOpen" class="service-checkout-route">
+        <ServiceCheckout
+          :plan="selectedServicePlan"
+          :current-plan="currentServicePlan"
+          :mode="serviceMode"
+          :change-kind="servicePlanChangeKind"
+          :buyer="serviceAccountSummary?.buyer"
+          :loading="servicePurchaseLoading"
+          :error="servicePurchaseError || serviceRequestError"
+          :submitted="serviceRequestSubmitted"
+          :status="servicePurchaseStatus"
+          :notice="servicePurchaseNotice || serviceRequestNotice"
+          :request-reference="serviceRequestReference"
+          @back="serviceCheckoutOpen = false"
+          @submit="submitServiceRequest"
+          @refresh="fetchServiceAccountSummary"
+        />
+      </section>
+
+      <section v-else-if="currentTab === 'service'" class="service-page-layout" aria-label="Gói dịch vụ">
         <div class="service-page-hero">
           <div>
             <div class="service-brand-lockup">
@@ -14142,7 +14233,7 @@ function followupRecommendationLabel(item) {
         </div>
         <ServicePricing :plans="activeServicePlans" :mode="serviceMode" :selected="serviceRequestForm.plan_code" :current-plan="currentServicePlanCode" :authenticated="!!authUser" @select="selectServicePlan" @signup="closePublicServicePage(); openSignup(true)" @login="closePublicServicePage(); openLogin()" />
 
-        <div v-if="!authUser || serviceRequestOpen || serviceRequestSubmitted" class="service-page-grid" :class="{ 'guest-pricing': !authUser }">
+        <div v-if="!authUser" class="service-page-grid guest-pricing">
           <article class="service-benefits-card">
             <span class="service-page-kicker">SHOP NHẬN ĐƯỢC GÌ</span>
             <h2>{{ t(serviceMode === 'chatbot' ? 'Trợ lý theo cách shop phục vụ' : 'Từ đăng ký đến vận hành') }}</h2>
@@ -14155,61 +14246,8 @@ function followupRecommendationLabel(item) {
           </article>
 
           <article class="service-request-card">
-            <div v-if="!authUser" class="service-public-gate"><p>{{ t('Bạn có thể xem các gói trước. Để đăng ký dịch vụ, hãy tạo không gian shop hoặc đăng nhập vào tài khoản hiện có.') }}</p></div>
-            <div v-if="serviceRequestSubmitted" class="service-request-success" role="status">
-              <div class="service-success-icon">✓</div>
-              <span class="service-page-kicker">ĐÃ GỬI YÊU CẦU</span>
-              <h2>{{ servicePurchaseStatus === 'pending' ? 'Yêu cầu đang chờ quản trị viên duyệt' : 'Gói Demo đã được kích hoạt' }}</h2>
-              <p v-if="servicePurchaseStatus === 'pending'">Mã yêu cầu <strong>{{ serviceRequestReference }}</strong>. Khi admin duyệt, hệ thống tự chuẩn bị không gian dữ liệu và mở các màn hình CRM cho shop.</p>
-              <p v-else>Mã yêu cầu <strong>{{ serviceRequestReference }}</strong>. Hệ thống đang kiểm tra không gian dữ liệu để mở CRM cho shop.</p>
-              <div class="service-success-actions">
-                <button v-if="servicePurchaseStatus === 'active'" type="button" class="secondary-btn" @click="refreshTenantProvisioning">Kiểm tra &amp; mở CRM</button>
-                <button v-else type="button" class="secondary-btn" @click="fetchServiceAccountSummary">Làm mới trạng thái</button>
-                <button ref="serviceSuccessStatusButton" type="button" class="history-btn" @click="resetServiceRequestForm">Chọn gói khác</button>
-              </div>
-            </div>
-            <form v-else-if="authUser" class="service-request-form" @submit.prevent="submitServiceRequest">
-              <div class="service-request-heading"><div><span class="service-page-kicker">{{ uiLocale === 'en' ? 'SELECTED PLAN' : 'GÓI ĐÃ CHỌN' }}</span><h2>{{ uiLocale === 'en' ? 'Request details' : 'Thông tin đăng ký' }}</h2></div><span class="service-request-badge">{{ servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? (uiLocale === 'en' ? 'Start trial' : 'Dùng thử ngay') : (uiLocale === 'en' ? 'Admin approval' : 'Admin duyệt') }}</span><button type="button" class="service-request-dismiss" :aria-label="uiLocale === 'en' ? 'Close request form' : 'Đóng biểu mẫu'" @click="serviceRequestOpen = false">×</button></div>
-              <p class="service-request-intro">{{ serviceMode === 'chatbot' ? 'Thuê riêng trợ lý AI theo mức hỗ trợ. Dịch vụ này độc lập với gói CRM và không làm thay đổi hạn mức kênh.' : `Gói đã chọn cho phép kết nối tối đa ${serviceChannelLimit} nền tảng. Việc kết nối thực tế được thực hiện duy nhất tại mục Kết nối mạng xã hội.` }}</p>
-              <div v-if="serviceRequestError" class="service-request-error" role="alert">{{ serviceRequestError }}</div>
-              <div class="service-request-fields">
-                <label>Người liên hệ<input v-model="serviceRequestForm.contact_name" required maxlength="120" placeholder="Nguyễn Văn A" /></label>
-                <label>Email nhận tư vấn<input v-model="serviceRequestForm.email" required type="email" maxlength="255" placeholder="banhang@shop.vn" /></label>
-                <label>Số điện thoại <span>(không bắt buộc)</span><input v-model="serviceRequestForm.phone" type="tel" maxlength="30" placeholder="0901 234 567" /></label>
-                <label>Tên shop<input v-model="serviceRequestForm.shop_name" required maxlength="160" placeholder="Shop của bạn" /></label>
-              </div>
-              <div class="selected-plan-summary" aria-live="polite">
-                <div><strong>{{ selectedServicePlan ? $t(selectedServicePlan.name) : serviceRequestForm.plan_code }}</strong><span>{{ selectedServicePlan?.price || '' }} · {{ serviceMode === 'chatbot' ? (uiLocale === 'en' ? 'Separate chatbot support' : 'Trợ lý chatbot riêng') : `${serviceChannelLimit} ${uiLocale === 'en' ? 'connected channels' : 'nền tảng kết nối'}` }}</span></div>
-                <button type="button" class="selected-plan-change" @click="scrollToServicePlans">{{ uiLocale === 'en' ? 'Change plan above' : 'Đổi gói ở phía trên' }}</button>
-              </div>
-              <div v-if="authUser" class="service-purchase-box">
-                <div v-if="servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo'"><strong>Gói Demo được mở ngay</strong><small>Sau khi gửi đăng ký, shop có thể dùng thử ngay khi không gian dữ liệu sẵn sàng.</small></div>
-                <div v-else><strong>Gói trả phí cần admin xác nhận</strong><small>Yêu cầu được chuyển vào hàng chờ duyệt. CRM chỉ mở sau khi admin duyệt và hệ thống chuẩn bị xong dữ liệu riêng.</small></div>
-              </div>
-              <div v-if="servicePurchaseError" class="service-request-error" role="alert">{{ servicePurchaseError }}</div>
-              <div v-if="servicePurchaseNotice" class="service-purchase-notice" role="status">
-                <span>{{ servicePurchaseNotice }}</span>
-                <div v-if="servicePurchaseStatus === 'active'" class="service-purchase-actions">
-                  <button type="button" class="secondary-btn" @click="openChannels">Mở kết nối kênh</button>
-                  <button type="button" class="history-btn" @click="openSettings">Quản lý nhân viên</button>
-                </div>
-              </div>
-              <div v-if="serviceMode === 'package'" class="service-channel-summary"><strong>Hạn mức nền tảng: {{ serviceChannelLimit }}</strong><span>Không chọn nền tảng tại đây để tránh lệch dữ liệu. Sau khi gói được duyệt, vào <b>Kết nối mạng xã hội</b> để kết nối đúng các nền tảng shop đang dùng.</span></div>
-              <div v-else class="service-channel-summary chatbot-service-summary"><strong>Trợ lý AI là dịch vụ thuê riêng</strong><span>Trợ lý không chiếm số kênh của gói CRM. Shop vẫn kết nối Facebook, Instagram, Telegram, Zalo, TikTok và Shopee theo gói CRM đang dùng.</span></div>
-              <p v-if="authUser" class="service-upgrade-note">Nâng cấp không cần hủy gói hiện tại: gói cũ vẫn hoạt động trong khi yêu cầu chờ duyệt; khi duyệt, hệ thống thay thế bằng gói mới.</p>
-              <label class="service-request-notes">Ghi chú thêm <span>(không bắt buộc)</span><textarea v-model="serviceRequestForm.notes" rows="3" maxlength="1000" placeholder="Ví dụ: shop cần bot trả lời ngoài giờ hoặc hỗ trợ nhiều nhân viên..."></textarea></label>
-              <button type="submit" class="primary-btn service-submit" :disabled="servicePurchaseLoading">{{ servicePurchaseLoading ? 'Đang gửi yêu cầu...' : servicePlanCodeForPurchase(serviceRequestForm.plan_code) === 'demo' ? 'Kích hoạt gói Demo' : serviceMode === 'chatbot' ? 'Gửi yêu cầu thuê trợ lý' : 'Gửi yêu cầu thuê gói' }} <span aria-hidden="true">→</span></button>
-              <small class="service-form-footnote">Gói trả phí chỉ được mở sau khi quản trị viên nền tảng xác nhận yêu cầu.</small>
-            </form>
+            <div class="service-public-gate"><p>{{ t('Bạn có thể xem các gói trước. Để đăng ký dịch vụ, hãy tạo không gian shop hoặc đăng nhập vào tài khoản hiện có.') }}</p></div>
           </article>
-        </div>
-        <div v-if="serviceSuccessDialogOpen" class="service-success-backdrop" @click.self="closeServiceSuccessDialog">
-          <section class="service-success-dialog" role="dialog" aria-modal="true" aria-labelledby="service-success-title" aria-describedby="service-success-description" @keydown.esc="closeServiceSuccessDialog" @keydown.tab.prevent="serviceSuccessCloseButton?.focus()">
-            <div class="service-success-icon" aria-hidden="true">✓</div>
-            <h2 id="service-success-title">{{ t('Đã gửi yêu cầu thành công') }}</h2>
-            <p id="service-success-description">{{ t(serviceRequestNotice) }} {{ t('Mã yêu cầu') }} <strong>{{ serviceRequestReference }}</strong>.</p>
-            <button ref="serviceSuccessCloseButton" class="primary-btn" type="button" @click="closeServiceSuccessDialog">{{ t('Xem trạng thái yêu cầu') }}</button>
-          </section>
         </div>
       </section>
 
@@ -16220,6 +16258,7 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 .channel-modal .bot-connect-form .bot-connect-submit { grid-column: 2; }
 .channel-modal .bot-connect-guides { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .meta-channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
+.meta-channel-grid.single { grid-template-columns: 1fr; }
 .meta-channel-card { display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--owly-border); border-radius: 14px; background: var(--owly-surface); color: var(--owly-ink); }
 .meta-channel-card.active { border-color: var(--salon-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--salon-accent) 16%, transparent); }
 .meta-channel-card > div:first-child { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; }
@@ -16246,6 +16285,24 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 .meta-channel-card .connection-badge { align-self: flex-start; }
 .meta-channel-card .meta-connection-details { margin: 0; padding: 12px; font-size: .88rem; }
 .meta-channel-card .btn-meta-connect { width: 100%; margin-top: auto; }
+.meta-business-suite-bridge-card { width: 100%; max-width: 100%; margin: 18px 0 0; padding: 20px; overflow: hidden; border: 1px solid #cfe4e3; border-radius: 18px; background: radial-gradient(ellipse at 100% 0, #dff6f2 0, transparent 45%), linear-gradient(145deg, #fbfefe, #f1f8f8); box-shadow: 0 12px 28px #15595b12; }
+.meta-bridge-heading { display: flex; align-items: center; gap: 13px; min-width: 0; margin-bottom: 16px; }
+.meta-bridge-icon { display: grid; flex: 0 0 44px; place-items: center; width: 44px; height: 44px; border: 1px solid #c6e8e5; border-radius: 14px; color: #087e77; background: linear-gradient(145deg, #e6fbf7, #cfefeb); font-size: 1.45rem; font-weight: 800; }
+.meta-bridge-title { min-width: 0; flex: 1; }
+.meta-bridge-eyebrow { color: #087e77; font-size: .68rem; font-weight: 850; letter-spacing: .11em; }
+.meta-bridge-title h3 { margin: 3px 0 2px; color: #172c31; font-size: 1.08rem; }
+.meta-bridge-title p { margin: 0; color: #647b80; font-size: .81rem; line-height: 1.4; }
+.meta-bridge-auto-badge { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #bde5d2; border-radius: 999px; color: #237450; background: #effaf4; font-size: .68rem; font-weight: 850; letter-spacing: .04em; }
+.meta-bridge-auto-badge i { width: 7px; height: 7px; border-radius: 50%; background: #2eaa70; box-shadow: 0 0 0 3px #2eaa7020; }
+.meta-bridge-note { display: flex; align-items: flex-start; gap: 10px; padding: 12px 13px; border: 1px solid #d5e9e8; border-radius: 12px; color: #48656a; background: #f4fbfa; }
+.meta-bridge-note > span { display: grid; flex: 0 0 20px; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: #fff; background: #3c9693; font-size: .74rem; font-weight: 850; }
+.meta-bridge-note p { margin: 0; color: inherit; font-size: .81rem; line-height: 1.5; }
+.meta-business-suite-bridge-card > .tiktok-bridge-actions { gap: 10px; margin-top: 12px; }
+.meta-business-suite-bridge-card .bot-connection-list { display: grid; gap: 9px; margin-top: 15px; padding: 0; list-style: none; }
+.meta-business-suite-bridge-card .bot-connection-list li { display: flex; align-items: center; gap: 12px; padding: 12px 13px; border: 1px solid #dce9e8; border-radius: 12px; background: #fff; }
+.meta-business-suite-bridge-card .bot-connection-list li > div { flex: 1; min-width: 0; }
+.meta-business-suite-bridge-card .bot-connection-list li > div small { display: block; margin-top: 3px; color: #6a7f83; }
+.meta-business-suite-bridge-card .bot-connect-note { margin: 13px 0 0; color: #728589; font-size: .76rem; line-height: 1.45; }
 .meta-oauth-note { margin: 0 0 6px; }
 .bot-provider-heading { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; }
 .bot-provider-heading > div { flex: 1; }
@@ -16422,6 +16479,14 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 .crm-dark .business-days-fieldset .field-hint,
 .crm-dark .webhook-item small { color: #b6c0c5 !important; }
 .crm-dark .meta-connection-details { background: #252a2d !important; border-color: #394145 !important; color: #e5eaec !important; }
+.crm-dark .meta-business-suite-bridge-card { border-color: #365d60 !important; background: radial-gradient(ellipse at 100% 0, #1c3a3b 0, transparent 48%), linear-gradient(145deg, #202a2c, #1c2426) !important; }
+.crm-dark .meta-bridge-title h3 { color: #f3f7f7 !important; }
+.crm-dark .meta-bridge-title p,
+.crm-dark .meta-bridge-note { color: #bfd0d1 !important; }
+.crm-dark .meta-bridge-note { border-color: #36575a; background: #222f31; }
+.crm-dark .meta-business-suite-bridge-card .bot-connection-list li { border-color: #394d50; background: #252d30; }
+.crm-dark .meta-business-suite-bridge-card .bot-connection-list li > div small,
+.crm-dark .meta-business-suite-bridge-card .bot-connect-note { color: #aebfc2 !important; }
 .crm-dark .business-day-option { background: #1a1e20 !important; border-color: #4a555a !important; color: #b6c0c5 !important; }
 .crm-dark .business-day-option.selected { background: #173f43 !important; border-color: #39a7ad !important; color: #d8ffff !important; }
 .crm-dark .team-otp-button { color: #d8ffff !important; background: #173f43 !important; border-color: #3c777a !important; }
@@ -16632,6 +16697,9 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
   .channel-modal .bot-connect-form { grid-template-columns: 1fr; }
   .channel-modal .bot-connect-form .bot-token-field,
   .channel-modal .bot-connect-form .bot-connect-submit { grid-column: 1; }
+  .meta-business-suite-bridge-card { padding: 15px; }
+  .meta-bridge-heading { align-items: flex-start; flex-wrap: wrap; }
+  .meta-bridge-auto-badge { margin-left: 57px; margin-top: -9px; }
   .meta-channel-grid { grid-template-columns: 1fr; }
   .bot-connect-guide-single { align-items: flex-start; }
   .tiktok-bridge-actions { grid-template-columns: 1fr; }
@@ -16989,6 +17057,375 @@ body.crm-dark .customer-identity-id code { color: #8bd8d7; }
   .settings-card.followup-card { padding: 16px; border-radius: 15px; }
   .customer-identity-row { gap: 10px; }
   .customer-identity-id { gap: 6px; }
+}
+
+/* Shared glass treatment for every social-channel connection dialog. */
+.channel-modal-backdrop {
+  z-index: 1000;
+  overflow-y: auto;
+  padding: clamp(10px, 3vw, 26px);
+  background: rgba(12, 31, 34, .46);
+  backdrop-filter: blur(12px) saturate(125%);
+}
+.channel-modal {
+  position: relative;
+  isolation: isolate;
+  gap: 15px;
+  width: min(94vw, 800px);
+  max-height: min(88dvh, 820px);
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(16px, 2.6vw, 26px);
+  border: 1px solid rgba(255, 255, 255, .76);
+  border-radius: 24px;
+  color: #183638;
+  background: radial-gradient(ellipse at 100% 0, rgba(199, 244, 237, .75), transparent 42%), linear-gradient(145deg, rgba(255, 255, 255, .97), rgba(239, 249, 248, .94));
+  box-shadow: 0 30px 90px rgba(8, 34, 38, .3), inset 0 1px rgba(255,255,255,.9);
+  scrollbar-color: #9accc8 transparent;
+  scrollbar-width: thin;
+  backdrop-filter: blur(24px) saturate(145%);
+}
+.channel-modal::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(120deg, rgba(255,255,255,.42), transparent 28%, transparent 72%, rgba(120, 224, 213, .16));
+  opacity: .9;
+}
+.channel-modal::after {
+  content: "";
+  position: absolute;
+  top: -92px;
+  right: -72px;
+  z-index: 0;
+  width: 230px;
+  height: 230px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(86, 205, 190, .28), transparent 68%);
+  filter: blur(8px);
+  animation: channel-modal-glow 8s ease-in-out infinite alternate;
+}
+.channel-modal > * { position: relative; z-index: 1; }
+.channel-modal .settings-card-header {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: 16px;
+  margin: calc(clamp(16px, 2.6vw, 26px) * -1) calc(clamp(16px, 2.6vw, 26px) * -1) 0;
+  padding: clamp(16px, 2.6vw, 26px) clamp(16px, 2.6vw, 26px) 15px;
+  border-bottom: 1px solid rgba(91, 145, 145, .17);
+  background: rgba(250, 255, 254, .86);
+  backdrop-filter: blur(18px);
+}
+.channel-modal .settings-card-header > div { min-width: 0; }
+.channel-modal .settings-card-header .card-eyebrow {
+  display: inline-flex;
+  margin-bottom: 5px;
+  padding: 5px 8px;
+  border: 1px solid rgba(18, 135, 130, .15);
+  border-radius: 999px;
+  color: #16817d;
+  background: rgba(222, 248, 244, .8);
+  font-size: .66rem;
+  letter-spacing: .1em;
+}
+.channel-modal .settings-card-header h2 { margin: 0 0 4px; color: #183638; font-size: clamp(1.2rem, 2.7vw, 1.55rem); line-height: 1.2; }
+.channel-modal .settings-card-header p { margin: 0; color: #657c7f; font-size: .86rem; line-height: 1.45; }
+.channel-modal .quick-action-close {
+  display: grid;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(69, 125, 127, .18);
+  border-radius: 12px;
+  color: #396264;
+  background: rgba(231, 247, 245, .88);
+  font-size: 1.35rem;
+  line-height: 1;
+  transition: transform .16s ease, background .16s ease;
+}
+.channel-modal .quick-action-close:hover { transform: rotate(5deg); background: #d9f2ef; }
+.channel-modal > .settings-notice { flex: 0 0 auto; margin: 0; border: 1px solid rgba(214, 173, 78, .2); background: rgba(255, 249, 228, .84); }
+.channel-modal .meta-oauth-section { display: grid; gap: 12px; padding: 13px; border: 1px solid rgba(115, 159, 159, .2); border-radius: 18px; background: rgba(255, 255, 255, .48); }
+.channel-modal .meta-channel-grid { gap: 12px; margin: 0; }
+.channel-modal .meta-channel-card {
+  min-width: 0;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 15px;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .72), 0 8px 20px rgba(31, 69, 75, .06);
+  backdrop-filter: blur(12px);
+}
+.channel-modal .meta-channel-card > div:first-child { grid-template-columns: 42px minmax(0, 1fr); gap: 2px 11px; }
+.channel-modal .meta-channel-card > div:first-child .channel-card-icon { grid-row: span 2; width: 42px; height: 42px; border-radius: 13px; font-size: 1.45rem; box-shadow: 0 5px 12px rgba(30, 65, 70, .12); }
+.channel-modal .meta-channel-card > div:first-child p { font-size: .84rem; line-height: 1.4; }
+.channel-modal .meta-channel-card .connection-badge { padding: 6px 9px; font-size: .68rem; }
+.channel-modal .meta-channel-card .meta-connection-details { gap: 7px; margin: 0; padding: 11px 12px; border: 1px solid rgba(114, 152, 153, .15); border-radius: 12px; color: #405a5d; background: rgba(255, 255, 255, .62); font-size: .8rem; line-height: 1.4; overflow-wrap: anywhere; }
+.channel-modal .meta-channel-card .btn-meta-connect { min-height: 42px; border-radius: 11px; box-shadow: 0 6px 14px rgba(24, 119, 242, .16); }
+.channel-modal .meta-oauth-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.channel-modal .meta-oauth-note { flex: 1; margin: 0; color: #617a7c; font-size: .78rem; line-height: 1.45; }
+.channel-modal .settings-actions { flex: 0 0 auto; margin: 0; }
+.channel-modal .btn-meta-disconnect { min-height: 36px; padding: 8px 11px; border: 1px solid rgba(185, 82, 68, .22); border-radius: 10px; color: #a64b40; background: rgba(255, 242, 239, .8); font-size: .78rem; }
+.channel-modal .btn-meta-disconnect:hover { background: #ffe7e2; }
+.channel-modal .meta-business-suite-bridge-card {
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0;
+  padding: 17px;
+  overflow: visible;
+  border-color: rgba(59, 143, 138, .24);
+  border-radius: 18px;
+  background: radial-gradient(ellipse at 100% 0, rgba(197, 241, 233, .68), transparent 48%), rgba(238, 249, 247, .84);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .8), 0 12px 28px rgba(18, 75, 77, .08);
+  backdrop-filter: blur(14px);
+}
+.channel-modal .meta-bridge-heading { margin-bottom: 12px; }
+.channel-modal .meta-bridge-note { border-color: rgba(68, 143, 141, .19); background: rgba(255, 255, 255, .6); }
+.channel-modal .meta-business-suite-bridge-card > .tiktok-bridge-actions { gap: 10px; margin-top: 10px; }
+.channel-modal .tiktok-bridge-actions.single { grid-template-columns: minmax(0, 1fr); }
+.channel-modal .tiktok-bridge-actions > button,
+.channel-modal .bot-connect-form > button,
+.channel-modal .local-connector-pairing > button { min-height: 42px; border-radius: 11px; }
+.channel-modal .bot-provider-heading {
+  min-width: 0;
+  margin: 0;
+  padding: 14px 15px;
+  border: 1px solid rgba(107, 159, 159, .2);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .56);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .82);
+  backdrop-filter: blur(12px);
+}
+.channel-modal .bot-provider-heading > div { min-width: 0; }
+.channel-modal .bot-provider-heading h3 { color: #183638; font-size: 1.02rem; }
+.channel-modal .bot-provider-heading p { color: #657c7f; font-size: .82rem; line-height: 1.4; }
+.channel-modal .bot-connect-guide-single { gap: 15px; padding: 15px; border-color: rgba(107, 159, 159, .2); border-radius: 16px; background: rgba(255, 255, 255, .54); box-shadow: inset 0 1px rgba(255,255,255,.72); backdrop-filter: blur(12px); }
+.channel-modal .bot-connect-guide-single ol { color: #526c6f; font-size: .85rem; }
+.channel-modal .bot-connect-guide-single li + li { margin-top: 4px; }
+.channel-modal .bot-guide-qr-wrap { box-shadow: 0 8px 18px rgba(20, 65, 69, .09); }
+.channel-modal .bot-connect-note { margin: 8px 0 0; color: #6c8183; font-size: .77rem; line-height: 1.45; }
+.channel-modal .tiktok-bridge-actions { gap: 10px; margin-top: 12px; }
+.channel-modal .local-connector-pairing { align-items: end; margin-top: 12px; padding: 12px; border: 1px solid rgba(107, 159, 159, .2); border-radius: 14px; background: rgba(255, 255, 255, .56); }
+.channel-modal .local-connector-pairing input,
+.channel-modal .bot-connect-form input:not([type="hidden"]) { min-height: 42px; border-color: rgba(77, 132, 134, .24); border-radius: 10px; background: rgba(255,255,255,.85); }
+.channel-modal .bot-connect-form { gap: 10px; margin-top: 12px; }
+.channel-modal .bot-connect-form label { color: #496467; }
+.channel-modal .bot-connection-list { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+.channel-modal .bot-connection-list li { flex-wrap: wrap; min-width: 0; border: 1px solid rgba(107, 159, 159, .2); border-radius: 13px; background: rgba(255,255,255,.56); }
+.channel-modal .bot-connection-list li > div { min-width: 120px; overflow-wrap: anywhere; }
+.channel-modal .bot-connection-list .team-toggle { min-height: 36px; border: 1px solid rgba(48, 126, 127, .16); background: rgba(226, 245, 242, .82); }
+.channel-modal .settings-empty { padding: 12px; border: 1px dashed rgba(88, 144, 145, .3); border-radius: 12px; color: #6b8182; background: rgba(255,255,255,.46); }
+body.crm-dark .channel-modal {
+  border-color: rgba(110, 174, 171, .35) !important;
+  color: #eff8f7 !important;
+  background: radial-gradient(ellipse at 100% 0, rgba(29, 75, 72, .68), transparent 45%), linear-gradient(145deg, rgba(31, 40, 43, .97), rgba(25, 34, 36, .96)) !important;
+  box-shadow: 0 30px 90px rgba(0,0,0,.54), inset 0 1px rgba(255,255,255,.06) !important;
+}
+body.crm-dark .channel-modal .settings-card-header { border-color: rgba(130, 183, 179, .16) !important; background: rgba(28, 40, 42, .88) !important; }
+body.crm-dark .channel-modal .settings-card-header h2,
+body.crm-dark .channel-modal .bot-provider-heading h3 { color: #eff8f7 !important; }
+body.crm-dark .channel-modal .settings-card-header p,
+body.crm-dark .channel-modal .meta-oauth-note,
+body.crm-dark .channel-modal .bot-provider-heading p,
+body.crm-dark .channel-modal .bot-connect-guide-single ol,
+body.crm-dark .channel-modal .bot-connect-note { color: #b3c8c8 !important; }
+body.crm-dark .channel-modal .meta-oauth-section,
+body.crm-dark .channel-modal .bot-provider-heading,
+body.crm-dark .channel-modal .bot-connect-guide-single,
+body.crm-dark .channel-modal .local-connector-pairing,
+body.crm-dark .channel-modal .bot-connection-list li { border-color: rgba(126, 173, 172, .2) !important; background: rgba(39, 51, 53, .76) !important; }
+body.crm-dark .channel-modal .meta-business-suite-bridge-card { border-color: rgba(78, 160, 151, .32) !important; background: radial-gradient(ellipse at 100% 0, rgba(30, 81, 75, .48), transparent 50%), rgba(31, 47, 48, .88) !important; }
+body.crm-dark .channel-modal .meta-bridge-title h3 { color: #eff8f7 !important; }
+body.crm-dark .channel-modal .meta-bridge-title p,
+body.crm-dark .channel-modal .meta-bridge-note { color: #b9cecd !important; }
+body.crm-dark .channel-modal .meta-bridge-note,
+body.crm-dark .channel-modal .meta-channel-card .meta-connection-details { border-color: rgba(126, 173, 172, .2) !important; background: rgba(29, 40, 42, .78) !important; }
+body.crm-dark .channel-modal .meta-channel-card .meta-connection-details { color: #c9d9d8 !important; }
+body.crm-dark .channel-modal .local-connector-pairing label,
+body.crm-dark .channel-modal .bot-connect-form label { color: #bfd0d0 !important; }
+body.crm-dark .channel-modal .local-connector-pairing input,
+body.crm-dark .channel-modal .bot-connect-form input:not([type="hidden"]) { color: #eff8f7 !important; background: rgba(23, 31, 33, .9) !important; border-color: rgba(126, 173, 172, .28) !important; }
+body.crm-dark .channel-modal .bot-connection-list .team-toggle { color: #d8ffff !important; background: #214246 !important; border-color: #38676b !important; }
+body.crm-dark .channel-modal .settings-empty { color: #b3c8c8 !important; background: rgba(39, 51, 53, .5) !important; }
+body.crm-dark .channel-modal .btn-meta-disconnect { color: #ffc8bf !important; border-color: rgba(222, 130, 113, .28) !important; background: rgba(102, 49, 44, .42) !important; }
+@media (max-width: 640px) {
+  .channel-modal-backdrop { place-items: start center; padding: 10px; }
+  .channel-modal { width: 100%; max-height: calc(100dvh - 20px); border-radius: 19px; gap: 12px; }
+  .channel-modal .settings-card-header { gap: 10px; }
+  .channel-modal .meta-oauth-section { padding: 10px; }
+  .channel-modal .meta-oauth-footer { align-items: stretch; flex-direction: column; }
+  .channel-modal .btn-meta-disconnect { align-self: flex-start; }
+  .channel-modal .meta-bridge-heading { align-items: center; }
+  .channel-modal .local-connector-pairing { align-items: stretch; flex-direction: column; }
+  .channel-modal .bot-connect-form { grid-template-columns: 1fr; }
+  .channel-modal .bot-connect-form .bot-token-field,
+  .channel-modal .bot-connect-form .bot-connect-submit { grid-column: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .channel-modal .quick-action-close { transition: none; }
+  .channel-modal::after { animation: none; }
+}
+@keyframes channel-modal-glow {
+  from { transform: translate3d(-8px, 5px, 0) scale(.92); opacity: .55; }
+  to { transform: translate3d(8px, -5px, 0) scale(1.08); opacity: .9; }
+}
+
+/* A clear, branded glass system shared by all channel dialogs. */
+.channel-modal { --channel-accent: #1b9b91; --channel-accent-deep: #126e68; --channel-halo: rgba(66, 204, 183, .25); }
+.channel-modal--meta,
+.channel-modal--facebook { --channel-accent: #3689f5; --channel-accent-deep: #2462bf; --channel-halo: rgba(55, 133, 245, .27); }
+.channel-modal--instagram { --channel-accent: #d64d9c; --channel-accent-deep: #8a4fca; --channel-halo: rgba(216, 72, 159, .28); }
+.channel-modal--telegram { --channel-accent: #2c9fd2; --channel-accent-deep: #2675b3; --channel-halo: rgba(44, 159, 210, .28); }
+.channel-modal--zalo { --channel-accent: #2588ed; --channel-accent-deep: #225cbb; --channel-halo: rgba(37, 136, 237, .28); }
+.channel-modal--shopee { --channel-accent: #ee7045; --channel-accent-deep: #bd4d2d; --channel-halo: rgba(238, 112, 69, .27); }
+.channel-modal--tiktok { --channel-accent: #21b7b1; --channel-accent-deep: #127d81; --channel-halo: rgba(37, 205, 194, .26); }
+.channel-modal::after { background: radial-gradient(circle, var(--channel-halo), transparent 70%); }
+.channel-modal .settings-card-header {
+  align-items: center;
+  padding-top: clamp(18px, 2.8vw, 28px);
+  padding-bottom: 18px;
+  background: linear-gradient(105deg, color-mix(in srgb, var(--channel-accent) 9%, rgba(250,255,254,.94)), rgba(250,255,254,.82));
+}
+.channel-modal-heading { display: flex; align-items: center; min-width: 0; gap: 14px; }
+.channel-modal-title-copy { min-width: 0; }
+.channel-modal-mark {
+  display: grid;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--channel-accent) 32%, transparent);
+  border-radius: 16px;
+  color: white;
+  background: linear-gradient(145deg, var(--channel-accent), var(--channel-accent-deep));
+  box-shadow: 0 9px 24px color-mix(in srgb, var(--channel-accent) 27%, transparent), inset 0 1px rgba(255,255,255,.38);
+  font-size: 1.38rem;
+  font-weight: 850;
+  text-shadow: 0 1px 5px rgba(0,0,0,.14);
+}
+.channel-modal .settings-card-header .card-eyebrow {
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  color: var(--channel-accent-deep);
+  border-color: color-mix(in srgb, var(--channel-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--channel-accent) 10%, white);
+  font-weight: 800;
+}
+.channel-modal .settings-card-header .card-eyebrow i { margin: 0 2px; opacity: .55; font-style: normal; }
+.channel-modal .settings-card-header h2 { letter-spacing: -.025em; }
+.channel-modal .quick-action-close { border-radius: 13px; }
+.channel-modal .quick-action-close:focus-visible,
+.channel-modal button:focus-visible,
+.channel-modal a:focus-visible,
+.channel-modal input:focus-visible { outline: 3px solid color-mix(in srgb, var(--channel-accent) 44%, transparent); outline-offset: 2px; }
+.channel-modal .bot-provider-heading,
+.channel-modal .meta-business-suite-bridge-card {
+  border-color: color-mix(in srgb, var(--channel-accent) 23%, rgba(107,159,159,.2));
+  box-shadow: inset 0 1px rgba(255,255,255,.08), 0 12px 30px color-mix(in srgb, var(--channel-accent) 8%, transparent);
+}
+.channel-modal .bot-provider-heading { position: relative; overflow: hidden; }
+.channel-modal .bot-provider-heading::after {
+  content: "";
+  position: absolute;
+  top: -42px;
+  right: -25px;
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, var(--channel-halo), transparent 70%);
+}
+.channel-modal .bot-provider-heading .connection-badge { flex: 0 0 auto; border-radius: 999px; letter-spacing: .045em; }
+.channel-modal .bot-connect-guide-single { border-left: 3px solid color-mix(in srgb, var(--channel-accent) 65%, transparent); }
+.channel-modal .bot-guide-qr-wrap { border: 1px solid color-mix(in srgb, var(--channel-accent) 24%, transparent); }
+.channel-modal .tiktok-bridge-actions > .primary-btn,
+.channel-modal .bot-connect-form > .primary-btn {
+  border: 1px solid color-mix(in srgb, var(--channel-accent-deep) 75%, transparent) !important;
+  color: #fff;
+  background: linear-gradient(125deg, var(--channel-accent), var(--channel-accent-deep)) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--channel-accent) 22%, transparent), inset 0 1px rgba(255,255,255,.24);
+  transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
+}
+.channel-modal .tiktok-bridge-actions > .primary-btn:hover:not(:disabled),
+.channel-modal .bot-connect-form > .primary-btn:hover:not(:disabled) { transform: translateY(-1px); filter: saturate(1.08); box-shadow: 0 11px 24px color-mix(in srgb, var(--channel-accent) 29%, transparent), inset 0 1px rgba(255,255,255,.26); }
+.channel-modal .tiktok-bridge-actions > .secondary-btn,
+.channel-modal .local-connector-pairing > .secondary-btn {
+  border: 1px solid color-mix(in srgb, var(--channel-accent) 30%, rgba(75,132,134,.15));
+  color: var(--channel-accent-deep);
+  background: color-mix(in srgb, var(--channel-accent) 8%, rgba(255,255,255,.8));
+}
+.channel-modal .local-connector-pairing { border-left: 3px solid color-mix(in srgb, var(--channel-accent) 65%, transparent); }
+.channel-modal .bot-connection-list li { position: relative; box-shadow: 0 5px 15px rgba(9,35,38,.05); }
+.channel-modal .bot-connection-list li strong { font-size: .93rem; }
+.channel-modal .bot-connection-list li small { line-height: 1.4; }
+.channel-modal .bot-connection-list .team-toggle:hover { color: var(--channel-accent-deep); border-color: color-mix(in srgb, var(--channel-accent) 40%, transparent); background: color-mix(in srgb, var(--channel-accent) 13%, white); }
+.channel-modal > .settings-notice.channel-notice-success {
+  border-color: rgba(42, 151, 105, .24);
+  color: #146e4e;
+  background: rgba(229, 249, 239, .88);
+}
+body.crm-dark .channel-modal .settings-card-header {
+  background: linear-gradient(105deg, color-mix(in srgb, var(--channel-accent) 15%, rgba(28,40,42,.94)), rgba(28,40,42,.86)) !important;
+}
+body.crm-dark .channel-modal .channel-modal-mark { color: white !important; }
+body.crm-dark .channel-modal .settings-card-header .card-eyebrow {
+  color: color-mix(in srgb, var(--channel-accent) 76%, #c8ffff) !important;
+  border-color: color-mix(in srgb, var(--channel-accent) 27%, transparent) !important;
+  background: color-mix(in srgb, var(--channel-accent) 13%, rgba(26,39,41,.9)) !important;
+}
+body.crm-dark .channel-modal .tiktok-bridge-actions > .secondary-btn,
+body.crm-dark .channel-modal .local-connector-pairing > .secondary-btn {
+  color: color-mix(in srgb, var(--channel-accent) 72%, #d8ffff) !important;
+  border-color: color-mix(in srgb, var(--channel-accent) 34%, transparent) !important;
+  background: color-mix(in srgb, var(--channel-accent) 12%, rgba(24,36,38,.92)) !important;
+}
+body.crm-dark .channel-modal > .settings-notice.channel-notice-success {
+  color: #b9f5d5 !important;
+  border-color: rgba(68, 180, 128, .28) !important;
+  background: rgba(25, 76, 55, .56) !important;
+}
+body.crm-dark .crm-app .channel-modal .tiktok-bridge-actions > .primary-btn,
+body.crm-dark .crm-app .channel-modal .bot-connect-form > .primary-btn {
+  background: linear-gradient(125deg, var(--channel-accent), var(--channel-accent-deep)) !important;
+  border-color: color-mix(in srgb, var(--channel-accent-deep) 75%, transparent) !important;
+}
+/* Keep the title and connector as separate cards; the sticky full-bleed title
+   overlapped the first card whenever a short viewport made the popup scroll. */
+.channel-modal { gap: 17px; }
+.channel-modal .settings-card-header {
+  position: relative;
+  top: auto;
+  z-index: 1;
+  margin: 0;
+  padding: 15px 17px;
+  border: 1px solid color-mix(in srgb, var(--channel-accent) 20%, rgba(126,173,172,.2));
+  border-radius: 17px;
+  box-shadow: inset 0 1px rgba(255,255,255,.06), 0 8px 20px rgba(3,19,21,.12);
+}
+.channel-modal .meta-business-suite-bridge-card,
+.channel-modal .bot-provider-heading,
+.channel-modal .bot-connect-guide-single,
+.channel-modal .local-connector-pairing,
+.channel-modal .bot-connection-list li { border-radius: 17px; }
+body.crm-dark .channel-modal .settings-card-header {
+  border-color: color-mix(in srgb, var(--channel-accent) 27%, rgba(126,173,172,.2)) !important;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--channel-accent) 14%, rgba(35,45,48,.96)), rgba(30,40,43,.9)) !important;
+}
+@media (max-width: 640px) {
+  .channel-modal-heading { gap: 10px; }
+  .channel-modal-mark { flex-basis: 42px; width: 42px; height: 42px; border-radius: 14px; font-size: 1.2rem; }
+  .channel-modal { gap: 12px; }
+  .channel-modal .settings-card-header { padding: 13px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .channel-modal .tiktok-bridge-actions > .primary-btn,
+  .channel-modal .bot-connect-form > .primary-btn { transition: none; }
 }
 
 </style>

@@ -17,8 +17,10 @@ test("local connectors are only visually online after backend heartbeat", () => 
   assert.match(app, /connected: localConnectorIsOnline\(tiktokChannelConnection\)/);
 });
 
-test("purchase confirmation is a keyboard-reachable dialog with reduced motion", () => {
-  assert.match(app, /class="service-success-dialog" role="dialog" aria-modal="true"/);
-  assert.match(app, /@keydown\.esc="closeServiceSuccessDialog"/);
-  assert.match(style, /@media \(prefers-reduced-motion: reduce\) \{ \.service-success-dialog \{ animation: none; \} \}/);
+test("plan payment confirmation is an inline checkout state, not a modal", () => {
+  const checkout = readFileSync(new URL("../src/ServiceCheckout.vue", import.meta.url), "utf8");
+  assert.match(checkout, /class="service-checkout-page" :aria-label="copy\.pageLabel"/);
+  assert.match(checkout, /class="checkout-confirmation" role="status"/);
+  assert.doesNotMatch(app, /service-success-dialog/);
+  assert.match(checkout, /prefers-reduced-motion:reduce/);
 });

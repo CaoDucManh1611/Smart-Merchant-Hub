@@ -5,6 +5,7 @@ import test from "node:test";
 const appSource = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
 const landingSource = fs.readFileSync(new URL("../src/MarketingLanding.vue", import.meta.url), "utf8");
 const pricingSource = fs.readFileSync(new URL("../src/ServicePricing.vue", import.meta.url), "utf8");
+const checkoutSource = fs.readFileSync(new URL("../src/ServiceCheckout.vue", import.meta.url), "utf8");
 const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 const indexSource = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const channelUtilsSource = fs.readFileSync(new URL("../src/channel-utils.js", import.meta.url), "utf8");
@@ -77,8 +78,10 @@ test("CRM shell uses neutral product branding instead of legacy food branding", 
   assert.doesNotMatch(indexSource, /Lunari/);
 });
 
-test("inbox starts compact and loads further conversation pages on scroll", () => {
-  assert.match(appSource, /const INBOX_PAGE_SIZE = 10/);
+test("inbox loads all available conversations without waiting for scroll", () => {
+  assert.match(appSource, /const INBOX_PAGE_SIZE = 50/);
+  assert.match(appSource, /const params = new URLSearchParams\(\);\s*if \(append\) \{\s*params\.set\("limit", String\(INBOX_PAGE_SIZE\)\)/);
+  assert.doesNotMatch(appSource, /new URLSearchParams\(\{ limit: String\(INBOX_PAGE_SIZE\), offset: String\(offset\) \}\)/);
   assert.match(appSource, /inboxHasMore/);
   assert.match(appSource, /function handleInboxConversationScroll\(event\)/);
   assert.match(appSource, /@scroll\.passive="handleInboxConversationScroll"/);
@@ -87,6 +90,14 @@ test("inbox starts compact and loads further conversation pages on scroll", () =
   assert.match(styleSource, /overscroll-behavior: contain/);
   assert.match(templateSource, /<details class="inbox-filter-disclosure">/);
   assert.doesNotMatch(templateSource, /<details class="inbox-filter-disclosure" open>/);
+});
+
+test("Meta live messages reconcile the open chat and ignore stale overlapping refreshes", () => {
+  assert.match(appSource, /eventConversationId === Number\(selectedId\.value\)/);
+  assert.match(appSource, /void loadMessages\(eventConversationId, false, true\)/);
+  assert.match(appSource, /cache: "no-store"/);
+  assert.match(appSource, /requestVersion !== activeMessagesLoadVersion/);
+  assert.match(appSource, /workspaceRefreshInFlight/);
 });
 
 test("inbox supports confirmed bulk assignment for selected conversations", () => {
@@ -120,11 +131,9 @@ test("customer 360 shows bought products and staff can process a customer-confir
 test("service plans declare channel limits without preselecting channels and include the 3-platform tier", () => {
   assert.match(appSource, /code: "scale"/);
   assert.match(appSource, /FALLBACK_SERVICE_PLANS\.filter\(\(plan\) => !returnedCodes\.has\(plan\.code\)\)/);
-  assert.match(templateSource, /serviceChannelLimit/);
-  assert.match(templateSource, /Không chọn nền tảng tại đây để tránh lệch dữ liệu/);
-  assert.match(templateSource, /Nâng cấp không cần hủy gói hiện tại/);
-  assert.match(templateSource, /class="selected-plan-summary"/);
-  assert.match(templateSource, /selectedServicePlan \? \$t\(selectedServicePlan\.name\)/);
+  assert.match(checkoutSource, /plan\?\.max_channels/);
+  assert.match(checkoutSource, /planName\(currentPlan, copy\.noCurrentPlan\)/);
+  assert.match(checkoutSource, /function planName\(plan, fallback\)/);
   assert.doesNotMatch(templateSource, /class="service-plan-picker"/);
   assert.doesNotMatch(templateSource, /class="service-channel-picker"/);
 });
@@ -138,12 +147,14 @@ test("service plan defaults to the shop's assigned tier and preserves manual cho
   assert.match(appSource, /function selectServicePlan\(planCode\) \{\s*servicePlanSelectionTouched\.value = true;/);
 });
 
-test("service selection stays compact until a plan is chosen and uses a high-contrast segmented switch", () => {
-  assert.match(appSource, /const serviceRequestOpen = ref\(false\)/);
-  assert.match(appSource, /serviceRequestOpen\.value = Boolean\(authUser\.value\)/);
-  assert.match(templateSource, /v-if="!authUser \|\| serviceRequestOpen \|\| serviceRequestSubmitted" class="service-page-grid"/);
+test("authenticated plan changes open a dedicated checkout page", () => {
+  assert.match(appSource, /const serviceCheckoutOpen = ref\(false\)/);
+  assert.match(appSource, /serviceCheckoutOpen\.value = Boolean\(authUser\.value\)/);
+  assert.match(templateSource, /currentTab === 'service' && authUser && serviceCheckoutOpen/);
+  assert.match(templateSource, /<ServiceCheckout[\s\S]*@submit="submitServiceRequest"/);
+  assert.doesNotMatch(templateSource, /class="service-request-form"/);
+  assert.doesNotMatch(templateSource, /Thông tin đăng ký/);
   assert.doesNotMatch(templateSource, /Xác nhận gói quản lý shop/);
-  assert.match(templateSource, /Thông tin đăng ký/);
   assert.match(styleSource, /\.service-mode-switch \{[\s\S]*?border-radius: 999px;/);
   assert.match(styleSource, /\.crm-app\.crm-dark \.service-mode-switch::before \{[\s\S]*?background: #1d2224;/);
   assert.match(pricingSource, /body\.crm-dark \.smh-price-card \{ background:#202427;border-color:#394145; \}/);
@@ -215,7 +226,8 @@ test("anonymous visitors see the public landing page before choosing login or si
   assert.match(appSource, /@click="openLogin"/);
   assert.match(appSource, /@click="openSignup"/);
   assert.match(appSource, /@click="openPublicServicePage"/);
-  assert.match(appSource, /v-if="!authUser" class="service-public-gate"/);
+  assert.match(appSource, /v-if="!authUser" class="service-page-grid guest-pricing"/);
+  assert.match(appSource, /class="service-public-gate"/);
   assert.match(appSource, /<section v-else class="login-page"/);
   assert.match(appSource, /data-testid="login-page"/);
     assert.match(appSource, /class="login-form"/);
@@ -962,7 +974,10 @@ test("network-backed controls expose busy, success, and failure feedback", () =>
   assert.match(appSource, /csatError\.value/);
   assert.match(templateSource, /v-if="followupError"[^>]+role="alert"/);
   assert.match(templateSource, /v-if="csatError"[^>]+role="alert"/);
-  assert.match(templateSource, /class="btn-meta-connect"[\s\S]*?:disabled="metaLoading"/);
+  assert.doesNotMatch(templateSource, /class="btn-meta-connect"/);
+  assert.match(templateSource, /class="settings-card meta-business-suite-bridge-card"[\s\S]*?:disabled="localConnectorDownloading"/);
+  assert.match(templateSource, /v-if="metaStatus\.connected" class="meta-oauth-footer"[\s\S]*@click="disconnectMeta"/);
+  assert.match(appSource, /async function disconnectMeta\(\)[\s\S]*Ngắt liên kết Meta API/);
 });
 
 test("destructive follow-up cancellation requires confirmation and reports errors", () => {

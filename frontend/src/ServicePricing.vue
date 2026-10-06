@@ -6,13 +6,13 @@ defineEmits(['select','signup','login']);
 const en = computed(()=>locale.value === 'en');
 const copy = computed(()=>en.value ? {
   title:props.mode === 'chatbot' ? 'Choose a chatbot plan' : 'A plan for the way your shop works', subtitle:props.mode === 'chatbot' ? 'Compare chatbot plans and choose the right assistant for your shop.' : 'Compare your options. Start small, then grow with your team.',
-  choose:'Choose', chooseChatbot:'Choose assistant', selected:'Selected plan', selectedChatbot:'Selected bot', current:'Current plan', currentChatbot:'Current bot', upgrade:'Upgrade to', upgradeChatbot:'Upgrade assistant to', switchPlan:'Switch to', switchChatbot:'Switch assistant to', signup:'Get started with', login:'Already have an account? Sign in',
+  choose:'Choose', chooseChatbot:'Choose assistant', selected:'Selected plan', selectedChatbot:'Selected bot', current:'Current plan', currentChatbot:'Current bot', upgrade:'Upgrade to', upgradeChatbot:'Upgrade assistant to', downgrade:'Downgrade to', downgradeChatbot:'Downgrade assistant to', switchChatbot:'Switch assistant to', signup:'Get started with', login:'Already have an account? Sign in',
   demo:'Explore the workspace', channels:'connected platforms', preview:'Explore customer workflows', separate:'Separate assistant service',
   knowledge:'Support based on shop knowledge', review:'Staff review and handoff', data:'Shop-scoped customer data', approval:'Activation follows the existing approval process.',
   note:'Prices and limits follow the current service catalogue. Connections require platform setup.'
 } : {
   title:props.mode === 'chatbot' ? 'Chọn chatbot phù hợp' : 'Chọn gói phù hợp với shop của bạn', subtitle:props.mode === 'chatbot' ? 'So sánh các gói trợ lý chatbot và chọn phương án phù hợp với shop của bạn.' : 'So sánh rõ ràng. Bắt đầu vừa đủ, mở rộng cùng đội ngũ.',
-  choose:'Chọn', chooseChatbot:'Chọn trợ lý', selected:'Gói đang chọn', selectedChatbot:'Bot đang chọn', current:'Gói hiện tại', currentChatbot:'Bot hiện tại', upgrade:'Nâng cấp lên', upgradeChatbot:'Nâng cấp trợ lý', switchPlan:'Chuyển sang', switchChatbot:'Chuyển sang trợ lý', signup:'Bắt đầu với', login:'Đã có tài khoản? Đăng nhập',
+  choose:'Chọn', chooseChatbot:'Chọn trợ lý', selected:'Gói đang chọn', selectedChatbot:'Bot đang chọn', current:'Gói hiện tại', currentChatbot:'Bot hiện tại', upgrade:'Nâng cấp lên', upgradeChatbot:'Nâng cấp trợ lý', downgrade:'Hạ gói xuống', downgradeChatbot:'Hạ trợ lý xuống', switchChatbot:'Chuyển sang trợ lý', signup:'Bắt đầu với', login:'Đã có tài khoản? Đăng nhập',
   demo:'Khám phá không gian làm việc', channels:'nền tảng kết nối', preview:'Trải nghiệm quy trình chăm khách', separate:'Dịch vụ trợ lý thuê riêng',
   knowledge:'Hỗ trợ theo kiến thức của shop', review:'Nhân viên xem lại và tiếp quản', data:'Dữ liệu khách riêng theo shop', approval:'Kích hoạt theo quy trình duyệt hiện có.',
   note:'Giá và hạn mức theo danh mục dịch vụ hiện tại. Kết nối cần thiết lập theo từng nền tảng.'
@@ -38,7 +38,7 @@ function planAction(plan) {
     const targetIndex = props.plans.findIndex(item => item.code === plan.code);
     if (referenceIndex < 0) return `${copy.value.chooseChatbot} ${targetName}`;
     if (targetIndex === referenceIndex) return copy.value.currentChatbot;
-    return `${targetIndex > referenceIndex ? copy.value.upgradeChatbot : copy.value.switchChatbot} ${targetName}`;
+    return `${targetIndex > referenceIndex ? copy.value.upgradeChatbot : copy.value.downgradeChatbot} ${targetName}`;
   }
   if (props.currentPlan) {
     const currentIndex = props.plans.findIndex(item => item.code === props.currentPlan);
@@ -46,7 +46,7 @@ function planAction(plan) {
     if (targetIndex === currentIndex) return copy.value.current;
     if (currentIndex >= 0) {
       const isUpgrade = targetIndex > currentIndex;
-      return `${isUpgrade ? copy.value.upgrade : copy.value.switchPlan} ${name}`;
+      return `${isUpgrade ? copy.value.upgrade : copy.value.downgrade} ${name}`;
     }
   }
   return props.selected === plan.code ? copy.value.selected : `${copy.value.choose} ${name}`;

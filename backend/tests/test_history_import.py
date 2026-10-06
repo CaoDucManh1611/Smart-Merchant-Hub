@@ -1,3 +1,6 @@
+import asyncio
+import io
+import json
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -19,6 +22,64 @@ from app.models import Business, Channel, ChannelEvent, Conversation, Customer, 
 from app.services.channel_credentials import encrypt_token
 from app.services.message_service import process_and_save_message
 from unittest.mock import patch
+
+
+def test_configure_local_connector_accepts_pairing_code_at_saved_connection_prompt(tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "runtime"
+    package_dir = tmp_path / "package"
+    runtime_dir.mkdir()
+    old_token = "CONN.facebook.4.5.oldTokenValue1234"
+    pairing_code = "PAIR.facebook.4.5.TestPairingValue1234"
+    (runtime_dir / "facebook_connector_config.json").write_text(json.dumps({
+        "backend_url": "http://127.0.0.1:8000",
+        "connector_token": old_token,
+    }), encoding="utf-8")
+    monkeypatch.delenv("SMART_MERCHANT_AUTO_RESTART", raising=False)
+    monkeypatch.setattr("builtins.input", lambda _prompt: pairing_code)
+    request_bodies = []
+
+    def fake_urlopen(request, timeout):
+        assert timeout == 20
+        request_bodies.append(json.loads(request.data.decode("utf-8")))
+        return io.BytesIO(json.dumps({
+            "channel_type": "facebook",
+            "connector_token": "CONN.facebook.4.5.newTokenValue1234",
+        }).encode("utf-8"))
+
+    monkeypatch.setattr(connector_pairing, "urlopen", fake_urlopen)
+    monkeypatch.setattr(connector_pairing, "start_connector_heartbeat", lambda *_args: None)
+
+    backend_url, connector_token = connector_pairing.configure_local_connector(
+        "facebook", runtime_dir, package_dir, config_filename="facebook_connector_config.json"
+    )
+
+    assert backend_url == "http://127.0.0.1:8000"
+    assert connector_token == "CONN.facebook.4.5.newTokenValue1234"
+    assert request_bodies == [{"pairing_code": pairing_code}]
+    saved = json.loads((runtime_dir / "facebook_connector_config.json").read_text(encoding="utf-8"))
+    assert saved["connector_token"] == connector_token
+
+
+def test_configure_local_connector_rejects_bad_choice_instead_of_reusing_stale_token(tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "runtime"
+    package_dir = tmp_path / "package"
+    runtime_dir.mkdir()
+    (runtime_dir / "facebook_connector_config.json").write_text(json.dumps({
+        "backend_url": "http://127.0.0.1:8000",
+        "connector_token": "CONN.facebook.4.5.oldTokenValue1234",
+    }), encoding="utf-8")
+    monkeypatch.delenv("SMART_MERCHANT_AUTO_RESTART", raising=False)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "not-a-pairing-code")
+    monkeypatch.setattr(
+        connector_pairing,
+        "urlopen",
+        lambda *_args, **_kwargs: pytest.fail("must not send an invalid pairing choice"),
+    )
+
+    with pytest.raises(SystemExit, match="Lựa chọn không hợp lệ"):
+        connector_pairing.configure_local_connector(
+            "facebook", runtime_dir, package_dir, config_filename="facebook_connector_config.json"
+        )
 
 
 def test_history_normalizer_preserves_original_time_and_direction():
@@ -79,6 +140,141 @@ def test_history_endpoint_uses_side_effect_free_persistence_and_counts_duplicate
     assert calls[0][0]["external_user_id"] == "buyer-1"
     assert calls[1][0]["direction"] == "outbound"
     assert calls[0][0]["raw_payload"]["history_import"] is True
+
+
+def test_duplicate_meta_history_refreshes_corrected_message_timestamp(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "id": 11, "business_id": 7, "channel_type": "instagram",
+        "status": "active", "external_account_id": "instagram-shop-7",
+    })()
+
+    class TenantDb:
+        def __init__(self):
+            self.updates = []
+
+        @staticmethod
+        def get(_model, _channel_id):
+            return channel
+
+        def execute(self, statement, params):
+            self.updates.append((str(statement), params))
+
+        @staticmethod
+        def commit():
+            pass
+
+    tenant_db = TenantDb()
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield tenant_db
+
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+    monkeypatch.setattr(local_connectors, "process_and_save_message", lambda **_kwargs: {
+        "_created": False,
+        "message_id": 42,
+        "conversation_id": 99,
+    })
+
+    result = local_connectors.receive_local_connector_history(
+        "instagram",
+        {"messages": [{
+            "threadId": "thread-1", "customerId": "thread-1", "messageId": "old-message",
+            "direction": "inbound", "message": "Tin cũ", "createdAt": "2026-09-30T06:45:00Z",
+        }]},
+        "Bearer connector-token",
+        object(),
+    )
+
+    assert result["duplicates"] == 1
+    assert "SET received_at = :received_at" in tenant_db.updates[0][0]
+    assert tenant_db.updates[0][1] == {
+        "received_at": datetime(2026, 9, 30, 6, 45),
+        "message_id": 42,
+        "conversation_id": 99,
+        "channel": "instagram",
+    }
+
+
+def test_live_meta_history_is_distinguished_from_backfill_and_gets_fallback_time():
+    live = local_connectors._normalize_history_message("instagram", {
+        "threadId": "thread-1", "customerId": "buyer-1", "messageId": "live-1",
+        "direction": "inbound", "message": "Tin mới", "isLive": True,
+    })
+    old = local_connectors._normalize_history_message("instagram", {
+        "threadId": "thread-1", "customerId": "buyer-1", "messageId": "old-1",
+        "direction": "inbound", "message": "Tin cũ",
+    })
+    unsupported_live = local_connectors._normalize_history_message("shopee", {
+        "threadId": "thread-1", "customerId": "buyer-1", "messageId": "market-1",
+        "direction": "inbound", "message": "Tin Shopee", "isLive": True,
+    })
+
+    assert live["is_live"] is True
+    assert live["created_at"] is not None
+    assert old["is_live"] is False
+    assert old["created_at"] is None
+    assert unsupported_live["is_live"] is False
+
+
+def test_live_meta_history_route_broadcasts_message_without_changing_history_persistence(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "id": 11, "business_id": 7, "channel_type": "instagram",
+        "status": "active", "external_account_id": "instagram-shop-7",
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def get(_model, _channel_id):
+            return channel
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    calls = []
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+
+    def persist(*, message, history_import, **_kwargs):
+        calls.append((message, history_import))
+        return {
+            "_created": True,
+            "message_id": 43,
+            "conversation_id": 99,
+            "external_message_id": message["external_message_id"],
+            "direction": "inbound",
+            "content": message["content"],
+            "received_at": message["received_at"],
+        }
+
+    monkeypatch.setattr(local_connectors, "process_and_save_message", persist)
+    captured = {}
+
+    async def broadcast(event, *, business_id):
+        captured.update(event=event, business_id=business_id)
+
+    monkeypatch.setattr(local_connectors.manager, "broadcast", broadcast)
+    response = asyncio.run(local_connectors.receive_shopee_tiktok_history(
+        "instagram",
+        {"messages": [{
+            "threadId": "thread-1", "customerId": "buyer-1", "messageId": "live-1",
+            "direction": "inbound", "message": "Tin mới", "isLive": True,
+        }]},
+        "Bearer connector-token",
+        object(),
+    ))
+
+    assert response == {"status": "received", "imported": 1, "duplicates": 0, "skipped": 0}
+    assert calls[0][1] is True  # Backfill-safe path: no bot/workflow side effects.
+    assert calls[0][0]["received_at"] is not None
+    assert captured["business_id"] == 7
+    assert captured["event"]["type"] == "message_created"
+    assert captured["event"]["conversation_id"] == 99
+    assert captured["event"]["message"]["message_id"] == 43
 
 
 def test_history_endpoint_rejects_unbounded_batches():
@@ -142,6 +338,40 @@ def test_history_import_persists_old_direction_and_timestamp_without_automation(
         assert customer.external_user_id == "buyer-1"
         assert saved["_created"] is True
         assert duplicate["_created"] is False
+
+
+def test_history_import_keeps_unavailable_timestamp_unknown_instead_of_using_import_time():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Business.metadata.create_all(engine)
+    with Session(engine) as db:
+        business = Business(name="Unknown Time Shop", slug="unknown-time-shop")
+        db.add(business)
+        db.flush()
+        channel = Channel(
+            business_id=business.id,
+            channel_type="instagram",
+            name="Instagram",
+            external_account_id="instagram-unknown-time",
+            status="active",
+        )
+        db.add(channel)
+        db.flush()
+        message = {
+            "channel": "instagram", "business_id": business.id, "channel_id": channel.id,
+            "external_account_id": channel.external_account_id, "external_user_id": "buyer-unknown-time",
+            "external_message_id": "instagram:unknown-time-1", "direction": "inbound",
+            "content": "Old message with no timestamp from Meta", "received_at": None,
+            "raw_payload": {"threadId": "thread-unknown-time", "history_import": True},
+        }
+
+        saved = process_and_save_message(db, message, history_import=True)
+        stored = db.scalar(select(Message).where(Message.external_message_id == "instagram:unknown-time-1"))
+        conversation = db.scalar(select(Conversation))
+
+        assert saved["_created"] is True
+        assert stored.received_at is None
+        assert stored.raw_payload["timestamp_accuracy"] == "unavailable_from_source"
+        assert conversation.last_message_at is None
 
 
 def test_zalo_oa_history_resumes_and_records_checkpoint_without_reprocessing_webhook(monkeypatch):

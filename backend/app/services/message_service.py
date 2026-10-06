@@ -1565,6 +1565,14 @@ def process_and_save_message(
     )
     if history_import:
         message["sender_type"] = "staff" if message["direction"] == "outbound" else "customer"
+        if message.get("received_at") is None:
+            # Preserve an unknown historical timestamp as NULL instead of
+            # making it look like the message arrived at import time.
+            message["preserve_unknown_received_at"] = True
+            raw_payload = dict(message.get("raw_payload") or {})
+            raw_payload.setdefault("created_at", None)
+            raw_payload["timestamp_accuracy"] = "unavailable_from_source"
+            message["raw_payload"] = raw_payload
 
 
     # =====================================================
@@ -1601,25 +1609,27 @@ def process_and_save_message(
                 )
             except Exception:
                 logger.warning("History import attachment persistence failed")
-        db.execute(
-            text("""
-                UPDATE conversations
-                SET updated_at = CASE
-                        WHEN updated_at IS NULL OR updated_at < :occurred_at THEN :occurred_at
-                        ELSE updated_at
-                    END,
-                    last_message_at = CASE
-                        WHEN last_message_at IS NULL OR last_message_at < :occurred_at THEN :occurred_at
-                        ELSE last_message_at
-                    END
-                WHERE id = :conversation_id
-            """),
-            {
-                "conversation_id": conversation_id,
-                "occurred_at": message.get("received_at") or datetime.now(timezone.utc).replace(tzinfo=None),
-            },
-        )
-        db.commit()
+        occurred_at = message.get("received_at")
+        if occurred_at is not None:
+            db.execute(
+                text("""
+                    UPDATE conversations
+                    SET updated_at = CASE
+                            WHEN updated_at IS NULL OR updated_at < :occurred_at THEN :occurred_at
+                            ELSE updated_at
+                        END,
+                        last_message_at = CASE
+                            WHEN last_message_at IS NULL OR last_message_at < :occurred_at THEN :occurred_at
+                            ELSE last_message_at
+                        END
+                    WHERE id = :conversation_id
+                """),
+                {
+                    "conversation_id": conversation_id,
+                    "occurred_at": occurred_at,
+                },
+            )
+            db.commit()
         return saved_message
 
     # Every outbound workflow spawned by this inbound event receives a

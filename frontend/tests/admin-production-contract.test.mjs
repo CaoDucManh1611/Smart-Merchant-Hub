@@ -21,6 +21,10 @@ test("platform admin loads shop subscription, payment and quota details through 
   assert.match(templateSource, /Tải bộ ZIP TikTok/);
   assert.match(templateSource, /Giải nén ZIP rồi chạy SmartMerchantTikTok\.exe/);
   assert.match(templateSource, /Giải nén ZIP rồi chạy SmartMerchantShopee\.exe/);
+  assert.match(templateSource, /Tải ZIP Meta/);
+  assert.match(templateSource, /Tải ZIP Instagram/);
+  assert.match(appSource, /SmartMerchantMessenger\.zip/);
+  assert.match(appSource, /SmartMerchantInstagram\.zip/);
   assert.match(templateSource, /Gói đang dùng/);
   assert.match(templateSource, /Trạng thái thanh toán/);
   assert.match(templateSource, /Dung lượng tra cứu/);
@@ -46,6 +50,15 @@ test("connector downloads make one ZIP save through the browser", () => {
   assert.match(downloadFunction, /signature\[0\] !== 0x50/);
   assert.match(downloadFunction, /setTimeout\(\(\) => URL\.revokeObjectURL\(blobUrl\), 60_000\)/);
   assert.doesNotMatch(downloadFunction, /SmartMerchant\$\{[^}]+\}\.exe/);
+});
+
+test("Facebook and Instagram open focused connector dialogs", () => {
+  assert.match(templateSource, /channelModalTab === 'facebook' \? 'Kết nối Meta' : channelModalTab === 'instagram' \? 'Kết nối Instagram'/);
+  assert.doesNotMatch(templateSource, /meta-oauth-section/);
+  assert.match(templateSource, /class="settings-card meta-business-suite-bridge-card"/);
+  assert.match(templateSource, /v-if="channelModalTab !== 'instagram'" class="primary-btn bot-connect-submit"[^>]*@click="downloadMessengerConnectorApp"/);
+  assert.match(templateSource, /v-if="channelModalTab !== 'facebook'" class="primary-btn bot-connect-submit"[^>]*@click="downloadInstagramConnectorApp"/);
+  assert.match(templateSource, /channelModalTab === 'meta' \|\| connection\.channel_type === channelModalTab/);
 });
 test("shop lifecycle actions expose confirmation, busy and result states", () => {
   assert.match(appSource, /platformShopMutatingIds/);

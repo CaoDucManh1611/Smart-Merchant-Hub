@@ -9,12 +9,13 @@ import json
 import re
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from zipfile import ZIP_STORED, ZipFile
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin_access
@@ -24,6 +25,8 @@ from app.database.tenant_session import tenant_session
 from app.models.business import User
 from app.models.channel import Channel
 from app.models.customer_identity import CustomerIdentity
+from app.models.customer import Customer
+from app.models.sales import Order, OrderItem, Product
 from app.models.platform_control import PlatformBusiness, TenantRegistry
 from app.services.audit_service import record_audit
 from app.services.channel_credentials import decrypt_token, encrypt_token
@@ -35,7 +38,8 @@ from app.tenancy.schema import schema_name_for, validate_schema_name
 
 router = APIRouter(tags=["Local channel connectors"])
 _SUPPORTED = {"tiktok", "shopee"}
-_CODE_RE = re.compile(r"^(PAIR|CONN)\.(tiktok|shopee)\.(\d+)\.(\d+)\.([A-Za-z0-9_-]{12,})$")
+_CHAT_SUPPORTED = _SUPPORTED | {"facebook", "instagram"}
+_CODE_RE = re.compile(r"^(PAIR|CONN)\.(tiktok|shopee|facebook|instagram)\.(\d+)\.(\d+)\.([A-Za-z0-9_-]{12,})$")
 
 
 class PairConnectorRequest(BaseModel):
@@ -46,6 +50,28 @@ class ConnectorHeartbeatRequest(BaseModel):
     state: str = Field(default="online", pattern="^(online|error)$")
     error_code: str | None = Field(default=None, max_length=80, pattern="^[a-zA-Z0-9_.-]+$")
     retry_ack_id: str | None = Field(default=None, max_length=80, pattern="^[A-Za-z0-9_-]+$")
+
+
+class ConnectorOrderItem(BaseModel):
+    external_product_id: str | None = Field(default=None, max_length=255)
+    sku: str | None = Field(default=None, max_length=80)
+    name: str = Field(min_length=1, max_length=255)
+    quantity: int = Field(ge=1, le=100000)
+    unit_price: Decimal = Field(ge=0)
+
+
+class ConnectorOrder(BaseModel):
+    external_order_id: str = Field(min_length=1, max_length=255)
+    buyer_id: str | None = Field(default=None, max_length=255)
+    source_status: str = Field(default="unknown", max_length=80)
+    total_amount: Decimal = Field(ge=0)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    items: list[ConnectorOrderItem] = Field(min_length=1, max_length=100)
+
+
+class ConnectorOrderBatch(BaseModel):
+    orders: list[ConnectorOrder] = Field(min_length=1, max_length=100)
 
 
 def _code_parts(value: str, kind: str, channel_type: str | None = None) -> tuple[str, int, int, str]:
@@ -181,6 +207,183 @@ def _connector_channel(
     return business_id, channel_id
 
 
+def _marketplace_order_number(channel_type: str, shop_id: str, external_order_id: str) -> str:
+    seed = f"{channel_type}|{shop_id}|{external_order_id}".encode("utf-8")
+    prefix = "SHP" if channel_type == "shopee" else "TTS"
+    return f"{prefix}-{hashlib.sha256(seed).hexdigest()[:32]}"
+
+
+def _as_naive_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+@router.post("/channels/{channel_type}/orders")
+def receive_local_connector_orders(
+    channel_type: str,
+    payload: ConnectorOrderBatch,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    """Import orders read from the seller UI as safe CRM drafts, idempotently."""
+    if channel_type not in _SUPPORTED:
+        raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
+    if len(payload.model_dump_json().encode("utf-8")) > 1_500_000:
+        raise HTTPException(status_code=413, detail="Lô đơn hàng vượt quá dung lượng cho phép.")
+
+    business_id, channel_id = _connector_channel(channel_type, authorization, platform_db)
+    schema = _tenant_schema(platform_db, business_id)
+    created = updated = 0
+    with tenant_session(schema) as tenant_db:
+        channel = tenant_db.get(Channel, channel_id)
+        if (
+            not channel
+            or channel.business_id != business_id
+            or channel.channel_type != channel_type
+            or channel.status != "active"
+        ):
+            raise HTTPException(status_code=401, detail="Kênh connector đã bị ngắt hoặc không còn hợp lệ.")
+
+        shop_id = str(channel.external_account_id or channel.id)[:255]
+        for imported in payload.orders:
+            order_number = _marketplace_order_number(channel_type, shop_id, imported.external_order_id)
+            source_metadata = {
+                "marketplace_source": channel_type,
+                "marketplace_shop_id": shop_id,
+                "external_order_id": imported.external_order_id,
+                "external_status": imported.source_status,
+                "external_created_at": imported.created_at.isoformat() if imported.created_at else None,
+                "external_updated_at": imported.updated_at.isoformat() if imported.updated_at else None,
+                "last_marketplace_sync_at": datetime.now(timezone.utc).isoformat(),
+            }
+            existing = tenant_db.scalar(
+                select(Order).where(
+                    Order.business_id == business_id,
+                    Order.order_number == order_number,
+                )
+            )
+            if existing is not None:
+                existing.metadata_ = {**(existing.metadata_ or {}), **source_metadata}
+                updated += 1
+                continue
+
+            buyer_id = str(imported.buyer_id or "").strip()
+            # If the seller UI does not expose a stable buyer ID, attach
+            # orders to one shop-scoped placeholder instead of creating one
+            # fake CRM customer per order.
+            external_user_id = buyer_id or "marketplace-orders"
+            identity = None
+            if buyer_id:
+                identity = tenant_db.scalar(
+                    select(CustomerIdentity).where(
+                        CustomerIdentity.business_id == business_id,
+                        CustomerIdentity.channel == channel_type,
+                        CustomerIdentity.external_account_id == shop_id,
+                        CustomerIdentity.external_user_id == buyer_id,
+                    )
+                )
+            customer = identity.customer if identity is not None else None
+            if customer is None:
+                customer_key = f"{shop_id}:{external_user_id}"[:255]
+                customer = tenant_db.scalar(
+                    select(Customer).where(
+                        Customer.business_id == business_id,
+                        Customer.channel == channel_type,
+                        Customer.external_user_id == customer_key,
+                    )
+                )
+                if customer is None:
+                    customer = Customer(
+                        business_id=business_id,
+                        channel=channel_type,
+                        external_user_id=customer_key,
+                        name=f"Khách {channel_type.title()}",
+                    )
+                    tenant_db.add(customer)
+                    tenant_db.flush()
+                if buyer_id and identity is None:
+                    tenant_db.add(CustomerIdentity(
+                        business_id=business_id,
+                        customer_id=customer.id,
+                        channel=channel_type,
+                        external_account_id=shop_id,
+                        external_user_id=external_user_id,
+                    ))
+
+            order_items = []
+            computed_total = Decimal("0")
+            for line in imported.items:
+                product = None
+                external_sku = str(line.sku or "").strip()
+                if external_sku:
+                    product = tenant_db.scalar(
+                        select(Product).where(
+                            Product.business_id == business_id,
+                            Product.sku == external_sku,
+                        )
+                    )
+                if product is None:
+                    product_key = line.external_product_id or external_sku or line.name
+                    product_hash = hashlib.sha256(
+                        f"{channel_type}|{shop_id}|{product_key}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    placeholder_sku = f"EXT-{channel_type[:2].upper()}-{product_hash}"
+                    product = tenant_db.scalar(
+                        select(Product).where(
+                            Product.business_id == business_id,
+                            Product.sku == placeholder_sku,
+                        )
+                    )
+                    if product is None:
+                        product = Product(
+                            business_id=business_id,
+                            sku=placeholder_sku,
+                            name=line.name,
+                            price=line.unit_price,
+                            stock_quantity=0,
+                            status="external",
+                            metadata_={
+                                "marketplace_source": channel_type,
+                                "external_product_id": line.external_product_id,
+                                "external_sku": external_sku,
+                            },
+                        )
+                        tenant_db.add(product)
+                        tenant_db.flush()
+                line_total = line.unit_price * line.quantity
+                computed_total += line_total
+                order_items.append((line, product, line_total))
+
+            order = Order(
+                business_id=business_id,
+                customer_id=customer.id,
+                order_number=order_number,
+                status="draft",
+                total_amount=imported.total_amount if imported.total_amount else computed_total,
+                created_at=_as_naive_utc(imported.created_at),
+                metadata_=source_metadata,
+            )
+            tenant_db.add(order)
+            tenant_db.flush()
+            for line, product, line_total in order_items:
+                tenant_db.add(OrderItem(
+                    order_id=order.id,
+                    product_id=product.id,
+                    quantity=line.quantity,
+                    unit_price=line.unit_price,
+                    line_total=line_total,
+                    product_name_snapshot=line.name,
+                    sku_snapshot=line.sku or product.sku,
+                ))
+            created += 1
+        tenant_db.commit()
+
+    return {"status": "received", "created": created, "updated": updated, "duplicates": 0}
+
+
 @router.post("/channels/{channel_type}/heartbeat")
 def report_connector_heartbeat(
     channel_type: str,
@@ -189,7 +392,7 @@ def report_connector_heartbeat(
     platform_db: Session = Depends(get_platform_db),
 ):
     """Record a minimal, authenticated liveness/error signal; never accept raw logs."""
-    if channel_type not in _SUPPORTED:
+    if channel_type not in _CHAT_SUPPORTED:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
     business_id, channel_id = _connector_channel(channel_type, authorization, platform_db)
     schema = _tenant_schema(platform_db, business_id)
@@ -240,7 +443,7 @@ async def receive_local_connector_message(
     authorization: str | None,
     platform_db: Session,
 ):
-    if channel_type not in _SUPPORTED:
+    if channel_type not in _CHAT_SUPPORTED:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
     if len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")) > 262144:
         raise HTTPException(status_code=413, detail="Tin nhắn gửi lên vượt quá dung lượng cho phép.")
@@ -352,6 +555,14 @@ def _normalize_history_message(channel_type: str, item: object) -> dict | None:
         return None
     if not content and message_type == "text":
         return None
+    is_live = bool(item.get("isLive") is True and channel_type in {"facebook", "instagram"} and direction == "inbound")
+    created_at_from_source = _history_datetime(item.get("createdAt") or item.get("created_at") or item.get("timestamp"))
+    created_at = created_at_from_source
+    if is_live and created_at is None:
+        # Some Meta message bubbles have no exposed timestamp. For an item
+        # explicitly identified by the live inbox watcher, use discovery time
+        # so the conversation moves to the top instead of remaining stale.
+        created_at = datetime.now(timezone.utc).replace(tzinfo=None)
     return {
         "thread_id": thread_id,
         "customer_id": customer_id,
@@ -364,7 +575,9 @@ def _normalize_history_message(channel_type: str, item: object) -> dict | None:
         "avatar_url": str(item.get("avatarUrl") or item.get("avatar_url") or "")[:2000] or None,
         "media_url": str(item.get("mediaUrl") or item.get("media_url") or "")[:2000] or None,
         "attachments": item.get("attachments") if isinstance(item.get("attachments"), list) else [],
-        "created_at": _history_datetime(item.get("createdAt") or item.get("created_at") or item.get("timestamp")),
+        "created_at": created_at,
+        "created_at_from_source": created_at_from_source is not None,
+        "is_live": is_live,
     }
 
 
@@ -373,9 +586,11 @@ def receive_local_connector_history(
     payload: dict,
     authorization: str | None,
     platform_db: Session,
+    *,
+    collect_realtime_events: bool = False,
 ):
     """Safely import an idempotent batch of prior chat messages without automation."""
-    if channel_type not in _SUPPORTED:
+    if channel_type not in _CHAT_SUPPORTED:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
     if len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")) > 1_500_000:
         raise HTTPException(status_code=413, detail="Lô lịch sử vượt quá dung lượng cho phép.")
@@ -385,6 +600,7 @@ def receive_local_connector_history(
     business_id, channel_id = _connector_channel(channel_type, authorization, platform_db)
     schema = _tenant_schema(platform_db, business_id)
     imported = duplicates = skipped = 0
+    realtime_events: list[tuple[int, dict]] = []
     with tenant_session(schema) as tenant_db:
         channel = tenant_db.get(Channel, channel_id)
         if not channel or channel.business_id != business_id or channel.channel_type != channel_type or channel.status != "active":
@@ -430,18 +646,82 @@ def receive_local_connector_history(
             if saved.get("_created", True):
                 imported += 1
             else:
+                if (
+                    channel_type in {"facebook", "instagram"}
+                    and normalized["created_at"]
+                    and (not normalized["is_live"] or normalized["created_at_from_source"])
+                    and saved.get("message_id")
+                    and saved.get("conversation_id")
+                ):
+                    tenant_db.execute(
+                        text("""
+                            UPDATE messages
+                            SET received_at = :received_at
+                            WHERE id = :message_id
+                              AND conversation_id = :conversation_id
+                              AND channel = :channel
+                        """),
+                        {
+                            "received_at": normalized["created_at"],
+                            "message_id": int(saved["message_id"]),
+                            "conversation_id": int(saved["conversation_id"]),
+                            "channel": channel_type,
+                        },
+                    )
+                    tenant_db.commit()
                 duplicates += 1
-    return {"status": "received", "imported": imported, "duplicates": duplicates, "skipped": skipped}
+            if normalized["is_live"] and saved.get("conversation_id"):
+                # Keep the Meta import route free of chatbot/workflow side
+                # effects, while still notifying open CRM sessions instantly.
+                realtime_events.append((
+                    int(business_id),
+                    {
+                        "type": "message_created",
+                        "conversation_id": saved.get("conversation_id"),
+                        "message": {key: value for key, value in saved.items() if key != "_created"},
+                    },
+                ))
+    result = {"status": "received", "imported": imported, "duplicates": duplicates, "skipped": skipped}
+    if collect_realtime_events:
+        result["_realtime_events"] = realtime_events
+    return result
 
 
 @router.post("/channels/{channel_type}/history")
-def receive_shopee_tiktok_history(
+async def receive_shopee_tiktok_history(
     channel_type: str,
     payload: dict,
     authorization: str | None = Header(default=None, alias="Authorization"),
     platform_db: Session = Depends(get_platform_db),
 ):
-    return receive_local_connector_history(channel_type, payload, authorization, platform_db)
+    result = receive_local_connector_history(
+        channel_type,
+        payload,
+        authorization,
+        platform_db,
+        collect_realtime_events=True,
+    )
+    for event_business_id, event in result.pop("_realtime_events", []):
+        await manager.broadcast(event, business_id=event_business_id)
+    return result
+
+
+@router.post("/channels/facebook/incoming")
+async def receive_meta_facebook_connector_message(
+    payload: dict,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    return await receive_local_connector_message("facebook", payload, authorization, platform_db)
+
+
+@router.post("/channels/instagram/incoming")
+async def receive_meta_instagram_connector_message(
+    payload: dict,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    return await receive_local_connector_message("instagram", payload, authorization, platform_db)
 
 
 @router.post("/channels/shopee/incoming")
@@ -471,13 +751,37 @@ def sync_tiktok_customer_avatars(
     return _sync_local_connector_customer_avatars("tiktok", payload, authorization, platform_db)
 
 
+@router.post("/channels/facebook/profiles")
+def sync_meta_facebook_customer_avatars(
+    payload: dict,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    return _sync_local_connector_customer_avatars(
+        "facebook", payload, authorization, platform_db, replace_existing=True
+    )
+
+
+@router.post("/channels/instagram/profiles")
+def sync_meta_instagram_customer_avatars(
+    payload: dict,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    return _sync_local_connector_customer_avatars(
+        "instagram", payload, authorization, platform_db, replace_existing=True
+    )
+
+
 def _sync_local_connector_customer_avatars(
     channel_type: str,
     payload: dict,
     authorization: str | None,
     platform_db: Session,
+    *,
+    replace_existing: bool = False,
 ):
-    """Fill missing avatars for known connector identities; never create customers."""
+    """Sync avatar URLs for known connector identities; never create customers."""
     profiles = payload.get("profiles")
     if not isinstance(profiles, list) or len(profiles) > 200:
         raise HTTPException(status_code=422, detail="Danh sách hồ sơ connector không hợp lệ.")
@@ -499,7 +803,7 @@ def _sync_local_connector_customer_avatars(
     with tenant_session(schema) as tenant_db:
         channel = tenant_db.get(Channel, channel_id)
         if channel is None:
-            raise HTTPException(status_code=401, detail="Shopee connector không còn hợp lệ.")
+            raise HTTPException(status_code=401, detail="Connector không còn hợp lệ.")
         identities = tenant_db.scalars(
             select(CustomerIdentity).where(
                 CustomerIdentity.business_id == business_id,
@@ -512,7 +816,9 @@ def _sync_local_connector_customer_avatars(
             matched_external_user_ids.add(identity.external_user_id)
             customer = identity.customer
             avatar_url = avatars.get(identity.external_user_id)
-            if customer.business_id != business_id or not avatar_url or customer.avatar_url:
+            if customer.business_id != business_id or not avatar_url:
+                continue
+            if customer.avatar_url == avatar_url or (customer.avatar_url and not replace_existing):
                 continue
             customer.avatar_url = avatar_url
             record_audit(
@@ -534,9 +840,15 @@ def _sync_local_connector_customer_avatars(
 
 
 def _connector_exe_path(channel_type: str) -> Path | None:
-    app_name = "TikTok" if channel_type == "tiktok" else "Shopee"
-    folder = "tiktok-bridge" if channel_type == "tiktok" else "shopee-bridge"
-    filename = f"SmartMerchant{app_name}.exe"
+    artifacts = {
+        "tiktok": ("tiktok-bridge", "SmartMerchantTikTok.exe"),
+        "shopee": ("shopee-bridge", "SmartMerchantShopee.exe"),
+        "facebook": ("meta-business-suite-bridge", "SmartMerchantMessenger.exe"),
+        "instagram": ("meta-business-suite-bridge", "SmartMerchantInstagram.exe"),
+    }
+    folder, filename = artifacts.get(channel_type, ("", ""))
+    if not filename:
+        return None
     candidates = (
         Path(__file__).resolve().parents[3] / "scripts" / "dist" / folder / filename,
         Path("/app/root-scripts/dist") / folder / filename,
@@ -546,7 +858,7 @@ def _connector_exe_path(channel_type: str) -> Path | None:
 
 
 def _validated_connector_exe(channel_type: str) -> tuple[Path, str]:
-    if channel_type not in _SUPPORTED:
+    if channel_type not in _CHAT_SUPPORTED:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
     app_path = _connector_exe_path(channel_type)
     if app_path is None:
@@ -556,7 +868,12 @@ def _validated_connector_exe(channel_type: str) -> tuple[Path, str]:
             raise HTTPException(status_code=503, detail="Ứng dụng connector trên máy chủ không hợp lệ.")
     except OSError as exc:
         raise HTTPException(status_code=503, detail="Không thể đọc ứng dụng connector trên máy chủ.") from exc
-    app_name = "TikTok" if channel_type == "tiktok" else "Shopee"
+    app_name = {
+        "tiktok": "TikTok",
+        "shopee": "Shopee",
+        "facebook": "Messenger",
+        "instagram": "Instagram",
+    }[channel_type]
     return app_path, app_name
 
 
@@ -571,7 +888,24 @@ def _connector_app_response(channel_type: str, *, include_download_header: bool 
     archive = BytesIO()
     with ZipFile(archive, "w", compression=ZIP_STORED) as bundle:
         bundle.write(app_path, filename)
-        bundle.writestr("HUONG-DAN.txt", f"Giải nén file ZIP, sau đó chạy {filename}.\n")
+        bundle.writestr(
+            "HUONG-DAN.txt",
+            (
+                f"Giải nén ZIP rồi chạy {filename}. File này chỉ ghép nối {app_name}; tạo mã đúng kênh trong CRM, "
+                f"sau đó đăng nhập thủ công trong Edge riêng của {app_name}. Connector đọc giao diện Meta Business Suite "
+                "và nhập tin nhắn vào CRM; không gọi Meta API. Connector chỉ nhập lịch sử lần đầu hoặc phần còn thiếu "
+                "khi mở lại; sau khi lịch sử hoàn tất sẽ chỉ đồng bộ tin mới. Việc mở chat có thể đánh dấu tin chưa đọc "
+                "thành đã đọc. Không vượt CAPTCHA; "
+                "xử lý xác minh thủ công. "
+                "Hồ sơ Edge lưu riêng trên máy này.\n"
+                if channel_type in {"facebook", "instagram"}
+                else f"Giải nén ZIP, sau đó chạy {filename}. Đăng nhập thủ công trong Edge. "
+                "Bridge đồng bộ tin nhắn và đơn đang hiển thị từ Seller Center/Kênh Người Bán về CRM; "
+                "đơn được nhập ở trạng thái nháp để kiểm tra. Giữ Edge và bridge hoạt động; "
+                "nếu nền tảng yêu cầu CAPTCHA/xác minh thì xử lý thủ công trong Edge. "
+                "Cookie và hồ sơ Edge không được gửi lên CRM.\n"
+            ),
+        )
     headers = {"Cache-Control": "no-store"}
     if include_download_header:
         headers["Content-Disposition"] = f'attachment; filename="SmartMerchant{app_name}.zip"'

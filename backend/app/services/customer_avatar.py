@@ -12,6 +12,30 @@ from app.core.config import settings
 
 CUSTOMER_AVATAR_TTL_SECONDS = 15 * 60
 PROVIDER_PROXY_CHANNELS = frozenset({"instagram", "telegram", "zalo"})
+META_AVATAR_HOSTS = (
+    "fbcdn.net",
+    "cdninstagram.com",
+    "fbsbx.com",
+    "lookaside.instagram.com",
+)
+
+
+def is_trusted_meta_avatar_url(value: object) -> bool:
+    """Return whether a URL is an HTTPS image URL hosted by Meta's CDNs."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        parsed = urlsplit(text)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    if parsed.scheme.lower() != "https" or not hostname:
+        return False
+    return any(
+        hostname == host or hostname.endswith(f".{host}")
+        for host in META_AVATAR_HOSTS
+    )
 
 
 def _signing_secret() -> bytes:

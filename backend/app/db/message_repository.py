@@ -24,6 +24,8 @@ def save_message(
         if dialect_name == "postgresql"
         else "COALESCE(:received_at, CURRENT_TIMESTAMP)"
     )
+    if message.get("preserve_unknown_received_at") is True:
+        received_at_value = "CAST(:received_at AS TIMESTAMP)" if dialect_name == "postgresql" else ":received_at"
     query = text(f"""
         INSERT INTO messages (
             conversation_id,

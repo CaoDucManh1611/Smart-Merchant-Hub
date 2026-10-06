@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     # http://host.docker.internal:8091.
     TIKTOK_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8091"
     SHOPEE_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8092"
+    # Separate local Edge bridge ports let Messenger and Instagram run together.
+    META_MESSENGER_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8093"
+    META_INSTAGRAM_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8094"
 
     # =========================================================
     # RAG SETTINGS
