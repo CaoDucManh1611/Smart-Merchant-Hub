@@ -234,5 +234,6 @@ Các endpoint chatbot tiêu biểu: `/api/chatbot/config`, `/api/chatbot/canned-
 | [Migration tenant](docs/runbooks/tenant-migration.md) | Di chuyển/cập nhật dữ liệu tenant |
 | [Backup & restore tenant](docs/runbooks/tenant-backup-restore.md) | Sao lưu và phục hồi |
 | [Checklist phát hành](docs/release-checklist.md) | Kiểm tra trước bàn giao |
+| [Luồng 3 – Evidence / Báo cáo nghiệm thu](docs/luong-3/README.md) | Implementation, test evidence, hướng dẫn sử dụng/triển khai, demo và checklist |
 
 Khi chạy backend trực tiếp, entry point là `uvicorn app.main:app --reload` từ thư mục `backend`, không phải `uvicorn main:app`.

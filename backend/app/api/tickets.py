@@ -31,7 +31,7 @@ from app.schemas.ticket import (
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.services.workflow_engine import emit_workflow_event
-from app.auth.dependencies import require_admin_access, require_write_access
+from app.auth.dependencies import require_admin_access, require_resource_access
 from app.services.notification_service import create_notification
 from app.services.audit_service import record_audit
 from app.services.job_service import dispatch_due_jobs
@@ -42,6 +42,10 @@ from app.services.ticket_sla import enqueue_ticket_sla_jobs, get_sla_rules, save
 router = APIRouter()
 VALID_STATUSES = ("open", "pending", "resolved", "closed")
 VALID_PRIORITIES = ("low", "normal", "high", "urgent")
+ticket_read_access = require_resource_access("tickets:read")
+ticket_write_access = require_resource_access("tickets:write")
+
+
 def _utcnow() -> datetime:
     """Return a naive UTC datetime matching the existing DateTime columns."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -140,7 +144,7 @@ def _enqueue_sla_job(db: Session, ticket: Ticket) -> None:
     enqueue_ticket_sla_jobs(db, ticket)
 
 
-@router.get("/tickets", response_model=TicketListOut)
+@router.get("/tickets", response_model=TicketListOut, dependencies=[Depends(ticket_read_access)])
 def list_tickets(
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
@@ -164,7 +168,7 @@ def list_tickets(
     return TicketListOut(items=[_out(ticket) for ticket in tickets], total=total)
 
 
-@router.get("/tickets/sla/rules", response_model=SlaRules)
+@router.get("/tickets/sla/rules", response_model=SlaRules, dependencies=[Depends(ticket_read_access)])
 def get_ticket_sla_rules(
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
@@ -193,14 +197,14 @@ def update_ticket_sla_rules(
     return rules
 
 
-@router.post("/tickets", response_model=TicketOut, status_code=201, dependencies=[Depends(require_write_access)])
+@router.post("/tickets", response_model=TicketOut, status_code=201, dependencies=[Depends(ticket_write_access)])
 def create_ticket(
     payload: TicketCreate,
     db: Session = Depends(get_tenant_db),
     platform_db: Session = Depends(get_platform_db),
     user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
-    actor: User | None = Depends(require_write_access),
+    actor: User | None = Depends(ticket_write_access),
 ):
     _validate_values(payload.status, payload.priority)
     customer = _customer(db, payload.customer_id, tenant)
@@ -278,7 +282,7 @@ def create_ticket(
     return _out(_ticket(db, ticket.id, tenant))
 
 
-@router.patch("/tickets/{ticket_id}", response_model=TicketOut, dependencies=[Depends(require_write_access)])
+@router.patch("/tickets/{ticket_id}", response_model=TicketOut, dependencies=[Depends(ticket_write_access)])
 def update_ticket(
     ticket_id: int,
     payload: TicketUpdate,
@@ -286,7 +290,7 @@ def update_ticket(
     platform_db: Session = Depends(get_platform_db),
     user_db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
-    actor: User | None = Depends(require_write_access),
+    actor: User | None = Depends(ticket_write_access),
 ):
     ticket = _ticket(db, ticket_id, tenant)
     previous_status = ticket.status
@@ -388,13 +392,13 @@ def update_ticket(
     return _out(_ticket(db, ticket_id, tenant))
 
 
-@router.post("/tickets/{ticket_id}/comments", response_model=TicketCommentOut, status_code=201, dependencies=[Depends(require_write_access)])
+@router.post("/tickets/{ticket_id}/comments", response_model=TicketCommentOut, status_code=201, dependencies=[Depends(ticket_write_access)])
 def add_ticket_comment(
     ticket_id: int,
     payload: TicketCommentCreate,
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
-    actor: User | None = Depends(require_write_access),
+    actor: User | None = Depends(ticket_write_access),
 ):
     ticket = _ticket(db, ticket_id, tenant)
     comment = TicketComment(
@@ -426,7 +430,7 @@ def add_ticket_comment(
     return comment
 
 
-@router.get("/tickets/sla-notifications", response_model=SlaNotificationListOut)
+@router.get("/tickets/sla-notifications", response_model=SlaNotificationListOut, dependencies=[Depends(ticket_read_access)])
 def sla_notifications(
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
@@ -540,7 +544,7 @@ def sla_notifications(
     return SlaNotificationListOut(items=items, total=len(items))
 
 
-@router.get("/tickets/{ticket_id}/history", response_model=TicketHistoryOut)
+@router.get("/tickets/{ticket_id}/history", response_model=TicketHistoryOut, dependencies=[Depends(ticket_read_access)])
 def ticket_history(
     ticket_id: int,
     db: Session = Depends(get_tenant_db),
@@ -557,12 +561,12 @@ def ticket_history(
     )
 
 
-@router.get("/tickets/{ticket_id}", response_model=TicketOut)
+@router.get("/tickets/{ticket_id}", response_model=TicketOut, dependencies=[Depends(ticket_read_access)])
 def get_ticket(ticket_id: int, db: Session = Depends(get_tenant_db), tenant: TenantContext = Depends(get_tenant_context)):
     return _out(_ticket(db, ticket_id, tenant))
 
 
-@router.get("/reports/tickets", response_model=TicketReportOut)
+@router.get("/reports/tickets", response_model=TicketReportOut, dependencies=[Depends(ticket_read_access)])
 def ticket_report(
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
