@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import webbrowser
 from pathlib import Path
 from threading import Event, Thread
 from datetime import datetime, timezone
@@ -459,8 +460,29 @@ def configure_local_connector(
 ) -> tuple[str, str]:
     runtime_dir.mkdir(parents=True, exist_ok=True)
     config_path = runtime_dir / config_filename
+    defaults_path = package_dir / "connector_defaults.json"
+    try:
+        defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        defaults = {}
+    execution_mode = str(defaults.get("execution_mode") or "local").strip().lower()
+    if execution_mode not in {"local", "server"}:
+        raise SystemExit("Cấu hình connector không hợp lệ: execution_mode phải là local hoặc server.")
+
+    # Server-managed workers receive their short-lived-at-rest credentials from
+    # the Windows agent process. They must never prompt or persist the token.
+    if os.getenv("SMART_MERCHANT_SERVER_WORKER") == "1":
+        backend_url = str(os.getenv("SMART_MERCHANT_SERVER_BACKEND_URL") or "").strip().rstrip("/")
+        connector_token = str(os.getenv("SMART_MERCHANT_SERVER_CONNECTOR_TOKEN") or "").strip()
+        if not backend_url or not connector_token.startswith(f"CONN.{channel_type}."):
+            raise SystemExit("Server agent chưa cấp cấu hình connector hợp lệ.")
+        os.environ[f"{channel_type.upper()}_BACKEND_URL"] = backend_url
+        os.environ[f"{channel_type.upper()}_CONNECTOR_TOKEN"] = connector_token
+        start_connector_heartbeat(channel_type, backend_url, connector_token)
+        return backend_url, connector_token
+
     pairing_code = ""
-    if config_path.is_file():
+    if execution_mode == "local" and config_path.is_file():
         try:
             saved = json.loads(config_path.read_text(encoding="utf-8"))
             backend_url = str(saved.get("backend_url") or "").strip().rstrip("/")
@@ -487,11 +509,6 @@ def configure_local_connector(
         except (OSError, ValueError, TypeError):
             pass
 
-    defaults_path = package_dir / "connector_defaults.json"
-    try:
-        defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        defaults = {}
     default_url = str(defaults.get("backend_url") or "http://127.0.0.1:8000").strip().rstrip("/")
     print("\nSmart Merchant — thiết lập kết nối lần đầu")
     print("Đang dùng địa chỉ hệ thống đã cấu hình sẵn. Mã ghép nối lấy trong mục Liên kết mạng xã hội.")
@@ -507,9 +524,12 @@ def configure_local_connector(
         pairing_code = input("Nhập pairing code trong mục Liên kết mạng xã hội: ").strip()
     if not pairing_code:
         raise SystemExit("Chưa nhập pairing code.")
+    pair_payload = {"pairing_code": pairing_code}
+    if execution_mode == "server":
+        pair_payload["execution_mode"] = "server"
     request = Request(
         f"{backend_url}/api/channels/pair",
-        data=json.dumps({"pairing_code": pairing_code}).encode("utf-8"),
+        data=json.dumps(pair_payload).encode("utf-8"),
         headers={"Content-Type": "application/json", "Accept": "application/json"},
         method="POST",
     )
@@ -521,6 +541,35 @@ def configure_local_connector(
         raise SystemExit(f"Ghép nối thất bại (HTTP {exc.code}): {detail}") from exc
     except (URLError, TimeoutError, ValueError) as exc:
         raise SystemExit(f"Không kết nối được Smart Merchant: {exc}") from exc
+
+    if execution_mode == "server":
+        if paired.get("channel_type") != channel_type or not paired.get("server_managed"):
+            raise SystemExit("CRM chưa xác nhận ghép nối server-side cho kênh này.")
+        viewer_ticket = str(paired.get("viewer_ticket") or "").strip()
+        business_id = str(paired.get("business_id") or "").strip()
+        channel_id = str(paired.get("channel_id") or "").strip()
+        frontend_url = str(defaults.get("frontend_url") or "").strip().rstrip("/")
+        if not viewer_ticket or not business_id or not channel_id or not frontend_url:
+            raise SystemExit("CRM chưa trả đủ thông tin mở phiên đăng nhập trên server.")
+        from urllib.parse import urlencode
+
+        viewer_url = (
+            f"{frontend_url}/server-connector-viewer.html#"
+            + urlencode({
+                "api": backend_url,
+                "business": business_id,
+                "channel": channel_id,
+                "type": channel_type,
+                "ticket": viewer_ticket,
+            })
+        )
+        print("Đã ghép shop với server. Mở cửa sổ đăng nhập từ xa; token không được lưu trên máy này.", flush=True)
+        opened = webbrowser.open(viewer_url)
+        if opened:
+            print("Hãy đăng nhập/xử lý xác minh trong cửa sổ đăng nhập từ xa, rồi có thể đóng EXE.", flush=True)
+        else:
+            print(f"Không tự mở được trình duyệt; hãy mở liên kết dùng một lần này: {viewer_url}", flush=True)
+        raise SystemExit(0)
 
     connector_token = str(paired.get("connector_token") or "").strip()
     if paired.get("channel_type") != channel_type or not connector_token.startswith(f"CONN.{channel_type}."):

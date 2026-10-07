@@ -78,6 +78,10 @@ def send_telegram_media(
     media_type: str,
     media_url: str,
     caption: str | None = None,
+    upload_bytes: bytes | None = None,
+    upload_filename: str | None = None,
+    upload_content_type: str | None = None,
+    voice_note: bool = False,
 ) -> dict:
     """Send image/audio/sticker/video/file through the linked bot."""
     channel_id = db.scalar(
@@ -109,6 +113,10 @@ def send_telegram_media(
             media_url=media_url,
             caption=caption,
             access_token=access_token,
+            upload_bytes=upload_bytes,
+            upload_filename=upload_filename,
+            upload_content_type=upload_content_type,
+            voice_note=voice_note,
         ),
     )
     if result.get("ok") is False:

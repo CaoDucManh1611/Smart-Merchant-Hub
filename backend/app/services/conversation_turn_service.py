@@ -71,7 +71,11 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         Message.conversation_id == conversation_id,
         Message.direction == "inbound",
     ).first()
-    if source is None or not source.content or not source.content.strip():
+    source_has_image = (
+        source is not None
+        and (source.media_type == "image" or any(item.media_type == "image" for item in source.attachments))
+    )
+    if source is None or (not (source.content or "").strip() and not source_has_image):
         return False
 
     turn_started = perf_counter()
@@ -103,9 +107,12 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         batch.insert(0, row)
         if len(batch) >= 12:
             break
-    fragments = [row.content.strip() for row in batch]
-    query = _merge_fragments(fragments)
-    if conversation.channel in {"shopee", "tiktok"}:
+    fragments = [row.content.strip() for row in batch if row.content and row.content.strip()]
+    query = _merge_fragments(fragments) if fragments else ""
+    if source_has_image:
+        image_context = "Khách gửi ảnh đính kèm. Hãy xem ảnh khi trả lời; nếu chưa có câu hỏi rõ, hỏi một câu làm rõ."
+        query = f"{query}\n\n{image_context}".strip()
+    if fragments and not source_has_image:
         from app.models.crm_job import CrmJob
         from app.services.customer_collection_flow import advance_customer_collection
         from app.services.auto_reply_service import send_text_reply
@@ -122,9 +129,15 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
                 conversation_id=conversation_id,
                 source_channel=conversation.channel,
                 text=query,
+                form_fragments=fragments,
             )
             if result is not None:
-                reply_text = result.prompt
+                reply_text = str(result.prompt or "")
+                if not reply_text.strip():
+                    # Partial checkout fields were saved on the session. Wait
+                    # for the customer's remaining entries instead of asking
+                    # for the entire form again or routing the values to RAG.
+                    return True
                 job = db.query(CrmJob).filter(
                     CrmJob.business_id == business_id,
                     CrmJob.idempotency_key == f"chatbot-turn:{conversation_id}:{message_id}",
@@ -144,7 +157,7 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
             except HTTPException as exc:
                 if exc.status_code != 409 or not isinstance(exc.detail, dict) or exc.detail.get("code") != "delivery_unknown":
                     raise
-                logger.warning("Shopee delivery unconfirmed for conversation %s; check channel before resending", conversation_id)
+                logger.warning("Provider delivery unconfirmed for conversation %s; check channel before resending", conversation_id)
             logger.info(
                 "Chatbot turn channel=%s conversation=%s wait_ms=%s processing_ms=%s delivery_ms=%s",
                 conversation.channel, conversation_id,

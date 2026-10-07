@@ -10,6 +10,7 @@ from app.models.business_setting import BusinessSetting
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_fact import CustomerFact
+from app.models.crm_job import CrmJob
 from app.models.message import Message
 from app.services.customer_fact_extractor import (
     extract_customer_facts,
@@ -17,6 +18,7 @@ from app.services.customer_fact_extractor import (
     parse_extraction_response,
     persist_extracted_facts,
     get_customer_fact_extraction_enabled,
+    dispatch_weekly_customer_fact_scan,
 )
 
 
@@ -210,6 +212,67 @@ class CustomerFactExtractorTests(unittest.TestCase):
             call.assert_not_called()
             db.get(Customer, self.customer_id).fact_extraction_opt_out = False
             db.commit()
+
+    def test_weekly_history_scan_is_resumable_and_does_not_reprocess_completed_rows(self):
+        with Session(self.engine) as db:
+            setting = db.query(BusinessSetting).filter(
+                BusinessSetting.business_id == self.business_id,
+                BusinessSetting.key == "customer_fact_extraction_enabled",
+            ).first()
+            if setting is None:
+                setting = BusinessSetting(
+                    business_id=self.business_id,
+                    key="customer_fact_extraction_enabled",
+                    value="true",
+                )
+                db.add(setting)
+            else:
+                setting.value = "true"
+            conversation = db.query(Conversation).filter(
+                Conversation.business_id == self.business_id,
+                Conversation.customer_id == self.customer_id,
+            ).one()
+            db.add(Message(
+                conversation_id=conversation.id,
+                channel="telegram",
+                external_user_id="extractor-user",
+                external_message_id="extractor-message-2",
+                direction="inbound",
+                content="Mình thích màu hồng",
+            ))
+            db.add(Message(
+                conversation_id=conversation.id,
+                channel="telegram",
+                external_user_id="extractor-user",
+                external_message_id="extractor-message-outbound",
+                direction="outbound",
+                content="Shop chào bạn",
+            ))
+            db.commit()
+
+        with Session(self.engine) as db, patch(
+            "app.services.customer_fact_extractor.extract_and_persist_customer_facts",
+            return_value=[],
+        ) as extract:
+            result = dispatch_weekly_customer_fact_scan(db, business_id=self.business_id)
+            self.assertEqual(2, result["scanned"])
+            self.assertFalse(result["has_more"])
+            # The original message already has a durable extraction from an
+            # earlier test; only the newly appended inbound row should call AI.
+            self.assertEqual(1, extract.call_count)
+            jobs = db.query(CrmJob).filter(
+                CrmJob.business_id == self.business_id,
+                CrmJob.kind == "customer.facts.weekly_scan",
+            ).all()
+            self.assertTrue(jobs)
+
+        with Session(self.engine) as db, patch(
+            "app.services.customer_fact_extractor.extract_and_persist_customer_facts",
+            return_value=[],
+        ) as extract:
+            result = dispatch_weekly_customer_fact_scan(db, business_id=self.business_id)
+            self.assertEqual(0, result["scanned"])
+            extract.assert_not_called()
 
 
 if __name__ == "__main__":

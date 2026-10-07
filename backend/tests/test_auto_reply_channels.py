@@ -335,6 +335,45 @@ def test_rag_without_context_sends_safe_handoff_without_calling_llm():
     assert "chưa có đủ thông tin" in send.call_args.kwargs["text"].lower()
 
 
+def test_instagram_image_is_passed_to_vision_model_and_gets_a_reply():
+    db = Mock()
+    conversation = Mock(bot_mode="auto", customer_id=8, resolution_outcome=None)
+    db.query.return_value.filter.return_value.first.side_effect = [None, conversation]
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.services.auto_reply_service._latest_inbound_image_url", return_value="https://scontent.cdninstagram.com/test.jpg"), \
+        patch("app.services.auto_reply_service._download_meta_image", return_value=(b"image-bytes", "image/jpeg")), \
+        patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+        patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
+        patch("app.services.auto_reply_service.record_explicit_chat_recommendation_decline"), \
+        patch("app.services.auto_reply_service._deterministic_customer_reply", return_value=None), \
+        patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
+        patch("app.services.auto_reply_service.retrieve", return_value=[]), \
+        patch("app.services.auto_reply_service.select_chatbot_reply_choice", return_value=None), \
+        patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
+        patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "xem ảnh"}]), \
+        patch("app.services.auto_reply_service.record_quota_usage"), \
+        patch("app.services.auto_reply_service.estimate_ai_cost", return_value=Decimal("0")), \
+        patch("app.services.auto_reply_service.call_llm") as text_model, \
+        patch("app.services.auto_reply_service.call_llm_with_image", return_value="Mình thấy một chiếc áo màu hồng.") as vision_model, \
+        patch("app.services.auto_reply_service._get_conversation_recipient", return_value=("instagram", "ig-customer")), \
+        patch("app.services.auto_reply_service._send_channel_reply", return_value={"message_id": "ig-reply-1"}), \
+        patch("app.services.auto_reply_service._save_auto_reply_outbound"):
+        result = process_rag_auto_reply(
+            db=db,
+            conversation_id=4,
+            channel="instagram",
+            query_text="Khách gửi ảnh đính kèm.",
+            business_id=1,
+        )
+
+    assert result is True
+    vision_model.assert_called_once_with(
+        [{"role": "user", "content": "xem ảnh"}], b"image-bytes", "image/jpeg"
+    )
+    text_model.assert_not_called()
+
+
 def test_order_status_reply_bypasses_rag_and_uses_customer_scoped_flow():
     db = Mock()
     with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \

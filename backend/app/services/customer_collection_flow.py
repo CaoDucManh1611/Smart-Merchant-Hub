@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import re
 from threading import Thread
+import unicodedata
 
 from sqlalchemy.orm import Session
 
@@ -55,20 +56,6 @@ from app.tenancy.schema import schema_name_for
 
 REQUIRED_FIELDS = ("name", "phone", "email", "address", "payment_method")
 SHOPEE_REQUIRED_FIELDS = ("name", "email", "address", "payment_method")
-PROMPTS = {
-    "name": "Để lên đơn, bạn cho mình xin tên người nhận nhé.",
-    "phone": "Bạn cho mình xin số điện thoại nhận hàng nhé.",
-    "email": "Bạn cho mình xin email để gửi xác nhận đơn nhé.",
-    "address": "Bạn cho mình xin địa chỉ giao hàng đầy đủ nhé.",
-    "payment_method": "Bạn muốn thanh toán COD hay chuyển khoản?",
-}
-PROMPTS_EN = {
-    "name": "What name should I put on the order?",
-    "phone": "What phone number should receive the delivery?",
-    "email": "What email should I use to send the order confirmation?",
-    "address": "What is the full delivery address?",
-    "payment_method": "Would you like to pay by cash on delivery or bank transfer?",
-}
 
 
 def _required_fields_for_channel(source_channel: str | None) -> tuple[str, ...]:
@@ -78,8 +65,8 @@ def _required_fields_for_channel(source_channel: str | None) -> tuple[str, ...]:
 
 
 PAYMENT_METHODS = {
-    "cod": {"cod", "thu tien khi nhan", "thanh toan khi nhan", "nhan hang moi tra"},
-    "bank_transfer": {"chuyen khoan", "chuyen khoan ngan hang", "ck", "qr"},
+    "cod": {"cod", "cash on delivery", "thu tien khi nhan", "thanh toan khi nhan", "nhan hang moi tra"},
+    "bank_transfer": {"chuyen khoan", "chuyen khoan ngan hang", "bank transfer", "ck", "qr"},
 }
 GREETING_PHRASES = {
     "alo",
@@ -125,12 +112,6 @@ ORDER_APPROVAL_PHRASES = (
     "dat don",
     "lay",
 )
-ORDER_REJECTION_PHRASES = (
-    "khong",
-    "huy",
-    "de sau",
-    "chua mua",
-)
 PRICE_QUERY_PHRASES = (
     "bao nhieu tien",
     "het bao nhieu",
@@ -172,8 +153,11 @@ ENGLISH_PURCHASE_MARKERS = (
 BROWSING_PHRASES = (
     "tim hieu",
     "danh sach san pham",
+    "danh sach do",
+    "danh sach mat hang",
+    "liet ke san pham",
+    "liet ke mat hang",
     "san pham nao",
-    "gia bao nhieu",
     "tu van san pham",
     "xem san pham",
     "xem hang",
@@ -248,6 +232,8 @@ def is_greeting(text: str | None) -> bool:
 def is_order_intent(text: str | None) -> bool:
     folded = re.sub(r"[^\w\s]", " ", _fold(str(text or "")))
     folded = " ".join(folded.split())
+    if _is_product_detail_request(folded):
+        return False
     if _is_purchase_history_question(folded):
         return False
     if any(phrase in folded for phrase in ORDER_CONFIRMATION_PHRASES):
@@ -354,8 +340,15 @@ def _is_checkout_information_question(text: str) -> bool:
     folded = _fold(str(text or ""))
     return any(term in folded for term in (
         "giao hang", "van chuyen", "phi ship", "ship", "doi tra", "tra hang",
-        "hoan tien", "bao hanh", "chinh sach",
+        "hoan tien", "bao hanh", "chinh sach", "link", "lien ket", "duong dan", "url",
     ))
+
+
+def _is_product_detail_request(text: str | None) -> bool:
+    folded = _fold(str(text or ""))
+    if any(term in folded for term in ("don hang", "hoa don", "ma don", "order status", "invoice")):
+        return False
+    return any(term in folded for term in ("chi tiet", "mo ta san pham", "thong so san pham"))
 
 
 def _format_vnd(value: object) -> str:
@@ -404,6 +397,18 @@ def _extract_quantity(text: str) -> int:
         if not re.search(r"(?:\b(?:mau|model|sku|ma)\s*)$", prefix):
             return ENGLISH_QUANTITY_WORDS[match.group(0)]
     return 0
+
+
+def _is_contextual_quantity_purchase(text: str | None) -> bool:
+    folded = " ".join(re.sub(r"[^\w\s]", " ", _fold(str(text or ""))).split())
+    quantity = r"(?:\d{1,4}|" + "|".join(ENGLISH_QUANTITY_WORDS) + r")"
+    return bool(re.fullmatch(
+        r"(?:(?:cho\s+)?(?:toi|minh|em|anh|chi)\s+)?(?:muon\s+)?(?:(?:lay|mua)\s+)?"
+        + quantity
+        + r"\s+(?:cai|chiec|bo|sp|san\s+pham|items?|units?|pieces?)"
+        + r"(?:\s+(?:do|nay|nhe|thoi|please))?",
+        folded,
+    ))
 
 
 def _is_quantity_only_update(text: str) -> bool:
@@ -665,8 +670,203 @@ def _quote_product_name(item: dict, language: str) -> str:
     )
 
 
-def _collection_prompt(field: str, language: str) -> str:
-    return (PROMPTS_EN if language == "en" else PROMPTS)[field]
+_ORDER_FORM_LABELS = {
+    "ten nguoi nhan": "name",
+    "ho ten": "name",
+    "ho va ten": "name",
+    "ten": "name",
+    "recipient name": "name",
+    "name": "name",
+    "so dien thoai": "phone",
+    "dien thoai": "phone",
+    "sdt": "phone",
+    "so dt": "phone",
+    "phone": "phone",
+    "phone number": "phone",
+    "mobile": "phone",
+    "email": "email",
+    "thu dien tu": "email",
+    "dia chi nhan hang": "address",
+    "dia chi giao hang": "address",
+    "dia chi": "address",
+    "shipping address": "address",
+    "delivery address": "address",
+    "address": "address",
+    "phuong thuc thanh toan": "payment_method",
+    "hinh thuc thanh toan": "payment_method",
+    "thanh toan": "payment_method",
+    "payment method": "payment_method",
+    "payment": "payment_method",
+}
+
+
+def _order_form_prompt(required_fields: list[str] | tuple[str, ...], language: str) -> str:
+    labels = {
+        "name": "Recipient name" if language == "en" else "Tên người nhận",
+        "phone": "Phone number" if language == "en" else "Số điện thoại",
+        "email": "Email",
+        "address": "Delivery address" if language == "en" else "Địa chỉ nhận hàng",
+        "payment_method": "Payment (COD/bank transfer)" if language == "en" else "Thanh toán (COD/chuyển khoản)",
+    }
+    if language == "en":
+        intro = (
+            "Please complete every field below. If you send the details in a few messages, "
+            "I will keep them together instead of asking for each field again:\n"
+        )
+    else:
+        intro = (
+            "Để lên đơn, bạn điền đầy đủ các mục dưới đây nhé. Nếu gửi thành vài tin, "
+            "mình sẽ tự ghi nhận thay vì hỏi lại từng mục:\n"
+        )
+    return intro + "\n".join(f"{labels[field]}:" for field in required_fields if field in labels)
+
+
+def _split_order_form_line(line: str) -> tuple[str | None, str]:
+    for label, field in sorted(_ORDER_FORM_LABELS.items(), key=lambda item: len(item[0]), reverse=True):
+        for boundary in range(1, len(line) + 1):
+            if _fold(line[:boundary]).strip() != label:
+                continue
+            remainder = line[boundary:]
+            if remainder and not (remainder[0].isspace() or remainder[0] in ":：=—-"):
+                continue
+            return field, remainder.lstrip(" \t:：=—-").strip()
+    return None, ""
+
+
+def _fold_with_positions(value: str) -> tuple[str, list[int]]:
+    """Fold accents while retaining offsets into the original message."""
+    folded_chars: list[str] = []
+    original_positions: list[int] = []
+    for index, char in enumerate(value):
+        normalized = unicodedata.normalize("NFKD", char.casefold()).replace("đ", "d")
+        for item in normalized:
+            if unicodedata.combining(item):
+                continue
+            folded_chars.append(item)
+            original_positions.append(index)
+    return "".join(folded_chars), original_positions
+
+
+def _split_order_form_line_parts(line: str) -> list[tuple[str, str]]:
+    """Read multiple labeled fields from one message line, preserving addresses."""
+    folded, positions = _fold_with_positions(line)
+    candidates: list[tuple[int, int, str, str]] = []
+    for label, field in _ORDER_FORM_LABELS.items():
+        pattern = re.compile(rf"(?<![a-z0-9]){re.escape(label)}(?![a-z0-9])")
+        for match in pattern.finditer(folded):
+            start, end = match.span()
+            original_start = positions[start]
+            original_end = positions[end - 1] + 1
+            candidates.append((original_start, original_end, label, field))
+
+    candidates.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+    labels: list[tuple[int, int, str]] = []
+    for start, end, _label, field in candidates:
+        if labels and start < labels[-1][1]:
+            continue
+        if not labels:
+            # A line may begin with a small conversational lead-in, but don't
+            # treat an incidental word like "email" inside an address as a
+            # form label unless it follows a recognized field.
+            prefix = line[:start].strip(" \t,;|:：=—-")
+            if prefix and _fold(prefix) not in {"minh", "toi", "ten", "ho ten"}:
+                continue
+        labels.append((start, end, field))
+
+    parts: list[tuple[str, str]] = []
+    for index, (_start, end, field) in enumerate(labels):
+        next_start = labels[index + 1][0] if index + 1 < len(labels) else len(line)
+        raw_value = line[end:next_start].strip(" \t,;|:：=—-")
+        parts.append((field, raw_value))
+    return parts
+
+
+def _parse_order_form_details(
+    text: str,
+    required_fields: list[str] | tuple[str, ...],
+    fragments: list[str] | None = None,
+    fallback_field: str | None = None,
+) -> tuple[dict[str, str], bool, set[str]]:
+    required = set(required_fields)
+    values: dict[str, str] = {}
+    found_form = False
+    invalid_fields: set[str] = set()
+    source = "\n".join(fragments) if fragments else str(text or "")
+    lines = [line.strip() for line in re.split(r"[\r\n;|]+", source) if line.strip()]
+    unlabelled: list[str] = []
+    for line in lines:
+        labeled_parts = _split_order_form_line_parts(line)
+        if not labeled_parts:
+            unlabelled.append(line)
+            continue
+        for field, raw_value in labeled_parts:
+            found_form = True
+            if field not in required:
+                continue
+            if field == "payment_method" and ":" in raw_value:
+                # Drop example text from labels such as "Payment (COD/bank
+                # transfer): ..." before looking for the selected method.
+                raw_value = raw_value.rsplit(":", 1)[-1]
+            value = _extract_value(field, raw_value)
+            if value:
+                values[field] = value
+                invalid_fields.discard(field)
+            else:
+                invalid_fields.add(field)
+
+    # The conversation-turn worker already groups rapid-fire chat fragments.
+    # Customers may therefore answer in the same order as the displayed form
+    # without repeating labels. Accept a complete positional batch only when
+    # every line maps cleanly; partial turns are handled below and persisted.
+    if not found_form and len(lines) == len(required_fields):
+        positional = {
+            field: value
+            for field, raw_value in zip(required_fields, lines)
+            if (value := _extract_value(field, raw_value))
+        }
+        if len(positional) == len(required_fields):
+            return positional, True, set()
+
+    fallback_used = False
+    for line in unlabelled:
+        inferred_field = next(
+            (
+                field for field in ("email", "phone", "payment_method")
+                if (value := _extract_value(field, line))
+            ),
+            None,
+        )
+        if inferred_field is not None:
+            found_form = True
+            if inferred_field in required:
+                values[inferred_field] = _extract_value(inferred_field, line) or ""
+            continue
+        # When a customer replies with a bare value (for example just their
+        # name) after seeing the form, assign one such fragment to the next
+        # missing field. This supports short chat messages without asking the
+        # same full form again after every batch.
+        if not fallback_used and required_fields:
+            field = fallback_field if fallback_field in required else required_fields[0]
+            value = _extract_value(field, line)
+            if value:
+                found_form = True
+                values[field] = value
+                fallback_used = True
+
+    return values, found_form, invalid_fields
+
+
+def _parse_order_form(
+    text: str,
+    required_fields: list[str] | tuple[str, ...],
+    fragments: list[str] | None = None,
+) -> tuple[dict[str, str], bool]:
+    values, found_form, _invalid_fields = _parse_order_form_details(
+        text,
+        required_fields,
+        fragments,
+    )
+    return values, found_form
 
 
 def _stock_unavailable_prompt(items: list[dict], *, language: str = "vi") -> str:
@@ -817,9 +1017,12 @@ def _is_order_approval(text: str | None) -> bool:
 
 def _is_order_rejection(text: str | None) -> bool:
     folded = " ".join(re.sub(r"[^\w\s]", " ", _fold(str(text or ""))).split())
-    return folded in {"no", "no thanks", "not now", "i changed my mind"} or any(
-        phrase in folded for phrase in ORDER_REJECTION_PHRASES
-    )
+    return folded in {
+        "khong", "khong nhe", "khong cam on", "khong can", "thoi khong",
+        "khong mua nua", "khong dat nua", "khong lay nua", "huy", "huy don",
+        "huy yeu cau", "de sau", "chua mua", "no", "no thanks", "not now",
+        "i changed my mind", "cancel", "cancel order",
+    }
 
 
 def _is_product_switch_request(text: str | None) -> bool:
@@ -873,6 +1076,8 @@ def _is_fresh_checkout_request(
 def is_browsing_request(text: str | None) -> bool:
     """Identify product discovery messages that must stay in RAG/chat mode."""
     folded = _fold(str(text or ""))
+    if _is_product_detail_request(folded):
+        return True
     # A reference to a previously discussed item is not a request to list
     # every product merely because it contains "mau ... khong".
     if re.search(r"\b(?:mau|san pham)\s+(?:do|nay|vua hoi)\b", folded):
@@ -1077,7 +1282,21 @@ def _extract_value(field: str, text: str) -> str | None:
         return None
     folded = _fold(raw)
     if field == "name":
-        value = re.sub(r"^(ten nguoi nhan|ten toi la|minh la|toi la)\s*[:,-]?\s*", "", folded and raw, flags=re.IGNORECASE).strip()
+        value = raw
+        for prefix in (
+            "tên người nhận", "họ và tên", "họ tên", "tên tôi là", "mình là", "tôi là", "tên", "name",
+        ):
+            for boundary in range(1, len(raw) + 1):
+                if _fold(raw[:boundary]).strip() != _fold(prefix):
+                    continue
+                remainder = raw[boundary:]
+                if remainder and not (remainder[0].isspace() or remainder[0] in ":：=—-,"):
+                    continue
+                value = remainder.lstrip(" \t:：=—-,").strip()
+                value = re.sub(r"^(?:là|is)\s+", "", value, flags=re.IGNORECASE).strip()
+                break
+            if value != raw:
+                break
         return value[:255] if value else None
     if field == "phone":
         match = PHONE_PATTERN.search(raw)
@@ -1726,8 +1945,9 @@ def advance_customer_collection(
     conversation_id: int | None,
     source_channel: str,
     text: str,
+    form_fragments: list[str] | None = None,
 ) -> CollectionFlowResult | None:
-    """Start or advance a collection session from one inbound chat message."""
+    """Start or advance a collection session from one coalesced chat turn."""
     customer = db.query(Customer).filter(
         Customer.id == customer_id,
         Customer.business_id == business_id,
@@ -1793,6 +2013,31 @@ def advance_customer_collection(
                     text=text,
                 )
             return None
+        if _is_product_detail_request(text):
+            return None
+        if _is_contextual_quantity_purchase(text):
+            products = _find_requested_products(
+                db,
+                business_id=business_id,
+                text=text,
+                conversation_id=conversation_id,
+            )
+            if products:
+                return _start_product_quote(
+                    db,
+                    business_id=business_id,
+                    customer_id=customer_id,
+                    conversation_id=conversation_id,
+                    source_channel=source_channel,
+                    text=text,
+                )
+            return CollectionFlowResult(
+                session_id=0,
+                status="product_clarification",
+                current_field=None,
+                prompt="Bạn muốn lấy sản phẩm nào ạ? Gửi mình tên hoặc mã sản phẩm để kiểm tra nhé.",
+                started=True,
+            )
         # Resolve an explicitly named product before the generic browsing
         # detector. Otherwise ``muốn mua 3 Kem chống nắng ...`` is mistaken
         # for a catalogue request and the bot repeats every product.
@@ -1847,7 +2092,10 @@ def advance_customer_collection(
             session_id=session.id,
             status=session.status,
             current_field=session.current_field,
-            prompt=_collection_prompt(session.current_field, detect_reply_language(text)),
+            prompt=_order_form_prompt(
+                session.required_fields,
+                detect_reply_language(text),
+            ),
             started=True,
         )
 
@@ -2084,6 +2332,18 @@ def advance_customer_collection(
     if session.purpose == "order_confirmation":
         quote = dict(session.collected_fields or {})
         reply_language = quote.get("reply_language") or detect_reply_language(text)
+        if is_browsing_request(text) or _is_checkout_information_question(text):
+            session.status = "abandoned"
+            session.current_field = None
+            session.last_activity_at = _now()
+            _cancel_checkout_reminder(
+                db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                session_id=session.id,
+            )
+            db.commit()
+            return None
         # A customer may add another product while reviewing the quote.  Do
         # this before checking approval so a message such as “mua thêm 1
         # serum” updates the same cart instead of repeating the old quote.
@@ -2245,7 +2505,10 @@ def advance_customer_collection(
             session_id=session.id,
             status=session.status,
             current_field=session.current_field,
-            prompt=_collection_prompt(session.current_field, reply_language),
+            prompt=_order_form_prompt(
+                session.required_fields,
+                reply_language,
+            ),
         )
 
     # Quantity edits after accepting a quote invalidate that acceptance.
@@ -2261,6 +2524,7 @@ def advance_customer_collection(
         return advance_customer_collection(
             db, business_id=business_id, customer_id=customer_id,
             conversation_id=conversation_id, source_channel=source_channel, text=text,
+            form_fragments=form_fragments,
         )
 
     if _ensure_channel_fields(session):
@@ -2285,47 +2549,82 @@ def advance_customer_collection(
         )
         db.commit()
         return None
-    value = _extract_value(field, text)
-    if value is None:
-        return CollectionFlowResult(
-            session_id=session.id,
-            status=session.status,
-            current_field=field,
-            prompt=_collection_prompt(
-                field,
-                (session.collected_fields or {}).get("reply_language") or detect_reply_language(text),
-            ),
-        )
-
     collected = dict(session.collected_fields or {})
-    collected[field] = value
+    values, form_submitted, invalid_fields = _parse_order_form_details(
+        text,
+        session.required_fields,
+        form_fragments,
+        fallback_field=field,
+    )
+    if not form_submitted:
+        # Let ordinary questions reach RAG while leaving this checkout open.
+        return None
+
+    # Repair partial checkouts saved by older builds that treated a combined
+    # "name, phone" line as one name value. This only runs when the customer
+    # sends another recognizable form value; it never creates an order by
+    # itself or replays outbound messages.
+    legacy_name_repaired = False
+    saved_name = str(collected.get("name") or "").strip()
+    if saved_name:
+        recovered, _, _ = _parse_order_form_details(
+            f"Tên người nhận: {saved_name}",
+            session.required_fields,
+        )
+        recovered_name = recovered.get("name")
+        if recovered_name and recovered_name != saved_name:
+            collected["name"] = recovered_name
+            legacy_name_repaired = True
+        for recovered_field, recovered_value in recovered.items():
+            if recovered_value and not collected.get(recovered_field):
+                values.setdefault(recovered_field, recovered_value)
+
+    for collected_field, value in values.items():
+        collected[collected_field] = value
+        if collected_field == "name" and not customer.name:
+            customer.name = value
+        elif collected_field == "phone":
+            _store_contact(db, business_id=business_id, customer_id=customer_id, kind="phone", value=value)
+            if not customer.phone:
+                customer.phone = value
+        elif collected_field == "email":
+            _store_contact(db, business_id=business_id, customer_id=customer_id, kind="email", value=value)
+            if not customer.email:
+                customer.email = value
+        elif collected_field == "address":
+            _store_address(db, business_id=business_id, customer_id=customer_id, value=value)
+            if not customer.address:
+                customer.address = value
+    if legacy_name_repaired:
+        customer.name = collected["name"]
     session.collected_fields = collected
     session.last_activity_at = _now()
-
-    if field == "name" and not customer.name:
-        customer.name = value
-    elif field == "phone":
-        _store_contact(db, business_id=business_id, customer_id=customer_id, kind="phone", value=value)
-        if not customer.phone:
-            customer.phone = value
-    elif field == "email":
-        _store_contact(db, business_id=business_id, customer_id=customer_id, kind="email", value=value)
-        if not customer.email:
-            customer.email = value
-    elif field == "address":
-        _store_address(db, business_id=business_id, customer_id=customer_id, value=value)
-        if not customer.address:
-            customer.address = value
 
     next_field = next((item for item in session.required_fields if not collected.get(item)), None)
     if next_field is not None:
         session.current_field = next_field
         session.status = "partial"
-        prompt = _collection_prompt(
-            next_field,
-            (session.collected_fields or {}).get("reply_language") or detect_reply_language(text),
-        )
         db.commit()
+        invalid_missing = [item for item in session.required_fields if item in invalid_fields and not collected.get(item)]
+        if invalid_missing:
+            labels = {
+                "name": "tên người nhận",
+                "phone": "số điện thoại",
+                "email": "email",
+                "address": "địa chỉ nhận hàng",
+                "payment_method": "phương thức thanh toán",
+            }
+            invalid_labels = ", ".join(labels.get(item, item) for item in invalid_missing)
+            language = collected.get("reply_language") or detect_reply_language(text)
+            prompt = (
+                f"I couldn't read: {invalid_labels}. Please correct those fields in the form:\n"
+                if language == "en"
+                else f"Mình chưa đọc được {invalid_labels}. Bạn kiểm tra lại các mục đó theo form này nhé:\n"
+            ) + _order_form_prompt(session.required_fields, language)
+        else:
+            # Keep valid fragments across batched turns without sending the
+            # full form again after every partial customer message.
+            prompt = ""
         return CollectionFlowResult(
             session_id=session.id,
             status=session.status,

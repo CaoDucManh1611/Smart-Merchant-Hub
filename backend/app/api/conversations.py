@@ -61,6 +61,8 @@ from app.services.channel_delivery import (
     validate_client_id,
 )
 from app.services.zalo_media import normalize_zalo_audio_upload
+from app.services.telegram_media import TELEGRAM_VOICE_CONTENT_TYPES, normalize_telegram_voice_upload
+from app.services.media_capabilities import supported_outbound_media_types, unsupported_media_detail
 from app.services.media_resolver import build_media_url
 from app.services.audit_service import record_audit
 from app.services.customer_avatar import refresh_customer_avatar_url
@@ -207,6 +209,7 @@ class SendMediaRequest(
     media_type: str = "image"
     caption: str | None = None
     client_id: str | None = None
+    is_voice_note: bool = False
 
 
 class ConversationAssignmentRequest(BaseModel):
@@ -429,12 +432,43 @@ def get_upload_file_media_type(
     return media_type
 
 
+def _public_image_url_error_detail(response: httpx.Response, content_type: str) -> dict:
+    ngrok_error = response.headers.get("ngrok-error-code")
+    message = "Public image URL không trả về ảnh hợp lệ"
+    if ngrok_error == "ERR_NGROK_3200":
+        message = (
+            "Đường hầm PUBLIC_BASE_URL đang ngoại tuyến (ngrok ERR_NGROK_3200). "
+            "Hãy bật lại ngrok trỏ tới cổng 8000, dùng đúng domain đó trong "
+            "PUBLIC_BASE_URL rồi gửi lại ảnh."
+        )
+    detail = {
+        "stage": "public_url_check",
+        "message": message,
+        "status": response.status_code,
+        "content_type": content_type,
+        "content_length": response.headers.get("content-length"),
+        "final_url": str(response.url),
+    }
+    if ngrok_error:
+        detail["upstream_error_code"] = ngrok_error
+    return detail
+
+
+def _public_image_check_headers() -> dict[str, str]:
+    return {
+        "Accept": "image/png,image/jpeg,*/*;q=0.8",
+        "User-Agent": "SmartMerchantMedia/1.0",
+        "ngrok-skip-browser-warning": "true",
+    }
+
+
 def check_public_image_url(
     image_url: str,
 ) -> dict:
     try:
         response = httpx.get(
             image_url,
+            headers=_public_image_check_headers(),
             follow_redirects=True,
             timeout=15,
         )
@@ -476,20 +510,7 @@ def check_public_image_url(
     ):
         raise HTTPException(
             status_code=400,
-            detail={
-                "stage":
-                    "public_url_check",
-                "message":
-                    "Public image URL không trả về ảnh hợp lệ",
-                "status":
-                    response.status_code,
-                "content_type":
-                    content_type,
-                "content_length":
-                    content_length,
-                "final_url":
-                    str(response.url),
-            },
+            detail=_public_image_url_error_detail(response, content_type),
         )
 
     if content_type not in ALLOWED_IMAGE_TYPES:
@@ -526,7 +547,8 @@ async def check_public_image_url_async(
             timeout=15,
         ) as client:
             response = await client.get(
-                image_url
+                image_url,
+                headers=_public_image_check_headers(),
             )
     except httpx.RequestError as exc:
         logger.warning("Public media URL check failed: error_type=%s", type(exc).__name__)
@@ -566,20 +588,7 @@ async def check_public_image_url_async(
     ):
         raise HTTPException(
             status_code=400,
-            detail={
-                "stage":
-                    "public_url_check",
-                "message":
-                    "Public image URL không trả về ảnh hợp lệ",
-                "status":
-                    response.status_code,
-                "content_type":
-                    content_type,
-                "content_length":
-                    content_length,
-                "final_url":
-                    str(response.url),
-            },
+            detail=_public_image_url_error_detail(response, content_type),
         )
 
     if content_type not in ALLOWED_IMAGE_TYPES:
@@ -1050,22 +1059,35 @@ def send_tiktok_text(
     # channel was connected.  The launcher uses 127.0.0.1 for a host-run
     # FastAPI process, while Docker uses host.docker.internal; a stale value
     # in channel.config must not make an otherwise healthy bridge unreachable.
+    server_managed = config.get("connector_execution_mode") == "server"
     control_url = str(
-        settings.TIKTOK_BRIDGE_CONTROL_URL or config.get("bridge_control_url") or ""
+        settings.SERVER_CONNECTOR_AGENT_URL
+        if server_managed
+        else (settings.TIKTOK_BRIDGE_CONTROL_URL or config.get("bridge_control_url") or "")
     ).strip().rstrip("/")
     if not control_url:
         raise HTTPException(status_code=503, detail="TikTok outbound bridge chưa được cấu hình")
+    endpoint = (
+        f"{control_url}/internal/channels/{business_id}/tiktok/{channel.id}/send"
+        if server_managed else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-TikTok-Bridge-Secret": bridge_secret}
+    )
+    if server_managed and not settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
 
     try:
         response = httpx.post(
-            f"{control_url}/send",
+            endpoint,
             json={
                 "threadId": thread_id,
                 "message": text_content or "",
                 "conversationId": int(conversation["id"]),
                 "recipientId": str(recipient_id or ""),
             },
-            headers={"X-TikTok-Bridge-Secret": bridge_secret},
+            headers=headers,
             timeout=30,
         )
     except httpx.RequestError as exc:
@@ -1121,11 +1143,24 @@ def send_shopee_text(
     control_url = str(settings.SHOPEE_BRIDGE_CONTROL_URL or "").strip().rstrip("/")
     if not control_url:
         raise HTTPException(status_code=503, detail="Shopee outbound connector chưa được cấu hình")
+    channel_config = getattr(channel, "config", {})
+    server_managed = isinstance(channel_config, dict) and channel_config.get("connector_execution_mode") == "server"
+    endpoint = (
+        f"{settings.SERVER_CONNECTOR_AGENT_URL.rstrip('/')}/internal/channels/{business_id}/shopee/{channel.id}/send"
+        if server_managed and settings.SERVER_CONNECTOR_AGENT_URL
+        else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-Shopee-Bridge-Secret": connector_token}
+    )
+    if server_managed and (not settings.SERVER_CONNECTOR_AGENT_URL or not settings.SERVER_CONNECTOR_AGENT_TOKEN):
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
     try:
         response = httpx.post(
-            f"{control_url}/send",
+            endpoint,
             json={"threadId": thread_id, "message": text_content or "", "recipientId": str(recipient_id or "")},
-            headers={"X-Shopee-Bridge-Secret": connector_token},
+            headers=headers,
             timeout=30,
         )
     except httpx.RequestError as exc:
@@ -1186,18 +1221,31 @@ def send_meta_text(
     thread_id = _local_connector_thread_id(db, int(conversation["id"]), channel_type)
     if not thread_id:
         raise HTTPException(status_code=409, detail="Meta conversation chưa có thread_id để gửi tin")
+    server_managed = config.get("connector_execution_mode") == "server"
     control_url = str(
-        settings.META_INSTAGRAM_BRIDGE_CONTROL_URL
-        if channel_type == "instagram"
-        else settings.META_MESSENGER_BRIDGE_CONTROL_URL
+        settings.SERVER_CONNECTOR_AGENT_URL
+        if server_managed
+        else (settings.META_INSTAGRAM_BRIDGE_CONTROL_URL
+            if channel_type == "instagram"
+            else settings.META_MESSENGER_BRIDGE_CONTROL_URL)
     ).strip().rstrip("/")
     if not control_url:
         raise HTTPException(status_code=503, detail=f"{channel_type.title()} outbound bridge chưa được cấu hình")
+    endpoint = (
+        f"{control_url}/internal/channels/{business_id}/{channel_type}/{channel.id}/send"
+        if server_managed else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-Meta-Bridge-Secret": connector_token}
+    )
+    if server_managed and not settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
     try:
         response = httpx.post(
-            f"{control_url}/send",
+            endpoint,
             json={"threadId": thread_id, "message": text_content or "", "recipientId": str(recipient_id or "")},
-            headers={"X-Meta-Bridge-Secret": connector_token},
+            headers=headers,
             timeout=30,
         )
     except httpx.RequestError as exc:
@@ -1769,6 +1817,7 @@ def get_conversations(
             c.avatar_url,
 
             cv.channel,
+            cv.channel_id,
             cv.status,
             cv.bot_mode,
             cv.resolution_outcome,
@@ -1914,6 +1963,16 @@ def get_conversations(
     total = int(db.execute(text(total_sql), total_params).scalar_one())
 
     customer_ids = {int(row["customer_id"]) for row in result if row.get("customer_id") is not None}
+    channel_ids = {int(row["channel_id"]) for row in result if row.get("channel_id") is not None}
+    channel_provider_map: dict[int, str] = {}
+    if channel_ids:
+        for channel_id, config in db.query(Channel.id, Channel.config).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.id.in_(channel_ids),
+        ).all():
+            provider = config.get("provider") if isinstance(config, dict) else None
+            if provider:
+                channel_provider_map[int(channel_id)] = str(provider).strip().lower()
     tag_map: dict[int, list[str]] = {customer_id: [] for customer_id in customer_ids}
     if customer_ids:
         tag_rows = db.query(CustomerTag.customer_id, Tag.name).join(
@@ -1949,6 +2008,7 @@ def get_conversations(
                 ),
                 "customer_tags": tag_map.get(int(row["customer_id"]), []),
                 "conversation_tags": conversation_tag_map.get(int(row["conversation_id"]), []),
+                "channel_provider": channel_provider_map.get(int(row["channel_id"])) if row.get("channel_id") is not None else None,
             }
             for row in result
         ]
@@ -3090,15 +3150,29 @@ async def unified_send(
 # SEND IMAGE BY URL
 # =========================================================
 
-@router.post("/{conversation_id}/send-media", dependencies=[Depends(require_write_access)])
-async def send_media_message(
+def _conversation_media_provider(db: Session, conversation: dict, business_id: int) -> str | None:
+    if str(conversation.get("channel") or "").strip().lower() != "zalo":
+        return None
+    channel_id = conversation.get("channel_id")
+    if channel_id is None:
+        return "bot"
+    channel_row = db.query(Channel).filter(
+        Channel.id == int(channel_id),
+        Channel.business_id == business_id,
+    ).first()
+    config = channel_row.config if channel_row and isinstance(channel_row.config, dict) else {}
+    return str(config.get("provider") or "bot").strip().lower()
+
+
+async def _send_media_message(
     conversation_id: int,
     body: SendMediaRequest,
-    db: Session = Depends(get_tenant_db),
-    tenant: TenantContext = Depends(get_tenant_context),
-    actor: User | None = Depends(require_write_access),
+    db: Session,
+    tenant: TenantContext,
+    actor: User | None,
+    uploaded_media: dict | None = None,
 ):
-    """Send one canonical media attachment through the linked channel."""
+    """Send one canonical attachment, optionally using bytes from a safe upload."""
     media_type = str(body.media_type or "").strip().lower()
     try:
         MediaType(media_type)
@@ -3109,8 +3183,6 @@ async def send_media_message(
     media_url = str(body.media_url or "").strip()
     if not media_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=422, detail="media_url phải là URL http/https")
-    if media_type == "image":
-        check_public_image_url(media_url)
     conversation = get_conversation_target(
         db=db,
         conversation_id=conversation_id,
@@ -3119,6 +3191,12 @@ async def send_media_message(
     require_responsible_staff(conversation, actor)
     client_id = validate_client_id(body.client_id)
     channel = str(conversation["channel"] or "").strip().lower()
+    channel_provider = _conversation_media_provider(db, conversation, tenant.business_id)
+    unsupported_detail = unsupported_media_detail(channel, media_type, channel_provider)
+    if unsupported_detail:
+        raise HTTPException(status_code=422, detail=unsupported_detail)
+    if media_type == "image":
+        check_public_image_url(media_url)
     recipient_id = str(conversation["external_user_id"])
     attempt_id, replay = _claim_outbound_delivery(
         db,
@@ -3161,15 +3239,22 @@ async def send_media_message(
                 business_id=tenant.business_id,
             )
         elif channel == "telegram":
+            telegram_kwargs = {
+                "db": db,
+                "business_id": tenant.business_id,
+                "conversation_id": conversation_id,
+                "recipient_id": recipient_id,
+                "media_type": media_type,
+                "media_url": media_url,
+                "caption": body.caption,
+            }
+            if uploaded_media is not None:
+                telegram_kwargs.update(uploaded_media)
+            if body.is_voice_note:
+                telegram_kwargs["voice_note"] = True
             result = await run_in_threadpool(
                 send_telegram_media,
-                db=db,
-                business_id=tenant.business_id,
-                conversation_id=conversation_id,
-                recipient_id=recipient_id,
-                media_type=media_type,
-                media_url=media_url,
-                caption=body.caption,
+                **telegram_kwargs,
             )
         elif channel == "zalo":
             result = await run_in_threadpool(
@@ -3248,6 +3333,18 @@ async def send_media_message(
         "message": saved,
         "provider_response": result,
     }
+
+
+@router.post("/{conversation_id}/send-media", dependencies=[Depends(require_write_access)])
+async def send_media_message(
+    conversation_id: int,
+    body: SendMediaRequest,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    """Send media from a provider-hosted URL."""
+    return await _send_media_message(conversation_id, body, db, tenant, actor)
 
 @router.post(
     "/{conversation_id}/media",
@@ -4247,6 +4344,7 @@ async def upload_and_send_generic_media(
     client_id: str = Form(...),
     media_type: str = Form("file"),
     caption: str | None = Form(None),
+    is_voice_note: bool = Form(False),
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
@@ -4273,6 +4371,14 @@ async def upload_and_send_generic_media(
     if normalized_type in {"text", "unknown"}:
         raise HTTPException(status_code=422, detail="upload-generic chỉ nhận image/audio/sticker/video/file")
 
+    channel = str(conversation.get("channel") or "").strip().lower()
+    channel_provider = _conversation_media_provider(db, conversation, tenant.business_id)
+    unsupported_detail = unsupported_media_detail(channel, normalized_type, channel_provider)
+    if unsupported_detail:
+        raise HTTPException(status_code=422, detail=unsupported_detail)
+    if is_voice_note and normalized_type != "audio":
+        raise HTTPException(status_code=422, detail="Bản ghi giọng nói phải có media_type=audio")
+
     content_type = str(file.content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
     allowed_types = ALLOWED_MEDIA_UPLOAD_TYPES[normalized_type]
     if content_type not in allowed_types:
@@ -4296,24 +4402,48 @@ async def upload_and_send_generic_media(
         suffix = mimetypes.guess_extension(content_type) or ".bin"
     filename = f"{uuid.uuid4().hex}{suffix}"
     file_path = UPLOAD_DIR / filename
+    upload_path = file_path
     try:
         file_path.write_bytes(file_bytes)
-        upload_path = file_path
         upload_content_type = content_type
+        telegram_voice_note = bool(is_voice_note)
         if normalized_type == "audio":
-            channel = str(conversation["channel"] or "").strip().lower()
-            if channel == "zalo":
+            if channel == "telegram":
+                telegram_audio_file = content_type in {"audio/mpeg", "audio/mp4", "audio/m4a"}
+                telegram_voice_note = telegram_voice_note or content_type in TELEGRAM_VOICE_CONTENT_TYPES or not telegram_audio_file
+                if telegram_voice_note:
+                    upload_path, upload_content_type = normalize_telegram_voice_upload(
+                        file_path,
+                        content_type=content_type,
+                    )
+            elif channel == "zalo":
                 upload_path, upload_content_type = normalize_zalo_audio_upload(
                     file_path,
                     content_type=content_type,
                 )
         media_url = f"{get_public_base_url()}/api/conversations/media-uploads/{upload_path.name}"
-        result = await send_media_message(
+        uploaded_media = None
+        if channel == "telegram":
+            uploaded_media = {
+                "upload_bytes": upload_path.read_bytes(),
+                "upload_filename": upload_path.name,
+                "upload_content_type": upload_content_type,
+                "voice_note": telegram_voice_note,
+            }
+        request_body = SendMediaRequest(
+            media_type=normalized_type,
+            media_url=media_url,
+            caption=caption,
+            client_id=client_id,
+            is_voice_note=telegram_voice_note,
+        )
+        result = await _send_media_message(
             conversation_id,
-            SendMediaRequest(media_type=normalized_type, media_url=media_url, caption=caption, client_id=client_id),
+            request_body,
             db,
             tenant,
             actor,
+            uploaded_media=uploaded_media,
         )
         if result.get("idempotent_replay"):
             file_path.unlink(missing_ok=True)
@@ -4326,18 +4456,26 @@ async def upload_and_send_generic_media(
             "size": upload_path.stat().st_size,
             "media_url": media_url,
         }
+        if upload_path != file_path:
+            file_path.unlink(missing_ok=True)
         return result
     except RuntimeError as exc:
         db.rollback()
         file_path.unlink(missing_ok=True)
+        if upload_path != file_path:
+            upload_path.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
         db.rollback()
         file_path.unlink(missing_ok=True)
+        if upload_path != file_path:
+            upload_path.unlink(missing_ok=True)
         raise
     except Exception as exc:
         db.rollback()
         file_path.unlink(missing_ok=True)
+        if upload_path != file_path:
+            upload_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="Không thể upload và gửi media") from exc
 
 

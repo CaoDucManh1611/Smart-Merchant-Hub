@@ -156,6 +156,12 @@ const english = Object.freeze({
   "Đang gửi...": "Sending…",
   "ĐANG TRỰC TUYẾN": "ONLINE",
   "ĐANG NGOẠI TUYẾN": "OFFLINE",
+  "CHƯA CÓ KÊNH TRỰC TUYẾN": "NO CHANNELS ONLINE",
+  "Hạn mức đã cấp:": "Plan slots in use:",
+  "Kênh đang trực tuyến:": "Channels online:",
+  "Quản lý Facebook": "Manage Facebook",
+  "Quản lý Instagram": "Manage Instagram",
+  "Connector đang ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.": "This connector is already paired. Disconnect it before creating a new pairing code.",
   "CẦN KIỂM TRA": "NEEDS ATTENTION",
   "Đã gửi yêu cầu khởi động lại tới ứng dụng đang chạy trên máy của shop. Máy tắt hoặc connector ngoại tuyến thì cần mở ứng dụng thủ công.": "A restart request was sent to the connector app on the shop's device. If the device is off or the connector is offline, open the app manually.",
   "Tài khoản SMTP": "SMTP username",
@@ -276,6 +282,14 @@ const english = Object.freeze({
   "Quy tắc thời hạn": "SLA rules",
   "Kiến thức & tự động hóa": "Knowledge & automation",
   "Kho kiến thức": "Knowledge base",
+  "Gói": "Plan",
+  "Hạn mức Kho kiến thức": "Knowledge base quota",
+  "không giới hạn": "unlimited",
+  "Đang tải hạn mức của gói…": "Loading plan limits…",
+  "Chưa tải được hạn mức; máy chủ vẫn kiểm tra trước khi lưu.": "Plan limits could not be loaded; the server will still validate before saving.",
+  "Chọn tệp được kênh này hỗ trợ": "Choose a file supported by this channel",
+  "Xem gói dịch vụ": "View service plans",
+  "Đã hết lượt thêm tài liệu theo gói. Tài liệu cũ vẫn được giữ; xóa tài liệu hoặc đổi gói để nạp thêm.": "This plan has reached its document limit. Existing documents are kept; delete a document or change plans to add more.",
   "Mở trợ lý hỏi đáp": "Open knowledge assistant",
   "Quay lại Kho kiến thức": "Back to Knowledge base",
   "Nguồn tham khảo": "Sources",
@@ -1348,6 +1362,51 @@ const english = Object.freeze({
   "Đang tải lịch chăm sóc...": "Loading follow-up reminders...",
   "Chưa có lịch nhắc chăm sóc đang chờ.": "No pending follow-up reminders.",
   "Gợi ý mua thêm:": "Suggested add-on:",
+  "CHĂM SÓC THEO SỞ THÍCH": "PREFERENCE-BASED CUSTOMER CARE",
+  "Cá nhân hóa khách hàng": "Customer personalization",
+  "TÁCH RIÊNG THEO SHOP": "SEPARATE FOR EACH SHOP",
+  "Khi bật, hệ thống bổ sung sở thích còn thiếu theo từng đợt và ghi nhớ tiến độ, không đọc lại tin đã xử lý mỗi tuần. Chỉ lưu thông tin tóm tắt như màu sắc, nhóm sản phẩm và tần suất mua; không sao chép toàn bộ nội dung chat vào hồ sơ. Tắt tùy chọn sẽ dừng ghi nhận mới; shop có thể xóa thông tin suy ra trong hồ sơ từng khách.": "When enabled, the system fills in missing preferences in batches and saves its progress, instead of repeatedly reviewing processed messages each week. It stores only brief details such as colors, product groups, and buying frequency—not copies of entire chats. Turning this off stops new extraction; staff can remove inferred details from each customer profile.",
+  "Ghi nhận sở thích được khách nói rõ, thói quen mua và phản hồi để xếp thứ tự gợi ý phù hợp hơn.": "Use stated preferences, purchase habits, and feedback to rank relevant suggestions.",
+  "Trích xuất sở thích từ tin nhắn và lịch sử đã nhập": "Save preferences stated in messages and imported history",
+  "Cho phép lưu mẫu hội thoại trên thiết bị này để nhân viên tham khảo": "Allow staff to save selected conversation examples on this device",
+  "Khi bật, tin cũ còn thiếu được xử lý theo lô có checkpoint; tin đã xử lý không bị gửi phân tích lặp lại hằng tuần. Chỉ lưu các đặc trưng ngắn như màu, nhóm sản phẩm và tần suất mua — không tạo bản sao chat hay vector cho từng tin. Tắt thu thập sẽ dừng trích xuất mới; shop có thể xóa fact trong hồ sơ từng khách.": "When enabled, missing older messages are processed in resumable batches and are not analyzed again each week. Only short signals such as color, product group, and purchase frequency are saved—not duplicate chats or a search vector for every message. Turning this off stops new extraction; staff can remove inferred details from each customer profile.",
+  "Lưu cá nhân hóa theo shop": "Save shop personalization setting",
+  "Tổng hợp nhu cầu xuất hiện nhiều trong 30 ngày qua để shop cập nhật sản phẩm và cách tư vấn.": "Summarizes common needs from the last 30 days to help update products and sales guidance.",
+  "Gợi ý sản phẩm dùng sở thích đã ghi nhận, đơn mua và phản hồi thật. Nhân viên vẫn có thể xem lại và sửa thông tin khách.": "Product suggestions use saved preferences, purchases, and feedback. Staff can review and edit customer details.",
+  "Cho phép lưu sở thích rút ra từ hội thoại này": "Allow saving preferences inferred from this conversation",
+  "Ngừng lưu và xóa sở thích suy ra": "Stop saving and remove inferred preferences",
+  "Trợ lý tìm câu trả lời trong tài liệu do shop cung cấp.": "The assistant looks for answers in documents provided by the shop.",
+  "Nhu cầu khách hàng": "Customer needs",
+  "Tổng hợp câu hỏi thường gặp để shop xem lại và bổ sung thông tin.": "Summarizes common questions so the shop can review and add information.",
+  "Thống kê": "Summary",
+  "Đang thử": "In review",
+  "So sánh & dự đoán": "Comparison & forecast",
+  "Chỉ dùng để tham khảo; chưa tự thay đổi cách trả lời khách.": "For reference only; it does not change customer replies.",
+  "Công cụ bán hàng": "Sales tools",
+  "Xem cách hệ thống gợi ý sản phẩm và chăm sóc khách; duyệt trước mọi thay đổi ảnh hưởng đến câu trả lời tự động.": "Review product suggestions and customer care; approve any change that affects automatic replies.",
+  "Các cách gợi ý và kết quả dự đoán ở đây chỉ để kiểm tra; chúng chưa tự thay đổi câu trả lời gửi khách. Quản trị viên cần duyệt và bật riêng.": "Suggestions and predictions here are for review only. They do not change customer replies unless an administrator approves and enables them.",
+  "So sánh hai cách chăm sóc": "Compare two customer-care approaches",
+  "Nhập 2–3 tên cách chăm sóc. Khi bạn bật thử nghiệm, hệ thống chỉ thay đổi giọng trả lời trong phạm vi cân bằng, ngắn gọn hoặc chi tiết; mọi cách khác không được tự thêm vào câu trả lời.": "Enter 2–3 names for the customer-care approaches. When you enable the trial, only the approved balanced, concise, or detailed reply styles are used; no other behavior is added to customer replies.",
+  "Cần tên và từ hai đến ba cách chăm sóc khác nhau.": "Enter a name and two or three distinct customer-care approaches.",
+  "Tạo phép so sánh ở biểu mẫu phía trên.": "Create a comparison using the form above.",
+  "Cách hệ thống chọn gợi ý": "How suggestions are selected",
+  "Thử cách mới (%)": "Try a new approach (%)",
+  "Thử cách mới": "Try a new approach",
+  "Tên cách chọn": "Selection name",
+  "SO SÁNH NỘI BỘ": "INTERNAL COMPARISON",
+  "Ghi nhận hai cách chăm sóc để so sánh kết quả. Nội dung chưa tự được đưa vào câu trả lời cho khách.": "Track two approaches to compare outcomes. Neither is automatically used in customer replies.",
+  "Các cách chăm sóc": "Customer-care approaches",
+  "Cách 1\nCách 2": "Approach 1\nApproach 2",
+  "Cách 1\\nCách 2": "Approach 1\\nApproach 2",
+  "Bản dự đoán thử": "Test forecast",
+  "KIỂM TRA NỘI BỘ": "INTERNAL REVIEW",
+  "Lưu một bản dữ liệu để kiểm tra kết quả. Việc này không tự thay đổi cách trợ lý đang trả lời khách.": "Save a data snapshot for evaluation. This does not change how the assistant replies to customers.",
+  "Tên bản": "Version name",
+  "Lần cập nhật dữ liệu": "Data update",
+  "LỊCH SỬ KIỂM TRA": "REVIEW HISTORY",
+  "Các bản dự đoán đã lưu": "Saved forecasts",
+  "“Sẵn sàng” nghĩa là lượt kiểm tra đã xong; bản này chưa được dùng để trả lời khách.": "“Ready” means the evaluation is complete; this version is not used to reply to customers.",
+  "Thêm tài liệu sản phẩm, câu hỏi thường gặp và chính sách để trợ lý tra cứu khi trả lời khách. Việc thêm tài liệu không tự thay đổi cách trợ lý được thiết lập.": "Add product details, common questions, and policies for the assistant to consult. Adding documents does not automatically change its setup.",
   "DỮ LIỆU CẢI THIỆN TRỢ LÝ": "ASSISTANT QUALITY DATA",
   "Thu thập mẫu và phản hồi": "Collect samples and feedback",
   "Lưu những tín hiệu shop đã chọn để theo dõi chất lượng và chuẩn bị dữ liệu đánh giá.": "Save shop-selected signals to monitor quality and prepare evaluation data.",
@@ -1461,11 +1520,15 @@ const english = Object.freeze({
   "Nhóm 2": "Group 2",
   "Nhóm 3": "Group 3",
   "Nhóm 4": "Group 4",
+  "Khách mới": "New customer",
+  "Khách thường": "Regular customer",
+  "VIP": "VIP",
   "Phân loại & gắn nhãn": "Classify & tag",
   "Phân loại RFM + học nhóm AI": "Classify RFM + learn AI segments",
   "Phân nhóm AI đang được đưa vào hàng đợi; nhãn sẽ cập nhật sau khi worker xử lý.": "AI segmentation is queued; customer labels will update after the worker finishes.",
   "khách đã phân loại": "customers classified",
   "RFM · Chưa mua": "RFM · No purchases",
+  "RFM · Khách mới": "RFM · New customer",
   "RFM · Giá trị cao": "RFM · High value",
   "RFM · Trung thành": "RFM · Loyal",
   "RFM · Tiềm năng": "RFM · Potential",
@@ -2157,7 +2220,7 @@ const vietnameseTermReplacements = [
   [/\bworkflows?\b/gi, "quy trình tự động"],
   [/\btenants?\b/gi, "shop"],
   [/\bonboarding\b/gi, "thiết lập ban đầu"],
-  [/\bwebhooks?\b/gi, "điểm nhận sự kiện"],
+  [/\bwebhooks?\b/gi, "điểm nhận tin tự động"],
   [/\bbot[\s_-]*token\b/gi, "mã truy cập của bot"],
   [/\baccess[\s_-]*tokens?\b/gi, "mã truy cập"],
   [/\btokens?\b/gi, "mã truy cập"],
@@ -2166,6 +2229,15 @@ const vietnameseTermReplacements = [
   [/\bexperiments?\b/gi, "thử nghiệm"],
   [/\bcorrelation[\s_-]+id\b/gi, "mã theo dõi"],
   [/\bAPIs?\b/gi, "kết nối hệ thống"],
+  [/\bconnectors?\b/gi, "ứng dụng kết nối"],
+  [/\bbridges?\b/gi, "ứng dụng đồng bộ"],
+  [/\bembeddings?\b/gi, "dữ liệu phục vụ tra cứu"],
+  [/\bvector\s+databases?\b/gi, "kho dữ liệu ngữ nghĩa"],
+  [/\bunsupervised learning\b/gi, "tự nhóm theo dữ liệu"],
+  [/\breinforcement learning\b/gi, "học từ phản hồi"],
+  [/\bRFM\b/gi, "mức độ mua hàng"],
+  [/\bOAuth\b/gi, "cấp quyền"],
+  [/\bCAPTCHAs?\b/gi, "bước xác minh"],
   [/\bOTP\b/gi, "xác minh"],
   [/\bFAQ\b/gi, "câu hỏi thường gặp"],
   [/\bdatabase\b/gi, "cơ sở dữ liệu"],
@@ -2178,8 +2250,7 @@ function standardizeVietnameseUiCopy(text) {
   const trailing = text.match(/\s*$/)?.[0] || "";
   const content = text.slice(leading.length, text.length - trailing.length);
   const phrase = content.replace(/\s+/g, " ").trim();
-  if (vietnameseUiCopy[phrase]) return `${leading}${vietnameseUiCopy[phrase].replace(/\bCRM\b/gi, "quản lý khách hàng")}${trailing}`;
-
+  const source = vietnameseUiCopy[phrase] || content;
   const standardized = vietnameseTermReplacements.reduce((value, [pattern, replacement]) => (
     value.replace(pattern, (match) => {
       if (match !== match.toUpperCase() && match[0] === match[0].toLocaleUpperCase("vi-VN")) {
@@ -2187,7 +2258,7 @@ function standardizeVietnameseUiCopy(text) {
       }
       return replacement;
     })
-  ), content);
+  ), source);
   return `${leading}${standardized.replace(/\bCRM\b/gi, "hệ thống quản lý khách hàng")}${trailing}`;
 }
 
@@ -2209,6 +2280,17 @@ function standardizeEnglishUiCopy(text) {
     .replace(/\bCRM opens\b/gi, "your workspace opens")
     .replace(/\bopen CRM\b/gi, "open your workspace")
     .replace(/\busing CRM\b/gi, "using your workspace")
+    .replace(/\bRAG\b/gi, "knowledge search")
+    .replace(/\bunsupervised learning\b/gi, "automatic customer grouping")
+    .replace(/\breinforcement learning\b/gi, "learning from feedback")
+    .replace(/\bvector databases?\b/gi, "semantic search storage")
+    .replace(/\bembeddings?\b/gi, "search-ready content")
+    .replace(/\bwebhooks?\b/gi, "automatic message routes")
+    .replace(/\bconnectors?\b/gi, "sync apps")
+    .replace(/\bbridges?\b/gi, "sync apps")
+    .replace(/\bOAuth\b/gi, "account authorization")
+    .replace(/\bCAPTCHAs?\b/gi, "verification checks")
+    .replace(/\bRFM\b/gi, "purchase-based groups")
     .replace(/\bCRM\b/gi, "customer management");
 }
 

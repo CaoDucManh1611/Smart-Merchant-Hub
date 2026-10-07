@@ -31,6 +31,7 @@ from app.rag.llm_caller import call_llm, stream_llm
 from app.rag.run_logger import RagRunLog
 from app.schemas.rag import ChatRequest, ChatResponse, SourceChunk
 from app.services.quota_service import QuotaExceededError, reserve_ai_budget
+from app.services.chatbot_agent import deterministic_escalation_reply
 from app.services.recommendation_interaction_service import (
     RecommendationInteractionError,
     record_interaction,
@@ -107,6 +108,16 @@ async def chat(
             request=request,
             idempotency_key=idempotency_key,
         )
+        handoff_reply = deterministic_escalation_reply(request.query)
+        if handoff_reply:
+            run.finish("handoff_required", phase="complete", answer_chars=len(handoff_reply), handoff_required=True)
+            return ChatResponse(
+                answer=handoff_reply,
+                sources=[],
+                chunks_found=0,
+                answer_status="handoff_required",
+                handoff_required=True,
+            )
         # Bước 1: Retrieve relevant chunks
         run.update(phase="retrieve")
         retrieval_started = perf_counter()
@@ -269,6 +280,13 @@ async def chat_stream(
                 request=request,
                 idempotency_key=idempotency_key,
             )
+            handoff_reply = deterministic_escalation_reply(request.query)
+            if handoff_reply:
+                run.finish("handoff_required", phase="complete", answer_chars=len(handoff_reply), handoff_required=True)
+                yield f"data: {json.dumps({'type': 'sources', 'sources': [], 'chunks_found': 0}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'chunk', 'content': handoff_reply}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'answer_status': 'handoff_required', 'handoff_required': True})}\n\n"
+                return
             # Retrieve
             run.update(phase="retrieve")
             retrieval_started = perf_counter()

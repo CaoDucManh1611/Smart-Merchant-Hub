@@ -36,7 +36,9 @@ Quy tắc:
 9. Gắn nhãn [Nguồn N] vào câu trả lời có sử dụng thông tin từ từng đoạn tham khảo;
    chỉ trích dẫn nguồn thực sự hỗ trợ cho nội dung đó.
 10. Khi khách hỏi tiếp về "sản phẩm lúc nãy", ưu tiên sản phẩm được nhắc trong
-   lịch sử của chính khách hàng."""
+    lịch sử của chính khách hàng.
+11. Trả lời câu hỏi mới nhất. Chỉ dùng lịch sử để hiểu đại từ hoặc nội dung còn
+    thiếu; không trả lời lại hay tóm tắt câu hỏi cũ, trừ khi khách yêu cầu."""
 
 NO_CONTEXT_FALLBACK = "Xin lỗi, shop chưa có đủ thông tin để trả lời chính xác. Nhân viên sẽ hỗ trợ bạn."
 SERVICE_ERROR_FALLBACK = "Trợ lý đang gặp sự cố. Nhân viên của shop sẽ hỗ trợ bạn."
@@ -51,6 +53,8 @@ _VIETNAMESE_WORDS = {
     "toi", "minh", "ban", "shop", "muon", "mua", "hang", "san", "pham", "gia",
     "bao", "nhieu", "con", "khong", "co", "cai", "nao", "gi", "cua", "cho",
     "voi", "duoc", "xin", "chao", "giup", "giao", "don", "ve", "la", "the", "sao",
+    # Common Vietnamese commerce shorthand without diacritics.
+    "bn", "tien", "phi", "ko", "k", "sp", "sdt", "dc",
 }
 _ENGLISH_WORDS = {
     "i", "you", "we", "my", "your", "the", "a", "an", "is", "are", "do", "does",

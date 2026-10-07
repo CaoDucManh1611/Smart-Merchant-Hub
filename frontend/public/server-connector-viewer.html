@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Đăng nhập kênh trên server · Smart Merchant</title>
+    <style>
+      :root { color-scheme: dark; font: 15px/1.45 Inter, "Segoe UI", sans-serif; background:#0d1517; color:#e8f5f3; }
+      * { box-sizing:border-box }
+      body { margin:0; min-height:100vh; background:radial-gradient(ellipse at 50% -30%,#16464a 0,transparent 58%),#0d1517; }
+      header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px clamp(16px,3vw,34px); border-bottom:1px solid #294144; background:#111c1eec; }
+      .brand { font-weight:750; letter-spacing:.02em } .brand i { color:#44d5c6; font-style:normal }
+      #status { color:#a7c4c0; font-size:13px } #status[data-state="bad"] { color:#ffb5a9 } #status[data-state="good"] { color:#83e5bd }
+      main { width:min(1400px,96vw); margin:20px auto; }
+      .notice { margin:0 0 12px; padding:10px 14px; border:1px solid #305458; border-radius:12px; background:#142426; color:#b9d3d0; font-size:13px; }
+      .screen { position:relative; min-height:52vh; display:grid; place-items:center; overflow:auto; border:1px solid #35575a; border-radius:16px; background:#080c0d; box-shadow:0 20px 80px #0007; }
+      #view { display:block; max-width:100%; max-height:calc(100vh - 190px); object-fit:contain; cursor:crosshair; user-select:none; }
+      .placeholder { padding:48px 20px; text-align:center; color:#a4bfbc; }
+      .tools { display:flex; align-items:center; flex-wrap:wrap; gap:9px; padding:12px 2px; }
+      button { border:1px solid #3d6669; border-radius:10px; padding:9px 13px; color:#e3f7f4; background:#172628; cursor:pointer; }
+      button:hover { background:#1d383a; border-color:#52aaa7 } button:disabled { opacity:.5; cursor:wait }
+      #typing { flex:1 1 260px; min-width:180px; border:1px solid #35575a; border-radius:10px; padding:10px 12px; color:#e8f5f3; background:#121d1f; outline:none; }
+      #typing:focus { border-color:#36b7ac; box-shadow:0 0 0 3px #23aa9d25 }
+      footer { color:#718b89; font-size:12px; padding:4px 2px 18px }
+      @media(max-width:640px){ main{width:100%;margin:10px auto}.screen{border-radius:0;min-height:55vh;border-left:0;border-right:0}.tools{padding:12px}.tools button{flex:1} }
+    </style>
+  </head>
+  <body>
+    <header><div class="brand"><i>◆</i> SMART MERCHANT <span>· Thiết lập phiên đăng nhập</span></div><div id="status" data-state="">Đang xác thực phiên…</div></header>
+    <main>
+      <div class="notice">Đây là màn hình Edge đang chạy trên máy chủ. Đăng nhập và tự xử lý CAPTCHA/xác minh trực tiếp; không chia sẻ liên kết này. Khi thấy hộp thư đã đăng nhập, bạn có thể đóng cửa sổ này và EXE.</div>
+      <section class="screen" id="screen"><div class="placeholder" id="placeholder">Đang chờ Windows server mở Edge…</div><img id="view" alt="Màn hình đăng nhập Seller Center" hidden></section>
+      <div class="tools">
+        <button id="refresh" type="button">Làm mới màn hình</button>
+        <input id="typing" type="text" autocomplete="off" placeholder="Nhập vào trường đang chọn trên Edge…" aria-label="Nhập văn bản">
+        <button id="sendText" type="button">Gửi chữ</button>
+        <button id="enter" type="button">Enter</button>
+        <button id="tab" type="button">Tab</button>
+      </div>
+      <footer>Thao tác được chuyển tiếp tới phiên riêng của shop/kênh này. Phiên đăng nhập được giữ trên server; hết hạn hoặc cần xác minh thì hãy kết nối lại.</footer>
+    </main>
+    <script>
+      (() => {
+        const params = new URLSearchParams(location.hash.slice(1));
+        const api = (params.get('api') || '').replace(/\/$/, '');
+        const business = params.get('business');
+        const channel = params.get('channel');
+        const type = params.get('type');
+        const ticket = params.get('ticket');
+        history.replaceState(null, '', location.pathname + location.search);
+        const status = document.querySelector('#status');
+        const view = document.querySelector('#view');
+        const placeholder = document.querySelector('#placeholder');
+        const screen = document.querySelector('#screen');
+        const input = document.querySelector('#typing');
+        const endpoint = `${api}/api/channels/${encodeURIComponent(business)}/${encodeURIComponent(type)}/${encodeURIComponent(channel)}/server-session`;
+        let busy = false;
+        const valid = /^https?:\/\//.test(api) && /^\d+$/.test(business || '') && /^\d+$/.test(channel || '') && ['tiktok','shopee','facebook','instagram'].includes(type) && !!ticket;
+        const say = (text, state='') => { status.textContent = text; status.dataset.state = state; };
+        async function call(url, options={}) {
+          const response = await fetch(url, { ...options, cache:'no-store', headers:{ 'Authorization':`Bearer ${ticket}`, ...(options.headers || {}) } });
+          if (!response.ok) throw new Error(response.status === 401 ? 'Phiên đăng nhập hết hạn. Hãy chạy lại gói kết nối.' : `Server trả HTTP ${response.status}.`);
+          return response;
+        }
+        async function refresh() {
+          if (!valid || busy) return;
+          busy = true;
+          try {
+            const response = await call(`${endpoint}/screenshot`);
+            const blob = await response.blob();
+            const old = view.src;
+            view.src = URL.createObjectURL(blob);
+            view.hidden = false;
+            placeholder.hidden = true;
+            if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+            say('Edge trên server đang mở · hãy đăng nhập thủ công', 'good');
+          } catch (error) { say(error.message || 'Đang chờ Edge trên server…', 'bad'); }
+          finally { busy = false; }
+        }
+        async function send(payload) {
+          if (!valid) return;
+          try { await call(`${endpoint}/input`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); }
+          catch (error) { say(error.message, 'bad'); }
+          setTimeout(refresh, 250);
+        }
+        document.querySelector('#refresh').addEventListener('click', refresh);
+        document.querySelector('#sendText').addEventListener('click', async () => { const text=input.value; if (!text) return; input.value=''; await send({action:'type',text}); });
+        document.querySelector('#enter').addEventListener('click', () => send({action:'press',key:'Enter'}));
+        document.querySelector('#tab').addEventListener('click', () => send({action:'press',key:'Tab'}));
+        input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); document.querySelector('#sendText').click(); } });
+        view.addEventListener('click', event => {
+          const rect=view.getBoundingClientRect();
+          const x=Math.round((event.clientX-rect.left)*view.naturalWidth/rect.width);
+          const y=Math.round((event.clientY-rect.top)*view.naturalHeight/rect.height);
+          send({action:'click',x,y});
+        });
+        screen.addEventListener('wheel', event => { event.preventDefault(); send({action:'scroll',delta_y:Math.max(-1800,Math.min(1800,Math.round(event.deltaY*2)))}); }, {passive:false});
+        window.addEventListener('keydown', event => {
+          if (document.activeElement === input || event.ctrlKey || event.metaKey || event.altKey) return;
+          const allowed={Enter:'Enter',Tab:'Tab',Escape:'Escape',Backspace:'Backspace',ArrowUp:'ArrowUp',ArrowDown:'ArrowDown',ArrowLeft:'ArrowLeft',ArrowRight:'ArrowRight',' ':'Space'};
+          if (allowed[event.key]) { event.preventDefault(); send({action:'press',key:allowed[event.key]}); }
+        });
+        if (!valid) say('Liên kết viewer không hợp lệ.', 'bad');
+        refresh(); setInterval(refresh, 1800);
+      })();
+    </script>
+  </body>
+</html>

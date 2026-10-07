@@ -9,12 +9,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import re
+import unicodedata
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.business import User
+from app.models.customer import Customer
 from app.models.platform_control import PlatformUser
 from app.models.chatbot import ChatbotConfig
 from app.models.canned_response import CannedResponse
@@ -56,11 +59,70 @@ AGENT_TOOLS = {
 
 
 ESCALATION_TERMS = (
-    "gặp nhân viên", "nhân viên", "khiếu nại", "hoàn tiền", "đổi trả",
-    "hàng lỗi", "hàng bị lỗi", "bị hỏng", "không nhận được", "hỗ trợ gấp",
+    "gặp nhân viên", "nói chuyện với nhân viên", "chuyển cho nhân viên",
+    "nhờ nhân viên", "gặp quản lý", "nói chuyện với quản lý", "nối máy",
+    "người thật", "tư vấn viên", "bot không hiểu", "bot trả lời sai",
+    "khiếu nại", "muốn hoàn tiền", "yêu cầu hoàn tiền", "hoàn tiền đơn hàng",
+    "muốn đổi trả", "yêu cầu đổi trả", "nhận sai mẫu", "nhận sai size",
+    "hàng lỗi", "hàng bị lỗi",
+    "bị hỏng", "không nhận được", "hỗ trợ gấp",
     "speak to a person", "talk to a person", "speak to someone", "talk to someone",
-    "human agent", "live agent", "customer support", "customer service", "representative",
+    "speak to a human", "talk to a human", "human agent", "live agent",
+    "customer support", "customer service", "representative",
+    "i want a refund", "i need a refund", "request a refund", "refund my order",
+    "i want to return this", "return this order",
+    "charged twice", "double charged", "charged two times",
+    "mùi khét", "bốc khói", "phát khói", "tia lửa", "rò điện", "giật điện",
+    "chập điện", "nóng bất thường", "quá nóng", "burning smell", "smells burnt",
+    "smoke", "sparks", "electric shock", "overheating",
 )
+SAFETY_ESCALATION_TERMS = (
+    "mui khet", "boc khoi", "phat khoi", "tia lua", "ro dien", "giat dien",
+    "chap dien", "nong bat thuong", "qua nong", "burning smell", "smells burnt",
+    "smoke", "sparks", "electric shock", "overheating",
+)
+PAYMENT_ESCALATION_TERMS = (
+    "bi tru tien hai lan", "tru tien hai lan", "charged twice", "double charged",
+    "charged two times",
+)
+STAFF_REQUEST_TERMS = (
+    "gap nhan vien", "noi chuyen voi nhan vien", "chuyen cho nhan vien",
+    "nho nhan vien", "gap quan ly", "noi chuyen voi quan ly", "noi may",
+    "nguoi that", "tu van vien", "speak to a person", "talk to a person",
+    "speak to someone", "talk to someone", "speak to a human", "talk to a human",
+    "human agent", "live agent", "representative",
+)
+
+
+def _fold_escalation_text(text: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", str(text or "").casefold()).replace("đ", "d")
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", normalized).split())
+
+
+def escalation_reply(text: str) -> str:
+    """Acknowledge takeover and give immediate, non-diagnostic safety guidance."""
+    from app.rag.prompt_builder import detect_reply_language
+
+    folded = _fold_escalation_text(text)
+    english = detect_reply_language(text) == "en"
+    if any(term in folded for term in SAFETY_ESCALATION_TERMS):
+        return (
+            "Stop using the device now. If it is safe, disconnect its power; do not touch a hot, sparking, or possibly live device or cable. I’ve routed this to shop staff. If there is smoke, fire, or immediate danger, move away and contact local emergency services."
+            if english else
+            "Bạn ngừng sử dụng thiết bị ngay. Nếu an toàn, hãy ngắt nguồn điện; đừng chạm vào thiết bị hoặc dây điện đang nóng, tóe lửa hay nghi rò điện. Mình đã chuyển hội thoại cho nhân viên hỗ trợ kiểm tra. Nếu có khói, lửa hoặc nguy hiểm trước mắt, hãy rời khỏi khu vực và liên hệ dịch vụ khẩn cấp tại địa phương."
+        )
+    if any(term in folded for term in PAYMENT_ESCALATION_TERMS):
+        return (
+            "I’ve routed this to staff to reconcile the transaction. Please don’t pay again or share an OTP, password, or card number; keep the receipt or transaction reference for the staff to verify."
+            if english else
+            "Mình đã chuyển yêu cầu cho nhân viên đối soát giao dịch. Bạn đừng thanh toán lại và không chia sẻ OTP, mật khẩu hoặc số thẻ; hãy giữ biên lai hoặc mã giao dịch để nhân viên kiểm tra."
+        )
+    return (
+        "I’ve passed your request to a staff member for help."
+        if english else
+        "Mình đã chuyển yêu cầu cho nhân viên hỗ trợ nhé."
+    )
 
 
 def _record_handoff(db: Session, business_id: int, conversation_id: int, *, reason_code: str, reason: str | None, ticket_id: int | None = None, source: str) -> None:
@@ -95,6 +157,16 @@ def _is_neutral_policy_question(text: str | None) -> bool:
     ))
 
 
+def deterministic_escalation_reply(text: str) -> str | None:
+    """Return an immediate handoff reply for explicit support or risk signals."""
+    if _is_neutral_policy_question(text):
+        return None
+    folded_text = _fold_escalation_text(text)
+    if any(_fold_escalation_text(term) in folded_text for term in ESCALATION_TERMS):
+        return escalation_reply(text)
+    return None
+
+
 def _conversation(db: Session, business_id: int, conversation_id: int) -> Conversation:
     row = db.query(Conversation).filter(
         Conversation.id == conversation_id,
@@ -119,7 +191,11 @@ def build_agent_memory(db: Session, business_id: int, conversation_id: int) -> d
         CustomerConsent.customer_id == conversation.customer_id,
         CustomerConsent.purpose == "personalization",
     ).order_by(CustomerConsent.id.desc()).first()
-    facts = [] if personalization_consent and personalization_consent[0] == "revoked" else db.query(CustomerFact).filter(
+    customer_opted_out = bool(db.query(Customer.fact_extraction_opt_out).filter(
+        Customer.id == conversation.customer_id,
+        Customer.business_id == business_id,
+    ).scalar())
+    facts = [] if customer_opted_out or (personalization_consent and personalization_consent[0] == "revoked") else db.query(CustomerFact).filter(
         CustomerFact.business_id == business_id,
         CustomerFact.customer_id == conversation.customer_id,
     ).order_by(CustomerFact.observed_at.desc(), CustomerFact.id.desc()).limit(20).all()
@@ -243,9 +319,8 @@ def route_escalation(
     *,
     platform_db: Session | None = None,
 ) -> Ticket | None:
-    if _is_neutral_policy_question(text):
-        return None
-    if not any(term in (text or "").casefold() for term in ESCALATION_TERMS):
+    folded_text = _fold_escalation_text(text)
+    if deterministic_escalation_reply(text) is None:
         return None
     conversation = _conversation(db, business_id, conversation_id)
     existing = db.query(Ticket).filter(
@@ -325,12 +400,9 @@ def route_escalation(
         pass
     _record_handoff(
         db, business_id, conversation_id,
-        reason_code="customer_requested_staff" if any(
-            term in text.casefold() for term in (
-                "nhân viên", "speak to a person", "talk to a person", "speak to someone",
-                "talk to someone", "human agent", "live agent", "representative",
-            )
-        ) else "support_needed",
+        reason_code="customer_requested_staff"
+        if any(term in folded_text for term in STAFF_REQUEST_TERMS)
+        else "support_needed",
         reason=text, ticket_id=ticket.id, source="automatic_escalation",
     )
     record_audit(db, business_id=business_id, action="chatbot_escalated", resource_type="ticket", resource_id=ticket.id, metadata={"conversation_id": conversation_id, "reason": text[:500]})

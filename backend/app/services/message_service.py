@@ -85,6 +85,15 @@ def extract_normalized_attachments(
     return []
 
 
+def _attachment_media_type(attachment: object) -> str:
+    value = (
+        attachment.get("media_type")
+        if isinstance(attachment, dict)
+        else getattr(attachment, "media_type", None)
+    )
+    return str(getattr(value, "value", value) or "").lower()
+
+
 # =========================================================
 # ATTACHMENT HELPER
 # =========================================================
@@ -1853,7 +1862,7 @@ def process_and_save_message(
     # human takeover and creates one auditable support ticket.
     if message.get("content") and business_id is not None:
         try:
-            from app.services.chatbot_agent import route_escalation
+            from app.services.chatbot_agent import escalation_reply, route_escalation
             from app.services.auto_reply_service import send_text_reply_background
 
             ticket = route_escalation(
@@ -1868,7 +1877,7 @@ def process_and_save_message(
                 send_text_reply_background(
                     conversation_id=int(conversation_id),
                     channel=str(channel),
-                    text="Mình đã chuyển yêu cầu cho nhân viên hỗ trợ. Nhân viên sẽ liên hệ bạn sớm nhất nhé.",
+                    text=escalation_reply(str(message.get("content") or "")),
                     business_id=int(business_id),
                     auto_reply_key=(
                         f"{auto_reply_base_key}:escalation"
@@ -1911,13 +1920,17 @@ def process_and_save_message(
             db.rollback()
             logger.warning("Transactional order trigger failed", exc_info=True)
 
-    # Progressive customer-profile collection runs before RAG. Once a buyer
-    # starts checkout, each inbound answer advances the session and the next
-    # prompt is sent back through the same channel. This prevents the generic
-    # knowledge-base reply from competing with the order data-collection flow.
-    collection_result = None
-    if escalation_triggered or csat_recorded or transactional_reply:
-        collection_result = True
+    # Order collection is handled once per durable, coalesced chatbot turn,
+    # alongside RAG. Running it here on every provider webhook would send a
+    # repeated checkout form when a customer enters their details in several
+    # quick messages.
+    has_image = (
+        str(message.get("media_type") or "").lower() == "image"
+        or any(
+            _attachment_media_type(attachment) == "image"
+            for attachment in message.get("attachments") or []
+        )
+    )
     if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded and not transactional_reply:
         if saved_message and saved_message.get("message_id"):
             try:
@@ -1931,54 +1944,27 @@ def process_and_save_message(
                 )
             except Exception:
                 logger.warning("Customer fact extraction trigger failed")
-        # Shopee/TikTok buyers often send one thought in several messages.
-        # Their collection flow runs once on the coalesced turn in the job
-        # worker; handling it here would send a quote for every fragment.
-        if channel not in {"shopee", "tiktok"}:
-            try:
-                from app.services.customer_collection_flow import (
-                    advance_customer_collection,
-                    send_collection_prompt_background,
-                )
+    should_schedule_turn = bool(
+        saved_message
+        and saved_message.get("message_id")
+        and business_id is not None
+        and not escalation_triggered
+        and not csat_recorded
+        and not transactional_reply
+        and (has_image or bool(str(message.get("content") or "").strip()))
+    )
+    if should_schedule_turn:
+        try:
+            from app.services.conversation_turn_service import schedule_chatbot_turn
 
-                collection_result = advance_customer_collection(
-                    db,
-                    business_id=int(business_id),
-                    customer_id=int(customer_id),
-                    conversation_id=int(conversation_id),
-                    source_channel=str(channel),
-                    text=str(message.get("content")),
-                )
-                if collection_result is not None:
-                    send_collection_prompt_background(
-                        result=collection_result,
-                        conversation_id=int(conversation_id),
-                        channel=str(channel),
-                        business_id=int(business_id),
-                        auto_reply_key=(
-                            f"{auto_reply_base_key}:collection"
-                            if auto_reply_base_key
-                            else None
-                        ),
-                    )
-            except Exception:
-                # Collection is an enhancement on top of the accepted inbound
-                # message; a malformed session must not make the webhook fail.
-                logger.warning("Customer collection trigger failed", exc_info=True)
-
-        if collection_result is None:
-            try:
-                from app.services.conversation_turn_service import schedule_chatbot_turn
-
-                if saved_message and saved_message.get("message_id") and message.get("content"):
-                    schedule_chatbot_turn(
-                        db,
-                        conversation_id=int(conversation_id),
-                        message_id=int(saved_message["message_id"]),
-                        business_id=int(business_id),
-                    )
-            except Exception:
-                logger.warning("Auto-reply trigger failed")
+            schedule_chatbot_turn(
+                db,
+                conversation_id=int(conversation_id),
+                message_id=int(saved_message["message_id"]),
+                business_id=int(business_id),
+            )
+        except Exception:
+            logger.warning("Auto-reply trigger failed")
 
 
 

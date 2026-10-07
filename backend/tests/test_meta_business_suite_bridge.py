@@ -138,9 +138,13 @@ def test_meta_outbound_opens_the_exact_thread_and_confirms_send(monkeypatch):
             pass
 
         async def evaluate(self, script, *_args):
-            if "data-smart-merchant-meta-composer" in script and "const editors" in script:
-                return {"hasButton": True}
-            return {"empty": True, "messageId": "message-sent-7"}
+            if "messageText, existingMessageIds" in script:
+                assert "previous.has(id)" in script
+                assert _args[0]["existingMessageIds"] == ["old-message"]
+                return {"empty": True, "messageId": "message-sent-7"}
+            if "const editors" in script or "const editor = document.querySelector('[data-smart-merchant-meta-composer" in script:
+                return {"hasButton": True, "messageIds": ["old-message"]}
+            raise AssertionError(f"Unexpected browser script: {script[:80]}")
 
         def locator(self, selector):
             return Locator(self, selector)
@@ -156,6 +160,97 @@ def test_meta_outbound_opens_the_exact_thread_and_confirms_send(monkeypatch):
     assert page.filled == "Chào bạn"
     assert page.clicked == '[data-smart-merchant-meta-send="active"]'
     assert result == {"status": "sent", "message_id": "message-sent-7", "threadId": "target-thread"}
+
+
+def test_meta_outbound_click_timeout_is_ambiguous_and_must_not_retry(monkeypatch):
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        async def fill(self, _value):
+            pass
+
+        async def click(self, **_kwargs):
+            raise asyncio.TimeoutError("send control changed during click")
+
+        async def press(self, _key):
+            raise AssertionError("Do not fall back to Enter after a timed-out click")
+
+    class Page:
+        url = "https://business.facebook.com/latest/inbox/instagram_direct?asset_id=34&thread_type=IG_MESSAGE&selected_item_id=target-thread"
+
+        def is_closed(self):
+            return False
+
+        async def wait_for_timeout(self, _milliseconds):
+            pass
+
+        async def evaluate(self, script, *_args):
+            if "messageText, existingMessageIds" in script:
+                raise AssertionError("A timed-out send must not be retried automatically")
+            return {"hasButton": True, "messageIds": []}
+
+        def locator(self, selector):
+            return Locator(selector)
+
+    monkeypatch.setattr(bridge, "CONTROL_PAGE", Page())
+    monkeypatch.setenv("SMART_MERCHANT_CHANNEL_TYPE", "instagram")
+
+    with pytest.raises(bridge.MetaDeliveryUnknown):
+        asyncio.run(bridge._send_meta_message("target-thread", "Chào bạn", "buyer-1"))
+
+
+def test_meta_outbound_requires_provider_message_id_even_if_composer_clears(monkeypatch):
+    class Locator:
+        def __init__(self, page, selector):
+            self.page = page
+            self.selector = selector
+
+        async def fill(self, _value):
+            pass
+
+        async def click(self, **_kwargs):
+            pass
+
+        async def press(self, _key):
+            pass
+
+    class Page:
+        url = "https://business.facebook.com/latest/inbox/instagram_direct?asset_id=34&thread_type=IG_MESSAGE&selected_item_id=target-thread"
+
+        def is_closed(self):
+            return False
+
+        async def wait_for_timeout(self, _milliseconds):
+            pass
+
+        async def evaluate(self, script, *_args):
+            if "messageText, existingMessageIds" in script:
+                return {"empty": True, "messageId": ""}
+            if "const editors" in script or "const editor = document.querySelector('[data-smart-merchant-meta-composer" in script:
+                return {"hasButton": True, "messageIds": []}
+            raise AssertionError(f"Unexpected browser script: {script[:80]}")
+
+        def locator(self, selector):
+            return Locator(self, selector)
+
+    monkeypatch.setattr(bridge, "CONTROL_PAGE", Page())
+    monkeypatch.setenv("SMART_MERCHANT_CHANNEL_TYPE", "instagram")
+
+    with pytest.raises(bridge.MetaDeliveryUnknown):
+        asyncio.run(bridge._send_meta_message("target-thread", "Chào bạn", "buyer-1"))
+
+
+def test_visible_meta_rows_deduplicate_nested_ids_but_keep_distinct_bubbles():
+    rows = [
+        {"messageId": "bubble-id", "message": "Trả lời đã gửi\nĐã gửi Người gửi: Shop", "direction": "outbound", "bubbleX": 650, "bubbleY": 420},
+        {"messageId": "status-id", "message": "Trả lời đã gửi\nĐã gửi Người gửi: Shop", "direction": "outbound", "bubbleX": 650, "bubbleY": 420},
+        {"messageId": "same-text-next-bubble", "message": "Trả lời đã gửi", "direction": "outbound", "bubbleX": 650, "bubbleY": 500},
+    ]
+
+    assert [row["messageId"] for row in bridge._dedupe_visible_message_rows(rows)] == [
+        "bubble-id", "same-text-next-bubble",
+    ]
 
 
 def test_meta_static_inbox_heading_is_not_used_as_customer_name():
@@ -345,6 +440,60 @@ def test_incremental_meta_import_does_not_mark_partial_thread_history_complete(m
     assert count == 1
     assert checkpoint == {"completed_threads": []}
     assert completed == []
+
+
+def test_changed_meta_conversation_retries_after_transient_thread_id_error(monkeypatch, tmp_path):
+    row = {
+        "index": 3,
+        "label": "Buyer\nnew message",
+        "displayName": "Buyer",
+        "avatarUrl": "https://cdn.example/avatar.jpg",
+    }
+    open_attempts = 0
+    imports = []
+
+    async def rows(_page):
+        return [row]
+
+    async def open_thread(_page, _row, _channel):
+        nonlocal open_attempts
+        open_attempts += 1
+        if open_attempts == 1:
+            raise RuntimeError("Meta chưa cung cấp mã hội thoại đang mở")
+        return "thread-3"
+
+    async def import_history(*_args, **_kwargs):
+        imports.append(True)
+        return {"completed_threads": []}, 1
+
+    monkeypatch.setattr(bridge, "_conversation_rows", rows)
+    monkeypatch.setattr(bridge, "_open_meta_conversation", open_thread)
+    monkeypatch.setattr(bridge, "_import_history", import_history)
+
+    observed = {"3": "previous-row-signature"}
+    profile_cache = {}
+    checkpoint_path = tmp_path / "checkpoint.json"
+
+    asyncio.run(bridge._sync_changed_conversations(
+        object(), "facebook", "http://localhost:8000", "connector-token",
+        checkpoint_path, observed, [row], profile_cache,
+    ))
+    assert observed["3"] == "previous-row-signature"
+    assert imports == []
+
+    asyncio.run(bridge._sync_changed_conversations(
+        object(), "facebook", "http://localhost:8000", "connector-token",
+        checkpoint_path, observed, [row], profile_cache,
+    ))
+    assert observed["3"] == bridge.hashlib.sha256(row["label"].encode("utf-8")).hexdigest()
+    assert imports == [True]
+
+    asyncio.run(bridge._sync_changed_conversations(
+        object(), "facebook", "http://localhost:8000", "connector-token",
+        checkpoint_path, observed, [row], profile_cache,
+    ))
+    assert open_attempts == 2
+    assert imports == [True]
 
 
 def test_meta_import_does_not_mark_unreadable_empty_history_complete(monkeypatch, tmp_path):

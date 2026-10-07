@@ -22,6 +22,7 @@ from app.models.conversation import Conversation
 from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.sales import Order, Product
 from app.services.customer_collection_flow import (
+    _parse_order_form,
     _store_address,
     _store_contact,
     advance_customer_collection,
@@ -129,7 +130,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 order.metadata_ = metadata
             db.commit()
 
-    def test_progressive_collection_persists_each_step(self):
+    def test_checkout_keeps_partial_fields_without_repeating_the_form(self):
         with Session(self.engine) as db:
             customer = db.get(Customer, self.customer_id)
             customer.name = None
@@ -148,8 +149,13 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             )
             self.assertTrue(first.started)
             self.assertEqual("name", first.current_field)
+            self.assertIn("tên người nhận:", first.prompt.casefold())
+            self.assertIn("số điện thoại:", first.prompt.casefold())
+            self.assertIn("email:", first.prompt.casefold())
+            self.assertIn("địa chỉ nhận hàng:", first.prompt.casefold())
+            self.assertIn("thanh toán", first.prompt.casefold())
 
-            second = advance_customer_collection(
+            incomplete = advance_customer_collection(
                 db,
                 business_id=self.business_id,
                 customer_id=self.customer_id,
@@ -157,38 +163,11 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 source_channel="facebook",
                 text="Nguyễn Văn A",
             )
-            self.assertEqual("phone", second.current_field)
-            self.assertIn("số điện thoại", second.prompt)
-
-            third = advance_customer_collection(
-                db,
-                business_id=self.business_id,
-                customer_id=self.customer_id,
-                conversation_id=11,
-                source_channel="facebook",
-                text="090 123 4567",
-            )
-            self.assertEqual("email", third.current_field)
-
-            email = advance_customer_collection(
-                db,
-                business_id=self.business_id,
-                customer_id=self.customer_id,
-                conversation_id=11,
-                source_channel="facebook",
-                text="nguyen.van.a@example.com",
-            )
-            self.assertEqual("address", email.current_field)
-
-            fourth = advance_customer_collection(
-                db,
-                business_id=self.business_id,
-                customer_id=self.customer_id,
-                conversation_id=11,
-                source_channel="facebook",
-                text="12 Nguyễn Huệ, phường Bến Nghé, Quận 1, TP.HCM",
-            )
-            self.assertEqual("payment_method", fourth.current_field)
+            self.assertEqual("phone", incomplete.current_field)
+            self.assertEqual("", incomplete.prompt)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=11).one()
+            self.assertEqual("Nguyễn Văn A", session.collected_fields["name"])
+            self.assertEqual("Nguyễn Văn A", customer.name)
 
             completed = advance_customer_collection(
                 db,
@@ -196,7 +175,13 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 customer_id=self.customer_id,
                 conversation_id=11,
                 source_channel="facebook",
-                text="Thanh toán COD",
+                text=(
+                    "Tên người nhận: Nguyễn Văn A\n"
+                    "Số điện thoại: 094 111 2233\n"
+                    "Email: single.form@example.net\n"
+                    "Địa chỉ nhận hàng: 12 Nguyễn Huệ, phường Bến Nghé, Quận 1, TP.HCM\n"
+                    "Thanh toán: COD"
+                ),
             )
             self.assertTrue(completed.completed)
             self.assertIsNone(completed.current_field)
@@ -204,15 +189,230 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             session = db.query(CustomerCollectionSession).filter_by(conversation_id=11).one()
             self.assertEqual("completed", session.status)
             self.assertEqual("Nguyễn Văn A", session.collected_fields["name"])
-            self.assertEqual("+84901234567", session.collected_fields["phone"])
-            self.assertEqual("nguyen.van.a@example.com", session.collected_fields["email"])
+            self.assertEqual("+84941112233", session.collected_fields["phone"])
+            self.assertEqual("single.form@example.net", session.collected_fields["email"])
             self.assertEqual("cod", session.collected_fields["payment_method"])
             customer = db.get(Customer, self.customer_id)
             self.assertEqual("Nguyễn Văn A", customer.name)
-            self.assertEqual("nguyen.van.a@example.com", customer.email)
-            self.assertEqual(1, db.query(CustomerContact).filter_by(customer_id=self.customer_id, kind="phone").count())
-            self.assertEqual(1, db.query(CustomerContact).filter_by(customer_id=self.customer_id, kind="email").count())
-            self.assertEqual(1, db.query(CustomerAddress).filter_by(customer_id=self.customer_id).count())
+            self.assertEqual("single.form@example.net", customer.email)
+            self.assertEqual(1, db.query(CustomerContact).filter_by(
+                customer_id=self.customer_id, kind="phone",
+                value_hash=contact_hash("phone", "+84941112233"),
+            ).count())
+            self.assertEqual(1, db.query(CustomerContact).filter_by(
+                customer_id=self.customer_id, kind="email",
+                value_hash=contact_hash("email", "single.form@example.net"),
+            ).count())
+            self.assertEqual(1, db.query(CustomerAddress).filter_by(
+                customer_id=self.customer_id,
+                address_line1="12 Nguyễn Huệ, phường Bến Nghé, Quận 1, TP.HCM",
+            ).count())
+
+    def test_checkout_collects_labeled_order_form_in_one_reply(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="facebook",
+                external_user_id="one-message-order-form-user",
+            )
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                channel="facebook",
+            )
+            db.add(conversation)
+            db.flush()
+
+            quote = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation.id, source_channel="facebook",
+                text="Mình mua Serum Vitamin C Lunari",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+            form_request = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation.id, source_channel="facebook",
+                text="Đồng ý đặt hàng",
+            )
+            self.assertIn("Tên người nhận:", form_request.prompt)
+            self.assertIn("Số điện thoại:", form_request.prompt)
+            self.assertIn("Email:", form_request.prompt)
+            self.assertIn("Địa chỉ nhận hàng:", form_request.prompt)
+            self.assertIn("Thanh toán (COD/chuyển khoản):", form_request.prompt)
+
+            completed = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=customer.id,
+                conversation_id=conversation.id, source_channel="facebook",
+                text=(
+                    "Tên người nhận: Nguyễn Văn A\n"
+                    "Số điện thoại: 093 987 6543\n"
+                    "Email: order.form@example.com\n"
+                    "Địa chỉ nhận hàng: 12 Nguyễn Huệ, Quận 1, TP.HCM\n"
+                    "Thanh toán (COD/chuyển khoản): COD"
+                ),
+            )
+
+            self.assertTrue(completed.completed)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=conversation.id).one()
+            self.assertEqual("Nguyễn Văn A", session.collected_fields["name"])
+            self.assertEqual("+84939876543", session.collected_fields["phone"])
+            self.assertEqual("order.form@example.com", session.collected_fields["email"])
+            self.assertEqual("cod", session.collected_fields["payment_method"])
+            order = db.query(Order).filter_by(customer_id=customer.id, business_id=self.business_id).one()
+            self.assertEqual(completed.draft_order_id, order.id)
+
+    def test_checkout_accepts_fields_grouped_from_separate_chat_messages(self):
+        with Session(self.engine) as db:
+            started = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=14, source_channel="facebook",
+                text="Chốt đơn giúp mình",
+            )
+            self.assertTrue(started.started)
+
+            fragments = [
+                "Nguyễn Thị Mai",
+                "093 555 1122",
+                "mai.batch@example.net",
+                "17 Hai Bà Trưng, Quận 1",
+                "COD",
+            ]
+            completed = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=14, source_channel="facebook",
+                text="\n".join(fragments), form_fragments=fragments,
+            )
+
+            self.assertTrue(completed.completed)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=14).one()
+            self.assertEqual("Nguyễn Thị Mai", session.collected_fields["name"])
+            self.assertEqual("+84935551122", session.collected_fields["phone"])
+            self.assertEqual("mai.batch@example.net", session.collected_fields["email"])
+            self.assertEqual("17 Hai Bà Trưng, Quận 1", session.collected_fields["address"])
+            self.assertEqual("cod", session.collected_fields["payment_method"])
+
+    def test_checkout_accumulates_labeled_fragments_across_existing_chat_batches(self):
+        with Session(self.engine) as db:
+            started = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=15, source_channel="facebook",
+                text="Chốt đơn giúp mình",
+            )
+            self.assertTrue(started.started)
+
+            # Real customers often put name and phone in the same message.
+            first_batch = ["tên: Ngô Long Thiên , sdt 0327256842"]
+            first_partial = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=15, source_channel="facebook",
+                text="\n".join(first_batch), form_fragments=first_batch,
+            )
+            self.assertEqual("", first_partial.prompt)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=15).one()
+            self.assertEqual("Ngô Long Thiên", session.collected_fields["name"])
+            self.assertEqual("+84327256842", session.collected_fields["phone"])
+
+            second_batch = ["email thienliz77@gmail.com", "địa chỉ 140 Lê Trọng Tấn"]
+            second_partial = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=15, source_channel="facebook",
+                text="\n".join(second_batch), form_fragments=second_batch,
+            )
+            self.assertEqual("", second_partial.prompt)
+            self.assertEqual("thienliz77@gmail.com", session.collected_fields["email"])
+            self.assertEqual("140 Lê Trọng Tấn", session.collected_fields["address"])
+
+            completed = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=self.customer_id,
+                conversation_id=15, source_channel="facebook", text="cod",
+                form_fragments=["cod"],
+            )
+            self.assertTrue(completed.completed)
+            self.assertEqual("cod", session.collected_fields["payment_method"])
+
+    def test_checkout_parses_multiple_fields_from_one_labeled_line(self):
+        values, submitted = _parse_order_form(
+            "Tên: Ngô Long Thiên, SĐT: 0327256842, Email: thien@example.com, "
+            "Địa chỉ: 140 Lê Trọng Tấn, Quận Tân Phú, Thanh toán: COD",
+            ("name", "phone", "email", "address", "payment_method"),
+        )
+
+        self.assertTrue(submitted)
+        self.assertEqual("Ngô Long Thiên", values["name"])
+        self.assertEqual("+84327256842", values["phone"])
+        self.assertEqual("thien@example.com", values["email"])
+        self.assertEqual("140 Lê Trọng Tấn, Quận Tân Phú", values["address"])
+        self.assertEqual("cod", values["payment_method"])
+
+    def test_checkout_repairs_legacy_name_that_absorbed_phone_label(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="facebook",
+                external_user_id="legacy-combined-name-phone",
+                name="Ngô Long Thiên , sdt 0327256842",
+            )
+            db.add(customer)
+            db.flush()
+            product = db.query(Product).filter_by(
+                business_id=self.business_id,
+                sku="SERUM-001",
+            ).one()
+            session = CustomerCollectionSession(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                purpose="order",
+                required_fields=["name", "phone", "email", "address", "payment_method"],
+                collected_fields={
+                    "name": "Ngô Long Thiên , sdt 0327256842",
+                    "email": "thien@example.com",
+                    "address": "140 Lê Trọng Tấn",
+                    "payment_method": "cod",
+                    "product_id": product.id,
+                    "product_name": product.name,
+                    "quantity": 2,
+                    "unit_price": str(product.price),
+                    "available": product.stock_quantity,
+                },
+                current_field="phone",
+                source_channel="facebook",
+                status="partial",
+            )
+            db.add(session)
+            db.commit()
+
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=customer.id,
+                conversation_id=None,
+                source_channel="facebook",
+                text="0327256842",
+                form_fragments=["0327256842"],
+            )
+
+            self.assertTrue(result.completed)
+            self.assertEqual("Ngô Long Thiên", session.collected_fields["name"])
+            self.assertEqual("+84327256842", session.collected_fields["phone"])
+            self.assertEqual("Ngô Long Thiên", customer.name)
+
+    def test_english_checkout_form_labels_are_parsed(self):
+        values, submitted = _parse_order_form(
+            "Recipient name: Alex Nguyen\n"
+            "Phone number: 0939876543\n"
+            "Email: alex@example.com\n"
+            "Delivery address: 12 Nguyen Hue, District 1\n"
+            "Payment (COD/bank transfer): bank transfer",
+            ("name", "phone", "email", "address", "payment_method"),
+        )
+
+        self.assertTrue(submitted)
+        self.assertEqual("Alex Nguyen", values["name"])
+        self.assertEqual("+84939876543", values["phone"])
+        self.assertEqual("alex@example.com", values["email"])
+        self.assertEqual("bank_transfer", values["payment_method"])
 
     def test_interrupted_session_resumes_and_non_order_text_is_ignored(self):
         with Session(self.engine) as db:
@@ -247,6 +447,9 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 text="Trần B",
             )
             self.assertEqual("phone", resumed.current_field)
+            self.assertEqual("", resumed.prompt)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=21).one()
+            self.assertEqual("Trần B", session.collected_fields["name"])
             self.assertEqual(1, db.query(CustomerCollectionSession).filter_by(conversation_id=21).count())
 
     def test_shopee_checkout_asks_for_email_without_phone(self):
@@ -265,28 +468,32 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 conversation_id=conversation_id, source_channel="shopee",
                 text="Chốt đơn giúp mình",
             ).current_field)
-            contact = advance_customer_collection(
+            incomplete = advance_customer_collection(
                 db, business_id=self.business_id, customer_id=customer.id,
                 conversation_id=conversation_id, source_channel="shopee",
                 text="Lê Mai",
             )
-            self.assertEqual("email", contact.current_field)
-            self.assertIn("email", contact.prompt)
-            self.assertNotIn("số điện thoại", contact.prompt)
+            self.assertEqual("email", incomplete.current_field)
+            self.assertEqual("", incomplete.prompt)
 
-            invalid_phone = advance_customer_collection(
+            invalid = advance_customer_collection(
                 db, business_id=self.business_id, customer_id=customer.id,
                 conversation_id=conversation_id, source_channel="shopee",
                 text="0901234567",
             )
-            self.assertEqual("email", invalid_phone.current_field)
+            self.assertEqual("", invalid.prompt)
 
-            address = advance_customer_collection(
+            completed = advance_customer_collection(
                 db, business_id=self.business_id, customer_id=customer.id,
                 conversation_id=conversation_id, source_channel="shopee",
-                text="mai.checkout@example.com",
+                text=(
+                    "Tên người nhận: Lê Mai\n"
+                    "Email: mai.checkout@example.com\n"
+                    "Địa chỉ nhận hàng: 12 Nguyễn Huệ, Quận 1\n"
+                    "Thanh toán: COD"
+                ),
             )
-            self.assertEqual("address", address.current_field)
+            self.assertTrue(completed.completed)
             session = db.query(CustomerCollectionSession).filter_by(conversation_id=conversation_id).one()
             self.assertEqual(["name", "email", "address", "payment_method"], session.required_fields)
             self.assertEqual("mai.checkout@example.com", customer.email)
@@ -325,6 +532,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertEqual(["name", "email", "address", "payment_method"], session.required_fields)
             self.assertEqual("0901234567", session.collected_fields["phone"])
             self.assertEqual("an@example.com", session.collected_fields["email"])
+            self.assertEqual("", result.prompt)
 
     def test_shopee_email_checkout_stays_pending_when_only_sms_otp_is_configured(self):
         with Session(self.engine) as db:
@@ -347,27 +555,16 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 conversation_id=conversation_id, source_channel="shopee",
                 text="Đồng ý đặt hàng",
             ).current_field)
-            advance_customer_collection(
-                db, business_id=self.business_id, customer_id=customer.id,
-                conversation_id=conversation_id, source_channel="shopee",
-                text="Trần An",
-            )
-            self.assertEqual("address", advance_customer_collection(
-                db, business_id=self.business_id, customer_id=customer.id,
-                conversation_id=conversation_id, source_channel="shopee",
-                text="an.shopee@example.com",
-            ).current_field)
-            self.assertEqual("payment_method", advance_customer_collection(
-                db, business_id=self.business_id, customer_id=customer.id,
-                conversation_id=conversation_id, source_channel="shopee",
-                text="12 Nguyễn Huệ, Quận 1",
-            ).current_field)
-
             with patch("app.services.customer_collection_flow.settings.OTP_DELIVERY_MODE", "twilio"):
                 result = advance_customer_collection(
                     db, business_id=self.business_id, customer_id=customer.id,
                     conversation_id=conversation_id, source_channel="shopee",
-                    text="COD",
+                    text=(
+                        "Tên người nhận: Trần An\n"
+                        "Email: an.shopee@example.com\n"
+                        "Địa chỉ nhận hàng: 12 Nguyễn Huệ, Quận 1\n"
+                        "Thanh toán: COD"
+                    ),
                 )
 
             session = db.query(CustomerCollectionSession).filter_by(conversation_id=conversation_id).one()
@@ -419,6 +616,69 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             )
             self.assertIsNone(browse)
             session = db.query(CustomerCollectionSession).filter_by(conversation_id=32).one()
+            self.assertEqual("abandoned", session.status)
+
+    def test_product_detail_request_does_not_start_or_repeat_checkout(self):
+        detail_before_purchase = "Tôi muốn mua Serum Vitamin C Lunari nhưng muốn xem chi tiết nó"
+        self.assertFalse(is_order_intent(detail_before_purchase))
+        self.assertTrue(is_browsing_request(detail_before_purchase))
+
+        with Session(self.engine) as db:
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=33,
+                source_channel="instagram",
+                text=detail_before_purchase,
+            )
+            self.assertIsNone(result)
+            self.assertEqual(0, db.query(CustomerCollectionSession).filter_by(conversation_id=33).count())
+
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=34,
+                source_channel="instagram",
+                text="Mình mua Serum Vitamin C Lunari",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+            follow_up = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=34,
+                source_channel="instagram",
+                text="Tôi muốn xem chi tiết trước khi mua",
+            )
+            self.assertIsNone(follow_up)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=34).one()
+            self.assertEqual("abandoned", session.status)
+
+    def test_product_link_question_is_not_misread_as_quote_rejection(self):
+        with Session(self.engine) as db:
+            quote = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=35,
+                source_channel="instagram",
+                text="Mình mua Serum",
+            )
+            self.assertEqual("order_confirmation", quote.current_field)
+
+            response = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=35,
+                source_channel="instagram",
+                text="Bạn có liên kết sản phẩm Serum không?",
+            )
+
+            self.assertIsNone(response)
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=35).one()
             self.assertEqual("abandoned", session.status)
 
     def test_greeting_is_detected_without_treating_product_questions_as_greetings(self):
@@ -1050,7 +1310,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             )
 
             self.assertEqual("name", confirmed.current_field)
-            self.assertIn("tên người nhận", confirmed.prompt)
+            self.assertIn("tên người nhận:", confirmed.prompt.casefold())
             self.assertEqual("order", session.purpose)
             self.assertEqual(list(("name", "phone", "email", "address", "payment_method")), session.required_fields)
 
@@ -1083,11 +1343,17 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 source_channel="telegram",
                 text="Đồng ý đặt hàng",
             ).current_field)
-            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=89, source_channel="telegram", text="Nguyễn Mai")
-            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=89, source_channel="telegram", text="0912345678")
-            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=89, source_channel="telegram", text="mai@example.com")
-            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=89, source_channel="telegram", text="12 Nguyễn Huệ, Quận 1")
-            completed = advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=89, source_channel="telegram", text="COD")
+            completed = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=checkout_customer.id,
+                conversation_id=89, source_channel="telegram",
+                text=(
+                    "Tên người nhận: Nguyễn Mai\n"
+                    "Số điện thoại: 0912345678\n"
+                    "Email: mai@example.com\n"
+                    "Địa chỉ nhận hàng: 12 Nguyễn Huệ, Quận 1\n"
+                    "Thanh toán: COD"
+                ),
+            )
 
             self.assertTrue(completed.completed)
             self.assertIsNotNone(completed.draft_order_id)
@@ -1219,7 +1485,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                     text="yes",
                 )
                 self.assertEqual("name", approved.current_field)
-                self.assertIn("What name", approved.prompt)
+                self.assertIn("recipient name:", approved.prompt.casefold())
                 self.assertNotIn("xin", approved.prompt)
             finally:
                 db.query(CustomerCollectionSession).filter_by(conversation_id=conversation_id).delete(synchronize_session=False)
@@ -1271,11 +1537,17 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 source_channel="zalo",
                 text="Đồng ý đặt hàng",
             ).current_field)
-            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="Nguyễn Mai")
-            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="0912345678")
-            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="mai96@example.com")
-            advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="12 Nguyễn Huệ, Quận 1")
-            completed = advance_customer_collection(db, business_id=self.business_id, customer_id=checkout_customer.id, conversation_id=96, source_channel="zalo", text="COD")
+            completed = advance_customer_collection(
+                db, business_id=self.business_id, customer_id=checkout_customer.id,
+                conversation_id=96, source_channel="zalo",
+                text=(
+                    "Tên người nhận: Nguyễn Mai\n"
+                    "Số điện thoại: 0912345678\n"
+                    "Email: mai96@example.com\n"
+                    "Địa chỉ nhận hàng: 12 Nguyễn Huệ, Quận 1\n"
+                    "Thanh toán: COD"
+                ),
+            )
 
             self.assertTrue(completed.completed)
             order = db.query(Order).filter_by(conversation_id=96).one()
@@ -1426,6 +1698,79 @@ class CustomerCollectionFlowTests(unittest.TestCase):
 
             self.assertEqual("order_confirmation", result.current_field)
             self.assertIn("4.794.000 đồng", result.prompt)
+
+    def test_quantity_purchase_followup_uses_last_product_and_waits_for_confirmation(self):
+        with Session(self.engine) as db:
+            product = Product(
+                business_id=self.business_id,
+                sku="APPLIANCE-01",
+                name="Điện gia dụng mẫu 01",
+                price=Decimal("349000"),
+                stock_quantity=219,
+                reserved_quantity=0,
+                status="active",
+            )
+            db.add(product)
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                channel="facebook",
+            )
+            db.add(conversation)
+            db.flush()
+            for content in (
+                "Tôi muốn mua điện gia dụng mẫu 01 nhưng muốn xem chi tiết trước",
+                "alo",
+                "Tôi muốn mua điện gia dụng mẫu 01 nhưng muốn xem chi tiết trước",
+                "Cho tôi 2 cái",
+            ):
+                db.add(Message(
+                    conversation_id=conversation.id,
+                    channel="facebook",
+                    direction="inbound",
+                    content=content,
+                ))
+            db.flush()
+            orders_before = db.query(Order).filter(Order.business_id == self.business_id).count()
+
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=conversation.id,
+                source_channel="facebook",
+                text="Cho tôi 2 cái",
+            )
+
+            self.assertEqual("order_confirmation", result.current_field)
+            self.assertIn("2 Điện gia dụng mẫu 01", result.prompt)
+            self.assertIn("698.000 đồng", result.prompt)
+            self.assertIn("Bạn xác nhận đặt hàng chứ?", result.prompt)
+            self.assertEqual(orders_before, db.query(Order).filter(Order.business_id == self.business_id).count())
+
+    def test_contextual_quantity_purchase_asks_which_product_when_context_is_missing(self):
+        with Session(self.engine) as db:
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                channel="facebook",
+            )
+            db.add(conversation)
+            db.flush()
+
+            result = advance_customer_collection(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=conversation.id,
+                source_channel="facebook",
+                text="Cho tôi 2 cái",
+            )
+
+            self.assertEqual("product_clarification", result.status)
+            self.assertIn("Bạn muốn lấy sản phẩm nào", result.prompt)
+            self.assertEqual(0, db.query(CustomerCollectionSession).filter_by(conversation_id=conversation.id).count())
 
     def test_quote_only_quantity_correction_keeps_previous_product_without_order(self):
         with Session(self.engine) as db:

@@ -40,11 +40,12 @@ except Exception:
 
 BASE = Path(__file__).resolve().parent
 PACKAGE_DIR = Path(getattr(sys, "_MEIPASS", str(BASE)))
-RUNTIME = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantShopee"
+RUNTIME = Path(os.getenv("SMART_MERCHANT_RUNTIME_DIR") or (Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantShopee"))
 HISTORY_CHECKPOINT: Path | None = None
 ORDER_CHECKPOINT: Path | None = None
 EDGE_PROFILE = RUNTIME / "edge-profile"
-CDP = os.getenv("SHOPEE_CDP_URL", "http://127.0.0.1:9222")
+SHOPEE_CDP_PORT = int(os.getenv("SHOPEE_CDP_PORT", "9222"))
+CDP = os.getenv("SHOPEE_CDP_URL", f"http://127.0.0.1:{SHOPEE_CDP_PORT}")
 SELLER_CHAT = "https://banhang.shopee.vn/new-webchat/conversations"
 SELLER_ORDERS = "https://banhang.shopee.vn/portal/sale/order"
 BACKEND_URL = ""
@@ -148,7 +149,7 @@ def start_edge() -> None:
         [
             str(edge),
             "--remote-debugging-address=127.0.0.1",
-            "--remote-debugging-port=9222",
+            f"--remote-debugging-port={SHOPEE_CDP_PORT}",
             f"--user-data-dir={EDGE_PROFILE}",
             "--no-first-run",
             "--no-default-browser-check",

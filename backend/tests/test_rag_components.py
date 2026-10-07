@@ -147,6 +147,7 @@ def test_rag_detects_vietnamese_and_english_and_follows_recent_user_language():
     assert detect_reply_language("Can you tell me the delivery policy?") == "en"
     assert detect_reply_language("How much would it cost to buy 10 units of the Điện gia dụng mẫu 01?") == "en"
     assert detect_reply_language("ok", [{"role": "user", "content": "How much does delivery cost?"}]) == "en"
+    assert detect_reply_language("ship HN bn tien???") == "vi"
 
 
 def test_prompt_and_no_context_fallback_follow_customer_language():
@@ -156,6 +157,19 @@ def test_prompt_and_no_context_fallback_follow_customer_language():
     assert "hãy trả lời tự nhiên" in messages[0]["content"]
     assert "không cần gắn nhãn nguồn" in messages[0]["content"]
     assert localize_rag_fallback(NO_CONTEXT_CHAT_FALLBACK, query="What is the return policy?").startswith("I couldn't find")
+
+
+def test_prompt_answers_latest_question_and_uses_history_only_for_context():
+    messages = build_prompt(
+        query="Cái đó còn hàng không?",
+        chunks=[],
+        conversation_history=[
+            {"role": "user", "content": "Giá của Điện gia dụng mẫu 01 bao nhiêu?"},
+            {"role": "assistant", "content": "349.000 đồng."},
+        ],
+    )
+    assert "Trả lời câu hỏi mới nhất" in messages[0]["content"]
+    assert "không trả lời lại hay tóm tắt câu hỏi cũ" in messages[0]["content"]
 
 
 def test_shop_prompt_cannot_replace_rag_grounding_rules():

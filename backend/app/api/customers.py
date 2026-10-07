@@ -81,6 +81,7 @@ from app.tenancy.dependencies import get_tenant_context
 from app.services.customer_fact_extractor import (
     FACT_EXTRACTION_SETTING_KEY,
     get_customer_fact_extraction_enabled,
+    schedule_weekly_customer_fact_scan,
 )
 from app.services.customer_merge_service import (
     duplicate_evidence,
@@ -273,6 +274,7 @@ class BulkCustomerTagUpdate(BaseModel):
 
 RFM_TAG_PREFIX = "RFM · "
 RFM_GROUPS = (
+    "RFM · Khách mới",
     "RFM · Chưa mua",
     "RFM · Giá trị cao",
     "RFM · Trung thành",
@@ -296,9 +298,11 @@ def _rfm_score(value: float, population: list[float], *, lower_is_better: bool =
     return max(1, min(5, 1 + round(4 * rank / (len(population) - 1))))
 
 
-def _rfm_group(recency: int, frequency: int, monetary: float) -> str:
+def _rfm_group(recency: int, frequency: int, monetary: float, *, first_purchase_recent: bool = False) -> str:
     if frequency == 0:
         return "RFM · Chưa mua"
+    if frequency == 1 and first_purchase_recent:
+        return "RFM · Khách mới"
     if recency >= 4 and frequency >= 4 and monetary >= 4:
         return "RFM · Giá trị cao"
     if recency >= 3 and frequency >= 4:
@@ -1001,6 +1005,13 @@ def set_fact_extraction_status(
         metadata={"enabled": payload.enabled},
     )
     db.commit()
+    if payload.enabled:
+        schedule_weekly_customer_fact_scan(
+            db,
+            business_id=tenant.business_id,
+            idempotency_key=f"customer-facts-weekly:bootstrap:{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+        )
+        db.commit()
     return CustomerFactExtractionStatusOut(enabled=payload.enabled)
 
 
@@ -1131,7 +1142,12 @@ def classify_customers_rfm(
             _rfm_score(float(stats["frequency"]), frequencies),
             _rfm_score(float(stats["monetary"]), monetary_values),
         )
-        assignments[customer_id] = _rfm_group(*scores)
+        first_purchase_recent = bool(
+            stats["frequency"] == 1
+            and last_order_at is not None
+            and recency_days <= 30
+        )
+        assignments[customer_id] = _rfm_group(*scores, first_purchase_recent=first_purchase_recent)
 
     tag_rows = db.query(Tag).filter(
         Tag.business_id == tenant.business_id,

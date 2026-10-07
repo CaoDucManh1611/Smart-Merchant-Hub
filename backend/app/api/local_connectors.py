@@ -7,12 +7,16 @@ import hmac
 from io import BytesIO
 import json
 import re
+import secrets
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
+from urllib.parse import urlsplit
 from zipfile import ZIP_STORED, ZipFile
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
@@ -44,6 +48,16 @@ _CODE_RE = re.compile(r"^(PAIR|CONN)\.(tiktok|shopee|facebook|instagram)\.(\d+)\
 
 class PairConnectorRequest(BaseModel):
     pairing_code: str = Field(min_length=24, max_length=200)
+    execution_mode: Literal["local", "server"] = "local"
+
+
+class ServerViewerInput(BaseModel):
+    action: Literal["click", "type", "press", "scroll"]
+    x: int | None = Field(default=None, ge=0, le=10000)
+    y: int | None = Field(default=None, ge=0, le=10000)
+    text: str | None = Field(default=None, max_length=2000)
+    key: str | None = Field(default=None, max_length=32)
+    delta_y: int | None = Field(default=None, ge=-2000, le=2000)
 
 
 class ConnectorHeartbeatRequest(BaseModel):
@@ -110,10 +124,12 @@ def pair_local_connector(
     response: Response,
     platform_db: Session = Depends(get_platform_db),
 ):
-    """Exchange a one-time pairing code for the connector's shop-scoped token."""
+    """Exchange a one-time pairing code for local or server-managed execution."""
 
     response.headers["Cache-Control"] = "no-store"
     channel_type, business_id, channel_id, _nonce = _code_parts(payload.pairing_code, "PAIR")
+    if payload.execution_mode == "server":
+        _require_server_agent()
     schema = _tenant_schema(platform_db, business_id)
     supplied_hash = hashlib.sha256(payload.pairing_code.strip().encode("utf-8")).hexdigest()
 
@@ -160,16 +176,199 @@ def pair_local_connector(
         config.pop("webhook_secret_encrypted", None)
         config.pop("bridge_control_url", None)
         config["connector_paired_at"] = int(time.time())
+        if payload.execution_mode == "server":
+            viewer_ticket = secrets.token_urlsafe(32)
+            config["connector_execution_mode"] = "server"
+            config["server_viewer_ticket_hash"] = hashlib.sha256(viewer_ticket.encode("utf-8")).hexdigest()
+            config["server_viewer_ticket_expires_at"] = int(time.time()) + max(
+                600, min(int(settings.SERVER_CONNECTOR_VIEWER_TICKET_TTL_SECONDS or 14400), 86400)
+            )
+            config["connector_status"] = "starting"
+        else:
+            config["connector_execution_mode"] = "local"
+            for key in ("server_viewer_ticket_hash", "server_viewer_ticket_expires_at"):
+                config.pop(key, None)
         channel.config = config
         tenant_db.flush()
 
     platform_db.commit()
 
+    if payload.execution_mode == "server":
+        return {
+            "channel_type": channel_type,
+            "business_id": business_id,
+            "channel_id": channel_id,
+            "server_managed": True,
+            "viewer_ticket": viewer_ticket,
+            "incoming_endpoint": f"/api/channels/{channel_type}/incoming",
+        }
     return {
         "channel_type": channel_type,
         "connector_token": connector_token,
         "incoming_endpoint": f"/api/channels/{channel_type}/incoming",
     }
+
+
+def _server_agent_headers() -> dict[str, str]:
+    token = str(settings.SERVER_CONNECTOR_AGENT_TOKEN or "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình.")
+    return {"X-Server-Connector-Agent-Token": token}
+
+
+def _require_server_agent() -> str:
+    agent_url = str(settings.SERVER_CONNECTOR_AGENT_URL or "").strip().rstrip("/")
+    if not agent_url:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình.")
+    try:
+        parsed = urlsplit(agent_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+            raise ValueError("invalid agent URL")
+        health = httpx.get(f"{agent_url}/health", headers=_server_agent_headers(), timeout=3)
+        if health.status_code != 200:
+            raise HTTPException(status_code=503, detail="Windows connector agent chưa sẵn sàng.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Không kết nối được Windows connector agent.") from exc
+    return agent_url
+
+
+def _authorized_server_agent(x_server_connector_agent_token: str | None) -> None:
+    expected = str(settings.SERVER_CONNECTOR_AGENT_TOKEN or "").strip()
+    if not expected or not x_server_connector_agent_token or not hmac.compare_digest(
+        expected, x_server_connector_agent_token.strip()
+    ):
+        raise HTTPException(status_code=401, detail="Server agent không được xác thực.")
+
+
+@router.get("/channels/server-managed/active")
+def list_server_managed_connectors(
+    x_server_connector_agent_token: str | None = Header(default=None, alias="X-Server-Connector-Agent-Token"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    """Private agent poll endpoint. Connector tokens are returned only over the configured secret channel."""
+    _authorized_server_agent(x_server_connector_agent_token)
+    active: list[dict] = []
+    businesses = platform_db.scalars(
+        select(PlatformBusiness).where(PlatformBusiness.status == "active")
+    ).all()
+    for business in businesses:
+        business_id = int(business.id)
+        try:
+            schema = _tenant_schema(platform_db, business_id)
+            with tenant_session(schema) as tenant_db:
+                channels = tenant_db.scalars(
+                    select(Channel).where(
+                        Channel.business_id == business_id,
+                        Channel.status == "active",
+                    )
+                ).all()
+                for channel in channels:
+                    config = channel.config if isinstance(channel.config, dict) else {}
+                    channel_type = str(channel.channel_type or "")
+                    if (
+                        channel_type not in _CHAT_SUPPORTED
+                        or config.get("connector_execution_mode") != "server"
+                        or config.get("provider") != f"{channel_type}_local_connector"
+                        or not channel.access_token_encrypted
+                    ):
+                        continue
+                    try:
+                        connector_token = decrypt_token(
+                            channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY
+                        )
+                    except Exception:
+                        continue
+                    active.append({
+                        "business_id": business_id,
+                        "channel_id": int(channel.id),
+                        "channel_type": channel_type,
+                        "connector_token": connector_token,
+                    })
+        except HTTPException:
+            continue
+    return {"connectors": active}
+
+
+def _server_viewer_channel(
+    business_id: int,
+    channel_type: str,
+    channel_id: int,
+    authorization: str | None,
+    platform_db: Session,
+) -> tuple[str, dict]:
+    if channel_type not in _CHAT_SUPPORTED:
+        raise HTTPException(status_code=404, detail="Kênh không hỗ trợ server viewer.")
+    scheme, _, ticket = str(authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not ticket.strip():
+        raise HTTPException(status_code=401, detail="Thiếu viewer ticket.")
+    schema = _tenant_schema(platform_db, business_id)
+    with tenant_session(schema) as tenant_db:
+        channel = tenant_db.scalar(select(Channel).where(
+            Channel.id == channel_id,
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        ))
+        config = channel.config if channel and isinstance(channel.config, dict) else {}
+        expected = str(config.get("server_viewer_ticket_hash") or "")
+        supplied = hashlib.sha256(ticket.strip().encode("utf-8")).hexdigest()
+        expires_at = int(config.get("server_viewer_ticket_expires_at") or 0)
+        if (
+            not channel
+            or config.get("connector_execution_mode") != "server"
+            or not expected
+            or expires_at <= time.time()
+            or not hmac.compare_digest(expected, supplied)
+        ):
+            raise HTTPException(status_code=401, detail="Viewer ticket hết hạn hoặc không hợp lệ.")
+        return schema, dict(config)
+
+
+@router.get("/channels/{business_id}/{channel_type}/{channel_id}/server-session/screenshot")
+def get_server_connector_screenshot(
+    business_id: int,
+    channel_type: str,
+    channel_id: int,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    _server_viewer_channel(business_id, channel_type, channel_id, authorization, platform_db)
+    agent_url = _require_server_agent()
+    try:
+        response = httpx.get(
+            f"{agent_url}/internal/channels/{business_id}/{channel_type}/{channel_id}/screenshot",
+            headers=_server_agent_headers(), timeout=15,
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="Không đọc được màn hình Edge trên server.") from exc
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="Windows agent chưa có màn hình đăng nhập sẵn sàng.")
+    return Response(content=response.content, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/channels/{business_id}/{channel_type}/{channel_id}/server-session/input")
+def send_server_connector_input(
+    business_id: int,
+    channel_type: str,
+    channel_id: int,
+    payload: ServerViewerInput,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    platform_db: Session = Depends(get_platform_db),
+):
+    _server_viewer_channel(business_id, channel_type, channel_id, authorization, platform_db)
+    agent_url = _require_server_agent()
+    try:
+        response = httpx.post(
+            f"{agent_url}/internal/channels/{business_id}/{channel_type}/{channel_id}/input",
+            json=payload.model_dump(exclude_none=True), headers=_server_agent_headers(), timeout=10,
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="Không gửi được thao tác tới Edge trên server.") from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail="Windows agent từ chối thao tác trên phiên đăng nhập.")
+    return {"status": "accepted"}
 
 
 def _connector_channel(
@@ -589,7 +788,7 @@ def receive_local_connector_history(
     *,
     collect_realtime_events: bool = False,
 ):
-    """Safely import an idempotent batch of prior chat messages without automation."""
+    """Persist Meta history safely; explicitly marked live messages enter automation."""
     if channel_type not in _CHAT_SUPPORTED:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
     if len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")) > 1_500_000:
@@ -612,9 +811,18 @@ def receive_local_connector_history(
                 continue
             thread_id = normalized["thread_id"]
             message_type = normalized["message_type"]
+            history_import = not normalized["is_live"]
+            raw_payload = {
+                "threadId": thread_id,
+                "message_type": message_type,
+                "created_at": normalized["created_at"].isoformat() if normalized["created_at"] else None,
+                "source": "meta_history_import" if history_import else "meta_live_inbox",
+            }
+            if history_import:
+                raw_payload["history_import"] = True
             saved = process_and_save_message(
                 db=tenant_db,
-                history_import=True,
+                history_import=history_import,
                 message={
                     "channel": channel_type,
                     "external_account_id": channel.external_account_id,
@@ -631,12 +839,7 @@ def receive_local_connector_history(
                     "media_url": normalized["media_url"],
                     "attachments": normalized["attachments"][:20],
                     "received_at": normalized["created_at"],
-                    "raw_payload": {
-                        "threadId": thread_id,
-                        "history_import": True,
-                        "message_type": message_type,
-                        "created_at": normalized["created_at"].isoformat() if normalized["created_at"] else None,
-                    },
+                    "raw_payload": raw_payload,
                     "business_id": business_id,
                     "channel_id": channel_id,
                 },
@@ -670,9 +873,22 @@ def receive_local_connector_history(
                     )
                     tenant_db.commit()
                 duplicates += 1
+                if normalized["is_live"] and saved.get("conversation_id") and saved.get("message_id"):
+                    # A foreground watcher can discover a message after the
+                    # background history scan already persisted it. Promote
+                    # that duplicate to a bot turn; enqueue_job's stable key
+                    # prevents repeated watcher polls from replying twice.
+                    from app.services.conversation_turn_service import schedule_chatbot_turn
+
+                    schedule_chatbot_turn(
+                        tenant_db,
+                        business_id=int(business_id),
+                        conversation_id=int(saved["conversation_id"]),
+                        message_id=int(saved["message_id"]),
+                    )
             if normalized["is_live"] and saved.get("conversation_id"):
-                # Keep the Meta import route free of chatbot/workflow side
-                # effects, while still notifying open CRM sessions instantly.
+                # The live path already schedules automation in the message
+                # service; this event only refreshes open CRM sessions.
                 realtime_events.append((
                     int(business_id),
                     {
@@ -849,6 +1065,8 @@ def _connector_exe_path(channel_type: str) -> Path | None:
     folder, filename = artifacts.get(channel_type, ("", ""))
     if not filename:
         return None
+    if settings.SERVER_CONNECTOR_AGENT_URL and settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        folder = f"{folder}-server"
     candidates = (
         Path(__file__).resolve().parents[3] / "scripts" / "dist" / folder / filename,
         Path("/app/root-scripts/dist") / folder / filename,
@@ -885,25 +1103,30 @@ def download_local_connector_app(channel_type: str):
 def _connector_app_response(channel_type: str, *, include_download_header: bool = True):
     app_path, app_name = _validated_connector_exe(channel_type)
     filename = f"SmartMerchant{app_name}.exe"
+    server_mode = bool(settings.SERVER_CONNECTOR_AGENT_URL and settings.SERVER_CONNECTOR_AGENT_TOKEN)
     archive = BytesIO()
     with ZipFile(archive, "w", compression=ZIP_STORED) as bundle:
         bundle.write(app_path, filename)
         bundle.writestr(
             "HUONG-DAN.txt",
             (
-                f"Giải nén ZIP rồi chạy {filename}. File này chỉ ghép nối {app_name}; tạo mã đúng kênh trong CRM, "
-                f"sau đó đăng nhập thủ công trong Edge riêng của {app_name}. Connector đọc giao diện Meta Business Suite "
-                "và nhập tin nhắn vào CRM; không gọi Meta API. Connector chỉ nhập lịch sử lần đầu hoặc phần còn thiếu "
-                "khi mở lại; sau khi lịch sử hoàn tất sẽ chỉ đồng bộ tin mới. Việc mở chat có thể đánh dấu tin chưa đọc "
-                "thành đã đọc. Không vượt CAPTCHA; "
-                "xử lý xác minh thủ công. "
-                "Hồ sơ Edge lưu riêng trên máy này.\n"
-                if channel_type in {"facebook", "instagram"}
-                else f"Giải nén ZIP, sau đó chạy {filename}. Đăng nhập thủ công trong Edge. "
-                "Bridge đồng bộ tin nhắn và đơn đang hiển thị từ Seller Center/Kênh Người Bán về CRM; "
-                "đơn được nhập ở trạng thái nháp để kiểm tra. Giữ Edge và bridge hoạt động; "
-                "nếu nền tảng yêu cầu CAPTCHA/xác minh thì xử lý thủ công trong Edge. "
-                "Cookie và hồ sơ Edge không được gửi lên CRM.\n"
+                f"Giải nén ZIP rồi chạy {filename}. Tạo mã đúng kênh trong CRM và nhập vào ứng dụng. Ứng dụng "
+                "chỉ ghép shop; Edge và worker chạy trên Windows server. Cửa sổ đăng nhập từ xa sẽ mở để bạn tự "
+                "đăng nhập/xử lý CAPTCHA. Sau khi đăng nhập có thể đóng ứng dụng và máy khách; phiên tiếp tục chạy "
+                "trên server.\n"
+                if server_mode else (
+                    f"Giải nén ZIP rồi chạy {filename}. File này chỉ ghép nối {app_name}; tạo mã đúng kênh trong CRM, "
+                    f"sau đó đăng nhập thủ công trong Edge riêng của {app_name}. Connector đọc giao diện Meta Business Suite "
+                    "và nhập tin nhắn vào CRM; không gọi Meta API. Connector chỉ nhập lịch sử lần đầu hoặc phần còn thiếu "
+                    "khi mở lại; sau khi lịch sử hoàn tất sẽ chỉ đồng bộ tin mới. Việc mở chat có thể đánh dấu tin chưa đọc "
+                    "thành đã đọc. Không vượt CAPTCHA; xử lý xác minh thủ công. Hồ sơ Edge lưu riêng trên máy này.\n"
+                    if channel_type in {"facebook", "instagram"} else
+                    f"Giải nén ZIP, sau đó chạy {filename}. Đăng nhập thủ công trong Edge. "
+                    "Bridge đồng bộ tin nhắn và đơn đang hiển thị từ Seller Center/Kênh Người Bán về CRM; "
+                    "đơn được nhập ở trạng thái nháp để kiểm tra. Giữ Edge và bridge hoạt động; "
+                    "nếu nền tảng yêu cầu CAPTCHA/xác minh thì xử lý thủ công trong Edge. "
+                    "Cookie và hồ sơ Edge không được gửi lên CRM.\n"
+                )
             ),
         )
     headers = {"Cache-Control": "no-store"}

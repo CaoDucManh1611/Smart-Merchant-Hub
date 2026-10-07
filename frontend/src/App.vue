@@ -14,7 +14,8 @@ import { channelLabel } from "./channel-utils.js";
 import { safeProductUrl } from "./product-url.js";
 import { customerTagDisplayName, customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";
 import { filterConversationsForCustomer } from "./ticket-utils.js";
-import { displayAttachments, displayMessageText, resolveMediaUrl } from "./media-utils.js";
+import { displayAttachments, displayMessageText, resolveMediaUrl, visibleConversationMessages } from "./media-utils.js";
+import { outboundMediaAccept, outboundMediaTypes, supportsOutboundMedia } from "./media-capabilities.js";
 import { getInboxChannels } from "./inbox-utils.js";
 import { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxViews } from "./inbox-view-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
@@ -174,6 +175,14 @@ const crmEnglishCopy = {
   "Đã lưu thông tin bổ sung.": "Additional customer information saved.",
   "Đã nhận tài liệu. Hệ thống đang xử lý ở nền; bạn có thể tiếp tục làm việc.": "Document received. Processing will continue in the background while you work.",
   "Mã chỉ dùng một lần và hết hạn sau 10 phút. Nhập mã trong ứng dụng trên máy của shop.": "This code can be used once and expires in 10 minutes. Enter it in the app on the shop computer.",
+  "Connector đang ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.": "This connector is already paired. Disconnect it before creating a new pairing code.",
+  "Hạn mức đã cấp:": "Plan slots in use:",
+  "Kênh đang trực tuyến:": "Channels online:",
+  "CHƯA CÓ KÊNH TRỰC TUYẾN": "NO CHANNELS ONLINE",
+  "Ngắt connector Meta bên dưới để ghép lại": "Disconnect the Meta connector below before pairing again",
+  "Ngắt connector Instagram bên dưới để ghép lại": "Disconnect the Instagram connector below before pairing again",
+  "Ngắt connector TikTok bên dưới để ghép lại": "Disconnect the TikTok connector below before pairing again",
+  "Ngắt connector Shopee bên dưới để ghép lại": "Disconnect the Shopee connector below before pairing again",
   "Đã sao chép pairing code.": "Pairing code copied.",
   "Không thể sao chép tự động. Hãy bôi đen và sao chép mã.": "Could not copy automatically. Select and copy the code instead.",
   "Chưa thể tạo pairing code. Vui lòng thử lại sau.": "Could not create a pairing code. Please try again later.",
@@ -182,7 +191,7 @@ const crmEnglishCopy = {
 
 function crmUiText(message) {
   if (uiLocale.value !== "en" || !message) return message;
-  return crmEnglishCopy[message] || t(message);
+  return t(crmEnglishCopy[message] || message);
 }
 
 function commerceStatusLabel(status) {
@@ -276,6 +285,7 @@ const customer360ExtraAddresses = computed(() => {
 const customer360OverflowCount = computed(() => customer360ExtraContacts.value.length + customer360ExtraAddresses.value.length);
 const customerFactSaving = ref(false);
 const customerFactError = ref("");
+const customerFactCollectionSaving = ref(false);
 const customerFactDraft = ref({
   fact_type: "preference",
   fact_key: "",
@@ -395,6 +405,28 @@ let reconnectTimer = null;
 
 /* RAG & TAB STATE */
 const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 'tickets' | 'reports' | 'documents' | 'rag_chat' | 'experiments' | 'channels' | 'webhooks' | 'settings' | 'platform_admin' | 'service'
+const RESTORABLE_WORKSPACE_TABS = new Set([
+  "inbox", "work_queue", "leads", "tickets", "products", "orders", "purchase-orders",
+  "appointments", "commercial", "business_hours", "sla_rules", "documents", "rag_chat",
+  "workflows", "experiments", "reports", "channels", "webhooks", "settings", "service",
+]);
+const workspaceTabStorageKey = () => `smh.workspace-tab.${authUser.value?.business_id || ""}`;
+function restoreWorkspaceTab() {
+  try {
+    const tab = window.sessionStorage.getItem(workspaceTabStorageKey());
+    if (RESTORABLE_WORKSPACE_TABS.has(tab)
+      && ((tab !== "appointments" || workspaceModuleEnabled("appointments"))
+        && (tab !== "commercial" || workspaceModuleEnabled("projects"))
+        && (!(["products", "orders", "purchase-orders"].includes(tab)) || workspaceModuleEnabled("retail")))) {
+      currentTab.value = tab;
+    }
+  } catch { /* session storage can be unavailable in restricted browser contexts */ }
+}
+watch(currentTab, (tab) => {
+  if (!authUser.value?.business_id || !tenantReady.value || !RESTORABLE_WORKSPACE_TABS.has(tab)) return;
+  try { window.sessionStorage.setItem(workspaceTabStorageKey(), tab); }
+  catch { /* session storage can be unavailable in restricted browser contexts */ }
+});
 const workQueueTarget = ref(null);
 watch(currentTab, (tab) => {
   const target = workQueueTarget.value;
@@ -1005,7 +1037,7 @@ const aiRuleForm = ref({
   workflow_id: "",
 });
 const experimentSaving = ref(false);
-const experimentForm = ref({ name: "", variants: "A\nB", status: "draft", min_sample_size: 0, target_conversion_rate: "" });
+const experimentForm = ref({ name: "", variants: "Cân bằng\nNgắn gọn", status: "draft", min_sample_size: 0, target_conversion_rate: "" });
 const modelSaving = ref(false);
 const modelForm = ref({ name: "lead-score", version: "v1", feature_version: "v1", target: "conversion" });
 const workflowForm = ref({
@@ -1194,6 +1226,9 @@ const serviceChannelLimit = computed(() => {
 });
 const messageLearningEnabled = ref(true);
 const reinforcementLearningEnabled = ref(true);
+const customerFactExtractionEnabled = ref(false);
+const customerFactSettingLoading = ref(false);
+const customerFactSettingSaving = ref(false);
 const learningNotice = ref("");
 const darkMode = ref(false);
 const cannedResponses = ref([]);
@@ -1250,6 +1285,14 @@ const tiktokChannelConnection = computed(() => botConnections.value.find((item) 
 const shopeeChannelConnection = computed(() => botConnections.value.find((item) => item.channel_type === "shopee"));
 const facebookConnectorConnection = computed(() => botConnections.value.find((item) => item.channel_type === "facebook" && item.requires_local_device));
 const instagramConnectorConnection = computed(() => botConnections.value.find((item) => item.channel_type === "instagram" && item.requires_local_device));
+const socialChannelOnlineCount = computed(() => [
+  isSocialChannelOnline("facebook"),
+  isSocialChannelOnline("instagram"),
+  isSocialChannelOnline("telegram"),
+  isSocialChannelOnline("zalo"),
+  isSocialChannelOnline("tiktok"),
+  isSocialChannelOnline("shopee"),
+].filter(Boolean).length);
 const channelCapacity = computed(() => channelCapacityState(quotaSnapshot.value));
 const demoChannelsLocked = computed(() => channelCapacity.value.blocked);
 
@@ -1338,6 +1381,53 @@ function localConnectorIsOnline(connection) {
   return Boolean(connection?.connector_paired) && String(connection.connector_status || "").toLowerCase() === "online";
 }
 
+function isSocialChannelOnline(channelType) {
+  if (channelType === "facebook" && metaStatus.value.connected) return true;
+  if (channelType === "instagram" && metaStatus.value.connected && metaStatus.value.instagram_account_id) return true;
+  const connection = botConnections.value.find((item) => item.channel_type === channelType);
+  if (!connection) return false;
+  if (connection.requires_local_device) return localConnectorIsOnline(connection);
+  return ["connected", "active"].includes(String(connection.status || "").toLowerCase())
+    && connection.webhook_status === "connected";
+}
+
+function metaChannelStatus(channelType) {
+  if (channelType === "facebook" && metaStatus.value.connected) return "META API";
+  if (channelType === "instagram" && metaStatus.value.connected && metaStatus.value.instagram_account_id) return "META API";
+  const connection = channelType === "facebook" ? facebookConnectorConnection.value : instagramConnectorConnection.value;
+  if (localConnectorIsOnline(connection)) return "BRIDGE ĐANG CHẠY";
+  if (connection?.connector_paired) return localConnectorStatus(connection);
+  return "CHƯA KẾT NỐI";
+}
+
+function metaChannelIsOffline(channelType) {
+  if (isSocialChannelOnline(channelType)) return false;
+  const connection = channelType === "facebook" ? facebookConnectorConnection.value : instagramConnectorConnection.value;
+  return Boolean(connection?.connector_paired && String(connection.connector_status || "").toLowerCase() === "offline");
+}
+
+function localConnectorPairingBlocked(channelType) {
+  return botConnections.value.some((item) => (
+    item.channel_type === channelType && item.requires_local_device && item.connector_paired
+  ));
+}
+
+function localConnectorPairingDisabled(channelType) {
+  const alreadyConnected = activeBotConnections.value.some((item) => item.channel_type === channelType && item.requires_local_device);
+  return localConnectorLoading.value || localConnectorPairingBlocked(channelType) || (demoChannelsLocked.value && !alreadyConnected);
+}
+
+function localConnectorPairingLabel(channelType, defaultLabel) {
+  if (localConnectorPairingBlocked(channelType)) {
+    const key = channelType === "facebook" ? "Ngắt connector Meta bên dưới để ghép lại"
+      : channelType === "instagram" ? "Ngắt connector Instagram bên dưới để ghép lại"
+        : channelType === "tiktok" ? "Ngắt connector TikTok bên dưới để ghép lại"
+          : "Ngắt connector Shopee bên dưới để ghép lại";
+    return crmUiText(key);
+  }
+  return localConnectorLoading.value ? crmUiText("Đang tạo mã...") : crmUiText(defaultLabel);
+}
+
 function botConnectionErrorMessage(payload, fallback) {
   const detail = payload?.detail;
   if (detail && typeof detail === "object") return detail.message || fallback;
@@ -1368,8 +1458,12 @@ async function fetchBotConnections() {
     const detail = await response.json().catch(() => []);
     if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
     botConnections.value = Array.isArray(detail)
-      ? detail.filter((item) => ["telegram", "zalo", "tiktok", "shopee"].includes(item.channel_type))
+      ? detail.filter((item) => ["facebook", "instagram", "telegram", "zalo", "tiktok", "shopee"].includes(item.channel_type))
       : [];
+    if (localConnectorPairingChannel.value && localConnectorPairingBlocked(localConnectorPairingChannel.value)) {
+      localConnectorPairingCode.value = "";
+      localConnectorPairingChannel.value = "";
+    }
   } catch (err) {
     const status = Number(err?.status);
     if (status === 401) {
@@ -1444,7 +1538,11 @@ async function disconnectBotChannel(connection) {
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
     botConnectionNotice.value = "Đã ngắt kết nối bot nhưng vẫn giữ nguyên lịch sử hội thoại.";
-    await fetchBotConnections();
+    if (localConnectorPairingChannel.value === connection.channel_type) {
+      localConnectorPairingCode.value = "";
+      localConnectorPairingChannel.value = "";
+    }
+    await Promise.all([fetchBotConnections(), fetchQuotaUsage()]);
   } catch (err) {
     botConnectionError.value = friendlyErrorMessage(err, "Chưa thể ngắt kết nối bot. Vui lòng thử lại sau.");
   } finally {
@@ -1523,6 +1621,7 @@ function openSettings() {
   void fetchFollowups();
   void fetchCsat();
   void fetchLearningSummary();
+  void fetchCustomerFactExtractionStatus();
   void fetchQuotaUsage();
   void fetchServiceAccountSummary();
 }
@@ -1625,6 +1724,44 @@ function saveLearningPreferences() {
   }
 }
 
+async function fetchCustomerFactExtractionStatus() {
+  if (!tenantReady.value) return;
+  customerFactSettingLoading.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/fact-extraction-status`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    customerFactExtractionEnabled.value = Boolean(payload.enabled);
+  } catch {
+    learningNotice.value = "Chưa tải được cài đặt cá nhân hóa. Vui lòng thử lại.";
+  } finally {
+    customerFactSettingLoading.value = false;
+  }
+}
+
+async function saveCustomerFactExtractionSetting() {
+  if (customerFactSettingSaving.value) return;
+  customerFactSettingSaving.value = true;
+  learningNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/fact-extraction-status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: customerFactExtractionEnabled.value }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+    customerFactExtractionEnabled.value = Boolean(payload.enabled);
+    learningNotice.value = payload.enabled
+      ? "Đã bật. Tin lịch sử còn thiếu sẽ được bổ sung theo từng lô; tin mới vẫn được xử lý bình thường."
+      : "Đã tắt trích xuất sở thích. Thông tin đã lưu vẫn được giữ đến khi shop xóa hoặc khách yêu cầu xóa.";
+  } catch (err) {
+    learningNotice.value = friendlyErrorMessage(err, "Chưa lưu được cài đặt cá nhân hóa.");
+  } finally {
+    customerFactSettingSaving.value = false;
+  }
+}
+
 async function fetchLearningSummary() {
   if (!tenantReady.value) return;
   learningSummaryLoading.value = true;
@@ -1644,6 +1781,10 @@ async function fetchLearningSummary() {
 }
 
 async function rateBotMessage(message, rating) {
+  if (!reinforcementLearningEnabled.value) {
+    learningNotice.value = "Đánh giá trợ lý đang tắt trên thiết bị này.";
+    return;
+  }
   if (!message?.message_id || messageFeedback.value[message.message_id]) return;
   messageFeedback.value = { ...messageFeedback.value, [message.message_id]: { rating, loading: true } };
   try {
@@ -2004,9 +2145,21 @@ function requestServiceDeployment() {
 }
 
 function openTextImport() {
+  if (knowledgeDocumentQuotaReached.value) {
+    docUploadError.value = `Gói ${quotaSnapshot.value?.plan_name || "hiện tại"} đã dùng hết số tài liệu cho phép. Hãy nâng cấp gói hoặc xóa bớt tài liệu để nhập tiếp.`;
+    return;
+  }
   textImportDraft.value = "";
   textImportTitle.value = "";
   textImportOpen.value = true;
+}
+
+function openDocumentPicker() {
+  if (knowledgeDocumentQuotaReached.value) {
+    docUploadError.value = `Gói ${quotaSnapshot.value?.plan_name || "hiện tại"} đã dùng hết số tài liệu cho phép. Hãy nâng cấp gói hoặc xóa bớt tài liệu để nhập tiếp.`;
+    return;
+  }
+  docFileInput.value?.click();
 }
 
 async function saveTextImport() {
@@ -2259,6 +2412,7 @@ async function disconnectMeta() {
     metaStatus.value = { connected: false };
     metaNotice.value = "Đã ngắt liên kết Meta API.";
     metaNoticeIsError.value = false;
+    await Promise.all([fetchMetaStatus(), fetchQuotaUsage()]);
   } catch (e) {
     metaNotice.value = "Chưa thể ngắt liên kết Meta API. Vui lòng thử lại sau.";
     metaNoticeIsError.value = true;
@@ -2318,6 +2472,10 @@ async function fetchDocuments() {
 
 async function uploadDocumentFile(file) {
   if (!file) return;
+  if (knowledgeDocumentQuotaReached.value) {
+    docUploadError.value = `Gói ${quotaSnapshot.value?.plan_name || "hiện tại"} đã dùng hết số tài liệu cho phép. Hãy nâng cấp gói hoặc xóa bớt tài liệu để nhập tiếp.`;
+    return;
+  }
   docUploading.value = true;
   docUploadError.value = "";
   docUploadNotice.value = "";
@@ -2337,7 +2495,7 @@ async function uploadDocumentFile(file) {
       throw new Error(errText);
     }
     docUploadNotice.value = "Đã nhận tài liệu. Hệ thống đang xử lý ở nền; bạn có thể tiếp tục làm việc.";
-    await fetchDocuments();
+    await Promise.all([fetchDocuments(), fetchQuotaUsage()]);
   } catch (err) {
     docUploadError.value = friendlyErrorMessage(err, "Chưa thể nhập tài liệu. Vui lòng kiểm tra tệp rồi thử lại.");
   } finally {
@@ -2373,6 +2531,7 @@ async function deleteDoc(docId) {
     }
     documents.value = documents.value.filter(d => d.id !== docId);
     docUploadError.value = "";
+    await fetchQuotaUsage();
   } catch (err) {
     console.error("Delete doc error:", err);
     docUploadError.value = friendlyErrorMessage(err, "Chưa thể xóa tài liệu. Vui lòng thử lại sau.");
@@ -2430,6 +2589,15 @@ async function toggleAutoReply() {
   } finally {
     autoReplySaving.value = false;
   }
+}
+
+function displayRagText(value) {
+  return String(value || "")
+    .replace(/```[^\n]*\n([\s\S]*?)```/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1");
 }
 
 async function sendRagQuery(presetText = null) {
@@ -2552,6 +2720,53 @@ const selected = computed(() => {
       item.conversation_id === selectedId.value
   );
 
+});
+const visibleMessages = computed(() => visibleConversationMessages(messages.value, selected.value?.channel));
+
+const selectedOutboundMediaTypes = computed(() => outboundMediaTypes(
+  selected.value?.channel,
+  selected.value?.channel_provider,
+));
+const selectedOutboundMediaAccept = computed(() => outboundMediaAccept(
+  selected.value?.channel,
+  selected.value?.channel_provider,
+));
+const selectedSupportsOutboundMedia = computed(() => selectedOutboundMediaTypes.value.length > 0);
+const selectedSupportsVoice = computed(() => selectedOutboundMediaTypes.value.includes("audio"));
+const selectedMediaCapabilityHint = computed(() => {
+  if (!selected.value) return "";
+  if (!selectedSupportsOutboundMedia.value) return `${channelLabel(selected.value.channel)} hiện chỉ gửi được tin nhắn văn bản từ CRM.`;
+  if (selected.value.channel === "zalo" && ["oa", "zalo_oa", "official_account"].includes(String(selected.value.channel_provider || "").toLowerCase())) {
+    return "Zalo OA hiện hỗ trợ gửi ảnh; ghi âm và tệp sẽ bị tắt để tránh gửi lỗi.";
+  }
+  return "Tệp đính kèm chỉ hiện các loại kênh này hỗ trợ gửi.";
+});
+const knowledgeDocumentUsage = computed(() => {
+  const quota = quotaSnapshot.value?.resources?.documents;
+  return {
+    used: Math.max(Number(quota?.used ?? 0), documents.value.length),
+    limit: quota?.limit == null ? null : Number(quota.limit),
+  };
+});
+const knowledgeChunkUsage = computed(() => {
+  const currentCount = documents.value.reduce((sum, doc) => sum + Number(doc.chunk_count || 0), 0);
+  const quota = quotaSnapshot.value?.resources?.rag_chunks;
+  return {
+    used: Math.max(Number(quota?.used ?? 0), currentCount),
+    limit: quota?.limit == null ? null : Number(quota.limit),
+  };
+});
+const knowledgeDocumentQuotaReached = computed(() => (
+  knowledgeDocumentUsage.value.limit !== null
+  && knowledgeDocumentUsage.value.used >= knowledgeDocumentUsage.value.limit
+));
+
+const customer360Avatar = computed(() => {
+  const profile = customer360.value;
+  const conversation = selected.value;
+  const profileMatchesSelection = Number(profile?.id) === Number(conversation?.customer_id);
+  return (profileMatchesSelection ? [profile, conversation] : [conversation])
+    .find((item) => resolvedAvatarUrl(item)) || null;
 });
 
 const selectedBotMode = computed(() => (
@@ -3700,6 +3915,11 @@ function openImagePicker() {
     return;
   }
 
+  if (!selectedSupportsOutboundMedia.value) {
+    error.value = selectedMediaCapabilityHint.value;
+    return;
+  }
+
   fileInput.value?.click();
 
 }
@@ -3721,7 +3941,7 @@ const allowedMediaTypes = new Set([
 ]);
 
 function detectMediaType(file) {
-  const contentType = String(file?.type || "").toLowerCase();
+  const contentType = String(file?.type || "").toLowerCase().split(";", 1)[0].trim();
   if (contentType.startsWith("audio/")) return "audio";
   if (contentType.startsWith("video/")) return "video";
   if (contentType === "image/webp" && /sticker/i.test(file?.name || "")) return "sticker";
@@ -3746,6 +3966,7 @@ function queueMediaFile(file, options = {}) {
       file,
       preview,
       mediaType: options.mediaType || detectMediaType(file),
+      isVoiceNote: Boolean(options.isVoiceNote),
     },
   ];
 }
@@ -3770,9 +3991,15 @@ function removePendingMedia(mediaId) {
 function setImageFile(file) {
   if (!file || !canReplyToSelectedConversation.value) return;
 
-  const contentType = String(file.type || "").toLowerCase();
+  const contentType = String(file.type || "").toLowerCase().split(";", 1)[0].trim();
   if (!allowedMediaTypes.has(contentType)) {
     error.value = "Định dạng chưa hỗ trợ. Chọn ảnh, âm thanh, video hoặc tệp phổ biến.";
+    return;
+  }
+
+  const mediaType = detectMediaType(file);
+  if (!supportsOutboundMedia(selected.value?.channel, mediaType, selected.value?.channel_provider)) {
+    error.value = `${channelLabel(selected.value?.channel)} chưa hỗ trợ gửi ${mediaType}. ${selectedMediaCapabilityHint.value}`;
     return;
   }
 
@@ -3804,16 +4031,19 @@ function formatVoiceRecordingTime(seconds) {
   return `${minutes}:${remainder}`;
 }
 
-function supportedVoiceMimeType() {
+function supportedVoiceMimeType(channel = "") {
   if (typeof window === "undefined" || typeof window.MediaRecorder === "undefined") {
     return "";
   }
-  const candidates = [
+  const commonCandidates = [
     "audio/webm;codecs=opus",
     "audio/webm",
     "audio/ogg;codecs=opus",
     "audio/mp4",
   ];
+  const candidates = String(channel).toLowerCase() === "telegram"
+    ? ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/ogg", "audio/webm", "audio/mp4"]
+    : commonCandidates;
   return candidates.find((type) => (
     typeof window.MediaRecorder.isTypeSupported !== "function"
       || window.MediaRecorder.isTypeSupported(type)
@@ -3864,7 +4094,7 @@ function finishVoiceRecording() {
   const file = new File([blob], `voice-${Date.now()}.${extension}`, {
     type: mimeType,
   });
-  queueMediaFile(file, { mediaType: "audio" });
+  queueMediaFile(file, { mediaType: "audio", isVoiceNote: true });
   error.value = "";
 }
 
@@ -3905,7 +4135,7 @@ async function startVoiceRecording() {
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mimeType = supportedVoiceMimeType();
+    const mimeType = supportedVoiceMimeType(selected.value?.channel);
     const recorder = mimeType
       ? new window.MediaRecorder(stream, { mimeType })
       : new window.MediaRecorder(stream);
@@ -7221,7 +7451,7 @@ function resetAiRuleForm() {
 }
 
 function resetExperimentForm() {
-  experimentForm.value = { name: "", variants: "A\nB", status: "draft" };
+  experimentForm.value = { name: "", variants: "Cân bằng\nNgắn gọn", status: "draft", min_sample_size: 0, target_conversion_rate: "" };
 }
 
 async function createRuleSuggestion() {
@@ -7277,8 +7507,8 @@ async function createRuleSuggestion() {
 async function createExperiment() {
   const form = experimentForm.value;
   const variants = [...new Set(form.variants.split(/[\n,]+/).map((variant) => variant.trim()).filter(Boolean))];
-  if (!form.name.trim() || variants.length < 2) {
-    experimentationError.value = "Thử nghiệm cần tên và ít nhất hai biến thể khác nhau.";
+  if (!form.name.trim() || variants.length < 2 || variants.length > 3) {
+    experimentationError.value = "Cần tên và từ hai đến ba cách chăm sóc khác nhau.";
     return;
   }
   experimentSaving.value = true;
@@ -7354,11 +7584,22 @@ async function createBanditPolicy(experiment) {
   // out of the shop-facing labels while preserving the API contract.
   const form = banditPolicyForms.value[experiment.id];
   if (!form?.version?.trim()) return;
+  const explorationRate = Math.max(0, Math.min(1, Number(form.explorationPercent || 0) / 100));
+  const responseStyles = ["balanced", "concise", "detailed"];
+  const approvedArms = Object.fromEntries(
+    (Array.isArray(experiment.variants) ? experiment.variants : []).slice(0, 3)
+      .map((arm, index) => [arm, { response_style: responseStyles[index] }]),
+  );
   try {
     const response = await apiFetch(`${API_BASE}/experiments/${experiment.id}/bandit/policies`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ version: form.version.trim(), epsilon: Number(form.epsilon), status: form.status, config: {} }),
+      body: JSON.stringify({
+        version: form.version.trim(),
+        epsilon: explorationRate,
+        status: form.status,
+        config: { runtime_binding: "chatbot_auto_reply", approved_arms: approvedArms },
+      }),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
@@ -7510,7 +7751,11 @@ async function toggleTeamMember(member) {
 
 async function createLocalConnectorPairingCode(requestedChannelType = channelModalTab.value) {
   const channelType = String(requestedChannelType || channelModalTab.value).trim().toLowerCase();
-  const alreadyConnected = activeBotConnections.value.some((item) => item.channel_type === channelType);
+  if (localConnectorPairingBlocked(channelType)) {
+    localConnectorError.value = crmUiText("Connector đang ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.");
+    return;
+  }
+  const alreadyConnected = activeBotConnections.value.some((item) => item.channel_type === channelType && item.requires_local_device);
   if (demoChannelsLocked.value && !alreadyConnected) {
     localConnectorError.value = channelCapacity.value.reason;
     return;
@@ -8448,6 +8693,38 @@ async function removeCustomerFact(fact) {
   }
 }
 
+async function setCustomerFactCollection(optOut, deleteExisting = false) {
+  const customerId = selected.value?.customer_id;
+  if (!customerId) return;
+  if (deleteExisting && !(await requestConfirmation("Xóa các sở thích do hệ thống suy ra từ hội thoại của khách này? Tin nhắn gốc vẫn được giữ.", {
+    title: "Xóa thông tin suy ra",
+    confirmLabel: "Xóa thông tin",
+    tone: "danger",
+  }))) return;
+  customerFactCollectionSaving.value = true;
+  customerFactError.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/customers/${customerId}/fact-collection`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ opt_out: Boolean(optOut), delete_existing_extracted: Boolean(deleteExisting) }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    customer360.value = {
+      ...customer360.value,
+      fact_extraction_opt_out: result.opt_out,
+      facts: deleteExisting
+        ? (customer360.value?.facts || []).filter((fact) => fact.source_type !== "extracted")
+        : customer360.value?.facts || [],
+    };
+  } catch (err) {
+    customerFactError.value = friendlyErrorMessage(err, "Chưa thể cập nhật việc lưu sở thích của khách.");
+  } finally {
+    customerFactCollectionSaving.value = false;
+  }
+}
+
 
 /* =========================================================
    SELECT CONVERSATION
@@ -8665,6 +8942,7 @@ async function sendUnifiedReply(retryClientId = null) {
       retry_file: media.file,
       retry_preview: media.preview,
       retry_media_type: media.mediaType,
+      retry_voice_note: media.isVoiceNote,
       retry_text: hasText && media.mediaType !== "image" && index === 0 ? text : null,
     });
   });
@@ -8720,6 +8998,7 @@ async function sendUnifiedReply(retryClientId = null) {
 
       if (hasGenericMedia) {
         formData.append("media_type", mediaType);
+        if (media.isVoiceNote) formData.append("is_voice_note", "true");
         if (hasText && index === 0) formData.append("caption", text);
       } else {
         formData.append("media_client_id", mediaClientId);
@@ -8822,6 +9101,7 @@ async function retryMessage(message) {
     queueMediaFile(message.retry_file, {
       preview: message.retry_preview || "",
       mediaType: message.retry_media_type || "image",
+      isVoiceNote: message.retry_voice_note,
     });
   }
 
@@ -8846,7 +9126,7 @@ async function loadExperimentSignals(items = experiments.value) {
   }));
   experimentReports.value = Object.fromEntries(signals.map(([id, report]) => [id, report]));
   banditPolicies.value = Object.fromEntries(signals.map(([id, _report, policies]) => [id, policies]));
-  banditPolicyForms.value = Object.fromEntries((items || []).map((experiment) => [experiment.id, banditPolicyForms.value[experiment.id] || { version: "v1", epsilon: 0.1, status: "active" }]));
+  banditPolicyForms.value = Object.fromEntries((items || []).map((experiment) => [experiment.id, banditPolicyForms.value[experiment.id] || { version: "v1", explorationPercent: 10, status: "active" }]));
 }
 
 async function recalculateRevenueAttribution() {
@@ -9180,6 +9460,7 @@ async function pollTenantProvisioning() {
   stopTenantProvisioningPolling();
   currentTab.value = "inbox";
   await initializeTenantWorkspace();
+  restoreWorkspaceTab();
 }
 
 function startTenantProvisioningPolling() {
@@ -9244,6 +9525,7 @@ async function refreshTenantProvisioning() {
   if (tenantReady.value) {
     currentTab.value = "inbox";
     await initializeTenantWorkspace();
+    restoreWorkspaceTab();
   }
 }
 
@@ -9360,6 +9642,7 @@ onMounted(async () => {
       return;
     }
     await initializeTenantWorkspace();
+    restoreWorkspaceTab();
   } finally {
     // Do not briefly render the tenant CRM before the platform role is known.
     sessionBootstrapLoading.value = false;
@@ -9700,6 +9983,11 @@ async function openPlatformAdmin() {
 }
 
 function saveSelectedConversationSample() {
+  if (!messageLearningEnabled.value) {
+    learningNotice.value = "Lưu mẫu hội thoại đang tắt trên thiết bị này.";
+    conversationActionsOpen.value = false;
+    return;
+  }
   if (!selected.value || !messages.value.length) return;
   const key = `crm-learning-samples-${authUser.value?.business_id || "shop"}`;
   try {
@@ -10545,10 +10833,15 @@ function followupRecommendationLabel(item) {
                     ·
 
                     {{
-                      selected.status
-                      === "open"
-                      ? "Khách hàng mới"
-                      : selected.status
+                      selected.status === "open"
+                      ? "Đang mở"
+                      : selected.status === "pending"
+                        ? "Đang chờ"
+                        : selected.status === "resolved"
+                          ? "Đã xử lý"
+                          : selected.status === "closed"
+                            ? "Đã đóng"
+                            : selected.status
                     }}
 
                   </p>
@@ -10691,7 +10984,7 @@ function followupRecommendationLabel(item) {
 
 
               <div
-                v-for="message in messages"
+                v-for="message in visibleMessages"
 
                 :key="
                   message.message_id
@@ -10903,7 +11196,7 @@ function followupRecommendationLabel(item) {
 
                   <p
                     v-if="
-                      displayMessageText(message.content, selected?.channel)
+                      displayMessageText(message.content, selected?.channel, message.direction)
                     "
 
                     class="
@@ -10912,7 +11205,7 @@ function followupRecommendationLabel(item) {
                   >
 
                     {{
-                      displayMessageText(message.content, selected?.channel)
+                      displayMessageText(message.content, selected?.channel, message.direction)
                     }}
 
                   </p>
@@ -11158,7 +11451,7 @@ function followupRecommendationLabel(item) {
                 type="file"
                 multiple
 
-                accept="image/*,audio/*,video/*,.pdf,.zip,.rar,.7z,.csv,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                :accept="selectedOutboundMediaAccept"
 
                 class="
                   hidden-file-input
@@ -11191,8 +11484,8 @@ function followupRecommendationLabel(item) {
                   <button
                     type="button"
 
-                    title="Chọn ảnh, audio, video hoặc file"
-                    :disabled="composerMode === 'reply' && !canReplyToSelectedConversation"
+                    :title="selectedSupportsOutboundMedia ? t('Chọn tệp được kênh này hỗ trợ') : t(selectedMediaCapabilityHint)"
+                    :disabled="(composerMode === 'reply' && !canReplyToSelectedConversation) || !selectedSupportsOutboundMedia"
 
                     @click="
                       openImagePicker
@@ -11208,9 +11501,9 @@ function followupRecommendationLabel(item) {
                     type="button"
                     class="voice-record-button"
                     :class="{ recording: voiceRecording }"
-                    :disabled="composerMode === 'internal' || sending || !canReplyToSelectedConversation"
-                    :title="voiceRecording ? 'Dừng ghi âm' : 'Ghi âm'"
-                    :aria-label="voiceRecording ? 'Dừng ghi âm' : 'Ghi âm'"
+                    :disabled="composerMode === 'internal' || sending || !canReplyToSelectedConversation || !selectedSupportsVoice"
+                    :title="voiceRecording ? t('Dừng ghi âm') : (selectedSupportsVoice ? t('Ghi âm') : t(selectedMediaCapabilityHint))"
+                    :aria-label="voiceRecording ? t('Dừng ghi âm') : (selectedSupportsVoice ? t('Ghi âm') : t(selectedMediaCapabilityHint))"
                     :aria-pressed="voiceRecording"
                     @click="toggleVoiceRecording"
                   >
@@ -11225,6 +11518,10 @@ function followupRecommendationLabel(item) {
                   >
                     {{ formatVoiceRecordingTime(voiceRecordingSeconds) }}
                   </span>
+
+                  <small v-if="composerMode === 'reply' && selectedMediaCapabilityHint" class="composer-media-capability" role="status">
+                    {{ t(selectedMediaCapabilityHint) }}
+                  </small>
 
 
                   <button
@@ -11446,17 +11743,17 @@ function followupRecommendationLabel(item) {
 
                 <img
                   v-if="
-                    resolvedAvatarUrl(selected)
+                    customer360Avatar
                   "
 
                   :src="
-                    resolvedAvatarUrl(selected)
+                    resolvedAvatarUrl(customer360Avatar)
                   "
 
                   :alt="
-                    nameOf(selected)
+                    nameOf(customer360 || selected)
                   "
-                  @error="markAvatarFailed(selected)"
+                  @error="markAvatarFailed(customer360Avatar)"
                 />
 
                 <span v-else>
@@ -11927,6 +12224,10 @@ function followupRecommendationLabel(item) {
                     <button type="submit" :disabled="customerFactSaving">{{ customerFactSaving ? 'Đang lưu...' : 'Ghi nhận' }}</button>
                   </div>
                 </form>
+                <div class="customer-fact-privacy">
+                  <label><input type="checkbox" :checked="!customer360.fact_extraction_opt_out" :disabled="customerFactCollectionSaving" @change="setCustomerFactCollection($event.target.checked)" /> Cho phép lưu sở thích rút ra từ hội thoại này</label>
+                  <button v-if="customer360.facts?.some((fact) => fact.source_type === 'extracted')" type="button" :disabled="customerFactCollectionSaving" @click="setCustomerFactCollection(true, true)">Ngừng lưu và xóa sở thích suy ra</button>
+                </div>
                 <div v-if="customerFactError" class="facts-error" role="alert">{{ crmErrorText(customerFactError) }}</div>
                 <div v-if="customer360.facts?.length" class="customer-facts">
                   <div
@@ -12950,9 +13251,9 @@ function followupRecommendationLabel(item) {
       <section v-if="currentTab === 'experiments'" class="products-layout experiments-layout">
         <div class="products-header">
           <div>
-            <span class="page-kicker">Trợ lý &amp; tự động hóa</span>
+            <span class="page-kicker">Công cụ bán hàng</span>
             <h2>Tự động hóa &amp; đo lường</h2>
-            <p>Kiểm tra đề xuất của trợ lý, duyệt trước khi áp dụng và theo dõi hiệu quả từng cách chăm sóc khách hàng.</p>
+            <p>Xem cách hệ thống gợi ý sản phẩm và chăm sóc khách; duyệt trước mọi thay đổi ảnh hưởng đến câu trả lời tự động.</p>
           </div>
           <button class="primary-btn" type="button" @click="fetchExperimentation">Làm mới dữ liệu</button>
         </div>
@@ -12963,12 +13264,12 @@ function followupRecommendationLabel(item) {
         <div v-else class="ai-lab-content">
           <div class="ai-readiness-notice" role="note">
             <strong>Khu vực thử nghiệm nội bộ</strong>
-            <span>Đề xuất, phiên bản dự đoán và A/B tại đây chưa tự thay đổi câu trả lời đang gửi cho khách. Quản trị viên vẫn phải duyệt và triển khai riêng.</span>
+            <span>Các cách gợi ý và kết quả dự đoán ở đây chỉ để kiểm tra; chúng chưa tự thay đổi câu trả lời gửi khách. Quản trị viên cần duyệt và bật riêng.</span>
           </div>
           <div class="ai-readiness-grid" aria-label="Mức độ sẵn sàng của các chức năng AI">
-            <div><span class="ai-readiness-badge ready">Đang dùng</span><strong>Kho kiến thức</strong><small>RAG dùng để tra cứu kho kiến thức đã lập chỉ mục khi hỗ trợ trả lời.</small></div>
-            <div><span class="ai-readiness-badge limited">Hỗ trợ phân tích</span><strong>Nhóm nhu cầu</strong><small>Tổng hợp theo quy tắc, chưa phải học không giám sát hoàn chỉnh.</small></div>
-            <div><span class="ai-readiness-badge experimental">Thử nghiệm</span><strong>A/B và dự đoán</strong><small>A/B đang thử nghiệm, chưa tự thay đổi bot hoặc áp dụng vào hội thoại thật.</small></div>
+            <div><span class="ai-readiness-badge ready">Đang dùng</span><strong>Kho kiến thức</strong><small>Trợ lý tìm câu trả lời trong tài liệu do shop cung cấp.</small></div>
+            <div><span class="ai-readiness-badge limited">Thống kê</span><strong>Nhu cầu khách hàng</strong><small>Tổng hợp câu hỏi thường gặp để shop xem lại và bổ sung thông tin.</small></div>
+            <div><span class="ai-readiness-badge experimental">Đang thử</span><strong>So sánh &amp; dự đoán</strong><small>Chỉ dùng để tham khảo; chưa tự thay đổi cách trả lời khách.</small></div>
           </div>
           <div class="ai-lab-summary">
             <div class="ai-stat-card ai-stat-primary"><span>Tổng đề xuất</span><strong>{{ ruleSuggestions.length }}</strong><small>Đề xuất đã ghi nhận</small></div>
@@ -13027,20 +13328,20 @@ function followupRecommendationLabel(item) {
             </form>
 
             <form class="ai-compose-card" @submit.prevent="createExperiment">
-              <div class="ai-card-heading"><div><span class="card-eyebrow">THỬ NGHIỆM NỘI BỘ</span><h3>Tạo thử nghiệm A/B</h3></div><span class="ai-card-icon ai-card-icon-alt">A/B</span></div>
-              <p class="ai-card-help">Khai báo các biến thể để ghi nhận và so sánh kết quả. Việc tạo thử nghiệm chưa tự đưa biến thể vào câu trả lời đang gửi cho khách.</p>
+              <div class="ai-card-heading"><div><span class="card-eyebrow">SO SÁNH NỘI BỘ</span><h3>So sánh hai cách chăm sóc</h3></div><span class="ai-card-icon ai-card-icon-alt">↔</span></div>
+              <p class="ai-card-help">Nhập 2–3 tên cách chăm sóc. Khi bạn bật thử nghiệm, hệ thống chỉ thay đổi giọng trả lời trong phạm vi cân bằng, ngắn gọn hoặc chi tiết; mọi cách khác không được tự thêm vào câu trả lời.</p>
               <label class="ai-field">Tên thử nghiệm<input v-model="experimentForm.name" required maxlength="160" placeholder="Ví dụ: Mẫu trả lời giá" /></label>
-              <label class="ai-field">Các biến thể<textarea v-model="experimentForm.variants" required rows="4" placeholder="A\nB"></textarea></label>
+              <label class="ai-field">Các cách chăm sóc<textarea v-model="experimentForm.variants" required rows="4" placeholder="Cách 1\nCách 2"></textarea></label>
               <label class="ai-field">Trạng thái ban đầu<select v-model="experimentForm.status"><option value="draft">Bản nháp</option><option value="running">Đang chạy</option><option value="paused">Tạm dừng</option></select></label>
               <div class="ai-field-grid"><label class="ai-field">Mẫu tối thiểu / cách thử<input v-model.number="experimentForm.min_sample_size" min="0" type="number" /></label><label class="ai-field">Dừng khi tỷ lệ chuyển đổi đạt<input v-model.number="experimentForm.target_conversion_rate" min="0" max="1" step="0.01" type="number" placeholder="VD: 0.15" /></label></div>
               <div class="ai-form-actions"><button type="button" class="secondary-btn" @click="resetExperimentForm">Xóa biểu mẫu</button><button class="primary-btn" type="submit" :disabled="experimentSaving">{{ experimentSaving ? 'Đang tạo...' : 'Tạo thử nghiệm' }}</button></div>
             </form>
 
             <form class="ai-compose-card" @submit.prevent="createModelVersion">
-              <div class="ai-card-heading"><div><span class="card-eyebrow">BẢN ĐÁNH GIÁ KỸ THUẬT</span><h3>Phiên bản dự đoán thử nghiệm</h3></div><span class="ai-card-icon">ML</span></div>
-              <p class="ai-card-help">Lưu một phiên bản dữ liệu để chạy đánh giá nền. Kết quả chưa phải mô hình tự học và không tự thay đổi trợ lý đang phục vụ khách.</p>
+              <div class="ai-card-heading"><div><span class="card-eyebrow">KIỂM TRA NỘI BỘ</span><h3>Bản dự đoán thử</h3></div><span class="ai-card-icon">✓</span></div>
+              <p class="ai-card-help">Lưu một bản dữ liệu để kiểm tra kết quả. Việc này không tự thay đổi cách trợ lý đang trả lời khách.</p>
               <label class="ai-field">Tên phiên bản<input v-model="modelForm.name" required maxlength="120" /></label>
-              <div class="ai-field-grid"><label class="ai-field">Phiên bản<input v-model="modelForm.version" required maxlength="40" /></label><label class="ai-field">Phiên bản dữ liệu<input v-model="modelForm.feature_version" required maxlength="40" /></label></div>
+              <div class="ai-field-grid"><label class="ai-field">Tên bản<input v-model="modelForm.version" required maxlength="40" /></label><label class="ai-field">Lần cập nhật dữ liệu<input v-model="modelForm.feature_version" required maxlength="40" /></label></div>
               <label class="ai-field">Mục tiêu<input v-model="modelForm.target" required maxlength="120" placeholder="tỷ lệ chuyển đổi" /></label>
               <div class="ai-form-actions"><button class="primary-btn" type="submit" :disabled="modelSaving">{{ modelSaving ? 'Đang lưu...' : 'Tạo phiên bản' }}</button></div>
             </form>
@@ -13058,22 +13359,22 @@ function followupRecommendationLabel(item) {
           </div>
 
           <div class="ai-board-card">
-            <div class="ai-board-header"><div><span class="card-eyebrow">KHO PHIÊN BẢN THỬ NGHIỆM</span><h3>Phiên bản &amp; đánh giá nền</h3><p>Trạng thái “sẵn sàng” chỉ cho biết lần đánh giá đã hoàn tất, không có nghĩa phiên bản đang được dùng để trả lời khách.</p></div><span class="count-badge">{{ modelVersions.length }}</span></div>
+              <div class="ai-board-header"><div><span class="card-eyebrow">LỊCH SỬ KIỂM TRA</span><h3>Các bản dự đoán đã lưu</h3><p>“Sẵn sàng” nghĩa là lượt kiểm tra đã xong; bản này chưa được dùng để trả lời khách.</p></div><span class="count-badge">{{ modelVersions.length }}</span></div>
             <div v-if="!modelVersions.length" class="ai-empty-state"><strong>Chưa có phiên bản trợ lý</strong><span>Tạo phiên bản đầu tiên để quản lý lịch sử cập nhật.</span></div>
             <div v-else class="ai-experiment-list"><article v-for="model in modelVersions" :key="model.id" class="ai-experiment-card"><div><strong>{{ model.name }} · {{ model.version }}</strong><span>Dữ liệu {{ model.feature_version }} → {{ model.target }}</span></div><span class="ai-status-pill" :class="`status-${model.status}`">{{ modelStatusLabel(model.status) }}</span><small v-if="model.artifact?.metrics">Độ lệch kiểm tra {{ model.artifact.metrics.mae ?? '—' }} · số mẫu kiểm tra {{ model.artifact.metrics.holdout_count ?? '—' }}</small><button v-if="model.status !== 'ready'" type="button" class="settings-refresh" @click="trainModel(model)">Chạy đánh giá mẫu</button></article></div>
           </div>
 
           <div class="ai-board-card">
             <div class="ai-board-header"><div><span class="card-eyebrow">THỬ NGHIỆM NỘI BỘ</span><h3>Thử nghiệm đang theo dõi</h3><p>So sánh dữ liệu đã ghi nhận để hỗ trợ quyết định; hệ thống chưa tự phân phối cách trả lời cho khách.</p></div><span class="count-badge">{{ experiments.length }}</span></div>
-            <div v-if="!experiments.length" class="ai-empty-state"><strong>Chưa có thử nghiệm</strong><span>Tạo thử nghiệm A/B ở biểu mẫu phía trên.</span></div>
+            <div v-if="!experiments.length" class="ai-empty-state"><strong>Chưa có thử nghiệm</strong><span>Tạo phép so sánh ở biểu mẫu phía trên.</span></div>
             <div v-else class="ai-experiment-list">
               <article v-for="experiment in experiments" :key="experiment.id" class="ai-experiment-card">
                 <div><strong>{{ experiment.name }}</strong><span>#{{ experiment.id }} · tối thiểu {{ experiment.min_sample_size || 0 }} lượt mỗi nhóm</span></div>
                 <div class="ai-variant-list"><span v-for="variant in experiment.variants" :key="variant">{{ variant }}</span></div>
                 <span class="ai-status-pill" :class="`status-${experiment.status}`">{{ experimentStatusLabel(experiment.status) }}</span>
                 <div v-if="experimentReports[experiment.id]" class="ai-rule-meta"><span v-for="arm in experimentReports[experiment.id].arms" :key="arm.variant">{{ arm.variant }}: {{ arm.exposures }} lượt thử · {{ (arm.conversion_rate * 100).toFixed(1) }}%</span><span v-if="experimentReports[experiment.id].stopped">Đã đạt điều kiện dừng</span></div>
-                <div class="ai-rule-meta"><strong>Cách phân bổ lượt thử</strong><span v-if="!banditPolicies[experiment.id]?.length">Chưa có thiết lập</span><span v-for="policy in banditPolicies[experiment.id] || []" :key="policy.id">{{ policy.version }} · ε {{ policy.epsilon }} · {{ policyStatusLabel(policy.status) }}</span></div>
-                <form class="ai-field-grid" @submit.prevent="createBanditPolicy(experiment)"><label class="ai-field">Phiên bản thiết lập<input v-model="banditPolicyForms[experiment.id].version" required maxlength="40" /></label><label class="ai-field">Mức thử nghiệm<input v-model.number="banditPolicyForms[experiment.id].epsilon" type="number" min="0" max="1" step="0.01" /></label><label class="ai-field">Trạng thái<select v-model="banditPolicyForms[experiment.id].status"><option value="active">Đang dùng</option><option value="paused">Tạm dừng</option><option value="archived">Đã lưu trữ</option></select></label><button type="submit" class="settings-refresh">Lưu thiết lập</button></form>
+                <div class="ai-rule-meta"><strong>Cách hệ thống chọn gợi ý</strong><span v-if="!banditPolicies[experiment.id]?.length">Chưa có thiết lập</span><span v-for="policy in banditPolicies[experiment.id] || []" :key="policy.id">{{ policy.version }} · {{ t('Thử cách mới') }} {{ Math.round(Number(policy.epsilon || 0) * 100) }}% · {{ policyStatusLabel(policy.status) }}</span></div>
+                <form class="ai-field-grid" @submit.prevent="createBanditPolicy(experiment)"><label class="ai-field">Tên cách chọn<input v-model="banditPolicyForms[experiment.id].version" required maxlength="40" /></label><label class="ai-field">Thử cách mới (%)<input v-model.number="banditPolicyForms[experiment.id].explorationPercent" type="number" min="0" max="100" step="1" /></label><label class="ai-field">Trạng thái<select v-model="banditPolicyForms[experiment.id].status"><option value="active">Đang dùng</option><option value="paused">Tạm dừng</option><option value="archived">Đã lưu trữ</option></select></label><button type="submit" class="settings-refresh">Lưu thiết lập</button></form>
               </article>
             </div>
           </div>
@@ -13087,7 +13388,7 @@ function followupRecommendationLabel(item) {
         <div class="rag-header-panel">
           <div>
             <h2>Kho kiến thức</h2>
-            <p>Nạp tài liệu sản phẩm, câu hỏi thường gặp và chính sách để trợ lý tra cứu kho kiến thức khi trả lời khách. Tài liệu được lập chỉ mục, không dùng để tự huấn luyện mô hình.</p>
+            <p>Thêm tài liệu sản phẩm, câu hỏi thường gặp và chính sách để trợ lý tra cứu khi trả lời khách. Việc thêm tài liệu không tự thay đổi cách trợ lý được thiết lập.</p>
             <button type="button" class="secondary-btn rag-assistant-link" @click="currentTab = 'rag_chat'">Mở trợ lý hỏi đáp</button>
           </div>
           <div class="rag-stats">
@@ -13106,14 +13407,31 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
+        <div class="knowledge-plan-usage" :class="{ 'at-document-limit': knowledgeDocumentQuotaReached }">
+          <div>
+            <strong>{{ quotaSnapshot?.plan_name ? `${t('Gói')} ${t(quotaSnapshot.plan_name)}` : t('Hạn mức Kho kiến thức') }}</strong>
+            <span v-if="quotaSnapshot">
+              {{ t('Tài liệu') }} <b>{{ knowledgeDocumentUsage.used.toLocaleString() }} / {{ knowledgeDocumentUsage.limit === null ? t('không giới hạn') : knowledgeDocumentUsage.limit.toLocaleString() }}</b>
+              <span class="knowledge-usage-separator">·</span>
+              {{ t('Đoạn kiến thức') }} <b>{{ knowledgeChunkUsage.used.toLocaleString() }} / {{ knowledgeChunkUsage.limit === null ? t('không giới hạn') : knowledgeChunkUsage.limit.toLocaleString() }}</b>
+            </span>
+            <span v-else>{{ quotaLoading ? t('Đang tải hạn mức của gói…') : t('Chưa tải được hạn mức; máy chủ vẫn kiểm tra trước khi lưu.') }}</span>
+          </div>
+          <button v-if="knowledgeDocumentQuotaReached" type="button" class="secondary-btn" @click="requestServiceDeployment">{{ t('Xem gói dịch vụ') }}</button>
+        </div>
+        <p v-if="knowledgeDocumentQuotaReached" class="knowledge-quota-warning" role="status">
+          {{ t('Đã hết lượt thêm tài liệu theo gói. Tài liệu cũ vẫn được giữ; xóa tài liệu hoặc đổi gói để nạp thêm.') }}
+        </p>
+
         <!-- UPLOAD DROPZONE -->
         <div
           class="upload-dropzone"
+          :class="{ 'quota-locked': knowledgeDocumentQuotaReached }"
           @dragover.prevent
           @drop.prevent="handleDocDrop"
-          @click="$refs.docFileInput.click()"
-          @keydown.enter.prevent="$refs.docFileInput.click()"
-          @keydown.space.prevent="$refs.docFileInput.click()"
+          @click="openDocumentPicker"
+          @keydown.enter.prevent="openDocumentPicker"
+          @keydown.space.prevent="openDocumentPicker"
           role="button"
           tabindex="0"
           :aria-label="t('Nhập tệp vào Kho kiến thức')"
@@ -13129,7 +13447,7 @@ function followupRecommendationLabel(item) {
             <span class="upload-icon">NHẬP NỘI DUNG</span>
             <strong>Nhập tệp hoặc nhập văn bản để bổ sung thông tin cho shop</strong>
             <small>Hỗ trợ PDF, DOCX, TXT, CSV, MD, HTML (tối đa 20MB)</small>
-            <div class="import-choice-row"><button type="button" class="secondary-btn import-choice" @click.stop="$refs.docFileInput.click()">Nhập tệp</button><button type="button" class="secondary-btn import-choice" @click.stop="openTextImport">Nhập văn bản</button></div>
+            <div class="import-choice-row"><button type="button" class="secondary-btn import-choice" :disabled="knowledgeDocumentQuotaReached" @click.stop="openDocumentPicker">Nhập tệp</button><button type="button" class="secondary-btn import-choice" :disabled="knowledgeDocumentQuotaReached" @click.stop="openTextImport">Nhập văn bản</button></div>
           </div>
           <div class="dropzone-content" v-else>
             <span class="spinner-icon">...</span>
@@ -13149,7 +13467,7 @@ function followupRecommendationLabel(item) {
             <div class="settings-card-header"><div><span class="card-eyebrow">BỔ SUNG THÔNG TIN</span><h2>Nhập văn bản</h2><p>Dán FAQ, chính sách hoặc mô tả sản phẩm. Nội dung sẽ được lưu thành tài liệu riêng của shop.</p></div><button type="button" class="quick-action-close" aria-label="Đóng" @click="textImportOpen = false">×</button></div>
             <label class="text-import-title">Tên tài liệu<input v-model="textImportTitle" maxlength="120" placeholder="Ví dụ: Chính sách đổi trả" /></label>
             <label class="text-import-title">Nội dung<textarea v-model="textImportDraft" rows="10" autofocus placeholder="Dán nội dung cần lưu tại đây..."></textarea></label>
-            <div class="dialog-actions"><button type="button" class="secondary-btn" @click="textImportOpen = false">Hủy</button><button type="button" class="primary-btn" :disabled="!textImportDraft.trim() || docUploading" @click="saveTextImport">{{ docUploading ? 'Đang lưu...' : 'Lưu tài liệu' }}</button></div>
+            <div class="dialog-actions"><button type="button" class="secondary-btn" @click="textImportOpen = false">Hủy</button><button type="button" class="primary-btn" :disabled="!textImportDraft.trim() || docUploading || knowledgeDocumentQuotaReached" @click="saveTextImport">{{ docUploading ? 'Đang lưu...' : 'Lưu tài liệu' }}</button></div>
           </section>
         </div>
 
@@ -13317,7 +13635,7 @@ function followupRecommendationLabel(item) {
                   {{ m.role === 'user' ? 'Bạn' : 'Trợ lý' }}
                 </div>
                 <div class="rag-msg-text" v-if="m.content">
-                  {{ m.localize ? crmUiText(m.content) : m.content }}
+                  {{ displayRagText(m.localize ? crmUiText(m.content) : m.content) }}
                 </div>
                 <p v-if="m.handoffRequired" class="rag-handoff-notice" role="status">{{ t('Cần nhân viên hỗ trợ câu hỏi này.') }}</p>
                 <details v-if="m.role === 'assistant' && m.sources?.length" class="rag-msg-sources">
@@ -13325,7 +13643,7 @@ function followupRecommendationLabel(item) {
                   <article v-for="(source, sourceIndex) in m.sources" :key="source.chunk_id || `${source.document_id}-${sourceIndex}`" class="rag-msg-source">
                     <strong>[{{ t('Nguồn') }} {{ source.citation_id || sourceIndex + 1 }}] {{ source.filename || `${t('Tài liệu')} #${source.document_id}` }}</strong>
                     <small>{{ t('Đoạn') }} {{ Number(source.chunk_index ?? 0) + 1 }} · {{ Math.round(Number(source.similarity || 0) * 100) }}%</small>
-                    <p>{{ source.content }}</p>
+                    <p>{{ displayRagText(source.content) }}</p>
                   </article>
                 </details>
                 <div class="rag-msg-loading" v-if="m.loading">
@@ -13538,25 +13856,25 @@ function followupRecommendationLabel(item) {
               <h2>Kết nối mạng xã hội</h2>
               <p>Quản lý Facebook, Instagram, Telegram, Zalo, TikTok và Shopee riêng cho shop này.</p>
             </div>
-            <span class="connection-badge" :class="{ connected: metaStatus.connected || activeBotConnections.length }">
-              {{ (metaStatus.connected || activeBotConnections.length) ? 'ĐANG HOẠT ĐỘNG' : 'CHƯA KẾT NỐI' }}
+            <span class="connection-badge" :class="{ connected: socialChannelOnlineCount > 0 }">
+              {{ socialChannelOnlineCount > 0 ? 'ĐANG HOẠT ĐỘNG' : 'CHƯA CÓ KÊNH TRỰC TUYẾN' }}
             </span>
           </div>
           <p class="settings-muted">Mỗi shop chỉ nhìn thấy mã kết nối, nhận sự kiện và lịch sử của chính shop đó. Dữ liệu không dùng chung giữa các không gian.</p>
-          <div v-if="quotaSnapshot?.resources?.connected_channels" class="channel-quota-note">Kênh đang dùng: <strong>{{ channelCapacity.limit === null ? `${channelCapacity.used} / ∞` : `${channelCapacity.used} / ${channelCapacity.limit}` }}</strong> theo gói {{ quotaSnapshot.plan_name || 'hiện tại' }}.</div>
+          <div v-if="quotaSnapshot?.resources?.connected_channels" class="channel-quota-note">{{ crmUiText('Hạn mức đã cấp:') }} <strong>{{ channelCapacity.limit === null ? `${channelCapacity.used} / ∞` : `${channelCapacity.used} / ${channelCapacity.limit}` }}</strong> theo gói {{ quotaSnapshot.plan_name || 'hiện tại' }}<span> · {{ crmUiText('Kênh đang trực tuyến:') }} <strong>{{ socialChannelOnlineCount }} / 6</strong></span>.</div>
           <div v-if="channelCapacity.blocked" class="channel-capacity-alert" role="status"><span>{{ channelCapacity.reason }}</span><button type="button" class="settings-refresh" @click="openServicePage">Nâng cấp gói</button></div>
         </div>
 
         <div v-if="authUser" class="channel-summary-grid channel-summary-grid-six">
           <article class="settings-card channel-summary-card">
-            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon facebook-channel-icon" aria-hidden="true">f</span><span>Facebook</span></h2><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: metaStatus.connected || localConnectorIsOnline(facebookConnectorConnection) }">{{ metaStatus.connected ? 'META API' : localConnectorIsOnline(facebookConnectorConnection) ? 'BRIDGE ĐANG CHẠY' : 'CHƯA KẾT NỐI' }}</span></div>
+            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon facebook-channel-icon" aria-hidden="true">f</span><span>Facebook</span></h2><p>Trang bán hàng và tin nhắn Messenger.</p></div><span class="connection-badge" :class="{ connected: isSocialChannelOnline('facebook'), offline: metaChannelIsOffline('facebook') }">{{ metaChannelStatus('facebook') }}</span></div>
             <p class="settings-muted">Có thể dùng Meta API hoặc đăng nhập Business Suite qua bridge cục bộ.</p>
-            <div class="channel-summary-actions"><button type="button" class="primary-btn" @click="openChannelModal('facebook')">{{ metaStatus.connected ? 'Xem Facebook' : 'Kết nối Facebook' }}</button></div>
+            <div class="channel-summary-actions"><button type="button" class="primary-btn" @click="openChannelModal('facebook')">{{ facebookConnectorConnection?.connector_paired ? 'Quản lý Facebook' : metaStatus.connected ? 'Xem Facebook' : 'Kết nối Facebook' }}</button></div>
           </article>
           <article class="settings-card channel-summary-card">
-            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon instagram-channel-icon" aria-hidden="true">◎</span><span>Instagram</span></h2><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: (metaStatus.connected && metaStatus.instagram_account_id) || localConnectorIsOnline(instagramConnectorConnection) }">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'META API' : localConnectorIsOnline(instagramConnectorConnection) ? 'BRIDGE ĐANG CHẠY' : 'CHƯA KẾT NỐI' }}</span></div>
+            <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon instagram-channel-icon" aria-hidden="true">◎</span><span>Instagram</span></h2><p>Tài khoản chuyên nghiệp và tin nhắn Instagram.</p></div><span class="connection-badge" :class="{ connected: isSocialChannelOnline('instagram'), offline: metaChannelIsOffline('instagram') }">{{ metaChannelStatus('instagram') }}</span></div>
             <p class="settings-muted">Có thể dùng Meta API hoặc đăng nhập Business Suite qua bridge cục bộ.</p>
-            <div class="channel-summary-actions"><button type="button" class="secondary-btn" @click="openChannelModal('instagram')">{{ metaStatus.connected && metaStatus.instagram_account_id ? 'Xem Instagram' : 'Kết nối Instagram' }}</button></div>
+            <div class="channel-summary-actions"><button type="button" class="secondary-btn" @click="openChannelModal('instagram')">{{ instagramConnectorConnection?.connector_paired ? 'Quản lý Instagram' : metaStatus.connected && metaStatus.instagram_account_id ? 'Xem Instagram' : 'Kết nối Instagram' }}</button></div>
           </article>
           <article class="settings-card channel-summary-card">
             <div class="settings-card-header"><div><h2 class="channel-title-with-logo"><span class="channel-card-icon telegram-channel-icon" aria-hidden="true">✈</span><span>Telegram</span></h2><p>Bot Telegram riêng của shop.</p></div><span class="connection-badge" :class="{ connected: activeBotConnections.some((item) => item.channel_type === 'telegram') }">{{ activeBotConnections.some((item) => item.channel_type === 'telegram') ? 'ĐÃ KẾT NỐI' : 'CHƯA KẾT NỐI' }}</span></div>
@@ -13605,11 +13923,11 @@ function followupRecommendationLabel(item) {
                 <div v-if="localConnectorError" class="settings-notice team-error" role="alert">{{ localConnectorError }}</div>
                 <div v-if="localConnectorNotice" class="settings-notice" role="status">{{ localConnectorNotice }}</div>
                 <div class="tiktok-bridge-actions" :class="{ single: channelModalTab !== 'meta' }"><button v-if="channelModalTab !== 'instagram'" class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadMessengerConnectorApp">{{ localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải ZIP Meta' }}</button><button v-if="channelModalTab !== 'facebook'" class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadInstagramConnectorApp">{{ localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải ZIP Instagram' }}</button></div>
-                <div class="tiktok-bridge-actions" :class="{ single: channelModalTab !== 'meta' }"><button v-if="channelModalTab !== 'instagram'" class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !facebookConnectorConnection?.connector_paired)" @click="createLocalConnectorPairingCode('facebook')">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Ghép nối Meta' }}</button><button v-if="channelModalTab !== 'facebook'" class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !instagramConnectorConnection?.connector_paired)" @click="createLocalConnectorPairingCode('instagram')">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Ghép nối Instagram' }}</button></div>
+                <div class="tiktok-bridge-actions" :class="{ single: channelModalTab !== 'meta' }"><button v-if="channelModalTab !== 'instagram'" class="secondary-btn" type="button" :disabled="localConnectorPairingDisabled('facebook')" :title="localConnectorPairingBlocked('facebook') ? crmUiText('Connector đang ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.') : undefined" @click="createLocalConnectorPairingCode('facebook')">{{ localConnectorPairingLabel('facebook', 'Ghép nối Meta') }}</button><button v-if="channelModalTab !== 'facebook'" class="secondary-btn" type="button" :disabled="localConnectorPairingDisabled('instagram')" :title="localConnectorPairingBlocked('instagram') ? crmUiText('Connector đang ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.') : undefined" @click="createLocalConnectorPairingCode('instagram')">{{ localConnectorPairingLabel('instagram', 'Ghép nối Instagram') }}</button></div>
                 <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>{{ localConnectorPairingChannel === 'instagram' ? 'Pairing code Instagram' : 'Pairing code Meta' }}<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">Sao chép mã</button></div>
                 <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái connector...</div>
                 <ul v-else-if="[facebookConnectorConnection, instagramConnectorConnection].filter((connection) => connection && (channelModalTab === 'meta' || connection.channel_type === channelModalTab)).length" class="bot-connection-list"><li v-for="connection in [facebookConnectorConnection, instagramConnectorConnection].filter((item) => item && (channelModalTab === 'meta' || item.channel_type === channelModalTab))" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ connection.channel_type === 'instagram' ? 'Instagram' : 'Meta' }} · {{ localConnectorStatus(connection) }}</small><small v-if="connection.connector_last_error_code" role="alert">{{ t('Mã lỗi connector') }}: {{ connection.connector_last_error_code }}</small></div><button v-if="connection.connector_paired" type="button" class="team-toggle" :disabled="localConnectorRetryingId === connection.id" @click="retryLocalConnector(connection)">{{ localConnectorRetryingId === connection.id ? t('Đang gửi...') : t('Thử kết nối lại') }}</button><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt connector</button></li></ul>
-                <p v-if="channelModalTab === 'meta'" class="bot-connect-note">Để kết nối Meta và Instagram cùng lúc, chạy cùng một ZIP hai lần, chọn kênh tương ứng và dùng mã ghép nối riêng. Không gửi phản hồi qua bridge ở phiên bản này; phản hồi từ CRM cần cấu hình kênh gửi riêng.</p><p v-else class="bot-connect-note">Không gửi phản hồi qua bridge ở phiên bản này; phản hồi từ CRM cần cấu hình kênh gửi riêng.</p>
+                <p v-if="channelModalTab === 'meta'" class="bot-connect-note">Để kết nối Meta và Instagram cùng lúc, chạy cùng một ZIP hai lần, chọn kênh tương ứng và dùng mã ghép nối riêng. Bot có thể trả lời qua connector khi kênh đang hoạt động và hội thoại bật chế độ tự động.</p><p v-else class="bot-connect-note">Bot trả lời qua connector khi Instagram đang hoạt động và hội thoại bật chế độ tự động; giữ connector đã đăng nhập luôn chạy.</p>
               </div>
             </template>
             <template v-else-if="['tiktok', 'shopee'].includes(channelModalTab)">
@@ -13618,7 +13936,7 @@ function followupRecommendationLabel(item) {
               <template v-if="channelModalTab === 'tiktok'">
               <div class="bot-provider-heading"><span class="channel-card-icon tiktok-channel-icon"><svg class="tiktok-logo" viewBox="0 0 24 24" aria-hidden="true"><path class="tiktok-logo-cyan" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-red" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/><path class="tiktok-logo-main" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-3.77V2h-3.32v13.11a2.89 2.89 0 1 1-2.89-2.89c.3 0 .59.04.87.13V9.03a6.24 6.24 0 1 0 5.34 6.08V8.38a8.17 8.17 0 0 0 4.77 1.53V6.69Z"/></svg></span><div><h3>TikTok Bridge</h3><p>Nhận tin TikTok qua tệp bridge đang chạy trên máy của shop.</p></div><span class="connection-badge" :class="{ connected: localConnectorIsOnline(tiktokChannelConnection) }">{{ localConnectorStatus(tiktokChannelConnection) }}</span></div>
               <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap tiktok-channel-icon">T</div><div><ol><li>Tải bộ ZIP connector TikTok Shop về máy cần chạy bridge.</li><li>Giải nén ZIP rồi chạy SmartMerchantTikTok.exe.</li><li>Tạo mã ghép nối, nhập mã vào ứng dụng rồi đăng nhập Seller Center trong Edge.</li></ol><p class="bot-connect-note">Connector đồng bộ tin nhắn và đơn đang hiển thị về CRM; đơn ở trạng thái nháp để kiểm tra. Hồ sơ Edge ở lại trên máy chạy bridge. Nếu gặp CAPTCHA, xử lý thủ công trong Edge.</p></div></div>
-              <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ crmUiText(localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải bộ ZIP TikTok') }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeTikTokConnection)" @click="createLocalConnectorPairingCode">{{ crmUiText(localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối') }}</button></div>
+              <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ crmUiText(localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải bộ ZIP TikTok') }}</button><button class="secondary-btn" type="button" :disabled="localConnectorPairingDisabled('tiktok')" :title="localConnectorPairingBlocked('tiktok') ? crmUiText('Connector đang ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.') : undefined" @click="createLocalConnectorPairingCode">{{ localConnectorPairingLabel('tiktok', 'Tạo mã ghép nối') }}</button></div>
               <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>{{ crmUiText('Pairing code') }}<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">{{ crmUiText('Sao chép mã') }}</button></div>
               <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.filter((item) => item.channel_type === 'tiktok').length" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'tiktok')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>TikTok bridge · {{ localConnectorStatus(connection) }}</small><small v-if="connection.connector_last_error_code" role="alert">{{ t('Mã lỗi connector') }}: {{ connection.connector_last_error_code }}</small></div><button v-if="connection.connector_paired" type="button" class="team-toggle" :disabled="localConnectorRetryingId === connection.id" @click="retryLocalConnector(connection)">{{ localConnectorRetryingId === connection.id ? t('Đang gửi...') : t('Thử kết nối lại') }}</button><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul>
               <div v-else class="settings-empty">Chưa có TikTok connector nào.</div>
@@ -13626,7 +13944,7 @@ function followupRecommendationLabel(item) {
               <template v-else>
                 <div class="bot-provider-heading"><span class="channel-card-icon shopee-channel-icon">S</span><div><h3>Shopee Seller Chat</h3><p>Nhận tin realtime từ Seller Chat trong Edge cục bộ.</p></div><span class="connection-badge" :class="{ connected: localConnectorIsOnline(shopeeChannelConnection) }">{{ localConnectorStatus(shopeeChannelConnection) }}</span></div>
                 <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap channel-card-icon shopee-channel-icon">S</div><div><ol><li>Tải bộ ZIP connector Shopee về máy dùng Seller Chat.</li><li>Giải nén ZIP rồi chạy SmartMerchantShopee.exe.</li><li>Tạo mã ghép nối bên dưới, nhập mã rồi đăng nhập Shopee trong Edge.</li></ol><p class="bot-connect-note">Connector đồng bộ tin nhắn và đơn đang hiển thị về CRM; đơn ở trạng thái nháp để kiểm tra. Hồ sơ Edge ở lại trên máy chạy bridge. Nếu gặp CAPTCHA, xử lý thủ công trong Edge.</p></div></div>
-                <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải bộ ZIP Shopee' }}</button><button class="secondary-btn" type="button" :disabled="localConnectorLoading || (demoChannelsLocked && !activeBotConnections.some((item) => item.channel_type === 'shopee'))" @click="createLocalConnectorPairingCode">{{ localConnectorLoading ? 'Đang tạo mã...' : 'Tạo mã ghép nối' }}</button></div>
+                <div class="tiktok-bridge-actions"><button class="primary-btn bot-connect-submit" type="button" :disabled="localConnectorDownloading" @click="downloadLocalConnectorApp">{{ localConnectorDownloading ? 'Đang tải ZIP...' : 'Tải bộ ZIP Shopee' }}</button><button class="secondary-btn" type="button" :disabled="localConnectorPairingDisabled('shopee')" :title="localConnectorPairingBlocked('shopee') ? crmUiText('Connector đang ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.') : undefined" @click="createLocalConnectorPairingCode">{{ localConnectorPairingLabel('shopee', 'Tạo mã ghép nối') }}</button></div>
                 <div v-if="localConnectorPairingCode" class="local-connector-pairing"><label>Pairing code<input :value="localConnectorPairingCode" readonly autocomplete="off" /></label><button type="button" class="secondary-btn" @click="copyLocalConnectorPairingCode">Sao chép mã</button></div>
                 <div v-if="botConnectionLoading" class="settings-empty">Đang tải trạng thái kết nối...</div><ul v-else-if="botConnections.some((item) => item.channel_type === 'shopee')" class="bot-connection-list"><li v-for="connection in botConnections.filter((item) => item.channel_type === 'shopee')" :key="connection.id"><div><strong>{{ connection.name }}</strong><small>{{ localConnectorStatus(connection) }}</small><small v-if="connection.connector_last_error_code" role="alert">{{ t('Mã lỗi connector') }}: {{ connection.connector_last_error_code }}</small></div><button v-if="connection.connector_paired" type="button" class="team-toggle" :disabled="localConnectorRetryingId === connection.id" @click="retryLocalConnector(connection)">{{ localConnectorRetryingId === connection.id ? t('Đang gửi...') : t('Thử kết nối lại') }}</button><button type="button" class="team-toggle" @click="disconnectBotChannel(connection)">Ngắt kết nối</button></li></ul><div v-else class="settings-empty">Chưa có Shopee connector nào.</div>
               </template>
@@ -13657,7 +13975,7 @@ function followupRecommendationLabel(item) {
           <div class="webhook-grid">
             <article class="webhook-item"><div><strong>Facebook</strong><span class="webhook-status" :class="{ connected: metaStatus.connected && metaStatus.subscription_status }">{{ metaStatus.connected ? (metaStatus.subscription_status || 'Đã kết nối') : 'Chưa kết nối' }}</span></div><small>Nhận tin tự động từ Trang Facebook của shop.</small></article>
             <article class="webhook-item"><div><strong>Instagram</strong><span class="webhook-status" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.instagram_account_id ? 'Đã kết nối' : 'Chưa kết nối' }}</span></div><small>Nhận tin Instagram riêng, dùng cùng lần cấp quyền Facebook.</small></article>
-            <article v-for="connection in botConnections" :key="`webhook-${connection.id}`" class="webhook-item"><div><strong>{{ connection.channel_type === 'facebook' ? 'Facebook Messenger' : connection.channel_type === 'instagram' ? 'Instagram' : connection.channel_type === 'zalo' ? 'Zalo' : connection.channel_type === 'tiktok' ? 'TikTok' : connection.channel_type === 'shopee' ? 'Shopee' : 'Telegram' }}</strong><span class="webhook-status" :class="{ connected: connection.webhook_status === 'connected' }">{{ connection.webhook_status === 'connected' ? 'Đang hoạt động' : connection.webhook_status === 'disconnected' ? 'Đã ngắt' : 'Cần kiểm tra' }}</span></div><small>{{ connection.name }} · nhận tin riêng cho shop.</small></article>
+            <article v-for="connection in botConnections.filter((item) => !['facebook', 'instagram'].includes(item.channel_type))" :key="`webhook-${connection.id}`" class="webhook-item"><div><strong>{{ connection.channel_type === 'zalo' ? 'Zalo' : connection.channel_type === 'tiktok' ? 'TikTok' : connection.channel_type === 'shopee' ? 'Shopee' : 'Telegram' }}</strong><span class="webhook-status" :class="{ connected: connection.webhook_status === 'connected' }">{{ connection.webhook_status === 'connected' ? 'Đang hoạt động' : connection.webhook_status === 'disconnected' ? 'Đã ngắt' : 'Cần kiểm tra' }}</span></div><small>{{ connection.name }} · nhận tin riêng cho shop.</small></article>
           </div>
           <div v-if="!botConnections.length && !metaStatus.connected" class="settings-empty">Chưa có điểm nhận sự kiện nào được đăng ký.</div>
         </div>
@@ -14021,11 +14339,11 @@ function followupRecommendationLabel(item) {
         </div>
 
         <div v-if="authUser" class="settings-card learning-card">
-          <div class="settings-card-header"><div><span class="card-eyebrow">DỮ LIỆU CẢI THIỆN TRỢ LÝ</span><h2>Thu thập mẫu và phản hồi</h2><p>Lưu những tín hiệu shop đã chọn để theo dõi chất lượng và chuẩn bị dữ liệu đánh giá.</p></div><span class="connection-badge">CHƯA TỰ HỌC</span></div>
-          <div class="learning-options"><label class="checkbox-field"><input v-model="messageLearningEnabled" type="checkbox" /> Cho phép lưu tin nhắn đã chọn làm mẫu tham khảo</label><label class="checkbox-field"><input v-model="reinforcementLearningEnabled" type="checkbox" /> Cho phép ghi nhận đánh giá hữu ích / cần cải thiện</label></div>
-          <p class="settings-muted">Các lựa chọn này được lưu trên thiết bị hiện tại. Phản hồi chỉ dùng để thống kê và chưa tự thay đổi câu trả lời của trợ lý. Dữ liệu trên máy chủ vẫn tách riêng theo từng shop.</p><div v-if="learningNotice" class="settings-notice" role="status">{{ learningNotice }}</div><button type="button" class="primary-btn" @click="saveLearningPreferences">Lưu tùy chọn trên thiết bị</button>
+          <div class="settings-card-header"><div><span class="card-eyebrow">CHĂM SÓC THEO SỞ THÍCH</span><h2>Cá nhân hóa khách hàng</h2><p>Ghi nhận sở thích được khách nói rõ, thói quen mua và phản hồi để xếp thứ tự gợi ý phù hợp hơn.</p></div><span class="connection-badge">TÁCH RIÊNG THEO SHOP</span></div>
+          <div class="learning-options"><label class="checkbox-field"><input v-model="customerFactExtractionEnabled" type="checkbox" :disabled="customerFactSettingLoading || customerFactSettingSaving" /> Trích xuất sở thích từ tin nhắn và lịch sử đã nhập</label><label class="checkbox-field"><input v-model="messageLearningEnabled" type="checkbox" /> Cho phép lưu mẫu hội thoại trên thiết bị này để nhân viên tham khảo</label><label class="checkbox-field"><input v-model="reinforcementLearningEnabled" type="checkbox" /> Cho phép ghi nhận đánh giá hữu ích / cần cải thiện</label></div>
+          <p class="settings-muted">Khi bật, hệ thống bổ sung sở thích còn thiếu theo từng đợt và ghi nhớ tiến độ, không đọc lại tin đã xử lý mỗi tuần. Chỉ lưu thông tin tóm tắt như màu sắc, nhóm sản phẩm và tần suất mua; không sao chép toàn bộ nội dung chat vào hồ sơ. Tắt tùy chọn sẽ dừng ghi nhận mới; shop có thể xóa thông tin suy ra trong hồ sơ từng khách.</p><div class="learning-options-actions"><button type="button" class="primary-btn" :disabled="customerFactSettingLoading || customerFactSettingSaving" @click="saveCustomerFactExtractionSetting">{{ customerFactSettingSaving ? 'Đang lưu...' : 'Lưu cá nhân hóa theo shop' }}</button><button type="button" class="history-btn" @click="saveLearningPreferences">Lưu tùy chọn trên thiết bị</button></div><div v-if="learningNotice" class="settings-notice" role="status">{{ learningNotice }}</div>
           <div class="learning-insights">
-            <div class="settings-card-header"><div><h3>Chủ đề khách thường hỏi</h3><p>Tổng hợp 30 ngày gần nhất theo các nhóm quy tắc có sẵn để gợi ý nội dung cần bổ sung. Đây chưa phải học không giám sát hoàn chỉnh.</p></div><button type="button" class="settings-refresh" :disabled="learningSummaryLoading" @click="fetchLearningSummary">{{ learningSummaryLoading ? 'Đang tổng hợp...' : 'Làm mới' }}</button></div>
+            <div class="settings-card-header"><div><h3>Chủ đề khách thường hỏi</h3><p>Tổng hợp nhu cầu xuất hiện nhiều trong 30 ngày qua để shop cập nhật sản phẩm và cách tư vấn.</p></div><button type="button" class="settings-refresh" :disabled="learningSummaryLoading" @click="fetchLearningSummary">{{ learningSummaryLoading ? 'Đang tổng hợp...' : 'Làm mới' }}</button></div>
             <div v-if="learningSummaryError" class="settings-notice team-error" role="alert">{{ learningSummaryError }}</div>
             <div v-if="learningSummary.topics?.length" class="learning-topic-grid">
               <div v-for="topic in learningSummary.topics.slice(0, 4)" :key="topic.key" class="learning-topic">
@@ -14034,7 +14352,7 @@ function followupRecommendationLabel(item) {
             </div>
             <div v-else-if="!learningSummaryLoading" class="settings-empty">Chưa có đủ hội thoại để tổng hợp chủ đề.</div>
             <p class="settings-muted learning-signal-summary">Phản hồi câu trả lời: {{ learningSummary.response_feedback?.positive || 0 }} hữu ích · {{ learningSummary.response_feedback?.negative || 0 }} cần cải thiện · {{ Math.round(Number(learningSummary.response_feedback?.positive_rate || 0) * 100) }}% tích cực.</p>
-            <small class="learning-method-note">Số liệu dùng để quản trị viên đánh giá chất lượng; chưa được dùng để tự huấn luyện hoặc tự điều chỉnh trợ lý.</small>
+            <small class="learning-method-note">Gợi ý sản phẩm dùng sở thích đã ghi nhận, đơn mua và phản hồi thật. Nhân viên vẫn có thể xem lại và sửa thông tin khách.</small>
           </div>
         </div>
 
@@ -15037,13 +15355,15 @@ function followupRecommendationLabel(item) {
 
 .rag-msg-avatar {
   width: 36px;
+  flex: 0 0 36px;
   height: 36px;
   border-radius: 50%;
   background: #e2e8f0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .rag-msg-bubble {
@@ -15700,6 +16020,16 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
   background: #e7f7f0;
 }
 
+.connection-badge.offline {
+  color: #a93e34;
+  background: #ffe8e4;
+}
+
+body.crm-dark .connection-badge.offline {
+  color: #ffc1b7;
+  background: #542d2a;
+}
+
 .meta-connection-details {
   color: var(--crm-ink);
   background: #f5f8fc;
@@ -16145,10 +16475,10 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 .channel-modal { width: min(94vw, 900px); max-height: 90vh; overflow: auto; }
 .channel-modal .settings-card-header { align-items: flex-start; }
 .channel-modal .quick-action-close { flex: 0 0 auto; }
-.text-import-dialog { width: min(94vw, 700px); }
+.text-import-dialog { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; width: min(94vw, 700px); max-height: calc(100vh - 48px); overflow-y: auto; }
 .text-import-title { display: grid; gap: 7px; margin: 12px 0; color: var(--owly-ink); font-weight: 700; }
 .text-import-title input, .text-import-title textarea { border: 1px solid var(--owly-border); border-radius: 10px; padding: 10px 12px; background: #fff; color: var(--owly-ink); }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+.text-import-dialog .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 0; }
 .import-choice-row { display: flex; justify-content: center; gap: 10px; margin-top: 14px; }
 .import-choice { font-weight: 700; }
 .error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -16187,6 +16517,8 @@ body.crm-dark .rag-handoff-notice { background: #183436; color: #bce9e6; }
 .service-plan-grid > div { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--owly-border); border-radius: 10px; background: #fafafa; }
 .service-plan-grid span, .service-plan-grid strong { color: var(--owly-ink); }
 .learning-options { display: grid; gap: 10px; margin-bottom: 10px; }
+.learning-options-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 12px 0; }
+.learning-options-actions .primary-btn, .learning-options-actions .history-btn { min-height: 40px; margin: 0; }
 .followup-list li > span { display: grid; gap: 4px; }
 .followup-recommendation { color: var(--owly-muted); }
 .purchase-orders-layout { display: none !important; }

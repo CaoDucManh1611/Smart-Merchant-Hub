@@ -16,7 +16,10 @@ const templateSource = appSource.slice(appSource.indexOf("<template>"), appSourc
 test("RAG assistant displays cited document chunks and handoff state", () => {
   assert.match(appSource, /answerStatus: null/);
   assert.match(appSource, /assistantMsg\.handoffRequired = Boolean\(data\.handoff_required\)/);
+  assert.match(appSource, /function displayRagText\(value\)/);
   assert.match(templateSource, /class="rag-msg-sources"/);
+  assert.match(templateSource, /displayRagText\(m\.localize \? crmUiText\(m\.content\) : m\.content\)/);
+  assert.match(templateSource, /displayRagText\(source\.content\)/);
   assert.match(templateSource, /source\.citation_id/);
   assert.match(templateSource, /source\.filename/);
   assert.match(templateSource, /class="rag-handoff-notice"/);
@@ -1197,8 +1200,8 @@ test("chat composer replaces the search control with a voice recorder", () => {
   assert.match(appSource, /new (?:window\.)?MediaRecorder/);
   assert.match(appSource, /toggleVoiceRecording/);
   assert.match(appSource, /new File\(\[blob\]/);
-  assert.match(appSource, /queueMediaFile\(file, \{ mediaType: "audio" \}/);
-  assert.match(appSource, /:title="voiceRecording \? 'Dừng ghi âm' : 'Ghi âm'"/);
+  assert.match(appSource, /queueMediaFile\(file, \{ mediaType: "audio", isVoiceNote: true \}/);
+  assert.match(appSource, /:title="voiceRecording \? t\('Dừng ghi âm'\) : \(selectedSupportsVoice \? t\('Ghi âm'\) : t\(selectedMediaCapabilityHint\)\)"/);
   assert.doesNotMatch(appSource, /title="Đặt con trỏ vào ô nhập"/);
   assert.match(appSource, /async function selectConversation\(id\) \{[\s\S]*?discardVoiceRecording\(\);/);
 });

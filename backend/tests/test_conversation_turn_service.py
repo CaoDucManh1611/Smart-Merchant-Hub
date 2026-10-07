@@ -66,6 +66,9 @@ class ConversationTurnTests(unittest.TestCase):
 
     def test_collection_sees_one_complete_turn_instead_of_each_fragment(self):
         with Session(self.engine) as db:
+            conversation = db.get(Conversation, self.conversation_id)
+            conversation.channel = "facebook"
+            db.commit()
             latest = db.query(Message.id).order_by(Message.id.desc()).limit(1).scalar()
             result = CollectionFlowResult(session_id=1, status="quoted", current_field=None, prompt="Còn hàng ạ.")
             with patch("app.services.conversation_turn_service._merge_fragments", side_effect=lambda parts: " ".join(parts)), \
@@ -75,6 +78,7 @@ class ConversationTurnTests(unittest.TestCase):
                 self.assertTrue(dispatch_chatbot_turn(db, business_id=self.business_id,
                     payload={"conversation_id": self.conversation_id, "message_id": latest}))
             self.assertEqual("tôi muốn áo màu hồng size M", collect.call_args.kwargs["text"])
+            self.assertEqual(["tôi muốn áo", "màu hồng", "size M"], collect.call_args.kwargs["form_fragments"])
             send.assert_called_once()
             rag.assert_not_called()
 
@@ -94,6 +98,27 @@ class ConversationTurnTests(unittest.TestCase):
                 dispatch_chatbot_turn(db, business_id=self.business_id, payload=job.payload)
             collect.assert_called_once()
             self.assertEqual(2, send.call_count)
+
+    def test_partial_checkout_turn_is_saved_without_repeating_form_or_falling_through_to_rag(self):
+        with Session(self.engine) as db:
+            latest = db.query(Message).order_by(Message.id.desc()).first()
+            partial = CollectionFlowResult(
+                session_id=2,
+                status="partial",
+                current_field="email",
+                prompt="",
+            )
+            with patch("app.services.customer_collection_flow.advance_customer_collection", return_value=partial) as collect, \
+                 patch("app.services.auto_reply_service.send_text_reply") as send, \
+                 patch("app.services.auto_reply_service.process_rag_auto_reply") as rag:
+                self.assertTrue(dispatch_chatbot_turn(
+                    db,
+                    business_id=self.business_id,
+                    payload={"conversation_id": self.conversation_id, "message_id": latest.id},
+                ))
+            collect.assert_called_once()
+            send.assert_not_called()
+            rag.assert_not_called()
 
     def test_unknown_shopee_delivery_does_not_retry_automatically(self):
         from fastapi import HTTPException
@@ -192,6 +217,33 @@ class ConversationTurnTests(unittest.TestCase):
                     payload={"conversation_id": self.conversation_id, "message_id": latest.id})
             self.assertEqual(latest.content, reply.call_args.kwargs["query_text"])
 
+    def test_image_only_instagram_turn_is_sent_to_rag(self):
+        with Session(self.engine) as db:
+            conversation = db.get(Conversation, self.conversation_id)
+            conversation.channel = "instagram"
+            latest = db.query(Message).order_by(Message.id.desc()).first()
+            source = Message(
+                conversation_id=self.conversation_id,
+                channel="instagram",
+                direction="inbound",
+                content=None,
+                media_type="image",
+                media_url="https://scontent.cdninstagram.com/test.jpg",
+                received_at=latest.received_at + timedelta(minutes=1),
+            )
+            db.add(source)
+            db.commit()
+            with patch("app.services.auto_reply_service.process_rag_auto_reply", return_value=True) as reply:
+                self.assertTrue(dispatch_chatbot_turn(
+                    db,
+                    business_id=self.business_id,
+                    payload={"conversation_id": self.conversation_id, "message_id": source.id},
+                ))
+
+        reply.assert_called_once()
+        self.assertIn("Khách gửi ảnh đính kèm", reply.call_args.kwargs["query_text"])
+        self.assertEqual(source.id, reply.call_args.kwargs["expected_latest_inbound_id"])
+
     def test_preference_uses_only_explicit_fact(self):
         with Session(self.engine) as db:
             customer = db.query(Customer).filter(Customer.business_id == self.business_id).first()
@@ -199,8 +251,8 @@ class ConversationTurnTests(unittest.TestCase):
                 fact_type="preference", fact_key="preferred_color", fact_value_json="hồng",
                 confidence=0.9, source_type="extracted", is_verified=False))
             db.commit()
-            self.assertEqual("hồng", _preferred_color(db, self.business_id, customer.id))
-            self.assertIsNone(_preferred_color(db, self.other_id, customer.id))
+            self.assertEqual(("pink", "explicit_color_preference"), _preferred_color(db, self.business_id, customer.id))
+            self.assertEqual((None, None), _preferred_color(db, self.other_id, customer.id))
 
     def test_opt_out_removes_derived_facts_and_persisted_queries(self):
         with Session(self.engine) as db:
@@ -257,4 +309,4 @@ class ConversationTurnTests(unittest.TestCase):
                             payload={"customer_id": self.customer_id, "message_id": source.id})
             self.assertEqual(0, result)
             extractor.assert_not_called()
-            self.assertIsNone(_preferred_color(db, self.business_id, self.customer_id))
+            self.assertEqual((None, None), _preferred_color(db, self.business_id, self.customer_id))

@@ -1,0 +1,91 @@
+sku,product_name_vi,product_name_en,industry,category,color,attributes,price_vnd,demo_stock,product_url,source_label
+DM-APP-001,Áo thun Mây Basic,Mây Basic T-shirt,fashion,apparel,hồng,unisex cotton size S-XL,199000,24,https://example.com/demo/DM-APP-001,demo_synthetic
+DM-APP-002,Áo thun Mây Basic xanh,Mây Basic T-shirt Blue,fashion,apparel,xanh dương,unisex cotton size S-XL,199000,18,https://example.com/demo/DM-APP-002,demo_synthetic
+DM-APP-003,Túi vải Hồng Nắng,Sunny Pink Tote,fashion,bag,hồng,vải canvas 35 x 40 cm,129000,12,https://example.com/demo/DM-APP-003,demo_synthetic
+DM-APP-004,Túi vải Mộc,Mộc Canvas Tote,fashion,bag,be,canvas có ngăn trong,149000,0,https://example.com/demo/DM-APP-004,demo_synthetic
+DM-APP-005,Kẹp tóc Hoa Nhỏ,Little Flower Hair Clip,fashion,accessory,hồng,nhựa nhẹ bộ 2 chiếc,59000,35,https://example.com/demo/DM-APP-005,demo_synthetic
+DM-APP-006,Ví Mini Mây,Mini Mây Wallet,fashion,wallet,đen,ví gọn 6 ngăn thẻ,179000,8,https://example.com/demo/DM-APP-006,demo_synthetic
+DM-BEA-001,Sữa rửa mặt Dịu Mây,Soft Cloud Cleanser,beauty,skincare,trắng,chai 150 ml không có tuyên bố điều trị,189000,20,https://example.com/demo/DM-BEA-001,demo_synthetic
+DM-BEA-002,Túi mỹ phẩm Hồng Phấn,Blush Pink Cosmetic Pouch,beauty,accessory,hồng,vải chống thấm khóa kéo,99000,16,https://example.com/demo/DM-BEA-002,demo_synthetic
+DM-BEA-003,Kem dưỡng Cấp Ẩm,Mây Moisture Cream,beauty,skincare,trắng,hũ 50 g; kiểm tra thành phần trước khi dùng,259000,9,https://example.com/demo/DM-BEA-003,demo_synthetic
+DM-BEA-004,Băng đô Mây Spa,Cloud Spa Headband,beauty,accessory,hồng,co giãn giặt được,79000,30,https://example.com/demo/DM-BEA-004,demo_synthetic
+DM-ELE-001,Cáp sạc USB-C 1 m,USB-C Cable 1 m,electronics,cable,đen,USB-C to USB-C; không kèm củ sạc,89000,40,https://example.com/demo/DM-ELE-001,demo_synthetic
+DM-ELE-002,Củ sạc 20 W,20 W Charger,electronics,charger,trắng,USB-C PD; kiểm tra tương thích thiết bị,229000,15,https://example.com/demo/DM-ELE-002,demo_synthetic
+DM-ELE-003,Ốp điện thoại Hồng Mây,Pink Cloud Phone Case,electronics,phone case,hồng,chỉ có phiên bản cho mẫu máy ghi trên bao bì,159000,11,https://example.com/demo/DM-ELE-003,demo_synthetic
+DM-ELE-004,Tai nghe không dây Mây,Cloud Wireless Earbuds,electronics,audio,trắng,Bluetooth; thời lượng pin demo 5 giờ,499000,5,https://example.com/demo/DM-ELE-004,demo_synthetic
+DM-ELE-005,Giá đỡ điện thoại gập,Foldable Phone Stand,electronics,accessory,bạc,nhôm gập; không có sạc không dây,119000,22,https://example.com/demo/DM-ELE-005,demo_synthetic
+DM-HOM-001,Cốc sứ Mầm Xanh,Green Sprout Ceramic Mug,home,kitchen,xanh lá,dung tích demo 350 ml; rửa tay,149000,14,https://example.com/demo/DM-HOM-001,demo_synthetic
+DM-HOM-002,Bình nước Hồng Sớm,Early Pink Water Bottle,home,drinkware,hồng,bình inox 500 ml; không dùng lò vi sóng,219000,19,https://example.com/demo/DM-HOM-002,demo_synthetic
+DM-HOM-003,Hộp đựng đồ Mây,Cloud Storage Box,home,storage,be,kích thước demo 30 x 20 x 12 cm,179000,7,https://example.com/demo/DM-HOM-003,demo_synthetic
+DM-HOM-004,Đèn bàn Lá Nhỏ,Little Leaf Desk Lamp,home,lighting,xanh lá,USB 5 V; không bao gồm adapter,329000,6,https://example.com/demo/DM-HOM-004,demo_synthetic
+DM-HOM-005,Gối tựa Hồng Phấn,Blush Pink Cushion,home,textile,hồng,vỏ tháo giặt; ruột gối 40 x 40 cm,239000,0,https://example.com/demo/DM-HOM-005,demo_synthetic
+DM-FOO-001,Trà gạo rang Mây,Roasted Rice Tea,food,beverage,nâu,hộp 10 gói; xem nhãn thành phần trước khi dùng,79000,32,https://example.com/demo/DM-FOO-001,demo_synthetic
+DM-FOO-002,Bánh quy mè,Mixed Sesame Cookies,food,snack,vàng,gói 150 g; dị ứng: cần xác nhận nhãn tại lô hàng,69000,17,https://example.com/demo/DM-FOO-002,demo_synthetic
+DM-FOO-003,Mật ong demo 250 g,Demo Honey 250 g,food,pantry,nâu,lọ 250 g; nguồn gốc chỉ ghi theo nhãn lô,159000,10,https://example.com/demo/DM-FOO-003,demo_synthetic
+DM-PET-001,Bát ăn thú cưng Mầm,Pet Bowl Sprout,pet,supplies,xanh lá,thép không gỉ dung tích demo 500 ml,99000,13,https://example.com/demo/DM-PET-001,demo_synthetic
+DM-PET-002,Dây dắt thú cưng Hồng,Pink Pet Leash,pet,accessory,hồng,dài 1.5 m; kiểm tra kích cỡ móc trước khi mua,139000,8,https://example.com/demo/DM-PET-002,demo_synthetic
+DM-STA-001,Sổ tay Lá Nhỏ,Little Leaf Notebook,stationery,notebook,xanh lá,A5 120 trang giấy trơn,49000,26,https://example.com/demo/DM-STA-001,demo_synthetic
+DM-STA-002,Bút gel Hồng Mây,Pink Cloud Gel Pen,stationery,pen,hồng,mực xanh ngòi 0.5 mm,19000,50,https://example.com/demo/DM-STA-002,demo_synthetic
+DM-STA-003,Hộp bút Mây,Cloud Pencil Case,stationery,case,hồng,vải canvas có khóa kéo,69000,21,https://example.com/demo/DM-STA-003,demo_synthetic
+DM-STA-004,Bộ sticker Mầm Xanh,Green Sprout Sticker Set,stationery,sticker,xanh lá,6 tờ sticker trang trí; không chống nước,39000,18,https://example.com/demo/DM-STA-004,demo_synthetic
+DM-SVC-001,Gói tư vấn setup cửa hàng,Store Setup Consultation,services,consulting,không áp dụng,buổi tư vấn demo 45 phút; cần xác nhận lịch,300000,99,https://example.com/demo/DM-SVC-001,demo_synthetic
+DM-SVC-002,Gói kiểm kê sản phẩm demo,Demo Product Audit,services,operations,không áp dụng,phạm vi và lịch thực hiện cần nhân viên xác nhận,500000,99,https://example.com/demo/DM-SVC-002,demo_synthetic
+DM-APP-007,Áo sơ mi Nắng Nhẹ,Soft Sun Shirt,fashion,shirt,trắng,cotton size S-XL nút gỗ mẫu,279000,13,https://example.com/demo/DM-APP-007,demo_synthetic
+DM-APP-008,Chân váy Mây Hồng,Pink Cloud Skirt,fashion,skirt,hồng,vải nhẹ size S-L; xem bảng size demo,249000,7,https://example.com/demo/DM-APP-008,demo_synthetic
+DM-APP-009,Váy liền Lá Non,Young Leaf Dress,fashion,dress,xanh lá,size S-XL; chiều dài demo 110 cm,389000,4,https://example.com/demo/DM-APP-009,demo_synthetic
+DM-APP-010,Thắt lưng Mộc,Natural Mộc Belt,fashion,belt,nâu,da tổng hợp dài 105 cm có thể điều chỉnh,159000,12,https://example.com/demo/DM-APP-010,demo_synthetic
+DM-APP-011,Nón lưỡi trai Hồng Mây,Pink Cloud Cap,fashion,hat,hồng,vòng đầu demo 54-58 cm,119000,16,https://example.com/demo/DM-APP-011,demo_synthetic
+DM-APP-012,Tất cổ ngắn Mây,Cloud Ankle Socks,fashion,socks,trắng,cotton size 36-42 bộ 3 đôi,69000,20,https://example.com/demo/DM-APP-012,demo_synthetic
+DM-APP-013,Áo khoác Gió Mát,Breeze Jacket,fashion,jacket,xám,size M-XXL; không chống nước,459000,0,https://example.com/demo/DM-APP-013,demo_synthetic
+DM-APP-014,Balo Đi Học Mầm,Sprout School Backpack,fashion,backpack,đen,ngăn laptop tối đa 14 inch,329000,9,https://example.com/demo/DM-APP-014,demo_synthetic
+DM-BEA-005,Sữa tắm Mây Dịu,Soft Cloud Body Wash,beauty,body care,trắng,chai 300 ml; xem nhãn thành phần trước khi dùng,169000,18,https://example.com/demo/DM-BEA-005,demo_synthetic
+DM-BEA-006,Son dưỡng Mây Hồng,Pink Cloud Lip Balm,beauty,lip care,hồng,tuýp 5 g; không có tuyên bố điều trị,89000,28,https://example.com/demo/DM-BEA-006,demo_synthetic
+DM-BEA-007,Cọ trang điểm Mầm Xanh,Sprout Makeup Brush,beauty,tool,xanh lá,cán 15 cm; vệ sinh trước khi dùng,129000,11,https://example.com/demo/DM-BEA-007,demo_synthetic
+DM-BEA-008,Gương gập Túi Mây,Cloud Pocket Mirror,beauty,accessory,bạc,gương đường kính 7 cm,59000,23,https://example.com/demo/DM-BEA-008,demo_synthetic
+DM-BEA-009,Bông tẩy trang Mềm Mây,Soft Cloud Cotton Pads,beauty,skincare accessory,trắng,túi 80 miếng; xem nhãn chất liệu,49000,31,https://example.com/demo/DM-BEA-009,demo_synthetic
+DM-BEA-010,Túi cọ trang điểm Hồng,Pink Brush Pouch,beauty,accessory,hồng,vải canvas khóa kéo 20 cm,79000,15,https://example.com/demo/DM-BEA-010,demo_synthetic
+DM-BEA-011,Lược gỗ Mộc,Natural Wood Comb,beauty,hair accessory,nâu,gỗ mẫu dài 18 cm,69000,17,https://example.com/demo/DM-BEA-011,demo_synthetic
+DM-BEA-012,Kẹp tóc Mây Ngọc,Cloud Pearl Hair Clip,beauty,accessory,trắng,bộ 2 chiếc; kích thước demo 6 cm,55000,0,https://example.com/demo/DM-BEA-012,demo_synthetic
+DM-ELE-006,Cáp USB-C Mây 2 m,Cloud USB-C Cable 2 m,electronics,cable,đen,USB-C to USB-C; không kèm củ sạc,129000,27,https://example.com/demo/DM-ELE-006,demo_synthetic
+DM-ELE-007,Cáp Lightning Mây 1 m,Cloud Lightning Cable 1 m,electronics,cable,trắng,đầu nối Lightning; kiểm tra model thiết bị,99000,21,https://example.com/demo/DM-ELE-007,demo_synthetic
+DM-ELE-008,Pin sạc dự phòng Mầm 10000,Sprout Power Bank 10000,electronics,power bank,xanh lá,10000 mAh demo; kiểm tra quy định hành lý,399000,6,https://example.com/demo/DM-ELE-008,demo_synthetic
+DM-ELE-009,Chuột không dây Mây,Cloud Wireless Mouse,electronics,computer accessory,xám,receiver USB; cần cổng USB-A,219000,14,https://example.com/demo/DM-ELE-009,demo_synthetic
+DM-ELE-010,Bàn phím gọn Mây,Cloud Compact Keyboard,electronics,computer accessory,đen,layout demo 75 phần trăm; kết nối USB,499000,3,https://example.com/demo/DM-ELE-010,demo_synthetic
+DM-ELE-011,Bộ chia USB 4 cổng,Four-Port USB Hub,electronics,computer accessory,bạc,USB 3.0 demo; không có cổng sạc nhanh,189000,19,https://example.com/demo/DM-ELE-011,demo_synthetic
+DM-ELE-012,Cáp HDMI Mây 2 m,Cloud HDMI Cable 2 m,electronics,cable,đen,HDMI 2 m; độ phân giải cần kiểm tra theo thiết bị,149000,10,https://example.com/demo/DM-ELE-012,demo_synthetic
+DM-ELE-013,Micro cài áo Mây,Cloud Clip Microphone,electronics,audio,đen,jack USB-C; kiểm tra tương thích ứng dụng và thiết bị,259000,8,https://example.com/demo/DM-ELE-013,demo_synthetic
+DM-ELE-014,Ốp điện thoại Xanh Mầm,Sprout Green Phone Case,electronics,phone case,xanh lá,chỉ có cho model ghi trên bao bì; không kèm điện thoại,159000,12,https://example.com/demo/DM-ELE-014,demo_synthetic
+DM-ELE-015,Giá đỡ điện thoại Hồng,Pink Phone Stand,electronics,accessory,hồng,gập góc; không có tính năng sạc,99000,24,https://example.com/demo/DM-ELE-015,demo_synthetic
+DM-HOM-006,Bộ cốc thủy tinh Mây,Cloud Glass Cup Set,home,kitchen,trong,bộ 2 cốc 300 ml; tránh thay đổi nhiệt đột ngột,179000,10,https://example.com/demo/DM-HOM-006,demo_synthetic
+DM-HOM-007,Khay gỗ Mộc,Natural Mộc Tray,home,kitchen,nâu,kích thước demo 25 x 15 cm; lau khô sau khi dùng,159000,8,https://example.com/demo/DM-HOM-007,demo_synthetic
+DM-HOM-008,Đèn ngủ Mầm Xanh,Sprout Night Light,home,lighting,xanh lá,USB 5 V; không kèm adapter,249000,9,https://example.com/demo/DM-HOM-008,demo_synthetic
+DM-HOM-009,Rèm cửa Mây Nhẹ,Light Cloud Curtain,home,textile,be,một tấm 140 x 220 cm; không gồm thanh treo,299000,5,https://example.com/demo/DM-HOM-009,demo_synthetic
+DM-HOM-010,Hộp cơm Hồng Mây,Pink Cloud Lunch Box,home,kitchen,hồng,dung tích demo 700 ml; không dùng lò vi sóng,189000,15,https://example.com/demo/DM-HOM-010,demo_synthetic
+DM-HOM-011,Túi đựng đồ Mây,Cloud Storage Pouch,home,storage,xám,khóa kéo 30 x 20 cm,79000,22,https://example.com/demo/DM-HOM-011,demo_synthetic
+DM-HOM-012,Khăn bếp Lá Non,Young Leaf Kitchen Towel,home,textile,xanh lá,cotton 40 x 60 cm; bộ 2 khăn,69000,0,https://example.com/demo/DM-HOM-012,demo_synthetic
+DM-HOM-013,Thảm cửa Mầm Xanh,Sprout Door Mat,home,textile,nâu,kích thước demo 40 x 60 cm; giặt theo nhãn,139000,11,https://example.com/demo/DM-HOM-013,demo_synthetic
+DM-FOO-004,Cà phê rang Mây,Cloud Roasted Coffee,food,beverage,nâu,gói 250 g; xem thông tin lô và hạn dùng trên bao bì,129000,25,https://example.com/demo/DM-FOO-004,demo_synthetic
+DM-FOO-005,Granola Mầm Xanh,Sprout Granola,food,snack,nâu,gói 300 g; thành phần và dị ứng cần đối chiếu nhãn lô,99000,13,https://example.com/demo/DM-FOO-005,demo_synthetic
+DM-FOO-006,Mứt dâu Hồng Mây,Pink Cloud Strawberry Jam,food,pantry,đỏ,hũ 200 g; xem thành phần và hạn dùng trên nhãn,89000,7,https://example.com/demo/DM-FOO-006,demo_synthetic
+DM-FOO-007,Mì gạo Mây,Cloud Rice Noodles,food,pantry,trắng,gói 400 g; xem hướng dẫn và thông tin dị ứng trên nhãn,49000,30,https://example.com/demo/DM-FOO-007,demo_synthetic
+DM-FOO-008,Bột cacao Mộc,Natural Cocoa Powder,food,beverage,nâu,gói 200 g; xem thành phần và cách bảo quản trên nhãn,109000,0,https://example.com/demo/DM-FOO-008,demo_synthetic
+DM-FOO-009,Nước ép táo Mầm,Sprout Apple Juice,food,beverage,vàng,chai 250 ml; xem hạn dùng và nhãn lô,35000,36,https://example.com/demo/DM-FOO-009,demo_synthetic
+DM-FOO-010,Hạt điều rang Mây,Cloud Roasted Cashews,food,snack,vàng,túi 180 g; dị ứng cần xác nhận nhãn chính thức,119000,16,https://example.com/demo/DM-FOO-010,demo_synthetic
+DM-FOO-011,Bánh gạo giòn Lá Non,Young Leaf Rice Crackers,food,snack,vàng,gói 100 g; xem nhãn thành phần của lô hàng,39000,21,https://example.com/demo/DM-FOO-011,demo_synthetic
+DM-PET-003,Đồ chơi vải Mây,Cloud Fabric Pet Toy,pet,toy,xám,kích thước demo 12 cm; kiểm tra độ bền thường xuyên,79000,17,https://example.com/demo/DM-PET-003,demo_synthetic
+DM-PET-004,Khăn lau thú cưng Mầm,Sprout Pet Towel,pet,care accessory,xanh lá,40 x 60 cm; giặt riêng theo hướng dẫn,89000,12,https://example.com/demo/DM-PET-004,demo_synthetic
+DM-PET-005,Hộp đựng thức ăn Mây,Cloud Pet Food Container,pet,storage,trắng,dung tích demo 1.5 lít; không gồm thức ăn,149000,8,https://example.com/demo/DM-PET-005,demo_synthetic
+DM-PET-006,Vòng cổ Hồng Mây,Pink Cloud Pet Collar,pet,accessory,hồng,điều chỉnh 20-30 cm; đo cổ trước khi mua,119000,6,https://example.com/demo/DM-PET-006,demo_synthetic
+DM-PET-007,Bàn chải lông Mộc,Natural Pet Brush,pet,grooming,bạc,cán dài 18 cm; dùng nhẹ nhàng theo hướng dẫn,129000,10,https://example.com/demo/DM-PET-007,demo_synthetic
+DM-PET-008,Bình nước đi dạo Mầm,Sprout Walk Bottle,pet,travel,xanh lá,dung tích demo 300 ml; không gồm dây đeo,99000,19,https://example.com/demo/DM-PET-008,demo_synthetic
+DM-PET-009,Đệm nằm Mây,Cloud Pet Mat,pet,bedding,xám,50 x 40 cm; kiểm tra hướng dẫn giặt trên nhãn,259000,0,https://example.com/demo/DM-PET-009,demo_synthetic
+DM-STA-005,Bút highlight Mây,Cloud Highlighter Set,stationery,pen,vàng,bộ 4 màu; ngòi dẹt demo,49000,29,https://example.com/demo/DM-STA-005,demo_synthetic
+DM-STA-006,Sổ kế hoạch Hồng Mây,Pink Cloud Planner,stationery,notebook,hồng,khổ A5 160 trang; lịch mẫu năm 2026,89000,14,https://example.com/demo/DM-STA-006,demo_synthetic
+DM-STA-007,Kẹp giấy Mầm Xanh,Sprout Paper Clips,stationery,office supply,xanh lá,hộp 50 chiếc; cỡ tiêu chuẩn demo,29000,32,https://example.com/demo/DM-STA-007,demo_synthetic
+DM-STA-008,Bút chì gỗ Mộc,Natural Wood Pencil,stationery,pen,nâu,bộ 5 cây; độ cứng HB,25000,41,https://example.com/demo/DM-STA-008,demo_synthetic
+DM-STA-009,Túi hồ sơ Mây,Cloud Document Folder,stationery,office supply,trắng,khổ A4; bộ 3 túi,39000,18,https://example.com/demo/DM-STA-009,demo_synthetic
+DM-STA-010,Giấy note Hồng Phấn,Blush Pink Sticky Notes,stationery,office supply,hồng,3 xấp 70 tờ; giấy không chống nước,35000,0,https://example.com/demo/DM-STA-010,demo_synthetic
+DM-SVC-003,Gói tư vấn sản phẩm 30 phút,30-Minute Product Consultation,services,consulting,không áp dụng,buổi demo 30 phút; lịch cần nhân viên xác nhận,200000,99,https://example.com/demo/DM-SVC-003,demo_synthetic
+DM-SVC-004,Gói chụp ảnh sản phẩm cơ bản,Basic Product Photography,services,creative,không áp dụng,phạm vi số ảnh và lịch cần nhân viên xác nhận,800000,99,https://example.com/demo/DM-SVC-004,demo_synthetic
+DM-SVC-005,Gói rà soát danh mục,Product Catalogue Review,services,operations,không áp dụng,phạm vi và thời gian bàn giao cần nhân viên xác nhận,450000,99,https://example.com/demo/DM-SVC-005,demo_synthetic
+DM-SVC-006,Gói hướng dẫn bán hàng đa kênh,Omnichannel Sales Walkthrough,services,training,không áp dụng,buổi demo 60 phút; lịch cần nhân viên xác nhận,350000,99,https://example.com/demo/DM-SVC-006,demo_synthetic

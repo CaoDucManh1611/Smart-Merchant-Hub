@@ -80,11 +80,33 @@ test("channel cards expose quota blockers and normalized provider states", () =>
   assert.match(templateSource, /Nâng cấp gói/);
 });
 
-test("AI language keeps retrieval, topic grouping and experiments honest", () => {
-  assert.match(templateSource, /tra cứu kho kiến thức/i);
-  assert.match(templateSource, /chưa phải học không giám sát hoàn chỉnh/i);
-  assert.match(templateSource, /A\/B.*đang thử nghiệm/i);
-  assert.match(templateSource, /chưa tự thay đổi bot/i);
+test("social channel cards distinguish reserved plan slots from live connectors", () => {
+  assert.match(appSource, /detail\.filter\(\(item\) => \["facebook", "instagram", "telegram", "zalo", "tiktok", "shopee"\]/);
+  assert.match(appSource, /const socialChannelOnlineCount = computed/);
+  assert.match(appSource, /function isSocialChannelOnline\(channelType\)/);
+  assert.match(templateSource, /Hạn mức đã cấp:/);
+  assert.match(templateSource, /Kênh đang trực tuyến:/);
+  assert.match(templateSource, /metaChannelStatus\('facebook'\)/);
+  assert.match(templateSource, /metaChannelStatus\('instagram'\)/);
+  assert.match(templateSource, /offline: metaChannelIsOffline\('facebook'\)/);
+  assert.match(templateSource, /offline: metaChannelIsOffline\('instagram'\)/);
+});
+
+test("paired local connectors must be disconnected before a replacement pairing code", () => {
+  assert.match(appSource, /function localConnectorPairingBlocked\(channelType\)/);
+  assert.match(appSource, /if \(localConnectorPairingBlocked\(channelType\)\)/);
+  assert.match(templateSource, /localConnectorPairingDisabled\('facebook'\)/);
+  assert.match(templateSource, /localConnectorPairingDisabled\('instagram'\)/);
+  assert.match(templateSource, /localConnectorPairingDisabled\('tiktok'\)/);
+  assert.match(templateSource, /localConnectorPairingDisabled\('shopee'\)/);
+});
+
+test("sales guidance uses plain language and marks changes that need approval", () => {
+  assert.match(templateSource, /Trợ lý tìm câu trả lời trong tài liệu do shop cung cấp/);
+  assert.match(templateSource, /Nhu cầu khách hàng/);
+  assert.match(templateSource, /So sánh &amp; dự đoán/);
+  assert.match(templateSource, /chưa tự thay đổi câu trả lời gửi khách/);
+  assert.doesNotMatch(templateSource, /học không giám sát|A\/B và dự đoán/);
 });
 
 test("admin, auth and channel layouts have explicit mobile overflow protection", () => {

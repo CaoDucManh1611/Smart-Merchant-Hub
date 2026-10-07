@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 EXTRACTOR_NAME = "llm"
 EXTRACTOR_VERSION = "customer-facts-v1"
 FACT_EXTRACTION_SETTING_KEY = "customer_fact_extraction_enabled"
+FACT_WEEKLY_BATCH_SIZE = 100
+FACT_WEEKLY_CURSOR_PREFIX = "customer-fact-weekly-cursor:"
 MIN_CONFIDENCE = 0.65
 MAX_FACTS_PER_MESSAGE = 10
 ALLOWED_FACT_KEYS = {
@@ -346,6 +348,154 @@ def get_customer_fact_extraction_enabled(db: Session, business_id: int) -> bool:
     if setting is not None:
         return setting.value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(settings.CUSTOMER_FACT_EXTRACTION_ENABLED)
+
+
+def schedule_weekly_customer_fact_scan(
+    db: Session,
+    *,
+    business_id: int,
+    run_at: datetime | None = None,
+    idempotency_key: str | None = None,
+) -> None:
+    """Queue a resumable history backfill; raw conversations remain untouched."""
+    if not get_customer_fact_extraction_enabled(db, business_id):
+        return
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    week_key = (run_at or now).strftime("%G-W%V")
+    enqueue_job(
+        db,
+        business_id=business_id,
+        kind="customer.facts.weekly_scan",
+        payload={},
+        idempotency_key=idempotency_key or f"customer-facts-weekly:{week_key}",
+        run_at=run_at or now,
+    )
+
+
+def _fact_scan_cursor_key(customer_id: int) -> str:
+    return f"{FACT_WEEKLY_CURSOR_PREFIX}{customer_id}"
+
+
+def _set_fact_scan_cursor(db: Session, *, business_id: int, customer_id: int, message_id: int) -> None:
+    key = _fact_scan_cursor_key(customer_id)
+    setting = db.query(BusinessSetting).filter(
+        BusinessSetting.business_id == business_id,
+        BusinessSetting.key == key,
+    ).first()
+    if setting is None:
+        db.add(BusinessSetting(business_id=business_id, key=key, value=str(message_id)))
+    else:
+        setting.value = str(message_id)
+
+
+def dispatch_weekly_customer_fact_scan(db: Session, *, business_id: int) -> dict[str, int | bool]:
+    """Incrementally backfill imported chat once, then only inspect newer rows.
+
+    Each successful message advances a tenant-local checkpoint. This avoids
+    paying to re-read/re-embed every old message each week and keeps the source
+    chat as the canonical record. An empty extraction is checkpointed too.
+    """
+    if not get_customer_fact_extraction_enabled(db, business_id):
+        return {"scanned": 0, "extracted_facts": 0, "has_more": False}
+
+    customers = db.query(Customer.id).filter(
+        Customer.business_id == business_id,
+        Customer.status != "merged",
+        Customer.fact_extraction_opt_out.is_(False),
+    ).order_by(Customer.id.asc()).all()
+    remaining = FACT_WEEKLY_BATCH_SIZE
+    scanned = 0
+    extracted_count = 0
+    has_more = False
+    continuation_customer_id: int | None = None
+    continuation_cursor = 0
+
+    for (customer_id_value,) in customers:
+        if remaining <= 0:
+            has_more = True
+            break
+        customer_id = int(customer_id_value)
+        consent = db.query(CustomerConsent.status).filter(
+            CustomerConsent.business_id == business_id,
+            CustomerConsent.customer_id == customer_id,
+            CustomerConsent.purpose == "personalization",
+        ).order_by(CustomerConsent.id.desc()).first()
+        if consent is not None and consent[0] == "revoked":
+            continue
+
+        key = _fact_scan_cursor_key(customer_id)
+        cursor_row = db.query(BusinessSetting.value).filter(
+            BusinessSetting.business_id == business_id,
+            BusinessSetting.key == key,
+        ).first()
+        try:
+            cursor = max(0, int(cursor_row[0])) if cursor_row else 0
+        except (TypeError, ValueError):
+            cursor = 0
+
+        batch = db.query(Message).join(
+            Conversation, Conversation.id == Message.conversation_id,
+        ).filter(
+            Conversation.business_id == business_id,
+            Conversation.customer_id == customer_id,
+            Message.direction == "inbound",
+            Message.id > cursor,
+        ).order_by(Message.id.asc()).limit(remaining).all()
+        if not batch:
+            continue
+
+        continuation_customer_id = customer_id
+        for message in batch:
+            if (message.content or "").strip() and not (message.content or "").strip().startswith("/"):
+                already_extracted = db.query(CustomerFact.id).filter(
+                    CustomerFact.business_id == business_id,
+                    CustomerFact.customer_id == customer_id,
+                    CustomerFact.source_message_id == message.id,
+                    CustomerFact.extractor == EXTRACTOR_NAME,
+                ).first()
+                if already_extracted is None:
+                    extracted_count += len(extract_and_persist_customer_facts(
+                        db,
+                        business_id=business_id,
+                        customer_id=customer_id,
+                        source_message_id=int(message.id),
+                        content=str(message.content)[:4000],
+                    ))
+            _set_fact_scan_cursor(
+                db,
+                business_id=business_id,
+                customer_id=customer_id,
+                message_id=int(message.id),
+            )
+            db.commit()
+            scanned += 1
+            remaining -= 1
+            continuation_cursor = int(message.id)
+
+        # A full page may have a next page. Queue a short continuation instead
+        # of holding one worker lease while scanning an unbounded archive.
+        if len(batch) >= FACT_WEEKLY_BATCH_SIZE or remaining == 0:
+            has_more = True
+            break
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if has_more and continuation_customer_id is not None:
+        schedule_weekly_customer_fact_scan(
+            db,
+            business_id=business_id,
+            run_at=now + timedelta(seconds=30),
+            idempotency_key=(
+                f"customer-facts-weekly:continue:{continuation_customer_id}:{continuation_cursor}"
+            ),
+        )
+    else:
+        schedule_weekly_customer_fact_scan(
+            db,
+            business_id=business_id,
+            run_at=now + timedelta(days=7),
+        )
+    db.commit()
+    return {"scanned": scanned, "extracted_facts": extracted_count, "has_more": has_more}
 
 
 def schedule_customer_fact_extraction(db: Session, *, business_id: int, customer_id: int, source_message_id: int) -> None:

@@ -50,12 +50,17 @@ def _finish_checkout(db, *, business_id, customer_id, conversation_id):
         conversation_id=conversation_id, source_channel="telegram",
         text="Đồng ý đặt hàng",
     ).current_field == "name"
-    for value in ("Nguyễn Mai", "0912345678", "mai@example.com", "12 Nguyễn Huệ, Quận 1", "COD"):
-        result = advance_customer_collection(
-            db, business_id=business_id, customer_id=customer_id,
-            conversation_id=conversation_id, source_channel="telegram", text=value,
-        )
-    return result
+    return advance_customer_collection(
+        db, business_id=business_id, customer_id=customer_id,
+        conversation_id=conversation_id, source_channel="telegram",
+        text=(
+            "Tên người nhận: Nguyễn Mai\n"
+            "Số điện thoại: 0912345678\n"
+            "Email: mai@example.com\n"
+            "Địa chỉ nhận hàng: 12 Nguyễn Huệ, Quận 1\n"
+            "Thanh toán: COD"
+        ),
+    )
 
 
 def test_checkout_creates_draft_then_requires_hashed_otp_before_confirmation():
@@ -167,7 +172,7 @@ def test_smtp_checkout_sends_only_email_otp_and_reports_the_channel():
                 conversation_id=conversation.id,
             )
 
-        assert completed.prompt.find("email") >= 0
+        assert "email" in completed.prompt.lower()
         challenges = db.query(CustomerVerificationChallenge).filter_by(customer_id=customer.id).all()
         assert len(challenges) == 1
         assert challenges[0].channel == "email"

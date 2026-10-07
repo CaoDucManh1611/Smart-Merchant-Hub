@@ -25,6 +25,9 @@ class RecommendationItemOut(BaseModel):
     sku: str
     name: str
     price: float
+    available: int | None = None
+    product_url: str | None = None
+    click_url: str | None = None
     score: float
     reason: str
 

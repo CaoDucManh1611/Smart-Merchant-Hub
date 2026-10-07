@@ -110,5 +110,5 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceChunk]
     chunks_found: int
-    answer_status: Literal["answered", "no_context", "service_error"] = "answered"
+    answer_status: Literal["answered", "no_context", "service_error", "handoff_required"] = "answered"
     handoff_required: bool = False

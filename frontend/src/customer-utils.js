@@ -6,13 +6,14 @@ export function customerTagNames(profile) {
 }
 
 const friendlyCustomerTagNames = {
+  "RFM · Khách mới": "Khách mới",
   "RFM · Chưa mua": "Chưa mua hàng",
-  "RFM · Giá trị cao": "Chi tiêu cao",
+  "RFM · Giá trị cao": "VIP",
   "RFM · Trung thành": "Khách quen",
   "RFM · Tiềm năng": "Có tiềm năng",
   "RFM · Cần chăm sóc": "Cần quan tâm",
   "RFM · Nguy cơ rời bỏ": "Lâu chưa quay lại",
-  "RFM · Duy trì": "Mua đều đặn",
+  "RFM · Duy trì": "Khách thường",
   "RFM · AI nhóm 1": "Nhóm 1",
   "RFM · AI nhóm 2": "Nhóm 2",
   "RFM · AI nhóm 3": "Nhóm 3",

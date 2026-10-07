@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.experimentation import (
@@ -31,6 +32,7 @@ from app.models.recommendation import RecommendationCustomerProfile
 
 RUNTIME_BINDING = "chatbot_auto_reply"
 _RESPONSE_STYLES = {"balanced", "concise", "detailed"}
+MIN_CHATBOT_BANDIT_OUTCOMES = 20
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,7 @@ def select_chatbot_reply_choice(
         return None
 
     policy, experiment, approved = selected
+    policy_config = policy.config if isinstance(policy.config, dict) else {}
     source_key = auto_reply_key or f"conversation:{conversation_id}"
     idempotency_key = "chatbot-reply:" + hashlib.sha256(
         f"{business_id}:{source_key}".encode("utf-8")
@@ -185,7 +188,20 @@ def select_chatbot_reply_choice(
         .first()
         for arm in arms
     }
-    if explore or not any(item and item.pulls for item in stats.values()):
+    try:
+        minimum_events = max(1, min(10000, int(
+            policy_config.get("min_training_events", MIN_CHATBOT_BANDIT_OUTCOMES)
+        )))
+    except (TypeError, ValueError):
+        minimum_events = MIN_CHATBOT_BANDIT_OUTCOMES
+    observed_outcomes = int(db.query(func.coalesce(func.sum(BanditArmStat.pulls), 0)).filter(
+        BanditArmStat.business_id == business_id,
+        BanditArmStat.policy_id == policy.id,
+    ).scalar() or 0)
+    if observed_outcomes < minimum_events:
+        arm = arms[0]
+        reason = "warmup_default"
+    elif explore or not any(item and item.pulls for item in stats.values()):
         arm = random.choice(arms)
         reason = "exploration"
     else:
@@ -193,7 +209,7 @@ def select_chatbot_reply_choice(
             arms,
             key=lambda item: (
                 float(
-                    (stats[item].reward_sum or 0) / max(1, stats[item].pulls)
+                    ((stats[item].reward_sum or 0) / max(1, stats[item].pulls)) if stats[item] else 0
                 ),
                 item,
             ),

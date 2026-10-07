@@ -8,6 +8,7 @@ Hỗ trợ:
 - Streaming response
 """
 
+import base64
 import logging
 from collections.abc import AsyncGenerator
 from functools import lru_cache
@@ -75,6 +76,19 @@ def call_groq(messages: list[dict]) -> str:
     )
 
 
+def call_groq_vision(messages: list[dict]) -> str:
+    """Call the dedicated multimodal model without changing text-chat routing."""
+    return _call_with_key_rotation(
+        _provider_pool("groq"),
+        lambda key: _groq_client(key).chat.completions.create(
+            model=settings.GROQ_VISION_MODEL,
+            messages=messages,
+            temperature=0.1,
+            max_completion_tokens=512,
+        ).choices[0].message.content or "",
+    )
+
+
 async def stream_groq(
     messages: list[dict],
 ) -> AsyncGenerator[str, None]:
@@ -131,11 +145,28 @@ def _messages_to_gemini_format(
         if role == "system":
             system_instruction = content
         elif role == "user":
-            history.append({"role": "user", "parts": [content]})
+            history.append({"role": "user", "parts": content if isinstance(content, list) else [content]})
         elif role == "assistant":
-            history.append({"role": "model", "parts": [content]})
+            history.append({"role": "model", "parts": content if isinstance(content, list) else [content]})
 
     return system_instruction, history
+
+
+def _gemini_parts(parts: list, types) -> list:
+    result = []
+    for part in parts:
+        if isinstance(part, dict) and part.get("type") == "text":
+            result.append(types.Part.from_text(text=str(part.get("text") or "")))
+        elif isinstance(part, dict) and part.get("type") == "image_url":
+            image_url = str((part.get("image_url") or {}).get("url") or "")
+            header, separator, encoded = image_url.partition(",")
+            if not separator or not header.startswith("data:image/") or ";base64" not in header:
+                raise ValueError("Gemini vision expects an inline base64 image")
+            mime_type = header[5:].split(";", 1)[0]
+            result.append(types.Part.from_bytes(data=base64.b64decode(encoded), mime_type=mime_type))
+        else:
+            result.append(types.Part.from_text(text=str(part)))
+    return result
 
 
 def _call_gemini_once(messages: list[dict], api_key: str, model: str | None = None) -> str:
@@ -152,7 +183,7 @@ def _call_gemini_once(messages: list[dict], api_key: str, model: str | None = No
     contents = [
         types.Content(
             role=item["role"],
-            parts=[types.Part.from_text(text=str(part)) for part in item["parts"]],
+            parts=_gemini_parts(item["parts"], types),
         )
         for item in history
     ]
@@ -171,6 +202,35 @@ def call_gemini(messages: list[dict]) -> str:
         _provider_pool("gemini"),
         lambda key: _call_gemini_once(messages, key),
     )
+
+
+def call_llm_with_image(messages: list[dict], image_bytes: bytes, mime_type: str) -> str:
+    """Route a single inbound image through a vision-capable provider model."""
+    image_data = base64.b64encode(image_bytes).decode("ascii")
+    multimodal = [dict(message) for message in messages]
+    image_part = {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
+    }
+    for message in reversed(multimodal):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        parts = list(content) if isinstance(content, list) else [{"type": "text", "text": str(content or "")}]
+        parts.append(image_part)
+        message["content"] = parts
+        break
+    else:
+        multimodal.append({"role": "user", "content": [image_part]})
+
+    provider = settings.LLM_PROVIDER.strip().lower()
+    if provider == "groq":
+        return call_groq_vision(multimodal)
+    if provider == "gemini":
+        return call_gemini(multimodal)
+    if provider == "openai":
+        return call_openai(multimodal)
+    raise ValueError(f"Provider {provider!r} does not support image input")
 
 
 def call_gemini_for_turn(fragments: list[str]) -> str:

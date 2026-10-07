@@ -1,11 +1,15 @@
 import asyncio
 from concurrent.futures import Future
+import hashlib
 import json
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
+from threading import Thread
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
 import pytest
@@ -15,6 +19,7 @@ from starlette.responses import Response
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import shopee_bot
 import connector_pairing
+import server_connector_agent
 from shopee_bot import normalize_message
 
 
@@ -56,6 +61,129 @@ def test_pairing_and_connector_codes_are_shop_scoped(channel):
 
     token = f"CONN.{channel}.12.34.abcdEFGHijkl_1234"
     assert _code_parts(token, "CONN", channel) == (channel, 12, 34, "abcdEFGHijkl_1234")
+
+
+def test_pair_request_keeps_local_mode_as_compatibility_default():
+    request = local_connectors.PairConnectorRequest(pairing_code="PAIR.shopee.12.34.abcdEFGHijkl_1234")
+    assert request.execution_mode == "local"
+
+
+def test_server_viewer_input_rejects_unbounded_or_unsupported_actions():
+    assert local_connectors.ServerViewerInput(action="click", x=1200, y=800).action == "click"
+    with pytest.raises(Exception):
+        local_connectors.ServerViewerInput(action="navigate", url="https://example.com")
+    with pytest.raises(Exception):
+        local_connectors.ServerViewerInput(action="click", x=10001, y=0)
+
+
+def test_server_viewer_ticket_is_scoped_and_stored_only_as_a_hash(monkeypatch):
+    ticket = "viewer-ticket-value"
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "business_id": 7,
+        "channel_type": "instagram",
+        "status": "active",
+        "config": {
+            "connector_execution_mode": "server",
+            "server_viewer_ticket_hash": hashlib.sha256(ticket.encode()).hexdigest(),
+            "server_viewer_ticket_expires_at": int(__import__("time").time()) + 100,
+        },
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query): return channel
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+    _, config = local_connectors._server_viewer_channel(7, "instagram", 11, f"Bearer {ticket}", object())
+    assert config["server_viewer_ticket_hash"] != ticket
+    with pytest.raises(HTTPException) as error:
+        local_connectors._server_viewer_channel(7, "instagram", 11, "Bearer incorrect-ticket", object())
+    assert error.value.status_code == 401
+
+
+def test_server_agent_uses_stable_shop_scoped_ports_and_restricts_channels(tmp_path, monkeypatch):
+    monkeypatch.setattr(server_connector_agent, "DATA_ROOT", tmp_path)
+    first = server_connector_agent._worker_ports((7, "shopee", 11))
+    assert first == server_connector_agent._worker_ports((7, "shopee", 11))
+    assert first != server_connector_agent._worker_ports((7, "tiktok", 11))
+    with pytest.raises(ValueError):
+        server_connector_agent._safe_key(7, "whatsapp", 11)
+
+
+def test_server_agent_authorizes_internal_routes_and_scopes_worker_lookup(monkeypatch):
+    monkeypatch.setattr(server_connector_agent, "AGENT_TOKEN", "agent-test-secret")
+    assert server_connector_agent._authorized({"X-Server-Connector-Agent-Token": "agent-test-secret"})
+    assert not server_connector_agent._authorized({"X-Server-Connector-Agent-Token": "wrong"})
+
+    class Process:
+        @staticmethod
+        def poll(): return None
+
+    record = {"key": (7, "shopee", 11), "process": Process()}
+    monkeypatch.setattr(server_connector_agent, "workers", {(7, "shopee", 11): record})
+    assert server_connector_agent._record_for_path(["internal", "channels", "7", "shopee", "11", "send"]) is record
+    assert server_connector_agent._record_for_path(["internal", "channels", "7", "tiktok", "11", "send"]) is None
+
+
+def test_server_agent_http_routes_require_shared_secret(monkeypatch):
+    monkeypatch.setattr(server_connector_agent, "AGENT_TOKEN", "agent-test-secret")
+    server = server_connector_agent.ThreadingHTTPServer(("127.0.0.1", 0), server_connector_agent.AgentHandler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with urlopen(f"{base_url}/health", timeout=2) as response:
+            assert json.loads(response.read()) == {"status": "ok", "agent": "windows"}
+        with pytest.raises(HTTPError) as unauthorized:
+            urlopen(f"{base_url}/internal/channels/7/shopee/11/screenshot", timeout=2)
+        assert unauthorized.value.code == 401
+        request = Request(
+            f"{base_url}/internal/channels/7/shopee/11/screenshot",
+            headers={"X-Server-Connector-Agent-Token": "agent-test-secret"},
+        )
+        with pytest.raises(HTTPError) as not_ready:
+            urlopen(request, timeout=2)
+        assert not_ready.value.code == 503
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_server_pairing_helper_opens_ticket_viewer_without_persisting_connector_token(tmp_path, monkeypatch):
+    package = tmp_path / "bundle"
+    runtime = tmp_path / "runtime"
+    package.mkdir()
+    (package / "connector_defaults.json").write_text(json.dumps({
+        "backend_url": "https://crm.example/api",
+        "frontend_url": "https://crm.example",
+        "execution_mode": "server",
+    }), encoding="utf-8")
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        @staticmethod
+        def read():
+            return json.dumps({
+                "channel_type": "shopee", "business_id": 7, "channel_id": 11,
+                "server_managed": True, "viewer_ticket": "opaque-one-time-ticket",
+            }).encode()
+    monkeypatch.setattr(connector_pairing, "urlopen", lambda *_args, **_kwargs: Response())
+    opened = []
+    monkeypatch.setattr(connector_pairing.webbrowser, "open", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "PAIR.shopee.7.11.abcdEFGHijkl_1234")
+
+    with pytest.raises(SystemExit) as result:
+        connector_pairing.configure_local_connector("shopee", runtime, package)
+
+    assert result.value.code == 0
+    assert not (runtime / "connector_config.json").exists()
+    assert opened and "server-connector-viewer.html#" in opened[0]
+    assert "opaque-one-time-ticket" in opened[0]
 
 
 @pytest.mark.parametrize("channel", ["facebook", "instagram"])
@@ -386,6 +514,49 @@ def test_shop_admin_retry_explains_offline_connector(monkeypatch):
     monkeypatch.setattr(onboarding, "schema_name_for", lambda _business_id: "shop_7")
     with pytest.raises(HTTPException, match="ngoại tuyến"):
         onboarding.retry_local_connector(7, "tiktok", object(), type("User", (), {"id": 3})())
+
+
+@pytest.mark.parametrize("channel_type", ["facebook", "instagram", "tiktok", "shopee"])
+def test_pairing_code_requires_explicit_disconnect_for_already_paired_connector(monkeypatch, channel_type):
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "business_id": 7,
+        "channel_type": channel_type,
+        "status": "active",
+        "access_token_encrypted": "encrypted-connector-token",
+        "config": {
+            "provider": f"{channel_type}_local_connector",
+            "connector_paired_at": 123,
+            "connector_last_seen_at": "2020-01-01T00:00:00+00:00",
+        },
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query):
+            return channel
+
+    class PlatformSession:
+        @staticmethod
+        def rollback():
+            pass
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(onboarding, "_require_shop_admin", lambda *_args: None)
+    monkeypatch.setattr(onboarding, "tenant_session", tenant_session)
+    monkeypatch.setattr(onboarding, "schema_name_for", lambda _business_id: "shop_7")
+
+    with pytest.raises(HTTPException) as error:
+        onboarding.create_local_connector_pairing_code(
+            7, channel_type, object(), PlatformSession(), type("User", (), {"id": 3})()
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "connector_already_paired"
+    assert "ngắt kết nối" in error.value.detail["message"].lower()
 
 
 def test_shop_admin_retry_rejects_non_local_channel(monkeypatch):
@@ -784,6 +955,35 @@ def test_shopee_send_uses_shop_connector_and_platform_thread(monkeypatch):
     assert sent["url"] == "http://host.docker.internal:8092/send"
     assert sent["headers"]["X-Shopee-Bridge-Secret"] == "connector-token"
     assert sent["json"] == {"threadId": "thread-1", "message": "Chào bạn", "recipientId": "buyer-1"}
+
+
+def test_server_managed_shopee_send_routes_through_private_agent(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "access_token_encrypted": "encrypted-token",
+        "config": {"connector_execution_mode": "server"},
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query): return channel
+
+    response = type("Response", (), {"status_code": 200, "json": lambda _self: {"status": "sent"}})()
+    sent = {}
+    monkeypatch.setattr(conversations, "_local_connector_thread_id", lambda *_args: "thread-1")
+    monkeypatch.setattr(conversations, "decrypt_token", lambda *_args: "connector-token")
+    monkeypatch.setattr(conversations.settings, "SERVER_CONNECTOR_AGENT_URL", "http://host.docker.internal:8095")
+    monkeypatch.setattr(conversations.settings, "SERVER_CONNECTOR_AGENT_TOKEN", "agent-secret")
+    monkeypatch.setattr(conversations.httpx, "post", lambda url, **kwargs: (sent.update(url=url, **kwargs) or response))
+
+    result, _ = conversations.send_shopee_text(
+        db=TenantDb(), conversation={"id": 22, "channel_id": 11}, recipient_id="buyer-1",
+        text_content="Chào bạn", business_id=7,
+    )
+
+    assert result == {"status": "sent"}
+    assert sent["url"] == "http://host.docker.internal:8095/internal/channels/7/shopee/11/send"
+    assert sent["headers"] == {"X-Server-Connector-Agent-Token": "agent-secret"}
 
 
 @pytest.mark.parametrize(

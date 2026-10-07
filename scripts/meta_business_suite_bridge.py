@@ -36,7 +36,7 @@ except Exception:
 
 BASE = Path(__file__).resolve().parent
 PACKAGE_DIR = Path(getattr(sys, "_MEIPASS", str(BASE)))
-RUNTIME = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantMetaBusinessSuite"
+RUNTIME = Path(os.getenv("SMART_MERCHANT_RUNTIME_DIR") or (Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantMetaBusinessSuite"))
 INBOX_ROOT = "https://business.facebook.com/latest/inbox"
 CONNECTOR_STARTED_AT = time.time()
 CONTROL_PAGE = None
@@ -933,15 +933,17 @@ async def _visible_message_rows(page, channel_type: str, thread_id: str, display
                 messageNode = node;
                 if (node === child) break;
               }
-              const text = (messageNode.innerText || '').trim();
+              let text = (messageNode.innerText || '').trim();
               if (!id || !text) continue;
               const textNode = [...messageNode.querySelectorAll('span,div')]
                 .filter(e => e.children.length === 0 && (e.innerText || '').trim())
                 .sort((a, b) => (b.innerText || '').length - (a.innerText || '').length)[0];
               const bubble = (textNode || marker).getBoundingClientRect();
               const incoming = bubble.left + bubble.width / 2 < rr.left + rr.width / 2;
+              if (!incoming) text = text.replace(/\s*(?:(?:Đã gửi|Đã xem|Sent|Seen)\s*)?Người gửi\s*:\s*[\s\S]*$/iu, '').trim();
+              if (!text) continue;
               const perMessageTimestamp = timestampFrom(messageNode, marker);
-              result.push({messageId: id, message: text.slice(0, 10000), direction: incoming ? 'inbound' : 'outbound', timestamp: perMessageTimestamp, dateLabel: dateLabelFor(marker) || dateLabel});
+              result.push({messageId: id, message: text.slice(0, 10000), direction: incoming ? 'inbound' : 'outbound', timestamp: perMessageTimestamp, dateLabel: dateLabelFor(marker) || dateLabel, bubbleX: Math.round(bubble.left), bubbleY: Math.round(bubble.top)});
             }
           }
           return result;
@@ -949,6 +951,7 @@ async def _visible_message_rows(page, channel_type: str, thread_id: str, display
     )
     if not isinstance(raw, list):
         return []
+    raw = _dedupe_visible_message_rows(raw)
     return [
         {
             "messageId": str(item.get("messageId") or ""),
@@ -965,6 +968,21 @@ async def _visible_message_rows(page, channel_type: str, thread_id: str, display
         }
         for item in raw
     ]
+
+
+def _dedupe_visible_message_rows(rows: list[dict]) -> list[dict]:
+    """Collapse nested Meta IDs that describe the same rendered bubble."""
+    visible = []
+    seen = set()
+    for item in rows:
+        message = " ".join(str(item.get("message") or "").split()).casefold()
+        position = (item.get("bubbleX"), item.get("bubbleY"))
+        key = (item.get("direction"), message, *position) if message and None not in position else item.get("messageId")
+        if key in seen:
+            continue
+        seen.add(key)
+        visible.append(item)
+    return visible
 
 
 async def _send_meta_message(thread_id: object, message: object, recipient_id: object = "") -> dict:
@@ -1025,27 +1043,61 @@ async def _send_meta_message(thread_id: object, message: object, recipient_id: o
             .sort((a, b) => a.distance - b.distance);
           const button = buttons[0]?.node;
           if (button) button.setAttribute('data-smart-merchant-meta-send', 'active');
-          return {hasButton: !!button};
+          return {
+            hasButton: !!button,
+            messageIds: [...new Set([...document.querySelectorAll('[data-message-id]')]
+              .map(node => node.getAttribute('data-message-id')).filter(Boolean))]
+          };
         }"""
     )
     if not target:
         raise RuntimeError("Không nhận diện được ô trả lời trong hội thoại Meta đang mở.")
+    existing_message_ids = set(target.get("messageIds") or [])
     composer = page.locator('[data-smart-merchant-meta-composer="active"]')
     await composer.fill(message)
+    send_target = await page.evaluate(
+        r"""() => {
+          const editor = document.querySelector('[data-smart-merchant-meta-composer="active"]');
+          if (!editor) return {hasButton: false};
+          const vw = innerWidth, vh = innerHeight, er = editor.getBoundingClientRect();
+          const visible = node => {
+            const r = node.getBoundingClientRect(), s = getComputedStyle(node);
+            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+          };
+          for (const node of document.querySelectorAll('[data-smart-merchant-meta-send]')) node.removeAttribute('data-smart-merchant-meta-send');
+          const button = [...document.querySelectorAll('button,[role="button"]')]
+            .filter(visible).map(node => {
+              const r = node.getBoundingClientRect();
+              const name = [node.getAttribute('aria-label'), node.getAttribute('title'), node.getAttribute('data-testid'), node.innerText].join(' ').trim();
+              return {node, r, name, distance: Math.abs(r.y + r.height / 2 - (er.y + er.height / 2))};
+            }).filter(item => item.r.x > vw * .20 && item.r.x < vw * .82 && item.r.y > vh * .50
+              && item.distance < 100 && /(send|gửi|tin nhắn)/i.test(item.name))
+            .sort((a, b) => a.distance - b.distance)[0]?.node;
+          if (button) button.setAttribute('data-smart-merchant-meta-send', 'active');
+          return {hasButton: !!button};
+        }"""
+    )
     button = page.locator('[data-smart-merchant-meta-send="active"]')
-    if target.get("hasButton"):
-        await button.click(timeout=5000)
-    else:
-        await composer.press("Enter")
+    try:
+        if send_target and send_target.get("hasButton"):
+            await button.click(timeout=5000)
+        else:
+            await composer.press("Enter")
+    except Exception as exc:
+        raise MetaDeliveryUnknown("Meta chưa xác nhận thao tác gửi; kiểm tra hội thoại trước khi thử lại để tránh gửi trùng.") from exc
 
     for _ in range(20):
         await page.wait_for_timeout(250)
         state = await page.evaluate(
-            r"""messageText => {
+            r"""({messageText, existingMessageIds}) => {
+              const wanted = (messageText || '').replace(/\s+/g, ' ').trim();
+              const previous = new Set(existingMessageIds || []);
               const editor = document.querySelector('[data-smart-merchant-meta-composer="active"]');
               const value = editor ? ('value' in editor ? editor.value : editor.innerText || editor.textContent || '') : '';
               const vw = innerWidth, vh = innerHeight;
               const markers = [...document.querySelectorAll('[data-message-id]')].filter(node => {
+                const id = node.getAttribute('data-message-id') || '';
+                if (!id || previous.has(id)) return false;
                 const r = node.getBoundingClientRect();
                 if (!r.width || !r.height || r.x < vw * .2 || r.x > vw * .82 || r.y < vh * .1) return false;
                 let container = node;
@@ -1053,16 +1105,16 @@ async def _send_meta_message(thread_id: object, message: object, recipient_id: o
                   if ((container.innerText || '').includes(messageText)) break;
                 }
                 const text = (container.innerText || node.innerText || '').replace(/\s+/g, ' ').trim();
-                return text.includes(messageText) && r.x + r.width / 2 > vw * .48;
+                return text.includes(wanted) && r.x + r.width / 2 > vw * .48;
               });
-              return {empty: !!editor && !value.trim(), messageId: markers.at(-1)?.getAttribute('data-message-id') || ''};
+              return {empty: !!editor && !value.trim(), messageId: markers[0]?.getAttribute('data-message-id') || ''};
             }""",
-            message,
+            {"messageText": message, "existingMessageIds": list(existing_message_ids)},
         )
-        if state and (state.get("empty") or state.get("messageId")):
+        if state and state.get("messageId"):
             return {
                 "status": "sent",
-                "message_id": state.get("messageId") or f"meta-ui:{thread_id}:{int(time.time() * 1000)}",
+                "message_id": state["messageId"],
                 "threadId": thread_id,
             }
     raise MetaDeliveryUnknown("Meta chưa xác nhận tin đã gửi; hãy kiểm tra hội thoại trước khi thử lại.")
@@ -1416,6 +1468,62 @@ async def _scan_loaded_conversations(
     return scan_ok and stable_bottom >= 2
 
 
+async def _sync_changed_conversations(
+    page, channel_type: str, backend_url: str, connector_token: str,
+    checkpoint_path: Path, observed_rows: dict[str, str], rows: list[dict],
+    profile_cache: dict[str, dict],
+) -> None:
+    row_signatures = {
+        str(row.get("index")): hashlib.sha256(
+            str(row.get("label") or "").encode("utf-8")
+        ).hexdigest()
+        for row in rows
+    }
+    if not observed_rows:
+        observed_rows.update(row_signatures)
+        return
+
+    changed = [
+        row for row in rows
+        if observed_rows.get(str(row.get("index"))) != row_signatures.get(str(row.get("index")))
+    ]
+    for row in changed[:5]:
+        row_key = str(row.get("index"))
+        try:
+            fresh_rows = await _conversation_rows(page)
+            fresh_row = next((candidate for candidate in fresh_rows if candidate.get("label") == row.get("label")), None)
+            if fresh_row is None:
+                continue
+            thread_id = await _open_meta_conversation(page, fresh_row, channel_type)
+            profile = {
+                "displayName": _usable_meta_name(fresh_row.get("displayName")),
+                "avatarUrl": str(fresh_row.get("avatarUrl") or ""),
+            }
+            if profile["displayName"] or profile["avatarUrl"]:
+                profile_cache[thread_id] = profile
+            history_checkpoint = load_history_checkpoint(checkpoint_path)
+            history_checkpoint, count = await _import_history(
+                page, channel_type, backend_url, connector_token,
+                checkpoint_path, history_checkpoint, scroll_oldest=False,
+                display_name=profile["displayName"], avatar_url=profile["avatarUrl"],
+                mark_latest_inbound_live=True,
+            )
+            # A transient Meta navigation/ID error must not consume this row
+            # change; the next poll can retry it instead of losing the event.
+            observed_rows[row_key] = row_signatures[row_key]
+            print(
+                f"🔔 Đã cập nhật hội thoại {_channel_name(channel_type)} "
+                f"({count} tin đang hiển thị).",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"⚠️ Chưa đồng bộ được hoạt động chat Meta mới: "
+                f"{type(exc).__name__}: {str(exc)[:140]}.",
+                flush=True,
+            )
+
+
 def _select_channel_type() -> str:
     executable_name = Path(sys.executable if getattr(sys, "frozen", False) else sys.argv[0]).stem.casefold()
     if executable_name == "smartmerchantmessenger":
@@ -1467,7 +1575,8 @@ async def run() -> None:
     avatar_scan_task: asyncio.Task | None = None
     avatar_scan_page = None
     avatar_scan_started = bool(avatar_checkpoint.get("complete"))
-    port = 9224 if channel_type == "facebook" else 9225
+    port_variable = "META_MESSENGER_CDP_PORT" if channel_type == "facebook" else "META_INSTAGRAM_CDP_PORT"
+    port = int(os.getenv(port_variable, "9224" if channel_type == "facebook" else "9225"))
     report_connector_status(channel_type, backend_url, connector_token)
     async with async_playwright() as playwright:
         while True:
@@ -1551,43 +1660,11 @@ async def run() -> None:
                             avatar_scan_page = None
                             print(f"⚠️ Chưa khởi động được lượt cập nhật avatar Instagram: {type(exc).__name__}.", flush=True)
                     rows = await _conversation_rows(page)
-                    row_signatures = {
-                        str(row.get("index")): hashlib.sha256(
-                            str(row.get("label") or "").encode("utf-8")
-                        ).hexdigest()
-                        for row in rows
-                    }
-                    if not observed_rows:
-                        observed_rows.update(row_signatures)
-                    elif monitor_conversation_changes:
-                        changed = [
-                            row for row in rows
-                            if observed_rows.get(str(row.get("index"))) != row_signatures.get(str(row.get("index")))
-                        ]
-                        observed_rows.update(row_signatures)
-                        for row in changed[:5]:
-                            try:
-                                fresh_rows = await _conversation_rows(page)
-                                fresh_row = next((candidate for candidate in fresh_rows if candidate.get("label") == row.get("label")), None)
-                                if fresh_row is None:
-                                    continue
-                                thread_id = await _open_meta_conversation(page, fresh_row, channel_type)
-                                profile = {
-                                    "displayName": _usable_meta_name(fresh_row.get("displayName")),
-                                    "avatarUrl": str(fresh_row.get("avatarUrl") or ""),
-                                }
-                                if profile["displayName"] or profile["avatarUrl"]:
-                                    profile_cache[thread_id] = profile
-                                history_checkpoint = load_history_checkpoint(checkpoint_path)
-                                history_checkpoint, count = await _import_history(
-                                    page, channel_type, backend_url, connector_token,
-                                    checkpoint_path, history_checkpoint, scroll_oldest=False,
-                                    display_name=profile["displayName"], avatar_url=profile["avatarUrl"],
-                                    mark_latest_inbound_live=True,
-                                )
-                                print(f"🔔 Đã nhập tin mới ở inbox {channel_label} ({count} tin đang tải).", flush=True)
-                            except Exception as exc:
-                                print(f"⚠️ Chưa đồng bộ được hoạt động chat Meta mới: {type(exc).__name__}.", flush=True)
+                    if monitor_conversation_changes:
+                        await _sync_changed_conversations(
+                            page, channel_type, backend_url, connector_token,
+                            checkpoint_path, observed_rows, rows, profile_cache,
+                        )
                     if rows and not history_scan_started:
                         history_scan_started = True
                         try:

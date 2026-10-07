@@ -2999,6 +2999,27 @@ button:hover {
   opacity: 0.6;
 }
 
+.customer-fact-privacy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  margin: 10px 0;
+  color: #8c9699;
+  font-size: 12px;
+}
+.customer-fact-privacy label { display: inline-flex; align-items: center; gap: 7px; }
+.customer-fact-privacy button {
+  border: 1px solid rgba(220, 90, 90, 0.45);
+  border-radius: 7px;
+  padding: 6px 9px;
+  color: #d77777;
+  background: transparent;
+  cursor: pointer;
+}
+.customer-fact-privacy button:disabled { opacity: 0.55; cursor: wait; }
+
 .facts-error {
   margin-bottom: 0.6rem;
   color: #b52c25;
@@ -7190,6 +7211,13 @@ body,
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.chat-composer .composer-media-capability {
+  max-width: 320px;
+  color: var(--text-muted, #718287);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .chat-composer .voice-recording-status::before {
@@ -16108,3 +16136,22 @@ body.crm-dark .service-request-dismiss:hover { color: #fff; background: #303a3e;
 @media (prefers-reduced-motion: reduce) {
   .service-mode-switch::before { transition: none; }
 }
+
+/* Keep the Customer 360 avatar round and prevent long customer IDs from squeezing it. */
+.crm-app:not(.platform-admin-workspace) .customer-profile > .customer-avatar {
+  box-sizing: border-box;
+  flex: 0 0 72px;
+  width: 72px;
+  height: 72px;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 50%;
+}
+.crm-app:not(.platform-admin-workspace) .customer-profile > .customer-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+.crm-app:not(.platform-admin-workspace) .customer-profile > .customer-avatar + div { min-width: 0; }

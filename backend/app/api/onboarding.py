@@ -1111,10 +1111,12 @@ def list_connected_channels(
             config = channel.config if isinstance(channel.config, dict) else {}
             provider_account = config.get("provider_account")
             is_local_connector = str(config.get("provider") or "") == f"{channel.channel_type}_local_connector"
+            is_server_managed = config.get("connector_execution_mode") == "server"
             connector_paired = channel.status == "active" and bool(
                 config.get("connector_paired_at")
                 or config.get("webhook_secret")
                 or config.get("webhook_secret_encrypted")
+                or (is_local_connector and channel.access_token_encrypted)
             )
             last_seen = config.get("connector_last_seen_at")
             connector_state = "unknown"
@@ -1158,8 +1160,8 @@ def list_connected_channels(
                     connector_status=connector_state,
                     connector_last_seen_at=last_seen,
                     connector_last_error_code=(str(config.get("connector_last_error_code") or "")[:80] or None),
-                    requires_local_device=is_local_connector,
-                    automatic_supported=False if is_local_connector else None,
+                    requires_local_device=is_local_connector and not is_server_managed,
+                    automatic_supported=True if is_server_managed else False if is_local_connector else None,
                     retry_endpoint=(
                         f"/api/onboarding/shops/{business_id}/channels/{channel.channel_type}/retry"
                         if is_local_connector else None
@@ -1208,10 +1210,15 @@ def retry_local_connector(
             online = (now - heartbeat_at.astimezone(timezone.utc)).total_seconds() <= 150
         except (TypeError, ValueError):
             online = False
+        server_managed = config.get("connector_execution_mode") == "server"
         if not online:
             raise HTTPException(status_code=409, detail={
                 "code": "connector_offline",
-                "message": "Máy connector đang ngoại tuyến. Hãy mở ứng dụng trên máy đã đăng nhập rồi thử lại.",
+                "message": (
+                    "Server connector agent đang ngoại tuyến. Hãy kiểm tra Windows agent trên VPS."
+                    if server_managed else
+                    "Máy connector đang ngoại tuyến. Hãy mở ứng dụng trên máy đã đăng nhập rồi thử lại."
+                ),
             })
 
         retry_id = str(config.get("connector_retry_id") or "")
@@ -1241,8 +1248,12 @@ def retry_local_connector(
     return {
         "status": "retry_queued",
         "connector_status": "online",
-        "requires_local_device": True,
-        "message": "Ứng dụng connector trên máy đang chạy sẽ nhận lệnh và khởi động lại.",
+        "requires_local_device": not server_managed,
+        "message": (
+            "Windows server agent sẽ khởi động lại connector worker."
+            if server_managed else
+            "Ứng dụng connector trên máy đang chạy sẽ nhận lệnh và khởi động lại."
+        ),
     }
 
 
@@ -1292,6 +1303,22 @@ def create_local_connector_pairing_code(
                 )
                 tenant_db.add(channel)
                 tenant_db.flush()
+            config = dict(channel.config) if isinstance(channel.config, dict) else {}
+            already_paired = bool(
+                channel.status == "active"
+                and config.get("provider") == f"{channel_type}_local_connector"
+                and (
+                    config.get("connector_paired_at")
+                    or config.get("webhook_secret")
+                    or config.get("webhook_secret_encrypted")
+                    or channel.access_token_encrypted
+                )
+            )
+            if already_paired:
+                raise HTTPException(status_code=409, detail={
+                    "code": "connector_already_paired",
+                    "message": "Connector đã ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.",
+                })
             was_active = channel.status == "active"
             pairing_code = f"PAIR.{channel_type}.{business_id}.{channel.id}.{secrets.token_urlsafe(12)}"
             connector_token = f"CONN.{channel_type}.{business_id}.{channel.id}.{secrets.token_urlsafe(32)}"
@@ -1300,7 +1327,6 @@ def create_local_connector_pairing_code(
             if not was_active:
                 channel.access_token_encrypted = None
                 channel.access_token = None
-            config = dict(channel.config) if isinstance(channel.config, dict) else {}
             config.update(
                 {
                     "provider": f"{channel_type}_local_connector",

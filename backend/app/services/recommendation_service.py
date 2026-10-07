@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 import random
 import re
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.customer import Customer
 from app.models.crm_extended import CustomerTag, Tag
 from app.models.customer_collection import CustomerConsent
@@ -31,6 +35,7 @@ from app.models.sales import Order, OrderItem, Product
 from app.schemas.recommendation import RecommendationRequestCreate
 from app.services.recommendation_artifacts import RecommendationArtifactError, registry as artifact_registry
 from app.services.recommendation_interaction_service import (
+    apply_recommendation_outcome,
     record_interaction,
     record_recommendation_impressions,
 )
@@ -40,15 +45,7 @@ REVENUE_ORDER_STATUSES = ("confirmed", "processing", "shipped", "delivered", "co
 MODEL_VERSION = "item_affinity_v1"
 SEGMENT_MODEL_VERSION = "rfm_kmeans_v2"
 STRATEGIES = {"balanced", "personalized", "popular", "rag"}
-REWARDS = {
-    "impression": Decimal("0"),
-    "click": Decimal("0.2"),
-    "cart": Decimal("0.5"),
-    "purchase": Decimal("1"),
-    "skip": Decimal("0"),
-    "refund": Decimal("-1"),
-}
-TERMINAL_REWARD_EVENTS = {"purchase", "skip", "refund"}
+MIN_BANDIT_TRAINING_EVENTS = 20
 INTERACTION_WEIGHTS = {
     "view": 0.05,
     "impression": 0.0,
@@ -59,6 +56,18 @@ INTERACTION_WEIGHTS = {
     "refund": -1.0,
 }
 INTERACTION_HALF_LIFE_DAYS = 45
+PRODUCT_COLOR_ALIASES = {
+    "pink": ("pink", "hồng", "rose", "rosy", "fuchsia", "magenta"),
+    "red": ("red", "đỏ"),
+    "blue": ("blue", "xanh dương", "xanh lam", "navy"),
+    "green": ("green", "xanh lá", "xanh lục"),
+    "black": ("black", "đen", "den"),
+    "white": ("white", "trắng", "trang", "ivory"),
+    "yellow": ("yellow", "vàng", "vang"),
+    "purple": ("purple", "tím", "tim", "violet"),
+    "brown": ("brown", "nâu", "nau"),
+    "gray": ("gray", "grey", "xám", "xam"),
+}
 
 
 class RecommendationServiceError(ValueError):
@@ -75,6 +84,77 @@ def _now() -> datetime:
 def _context_hash(context: dict) -> str:
     encoded = json.dumps(context or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _recommendation_click_secret() -> bytes:
+    configured = str(settings.CHANNEL_ENCRYPTION_KEY or "").strip()
+    return (configured or f"{settings.APP_NAME}:recommendation-click").encode("utf-8")
+
+
+def recommendation_click_signature(
+    *, business_id: int, request_id: str, product_id: int, expires: int
+) -> str:
+    payload = f"{int(business_id)}:{request_id}:{int(product_id)}:{int(expires)}".encode("utf-8")
+    return hmac.new(_recommendation_click_secret(), payload, hashlib.sha256).hexdigest()
+
+
+def verify_recommendation_click_signature(
+    *, business_id: int, request_id: str, product_id: int, expires: int, signature: str
+) -> bool:
+    if int(expires) < int(time.time()):
+        return False
+    expected = recommendation_click_signature(
+        business_id=business_id,
+        request_id=request_id,
+        product_id=product_id,
+        expires=expires,
+    )
+    return hmac.compare_digest(str(signature or ""), expected)
+
+
+def _recommendation_click_url(*, business_id: int, request_id: str, product_id: int) -> str | None:
+    base = str(settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
+    if not base:
+        return None
+    expires = int(time.time()) + 365 * 24 * 60 * 60
+    signature = recommendation_click_signature(
+        business_id=business_id,
+        request_id=request_id,
+        product_id=product_id,
+        expires=expires,
+    )
+    return f"{base}/api/recommendations/click/{business_id}/{request_id}/{product_id}?expires={expires}&signature={signature}"
+
+
+def active_recommendation_experiment_id(db: Session, *, business_id: int) -> int | None:
+    """Return an explicitly running recommendation experiment, if configured."""
+    rows = db.query(Experiment, BanditPolicy).join(
+        BanditPolicy, BanditPolicy.experiment_id == Experiment.id,
+    ).filter(
+        Experiment.business_id == business_id,
+        Experiment.status == "running",
+        BanditPolicy.business_id == business_id,
+        BanditPolicy.status == "active",
+    ).order_by(Experiment.id.desc(), BanditPolicy.id.desc()).all()
+    for experiment, policy in rows:
+        config = policy.config if isinstance(policy.config, dict) else {}
+        if config.get("runtime_binding") not in (None, "recommendation_strategy"):
+            continue
+        variants = [str(value).strip() for value in (experiment.variants or [])]
+        if variants and all(value in STRATEGIES for value in variants):
+            return int(experiment.id)
+    return None
+
+
+def safe_http_url(value: object) -> str | None:
+    text = str(value or "").strip()
+    try:
+        parsed = urlsplit(text)
+        if parsed.scheme.lower() in {"http", "https"} and parsed.hostname and parsed.username is None and parsed.password is None:
+            return text
+    except ValueError:
+        pass
+    return None
 
 
 def _customer_or_raise(db: Session, business_id: int, customer_id: int | None) -> Customer | None:
@@ -137,12 +217,29 @@ def _select_strategy(
         ).first()
         for arm in variants
     }
-    explore = random.random() < float(policy.epsilon)
-    if explore or not any(stat and stat.pulls for stat in stats.values()):
-        strategy, reason = random.choice(variants), "exploration"
+    observed_outcomes = int(db.query(func.coalesce(func.sum(BanditArmStat.pulls), 0)).filter(
+        BanditArmStat.policy_id == policy.id,
+    ).scalar() or 0)
+    try:
+        minimum_events = max(1, min(10000, int(
+            (policy.config or {}).get("min_training_events", MIN_BANDIT_TRAINING_EVENTS)
+        )))
+    except (AttributeError, TypeError, ValueError):
+        minimum_events = MIN_BANDIT_TRAINING_EVENTS
+    if observed_outcomes < minimum_events:
+        # Keep the experiment on its first declared variant until enough
+        # terminal outcomes exist; impressions/clicks alone are not rewards.
+        strategy, reason = variants[0], "warmup_default"
     else:
-        strategy = max(variants, key=lambda arm: (float((stats[arm].reward_sum or 0) / max(1, stats[arm].pulls)), arm))
-        reason = "exploitation"
+        explore = random.random() < float(policy.epsilon)
+        if explore or not any(stat and stat.pulls for stat in stats.values()):
+            strategy, reason = random.choice(variants), "exploration"
+        else:
+            strategy = max(variants, key=lambda arm: (
+                float(((stats[arm].reward_sum or 0) / max(1, stats[arm].pulls)) if stats[arm] else 0),
+                arm,
+            ))
+            reason = "exploitation"
     decision = BanditDecision(
         business_id=business_id,
         experiment_id=experiment.id,
@@ -308,9 +405,40 @@ def _historic_interest_overlap(tokens: Counter, product: Product) -> float:
     return min(1.0, matched / max(1, max(tokens.values()) * 2))
 
 
-def _preferred_color(db: Session, business_id: int, customer_id: int | None) -> str | None:
-    if customer_id is None or not _personalization_allowed(db, business_id, customer_id):
+def _canonical_color(value: str | None) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
         return None
+    for color, aliases in PRODUCT_COLOR_ALIASES.items():
+        if any(alias in text for alias in aliases):
+            return color
+    return text if len(text) <= 30 else None
+
+
+def _product_color_text(product: Product) -> str:
+    metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+    values = [product.name or "", product.description or ""]
+    for key in ("color", "colors", "colour", "colours", "mau", "mau_sac", "available_colors"):
+        value = metadata.get(key)
+        if isinstance(value, (list, tuple, set)):
+            values.extend(str(item) for item in value)
+        elif value is not None:
+            values.append(str(value))
+    return " ".join(values).lower()
+
+
+def _product_matches_color(product: Product, color: str | None) -> bool:
+    canonical = _canonical_color(color)
+    if not canonical:
+        return False
+    text = _product_color_text(product)
+    aliases = PRODUCT_COLOR_ALIASES.get(canonical, (canonical,))
+    return any(alias in text for alias in aliases) or canonical in text
+
+
+def _preferred_color(db: Session, business_id: int, customer_id: int | None) -> tuple[str | None, str | None]:
+    if customer_id is None or not _personalization_allowed(db, business_id, customer_id):
+        return None, None
 
     fact = db.query(CustomerFact).filter(
         CustomerFact.business_id == business_id,
@@ -320,11 +448,44 @@ def _preferred_color(db: Session, business_id: int, customer_id: int | None) -> 
         CustomerFact.confidence >= 0.65,
     ).order_by(CustomerFact.is_verified.desc(), CustomerFact.updated_at.desc()).first()
     color = fact.fact_value_json if fact is not None else None
-    return color.strip().lower() if isinstance(color, str) and len(color.strip()) <= 30 else None
+    if isinstance(color, str) and len(color.strip()) <= 80:
+        canonical = _canonical_color(color)
+        if canonical:
+            return canonical, "explicit_color_preference"
+
+    # If the customer has purchased a color before but never stated a
+    # preference, use that observable catalog signal as a soft ranking boost.
+    # No inferred fact is written back to the profile.
+    purchased = db.query(Product, func.sum(OrderItem.quantity)).join(
+        OrderItem, OrderItem.product_id == Product.id,
+    ).join(
+        Order, Order.id == OrderItem.order_id,
+    ).filter(
+        Order.business_id == business_id,
+        Order.customer_id == customer_id,
+        Order.status.in_(REVENUE_ORDER_STATUSES),
+        Product.business_id == business_id,
+    ).group_by(Product.id).all()
+    color_counts: Counter[str] = Counter()
+    for product, quantity in purchased:
+        text = _product_color_text(product)
+        for canonical, aliases in PRODUCT_COLOR_ALIASES.items():
+            if any(alias in text for alias in aliases):
+                color_counts[canonical] += max(1, int(quantity or 1))
+    if color_counts:
+        return color_counts.most_common(1)[0][0], "purchased_color_affinity"
+    return None, None
 
 
 def _personalization_allowed(db: Session, business_id: int, customer_id: int | None) -> bool:
     if customer_id is None:
+        return False
+    customer = db.query(Customer.id).filter(
+        Customer.id == customer_id,
+        Customer.business_id == business_id,
+        Customer.fact_extraction_opt_out.is_(False),
+    ).first()
+    if customer is None:
         return False
     consent = db.query(CustomerConsent).filter(
         CustomerConsent.business_id == business_id,
@@ -358,7 +519,11 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             RecommendationCustomerProfile.customer_id == personalized_id,
         ).first()
     rfm_segment = profile.segment_label if profile else "unclassified"
-    learning_context = {**selection_payload.context, "rfm_segment": rfm_segment} if personalized_id is not None else {}
+    learning_context = {
+        **selection_payload.context,
+        "rfm_segment": rfm_segment,
+        "source_channel": customer.channel,
+    } if personalized_id is not None and customer is not None else {}
     strategy, bandit_decision_id = _select_strategy(
         db,
         business_id=business_id,
@@ -380,7 +545,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
     interaction_affinity = _interaction_scores(db, business_id=business_id, customer_id=personalized_id) if personalized_id else Counter()
     interaction_popularity = _interaction_scores(db, business_id=business_id)
     historic_tokens = _historic_query_tokens(db, business_id, personalized_id)
-    preferred_color = _preferred_color(db, business_id, personalized_id)
+    preferred_color, color_signal = _preferred_color(db, business_id, personalized_id)
     rag_scores = {candidate.product_id: candidate.relevance for candidate in payload.rag_candidates}
     popularity_signal = Counter(popularity)
     popularity_signal.update(interaction_popularity)
@@ -401,9 +566,9 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         historic_query_score = _historic_interest_overlap(historic_tokens, product)
         lexical_score = max(current_query_score, 0.35 * historic_query_score)
         score = _score(strategy, affinity_score, popularity_score, rag_score, lexical_score)
-        color_match = bool(preferred_color and preferred_color in f"{product.name} {product.description or ''}".lower())
+        color_match = _product_matches_color(product, preferred_color)
         if color_match:
-            score += 0.15
+            score += 0.30
         sku = str(product.sku)
         ncf_score = ncf_scores.get(sku)
         linucb_score = linucb_scores.get(sku)
@@ -419,7 +584,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         elif rag_score > 0:
             reason = "rag_relevance"
         elif color_match:
-            reason = "explicit_color_preference"
+            reason = color_signal or "color_affinity"
         elif interaction_score > 0:
             reason = "customer_interaction_affinity"
         elif affinity_score > 0:
@@ -435,11 +600,23 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             "sku": product.sku,
             "name": product.name,
             "price": float(product.price or 0),
+            "available": max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0),
+            "product_url": safe_http_url(product.product_url),
             "score": round(score, 6),
             "reason": reason,
         })
     scored_items.sort(key=lambda item: (-item["score"], item["product_id"]))
     served_items = scored_items[:payload.limit]
+    request_id = str(uuid4())
+    for item in served_items:
+        if item.get("product_url"):
+            click_url = _recommendation_click_url(
+                business_id=business_id,
+                request_id=request_id,
+                product_id=int(item["product_id"]),
+            )
+            if click_url:
+                item["click_url"] = click_url
     model_versions = [MODEL_VERSION]
     if ncf_scores:
         model_versions.append("ncf_bpr_uci_demo")
@@ -447,7 +624,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         model_versions.append("linucb_uci_demo")
     row = RecommendationRequest(
         business_id=business_id,
-        request_id=str(uuid4()),
+        request_id=request_id,
         customer_id=personalized_id,
         experiment_id=selection_payload.experiment_id,
         bandit_decision_id=bandit_decision_id,
@@ -499,17 +676,14 @@ def record_feedback(
     served_ids = {int(item.get("product_id")) for item in (request.served_items or [])}
     if product_id not in served_ids:
         raise RecommendationServiceError("Sản phẩm không thuộc lần gợi ý này.", 409)
-    reward = REWARDS[event_type]
-    row = RecommendationFeedback(
-        business_id=business_id,
-        recommendation_request_id=request.id,
+    row = apply_recommendation_outcome(
+        db,
+        request=request,
         product_id=product_id,
         event_type=event_type,
-        reward=reward,
         idempotency_key=idempotency_key,
-        event_metadata=metadata or {},
+        metadata=metadata,
     )
-    db.add(row)
     record_interaction(
         db,
         business_id=business_id,
@@ -523,30 +697,6 @@ def record_feedback(
         metadata=metadata,
         occurred_at=None,
     )
-    if event_type in TERMINAL_REWARD_EVENTS and request.bandit_decision_id is not None:
-        decision = db.get(BanditDecision, request.bandit_decision_id)
-        if decision is not None and decision.reward is None:
-            decision.reward = reward
-            decision.reward_idempotency_key = idempotency_key
-            if decision.policy_id is not None:
-                context_hash = decision.context_hash or _context_hash(decision.context)
-                stat = db.query(BanditArmStat).filter(
-                    BanditArmStat.policy_id == decision.policy_id,
-                    BanditArmStat.arm == decision.arm,
-                    BanditArmStat.context_hash == context_hash,
-                ).first()
-                if stat is None:
-                    stat = BanditArmStat(
-                        business_id=business_id,
-                        policy_id=decision.policy_id,
-                        arm=decision.arm,
-                        context_hash=context_hash,
-                        pulls=0,
-                        reward_sum=Decimal("0"),
-                    )
-                    db.add(stat)
-                stat.pulls = int(stat.pulls or 0) + 1
-                stat.reward_sum = Decimal(stat.reward_sum or 0) + reward
     db.commit()
     db.refresh(row)
     return row
@@ -588,7 +738,9 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
         ).order_by(CustomerConsent.id.asc()).all()
         latest_consent = {int(customer_id): status for customer_id, status in consent_rows}
         customers = [customer for customer in db.query(Customer).filter(
-            Customer.business_id == business_id, Customer.status != "merged"
+            Customer.business_id == business_id,
+            Customer.status != "merged",
+            Customer.fact_extraction_opt_out.is_(False),
         ).order_by(Customer.id.asc()).all()
             if latest_consent.get(customer.id) != "revoked"]
         orders = db.query(Order).filter(

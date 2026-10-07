@@ -83,4 +83,12 @@ onUnmounted(() => { window.clearInterval(timer); observer?.disconnect(); });
 .smh-story-customer h3 { color:#263c3a; font-size:19px; }
 .smh-story-customer p { color:#405b55; font-size:16px; }
 .smh-story-history { color:#29433f; font-size:16px; }
+.crm-app.public-home.crm-dark .smh-story-illustration { color:#e6efeb; background:#20292a; }
+.crm-app.public-home.crm-dark .smh-story-art-label { color:#7dd9c6; }
+.crm-app.public-home.crm-dark .smh-story-document,.crm-app.public-home.crm-dark .smh-story-history { color:#e1ebe6; background:#293435; }
+.crm-app.public-home.crm-dark .smh-story-document strong { color:#e1ebe6; }
+.crm-app.public-home.crm-dark .smh-story-document > span,.crm-app.public-home.crm-dark .smh-story-illustration small,.crm-app.public-home.crm-dark .smh-story-customer p { color:#b7cac2; }
+.crm-app.public-home.crm-dark .smh-story-customer h3 { color:#e1ebe6; }
+.crm-app.public-home.crm-dark .smh-story-person { color:#9fe5d7; background:#294340; border-color:#20292a; }
+.crm-app.public-home.crm-dark .smh-story-controls button:hover { background:#263334; }
 </style>

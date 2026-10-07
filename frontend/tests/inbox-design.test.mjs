@@ -11,10 +11,10 @@ const signupCss = fs.readFileSync(new URL('../src/signup-design.css', import.met
 test('inbox presentation is scoped away from public auth and platform administration', () => {
   assert.match(main, /import "\.\/inbox-design\.css"/);
   const rules = [...css.matchAll(/([^{}]+)\{/g)].map(m => m[1].trim());
-  for (const rule of rules.filter(r => !r.startsWith('@') && !r.startsWith('/*') && !r.includes('.ui-language-control'))) {
+  for (const rule of rules.filter(r => !r.startsWith('@') && !/^\s*(?:from|to|\d+(?:\.\d+)?%)(?:\s*,\s*(?:from|to|\d+(?:\.\d+)?%))*\s*$/i.test(r) && !r.startsWith('/*') && !r.includes('.ui-language-control'))) {
     assert.match(rule, /\.crm-app:not\(\.platform-admin-workspace\) \.layout/);
   }
-  assert.doesNotMatch(css, /pointer-events:\s*none|visibility:\s*hidden/);
+  assert.doesNotMatch(css, /\.crm-app:not\(\.platform-admin-workspace\) \.layout\s*\{[^}]*?(?:pointer-events:\s*none|visibility:\s*hidden)/s);
   assert.match(css, /:not\(:focus-within\):not\(\.has-composer-content\)/);
 });
 

@@ -142,7 +142,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
         ), patch(
             "app.services.conversation_turn_service.schedule_chatbot_turn"
-        ):
+        ) as schedule_turn:
             responses = [
                 self.client.post(fb_path, content=fb_body, headers=fb_headers),
                 self.client.post(ig_path, content=ig_body, headers=ig_headers),
@@ -159,6 +159,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             ]
 
         self.assertTrue(all(response.status_code == 200 for response in responses), [response.text for response in responses])
+        self.assertEqual(4, schedule_turn.call_count)
         with Session(self.engine) as db:
             messages = db.scalars(
                 select(Message)
@@ -173,6 +174,43 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             self.assertTrue(all(conversation.business_id == self.business_id for conversation in conversations))
             customers = db.scalars(select(Customer).order_by(Customer.id)).all()
             self.assertTrue(all(customer.business_id == self.business_id for customer in customers))
+
+    def test_image_only_instagram_webhook_schedules_a_chatbot_turn(self):
+        app_secret = "unified-inbox-image-secret"
+        instagram = {
+            "object": "instagram",
+            "entry": [{
+                "id": "ig-account",
+                "messaging": [{
+                    "sender": {"id": "ig-image-user"},
+                    "recipient": {"id": "ig-account"},
+                    "timestamp": 1700000001000,
+                    "message": {
+                        "mid": "ig-image-only-1",
+                        "attachments": [{
+                            "type": "image",
+                            "payload": {"url": "https://scontent.cdninstagram.com/test.jpg"},
+                        }],
+                    },
+                }],
+            }],
+        }
+        path, body, headers = self._meta_request("/api/webhooks/instagram", instagram, app_secret)
+
+        with patch.object(settings, "ENVIRONMENT", "production"), \
+             patch.object(settings, "META_APP_SECRET", app_secret), \
+             patch("app.services.customer_fact_extractor.schedule_customer_fact_extraction"), \
+             patch("app.services.conversation_turn_service.schedule_chatbot_turn") as schedule_turn:
+            response = self.client.post(path, content=body, headers=headers)
+
+        self.assertEqual(200, response.status_code, response.text)
+        with Session(self.engine) as db:
+            saved = db.scalar(select(Message).where(Message.external_message_id == "ig-image-only-1"))
+            self.assertIsNotNone(saved)
+            self.assertEqual("image", saved.media_type)
+        schedule_turn.assert_called_once()
+        self.assertGreater(schedule_turn.call_args.kwargs["message_id"], 0)
+        self.assertEqual(self.business_id, schedule_turn.call_args.kwargs["business_id"])
 
     def test_invalid_signatures_for_all_core_channels_are_rejected_before_persistence(self):
         facebook = {

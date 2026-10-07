@@ -1,11 +1,43 @@
 const ABSOLUTE_MEDIA_URL = /^(?:https?:|blob:|data:|file:)/i;
 
-export function displayMessageText(value, channel = "") {
-  const text = String(value ?? "");
+export function displayMessageText(value, channel = "", direction = "") {
+  let text = String(value ?? "");
+  if (["facebook", "instagram"].includes(String(channel).trim().toLowerCase()) && direction === "outbound") {
+    text = text.replace(/\s*(?:(?:Đã gửi|Đã xem|Sent|Seen)\s*)?Người gửi\s*:\s*[\s\S]*$/iu, "").trim();
+  }
   if (String(channel).trim().toLowerCase() !== "tiktok") {
     return text;
   }
   return text.replace(/^\[Khách gửi nội dung TikTok\]\s*/i, "").trim();
+}
+
+export function visibleConversationMessages(messages = [], channel = "") {
+  const rows = Array.isArray(messages) ? messages : [];
+  if (!["facebook", "instagram"].includes(String(channel).trim().toLowerCase())) return rows;
+
+  const body = (message) => displayMessageText(message?.content, channel, message?.direction)
+    .replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  return rows.filter((message, messageIndex) => {
+    if (message?.direction !== "outbound"
+      || message?.sender_type === "bot"
+      || message?.raw_payload?.source !== "meta_history_import") return true;
+
+    const echoBody = body(message);
+    const echoTime = Date.parse(message?.received_at || "");
+    if (!echoBody) return true;
+
+    // Meta history may omit timestamps, but the imported echo is adjacent to
+    // the local bot row. Only use adjacency when at least one timestamp is missing.
+    return !rows.some((candidate, candidateIndex) => {
+      if (candidate === message || candidate?.direction !== "outbound" || candidate?.sender_type !== "bot") return false;
+      const botTime = Date.parse(candidate?.received_at || "");
+      if (body(candidate) !== echoBody) return false;
+      if (Number.isFinite(echoTime) && Number.isFinite(botTime)) {
+        return Math.abs(echoTime - botTime) <= 3 * 60 * 1000;
+      }
+      return Math.abs(messageIndex - candidateIndex) === 1;
+    });
+  });
 }
 
 /**

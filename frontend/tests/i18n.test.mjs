@@ -33,7 +33,7 @@ test("Vietnamese CRM terminology is simplified consistently across pages", () =>
   setLocale("vi");
   assert.equal(t("Mô hình kinh doanh & module"), "Loại hình kinh doanh & tính năng");
   assert.equal(t("Trường khách hàng & pipeline"), "Thông tin khách hàng & quy trình bán hàng");
-  assert.equal(t("RAG · SLA · CSAT · workflow · tenant · webhook · token · API · OTP · FAQ"), "tra cứu trong kho kiến thức · thời hạn hỗ trợ · điểm hài lòng · quy trình tự động · shop · điểm nhận sự kiện · mã truy cập · kết nối hệ thống · xác minh · câu hỏi thường gặp");
+  assert.equal(t("RAG · SLA · CSAT · workflow · tenant · webhook · token · API · OTP · FAQ"), "tra cứu trong kho kiến thức · thời hạn hỗ trợ · điểm hài lòng · quy trình tự động · shop · điểm nhận tin tự động · mã truy cập · kết nối hệ thống · xác minh · câu hỏi thường gặp");
   assert.equal(t("Mã OTP 6 số"), "Mã xác minh 6 số");
   assert.equal(t("Đoạn kiến thức"), "Mục kiến thức");
   assert.equal(t("Hội thoại mới"), "Cuộc trò chuyện mới");
@@ -214,13 +214,13 @@ test("English localizes plain-language customer groups and the compact service r
     ["Nhóm 1", "Group 1"],
     ["Tối đa", "Up to"],
     ["kênh. Kết nối sau khi gói được duyệt.", "channels. Connect after plan approval."],
-    ["RFM · Chưa mua", "RFM · No purchases"],
-    ["RFM · Giá trị cao", "RFM · High value"],
-    ["RFM · Trung thành", "RFM · Loyal"],
-    ["RFM · Tiềm năng", "RFM · Potential"],
-    ["RFM · Cần chăm sóc", "RFM · Needs attention"],
-    ["RFM · Nguy cơ rời bỏ", "RFM · At risk"],
-    ["RFM · Duy trì", "RFM · Regular"],
+    ["RFM · Chưa mua", "purchase-based groups · No purchases"],
+    ["RFM · Giá trị cao", "purchase-based groups · High value"],
+    ["RFM · Trung thành", "purchase-based groups · Loyal"],
+    ["RFM · Tiềm năng", "purchase-based groups · Potential"],
+    ["RFM · Cần chăm sóc", "purchase-based groups · Needs attention"],
+    ["RFM · Nguy cơ rời bỏ", "purchase-based groups · At risk"],
+    ["RFM · Duy trì", "purchase-based groups · Regular"],
   ];
   setLocale("en");
   for (const [source, expected] of copy) assert.equal(t(source), expected);

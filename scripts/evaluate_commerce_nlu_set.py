@@ -64,6 +64,8 @@ def observed_intent(text: str) -> str | None:
         return "purchase_request_underspecified"
     if is_price_quote_request(text):
         return "quote_quantity"
+    if is_stock_query_request(text) and _requested_variant_tokens(text):
+        return "check_variant_stock"
     if is_stock_query_request(text):
         return "check_stock"
     # The production collection flow checks a resolvable named-product purchase

@@ -89,6 +89,16 @@
 .crm-app:not(.platform-admin-workspace) .products-layout :is(.pipeline-card, .report-card) strong { font-size: 26px; font-variant-numeric: tabular-nums; color: var(--ops-ink) !important; }
 .crm-app:not(.platform-admin-workspace) .products-layout :is(.products-empty, .operation-mode-banner) { border: 1px solid var(--ops-line); border-radius: 10px; background: var(--ops-soft) !important; padding: 16px; color: var(--ops-muted); }
 .crm-app:not(.platform-admin-workspace) :is(.products-layout, .rag-docs-layout) .upload-dropzone { background: var(--ops-soft) !important; padding: 22px; border: 1px dashed var(--ops-line); border-radius: 12px; margin-block: 16px; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--ops-line); border-radius: 10px; background: var(--ops-soft); color: var(--ops-muted); font-size: 12px; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage > div { display: flex; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage strong { color: var(--ops-ink); }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage b { color: var(--ops-accent); font-variant-numeric: tabular-nums; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-usage-separator { padding-inline: 3px; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage.at-document-limit { border-color: #d9ad69; background: #fff8e9; }
+.crm-app.crm-dark .rag-docs-layout .knowledge-plan-usage.at-document-limit { background: #3b3327; border-color: #8c6a37; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-quota-warning { margin: 8px 2px; color: #9b5d13 !important; font-size: 12px; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .upload-dropzone.quota-locked { opacity: .65; cursor: not-allowed; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .import-choice-row button:disabled { opacity: .5; cursor: not-allowed; }
 .crm-app:not(.platform-admin-workspace) :is(.products-layout, .rag-docs-layout) .upload-icon { font-size: 11px !important; font-weight: 650; letter-spacing: 1px; color: var(--ops-accent); }
 .crm-app:not(.platform-admin-workspace) .reports-layout .report-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 16px; align-items: end; }
 .crm-app:not(.platform-admin-workspace) :is(.business-hours-layout, .sla-rules-layout) .settings-card { max-width: 100%; }
@@ -113,6 +123,7 @@
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .docs-table { font-size: 12px; }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .docs-table :is(th, td) { padding: 14px 16px; line-height: 1.6; border-color: var(--ops-line); color: var(--ops-ink); }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .docs-table th { background: var(--ops-soft); font-size: 11px; font-weight: 600; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .docs-table td:last-child > button + button { margin-left: 6px; }
 .crm-app:not(.platform-admin-workspace) .channels-layout .channel-summary-card .settings-card-header p { display: block; overflow: visible; -webkit-line-clamp: unset; }
 .crm-app:not(.platform-admin-workspace) .webhooks-layout article { background: var(--ops-soft); border-color: var(--ops-line); padding: 16px; border-radius: 10px; line-height: 1.6; }
 .crm-app:not(.platform-admin-workspace) .reports-layout .report-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 14px; margin-block: 18px; }
@@ -278,14 +289,18 @@
   width: 36px;
   height: 36px;
   flex: 0 0 36px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
   font-size: 0 !important;
-  background-color: transparent !important;
+  background-color: #f3f6f7 !important;
   background-repeat: no-repeat !important;
   background-position: center !important;
-  background-size: contain !important;
-  border-radius: 0;
+  background-size: 22px 22px !important;
+  border: 1px solid rgba(36, 56, 67, .12);
+  border-radius: 12px;
   transform: none;
-  box-shadow: none;
+  box-shadow: 0 5px 11px rgba(0, 0, 0, .12), inset 0 1px 0 rgba(255,255,255,.5);
 }
 .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon svg { display: none; }
 .crm-app:not(.platform-admin-workspace) .channels-layout .facebook-channel-icon { background-image: url('/brand/platforms/facebook.svg') !important; }
@@ -294,6 +309,93 @@
 .crm-app:not(.platform-admin-workspace) .channels-layout .zalo-channel-icon { background-image: url('/brand/platforms/zalo.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .channels-layout .tiktok-channel-icon { background-image: url('/brand/platforms/tiktok.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .channels-layout .shopee-channel-icon { background-image: url('/brand/platforms/shopee.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .channels-layout .channel-modal-mark {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  color: transparent !important;
+  font-size: 0 !important;
+  background-color: #f3f6f7 !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-size: 28px 28px !important;
+  border: 1px solid rgba(36, 56, 67, .12) !important;
+  border-radius: 14px !important;
+}
+.crm-app:not(.platform-admin-workspace) .channel-modal--meta .channel-modal-mark,
+.crm-app:not(.platform-admin-workspace) .channel-modal--facebook .channel-modal-mark { background-image: url('/brand/platforms/facebook.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .channel-modal--instagram .channel-modal-mark { background-image: url('/brand/platforms/instagram.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .channel-modal--telegram .channel-modal-mark,
+.crm-app:not(.platform-admin-workspace) .channel-modal--telegram .bot-provider-heading > .channel-card-icon { background-image: url('/brand/platforms/telegram.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .channel-modal--zalo .channel-modal-mark,
+.crm-app:not(.platform-admin-workspace) .channel-modal--zalo .bot-provider-heading > .channel-card-icon { background-image: url('/brand/platforms/zalo.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .channel-modal--tiktok .channel-modal-mark { background-image: url('/brand/platforms/tiktok.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .channel-modal--shopee .channel-modal-mark { background-image: url('/brand/platforms/shopee.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon::after,
+.crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: -18%;
+  left: 0;
+  width: 100%;
+  height: 136%;
+  border-radius: 50%;
+  background: linear-gradient(90deg, transparent 34%, #ffffff12 42%, #ffffffd8 48%, #ffffffed 52%, #ffffff12 58%, transparent 66%);
+  transform: translate3d(100%, 0, 0) rotate(-25deg);
+  opacity: 0;
+  pointer-events: none;
+  animation: crm-social-logo-sheen 2.2s linear infinite;
+}
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon::after,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark::after,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark)::after {
+  background: linear-gradient(90deg, transparent 34%, rgba(8, 127, 125, .16) 42%, rgba(255, 255, 255, .92) 48%, #fff 52%, rgba(8, 127, 125, .16) 58%, transparent 66%);
+}
+body.crm-dark .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon,
+body.crm-dark .crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark {
+  background-color: #20272b !important;
+  border-color: rgba(220, 240, 242, .14) !important;
+  box-shadow: 0 5px 11px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+body.crm-dark .crm-app:not(.platform-admin-workspace) .channels-layout .tiktok-channel-icon { background-image: none !important; }
+body.crm-dark .crm-app:not(.platform-admin-workspace) .channels-layout .tiktok-channel-icon svg { display: block !important; }
+body.crm-dark .crm-app:not(.platform-admin-workspace) .tiktok-logo-main { fill: transparent !important; }
+body.crm-dark .crm-app:not(.platform-admin-workspace) .channel-modal--tiktok .channel-modal-mark { background-image: none !important; }
+body.crm-dark .crm-app:not(.platform-admin-workspace) .channel-modal--tiktok .channel-modal-mark::before {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  background: #32d8ce;
+  -webkit-mask: url('/brand/platforms/tiktok.svg') center / contain no-repeat;
+  mask: url('/brand/platforms/tiktok.svg') center / contain no-repeat;
+}
+.crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee),
+.crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon,
+.crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark { animation: crm-social-logo-rock 3.4s ease-in-out infinite; transform-origin: center; }
+.crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark) img { animation: crm-social-logo-rock 3.4s ease-in-out infinite; transform-origin: center; }
+.crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark)::after {
+  left: 0;
+  width: 100%;
+  background: linear-gradient(90deg, transparent 34%, #ffffff12 42%, #ffffffd8 48%, #ffffffed 52%, #ffffff12 58%, transparent 66%);
+  transform: translate3d(100%, 0, 0) rotate(-25deg);
+  animation-duration: 2.2s !important;
+  animation-timing-function: linear !important;
+}
+body.crm-dark .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark) {
+  background-color: #20272b !important;
+  border-color: rgba(220, 240, 242, .14) !important;
+  box-shadow: 0 5px 11px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+body.crm-dark .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark) img[src*="tiktok.svg"] { filter: brightness(0) invert(1); }
+@media (prefers-reduced-motion: reduce) {
+  .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon::after,
+  .crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark::after,
+  .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee),
+  .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon,
+  .crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark,
+  .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark) img { animation: none !important; }
+}
 .crm-app:not(.platform-admin-workspace) .main > .products-layout.reports-layout {
   margin: 20px 24px 40px;
   padding: 20px;
@@ -356,19 +458,28 @@
   .crm-app:not(.platform-admin-workspace) .reports-layout .report-cards { grid-template-columns: minmax(0, 1fr); }
 }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .docs-table-scroll {
-  max-height: 490px;
-  overflow: auto;
-  scrollbar-gutter: stable;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
   scrollbar-width: thin;
   scrollbar-color: var(--ops-accent) var(--ops-soft);
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
 }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .docs-table-scroll th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  position: static;
   background: var(--ops-soft) !important;
 }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout > .rag-header-panel,
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout > .settings-notice,
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout > .error-banner,
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout > .knowledge-quota-warning { margin-block: 0; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout > .upload-dropzone {
+  box-sizing: border-box;
+  min-height: 158px;
+  margin: 0 !important;
+  padding: 16px 20px;
+}
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout > .docs-table-card { flex: 0 0 auto; }
 .crm-app:not(.platform-admin-workspace) .orders-layout > .products-table-wrap {
   max-height: 654px;
   overflow: auto;

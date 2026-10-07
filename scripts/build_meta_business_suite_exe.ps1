@@ -1,11 +1,14 @@
 param(
   [string]$Python = "python",
-  [string]$BackendUrl = "http://127.0.0.1:8000"
+  [string]$BackendUrl = "http://127.0.0.1:8000",
+  [ValidateSet("local", "server")][string]$ExecutionMode = "local",
+  [string]$FrontendUrl = "http://127.0.0.1:5173"
 )
 
 $ErrorActionPreference = "Stop"
 $source = Join-Path $PSScriptRoot "meta_business_suite_bridge.py"
-$dist = Join-Path $PSScriptRoot "dist\meta-business-suite-bridge"
+$variant = if ($ExecutionMode -eq "server") { "meta-business-suite-bridge-server" } else { "meta-business-suite-bridge" }
+$dist = Join-Path $PSScriptRoot "dist\$variant"
 $work = Join-Path (Join-Path $PSScriptRoot "..") "build\meta-business-suite-bridge"
 $defaults = Join-Path $work "connector_defaults.json"
 
@@ -13,11 +16,15 @@ $backendUri = $null
 if (-not [Uri]::TryCreate($BackendUrl, [UriKind]::Absolute, [ref]$backendUri) -or $backendUri.Scheme -notin @("http", "https")) {
   throw "BackendUrl phải là một địa chỉ HTTP hoặc HTTPS hợp lệ."
 }
+$frontendUri = $null
+if (-not [Uri]::TryCreate($FrontendUrl, [UriKind]::Absolute, [ref]$frontendUri) -or $frontendUri.Scheme -notin @("http", "https")) {
+  throw "FrontendUrl phải là một địa chỉ HTTP hoặc HTTPS hợp lệ."
+}
 
 & $Python -m pip install pyinstaller playwright
 if ($LASTEXITCODE -ne 0) { throw "Không cài được công cụ đóng gói Meta Business Suite." }
 New-Item -ItemType Directory -Force -Path $work | Out-Null
-@{ backend_url = $BackendUrl.TrimEnd("/") } | ConvertTo-Json -Compress | Set-Content -LiteralPath $defaults -Encoding Ascii
+@{ backend_url = $BackendUrl.TrimEnd("/"); frontend_url = $FrontendUrl.TrimEnd("/"); execution_mode = $ExecutionMode } | ConvertTo-Json -Compress | Set-Content -LiteralPath $defaults -Encoding Ascii
 
 & $Python -m PyInstaller `
   --noconfirm `

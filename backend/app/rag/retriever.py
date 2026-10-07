@@ -366,13 +366,17 @@ def _retrieve_lexical(
             for index, identifier in enumerate(identifiers)
         }
     )
-    exact_order = (
-        "CASE WHEN ("
-        + " OR ".join(identifier_conditions)
-        + ") THEN 0 ELSE 1 END, dc.id"
-        if identifier_conditions
-        else "dc.id"
-    )
+    match_count_order = " + ".join(
+        f"CASE WHEN {condition} THEN 1 ELSE 0 END"
+        for condition in token_conditions
+    ) or "0"
+    order_parts = []
+    if identifier_conditions:
+        order_parts.append(
+            "CASE WHEN (" + " OR ".join(identifier_conditions) + ") THEN 0 ELSE 1 END"
+        )
+    order_parts.extend((f"({match_count_order}) DESC", "dc.id"))
+    candidate_order = ", ".join(order_parts)
     rows = db.execute(
         sa_text(
             f"""
@@ -383,7 +387,7 @@ def _retrieve_lexical(
             WHERE d.status = 'ready'
               AND d.business_id = :business_id
               AND ({conditions})
-            ORDER BY {exact_order}
+            ORDER BY {candidate_order}
             LIMIT :candidate_limit
             """
         ),

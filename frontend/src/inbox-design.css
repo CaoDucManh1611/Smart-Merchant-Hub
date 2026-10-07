@@ -25,6 +25,9 @@
 .crm-app:not(.platform-admin-workspace) .layout .chat-composer:not(:focus-within):not(.has-composer-content) .composer-delivery-warning { display: none; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee) {
   box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
   width: 20px !important;
   height: 20px !important;
   min-width: 20px;
@@ -46,14 +49,45 @@
   border-radius: 5px !important;
 }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee) :is(svg, img) { display: none !important; }
-.crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee)::before,
-.crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee)::after { content: none !important; }
+.crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee)::before { content: none !important; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon.facebook { background-image: url('/brand/platforms/facebook.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon.instagram { background-image: url('/brand/platforms/instagram.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon.telegram { background-image: url('/brand/platforms/telegram.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon.zalo { background-image: url('/brand/platforms/zalo.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon.tiktok { background-image: url('/brand/platforms/tiktok.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon.shopee { background-image: url('/brand/platforms/shopee.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee)::after {
+  content: "" !important;
+  position: absolute;
+  z-index: 1;
+  top: -18%;
+  left: 0;
+  width: 100%;
+  height: 136%;
+  border-radius: 50%;
+  background: linear-gradient(90deg, transparent 34%, #ffffff12 42%, #ffffffd8 48%, #ffffffed 52%, #ffffff12 58%, transparent 66%);
+  transform: translate3d(100%, 0, 0) rotate(-25deg);
+  opacity: 0;
+  pointer-events: none;
+  animation: crm-social-logo-sheen 2.2s linear infinite;
+}
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee)::after {
+  background: linear-gradient(90deg, transparent 34%, rgba(8, 127, 125, .16) 42%, rgba(255, 255, 255, .92) 48%, #fff 52%, rgba(8, 127, 125, .16) 58%, transparent 66%);
+}
+@keyframes crm-social-logo-sheen {
+  0% { transform: translate3d(100%, 0, 0) rotate(-25deg); opacity: 0; }
+  3% { opacity: .62; }
+  97% { transform: translate3d(-100%, 0, 0) rotate(-25deg); opacity: .62; }
+  100% { transform: translate3d(-100%, 0, 0) rotate(-25deg); opacity: 0; }
+}
+@keyframes crm-social-logo-rock {
+  0%, 100% { rotate: -2deg; }
+  50% { rotate: 2deg; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crm-app:not(.platform-admin-workspace) .layout .social-icon::after,
+  .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee) { animation: none !important; }
+}
 .crm-app:not(.platform-admin-workspace) .layout .chat-composer:not(:focus-within):not(.has-composer-content) {
   padding: 10px 16px;
 }
@@ -116,8 +150,12 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) .layout {
   --inbox-line: #3a484f;
   --inbox-selected: #213f40;
   --inbox-accent: #86d8ce;
-  --inbox-brand-logo-outline: rgba(10, 24, 30, .22);
+  --inbox-brand-logo-surface: #202b2f;
+  --inbox-brand-logo-outline: rgba(220, 240, 242, .14);
 }
+body.crm-dark .crm-app:not(.platform-admin-workspace) .layout .social-icon.tiktok { background-image: none !important; }
+body.crm-dark .crm-app:not(.platform-admin-workspace) .layout .social-icon.tiktok::before { content: none !important; }
+body.crm-dark .crm-app:not(.platform-admin-workspace) .layout .social-icon.tiktok .tiktok-mini-logo { display: block !important; width: 14px; height: 14px; }
 @media (min-width: 1181px) {
   .crm-app:not(.platform-admin-workspace) .layout {
     grid-template-columns: minmax(280px, 310px) minmax(0, 1fr) 300px;

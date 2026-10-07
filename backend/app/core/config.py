@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     META_MESSENGER_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8093"
     META_INSTAGRAM_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8094"
 
+    # Optional Windows-hosted agent for server-managed Seller Center sessions.
+    # Keep the shared key empty unless the agent is deployed on a private,
+    # firewall-restricted network with the same secret configured on both sides.
+    SERVER_CONNECTOR_AGENT_URL: str = ""
+    SERVER_CONNECTOR_AGENT_TOKEN: str = ""
+    SERVER_CONNECTOR_VIEWER_TICKET_TTL_SECONDS: int = 14400
+
     # =========================================================
     # RAG SETTINGS
     # =========================================================
@@ -114,6 +121,7 @@ class Settings(BaseSettings):
     LLM_API_KEYS: str = ""
     GROQ_API_KEY: str = ""
     GROQ_API_KEYS: str = ""
+    GROQ_VISION_MODEL: str = "qwen/qwen3.8-27b"
     GEMINI_API_KEY: str = ""
     GEMINI_API_KEYS: str = ""
 

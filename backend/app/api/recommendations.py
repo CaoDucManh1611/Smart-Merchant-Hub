@@ -1,11 +1,15 @@
 """Tenant-scoped product recommendation serving and feedback endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin_access, require_write_access
 from app.tenancy.crm_session import get_tenant_db
-from app.models.recommendation import RecommendationCustomerProfile, RecommendationTrainingRun
+from app.models.recommendation import RecommendationCustomerProfile, RecommendationRequest, RecommendationTrainingRun
+from app.models.sales import Product
+from app.database.tenant_session import tenant_session
+from app.tenancy.schema import schema_name_for
 from app.schemas.recommendation import (
     RecommendationFeedbackCreate,
     RecommendationFeedbackOut,
@@ -20,7 +24,9 @@ from app.services.job_service import enqueue_job
 from app.services.recommendation_service import (
     RecommendationServiceError,
     record_feedback,
+    safe_http_url,
     serve_recommendations,
+    verify_recommendation_click_signature,
 )
 from app.services.recommendation_artifacts import recommendation_artifact_status
 from app.services.recommendation_interaction_service import (
@@ -41,6 +47,58 @@ def _raise_service_error(exc: RecommendationServiceError) -> None:
 
 def _raise_interaction_error(exc: RecommendationInteractionError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.get("/click/{business_id}/{request_id}/{product_id}", include_in_schema=False)
+def track_recommendation_click(
+    business_id: int,
+    request_id: str,
+    product_id: int,
+    expires: int = Query(...),
+    signature: str = Query(...),
+):
+    """Record a signed product-link click, then redirect to the shop catalog URL."""
+    if not verify_recommendation_click_signature(
+        business_id=business_id,
+        request_id=request_id,
+        product_id=product_id,
+        expires=expires,
+        signature=signature,
+    ):
+        raise HTTPException(status_code=404, detail="Liên kết sản phẩm không hợp lệ hoặc đã hết hạn.")
+
+    with tenant_session(schema_name_for(business_id)) as db:
+        request = db.query(RecommendationRequest).filter(
+            RecommendationRequest.business_id == business_id,
+            RecommendationRequest.request_id == request_id,
+        ).first()
+        served_ids = {
+            int(item["product_id"])
+            for item in (request.served_items or [])
+            if isinstance(item, dict) and str(item.get("product_id", "")).isdigit()
+        } if request is not None else set()
+        product = db.query(Product).filter(
+            Product.business_id == business_id,
+            Product.id == product_id,
+        ).first() if product_id in served_ids else None
+        target_url = safe_http_url(product.product_url if product else None)
+        if target_url is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy liên kết sản phẩm.")
+        try:
+            record_feedback(
+                db,
+                business_id=business_id,
+                request_id=request_id,
+                product_id=product_id,
+                event_type="click",
+                idempotency_key=f"tracked-click:{request_id}:{product_id}",
+                metadata={"source": "signed_product_link"},
+            )
+        except Exception:
+            # A telemetry failure should not turn a valid customer-facing link
+            # into a broken product page.
+            db.rollback()
+    return RedirectResponse(target_url, status_code=307)
 
 
 @router.get("/artifacts", dependencies=[Depends(require_admin_access)])

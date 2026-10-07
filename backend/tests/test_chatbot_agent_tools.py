@@ -14,6 +14,7 @@ from app.models.message import Message
 from app.models.sales import Product
 from app.services.chatbot_agent import (
     build_agent_memory,
+    escalation_reply,
     execute_chatbot_tool,
     is_business_open,
     route_escalation,
@@ -101,3 +102,40 @@ class ChatbotAgentToolTests(unittest.TestCase):
                 )
             )
             self.assertEqual("bot", db.get(Conversation, self.conversation_id).bot_mode)
+            self.assertIsNone(
+                route_escalation(
+                    db,
+                    self.business_id,
+                    self.conversation_id,
+                    "Đổi trả được trong bao lâu?",
+                )
+            )
+
+    def test_escalation_handles_no_accent_staff_request_and_device_safety_risk(self):
+        with Session(self.engine) as db:
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                channel="telegram",
+            )
+            db.add(conversation)
+            db.flush()
+
+            ticket = route_escalation(
+                db,
+                self.business_id,
+                conversation.id,
+                "Thiet bi co mui khet, bot khong hieu, noi may nhan vien",
+            )
+
+            self.assertIsNotNone(ticket)
+            self.assertEqual("human", conversation.bot_mode)
+            reply = escalation_reply("Thiết bị có mùi khét, tôi nên làm gì?")
+            self.assertIn("ngừng sử dụng", reply)
+            self.assertIn("ngắt nguồn điện", reply)
+            self.assertIn("nhân viên", reply)
+
+    def test_double_charge_escalation_prevents_duplicate_payment_and_otp_sharing(self):
+        reply = escalation_reply("My card was charged twice")
+        self.assertIn("don’t pay again", reply)
+        self.assertIn("OTP", reply)

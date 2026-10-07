@@ -94,6 +94,48 @@ class RagTenantIsolationTests(unittest.TestCase):
 
             self.assertEqual([], results)
 
+    def test_lexical_retrieval_ranks_relevant_late_chunks_before_candidate_limit(self):
+        engine = create_engine("sqlite://")
+        Business.metadata.create_all(engine)
+        TenantBase.metadata.create_all(engine)
+        with Session(engine) as db:
+            business = Business(name="Large knowledge base", slug="large-knowledge-base")
+            db.add(business)
+            db.flush()
+            document = Document(
+                business_id=business.id,
+                filename="knowledge.md",
+                file_type="md",
+                status="ready",
+            )
+            db.add(document)
+            db.flush()
+            db.add_all([
+                DocumentChunk(
+                    document_id=document.id,
+                    content="Mẫu demo cần làm bước tiếp theo.",
+                    chunk_index=index,
+                )
+                for index in range(200)
+            ])
+            db.add(DocumentChunk(
+                document_id=document.id,
+                content="Thiết bị có mùi khét thì ngừng sử dụng và gọi nhân viên.",
+                chunk_index=200,
+            ))
+            db.commit()
+
+            results = _retrieve_lexical(
+                "Thiết bị có mùi khét thì tôi nên làm gì?",
+                db,
+                5,
+                business_id=business.id,
+                similarity_threshold=0.3,
+            )
+
+            self.assertTrue(results)
+            self.assertIn("mùi khét", results[0].content)
+
 
 if __name__ == "__main__":
     unittest.main()

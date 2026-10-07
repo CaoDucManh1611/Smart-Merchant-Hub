@@ -219,7 +219,7 @@ def test_live_meta_history_is_distinguished_from_backfill_and_gets_fallback_time
     assert unsupported_live["is_live"] is False
 
 
-def test_live_meta_history_route_broadcasts_message_without_changing_history_persistence(monkeypatch):
+def test_live_meta_history_route_schedules_bot_and_broadcasts_message(monkeypatch):
     channel = type("ChannelRow", (), {
         "id": 11, "business_id": 7, "channel_type": "instagram",
         "status": "active", "external_account_id": "instagram-shop-7",
@@ -269,12 +269,55 @@ def test_live_meta_history_route_broadcasts_message_without_changing_history_per
     ))
 
     assert response == {"status": "received", "imported": 1, "duplicates": 0, "skipped": 0}
-    assert calls[0][1] is True  # Backfill-safe path: no bot/workflow side effects.
+    assert calls[0][1] is False  # Explicit live messages use the normal automation path.
+    assert "history_import" not in calls[0][0]["raw_payload"]
+    assert calls[0][0]["raw_payload"]["source"] == "meta_live_inbox"
     assert calls[0][0]["received_at"] is not None
     assert captured["business_id"] == 7
     assert captured["event"]["type"] == "message_created"
     assert captured["event"]["conversation_id"] == 99
     assert captured["event"]["message"]["message_id"] == 43
+
+
+def test_live_meta_duplicate_promotes_history_message_to_idempotent_bot_turn(monkeypatch):
+    channel = type("ChannelRow", (), {
+        "id": 11, "business_id": 7, "channel_type": "facebook",
+        "status": "active", "external_account_id": "facebook-shop-7",
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def get(_model, _channel_id):
+            return channel
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    scheduled = []
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+    monkeypatch.setattr(local_connectors, "process_and_save_message", lambda **_kwargs: {
+        "_created": False, "message_id": 43, "conversation_id": 99,
+    })
+    monkeypatch.setattr(
+        "app.services.conversation_turn_service.schedule_chatbot_turn",
+        lambda db, **kwargs: scheduled.append(kwargs),
+    )
+
+    result = local_connectors.receive_local_connector_history(
+        "facebook",
+        {"messages": [{
+            "threadId": "thread-1", "customerId": "buyer-1", "messageId": "live-1",
+            "direction": "inbound", "message": "Tin mới", "isLive": True,
+        }]},
+        "Bearer connector-token",
+        object(),
+    )
+
+    assert result == {"status": "received", "imported": 0, "duplicates": 1, "skipped": 0}
+    assert scheduled == [{"business_id": 7, "conversation_id": 99, "message_id": 43}]
 
 
 def test_history_endpoint_rejects_unbounded_batches():

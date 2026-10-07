@@ -6,12 +6,16 @@ import json
 import logging
 import re
 import unicodedata
+from io import BytesIO
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from threading import Lock, Thread
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
+
+import httpx
+from PIL import Image
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -26,7 +30,9 @@ from app.models.business_setting import BusinessSetting
 from app.models.chatbot import ChatbotConfig
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.message_attachment import MessageAttachment
 from app.models.sales import Product
+from app.schemas.recommendation import RecommendationRequestCreate
 
 from app.rag.retriever import retrieve
 from app.rag.answer_guard import customer_facing_answer, has_valid_citations
@@ -37,7 +43,7 @@ from app.rag.prompt_builder import (
     detect_reply_language,
     localize_rag_fallback,
 )
-from app.rag.llm_caller import call_llm
+from app.rag.llm_caller import call_llm, call_llm_with_image
 from app.rag.run_logger import RagRunLog, query_metadata
 from app.rag.topics import infer_query_topic
 from app.services.telegram_service import send_telegram_message
@@ -62,8 +68,93 @@ from app.services.chatbot_bandit_service import (
     response_style_instruction,
     select_chatbot_reply_choice,
 )
+from app.services.recommendation_service import (
+    active_recommendation_experiment_id,
+    serve_recommendations,
+)
+from app.services.recommendation_interaction_service import record_explicit_chat_recommendation_decline
 
 logger = logging.getLogger(__name__)
+
+_MAX_INBOUND_IMAGE_BYTES = 8 * 1024 * 1024
+_META_MEDIA_HOST_SUFFIXES = (".cdninstagram.com", ".fbcdn.net", ".fbsbx.com")
+
+
+def _latest_inbound_image_url(
+    db: Session,
+    conversation_id: int,
+    business_id: int,
+    message_id: int | None,
+) -> str | None:
+    if message_id is None:
+        return None
+    source = db.query(Message).filter(
+        Message.id == message_id,
+        Message.conversation_id == conversation_id,
+        Message.direction == "inbound",
+        Message.channel.in_(("facebook", "instagram")),
+    ).first()
+    if source is None:
+        return None
+    if source.media_type == "image" and source.media_url:
+        return str(source.media_url)
+    attachment = db.query(MessageAttachment).filter(
+        MessageAttachment.message_id == source.id,
+        MessageAttachment.business_id == business_id,
+        MessageAttachment.media_type == "image",
+    ).order_by(MessageAttachment.id.asc()).first()
+    return str(attachment.source_url) if attachment and attachment.source_url else None
+
+
+def _is_meta_media_url(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        return (
+            parsed.scheme == "https"
+            and not parsed.username
+            and not parsed.password
+            and any(host.endswith(suffix) for suffix in _META_MEDIA_HOST_SUFFIXES)
+        )
+    except ValueError:
+        return False
+
+
+def _download_meta_image(url: str) -> tuple[bytes, str]:
+    """Fetch a bounded JPEG/PNG only from Meta's media CDNs."""
+    current_url = url
+    with httpx.Client(timeout=12, follow_redirects=False) as client:
+        for _ in range(4):
+            if not _is_meta_media_url(current_url):
+                raise ValueError("Image URL is not hosted by Meta")
+            with client.stream(
+                "GET",
+                current_url,
+                headers={"Accept": "image/jpeg,image/png", "User-Agent": "SmartMerchantCRM/1.0"},
+            ) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ValueError("Image redirect has no location")
+                    current_url = urljoin(current_url, location)
+                    continue
+                response.raise_for_status()
+                image = bytearray()
+                for chunk in response.iter_bytes():
+                    image.extend(chunk)
+                    if len(image) > _MAX_INBOUND_IMAGE_BYTES:
+                        raise ValueError("Image exceeds the 8 MB analysis limit")
+                image_bytes = bytes(image)
+                if image_bytes.startswith(b"\xff\xd8\xff"):
+                    mime_type = "image/jpeg"
+                elif image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                    mime_type = "image/png"
+                else:
+                    raise ValueError("Meta response is not a JPEG or PNG image")
+                with Image.open(BytesIO(image_bytes)) as verified:
+                    verified.verify()
+                return image_bytes, mime_type
+    raise ValueError("Too many image redirects")
 
 AUTO_REPLY_SETTING_KEY = "rag_auto_reply_enabled"
 NO_PRODUCT_CATALOG_REPLY = (
@@ -127,21 +218,41 @@ _RETURN_TERMS = (
     "doi tra", "doi hang", "tra hang", "hoan tien", "bao hanh", "chinh sach doi",
 )
 _RECOMMENDATION_TERMS = (
-    "da nhay cam", "phu hop", "goi y", "tu van", "nen dung", "danh cho",
+    "da nhay cam", "da mat", "da dau", "da mun", "cham soc da", "duong da",
+    "duong am", "tri mun", "chong nang", "my pham", "serum", "skincare",
+    "skin care", "face care", "acne", "sunscreen", "phu hop", "goi y",
+    "tu van", "nen dung", "danh cho",
+)
+_EXPLICIT_PRODUCT_NEEDS = (
+    "da nhay cam", "da mat", "da dau", "da mun", "cham soc da", "duong da",
+    "duong am", "tri mun", "chong nang", "my pham", "skincare", "skin care",
+    "face care", "acne", "sunscreen",
+)
+_SKINCARE_CATALOG_EVIDENCE = (
+    "da nhay cam", "da mat", "da dau", "da mun", "cham soc da", "duong da",
+    "duong am", "tri mun", "chong nang", "my pham", "serum", "sua rua mat",
+    "kem duong", "toner", "tay trang", "skincare", "skin care", "face care",
+    "acne", "sunscreen", "moisturizer", "cleanser",
 )
 _PRODUCT_ATTRIBUTE_TERMS = (
     "mau sac", "color", "colour", "giu nong", "giu lanh", "bao lau", "bao nhieu gio",
     "chat lieu", "kich thuoc", "dung tich", "bao hanh", "warranty", "material",
+    "chi tiet", "mo ta san pham", "thong so san pham", "product details", "product description",
     "keep warm", "keep hot", "retain heat", "how long", "how many hours",
+)
+_GENERIC_PRODUCT_DETAIL_TERMS = (
+    "chi tiet", "mo ta san pham", "thong tin san pham", "product details", "product description",
 )
 _PRODUCT_HINT_STOP_WORDS = {
     "shop", "co", "con", "khong", "cho", "minh", "toi", "ban", "san", "pham",
     "hang", "mau", "nao", "gi", "nhe", "voi", "la", "cua", "gia", "bao",
     "nhieu", "tien", "tong", "thanh", "het", "ton", "kho", "so", "luong", "cai", "hien", "tai",
     "luc", "nay", "hoi", "muon", "xem", "tim", "mua", "duoc", "khong",
+    "chi", "tiet", "mo", "ta", "thong", "tin", "detail", "details", "description",
 }
 _NON_PRODUCT_HINT_WORDS = set(_DELIVERY_TERMS + _RETURN_TERMS + (
     "chinh sach", "nhan vien", "ho tro", "don hang", "thanh toan", "dat hang",
+    "chiec", "vay", "ao", "quan", "giay", "dep",
     "hong", "den", "trang", "xanh", "do", "vang", "tim", "nau",
     "giu nhiet", "giu nong", "giu lanh", "bao lau", "gio", "chat lieu",
     "kich thuoc", "dung tich", "warranty", "material", "color", "colour",
@@ -729,6 +840,18 @@ def _has_any_term(text: str, terms: tuple[str, ...] | set[str]) -> bool:
     return any(term in text for term in terms)
 
 
+def _is_recommendation_question(text: str) -> bool:
+    folded = _fold_text(text)
+    return _contains_any_phrase(folded, _RECOMMENDATION_TERMS)
+
+
+def _contains_any_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", text)
+        for phrase in phrases
+    )
+
+
 def _is_price_question(folded_text: str) -> bool:
     if _has_any_term(folded_text, _PRICE_TERMS):
         return True
@@ -866,7 +989,7 @@ def _is_specific_product_lookup(text: str) -> bool:
         return False
     if re.search(r"\b(?:mau|model|sku|ma)\s+[a-z0-9][a-z0-9-]*\b", folded):
         return True
-    if _has_any_term(folded, _RECOMMENDATION_TERMS):
+    if _is_recommendation_question(text):
         return False
     if is_browsing_request(text):
         return False
@@ -975,6 +1098,62 @@ def _contextual_retrieval_query(
     return f"{product.name}\n{text}" if product is not None else text
 
 
+def _format_product_detail_reply(product: Product, *, language: str = "vi") -> str:
+    """Give a conversational product summary grounded in the shop catalog."""
+    name = product_display_name(product, language)
+    metadata = getattr(product, "metadata_", None)
+    attributes = metadata.get("attributes", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(attributes, dict):
+        attributes = {}
+
+    def values_for(key: str) -> str:
+        value = attributes.get(key)
+        if isinstance(value, (list, tuple, set)):
+            parts = [" ".join(str(item).split()) for item in value if str(item).strip()]
+            return ", ".join(dict.fromkeys(parts))
+        return " ".join(str(value or "").split())
+
+    details: list[str] = []
+    description = " ".join(str(getattr(product, "description", None) or "").split())
+    # Demo catalogues often use the same generic placeholder description for
+    # every item. It adds noise to a sales reply, so prefer useful facets.
+    if description and not re.match(r"(?i)^sản phẩm (?:demo|mẫu) thuộc nhóm .+; danh mục tham khảo gồm", description):
+        details.append(description)
+    labels = (
+        ("category", "category", "danh mục"),
+        ("suitable_for", "suitable for", "phù hợp với"),
+        ("colors", "listed colors", "màu shop ghi nhận"),
+        ("sizes", "sizes", "kích thước"),
+    )
+    for key, english_label, vietnamese_label in labels:
+        value = values_for(key)
+        if value:
+            label = english_label if language == "en" else vietnamese_label
+            details.append(f"{label}: {value}")
+
+    available = max(
+        int(getattr(product, "stock_quantity", 0) or 0)
+        - int(getattr(product, "reserved_quantity", 0) or 0),
+        0,
+    )
+    if language == "en":
+        sku = f" (SKU {product.sku})" if getattr(product, "sku", None) else ""
+        summary = f"Hello! {name}{sku} is ₫{_format_vnd(product.price).replace('.', ',')} and {available} units are currently available."
+        extra = " " + ". ".join(details) + "." if details else ""
+        return (
+            f"{summary}{extra} How many would you like, and where should they be delivered? "
+            "I can help prepare a draft order."
+        )
+
+    sku = f" (mã {product.sku})" if getattr(product, "sku", None) else ""
+    summary = f"Chào bạn! {name}{sku} hiện có giá {_format_vnd(product.price)} đồng và còn {available} sản phẩm."
+    extra = " " + ". ".join(details) + "." if details else ""
+    return (
+        f"{summary}{extra} Bạn muốn lấy số lượng bao nhiêu và nhận hàng ở đâu? "
+        "Nếu cần, mình có thể hỗ trợ tạo đơn nháp cho bạn."
+    )
+
+
 def _format_product_fact_reply(product: Product, folded_query: str, *, language: str = "vi") -> str:
     available = max(
         int(product.stock_quantity or 0) - int(product.reserved_quantity or 0),
@@ -1003,9 +1182,55 @@ def _recommendation_reply(
     business_id: int,
     query_text: str,
     language: str = "vi",
+    customer_id: int | None = None,
+    source_channel: str | None = None,
+    reply_metadata: dict | None = None,
 ) -> str | None:
-    """Recommend only products carrying an explicit matching attribute."""
+    """Use customer-aware ranking in live chats, with the safe catalog matcher as fallback."""
     folded_query = _fold_text(query_text)
+    # Do not let a general popularity/personalization ranker override a hard
+    # product need (for example, face-care items); it may rank unrelated stock.
+    if customer_id is not None and not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
+        try:
+            experiment_id = active_recommendation_experiment_id(db, business_id=business_id)
+            recommendation = serve_recommendations(
+                db,
+                business_id=business_id,
+                payload=RecommendationRequestCreate(
+                    customer_id=customer_id,
+                    limit=3,
+                    query=query_text,
+                    context={"source_channel": str(source_channel or "unknown"), "surface": "chatbot"},
+                    experiment_id=experiment_id,
+                ),
+            )
+            items = recommendation.served_items or []
+            if items:
+                lines = []
+                for item in items:
+                    name = str(item.get("name") or "Sản phẩm")
+                    price = _format_vnd(item.get("price") or 0)
+                    available = item.get("available")
+                    line = f"- {name} — {price} đồng"
+                    if isinstance(available, int):
+                        line += f" (còn {available})"
+                    product_url = str(item.get("click_url") or item.get("product_url") or "").strip()
+                    if product_url:
+                        line += f"\n  {product_url}"
+                    lines.append(line)
+                if reply_metadata is not None:
+                    reply_metadata["recommendation"] = {
+                        "request_id": recommendation.request_id,
+                        "product_ids": [int(item["product_id"]) for item in items if item.get("product_id") is not None],
+                        "source_channel": str(source_channel or "unknown"),
+                    }
+                if language == "en":
+                    return "Based on what you asked for, these options may fit:\n" + "\n".join(lines) + "\nWhich one would you like to know more about?"
+                return "Dựa trên nhu cầu của bạn, mấy sản phẩm này có thể phù hợp:\n" + "\n".join(lines) + "\nBạn muốn mình tư vấn kỹ hơn mẫu nào ạ?"
+        except Exception as error:
+            db.rollback()
+            logger.warning("Personalized product ranking unavailable; using catalog matcher: %s", type(error).__name__)
+
     query_terms = {
         token
         for token in folded_query.split()
@@ -1054,6 +1279,10 @@ def _recommendation_reply(
             str(product.name or ""), str(getattr(product, "description", None) or ""),
             " ".join(product_aliases(product)), " ".join(values),
         )))
+        if _contains_any_phrase(folded_query, _EXPLICIT_PRODUCT_NEEDS) and not _contains_any_phrase(
+            searchable_text, _SKINCARE_CATALOG_EVIDENCE,
+        ):
+            continue
         product_name = _fold_text(product.name)
         available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
         if available <= 0:
@@ -1105,6 +1334,9 @@ def _deterministic_customer_reply(
     business_id: int,
     conversation_id: int,
     query_text: str,
+    customer_id: int | None = None,
+    source_channel: str | None = None,
+    reply_metadata: dict | None = None,
 ) -> tuple[str, str] | None:
     """Return a safe reply and route for questions that must not enter RAG."""
     folded = _fold_text(query_text)
@@ -1170,9 +1402,20 @@ def _deterministic_customer_reply(
             return "Which product link would you like? Send the product name or SKU and I’ll find it.", "product_link_clarification"
         return "Bạn muốn xem link sản phẩm nào? Gửi mình tên hoặc mã sản phẩm nhé.", "product_link_clarification"
 
-    # The deterministic catalogue path has verified price/stock only. Attribute
-    # questions should retain the conversation and continue through sourced RAG.
+    # Product descriptions and facets are imported alongside price and stock.
+    # Use those tenant-owned catalog facts for broad detail requests instead of
+    # forcing them through retrieval (which can miss a valid CSV row entirely).
     if _is_product_attribute_question(query_text):
+        if _contains_any_phrase(folded, _GENERIC_PRODUCT_DETAIL_TERMS):
+            product, _hint = _find_exact_product(
+                db,
+                business_id,
+                query_text,
+                conversation_id=conversation_id,
+            )
+            if product is not None:
+                language = "en" if detect_reply_language(query_text) == "en" else "vi"
+                return _format_product_detail_reply(product, language=language), "product_detail_catalog"
         return None
 
     if (
@@ -1185,12 +1428,15 @@ def _deterministic_customer_reply(
         )
     ):
         return AMBIGUOUS_PRICE_REPLY, "product_price_clarification"
-    if _has_any_term(folded, _RECOMMENDATION_TERMS):
+    if _is_recommendation_question(query_text):
         recommendation = _recommendation_reply(
             db,
             business_id=business_id,
             query_text=query_text,
             language="en" if detect_reply_language(query_text) == "en" else "vi",
+            customer_id=customer_id,
+            source_channel=source_channel,
+            reply_metadata=reply_metadata,
         )
         if recommendation:
             return recommendation, "product_recommendation"
@@ -1274,6 +1520,16 @@ def _policy_kind(text: str) -> str | None:
     if _has_any_term(folded, _RETURN_TERMS):
         return "return"
     return None
+
+
+def _is_product_catalog_listing_request(text: str) -> bool:
+    """Only list all products for a genuinely broad, unqualified browse request."""
+    return (
+        is_browsing_request(text)
+        and not _policy_kind(text)
+        and not _is_recommendation_question(text)
+        and not _is_product_attribute_question(text)
+    )
 
 
 def _is_delivery_unknown_error(error: Exception) -> bool:
@@ -1431,6 +1687,9 @@ def process_rag_auto_reply(
         Conversation.id == conversation_id,
         Conversation.business_id == business_id,
     ).first()
+    inbound_image_url = _latest_inbound_image_url(
+        db, conversation_id, business_id, expected_latest_inbound_id
+    )
     if not isinstance(config, ChatbotConfig):
         config = None
     top_k = int(config.top_k if config and isinstance(config.top_k, (int, float)) and config.top_k else 5)
@@ -1440,6 +1699,7 @@ def process_rag_auto_reply(
         else 0.3
     )
     bandit_choice: ChatbotBanditChoice | None = None
+    reply_metadata: dict = {}
     external_reply_sent = False
 
     def turn_is_current() -> bool:
@@ -1465,8 +1725,11 @@ def process_rag_auto_reply(
         }
         if auto_reply_key:
             kwargs["auto_reply_key"] = auto_reply_key
+        metadata = dict(reply_metadata)
         if bandit_choice is not None:
-            kwargs["extra_metadata"] = bandit_choice.message_metadata()
+            metadata.update(bandit_choice.message_metadata())
+        if metadata:
+            kwargs["extra_metadata"] = metadata
         result = send_text_reply(**kwargs)
         external_reply_sent = True
         return result
@@ -1525,8 +1788,20 @@ def process_rag_auto_reply(
           return True
 
       try:
+        image_bytes = None
+        image_mime_type = None
+        if inbound_image_url:
+            try:
+                image_bytes, image_mime_type = _download_meta_image(inbound_image_url)
+            except Exception as error:
+                logger.warning("Inbound image could not be loaded for AI: error_type=%s", type(error).__name__)
+                query_text = (
+                    f"{query_text}\n\nẢnh đính kèm hiện chưa đọc được; không đoán nội dung ảnh, "
+                    "hãy lịch sự nhờ khách gửi lại ảnh hoặc mô tả thêm."
+                )
+
         social_reply = _social_reply(query_text)
-        if social_reply:
+        if social_reply and not inbound_image_url:
             send_reply(social_reply)
             run.finish("social_reply", phase="complete", chunks_found=0, answer_chars=len(social_reply))
             return True
@@ -1568,14 +1843,34 @@ def process_rag_auto_reply(
             )
             return True
 
+        try:
+            record_explicit_chat_recommendation_decline(
+                db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                text=query_text,
+                source_message_id=expected_latest_inbound_id,
+            )
+        except Exception as error:
+            db.rollback()
+            logger.warning("Could not record explicit recommendation decline: %s", type(error).__name__)
+
         # Product price/stock and exact product lookup are read from the live
         # catalogue.  This prevents an unrelated RAG chunk from turning a
         # typo such as ``serum01`` into a full product-list answer.
-        deterministic_reply = _deterministic_customer_reply(
+        raw_customer_id = getattr(conversation, "customer_id", None)
+        try:
+            customer_id = int(raw_customer_id) if raw_customer_id is not None else None
+        except (TypeError, ValueError):
+            customer_id = None
+        deterministic_reply = None if inbound_image_url else _deterministic_customer_reply(
             db,
             business_id=business_id,
             conversation_id=conversation_id,
             query_text=query_text,
+            customer_id=customer_id,
+            source_channel=channel,
+            reply_metadata=reply_metadata,
         )
         if deterministic_reply:
             reply_text, route = deterministic_reply
@@ -1589,7 +1884,7 @@ def process_rag_auto_reply(
             return True
 
         policy_kind = _policy_kind(query_text)
-        recommendation_question = _has_any_term(_fold_text(query_text), _RECOMMENDATION_TERMS)
+        recommendation_question = _is_recommendation_question(query_text)
 
         # Broad product-discovery questions should show the live catalog
         # deterministically.  Letting them enter RAG first can return a
@@ -1597,7 +1892,7 @@ def process_rag_auto_reply(
         # Policy and recommendation questions are deliberately excluded: the
         # phrase "có ... không" also matches those questions, but a catalogue
         # dump is not an answer to them.
-        if is_browsing_request(query_text) and not policy_kind and not recommendation_question and not _is_product_attribute_question(query_text):
+        if not inbound_image_url and _is_product_catalog_listing_request(query_text):
             catalog_reply = build_product_catalog_reply(
                 db,
                 business_id,
@@ -1654,6 +1949,23 @@ def process_rag_auto_reply(
         if recommendation_question and chunks:
             # A generic catalogue chunk is not evidence that a product is
             # suitable for a customer's stated need.
+            if _contains_any_phrase(_fold_text(query_text), _EXPLICIT_PRODUCT_NEEDS):
+                has_matching_category = any(
+                    _contains_any_phrase(
+                        _fold_text(getattr(chunk, "content", "")),
+                        _SKINCARE_CATALOG_EVIDENCE,
+                    )
+                    for chunk in chunks
+                )
+                if not has_matching_category:
+                    send_handoff_reply(NO_RECOMMENDATION_REPLY, reason="no_matching_recommendation_source")
+                    run.finish(
+                        "recommendation_missing",
+                        phase="complete",
+                        chunks_found=len(chunks),
+                        answer_chars=len(NO_RECOMMENDATION_REPLY),
+                    )
+                    return True
             query_terms = [
                 token
                 for token in _fold_text(query_text).split()
@@ -1694,7 +2006,7 @@ def process_rag_auto_reply(
                     answer_chars=len(NO_RECOMMENDATION_REPLY),
                 )
                 return True
-            if is_browsing_request(query_text) and not _is_product_attribute_question(query_text):
+            if not inbound_image_url and _is_product_catalog_listing_request(query_text):
                 catalog_reply = build_product_catalog_reply(
                     db,
                     business_id,
@@ -1713,7 +2025,7 @@ def process_rag_auto_reply(
                     answer_chars=len(catalog_reply),
                 )
                 return True
-            if not _is_casual_query(query_text):
+            if not inbound_image_url and not _is_casual_query(query_text):
                 send_handoff_reply(NO_CONTEXT_FALLBACK, reason="no_rag_context")
                 run.finish("no_context", phase="complete", chunks_found=0, handoff_required=True)
                 return True
@@ -1752,6 +2064,12 @@ def process_rag_auto_reply(
         )
         memory = build_agent_memory(db, business_id, conversation_id)
         runtime_system_prompt = config.system_prompt if config and config.system_prompt else None
+        if inbound_image_url:
+            runtime_system_prompt = "\n\n".join(value for value in (
+                runtime_system_prompt,
+                "Khách có gửi kèm ảnh. Chỉ mô tả điều nhìn thấy chắc chắn; không suy đoán giá, tồn kho, "
+                "thương hiệu hay chính sách. Nếu ảnh không được cung cấp hoặc không rõ, hãy nói thật và hỏi lại.",
+            ) if value)
         if bandit_choice is not None:
             style_instruction = response_style_instruction(bandit_choice.response_style)
             if style_instruction:
@@ -1776,6 +2094,12 @@ def process_rag_auto_reply(
                 idempotency_key=f"rag-llm:{run.run_id}",
             )
             estimated_cost = estimate_ai_cost(messages)
+            if image_bytes:
+                estimated_cost += (
+                    Decimal(str(settings.AI_COST_PER_1K_TOKENS or 0))
+                    * Decimal("2.048")
+                    / Decimal("1000")
+                ).quantize(Decimal("0.0001"))
             if estimated_cost > 0:
                 # Reserve the conservative estimate before the provider call,
                 # so an exhausted AI budget cannot still trigger billable work.
@@ -1804,7 +2128,11 @@ def process_rag_auto_reply(
             run.finish("quota_exceeded", phase="complete", quota=exc.detail, handoff_required=True)
             return True
         try:
-            answer = call_llm(messages)
+            answer = (
+                call_llm_with_image(messages, image_bytes, image_mime_type)
+                if image_bytes and image_mime_type
+                else call_llm(messages)
+            )
         except Exception as error:
             logger.warning("RAG reply generation unavailable: error_type=%s", type(error).__name__)
             send_handoff_reply(SERVICE_ERROR_FALLBACK, reason="llm_unavailable")

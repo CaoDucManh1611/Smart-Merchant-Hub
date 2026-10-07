@@ -41,7 +41,7 @@ except Exception:
 
 BASE = Path(__file__).resolve().parent
 PACKAGE_DIR = Path(getattr(sys, "_MEIPASS", str(BASE)))
-RUNTIME = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantTikTok"
+RUNTIME = Path(os.getenv("SMART_MERCHANT_RUNTIME_DIR") or (Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantTikTok"))
 HISTORY_CHECKPOINT: Path | None = None
 EDGE_PROFILE = RUNTIME / "seller-center-edge-profile"
 CDP_PORT = int(os.getenv("TIKTOK_CDP_PORT", "9223"))
