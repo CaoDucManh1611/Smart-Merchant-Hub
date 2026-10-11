@@ -1110,6 +1110,10 @@ def transition_order(
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="transition", resource_type="sales_order", resource_id=str(order.id), metadata={"to_status": order.status})
         db.commit()
+    if order.status == "confirmed":
+        from app.services.order_confirmation import notify_order_confirmation
+
+        notify_order_confirmation(db, order=order, business_id=tenant.business_id)
     if order.status == "delivered" and order.conversation_id is not None:
         try:
             from app.services.chatbot_followup import schedule_post_delivery_followup

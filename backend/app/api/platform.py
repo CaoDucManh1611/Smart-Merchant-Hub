@@ -231,6 +231,10 @@ def _platform_quota_snapshot(db: Session, business_id: int, period_start, plan: 
 
 def _shop_out(db: Session, business: Business, period_start) -> PlatformShopOut:
     plan = _plan_for(db, business.id)
+    registered_at = db.scalar(select(Subscription.created_at).where(
+        Subscription.business_id == business.id,
+        Subscription.service_type == "package",
+    ).order_by(Subscription.id.desc()).limit(1))
     quota = _platform_quota_snapshot(db, business.id, period_start, plan)
     return PlatformShopOut(
         id=business.id,
@@ -239,6 +243,7 @@ def _shop_out(db: Session, business: Business, period_start) -> PlatformShopOut:
         status=business.status,
         plan_code=plan.code if plan else None,
         plan_name=plan.name if plan else None,
+        subscription_registered_at=registered_at,
         usage=_usage_for(db, business.id, period_start),
         quota=quota,
         period_start=period_start,
@@ -254,6 +259,8 @@ def _subscription_out(row: Subscription) -> PlatformSubscriptionOut:
         plan_name=row.plan.name,
         service_type=row.service_type or "package",
         status=row.status,
+        change_kind=row.change_kind,
+        quoted_amount=row.quoted_amount,
         starts_at=row.starts_at,
         ends_at=row.ends_at,
         auto_renew=row.auto_renew,
@@ -307,6 +314,8 @@ def _subscription_request_out(db: Session, row: Subscription) -> PlatformSubscri
         requested_at = requested_at.replace(tzinfo=timezone.utc)
     return PlatformSubscriptionRequestOut(
         subscription_id=row.id,
+        change_kind=row.change_kind,
+        quoted_amount=row.quoted_amount,
         business_id=business.id,
         shop_name=business.name,
         shop_slug=business.slug,
@@ -332,6 +341,7 @@ def _subscription_request_out(db: Session, row: Subscription) -> PlatformSubscri
 
 def _payment_out(row: Payment) -> PlatformPaymentOut:
     return PlatformPaymentOut(
+        reconciliation_required=bool((row.raw_response or {}).get("reconciliation_required") or (row.raw_response or {}).get("payos_verified_payments_pending_review")),
         id=row.id,
         business_id=row.business_id,
         subscription_id=row.subscription_id,
@@ -500,7 +510,10 @@ def approve_subscription_request(
 ):
     """Activate one approved request, then start the idempotent tenant saga."""
 
-    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update())
+    business_id = db.scalar(select(Subscription.business_id).where(Subscription.id == subscription_id))
+    if business_id is not None:
+        db.scalar(select(Business).where(Business.id == business_id).with_for_update())
+    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update().execution_options(populate_existing=True))
     if row is None:
         raise HTTPException(status_code=404, detail="Yêu cầu gói dịch vụ không tồn tại.")
     if row.status != "pending":
@@ -599,7 +612,10 @@ def reject_subscription_request(
 ):
     """Close an unapproved request without altering an existing active plan."""
 
-    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update())
+    business_id = db.scalar(select(Subscription.business_id).where(Subscription.id == subscription_id))
+    if business_id is not None:
+        db.scalar(select(Business).where(Business.id == business_id).with_for_update())
+    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update().execution_options(populate_existing=True))
     if row is None:
         raise HTTPException(status_code=404, detail="Yêu cầu gói dịch vụ không tồn tại.")
     if row.status != "pending":
@@ -705,11 +721,11 @@ def list_shop_payments(
 ):
     if db.get(Business, business_id) is None:
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
-    return db.scalars(
+    return [_payment_out(row) for row in db.scalars(
         select(Payment)
         .where(Payment.business_id == business_id)
         .order_by(Payment.created_at.desc(), Payment.id.desc())
-    ).all()
+    ).all()]
 
 
 @router.post("/shops/{business_id}/payments", response_model=PlatformPaymentOut, status_code=201)
@@ -727,11 +743,16 @@ def record_shop_payment(
             Subscription.id == payload.subscription_id,
             Subscription.business_id == business_id,
         )
+        .with_for_update().execution_options(populate_existing=True)
     )
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription không thuộc shop.")
     from app.api.onboarding import _chatbot_rental_price
-    expected_amount = _chatbot_rental_price(subscription.plan) if subscription.service_type == "chatbot" else subscription.plan.price
+    if subscription.change_kind == "downgrade":
+        raise HTTPException(status_code=409, detail="Yêu cầu hạ gói không tạo thanh toán hoặc hoàn tiền.")
+    expected_amount = subscription.quoted_amount if subscription.quoted_amount is not None else (
+        _chatbot_rental_price(subscription.plan) if subscription.service_type == "chatbot" else subscription.plan.price
+    )
     if payload.currency.upper() != "VND":
         raise HTTPException(status_code=422, detail="Chỉ hỗ trợ ghi nhận thanh toán VND.")
     if not payload.provider_transaction_id.strip():
@@ -740,6 +761,13 @@ def record_shop_payment(
     existing = db.scalar(
         select(Payment).where(Payment.provider_transaction_id == transaction_id)
     )
+    if payload.status == "paid" and (existing is None or existing.status == "pending"):
+        another_paid = db.scalar(select(Payment.id).where(
+            Payment.subscription_id == subscription.id, Payment.status == "paid",
+            Payment.currency == "VND", Payment.amount > 0,
+        ))
+        if another_paid is not None:
+            raise HTTPException(status_code=409, detail="Yêu cầu đã có khoản thu. Hãy đối soát giao dịch hiện có trước khi ghi nhận thêm.")
     if existing is not None:
         if existing.business_id != business_id:
             raise HTTPException(status_code=409, detail="Mã giao dịch đã thuộc shop khác.")

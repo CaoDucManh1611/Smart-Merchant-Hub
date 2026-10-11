@@ -269,6 +269,7 @@ function resetProject() { editingProjectId.value = null; Object.assign(projectFo
 async function saveProject() {
   const editing = editingProjectId.value;
   const payload = { ...projectForm, customer_id: Number(projectForm.customer_id), budget: Number(projectForm.budget), assigned_user_id: projectForm.assigned_user_id ? Number(projectForm.assigned_user_id) : null, starts_on: projectForm.starts_on || null, due_on: projectForm.due_on || null };
+  if (editing) delete payload.customer_id;
   if (await run(() => request(editing ? `/commercial/projects/${editing}` : "/commercial/projects", { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }), editing ? "Đã cập nhật dự án." : "Đã tạo dự án.")) resetProject();
 }
 function editProject(item) { editingProjectId.value = item.id; Object.assign(projectForm, { customer_id: String(item.customer_id), title: item.title, budget: item.budget, starts_on: item.starts_on || "", due_on: item.due_on || "", assigned_user_id: item.assigned_user_id ? String(item.assigned_user_id) : "", description: item.description || "" }); }
@@ -427,7 +428,7 @@ watch(() => props.module, () => {
       </div>
       <div v-else-if="activeTab === 'projects'" class="industry-columns">
         <form class="industry-card industry-form" @submit.prevent="saveProject"><h2>{{ editingProjectId ? tr("Sửa dự án", "Edit project") : tr("Tạo dự án", "Create project") }}</h2>
-          <label>Khách hàng<select v-model="projectForm.customer_id" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || customerLabel(customer.id) }}</option></select></label>
+          <label>Khách hàng<select v-model="projectForm.customer_id" :disabled="Boolean(editingProjectId)" required><option value="" disabled>Chọn khách hàng</option><option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">{{ customer.name || customer.email || customerLabel(customer.id) }}</option></select></label>
           <label>Tên dự án<input v-model="projectForm.title" required maxlength="200" /></label><label>Ngân sách (đ)<input v-model.number="projectForm.budget" type="number" min="0" step="1000" /></label>
           <div class="industry-form-row"><label>Bắt đầu<input v-model="projectForm.starts_on" type="date" /></label><label>Hạn hoàn thành<input v-model="projectForm.due_on" type="date" /></label></div>
           <label>Phụ trách<select v-model="projectForm.assigned_user_id"><option value="">Chưa phân công</option><option v-for="member in staff" :key="member.id" :value="String(member.id)">{{ member.full_name }}</option></select></label><label>Mô tả<textarea v-model="projectForm.description" rows="3" maxlength="4000" /></label>

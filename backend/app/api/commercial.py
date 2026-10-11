@@ -270,6 +270,8 @@ def update_quote(quote_id: int, payload: QuoteUpdate, db: Session = Depends(get_
     changes = payload.model_dump(exclude_unset=True)
     if any(key in changes and changes[key] is None for key in ("customer_id", "title", "status", "tax_rate")):
         raise HTTPException(status_code=422, detail="Khách hàng, tiêu đề, trạng thái và thuế không được để trống.")
+    if "title" in changes and not changes["title"].strip():
+        raise HTTPException(status_code=422, detail="Tiêu đề báo giá không được để trống.")
     if changes.get("status") is not None:
         _validate_status_transition("báo giá", row.status, changes["status"], QUOTE_TRANSITIONS)
     if "customer_id" in changes and changes["customer_id"] is not None:
@@ -277,7 +279,7 @@ def update_quote(quote_id: int, payload: QuoteUpdate, db: Session = Depends(get_
     if "title" in changes and changes["title"] is not None:
         row.title = changes.pop("title").strip()
     if "items" in changes and changes["items"] is not None:
-        changes["items"], row.subtotal = _quote_amounts(payload.items)
+        row.items, row.subtotal = _quote_amounts(payload.items)
     if "tax_rate" in changes and changes["tax_rate"] is not None:
         row.tax_rate = changes.pop("tax_rate")
     if "items" in payload.model_fields_set or "tax_rate" in payload.model_fields_set:
@@ -411,6 +413,8 @@ def update_project(
     changes = payload.model_dump(exclude_unset=True)
     if any(key in changes and changes[key] is None for key in ("title", "status", "budget")):
         raise HTTPException(status_code=422, detail="Tên, trạng thái và ngân sách không được để trống.")
+    if "title" in changes and not changes["title"].strip():
+        raise HTTPException(status_code=422, detail="Tên dự án không được để trống.")
     if changes.get("status") is not None:
         _validate_status_transition("dự án", row.status, changes["status"], PROJECT_TRANSITIONS)
     start = changes.get("starts_on", row.starts_on)

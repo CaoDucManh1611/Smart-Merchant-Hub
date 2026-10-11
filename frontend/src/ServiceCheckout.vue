@@ -1,6 +1,8 @@
 <script setup>
-import { computed } from "vue";
-import { locale, t } from "./i18n.js";
+import { computed, ref, watch } from "vue";
+import { locale, t, formatDateTime, formatMoney } from "./i18n.js";
+import QRCode from "qrcode";
+import { checkoutRequestLabel, checkoutAmount } from "./checkout-utils.js";
 
 const props = defineProps({
   plan: { type: Object, default: null },
@@ -14,9 +16,38 @@ const props = defineProps({
   status: { type: String, default: "" },
   notice: { type: String, default: "" },
   requestReference: { type: String, default: "" },
+  payment: { type: Object, default: null },
+  paymentLoading: { type: Boolean, default: false },
+  paymentError: { type: String, default: "" },
+  quotedAmount: { type: [String, Number], default: null },
 });
 
-const emit = defineEmits(["back", "submit", "refresh"]);
+const emit = defineEmits(["back", "submit", "refresh", "pay", "reprice"]);
+const qrImage = ref('');
+const qrError = ref('');
+watch(() => props.payment?.qr_code, async (code, _, cleanup) => {
+  let active = true;
+  cleanup(() => { active = false; });
+  qrImage.value = '';
+  qrError.value = '';
+  if (!code) return;
+  try {
+    const image = await QRCode.toDataURL(code, { width: 256, margin: 2 });
+    if (active) qrImage.value = image;
+  } catch {
+    if (active) qrError.value = 'Chưa thể hiển thị QR. Hãy làm mới trạng thái hoặc chuyển khoản theo thông tin bên dưới.';
+  }
+}, { immediate: true });
+const payableAmount = computed(() => checkoutAmount(props.quotedAmount, props.payment, props.plan?.raw_price));
+const quotedPrice = computed(() => payableAmount.value == null ? props.plan?.price : formatMoney(payableAmount.value));
+const priceChanged = computed(() => props.submitted && payableAmount.value != null && props.plan?.raw_price != null && Number(payableAmount.value) !== Number(props.plan.raw_price));
+const paymentLabel = computed(() => ({ paid: 'Đã nhận tiền', refunded: 'Đã hoàn tiền', pending: 'Chờ nhận tiền', creating: 'Đang chuẩn bị thanh toán', expired: 'Thanh toán đã hết hạn', cancelled: 'Thanh toán đã hủy', failed: 'Chưa tạo được thanh toán', reconciliation_required: 'Cần admin đối soát' }[props.payment?.status] || 'Chưa ghi nhận thanh toán'));
+const checkoutUrl = computed(() => {
+  try {
+    const url = new URL(props.payment?.checkout_url || '');
+    return url.protocol === 'https:' && url.hostname === 'pay.payos.vn' ? url.href : '';
+  } catch { return ''; }
+});
 
 function isDowngrade() {
   return props.changeKind === "downgrade";
@@ -143,7 +174,7 @@ function planName(plan, fallback) {
           <div class="checkout-plan-block target">
             <small>{{ copy.selectedPlan }}</small>
             <strong>{{ planName(plan, copy.genericPlan) }}</strong>
-            <span>{{ plan?.price || copy.contactPrice }}</span>
+            <span>{{ submitted ? quotedPrice : plan?.price || copy.contactPrice }}</span>
           </div>
         </div>
 
@@ -154,23 +185,58 @@ function planName(plan, fallback) {
           <div v-if="buyer?.name"><dt>{{ copy.registrant }}</dt><dd>{{ buyer.name }}</dd></div>
           <div v-if="buyer?.email"><dt>{{ copy.email }}</dt><dd>{{ buyer.email }}</dd></div>
         </dl>
+        <button v-if="priceChanged && status === 'pending' && payment?.status !== 'paid' && !payment?.reconciliation_required" type="button" class="checkout-back" @click="emit('reprice')">Tạo yêu cầu theo giá mới</button>
 
         <div v-if="error" class="checkout-error" role="alert">{{ error }}</div>
         <div v-if="submitted" class="checkout-confirmation" role="status">
           <span class="checkout-confirmation-icon" aria-hidden="true">✓</span>
           <div>
-            <strong>{{ status === 'pending' ? copy.requestRecorded : copy.activated }}</strong>
+            <strong>{{ t(checkoutRequestLabel(status)) }}</strong>
             <p>{{ notice }}</p>
             <small v-if="requestReference">{{ copy.requestCode }} <b>{{ requestReference }}</b></small>
           </div>
           <button type="button" class="checkout-refresh" @click="emit('refresh')">{{ copy.refresh }}</button>
         </div>
+        <section v-if="submitted && !isDowngrade() && Number(quotedAmount ?? plan?.raw_price ?? 0) > 0" class="checkout-payment" aria-labelledby="checkout-payment-title">
+          <h2 id="checkout-payment-title">Thông tin thanh toán</h2>
+          <p>Quét VietQR bằng ứng dụng ngân hàng và kiểm tra người nhận, số tiền, nội dung trước khi chuyển. Chờ admin xác nhận thực nhận tiền; thanh toán và duyệt gói là hai bước riêng.</p>
+          <p role="status" class="checkout-payment-status" :class="{ 'is-paid': payment?.status === 'paid' }"><strong>{{ paymentLabel }}</strong></p>
+          <p v-if="payment?.reconciliation_required" class="checkout-error">Giao dịch cần admin đối soát; không tự kích hoạt hoặc hoàn tiền.</p>
+          <template v-if="payment?.status === 'pending'">
+            <div class="checkout-transfer-layout">
+            <div class="checkout-qr-card">
+            <span class="checkout-qr-brand">VietQR <span>· Chuyển khoản ngân hàng</span></span>
+            <img v-if="qrImage" :src="qrImage" alt="Mã QR thanh toán chuyển khoản cho yêu cầu gói này" width="256" height="256" />
+            <a v-if="qrImage" :href="qrImage" download="vietqr-thanh-toan.png" class="checkout-back">Tải mã QR ↓</a>
+            </div>
+            <dl class="checkout-details checkout-transfer-details">
+              <div v-if="payment.account_name"><dt>Người nhận</dt><dd>{{ payment.account_name }}</dd></div>
+              <div v-if="payment.account_number"><dt>Số tài khoản</dt><dd>{{ payment.account_number }}</dd></div>
+              <div v-if="payment.bank_name || payment.bank_bin || payment.bin"><dt>Ngân hàng</dt><dd>{{ payment.bank_name || payment.bank_bin || payment.bin }}</dd></div>
+              <div><dt>Số tiền</dt><dd>{{ formatMoney(payment.amount) }}</dd></div>
+              <div><dt>Nội dung chuyển khoản</dt><dd>{{ payment.reference }}</dd></div>
+              <div v-if="payment.expires_at"><dt>Hết hạn</dt><dd>{{ formatDateTime(payment.expires_at) }}</dd></div>
+            </dl>
+            </div>
+            <a v-if="checkoutUrl && payment.provider !== 'vietqr'" :href="checkoutUrl" target="_blank" rel="noopener noreferrer" class="checkout-back">Mở trang thanh toán</a>
+          </template>
+          <p v-if="paymentError || qrError" class="checkout-error" role="alert">{{ paymentError || qrError }}</p>
+          <button v-if="!payment || payment.status === 'not_created' || payment.status === 'creating' || payment.status === 'failed'" type="button" class="checkout-submit" :disabled="paymentLoading || status === 'cancelled' || status === 'expired'" @click="emit('pay')">{{ paymentLoading ? 'Đang chuẩn bị thanh toán…' : 'Tạo QR thanh toán' }}</button>
+          <small>VietQR không tự xác nhận đã nhận tiền. Chỉ ghi nhận thanh toán khi admin xác nhận thực nhận tiền. Không dựa vào ảnh biên lai hay nút bấm của khách.</small>
+        </section>
       </section>
 
       <aside class="checkout-card checkout-total-card" :aria-label="copy.summary">
+        <svg class="checkout-summary-art" viewBox="0 0 240 88" fill="none" aria-hidden="true">
+          <rect x="36" y="17" width="124" height="64" rx="12" fill="currentColor" opacity=".08" />
+          <rect x="51" y="9" width="124" height="64" rx="12" stroke="currentColor" stroke-width="2" />
+          <path d="M52 29h122M66 49h26M66 59h44" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+          <circle cx="178" cy="59" r="22" fill="var(--checkout-panel)" stroke="currentColor" stroke-width="2" />
+          <path d="m168 59 7 7 13-15" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
         <span class="checkout-total-kicker">{{ copy.summary }}</span>
         <div class="checkout-total-line"><span>{{ isDowngrade() ? copy.afterDowngrade : copy.chosenPlan }}</span><strong>{{ planName(plan, '—') }}</strong></div>
-        <div class="checkout-total-price"><small>{{ isDowngrade() ? copy.newPlanPrice : copy.planPrice }}</small><strong>{{ plan?.price || '—' }}</strong></div>
+        <div class="checkout-total-price"><small>{{ submitted && !isDowngrade() ? t('GIÁ ĐÃ CHỐT CHO YÊU CẦU') : isDowngrade() ? copy.newPlanPrice : copy.planPrice }}</small><strong>{{ quotedPrice || '—' }}</strong></div>
 
         <div v-if="isDowngrade()" class="checkout-policy is-downgrade">
           <strong>{{ copy.downgradePolicyTitle }}</strong>
@@ -192,6 +258,22 @@ function planName(plan, fallback) {
 </template>
 
 <style scoped>
+.checkout-payment { margin-top:24px; padding-top:24px; border-top:1px solid var(--checkout-line); }
+.checkout-payment p,.checkout-payment small { font-size:13px; line-height:1.6; color:var(--checkout-muted); }
+.checkout-payment img { display:block; max-width:100%; height:auto; margin:18px auto; border-radius:12px; }
+.checkout-payment .checkout-submit { margin:16px 0; }
+:global(body:not(.crm-dark) .service-checkout-page) { --checkout-ink:#173b42; --checkout-muted:#46626b; --checkout-panel:#fff; --checkout-line:#cee1e3; }
+:global(body:not(.crm-dark) .checkout-plan-block) { background:#f6faf9; }
+:global(body:not(.crm-dark) .checkout-plan-block.target) { background:#eaf7f3; }
+:global(body:not(.crm-dark) .checkout-policy) { background:#edf6f5; }
+:global(body:not(.crm-dark) .checkout-policy.is-downgrade) { background:#fff8e8; }
+:global(body:not(.crm-dark) .checkout-confirmation) { background:#edf8f3; }
+:global(body:not(.crm-dark) .checkout-confirmation p),:global(body:not(.crm-dark) .checkout-confirmation small) { color:#34574e; }
+:global(body:not(.crm-dark) .checkout-total-price strong),
+:global(body:not(.crm-dark) .checkout-plan-block small),
+:global(body:not(.crm-dark) .checkout-total-kicker),
+:global(body:not(.crm-dark) .service-page-kicker) { color:#087d79; }
+:global(body:not(.crm-dark) .checkout-back:hover) { background:#eaf7f3; }
 .service-checkout-page { --checkout-ink:#edf5f4; --checkout-muted:#afc2c1; --checkout-panel:#20282b; --checkout-line:#39484b; --checkout-accent:#1fa3a0; width:min(1180px,100%); margin:0 auto; padding:clamp(22px,4vw,48px); color:var(--checkout-ink); }
 .service-checkout-header { margin-bottom:24px; }
 .checkout-back { display:inline-flex; align-items:center; min-height:38px; margin:0 0 22px; padding:0 13px; border:1px solid var(--checkout-line); border-radius:10px; background:transparent; color:var(--checkout-ink); font:inherit; font-size:13px; font-weight:700; cursor:pointer; }
@@ -243,4 +325,36 @@ function planName(plan, fallback) {
 .checkout-refresh { flex:0 0 auto; margin-left:auto; padding:7px 10px; border:1px solid #436b62; border-radius:9px; background:transparent; color:inherit; font:inherit; font-size:11px; cursor:pointer; }
 @media(max-width:760px) { .service-checkout-page { padding:20px 14px; }.service-checkout-grid { grid-template-columns:1fr; }.checkout-total-card { position:static; }.checkout-plan-flow { grid-template-columns:minmax(0,1fr) 26px minmax(0,1fr); gap:6px; }.checkout-plan-block { min-height:120px; padding:13px; }.checkout-details { grid-template-columns:1fr; }.checkout-confirmation { flex-wrap:wrap; }.checkout-refresh { margin-left:38px; } }
 @media(prefers-reduced-motion:reduce) { .checkout-submit:hover:not(:disabled) { transform:none; } }
+
+.service-checkout-page { box-sizing:border-box; padding:28px 24px; }
+.service-checkout-header { margin-bottom:22px; }
+.service-checkout-header h1 { font-size:clamp(26px,3vw,34px); }
+.service-checkout-grid { grid-template-columns:minmax(0,1fr) 300px; gap:24px; }
+.checkout-card { box-shadow:0 6px 28px #062d3510; animation:checkout-reveal .45s ease-out both; }
+.checkout-total-card { animation-delay:.08s; border-top:3px solid var(--checkout-accent); }
+.checkout-summary-art { display:block; width:180px; height:70px; margin:0 auto 18px; color:var(--checkout-accent); }
+.checkout-plan-block { min-height:100px; transition:border-color .2s,box-shadow .2s; }
+.checkout-plan-block.target { box-shadow:0 4px 16px #087d7910; }
+.checkout-details > div { border-color:var(--checkout-line); }
+.checkout-payment { padding-top:22px; }
+.checkout-payment-status { display:inline-flex; align-items:center; gap:8px; margin:0 0 14px; padding:7px 12px; border-radius:999px; border:1px solid var(--checkout-line); }
+.checkout-payment-status::before { content:''; width:7px; height:7px; border-radius:50%; background:#be831c; }
+.checkout-payment-status.is-paid::before { background:var(--checkout-accent); }
+.checkout-transfer-layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:20px; align-items:start; margin:4px 0 20px; }
+.checkout-qr-card { padding:14px; border:1px solid var(--checkout-line); border-radius:18px; background:#fff; text-align:center; color:#173b42; animation:checkout-reveal .35s ease-out both; }
+.checkout-qr-brand { display:block; font-weight:850; font-size:16px; color:#087d79; }
+.checkout-qr-brand span { display:block; margin-top:4px; font-weight:500; font-size:11px; color:#46626b; }
+.checkout-qr-card img { width:192px; margin:10px auto; border-radius:0; }
+.checkout-qr-card .checkout-back { margin:0; min-height:40px; color:#087d79; border-color:#cee1e3; background:#f4faf9; text-decoration:none; }
+.checkout-transfer-details { grid-template-columns:1fr; margin:0; }
+.checkout-transfer-details > div { display:grid; gap:5px; padding:9px 0; }
+.checkout-transfer-details dd { text-align:left; font-size:14px; }
+.checkout-transfer-details dt { font-size:11px; }
+.checkout-submit,.checkout-back,.checkout-refresh { transition:transform .18s,background .18s,box-shadow .18s; }
+.checkout-submit:focus-visible,.checkout-back:focus-visible,.checkout-refresh:focus-visible { outline:3px solid var(--checkout-accent); outline-offset:3px; }
+.checkout-confirmation { border-color:var(--checkout-line); }
+@keyframes checkout-reveal { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@media(max-width:1100px) { .service-checkout-grid { grid-template-columns:minmax(0,1fr) 260px; gap:16px; }.checkout-transfer-layout { grid-template-columns:1fr; }.checkout-qr-card { width:min(220px,100%); box-sizing:border-box; margin:auto; }.checkout-transfer-details { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:760px) { .service-checkout-page { padding:20px 12px; }.service-checkout-grid { grid-template-columns:1fr; }.checkout-total-card { position:static; }.checkout-transfer-details { grid-template-columns:1fr; }.checkout-card-heading { flex-wrap:wrap; } }
+@media(prefers-reduced-motion:reduce) { .checkout-card,.checkout-qr-card { animation:none; }.checkout-submit,.checkout-back,.checkout-refresh,.checkout-plan-block { transition:none; } }
 </style>

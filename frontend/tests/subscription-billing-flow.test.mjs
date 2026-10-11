@@ -16,7 +16,7 @@ test('admin billing uses backend data and requires explicit receipt confirmation
 });
 
 test('plan checkout distinguishes downgrade requests and never starts a refund', () => {
-  assert.match(source, /return selectedIndex < currentIndex \? "downgrade" : "upgrade"/);
+  assert.match(source, /planChangeKind\(currentServicePlan.value, selectedServicePlan.value\)/);
   assert.match(checkoutSource, /Gửi yêu cầu hạ gói/);
   assert.match(checkoutSource, /Không tạo yêu cầu hoàn tiền hoặc hoàn phần chênh lệch/);
   assert.match(checkoutSource, /Gửi yêu cầu thanh toán/);

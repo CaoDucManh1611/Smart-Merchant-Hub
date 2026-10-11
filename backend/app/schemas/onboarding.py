@@ -119,6 +119,9 @@ class OnboardingSubscriptionOut(BaseModel):
     plan_name: str
     status: str
     service_type: Literal["package", "chatbot"] = "package"
+    change_kind: str = "new"
+    quoted_amount: Decimal | None = None
+    quoted_currency: str = "VND"
 
 
 class OnboardingPlanPurchase(BaseModel):
@@ -179,6 +182,8 @@ class OnboardingSubscriptionSummaryOut(BaseModel):
     buyer: OnboardingBuyerOut
     subscription: OnboardingSubscriptionOut | None = None
     chatbot_subscription: OnboardingSubscriptionOut | None = None
+    package_request: OnboardingSubscriptionOut | None = None
+    chatbot_request: OnboardingSubscriptionOut | None = None
     amount: Decimal | None = None
     currency: str = "VND"
     payment_status: str | None = None

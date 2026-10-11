@@ -31,6 +31,11 @@ import MarketingLanding from "./MarketingLanding.vue";
 import BrandLogo from "./BrandLogo.vue";
 import ServicePricing from "./ServicePricing.vue";
 import ServiceCheckout from "./ServiceCheckout.vue";
+import ConnectionSupport from "./ConnectionSupport.vue";
+import PlatformOtpEmail from "./PlatformOtpEmail.vue";
+import PlatformPaymentSettings from "./PlatformPaymentSettings.vue";
+import { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash, newestShopsFirst, subscriptionRegistrationDate } from "./admin-navigation.js";
+import { planChangeKind } from "./checkout-utils.js";
 import {
   channelCapacityState,
   connectionStateMeta,
@@ -117,6 +122,13 @@ const crmEnglishCopy = {
   "Chi": "Spent",
   "Xuất sản phẩm & tồn kho": "Export products & inventory",
   "Xuất đơn hàng CSV": "Export orders CSV",
+  "Nhập hóa đơn": "Enter sales invoice",
+  "Tạo đơn bán bằng tay. Giá được lấy từ danh mục khi lưu; đơn mới ở trạng thái nháp, chưa ghi nhận thanh toán.": "Create a sales order manually. Catalogue prices apply when saved; new orders are drafts with no payment recorded.",
+  "Thêm sản phẩm": "Add product",
+  "Tổng dự kiến:": "Estimated total:",
+  "Cần có khách hàng và sản phẩm đang bán trước khi tạo đơn.": "Add a customer and an active product before creating an order.",
+  "Xác nhận tạo đơn nháp": "Create draft order",
+  "Đang tạo…": "Creating…",
   "Nhập CSV đơn hàng (tạo đơn nháp)": "Import orders from CSV (creates drafts)",
   "Chọn tệp CSV": "Choose CSV file",
   "Xem trước": "Preview",
@@ -853,6 +865,29 @@ const inPlatformAdminWorkspace = computed(() => (
   Boolean(authUser.value && platformAdmin.value && currentTab.value === "platform_admin")
 ));
 const platformShops = ref([]);
+const activePlatformSection = ref(adminSectionFromHash(window.location.hash));
+const adminMenuOpen = ref(false);
+const adminSectionHeading = ref(null);
+const activePlatformSectionMeta = computed(() => ADMIN_SECTIONS.find(section => section.id === activePlatformSection.value));
+
+async function syncPlatformSectionFromHash() {
+  if (!inPlatformAdminWorkspace.value) return;
+  activePlatformSection.value = adminSectionFromHash(window.location.hash);
+  adminMenuOpen.value = false;
+  await nextTick();
+  adminSectionHeading.value?.focus({ preventScroll: true });
+}
+
+function selectPlatformSection(id) {
+  const hash = adminSectionHash(id);
+  if (window.location.hash === hash) void syncPlatformSectionFromHash();
+  else window.location.hash = hash;
+}
+
+watch(inPlatformAdminWorkspace, (active) => {
+  if (active) void syncPlatformSectionFromHash();
+  else adminMenuOpen.value = false;
+});
 const platformShopDetails = ref({});
 const platformShopDetailLoadingIds = ref(new Set());
 const platformShopMutatingIds = ref(new Set());
@@ -1151,6 +1186,10 @@ const servicePlanSelectionTouched = ref(false);
 const serviceRequestSubmitted = ref(false);
 const serviceCheckoutOpen = ref(false);
 const serviceRequestReference = ref("");
+const serviceCheckoutRequest = ref(null);
+const servicePayment = ref(null);
+const servicePaymentLoading = ref(false);
+const servicePaymentError = ref("");
 const serviceRequestError = ref("");
 const serviceMode = ref("package");
 const servicePurchaseLoading = ref(false);
@@ -1192,6 +1231,7 @@ const activeServicePlans = computed(() => {
       const chatbotCopy = CHATBOT_PLAN_COPY[plan.code] || CHATBOT_PLAN_COPY.starter;
       return {
         ...plan,
+        raw_price: Number(isChatbot ? chatbotRentalPrice(plan) : plan.price),
         name: isChatbot ? chatbotCopy.name : plan.name,
         description: isChatbot ? chatbotCopy.description : plan.description,
         price: formatPlanPrice(isChatbot ? chatbotRentalPrice(plan) : plan.price, plan.billing_cycle),
@@ -1213,11 +1253,8 @@ const currentServicePlan = computed(() => (
   activeServicePlans.value.find((plan) => plan.code === currentServicePlanCode.value) || null
 ));
 const servicePlanChangeKind = computed(() => {
-  if (!currentServicePlanCode.value) return "new";
-  const currentIndex = activeServicePlans.value.findIndex((plan) => plan.code === currentServicePlanCode.value);
-  const selectedIndex = activeServicePlans.value.findIndex((plan) => plan.code === servicePlanCodeForPurchase(serviceRequestForm.value.plan_code));
-  if (currentIndex < 0 || selectedIndex < 0 || currentIndex === selectedIndex) return "switch";
-  return selectedIndex < currentIndex ? "downgrade" : "upgrade";
+  if (serviceRequestSubmitted.value && serviceCheckoutRequest.value) return serviceCheckoutRequest.value.change_kind;
+  return planChangeKind(currentServicePlan.value, selectedServicePlan.value);
 });
 const serviceChannelLimit = computed(() => {
   const selectedLimit = Number(selectedServicePlan.value?.max_channels);
@@ -1978,6 +2015,9 @@ function resetServiceRequestForm() {
   serviceRequestSubmitted.value = false;
   serviceCheckoutOpen.value = false;
   serviceRequestReference.value = "";
+  serviceCheckoutRequest.value = null;
+  servicePayment.value = null;
+  servicePaymentError.value = "";
   serviceRequestError.value = "";
   serviceRequestNotice.value = "";
   servicePurchaseNotice.value = "";
@@ -2003,6 +2043,9 @@ function normalizeServiceChannels(fillToLimit = false) {
 
 function selectServicePlan(planCode) {
   servicePlanSelectionTouched.value = true;
+  serviceCheckoutRequest.value = null;
+  servicePayment.value = null;
+  servicePaymentError.value = "";
   serviceRequestForm.value.plan_code = planCode;
   normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
@@ -2012,9 +2055,21 @@ function selectServicePlan(planCode) {
   servicePurchaseStatus.value = "";
   serviceCheckoutOpen.value = Boolean(authUser.value);
   if (authUser.value && !serviceAccountSummary.value) void fetchServiceAccountSummary();
+  const existing = serviceMode.value === 'chatbot' ? serviceAccountSummary.value?.chatbot_request : serviceAccountSummary.value?.package_request;
+  if (existing?.status === 'pending' && existing.plan_code === servicePlanCodeForPurchase(planCode) && Number(existing.quoted_amount) === Number(selectedServicePlan.value?.raw_price)) {
+    serviceCheckoutRequest.value = existing;
+    serviceRequestSubmitted.value = true;
+    servicePurchaseStatus.value = existing.status;
+    servicePurchaseNotice.value = subscriptionStatusLabel(existing.status);
+    serviceRequestReference.value = `SMH-${existing.id}`;
+    void loadServicePayment();
+  }
 }
 
 function selectServiceMode(mode) {
+  serviceCheckoutRequest.value = null;
+  servicePayment.value = null;
+  servicePaymentError.value = "";
   serviceMode.value = mode === "chatbot" ? "chatbot" : "package";
   serviceCheckoutOpen.value = false;
   servicePlanSelectionTouched.value = false;
@@ -2069,10 +2124,59 @@ async function submitServiceRequest() {
   if (!detail) return;
 
   serviceRequestReference.value = `SMH-${detail.id}`;
+  serviceCheckoutRequest.value = detail;
   serviceRequestSubmitted.value = true;
   serviceRequestNotice.value = detail.status === "pending"
     ? "Yêu cầu đã được chuyển tới quản trị viên nền tảng để duyệt."
     : "Gói Demo đã được kích hoạt cho shop.";
+}
+
+async function loadServicePayment(create = false) {
+  const request = serviceCheckoutRequest.value;
+  if (!request?.id || request.change_kind === 'downgrade' || servicePaymentLoading.value) return;
+  servicePaymentLoading.value = true;
+  servicePaymentError.value = '';
+  try {
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/subscription/${request.id}/payment`, {
+      method: create ? 'POST' : 'GET',
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw apiResponseError(response, detail, detail.detail?.code === 'payment_not_configured'
+      ? t('VietQR chưa được cấu hình. Vui lòng liên hệ quản trị viên.')
+      : t('Chưa thể tải thông tin thanh toán.'));
+    if (serviceCheckoutRequest.value?.id !== request.id) return;
+    servicePayment.value = detail;
+    servicePurchaseStatus.value = detail.approval_status || request.status;
+  } catch (error) {
+    if (serviceCheckoutRequest.value?.id === request.id) servicePaymentError.value = friendlyErrorMessage(error, 'Chưa thể tải thông tin thanh toán. Vui lòng thử lại.');
+  } finally {
+    servicePaymentLoading.value = false;
+  }
+}
+
+async function refreshCheckoutStatus() {
+  await fetchServiceAccountSummary();
+  const request = serviceMode.value === 'chatbot' ? serviceAccountSummary.value?.chatbot_request : serviceAccountSummary.value?.package_request;
+  if (request?.id === serviceCheckoutRequest.value?.id) {
+    serviceCheckoutRequest.value = request;
+    servicePurchaseStatus.value = request.status;
+    servicePurchaseNotice.value = request.status === 'pending'
+      ? 'Yêu cầu vẫn đang chờ admin duyệt. Trạng thái nhận tiền được hiển thị riêng bên dưới.'
+      : subscriptionStatusLabel(request.status);
+  }
+  await loadServicePayment();
+}
+
+async function resumeCheckoutRequest() {
+  const request = serviceMode.value === 'chatbot' ? serviceAccountSummary.value?.chatbot_request : serviceAccountSummary.value?.package_request;
+  if (!request) return;
+  selectServicePlan(request.plan_code);
+  serviceCheckoutRequest.value = request;
+  serviceRequestSubmitted.value = true;
+  servicePurchaseStatus.value = request.status;
+  servicePurchaseNotice.value = subscriptionStatusLabel(request.status);
+  serviceRequestReference.value = `SMH-${request.id}`;
+  await loadServicePayment();
 }
 
 function servicePlanCodeForPurchase(code) {
@@ -2123,7 +2227,9 @@ async function purchaseServicePlan() {
     if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
     servicePurchaseStatus.value = String(detail.status || "");
     if (detail.status === "pending") {
-      servicePurchaseNotice.value = serviceMode.value === "chatbot"
+      servicePurchaseNotice.value = detail.change_kind === "downgrade"
+        ? `Đã gửi yêu cầu hạ xuống ${detail.plan_name || planCode}. Gói hiện tại giữ nguyên đến khi admin duyệt; không tạo thanh toán hoặc hoàn tiền.`
+        : serviceMode.value === "chatbot"
         ? `Đã gửi yêu cầu thuê trợ lý ${detail.plan_name || planCode}. Shop sẽ mở không gian làm việc sau khi quản trị viên duyệt và dữ liệu được chuẩn bị.`
         : `Đã gửi yêu cầu thuê gói ${detail.plan_name || planCode}. Yêu cầu đang chờ quản trị viên duyệt và không gian làm việc sẽ mở sau khi dữ liệu riêng được chuẩn bị.`;
       await Promise.all([fetchServiceAccountSummary(), fetchTenantProvisioning()]);
@@ -5460,6 +5566,15 @@ async function transitionSalesOrder(order, toStatus) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
+    const updatedOrder = await response.json();
+    if (toStatus === "confirmed" && Number(updatedOrder.conversation_id) === Number(selectedId.value)) {
+      await loadMessages(updatedOrder.conversation_id, false, true);
+    }
+    if (toStatus === "confirmed" && updatedOrder.metadata?.confirmation_notification_status !== "sent") {
+      orderError.value = updatedOrder.metadata?.confirmation_notification_status === "no_conversation"
+        ? "Đã xác nhận đơn, nhưng đơn chưa gắn với hội thoại để gửi thông báo."
+        : "Đã xác nhận đơn, nhưng chưa gửi được thông báo cho khách. Hãy kiểm tra hội thoại trước khi gửi lại.";
+    }
     await Promise.all([fetchOrders(), fetchProducts()]);
     return true;
   } catch (err) {
@@ -6409,7 +6524,7 @@ async function fetchPlatformAdmin() {
     }
     const shopsPayload = await shopsResponse.json();
     platformAdmin.value = true;
-    platformShops.value = shopsPayload.items || [];
+    platformShops.value = newestShopsFirst(shopsPayload.items || []);
     const availableShopIds = new Set(platformShops.value.map((shop) => String(shop.id)));
     platformShopDetails.value = Object.fromEntries(
       Object.entries(platformShopDetails.value).filter(([shopId]) => availableShopIds.has(shopId)),
@@ -6492,10 +6607,12 @@ function platformShopLatestPayment(shop) {
 
 function platformPaymentSubscription(shop) {
   const detail = platformShopDetail(shop.id);
-  return detail.subscriptions?.find(item => item.id === Number(platformPaymentDrafts.value[shop.id]?.subscription_id)) || detail.subscriptions?.find(item => item.status === 'active' && platformPaymentAmount(item) > 0) || detail.subscription;
+  return detail.subscriptions?.find(item => item.id === Number(platformPaymentDrafts.value[shop.id]?.subscription_id)) || detail.subscriptions?.find(item => ['pending', 'active'].includes(item.status) && platformPaymentAmount(item) > 0) || detail.subscription;
 }
 
 function platformPaymentAmount(subscription) {
+  if (subscription?.change_kind === 'downgrade') return 0;
+  if (subscription?.quoted_amount != null) return Number(subscription.quoted_amount);
   const plan = platformPlans.value.find(item => item.id === subscription?.plan_id);
   return Number(subscription?.service_type === 'chatbot' ? chatbotRentalPrice(plan || {}) : plan?.price || 0);
 }
@@ -6947,7 +7064,11 @@ function resetOrderForm() {
   };
 }
 
+const manualOrderNotice = ref("");
+
 async function saveOrder() {
+  if (orderSaving.value) return;
+  manualOrderNotice.value = "";
   const form = orderForm.value;
   const items = (form.items || []).map((item) => ({
     product_id: Number(item.product_id),
@@ -6983,6 +7104,7 @@ async function saveOrder() {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
+    manualOrderNotice.value = `Đã tạo đơn nháp ${form.order_number.trim()}. Kiểm tra đơn trước khi xác nhận và ghi nhận thanh toán.`;
     resetOrderForm();
     await fetchOrders();
   } catch (err) {
@@ -9238,13 +9360,29 @@ function insertComposerEmoji() {
   focusComposer();
 }
 
+const replyTemplatePickerOpen = ref(false);
+const replyTemplateChoice = ref("");
+
 function insertReplyTemplate() {
-  if (!canReplyToSelectedConversation.value) return;
-  if (!draft.value.trim()) {
-    draft.value = "Xin chào, mình có thể hỗ trợ gì cho bạn?";
-  } else {
-    draft.value = `${draft.value.trim()} Xin chào, mình có thể hỗ trợ gì cho bạn?`;
+  replyTemplatePickerOpen.value = !replyTemplatePickerOpen.value;
+  if (replyTemplatePickerOpen.value) {
+    nextTick(() => document.querySelector("#reply-template-picker select")?.focus());
   }
+}
+
+function applyReplyTemplate() {
+  if (!canReplyToSelectedConversation.value) return;
+  const text = replyTemplateChoice.value === "greeting"
+    ? (uiLocale.value === "en" ? "Hello! How can we help you today?" : "Xin chào! Shop có thể hỗ trợ gì cho bạn ạ?")
+    : replyTemplateChoice.value === "order"
+      ? (uiLocale.value === "en"
+        ? "Please check your order details:\nOrder number: [fill in]\nRecipient: [fill in]\nPhone: [fill in]\nDelivery address: [fill in]\nProducts / quantity / unit price: [fill in]\nSubtotal: [fill in]\nShipping fee: [fill in]\nDiscount: [fill in]\nTotal payable: [fill in]\nPayment method: [fill in]\nExpected delivery: [fill in]\nNotes: [fill in]\nPlease confirm if these details are correct."
+        : "Bạn kiểm tra giúp shop thông tin đơn hàng nhé:\nMã đơn: [điền thông tin]\nNgười nhận: [điền thông tin]\nSố điện thoại: [điền thông tin]\nĐịa chỉ giao hàng: [điền thông tin]\nSản phẩm / số lượng / đơn giá: [điền thông tin]\nTiền hàng: [điền thông tin]\nPhí vận chuyển: [điền thông tin]\nGiảm giá: [điền thông tin]\nTổng thanh toán: [điền thông tin]\nPhương thức thanh toán: [điền thông tin]\nDự kiến giao hàng: [điền thông tin]\nGhi chú: [điền thông tin]\nBạn xác nhận thông tin trên đã đúng giúp shop nhé.")
+      : "";
+  if (!text) return;
+  draft.value = `${draft.value.trim()}${draft.value.trim() ? "\n\n" : ""}${text}`;
+  replyTemplateChoice.value = "";
+  replyTemplatePickerOpen.value = false;
   focusComposer();
 }
 
@@ -9604,6 +9742,7 @@ async function initializeTenantWorkspace() {
 
 onMounted(async () => {
 
+  window.addEventListener("hashchange", syncPlatformSectionFromHash);
   window.addEventListener("keydown", handleGlobalKeydown);
   window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   window.addEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);
@@ -9908,6 +10047,7 @@ async function fetchCsat() {
 
 onUnmounted(() => {
 
+  window.removeEventListener("hashchange", syncPlatformSectionFromHash);
   window.removeEventListener("keydown", handleGlobalKeydown);
   window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   window.removeEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);
@@ -11315,7 +11455,7 @@ function followupRecommendationLabel(item) {
                  COMPOSER
             ================================================== -->
 
-            <footer class="composer chat-composer" :class="{ 'has-composer-content': pendingMedia.length || voiceRecording }">
+            <footer class="composer chat-composer" :class="{ 'has-composer-content': pendingMedia.length || voiceRecording || replyTemplatePickerOpen }">
 
 
               <div class="composer-tabs">
@@ -11530,11 +11670,22 @@ function followupRecommendationLabel(item) {
                       template
                     "
                     title="Chèn mẫu trả lời"
+                    :aria-expanded="replyTemplatePickerOpen"
+                    aria-controls="reply-template-picker"
                     :disabled="composerMode === 'reply' && !canReplyToSelectedConversation"
                     @click="insertReplyTemplate"
                   >
                     Mẫu trả lời
                   </button>
+
+                  <label v-if="replyTemplatePickerOpen" id="reply-template-picker" class="reply-template-picker">
+                    <span>{{ uiLocale === 'en' ? 'Insert into draft' : 'Chèn vào bản nháp' }}</span>
+                    <select v-model="replyTemplateChoice" :disabled="!canReplyToSelectedConversation" @change="applyReplyTemplate">
+                      <option value="" disabled>{{ uiLocale === 'en' ? 'Choose a template' : 'Chọn mẫu trả lời' }}</option>
+                      <option value="greeting">{{ uiLocale === 'en' ? 'Greeting' : 'Chào khách' }}</option>
+                      <option value="order">{{ uiLocale === 'en' ? 'Order confirmation — fill in details' : 'Xác nhận đơn — điền thông tin' }}</option>
+                    </select>
+                  </label>
 
                   <select
                     v-if="cannedResponses.length"
@@ -12461,31 +12612,57 @@ function followupRecommendationLabel(item) {
         <div class="products-header platform-admin-hero">
           <div>
             <span class="card-eyebrow">CONTROL PLANE</span>
-            <h2>Quản trị nền tảng</h2>
-            <p>Quản lý tenant, gói dịch vụ, module, kết nối và sức khỏe toàn bộ hệ thống.</p>
+            <h2 ref="adminSectionHeading" tabindex="-1">{{ t(activePlatformSectionMeta.title) }}</h2>
+            <p>{{ t(activePlatformSectionMeta.description) }}</p>
           </div>
           <button type="button" class="settings-refresh" :disabled="platformLoading" @click="fetchPlatformAdmin">{{ platformLoading ? 'Đang tải...' : 'Làm mới dữ liệu' }}</button>
         </div>
+        <div class="admin-workspace-body">
+        <aside class="admin-sidebar">
+          <div class="admin-sidebar-art" aria-hidden="true">
+            <svg viewBox="0 0 220 112" fill="none">
+              <circle cx="110" cy="58" r="48" stroke="currentColor" stroke-opacity=".18" stroke-dasharray="3 6" />
+              <path d="M38 38L110 58 183 33M38 83L110 58 183 84" stroke="currentColor" stroke-opacity=".35" />
+              <g class="admin-art-window"><rect x="61" y="18" width="100" height="80" rx="12" fill="var(--admin-surface)" stroke="currentColor" stroke-opacity=".25" />
+                <path d="M61 37h100" stroke="currentColor" stroke-opacity=".15" />
+                <circle cx="72" cy="28" r="2" fill="currentColor" /><circle cx="79" cy="28" r="2" fill="currentColor" opacity=".4" />
+                <rect x="72" y="48" width="16" height="38" rx="4" fill="currentColor" opacity=".08" />
+                <path d="M98 76l12-13 12 6 17-19" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M98 86h42" stroke="currentColor" stroke-opacity=".18" />
+              </g>
+              <g class="admin-art-satellite" fill="var(--admin-surface)" stroke="currentColor" stroke-width="1.5">
+                <rect x="20" y="22" width="32" height="30" rx="9" /><path d="M28 31h16v10H33l-5 4z" />
+                <rect x="167" y="17" width="32" height="30" rx="9" /><path d="M175 31l5 5 10-11" />
+                <rect x="167" y="70" width="32" height="30" rx="9" /><path d="M175 91V80h16v11M174 80l3-4h12l3 4M181 91v-5h5v5" />
+                <circle cx="36" cy="84" r="14" /><path d="M31 84l4 4 7-8" />
+              </g>
+            </svg>
+            <img src="/brand/logo-mark.svg" alt="" class="admin-art-brand" />
+          </div>
+          <div class="admin-sidebar-heading"><span>{{ t('KHÔNG GIAN QUẢN TRỊ') }}</span><strong>{{ t('Quản trị nền tảng') }}</strong></div>
+          <button type="button" class="admin-menu-toggle" :aria-expanded="adminMenuOpen" aria-controls="admin-menu-navigation" @click="adminMenuOpen = !adminMenuOpen">{{ t(adminMenuOpen ? 'Đóng menu quản trị' : 'Mở menu quản trị') }}</button>
+          <nav id="admin-menu-navigation" class="admin-section-nav" :class="{ 'is-open': adminMenuOpen }" :aria-label="t('Đi nhanh đến mục quản trị')">
+            <a v-for="section in ADMIN_SECTIONS" :key="section.id" :href="adminSectionHash(section.id)" :aria-current="activePlatformSection === section.id ? 'page' : undefined" @click.prevent="selectPlatformSection(section.id)">
+              <svg class="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="section.icon" /></svg>
+              <b>{{ t(section.title) }}</b><span v-if="section.id === 'approvals'">{{ platformPendingRequests.length }}</span>
+            </a>
+          </nav>
+        </aside>
+        <div class="admin-section-content">
 
         <div v-if="platformError" class="settings-notice team-error" role="alert">{{ platformError }}</div>
         <div v-if="platformApprovalNotice" class="settings-notice platform-approval-notice" role="status">{{ platformApprovalNotice }}</div>
+        <PlatformOtpEmail id="admin-otp-email" v-show="activePlatformSection === 'otp-email'" :api-base="API_BASE" />
+        <PlatformPaymentSettings v-show="activePlatformSection === 'payments'" :api-base="API_BASE" />
 
-        <div class="platform-admin-metrics">
+        <div id="admin-overview" v-show="activePlatformSection === 'overview'" class="platform-admin-metrics">
           <article class="platform-admin-metric"><span>Tenant</span><strong>{{ platformShops.length }}</strong><small>Đang được quản lý</small></article>
           <article class="platform-admin-metric"><span>Đang hoạt động</span><strong>{{ platformShops.filter((shop) => shop.status !== 'suspended').length }}</strong><small>Tenant có thể truy cập</small></article>
           <article class="platform-admin-metric platform-admin-metric-alert"><span>Yêu cầu chờ duyệt</span><strong>{{ platformPendingRequests.length }}</strong><small>Chưa mở quyền CRM</small></article>
           <article class="platform-admin-metric platform-admin-metric-alert"><span>Cảnh báo kênh</span><strong>{{ platformProviderErrors.length }}</strong><small>Lỗi đã được ẩn thông tin nhạy cảm</small></article>
         </div>
 
-        <nav class="admin-section-nav" aria-label="Đi nhanh đến mục quản trị">
-          <a href="#admin-approvals">{{ t('Yêu cầu chờ duyệt') }} <span>{{ platformPendingRequests.length }}</span></a>
-          <a href="#admin-shops">{{ t('Danh sách shop') }}</a>
-          <a href="#admin-plans">{{ t('Gói dịch vụ') }}</a>
-          <a href="#admin-isolation">{{ t('Tách kho dữ liệu theo shop') }}</a>
-          <a href="#admin-health">{{ t('Kết nối & cảnh báo') }}</a>
-          <a href="#admin-audit">{{ t('Nhật ký nền tảng') }}</a>
-        </nav>
-        <section class="platform-admin-panel" aria-label="Doanh thu gói dịch vụ">
+        <section v-show="activePlatformSection === 'overview'" class="platform-admin-panel" aria-label="Doanh thu gói dịch vụ">
           <div class="platform-admin-panel-heading"><div><h3>Doanh thu gói dịch vụ</h3><p>Chỉ tính giao dịch VND đã xác nhận thu tiền, không tính yêu cầu hoặc gói được duyệt. Tháng tính theo UTC.</p></div></div>
           <div v-if="platformBilling" class="platform-admin-metrics">
             <article class="platform-admin-metric"><span>Thực thu còn giữ</span><strong>{{ formatMoney(platformBilling.net_collected) }}</strong></article>
@@ -12495,7 +12672,7 @@ function followupRecommendationLabel(item) {
           </div>
           <p v-else class="settings-empty">Chưa tải được thống kê thanh toán. Hãy làm mới dữ liệu.</p>
         </section>
-        <section id="admin-approvals" class="platform-admin-panel platform-approval-panel">
+        <section id="admin-approvals" v-show="activePlatformSection === 'approvals'" class="platform-admin-panel platform-approval-panel">
           <div class="platform-admin-panel-heading">
             <div><span class="card-eyebrow">SERVICE APPROVALS</span><h3>Yêu cầu chờ duyệt</h3><p>Duyệt gói để kích hoạt quyền sử dụng và bắt đầu chuẩn bị không gian dữ liệu riêng của shop.</p><small class="platform-admin-refresh-hint">Danh sách tự cập nhật mỗi 10 giây khi trang này đang mở.</small></div>
             <span class="platform-admin-count">{{ platformPendingRequests.length }} yêu cầu</span>
@@ -12520,12 +12697,12 @@ function followupRecommendationLabel(item) {
           </div>
         </section>
 
-        <div class="platform-admin-grid">
-          <section id="admin-shops" class="platform-admin-panel platform-admin-tenant-panel">
+        <div v-show="['shops', 'plans'].includes(activePlatformSection)" class="admin-section-stack">
+          <section id="admin-shops" v-show="activePlatformSection === 'shops'" class="platform-admin-panel platform-admin-tenant-panel">
             <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">TENANTS</span><h3>Danh sách tenant</h3><p>Quản lý trạng thái và hạn mức; dữ liệu vận hành vẫn nằm trong workspace riêng.</p></div><span class="platform-admin-count">{{ platformShops.length }} tenant</span></div>
             <p v-if="platformShopNotice" class="settings-notice platform-shop-notice" role="status">{{ platformShopNotice }}</p>
             <div v-if="!platformShops.length" class="settings-empty">Chưa có tenant trên nền tảng.</div>
-            <div v-else class="platform-admin-tenant-list">
+            <div v-else class="platform-admin-tenant-list" tabindex="0" role="region" :aria-label="t('Danh sách shop')">
               <article v-for="shop in platformShops" :key="shop.id" class="platform-admin-tenant-card" :class="{ suspended: shop.status === 'suspended' }">
                 <div class="platform-tenant-card-header">
                   <div><strong>{{ shop.name }}</strong><small>{{ shop.slug }} · #{{ shop.id }}</small></div>
@@ -12533,6 +12710,7 @@ function followupRecommendationLabel(item) {
                 </div>
                 <dl class="platform-tenant-summary">
                   <div><dt>Gói đang dùng</dt><dd><span class="platform-plan-chip">{{ platformShopDetail(shop.id).subscription?.plan_name || shop.plan_name || 'Chưa cấp gói' }}</span></dd></div>
+                  <div><dt>{{ uiLocale === 'en' ? 'Latest plan registration (UTC+7)' : 'Đăng ký gói gần nhất (UTC+7)' }}</dt><dd>{{ subscriptionRegistrationDate(shop.subscription_registered_at, uiLocale) }}</dd></div>
                   <div><dt>Trạng thái thanh toán</dt><dd><span class="platform-status-chip" :class="paymentStatusMeta(platformShopLatestPayment(shop)?.status).tone">{{ paymentStatusMeta(platformShopLatestPayment(shop)?.status).label }}</span></dd></div>
                   <div><dt>Nhân viên</dt><dd>{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'staff_users')?.used ?? 0 }}{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'staff_users')?.limit === null ? '' : ` / ${platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'staff_users')?.limit ?? 0}` }}</dd></div>
                   <div><dt>Kênh kết nối</dt><dd>{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.used ?? 0 }}{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.limit === null ? '' : ` / ${platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.limit ?? 0}` }}</dd></div>
@@ -12556,15 +12734,15 @@ function followupRecommendationLabel(item) {
                         <small v-if="item.exceeded">Đã vượt hạn mức</small><small v-else-if="item.nearLimit">Sắp chạm hạn mức</small><small v-else>Trong giới hạn</small>
                       </div>
                     </div>
-                    <form v-if="platformShopDetail(shop.id).subscriptions?.some(item => item.status === 'active' && platformPaymentAmount(item) > 0)" class="platform-payment-form" @submit.prevent="recordPlatformPayment(shop)">
-                      <label>Gói ghi nhận thanh toán<select :value="platformPaymentSubscription(shop)?.id" @change="platformPaymentDrafts[shop.id] = { ...platformPaymentDrafts[shop.id], subscription_id: Number($event.target.value) }"><option v-for="item in platformShopDetail(shop.id).subscriptions.filter(item => item.status === 'active' && platformPaymentAmount(item) > 0)" :key="item.id" :value="item.id">{{ item.plan_name }} · {{ item.service_type === 'chatbot' ? 'Trợ lý chatbot' : 'Gói quản lý shop' }} · {{ formatMoney(platformPaymentAmount(item)) }}</option></select></label>
+                    <form v-if="platformShopDetail(shop.id).subscriptions?.some(item => ['pending', 'active'].includes(item.status) && platformPaymentAmount(item) > 0)" class="platform-payment-form" @submit.prevent="recordPlatformPayment(shop)">
+                      <label>Gói ghi nhận thanh toán<select :value="platformPaymentSubscription(shop)?.id" @change="platformPaymentDrafts[shop.id] = { ...platformPaymentDrafts[shop.id], subscription_id: Number($event.target.value) }"><option v-for="item in platformShopDetail(shop.id).subscriptions.filter(item => ['pending', 'active'].includes(item.status) && platformPaymentAmount(item) > 0)" :key="item.id" :value="item.id">{{ item.plan_name }} · {{ item.service_type === 'chatbot' ? 'Trợ lý chatbot' : 'Gói quản lý shop' }} · {{ formatMoney(platformPaymentAmount(item)) }}</option></select></label>
                       <label>Mã giao dịch đã nhận tiền<input :value="platformPaymentDrafts[shop.id]?.reference || ''" required maxlength="255" placeholder="Mã chuyển khoản / mã biên nhận" @input="platformPaymentDrafts[shop.id] = { ...platformPaymentDrafts[shop.id], reference: $event.target.value }" /></label>
                       <button type="submit" class="primary-btn" :disabled="platformPaymentSaving">{{ platformPaymentSaving ? 'Đang ghi nhận…' : 'Xác nhận đã thu tiền' }}</button>
                       <small>Không thay thế bước duyệt gói. Dùng lại cùng mã giao dịch không cộng trùng tiền.</small>
                     </form>
                     <div v-if="platformShopDetail(shop.id).payments?.length" class="platform-payment-history">
                       <h4>Lịch sử thanh toán</h4>
-                      <p v-for="payment in platformShopDetail(shop.id).payments" :key="payment.id">{{ payment.provider_transaction_id }} · {{ formatMoney(payment.amount) }} · {{ paymentStatusMeta(payment.status).label }}</p>
+                      <p v-for="payment in platformShopDetail(shop.id).payments" :key="payment.id">{{ payment.provider_transaction_id }} · {{ formatMoney(payment.amount) }} · {{ paymentStatusMeta(payment.status).label }}<strong v-if="payment.reconciliation_required"> · {{ t('Cần admin đối soát') }}</strong></p>
                     </div>
                   </template>
                 </section>
@@ -12572,7 +12750,7 @@ function followupRecommendationLabel(item) {
             </div>
           </section>
 
-          <section class="platform-admin-panel">
+          <section v-show="activePlatformSection === 'plans'" class="platform-admin-panel">
             <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">SERVICE PLANS</span><h3>Gói dịch vụ</h3><p>Gói quyết định hạn mức và các module được cấp cho từng tenant.</p></div><div class="platform-plan-heading-actions"><span class="platform-admin-count">{{ platformPlans.length }} gói</span><button type="button" class="settings-refresh" @click="resetPlatformPlanForm">Thêm gói</button></div></div>
             <p v-if="platformPlanNotice" class="settings-notice platform-plan-notice" role="status">{{ platformPlanNotice }}</p>
             <form id="admin-plans" class="platform-plan-form" @submit.prevent="savePlatformPlan">
@@ -12597,8 +12775,8 @@ function followupRecommendationLabel(item) {
           </section>
         </div>
 
-        <div class="platform-admin-grid">
-          <section class="platform-admin-panel">
+        <div v-show="['isolation', 'health'].includes(activePlatformSection)" class="admin-section-stack">
+          <section v-show="activePlatformSection === 'isolation'" class="platform-admin-panel">
             <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">TENANT ISOLATION</span><h3>Tách kho dữ liệu theo shop</h3><p>Quản lý tách kho dữ liệu theo shop, điều khiển trạng thái thử nghiệm mà không mở dữ liệu CRM sang tenant khác.</p></div></div>
             <div id="admin-isolation"></div>
             <div v-if="!platformSchemas.length" class="settings-empty">Chưa đăng ký tenant thử nghiệm.</div>
@@ -12613,7 +12791,7 @@ function followupRecommendationLabel(item) {
             </div>
           </section>
 
-          <section class="platform-admin-panel">
+          <section v-show="activePlatformSection === 'health'" class="platform-admin-panel">
             <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">CHANNEL HEALTH</span><h3>Kết nối &amp; cảnh báo</h3><p>Theo dõi trạng thái và cảnh báo kết nối của các kênh bán hàng.</p></div></div>
             <div id="admin-health"></div>
             <p v-if="!platformProviderErrors.length" class="settings-empty">Chưa có cảnh báo kết nối.</p>
@@ -12623,13 +12801,15 @@ function followupRecommendationLabel(item) {
           </section>
         </div>
 
-        <section id="admin-audit" class="platform-admin-panel platform-admin-audit-panel">
+        <section id="admin-audit" v-show="activePlatformSection === 'audit'" class="platform-admin-panel platform-admin-audit-panel">
           <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">AUDIT</span><h3>Nhật ký nền tảng</h3><p>Ghi lại thao tác quản trị tenant, gói dịch vụ, thanh toán và tách dữ liệu.</p></div><span class="platform-admin-count">{{ platformAuditLogs.length }} sự kiện</span></div>
           <p v-if="!platformAuditLogs.length" class="settings-empty">Chưa có nhật ký nền tảng.</p>
           <ul v-else class="audit-list platform-alert-list">
             <li v-for="log in platformAuditLogs.slice(0, 12)" :key="log.id"><strong>{{ log.action }}</strong><span> · {{ resourceLabel(log.resource_type) }}{{ log.resource_id ? ` #${log.resource_id}` : '' }}</span><small>{{ log.created_at ? formatDateTime(log.created_at) : '' }}</small></li>
           </ul>
         </section>
+        </div>
+        </div>
       </section>
 
       <!-- ===================================================
@@ -12984,6 +13164,7 @@ function followupRecommendationLabel(item) {
            ĐƠN HÀNG + DOANH THU (SALES CRM)
       ==================================================== -->
       <section v-if="currentTab === 'orders'" v-show="workspaceModuleEnabled('retail')" class="products-layout orders-layout">
+        <div class="orders-control-card">
         <div class="products-header">
           <div>
             <h2>Đơn bán</h2>
@@ -13011,15 +13192,45 @@ function followupRecommendationLabel(item) {
           <span>Đơn từ Seller Center được nhập ở trạng thái nháp để bạn kiểm tra trước khi xử lý tồn kho.</span>
         </div>
 
+        <details class="report-panel manual-order-panel" @toggle="$event.target.open && !orderForm.order_number && resetOrderForm()">
+          <summary><span class="manual-order-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l3 3v15l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></span><span>{{ crmUiText('Nhập hóa đơn') }}</span><span class="manual-order-chevron" aria-hidden="true">⌄</span></summary>
+          <p>{{ crmUiText('Tạo đơn bán bằng tay. Giá được lấy từ danh mục khi lưu; đơn mới ở trạng thái nháp, chưa ghi nhận thanh toán.') }}</p>
+          <form class="industry-form" @submit.prevent="saveOrder">
+            <div class="industry-form-row">
+              <label>Mã đơn<input v-model="orderForm.order_number" required maxlength="100" :disabled="orderSaving" /></label>
+              <label>Khách hàng<select v-model="orderForm.customer_id" required :disabled="orderSaving"><option value="" disabled>Chọn khách hàng</option><option v-for="customer in orderCustomers" :key="customer.id" :value="customer.id">{{ customerOptionLabel(customer) }}</option></select></label>
+            </div>
+            <fieldset v-for="(item, index) in orderForm.items" :key="index" :disabled="orderSaving" class="manual-order-line">
+              <legend>Sản phẩm {{ index + 1 }}</legend>
+              <label>Sản phẩm<select v-model="item.product_id" required><option value="" disabled>Chọn sản phẩm</option><option v-for="product in orderItemProducts(index)" :key="product.id" :value="product.id">{{ product.name }} · {{ formatMoney(product.price) }}</option></select></label>
+              <label>Số lượng<input v-model.number="item.quantity" type="number" min="1" step="1" required /></label>
+              <strong class="manual-order-line-total">{{ formatMoney(orderItemLineTotal(item)) }}</strong>
+              <button type="button" class="settings-refresh" :disabled="orderForm.items.length <= 1" @click="removeOrderItem(index)">Xóa dòng</button>
+            </fieldset>
+            <div class="order-import-actions manual-order-footer">
+              <button type="button" class="settings-refresh" :disabled="orderSaving || orderForm.items.length >= activeOrderProducts.length" @click="addOrderItem">{{ crmUiText('Thêm sản phẩm') }}</button>
+              <div class="manual-order-total"><span>{{ crmUiText('Tổng dự kiến:') }}</span><strong>{{ formatMoney(orderFormTotal) }}</strong></div>
+              <button type="submit" class="primary-btn" :disabled="orderSaving || !orderCustomers.length || !activeOrderProducts.length">{{ crmUiText(orderSaving ? 'Đang tạo…' : 'Xác nhận tạo đơn nháp') }}</button>
+            </div>
+            <p v-if="manualOrderNotice" role="status">{{ manualOrderNotice }}</p>
+            <p v-if="!orderCustomers.length || !activeOrderProducts.length">{{ crmUiText('Cần có khách hàng và sản phẩm đang bán trước khi tạo đơn.') }}</p>
+          </form>
+        </details>
+
         <details class="report-panel order-import-panel">
-          <summary>{{ crmUiText('Nhập CSV đơn hàng (tạo đơn nháp)') }}</summary>
-          <p>{{ crmUiText('CSV cần các cột order_number,customer_id,sku,quantity; conversation_id tùy chọn.') }} {{ crmUiText('Dùng giá hiện tại trong danh mục; đơn nhập luôn ở trạng thái nháp và phải xác nhận qua quy trình tồn kho.') }}</p>
-          <div class="order-import-actions">
+          <summary><span class="manual-order-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 9v12M3 15h18"/></svg></span><span>{{ crmUiText('Nhập CSV đơn hàng (tạo đơn nháp)') }}</span><span class="manual-order-chevron" aria-hidden="true">⌄</span></summary>
+          <p>{{ crmUiText('Dùng giá hiện tại trong danh mục; đơn nhập luôn ở trạng thái nháp và phải xác nhận qua quy trình tồn kho.') }}</p>
+          <div class="order-import-steps">
+            <section class="order-import-step"><span class="order-import-step-number">01</span><strong>{{ uiLocale === 'en' ? 'Prepare your file' : 'Chuẩn bị tệp' }}</strong>
             <a class="settings-refresh" href="/templates/order-import-template.csv" download="mau-don-ban.csv">{{ t('Tải file mẫu đơn bán') }}</a>
-            <input ref="orderImportInput" type="file" accept=".csv,text/csv" aria-label="CSV order import file" @change="selectOrderImportFile" />
+            <small>{{ uiLocale === 'en' ? 'Replace example rows with real customer IDs and product SKUs from this shop.' : 'Thay dòng ví dụ bằng ID khách hàng và mã SKU sản phẩm thật của shop.' }}</small></section>
+            <section class="order-import-step"><span class="order-import-step-number">02</span><strong>{{ uiLocale === 'en' ? 'Choose a CSV file' : 'Chọn tệp CSV' }}</strong>
+            <label class="order-import-file"><span>{{ orderImportFile?.name || (uiLocale === 'en' ? 'Click to choose a .csv file' : 'Bấm để chọn tệp .csv') }}</span><small>{{ uiLocale === 'en' ? 'Select another file to replace it' : 'Chọn tệp khác để thay thế' }}</small><input ref="orderImportInput" type="file" accept=".csv,text/csv" aria-label="CSV order import file" :disabled="orderImportBusy" @change="selectOrderImportFile" /></label></section>
+            <section class="order-import-step"><span class="order-import-step-number">03</span><strong>{{ uiLocale === 'en' ? 'Check before importing' : 'Kiểm tra trước khi nhập' }}</strong><div class="order-import-actions">
             <button type="button" class="settings-refresh" :disabled="orderImportBusy || !orderImportFile" @click="previewOrderImport">{{ orderImportBusy ? crmUiText('Đang xử lý...') : crmUiText('Xem trước') }}</button>
-            <button type="button" class="settings-refresh" :disabled="orderImportBusy || !orderImportPreview || orderImportPreview.already_imported || orderImportPreview.errors?.length" @click="importDraftOrders">{{ crmUiText('Nhập các đơn nháp') }}</button>
+            <button type="button" class="primary-btn" :disabled="orderImportBusy || !orderImportPreview || orderImportPreview.already_imported || orderImportPreview.errors?.length" @click="importDraftOrders">{{ crmUiText('Nhập các đơn nháp') }}</button></div><small>{{ uiLocale === 'en' ? 'Import is enabled only after a valid preview.' : 'Chỉ được nhập sau khi xem trước và không còn lỗi.' }}</small></section>
           </div>
+          <details class="order-import-columns"><summary>{{ uiLocale === 'en' ? 'CSV column guide' : 'Hướng dẫn các cột CSV' }}</summary><p>{{ crmUiText('CSV cần các cột order_number,customer_id,sku,quantity; conversation_id tùy chọn.') }}</p><dl><div><dt>order_number</dt><dd>{{ uiLocale === 'en' ? 'Unique order number' : 'Mã đơn, không trùng đơn đã có' }}</dd></div><div><dt>customer_id</dt><dd>{{ uiLocale === 'en' ? 'Existing customer ID' : 'ID khách hàng có trong shop' }}</dd></div><div><dt>sku</dt><dd>{{ uiLocale === 'en' ? 'Existing product SKU' : 'Mã SKU sản phẩm đang bán' }}</dd></div><div><dt>quantity</dt><dd>{{ uiLocale === 'en' ? 'Positive whole quantity' : 'Số lượng nguyên, lớn hơn 0' }}</dd></div></dl></details>
           <p v-if="orderImportPreview && !orderImportPreview.already_imported" class="order-import-summary" role="status">
             {{ crmUiText('Đơn nháp trong tệp') }}: {{ orderImportPreview.orders || 0 }} · {{ crmUiText('Dòng sản phẩm') }}: {{ orderImportPreview.line_items || 0 }} · {{ crmUiText('Tổng theo giá hiện tại') }}: {{ formatMoney(orderImportPreview.total_amount || 0) }}
           </p>
@@ -13031,6 +13242,7 @@ function followupRecommendationLabel(item) {
           <p v-if="orderImportNotice" class="product-import-notice" role="status">{{ orderImportNotice }}</p>
         </details>
 
+        </div>
         <div v-if="ordersLoading" class="products-empty">Đang tải đơn hàng...</div>
         <div v-else-if="!orders.length" class="products-empty">Chưa có đơn hàng nào.</div>
         <div v-else class="products-table-wrap">
@@ -13850,6 +14062,7 @@ function followupRecommendationLabel(item) {
            LINKED CHANNELS
       ==================================================== -->
       <section v-if="currentTab === 'channels'" class="settings-layout channels-layout">
+        <ConnectionSupport v-if="authUser" :request="apiFetch" :base-url="API_BASE" />
         <div v-if="authUser" class="settings-card channel-page-header">
           <div class="settings-card-header">
             <div>
@@ -14525,9 +14738,15 @@ function followupRecommendationLabel(item) {
           :status="servicePurchaseStatus"
           :notice="servicePurchaseNotice || serviceRequestNotice"
           :request-reference="serviceRequestReference"
+          :payment="servicePayment"
+          :payment-loading="servicePaymentLoading"
+          :payment-error="servicePaymentError"
+          :quoted-amount="serviceCheckoutRequest?.quoted_amount"
           @back="serviceCheckoutOpen = false"
           @submit="submitServiceRequest"
-          @refresh="fetchServiceAccountSummary"
+          @refresh="refreshCheckoutStatus"
+          @pay="loadServicePayment(true)"
+            @reprice="selectServicePlan(selectedServicePlan.code)"
         />
       </section>
 
@@ -14549,6 +14768,11 @@ function followupRecommendationLabel(item) {
           <button type="button" class="service-mode-option" :class="{ selected: serviceMode === 'package' }" role="tab" :aria-selected="serviceMode === 'package'" @click="selectServiceMode('package')">{{ t('Gói quản lý shop') }}</button>
           <button type="button" class="service-mode-option" :class="{ selected: serviceMode === 'chatbot' }" role="tab" :aria-selected="serviceMode === 'chatbot'" @click="selectServiceMode('chatbot')">{{ t('Thuê riêng trợ lý chatbot') }}</button>
         </div>
+        <button v-if="authUser && (serviceMode === 'chatbot' ? serviceAccountSummary?.chatbot_request : serviceAccountSummary?.package_request)" type="button" class="service-payment-entry" @click="resumeCheckoutRequest">
+          <span class="service-payment-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M3 10h18M7 15h4" stroke-linecap="round" /></svg></span>
+          <span class="service-payment-entry-copy"><strong>Thanh toán & yêu cầu của bạn</strong><span>Xem yêu cầu gần nhất & trạng thái thanh toán</span></span>
+          <span class="service-payment-entry-action">Mở thanh toán <span aria-hidden="true">→</span></span>
+        </button>
         <ServicePricing :plans="activeServicePlans" :mode="serviceMode" :selected="serviceRequestForm.plan_code" :current-plan="currentServicePlanCode" :authenticated="!!authUser" @select="selectServicePlan" @signup="closePublicServicePage(); openSignup(true)" @login="closePublicServicePage(); openLogin()" />
 
         <div v-if="!authUser" class="service-page-grid guest-pricing">
@@ -17183,6 +17407,20 @@ body.crm-dark .connection-badge.offline {
 .permission-list li > small { font-size: 13px; }
 
 .service-page-layout { padding-top: clamp(24px, 3vw, 40px); }
+.service-payment-entry { display:flex; align-items:center; gap:16px; width:100%; box-sizing:border-box; margin:0 0 28px; padding:20px 24px; border:1px solid #a6d6d2; border-radius:18px; background:linear-gradient(115deg,#eaf7f4,#f6fbfa); color:#173b42; text-align:left; font:inherit; cursor:pointer; box-shadow:0 5px 18px #087d7910; transition:box-shadow .2s,border-color .2s; }
+.service-payment-entry:hover { border-color:#087d79; box-shadow:0 8px 24px #087d7920; }
+.service-payment-entry:focus-visible { outline:3px solid #087d79; outline-offset:4px; }
+.service-payment-entry-icon { display:grid; place-items:center; flex:0 0 48px; height:48px; border-radius:14px; background:#fff; color:#087d79; }
+.service-payment-entry-icon svg { width:28px; height:28px; }
+.service-payment-entry-copy { display:grid; gap:6px; min-width:0; }
+.service-payment-entry-copy strong { font-size:17px; }
+.service-payment-entry-copy > span { color:#46626b; font-size:13px; line-height:1.5; }
+.service-payment-entry-action { display:inline-flex; align-items:center; gap:14px; margin-left:auto; flex-shrink:0; min-height:44px; padding:0 16px; border-radius:11px; background:#087d79; color:white; font-size:13px; font-weight:750; }
+.crm-dark .service-payment-entry { background:linear-gradient(115deg,#203b3b,#202b2e); color:#edf5f4; border-color:#497977; }
+.crm-dark .service-payment-entry-copy > span { color:#afc2c1; }
+.crm-dark .service-payment-entry-icon { background:#193031; color:#85e2db; }
+@media(max-width:640px) { .service-payment-entry { flex-wrap:wrap; padding:16px; gap:12px; }.service-payment-entry-copy { flex:1; }.service-payment-entry-action { width:100%; justify-content:center; box-sizing:border-box; } }
+@media(prefers-reduced-motion:reduce) { .service-payment-entry { transition:none; } }
 .service-page-hero p { font-size: 16px; line-height: 1.65; }
 .service-request-card { padding: clamp(22px, 2.4vw, 32px); }
 .service-request-heading h2 { font-size: clamp(22px, 2vw, 28px); line-height: 1.25; }

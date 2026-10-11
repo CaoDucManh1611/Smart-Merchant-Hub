@@ -1,4 +1,5 @@
 import unittest
+from fastapi import HTTPException
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -7,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.onboarding import get_shop_subscription_summary, purchase_shop_plan
 from app.database.bootstrap import ensure_default_plans
 from app.models.audit_log import AuditLog
-from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.channel import Channel
 from app.schemas.onboarding import OnboardingPlanPurchase
 
@@ -31,6 +32,54 @@ class SubscriptionUpgradeFlowTests(unittest.TestCase):
 
     def tearDown(self):
         self.engine.dispose()
+
+    def test_downgrade_to_demo_is_only_a_request_and_keeps_active_access(self):
+        with Session(self.engine) as db:
+            owner = db.get(User, self.owner_id)
+            result = purchase_shop_plan(self.business_id, OnboardingPlanPurchase(plan_code="demo"), db, db, owner)
+            self.assertEqual("pending", result.status)
+            self.assertEqual("downgrade", result.change_kind)
+            self.assertEqual("starter", db.query(Subscription).filter_by(status="active").one().plan.code)
+            self.assertEqual(0, db.query(Payment).count())
+
+    def test_package_request_does_not_cancel_pending_chatbot(self):
+        with Session(self.engine) as db:
+            owner = db.get(User, self.owner_id)
+            chatbot = purchase_shop_plan(self.business_id, OnboardingPlanPurchase(plan_code="growth", service_type="chatbot"), db, db, owner)
+            package = purchase_shop_plan(self.business_id, OnboardingPlanPurchase(plan_code="growth"), db, db, owner)
+            self.assertNotEqual(chatbot.id, package.id)
+            self.assertEqual("pending", db.get(Subscription, chatbot.id).status)
+
+    def test_price_change_replaces_unpaid_request_and_preserves_old_quote(self):
+        with Session(self.engine) as db:
+            owner = db.get(User, self.owner_id)
+            request = purchase_shop_plan(self.business_id, OnboardingPlanPurchase(plan_code="growth"), db, db, owner)
+            plan = db.query(ServicePlan).filter_by(code="growth").one()
+            original = plan.price
+            plan.price = original + 1000
+            db.commit()
+            repeated = purchase_shop_plan(self.business_id, OnboardingPlanPurchase(plan_code="growth"), db, db, owner)
+            self.assertNotEqual(request.id, repeated.id)
+            self.assertEqual(original + 1000, repeated.quoted_amount)
+            self.assertEqual(original, db.get(Subscription, request.id).quoted_amount)
+            self.assertEqual("cancelled", db.get(Subscription, request.id).status)
+            fresh = purchase_shop_plan(self.business_id, OnboardingPlanPurchase(plan_code="growth"), db, db, owner)
+            self.assertEqual(repeated.id, fresh.id)
+            self.assertEqual(original + 1000, fresh.quoted_amount)
+
+    def test_price_change_never_replaces_request_with_received_money(self):
+        with Session(self.engine) as db:
+            owner = db.get(User, self.owner_id)
+            request = purchase_shop_plan(self.business_id, OnboardingPlanPurchase(plan_code="growth"), db, db, owner)
+            db.add(Payment(business_id=self.business_id, subscription_id=request.id, amount=request.quoted_amount,
+                           currency="VND", provider="manual", provider_transaction_id="PRICE-TEST", status="paid"))
+            plan = db.query(ServicePlan).filter_by(code="growth").one()
+            plan.price += 1000
+            db.commit()
+            with self.assertRaises(HTTPException) as error:
+                purchase_shop_plan(self.business_id, OnboardingPlanPurchase(plan_code="growth"), db, db, owner)
+            self.assertEqual(409, error.exception.status_code)
+            self.assertEqual("pending", db.get(Subscription, request.id).status)
 
     def test_upgrade_keeps_current_plan_until_approval_then_replaces_it(self):
         with Session(self.engine) as db:

@@ -82,6 +82,35 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(200, response.status_code, response.text)
         return response.json()["access_token"]
 
+    def test_checkout_receipt_uses_quote_and_blocks_duplicates_and_downgrade(self):
+        with Session(self.engine) as db:
+            plan = ServicePlan(code="frozen-checkout", name="Frozen", price=Decimal("999999"))
+            db.add(plan)
+            db.flush()
+            request = Subscription(business_id=self.business_id, plan_id=plan.id, status="pending", quoted_amount=Decimal("400000"), change_kind="upgrade")
+            downgrade = Subscription(business_id=self.business_id, plan_id=plan.id, status="pending", quoted_amount=Decimal("400000"), change_kind="downgrade")
+            db.add_all([request, downgrade])
+            db.commit()
+            request_id, downgrade_id = request.id, downgrade.id
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        endpoint = f"/api/platform/shops/{self.business_id}/payments"
+        payload = {"subscription_id": request_id, "amount": "400000", "currency": "VND", "provider": "bank_transfer", "provider_transaction_id": "frozen-quote-receipt", "status": "paid"}
+        paid = self.client.post(endpoint, headers=headers, json=payload)
+        self.assertEqual(201, paid.status_code, paid.text)
+        duplicate = self.client.post(endpoint, headers=headers, json={**payload, "provider_transaction_id": "duplicate-frozen-receipt"})
+        self.assertEqual(409, duplicate.status_code, duplicate.text)
+        blocked = self.client.post(endpoint, headers=headers, json={**payload, "subscription_id": downgrade_id, "provider_transaction_id": "downgrade-receipt"})
+        self.assertEqual(409, blocked.status_code, blocked.text)
+        with Session(self.engine) as db:
+            self.assertEqual(1, len(list(db.scalars(select(Payment).where(Payment.subscription_id == request_id)))))
+            self.assertIsNone(db.scalar(select(Payment).where(Payment.subscription_id == downgrade_id)))
+            receipt = db.scalar(select(Payment).where(Payment.subscription_id == request_id))
+            receipt.raw_response = {"payos_verified_payments_pending_review": [{"reference": "verified-overlap"}]}
+            db.commit()
+        listed = self.client.get(endpoint, headers=headers)
+        self.assertEqual(200, listed.status_code, listed.text)
+        self.assertTrue(next(row for row in listed.json() if row["subscription_id"] == request_id)["reconciliation_required"])
+
     def test_platform_member_lists_and_suspends_shop_with_audit(self):
         token = self.login("platform-admin@test", "platform-password")
         headers = {"Authorization": f"Bearer {token}", "X-Business-Id": str(self.other_business_id)}

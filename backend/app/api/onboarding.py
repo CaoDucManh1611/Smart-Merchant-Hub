@@ -257,6 +257,8 @@ def _create_shop_records(
         service_type=service_type,
         status="active" if service_type == "package" and plan.price == 0 else "pending",
         starts_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        change_kind="new",
+        quoted_amount=_chatbot_rental_price(plan) if service_type == "chatbot" else plan.price,
     )
     db.add(subscription)
     db.flush()
@@ -436,6 +438,31 @@ def list_onboarding_plans(db: Session = Depends(get_db)):
     return [plan for plan in plans if plan.status == "active"]
 
 
+def _plan_change_kind(current: Subscription | None, plan: ServicePlan, service_type: str) -> str:
+    if current is None:
+        return "new"
+    if current.plan_id == plan.id:
+        return "switch"
+    ranks = {"demo": 0, "starter": 1, "growth": 2, "scale": 3, "pro": 4, "enterprise": 4}
+    old = current.plan
+    if old.code in ranks and plan.code in ranks:
+        return "downgrade" if ranks[plan.code] < ranks[old.code] else "upgrade"
+    old_price = _chatbot_rental_price(old) if service_type == "chatbot" else old.price
+    new_price = _chatbot_rental_price(plan) if service_type == "chatbot" else plan.price
+    return "downgrade" if new_price < old_price else "upgrade"
+
+
+def _checkout_subscription_out(row: Subscription | None) -> OnboardingSubscriptionOut | None:
+    if row is None:
+        return None
+    return OnboardingSubscriptionOut(
+        id=row.id, plan_code=row.plan.code, plan_name=row.plan.name,
+        service_type=row.service_type, status=row.status,
+        change_kind=row.change_kind, quoted_amount=row.quoted_amount,
+        quoted_currency=row.quoted_currency,
+    )
+
+
 @router.post("/shops/{business_id}/subscription/purchase", response_model=OnboardingSubscriptionOut)
 def purchase_shop_plan(
     business_id: int,
@@ -449,11 +476,15 @@ def purchase_shop_plan(
     _require_shop_member_for_purchase(db, business_id, actor)
     business = db.get(Business, business_id)
     assert business is not None
+    # Serialize same-shop request replacement and payment creation on PostgreSQL.
+    db.scalar(select(Business).where(Business.id == business_id).with_for_update())
     ensure_default_plans(db)
     plan = _active_plan(db, payload.plan_code)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     service_type = payload.service_type
-    if service_type == "package":
+    current_active = _active_subscription_for(db, business_id, service_type=service_type)
+    change_kind = _plan_change_kind(current_active, plan, service_type)
+    if service_type == "package" and change_kind != "downgrade":
         _validate_requested_channels(plan, payload.channels)
     # Older clients sent their selected CRM channels with chatbot requests.
     # Accept that payload for compatibility, but never validate or consume it
@@ -465,19 +496,34 @@ def purchase_shop_plan(
 
     # Only the free Demo package is immediate. Every rental or paid plan
     # becomes a visible request in the control plane for an administrator.
-    if plan.code != "demo":
+    if plan.code != "demo" or change_kind == "downgrade":
         current_pending = db.scalar(
             select(Subscription)
             .where(
                 Subscription.business_id == business_id,
+                Subscription.service_type == service_type,
                 Subscription.status == "pending",
             )
             .order_by(Subscription.id.desc())
+            .with_for_update().execution_options(populate_existing=True)
         )
+        current_price = _chatbot_rental_price(plan) if service_type == "chatbot" else plan.price
         if current_pending is not None and (
             current_pending.plan_id != plan.id
             or current_pending.service_type != service_type
+            or current_pending.quoted_amount != current_price
         ):
+            from app.models.subscription_payment_attempt import SubscriptionPaymentAttempt
+            receipt = db.scalar(select(Payment.id).where(
+                Payment.subscription_id == current_pending.id,
+                Payment.status.in_(["paid", "refunded"]),
+            ))
+            paid_attempt = db.scalar(select(SubscriptionPaymentAttempt.id).where(
+                SubscriptionPaymentAttempt.subscription_id == current_pending.id,
+                SubscriptionPaymentAttempt.status.in_(["paid", "refunded", "reconciliation_required"]),
+            ))
+            if receipt is not None or paid_attempt is not None:
+                raise HTTPException(409, "Yêu cầu cũ đã có giao dịch nhận tiền hoặc cần đối soát. Liên hệ admin trước khi tạo yêu cầu mới.")
             current_pending.status = "cancelled"
             current_pending = None
         if current_pending is None:
@@ -489,6 +535,10 @@ def purchase_shop_plan(
                 starts_at=None,
                 ends_at=None,
                 auto_renew=False,
+                change_kind=change_kind,
+                previous_subscription_id=current_active.id if current_active else None,
+                quoted_amount=current_price,
+                quoted_currency="VND",
             )
             db.add(current_pending)
             db.flush()
@@ -516,6 +566,9 @@ def purchase_shop_plan(
             plan_name=plan.name,
             service_type=service_type,
             status=current_pending.status,
+            change_kind=current_pending.change_kind,
+            quoted_amount=current_pending.quoted_amount,
+            quoted_currency=current_pending.quoted_currency,
         )
 
     current_active = _active_subscription_for(db, business_id, service_type=service_type)
@@ -659,6 +712,8 @@ def get_shop_subscription_summary(
             plan_name=plan.name if plan else "Chưa chọn gói",
             service_type=subscription.service_type,
             status=subscription.status,
+            change_kind=subscription.change_kind,
+            quoted_amount=subscription.quoted_amount,
         ) if subscription is not None else None),
         chatbot_subscription=(OnboardingSubscriptionOut(
             id=chatbot_subscription.id,
@@ -666,7 +721,15 @@ def get_shop_subscription_summary(
             plan_name=(chatbot_subscription.plan.name if chatbot_subscription.plan else "Trợ lý AI"),
             service_type="chatbot",
             status=chatbot_subscription.status,
+            change_kind=chatbot_subscription.change_kind,
+            quoted_amount=chatbot_subscription.quoted_amount,
         ) if chatbot_subscription is not None else None),
+        package_request=_checkout_subscription_out(db.scalar(select(Subscription).where(
+            Subscription.business_id == business_id, Subscription.service_type == "package",
+        ).order_by(Subscription.id.desc()))),
+        chatbot_request=_checkout_subscription_out(db.scalar(select(Subscription).where(
+            Subscription.business_id == business_id, Subscription.service_type == "chatbot",
+        ).order_by(Subscription.id.desc()))),
         amount=payment.amount if payment is not None else (plan.price if plan is not None else None),
         currency=payment.currency if payment is not None else "VND",
         payment_status=payment.status if payment is not None else None,
@@ -709,8 +772,10 @@ def request_signup_otp(payload: SignupOtpRequest, db: Session = Depends(get_db))
     db.add(challenge)
     db.flush()
     try:
-        delivery = deliver_otp(channel="email", destination=email, code=code)
-        if not delivery.delivered:
+        from app.services.platform_otp_email import get_platform_otp_smtp_config
+        delivery = deliver_otp(channel="email", destination=email, code=code,
+                               smtp_config=get_platform_otp_smtp_config(db))
+        if not delivery.delivered or delivery.provider != "smtp":
             db.rollback()
             raise HTTPException(status_code=503, detail="Chưa thể gửi mã xác minh email. Vui lòng thử lại sau.")
     except HTTPException:

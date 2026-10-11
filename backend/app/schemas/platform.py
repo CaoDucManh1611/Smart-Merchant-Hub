@@ -14,6 +14,7 @@ class PlatformShopOut(BaseModel):
     status: str
     plan_code: str | None = None
     plan_name: str | None = None
+    subscription_registered_at: datetime | None = None
     usage: dict[str, int | float] = Field(default_factory=dict)
     quota: dict = Field(default_factory=dict)
     period_start: datetime
@@ -164,6 +165,8 @@ class PlatformSubscriptionOut(BaseModel):
     plan_name: str
     service_type: Literal["package", "chatbot"] = "package"
     status: str
+    change_kind: str = "new"
+    quoted_amount: Decimal | None = None
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     auto_renew: bool
@@ -181,6 +184,7 @@ class PlatformPaymentCreate(BaseModel):
 
 
 class PlatformPaymentOut(BaseModel):
+    reconciliation_required: bool = False
     id: int
     business_id: int
     subscription_id: int
@@ -199,6 +203,8 @@ class PlatformSubscriptionRequestOut(BaseModel):
     """Minimal, platform-admin-only view of a pending package request."""
 
     subscription_id: int
+    change_kind: str = "new"
+    quoted_amount: Decimal | None = None
     business_id: int
     shop_name: str
     shop_slug: str

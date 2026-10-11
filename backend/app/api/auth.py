@@ -247,7 +247,9 @@ def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(
     db.commit()
 
     try:
-        delivery = deliver_otp(channel="email", destination=email, code=code)
+        from app.services.platform_otp_email import get_platform_otp_smtp_config
+        delivery = deliver_otp(channel="email", destination=email, code=code,
+                               smtp_config=get_platform_otp_smtp_config(db))
         if not delivery.delivered or delivery.provider != "smtp":
             raise OtpDeliveryNotConfigured("Password reset requires email OTP delivery.")
     except (OtpDeliveryNotConfigured, OtpDeliveryError, ValueError, OSError):

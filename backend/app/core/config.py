@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     INSTAGRAM_ACCESS_TOKEN: str = ""
     PUBLIC_BASE_URL: str = ""
     FRONTEND_BASE_URL: str = "http://localhost:5173"
+    PAYOS_CLIENT_ID: str = ""
+    PAYOS_API_KEY: str = ""
+    PAYOS_CHECKSUM_KEY: str = ""
+    PAYOS_RETURN_URL: str = ""
+    PAYOS_CANCEL_URL: str = ""
+    PAYOS_EXPECTED_ACCOUNT_NUMBER: str = ""
+    PAYOS_EXPECTED_BANK_BIN: str = ""
+    PAYOS_PAYMENT_TTL_SECONDS: int = 900
     # Optional shared secret used by the local Zalo personal-account bridge.
     # Keep empty for development only; production must configure it before
     # accepting bridge events.
