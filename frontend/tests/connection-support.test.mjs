@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc';
+
+test('connection support is collapsed by default and preserves ticket workflow', () => {
+  const source = readFileSync(new URL('../src/ConnectionSupport.vue', import.meta.url), 'utf8');
+  const { descriptor, errors } = parse(source);
+  assert.deepEqual(errors, []);
+  compileScript(descriptor, { id: 'support-test' });
+  const template = compileTemplate({ source: descriptor.template.content, filename: 'ConnectionSupport.vue', id: 'support-test' });
+  assert.deepEqual(template.errors, []);
+  assert.match(source, /<details class="connection-support" aria-label="Hỗ trợ kết nối kênh">/);
+  assert.match(source, /<summary class="support-trigger">/);
+  assert.match(source, /@submit.prevent="submit"/);
+  assert.match(source, /v-model="description"/);
+  assert.match(source, /v-for="ticket in items"/);
+  assert.match(source, /idempotency_key: pending.key/);
+  assert.match(source, /grid-column: 1 \/ -1/);
+  assert.match(source, /prefers-reduced-motion: reduce/);
+  assert.match(source, /type="checkbox" v-model="providers"/);
+  assert.match(source, /providers.length >= channelLimit/);
+  assert.match(source, /providers: selected, description: summary/);
+  assert.match(source, /data.channel_limit/);
+  assert.match(source, /support_channel_limit/);
+  assert.match(source, /ref="channelMenu" class="support-channel-select"/);
+  assert.match(source, /@keydown.esc.stop.prevent="escapeChannelMenu"/);
+  assert.match(source, /removeEventListener\('pointerdown', closeChannelMenu\)/);
+  assert.match(source, /\.connection-support \{ border-color: var\(--owly-border, #d4e3e7\); \}/);
+});

@@ -40,8 +40,12 @@ class SupportRequestTests(unittest.TestCase):
             get_current_user: lambda: self.user, require_platform_admin: admin})
         self.client = TestClient(app)
         self.payload = {'provider': 'facebook', 'description': 'Không thể kết nối trang bán hàng.', 'idempotency_key': 'request-0001'}
+        self.quota = patch('app.api.platform_support_requests.quota_snapshot', return_value={
+            'plan_code': 'growth', 'resources': {'connected_channels': {'limit': 2, 'used': 2}}})
+        self.quota.start()
 
     def tearDown(self):
+        self.quota.stop()
         self.client.close()
         self.db.close()
         self.engine.dispose()
@@ -62,6 +66,30 @@ class SupportRequestTests(unittest.TestCase):
         self.db.expire_all()
         self.assertEqual(len(self.db.scalars(select(PlatformSupportRequestHistory)).all()), 1)
         self.assertNotIn(SupportGrant.__tablename__, self.engine.dialect.get_table_names(self.db.connection()))
+
+    def test_multiple_channels_are_one_ticket_with_plan_cap(self):
+        payload = {**self.payload, 'providers': ['instagram', 'facebook']}
+        first = self.client.post('/api/support/requests', json=payload)
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(first.json()['providers'], ['facebook', 'instagram'])
+        payload['providers'].reverse()
+        self.assertEqual(self.client.post('/api/support/requests', json=payload).status_code, 200)
+        self.assertEqual(self.client.get('/api/support/requests').json()['channel_limit'], 2)
+        self.assertEqual(self.create(providers=['facebook', 'instagram', 'telegram'], idempotency_key='request-0002').status_code, 422)
+        for channels in ([], ['facebook', 'facebook'], ['unknown']):
+            self.assertEqual(self.create(providers=channels).status_code, 422)
+        self.assertEqual(len(self.db.scalars(select(PlatformSupportRequest)).all()), 1)
+        self.user = SimpleNamespace(id=99, business_id=None)
+        self.assertEqual(self.client.get('/api/platform/support-requests').json()['items'][0]['providers'], ['facebook', 'instagram'])
+
+    def test_legacy_ticket_and_no_plan(self):
+        ticket = self.create().json()
+        row = self.db.get(PlatformSupportRequest, ticket['id'])
+        row.providers = None
+        self.db.commit()
+        self.assertEqual(self.client.get('/api/support/requests').json()['items'][0]['providers'], ['facebook'])
+        with patch('app.api.platform_support_requests.quota_snapshot', return_value={'plan_code': None}):
+            self.assertEqual(self.create(idempotency_key='request-new').status_code, 422)
 
     def test_own_shop_isolation_and_pagination(self):
         first = self.create().json()
@@ -179,9 +207,17 @@ class SupportRequestTests(unittest.TestCase):
             PlatformBusiness.__table__.create(connection)
             with patch.object(migration, 'op', Operations(MigrationContext.configure(connection))):
                 migration.upgrade()
+                next_path = path.parent / '20261012_0003_support_channels.py'
+                next_spec = importlib.util.spec_from_file_location('support_channels_migration', next_path)
+                next_migration = importlib.util.module_from_spec(next_spec)
+                next_spec.loader.exec_module(next_migration)
+                with patch.object(next_migration, 'op', Operations(MigrationContext.configure(connection))):
+                    next_migration.upgrade()
                 for model in (PlatformSupportRequest, PlatformSupportRequestHistory):
                     columns = inspect(connection).get_columns(model.__tablename__)
                     self.assertEqual({column['name'] for column in columns}, set(model.__table__.columns.keys()))
+                with patch.object(next_migration, 'op', Operations(MigrationContext.configure(connection))):
+                    next_migration.downgrade()
                 migration.downgrade()
                 self.assertEqual(inspect(connection).get_table_names(), ['platform_businesses'])
         engine.dispose()

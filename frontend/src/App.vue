@@ -32,6 +32,7 @@ import BrandLogo from "./BrandLogo.vue";
 import ServicePricing from "./ServicePricing.vue";
 import ServiceCheckout from "./ServiceCheckout.vue";
 import ConnectionSupport from "./ConnectionSupport.vue";
+import PlatformSupport from "./PlatformSupport.vue";
 import PlatformOtpEmail from "./PlatformOtpEmail.vue";
 import PlatformPaymentSettings from "./PlatformPaymentSettings.vue";
 import { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash, newestShopsFirst, subscriptionRegistrationDate } from "./admin-navigation.js";
@@ -504,6 +505,7 @@ const products = ref([]);
 const productVisibleCount = ref(5);
 const productsLoading = ref(false);
 const productSaving = ref(false);
+const productManualOpen = ref(false);
 const productError = ref("");
 const productUploading = ref(false);
 const productUploadNotice = ref("");
@@ -5292,6 +5294,7 @@ function editProduct(product) {
 }
 
 async function saveProduct() {
+  if (productSaving.value) return;
   const form = productForm.value;
   if (!form.sku.trim() || !form.name.trim()) {
     productError.value = "SKU và tên sản phẩm là bắt buộc.";
@@ -5299,6 +5302,14 @@ async function saveProduct() {
   }
   if (form.product_url?.trim() && !safeProductUrl(form.product_url)) {
     productError.value = t("Link sản phẩm phải là URL HTTP(S) hợp lệ, không chứa tài khoản hay mật khẩu.");
+    return;
+  }
+  if (form.price === '' || !Number.isFinite(Number(form.price)) || Number(form.price) < 0 || form.stock_quantity === '' || !Number.isSafeInteger(Number(form.stock_quantity)) || Number(form.stock_quantity) < 0) {
+    productError.value = 'Giá phải không âm; tồn kho phải là số nguyên không âm.';
+    return;
+  }
+  if (!form.id && products.value.some((product) => product.sku === form.sku.trim())) {
+    productError.value = 'Mã sản phẩm đã tồn tại. Hãy dùng mã khác hoặc điều chỉnh sản phẩm hiện có.';
     return;
   }
   productSaving.value = true;
@@ -5346,6 +5357,7 @@ async function saveProduct() {
     }
     resetProductForm();
     await fetchProducts();
+    productUploadNotice.value = 'Đã lưu sản phẩm thành công.';
   } catch (err) {
     productError.value = friendlyErrorMessage(err, "Chưa thể lưu sản phẩm. Vui lòng thử lại sau.");
   } finally {
@@ -12654,6 +12666,7 @@ function followupRecommendationLabel(item) {
         <div v-if="platformApprovalNotice" class="settings-notice platform-approval-notice" role="status">{{ platformApprovalNotice }}</div>
         <PlatformOtpEmail id="admin-otp-email" v-show="activePlatformSection === 'otp-email'" :api-base="API_BASE" />
         <PlatformPaymentSettings v-show="activePlatformSection === 'payments'" :api-base="API_BASE" />
+        <PlatformSupport id="admin-support" v-show="activePlatformSection === 'support'" :active="activePlatformSection === 'support'" :request="apiFetch" :base-url="API_BASE" :admin-id="authUser?.id" />
 
         <div id="admin-overview" v-show="activePlatformSection === 'overview'" class="platform-admin-metrics">
           <article class="platform-admin-metric"><span>Tenant</span><strong>{{ platformShops.length }}</strong><small>Đang được quản lý</small></article>
@@ -12844,6 +12857,7 @@ function followupRecommendationLabel(item) {
             <div class="import-choice-row">
               <a class="secondary-btn import-choice" href="/templates/product-import-template.csv" download="mau-san-pham.csv" @click.stop>{{ crmUiText('Tải file mẫu sản phẩm') }}</a>
               <button type="button" class="secondary-btn import-choice" @click.stop="openProductFilePicker">{{ crmUiText('Nhập tệp') }}</button>
+              <button type="button" class="secondary-btn import-choice" :aria-expanded="productManualOpen" aria-controls="product-manual-panel" @click.stop="productManualOpen = !productManualOpen">Nhập sản phẩm</button>
             </div>
           </div>
           <div v-else class="dropzone-content" role="status" aria-live="polite">
@@ -12852,8 +12866,27 @@ function followupRecommendationLabel(item) {
           </div>
         </div>
 
+        <section v-if="productManualOpen" id="product-manual-panel" class="product-manual-panel" aria-labelledby="product-manual-title">
+          <h3 id="product-manual-title">Nhập sản phẩm</h3>
+          <p>Đối chiếu mã đang có, rồi nhập sản phẩm mới bên dưới.</p>
+          <div class="product-manual-reference" tabindex="0" aria-label="Sản phẩm hiện có">
+            <div v-for="product in products" :key="product.id"><strong>{{ product.sku }}</strong><span>{{ product.name }}</span><span>{{ formatMoney(product.price) }}</span></div>
+            <p v-if="!products.length">{{ productsLoading ? 'Đang tải sản phẩm...' : 'Chưa có sản phẩm nào.' }}</p>
+          </div>
+          <form @submit.prevent="saveProduct">
+            <fieldset :disabled="productSaving" class="product-manual-fields">
+              <label>Mã sản phẩm (SKU)<input v-model="productForm.sku" required maxlength="80" autocomplete="off" /></label>
+              <label>Tên sản phẩm<input v-model="productForm.name" required maxlength="255" /></label>
+              <label>Giá bán (đ)<input v-model.number="productForm.price" type="number" required min="0" step="0.01" /></label>
+              <label>Số lượng tồn kho<input v-model.number="productForm.stock_quantity" type="number" required min="0" step="1" /></label>
+              <label class="product-manual-wide">Link sản phẩm<input v-model="productForm.product_url" type="url" maxlength="2048" placeholder="https://..." /></label>
+              <label class="product-manual-wide">Mô tả sản phẩm<textarea v-model="productForm.description" rows="3"></textarea></label>
+              <div class="product-manual-wide product-manual-actions"><button type="button" class="secondary-btn" @click="productManualOpen = false">Thu gọn</button><button type="submit" class="primary-btn">{{ productSaving ? 'Đang lưu...' : 'Lưu sản phẩm' }}</button></div>
+            </fieldset>
+          </form>
+        </section>
         <div v-if="productUploadNotice" class="product-import-notice" role="status">{{ productUploadNotice }}</div>
-        <div v-if="productError" class="product-error">{{ productError }}</div>
+        <div v-if="productError" class="product-error" role="alert">{{ productError }}</div>
         <div v-if="productStatusNotice" class="product-import-notice product-status-notice" role="status">{{ productStatusNotice }}</div>
 
         <div class="operation-mode-banner" data-testid="products-processing-only">
@@ -13245,7 +13278,7 @@ function followupRecommendationLabel(item) {
         </div>
         <div v-if="ordersLoading" class="products-empty">Đang tải đơn hàng...</div>
         <div v-else-if="!orders.length" class="products-empty">Chưa có đơn hàng nào.</div>
-        <div v-else class="products-table-wrap">
+        <div v-else class="products-table-wrap sales-orders-scroll" role="region" aria-label="Đơn bán" tabindex="0">
           <table class="products-table orders-table">
             <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>SĐT khách</th><th>Sản phẩm</th><th>Kênh</th><th>Trạng thái</th><th>Quy trình</th><th>Thanh toán</th><th>Tổng tiền</th><th>Ngày tạo</th></tr></thead>
             <tbody>
@@ -13659,7 +13692,12 @@ function followupRecommendationLabel(item) {
             <span class="upload-icon">NHẬP NỘI DUNG</span>
             <strong>Nhập tệp hoặc nhập văn bản để bổ sung thông tin cho shop</strong>
             <small>Hỗ trợ PDF, DOCX, TXT, CSV, MD, HTML (tối đa 20MB)</small>
-            <div class="import-choice-row"><button type="button" class="secondary-btn import-choice" :disabled="knowledgeDocumentQuotaReached" @click.stop="openDocumentPicker">Nhập tệp</button><button type="button" class="secondary-btn import-choice" :disabled="knowledgeDocumentQuotaReached" @click.stop="openTextImport">Nhập văn bản</button></div>
+            <div class="import-choice-row">
+              <button type="button" class="secondary-btn import-choice" :disabled="knowledgeDocumentQuotaReached" @click.stop="openDocumentPicker">Nhập tệp</button>
+              <button type="button" class="secondary-btn import-choice" :disabled="knowledgeDocumentQuotaReached" @click.stop="openTextImport">Nhập văn bản</button>
+              <a class="secondary-btn import-choice" href="/templates/tai-lieu-mau-kho-kien-thuc.txt" download="tai-lieu-mau-kho-kien-thuc.txt" @click.stop @keydown.stop>{{ t('Tài liệu mẫu') }}</a>
+            </div>
+            <small>{{ t('Tải mẫu TXT, điền thông tin của shop rồi nhập lại vào Kho kiến thức.') }}</small>
           </div>
           <div class="dropzone-content" v-else>
             <span class="spinner-icon">...</span>
@@ -13674,7 +13712,7 @@ function followupRecommendationLabel(item) {
           {{ crmUiText(docUploadNotice) }}
         </div>
 
-        <div v-if="textImportOpen" class="app-dialog-backdrop" @click.self="textImportOpen = false">
+        <div v-if="textImportOpen" class="app-dialog-backdrop text-import-backdrop" @click.self="textImportOpen = false">
           <section class="app-dialog text-import-dialog" role="dialog" aria-modal="true" aria-label="Nhập văn bản" tabindex="-1" @keydown.esc="textImportOpen = false">
             <div class="settings-card-header"><div><span class="card-eyebrow">BỔ SUNG THÔNG TIN</span><h2>Nhập văn bản</h2><p>Dán FAQ, chính sách hoặc mô tả sản phẩm. Nội dung sẽ được lưu thành tài liệu riêng của shop.</p></div><button type="button" class="quick-action-close" aria-label="Đóng" @click="textImportOpen = false">×</button></div>
             <label class="text-import-title">Tên tài liệu<input v-model="textImportTitle" maxlength="120" placeholder="Ví dụ: Chính sách đổi trả" /></label>
@@ -13896,6 +13934,8 @@ function followupRecommendationLabel(item) {
           <button type="button" class="settings-refresh" @click="fetchReports">Làm mới</button>
         </div>
         <div v-if="reportsError" class="product-error" role="alert">{{ crmErrorText(reportsError) }}</div>
+        <details class="report-disclosure report-filter-disclosure">
+        <summary>{{ t('Bộ lọc báo cáo') }}</summary>
         <form class="report-filters" @submit.prevent="fetchReports">
           <label>Từ ngày<input v-model="reportFilters.start_at" type="date" /></label>
           <label>Đến ngày<input v-model="reportFilters.end_at" type="date" /></label>
@@ -13906,6 +13946,7 @@ function followupRecommendationLabel(item) {
           <button class="primary-btn" type="submit">Áp dụng</button>
           <button type="button" class="settings-refresh" :disabled="reportCsvDownloading" @click="downloadReportCsv">{{ reportCsvDownloading ? 'Đang tải tệp...' : 'Tải tệp báo cáo' }}</button>
         </form>
+        </details>
         <p v-if="reportCsvStatus" class="settings-notice" role="status" aria-live="polite">{{ reportCsvStatus }}</p>
         <div v-if="reportsLoading" class="products-empty" role="status">Đang tải báo cáo...</div>
         <div v-else-if="!crmOverview" class="products-empty"><button type="button" @click="fetchReports">{{ t('Thử lại') }}</button></div>
@@ -13915,11 +13956,18 @@ function followupRecommendationLabel(item) {
             <div class="report-card"><span>Hội thoại</span><strong>{{ crmOverview.conversation_count }}</strong></div>
             <div class="report-card"><span>Đơn hàng</span><strong>{{ crmOverview.order_count }}</strong></div>
             <div class="report-card"><span>Doanh thu</span><strong>{{ formatMoney(crmOverview.total_revenue) }}</strong></div>
+          </div>
+          <details class="report-disclosure">
+            <summary>{{ t('Chỉ số bổ sung') }}</summary>
+          <div class="report-cards">
             <div class="report-card"><span>Tỷ lệ chốt cơ hội</span><strong>{{ crmOverview.conversion_rate }}%</strong><small>{{ crmOverview.won_lead_count }}/{{ crmOverview.lead_count }} cơ hội</small></div>
             <div class="report-card"><span>Đơn / hội thoại</span><strong>{{ crmOverview.conversation_to_order_rate }}%</strong></div>
             <div class="report-card"><span>Phiếu đang mở</span><strong>{{ crmOverview.open_ticket_count }}</strong><small>{{ crmOverview.ticket_count }} phiếu tổng</small></div>
             <div class="report-card"><span>Đơn nhập hàng</span><strong>{{ crmOverview.purchase_order_count || 0 }}</strong><small>{{ crmUiText('Chi') }} {{ formatMoney(crmOverview.purchase_spend) }}</small></div>
           </div>
+          </details>
+          <details v-if="commerceReport" class="report-disclosure">
+            <summary>{{ crmUiText('Đơn hàng, lịch hẹn, báo giá & hóa đơn') }}<span>{{ commerceReport.source_records?.length || 0 }} {{ crmUiText('bản ghi nguồn') }}</span></summary>
           <div v-if="commerceReport" class="report-panel">
             <div class="report-panel-header"><div><h3>{{ crmUiText('Đơn hàng, lịch hẹn, báo giá & hóa đơn') }}</h3><span>{{ crmUiText('Doanh thu tính từ đơn ở trạng thái đã xác nhận trở đi; Shopee không nằm trong phạm vi.') }}</span></div><span>{{ commerceReport.source_records?.length || 0 }} {{ crmUiText('bản ghi nguồn') }}</span></div>
             <div class="report-cards">
@@ -13942,6 +13990,9 @@ function followupRecommendationLabel(item) {
               </table>
             </div>
           </div>
+          </details>
+          <details class="report-disclosure">
+            <summary>{{ t('Vận hành nền tảng') }} · {{ t('Hiệu suất nhân viên') }}</summary>
           <div class="report-panel quality-ops-panel">
             <div class="report-panel-header">
               <div><h3>Vận hành nền tảng</h3><span>Lượt dùng, kênh kết nối, chi phí trợ lý và thời hạn trong {{ qualityDashboard.period_days || 30 }} ngày gần nhất</span></div>
@@ -13983,6 +14034,9 @@ function followupRecommendationLabel(item) {
               </table>
             </div>
           </div>
+          </details>
+          <details class="report-disclosure">
+            <summary>{{ t('Phân bổ doanh thu') }} · {{ t('Luồng bán hàng & chuyển đổi') }}</summary>
           <div v-if="revenueAttribution" class="report-panel">
             <div class="report-panel-header"><div><h3>Phân bổ doanh thu</h3><span>Ghi nhận theo lần tương tác cuối</span></div><button type="button" class="settings-refresh" :disabled="attributionSaving" @click="recalculateRevenueAttribution">{{ attributionSaving ? 'Đang tính...' : 'Tính lại nguồn doanh thu' }}</button></div>
             <div class="report-cards">
@@ -14002,6 +14056,9 @@ function followupRecommendationLabel(item) {
             <div v-if="!pipelineSummary.length" class="products-empty">Chưa có cơ hội phù hợp với bộ lọc.</div>
             <div v-else class="pipeline-summary"><div v-for="item in pipelineSummary" :key="item.stage" class="pipeline-card"><span>{{ leadStageLabel(item.stage) }}</span><strong>{{ item.lead_count }}</strong><small>{{ formatMoney(item.value) }}</small></div></div>
           </div>
+          </details>
+          <details class="report-disclosure">
+            <summary>{{ t('Phiếu hỗ trợ & thời hạn') }} · {{ t('Xu hướng theo ngày') }}</summary>
           <div class="report-panel">
             <div class="report-panel-header"><div><h3>Phiếu hỗ trợ & thời hạn</h3><span>Phiếu theo trạng thái trong phạm vi lọc</span></div><strong>{{ ticketReport.overdue_tickets || 0 }} quá hạn</strong></div>
             <div v-if="!ticketReport.items?.length" class="products-empty">Chưa có phiếu phù hợp với bộ lọc.</div>
@@ -14011,6 +14068,9 @@ function followupRecommendationLabel(item) {
             <div class="report-panel-header"><h3>Xu hướng theo ngày</h3><span>Hội thoại · đơn bán · doanh thu</span></div>
             <div class="report-series"><div v-for="point in crmOverview.time_series.slice(-14)" :key="point.date" class="report-series-row"><span>{{ formatDate(point.date) }}</span><b>{{ point.conversations }} hội thoại · {{ point.orders }} đơn · {{ formatMoney(point.revenue || 0) }}</b></div></div>
           </div>
+          </details>
+          <details v-if="inventoryReport || purchaseCostReport" class="report-disclosure">
+            <summary>{{ t('Tồn kho') }} · {{ t('Chi phí nhập đã nhận') }}<span v-if="inventoryReport">{{ inventoryReport.total || 0 }} {{ t('sản phẩm') }}</span></summary>
           <div v-if="inventoryReport" class="report-panel">
             <div class="report-panel-header"><h3>Tồn kho</h3><span>{{ inventoryReport.total || 0 }} sản phẩm</span></div>
             <div class="report-cards">
@@ -14018,7 +14078,7 @@ function followupRecommendationLabel(item) {
               <div class="report-card"><span>Đang giữ</span><strong>{{ inventoryReport.reserved_quantity || 0 }}</strong></div>
               <div class="report-card"><span>Có thể bán</span><strong>{{ inventoryReport.available_quantity || 0 }}</strong></div>
             </div>
-            <div v-if="inventoryReport.items?.length" class="products-table-wrap">
+            <div v-if="inventoryReport.items?.length" class="products-table-wrap inventory-report-scroll" role="region" aria-label="Tồn kho" tabindex="0">
               <table class="products-table reports-table">
                 <thead><tr><th>Sản phẩm</th><th>Tồn</th><th>Giữ</th><th>Có thể bán</th><th>Biến động</th></tr></thead>
                 <tbody><tr v-for="item in inventoryReport.items" :key="item.product_id"><td><strong>{{ item.name }}</strong><small>{{ item.sku }}</small></td><td>{{ item.stock_quantity }}</td><td>{{ item.reserved_quantity }}</td><td>{{ item.available_quantity }}</td><td>{{ item.net_movement_quantity }} ({{ item.movement_count }} lần)</td></tr></tbody>
@@ -14030,6 +14090,7 @@ function followupRecommendationLabel(item) {
             <div v-if="!purchaseCostReport.items?.length" class="products-empty">Chưa có phiếu nhập trong khoảng thời gian này.</div>
             <div v-else class="products-table-wrap"><table class="products-table reports-table"><thead><tr><th>Nhà cung cấp</th><th>Số phiếu</th><th>Số lượng</th><th>Chi phí nhận</th></tr></thead><tbody><tr v-for="item in purchaseCostReport.items" :key="item.supplier_name"><td>{{ item.supplier_name }}</td><td>{{ item.receipt_count }}</td><td>{{ item.received_quantity }}</td><td><strong>{{ formatMoney(item.received_cost) }}</strong></td></tr></tbody></table></div>
           </div>
+          </details>
         </template>
       </section>
 
@@ -14180,9 +14241,9 @@ function followupRecommendationLabel(item) {
       ==================================================== -->
       <section v-if="currentTab === 'webhooks'" class="settings-layout webhooks-layout">
         <div class="settings-card webhook-card">
-          <div class="settings-card-header">
-            <div><h2>Nhận sự kiện</h2><p>Kiểm tra trạng thái nhận tin nhắn từ Facebook, Instagram, Telegram, Zalo, TikTok và Shopee.</p></div>
-            <button type="button" class="settings-refresh" :disabled="botConnectionLoading || metaLoading" @click="refreshWebhookStatus">{{ botConnectionLoading || metaLoading ? 'Đang kiểm tra...' : 'Làm mới' }}</button>
+          <div class="settings-card-header webhook-page-heading">
+            <div class="webhook-heading-copy"><span class="webhook-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 12h4l3-7 3 14 3-7h3"/><rect x="2" y="2" width="20" height="20" rx="5"/></svg></span><div><h2>Nhận sự kiện</h2><p>Kiểm tra trạng thái nhận tin nhắn từ Facebook, Instagram, Telegram, Zalo, TikTok và Shopee.</p></div></div>
+            <button type="button" class="settings-refresh webhook-refresh" :disabled="botConnectionLoading || metaLoading" @click="refreshWebhookStatus"><svg :class="{ 'is-refreshing': botConnectionLoading || metaLoading }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>{{ botConnectionLoading || metaLoading ? 'Đang kiểm tra...' : 'Làm mới' }}</button>
           </div>
           <div v-if="botConnectionError" class="settings-notice team-error" role="alert">{{ botConnectionError }}</div>
           <div class="webhook-grid">
@@ -14190,7 +14251,7 @@ function followupRecommendationLabel(item) {
             <article class="webhook-item"><div><strong>Instagram</strong><span class="webhook-status" :class="{ connected: metaStatus.connected && metaStatus.instagram_account_id }">{{ metaStatus.instagram_account_id ? 'Đã kết nối' : 'Chưa kết nối' }}</span></div><small>Nhận tin Instagram riêng, dùng cùng lần cấp quyền Facebook.</small></article>
             <article v-for="connection in botConnections.filter((item) => !['facebook', 'instagram'].includes(item.channel_type))" :key="`webhook-${connection.id}`" class="webhook-item"><div><strong>{{ connection.channel_type === 'zalo' ? 'Zalo' : connection.channel_type === 'tiktok' ? 'TikTok' : connection.channel_type === 'shopee' ? 'Shopee' : 'Telegram' }}</strong><span class="webhook-status" :class="{ connected: connection.webhook_status === 'connected' }">{{ connection.webhook_status === 'connected' ? 'Đang hoạt động' : connection.webhook_status === 'disconnected' ? 'Đã ngắt' : 'Cần kiểm tra' }}</span></div><small>{{ connection.name }} · nhận tin riêng cho shop.</small></article>
           </div>
-          <div v-if="!botConnections.length && !metaStatus.connected" class="settings-empty">Chưa có điểm nhận sự kiện nào được đăng ký.</div>
+          <div v-if="!botConnections.length && !metaStatus.connected" class="settings-empty webhook-empty"><span>Chưa có điểm nhận sự kiện nào được đăng ký.</span><button type="button" class="settings-refresh" @click="openChannels">Kết nối mạng xã hội</button></div>
         </div>
         <div class="settings-card webhook-card webhook-guide-card">
           <div class="settings-card-header"><div><h3>Nguyên tắc an toàn</h3><p>Tin nhắn chỉ được nhận khi đúng mã bảo vệ và thông tin kết nối không hiển thị cho người khác.</p></div></div>
@@ -14441,6 +14502,7 @@ function followupRecommendationLabel(item) {
             <button type="button" class="settings-refresh" :disabled="customerImportBusy" @click="exportCustomerCsv">{{ uiLocale === 'en' ? 'Export CSV' : 'Xuất CSV' }}</button>
           </div>
           <label class="customer-import-file">
+            <svg class="customer-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>
             <span>{{ uiLocale === 'en' ? 'UTF-8 CSV, up to 2 MB and 5,000 rows' : 'CSV UTF-8, tối đa 2 MB và 5.000 dòng' }}</span>
             <input type="file" accept=".csv,text/csv" :disabled="customerImportBusy" @change="chooseCustomerCsv" />
           </label>
@@ -14718,8 +14780,8 @@ function followupRecommendationLabel(item) {
               <button type="button" class="settings-refresh" @click="fetchAuditLogs">{{ auditLoading ? 'Đang tải...' : 'Làm mới' }}</button>
             </div>
             <div v-if="!auditLogs.length" class="settings-empty">Chưa có nhật ký thao tác.</div>
-            <ul v-else class="audit-list">
-              <li v-for="log in auditLogs.slice(0, 10)" :key="log.id"><strong>{{ log.action }}</strong> · {{ resourceLabel(log.resource_type) }} {{ log.resource_id ? `#${log.resource_id}` : '' }} · {{ log.created_at ? formatDateTime(log.created_at) : '' }}</li>
+            <ul v-else class="audit-list account-audit-scroll" tabindex="0" aria-label="Nhật ký thao tác">
+              <li v-for="log in auditLogs" :key="log.id"><strong>{{ log.action }}</strong> · {{ resourceLabel(log.resource_type) }} {{ log.resource_id ? `#${log.resource_id}` : '' }} · {{ log.created_at ? formatDateTime(log.created_at) : '' }}</li>
             </ul>
           </div>
         </div>
@@ -16699,12 +16761,29 @@ body.crm-dark .connection-badge.offline {
 .channel-modal { width: min(94vw, 900px); max-height: 90vh; overflow: auto; }
 .channel-modal .settings-card-header { align-items: flex-start; }
 .channel-modal .quick-action-close { flex: 0 0 auto; }
-.text-import-dialog { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; width: min(94vw, 700px); max-height: calc(100vh - 48px); overflow-y: auto; }
+.text-import-backdrop { background: rgba(15, 35, 42, .38); backdrop-filter: blur(3px); }
+.text-import-dialog { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; box-sizing: border-box; width: min(100%, 700px); max-height: calc(100dvh - 48px); overflow-y: auto; padding: 28px; color: var(--owly-ink); background: var(--owly-surface, #fff); border: 1px solid var(--owly-border); border-radius: 18px; box-shadow: 0 24px 70px rgba(15, 35, 42, .22); }
+.text-import-dialog .settings-card-header { align-items: flex-start; gap: 16px; margin: 0; }
+.text-import-dialog .card-eyebrow { color: #087f82; font-size: 12px; letter-spacing: .06em; }
+.text-import-dialog h2 { font-size: 25px; line-height: 1.3; margin: 6px 0 10px; }
+.text-import-dialog .settings-card-header p { font-size: 14px; line-height: 1.65; margin: 0; color: var(--owly-muted); }
+.text-import-dialog .quick-action-close { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; background: var(--owly-surface-soft, #edf7f7); color: #087f82; border-radius: 10px; }
+.text-import-dialog .quick-action-close:hover { background: #d9f2ef; }
+.text-import-dialog .text-import-title { margin: 0; font-size: 14px; gap: 8px; }
+.text-import-dialog .text-import-title input, .text-import-dialog .text-import-title textarea { box-sizing: border-box; width: 100%; font: inherit; font-weight: 400; font-size: 14px; line-height: 1.6; background: var(--owly-surface, #fff); }
+.text-import-dialog .text-import-title textarea { min-height: 180px; resize: vertical; }
+.text-import-dialog :is(input, textarea, button):focus-visible { outline: 2px solid #087f82; outline-offset: 2px; }
+.text-import-dialog .dialog-actions { padding-top: 16px; border-top: 1px solid var(--owly-border); }
+.text-import-dialog .dialog-actions button { min-height: 40px; padding: 9px 16px; font-size: 14px; border-radius: 9px; }
+.crm-dark .text-import-dialog .card-eyebrow { color: #7ad6d2; }
+@media (max-width: 480px) { .text-import-backdrop { padding: 12px; } .text-import-dialog { padding: 20px; max-height: calc(100dvh - 24px); } }
+@media (prefers-reduced-motion: reduce) { .text-import-dialog { animation: none; } }
 .text-import-title { display: grid; gap: 7px; margin: 12px 0; color: var(--owly-ink); font-weight: 700; }
 .text-import-title input, .text-import-title textarea { border: 1px solid var(--owly-border); border-radius: 10px; padding: 10px 12px; background: #fff; color: var(--owly-ink); }
 .text-import-dialog .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 0; }
-.import-choice-row { display: flex; justify-content: center; gap: 10px; margin-top: 14px; }
+.import-choice-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 14px; }
 .import-choice { font-weight: 700; }
+a.import-choice { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; text-decoration: none; }
 .error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .error-retry-btn { border: 1px solid #d78b92; border-radius: 8px; padding: 7px 12px; color: #8e2f3c; background: #fff; cursor: pointer; font-weight: 700; }
 .business-hours-grid, .sla-rules-grid, .business-profile-grid, .service-plan-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
@@ -17224,7 +17303,81 @@ body.crm-dark .connection-badge.offline {
   margin: 0;
   padding: 24px;
 }
+.webhooks-layout .webhook-card { padding: clamp(20px, 2vw, 28px); border: 1px solid var(--owly-border); border-radius: 16px; background: var(--owly-surface); box-shadow: none; }
+.webhooks-layout .webhook-card:first-child { animation: webhook-enter 280ms ease-out; }
+.webhooks-layout .webhook-page-heading { gap: 20px; margin-bottom: 24px; align-items: center; }
+.webhook-heading-copy { display: flex; gap: 16px; align-items: flex-start; min-width: 0; }
+.webhook-heading-icon { display: grid; place-items: center; flex: 0 0 52px; width: 52px; height: 52px; border-radius: 14px; color: var(--owly-teal, #087f82); background: var(--owly-surface-soft, #edf7f7); }
+.webhook-heading-icon svg { width: 30px; height: 30px; }
+.webhooks-layout .webhook-card h2 { margin: 0; font-size: 26px; line-height: 1.3; }
+.webhooks-layout .webhook-card h3 { font-size: 20px; margin: 0; }
+.webhooks-layout .settings-card-header p { font-size: 15px; line-height: 1.65; margin: 8px 0 0; max-width: 760px; }
+.webhooks-layout .webhook-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+.webhooks-layout .webhook-item { padding: 22px; border-color: var(--owly-border); background: var(--owly-surface-soft, #f0f7f7); border-radius: 12px; transition: border-color 160ms ease, box-shadow 160ms ease; }
+.webhooks-layout .webhook-item:hover { border-color: var(--owly-teal, #087f82); box-shadow: 0 4px 14px rgba(8, 127, 130, .08); }
+.webhooks-layout .webhook-item > div { flex-wrap: wrap; gap: 12px; }
+.webhooks-layout .webhook-item strong { font-size: 18px; line-height: 1.4; }
+.webhooks-layout .webhook-item small { font-size: 14px; line-height: 1.65; margin-top: 14px; color: var(--owly-muted); }
+.webhooks-layout .webhook-status { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; line-height: 1.5; letter-spacing: 0; text-transform: none; padding: 5px 10px; border-radius: 20px; background: var(--owly-surface); white-space: nowrap; }
+.webhooks-layout .webhook-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.webhooks-layout .webhook-checklist { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; font-size: 14px; line-height: 1.65; }
+.webhooks-layout .webhook-checklist li { align-items: flex-start; padding: 16px; border-radius: 10px; background: var(--owly-surface-soft, #f0f7f7); }
+.webhooks-layout .webhook-checklist li span { display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; border-radius: 50%; background: var(--owly-surface); }
+.webhooks-layout .webhook-empty { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 20px; padding: 16px; font-size: 14px; border: 1px dashed var(--owly-border); border-radius: 10px; }
+.webhooks-layout .settings-refresh { font-size: 14px; min-height: 42px; transition: background-color 160ms ease, border-color 160ms ease; }
+.webhook-refresh { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex-shrink: 0; }
+.webhook-refresh svg { width: 18px; height: 18px; flex-shrink: 0; }
+.webhook-refresh .is-refreshing { animation: webhook-spin 900ms linear infinite; }
+@keyframes webhook-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes webhook-spin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) { .webhooks-layout .webhook-checklist { grid-template-columns: 1fr; } .webhooks-layout .webhook-page-heading { flex-direction: column; align-items: stretch; } .webhooks-layout .webhook-card h2 { font-size: 23px; } }
+@media (prefers-reduced-motion: reduce) { .webhooks-layout .webhook-card:first-child, .webhook-refresh .is-refreshing { animation: none; } .webhooks-layout .webhook-item, .webhooks-layout .settings-refresh { transition: none; } }
+.reports-layout .report-disclosure { border: 1px solid var(--owly-border); border-radius: 12px; background: var(--owly-surface); overflow: hidden; margin: 10px 0; }
+.reports-layout .report-disclosure > summary { display: flex; align-items: center; gap: 12px; padding: 16px 18px; min-height: 52px; box-sizing: border-box; cursor: pointer; list-style: none; font-size: 15px; font-weight: 700; color: var(--owly-ink); transition: background-color 160ms ease; }
+.reports-layout .report-disclosure > summary::-webkit-details-marker { display: none; }
+.reports-layout .report-disclosure > summary::after { content: ''; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); margin-left: auto; flex-shrink: 0; transition: transform 160ms ease; }
+.reports-layout .report-disclosure[open] > summary::after { transform: rotate(225deg); }
+.reports-layout .report-disclosure > summary:hover, .reports-layout .report-disclosure[open] > summary { background: var(--owly-surface-soft, #f0f7f7); }
+.reports-layout .report-disclosure > summary:focus-visible { outline: 2px solid #17888c; outline-offset: -3px; }
+.reports-layout .report-disclosure > summary > span { font-size: 12px; font-weight: 500; color: var(--owly-muted); }
+.reports-layout .report-disclosure > .report-panel { padding: 20px; margin: 0; border: 0; border-top: 1px solid var(--owly-border); box-shadow: none; border-radius: 0; }
+.reports-layout .report-disclosure > .report-cards, .reports-layout .report-disclosure > .report-filters { padding: 18px; margin: 0; }
+.reports-layout > .report-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 760px) { .reports-layout > .report-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .reports-layout .report-disclosure > summary { flex-wrap: wrap; font-size: 14px; } }
+@media (prefers-reduced-motion: reduce) { .reports-layout .report-disclosure > summary, .reports-layout .report-disclosure > summary::after { transition: none; } }
+.account-settings-layout .customer-import-card .settings-card-header { align-items: flex-start; gap: 20px; margin-bottom: 20px; }
+.account-settings-layout .customer-import-card h2 { font-size: 22px; line-height: 1.35; margin: 0 0 8px; }
+.account-settings-layout .customer-import-card .settings-card-header p { font-size: 14px; line-height: 1.65; max-width: 720px; margin: 0; }
+.customer-import-card .customer-import-file { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 8px 16px; padding: 20px; border: 1px dashed var(--owly-border); border-radius: 12px; background: var(--owly-surface-soft, #f0f7f7); }
+.customer-import-icon { grid-row: span 2; width: 28px; height: 28px; padding: 8px; box-sizing: content-box; border-radius: 12px; color: #279c9e; background: var(--owly-surface, #fff); }
+.customer-import-card .customer-import-file > span { font-size: 14px; font-weight: 600; }
+.customer-import-card .customer-import-file input { width: 100%; min-width: 0; font: inherit; font-size: 14px; color: var(--owly-ink); background: transparent !important; border: 0; padding: 0; }
+.customer-import-card input::file-selector-button { font: inherit; font-weight: 600; color: #087f82; background: #e0f3f2; border: 1px solid #b4dcd9; padding: 9px 14px; margin-right: 12px; border-radius: 8px; cursor: pointer; }
+.customer-import-card input:disabled::file-selector-button { opacity: .5; cursor: not-allowed; }
+.customer-import-card input:focus-visible { outline: 2px solid #279c9e; outline-offset: 4px; border-radius: 4px; }
+.customer-import-card > .settings-muted { display: block; padding: 12px 0; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.customer-import-card .settings-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; padding-top: 14px; border-top: 1px solid var(--owly-border); }
+.customer-import-card :is(.settings-refresh, .primary-btn) { min-height: 42px; padding: 9px 16px; border-radius: 9px; font-size: 14px; }
+.customer-import-card .customer-import-preview { display: grid; gap: 8px; margin-top: 16px; padding: 16px; border: 1px solid var(--owly-border); border-radius: 10px; background: var(--owly-surface-soft, #f0f7f7); font-size: 14px; line-height: 1.6; }
+.customer-import-card .customer-import-preview ul { margin: 0; padding-left: 20px; }
+@media (max-width: 640px) { .customer-import-card .settings-card-header { flex-direction: column; } .customer-import-card .customer-import-file { grid-template-columns: 1fr; } .customer-import-icon { grid-row: auto; } .customer-import-card .settings-actions > button { flex: 1; } }
+.crm-app .top-search .top-search-input:focus,
+.crm-app .top-search .top-search-input:focus-visible { outline: none; box-shadow: none; }
+.crm-app .top-search:focus-within { border-color: #17888c; box-shadow: 0 0 0 2px rgba(23, 136, 140, .14); }
 .product-import-dropzone .dropzone-content { gap: 7px; }
+.product-manual-panel { padding: 20px; border: 1px solid var(--owly-border, #d4e3e7); border-radius: 14px; background: var(--owly-surface, #fff); }
+.product-manual-panel h3 { margin: 0; }
+.product-manual-panel > p { color: var(--owly-text-muted, #64748b); font-size: 13px; }
+.product-manual-reference { max-height: 160px; overflow: auto; border-bottom: 1px solid var(--owly-border, #d4e3e7); margin-bottom: 18px; }
+.product-manual-reference > div { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; gap: 12px; padding: 9px 0; font-size: 13px; }
+.product-manual-reference span, .product-manual-reference strong { overflow-wrap: anywhere; }
+.product-manual-fields { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.product-manual-fields label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; font-weight: 600; }
+.product-manual-fields input, .product-manual-fields textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--owly-border, #d4e3e7); border-radius: 8px; padding: 10px 12px; font: inherit; color: inherit; background: transparent; }
+.product-manual-fields textarea { resize: vertical; }
+.product-manual-wide { grid-column: 1 / -1; }
+.product-manual-actions { display: flex; justify-content: flex-end; gap: 10px; }
+@media (max-width: 640px) { .product-manual-fields { grid-template-columns: 1fr; } .product-manual-reference > div { grid-template-columns: 90px minmax(0, 1fr); } .product-manual-reference > div > span:last-child { grid-column: 2; } }
 .product-import-dropzone .upload-icon {
   color: var(--salon-accent);
   font-size: .72rem;

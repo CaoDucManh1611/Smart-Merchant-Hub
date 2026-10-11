@@ -42,9 +42,9 @@ test('shared section heading precedes both columns and sidebar scrolling is view
   assert.match(css, /max-height:none; overflow:visible/);
 });
 
-test('admin navigation allowlists nine sections and preserves legacy hashes', async () => {
+test('admin navigation includes support and preserves legacy hashes', async () => {
   const { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash } = await import('../src/admin-navigation.js');
-  assert.deepEqual(ADMIN_SECTIONS.map(section => section.id), ['overview', 'approvals', 'shops', 'plans', 'isolation', 'health', 'otp-email', 'audit', 'payments']);
+  assert.deepEqual(ADMIN_SECTIONS.map(section => section.id), ['support', 'overview', 'approvals', 'shops', 'plans', 'isolation', 'health', 'otp-email', 'audit', 'payments']);
   for (const section of ADMIN_SECTIONS) {
     assert.equal(adminSectionFromHash(`#admin-${section.id}`), section.id);
     assert.equal(adminSectionHash(section.id), `#admin-${section.id}`);

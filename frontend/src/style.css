@@ -2022,6 +2022,10 @@ button {
   line-height: 1.7;
 }
 
+.account-settings-layout .account-audit-scroll { max-height: 320px; overflow-y: auto; scrollbar-gutter: stable; padding: 0 12px 0 24px; font-size: 14px; color: var(--owly-ink, #203e42); }
+.account-settings-layout .account-audit-scroll li { padding: 7px 0; overflow-wrap: anywhere; }
+.account-settings-layout .account-audit-scroll:focus-visible { outline: 2px solid #17888c; outline-offset: 2px; }
+
 .report-series {
   display: grid;
   gap: 5px;
@@ -14831,10 +14835,15 @@ body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer .tags span
   border-color: var(--owly-border);
 }
 
-body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .conversation-scroll::-webkit-scrollbar-thumb,
-body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .messages-scroll::-webkit-scrollbar-thumb,
-body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .customer::-webkit-scrollbar-thumb {
-  background: var(--salon-accent);
+.crm-app:not(.platform-admin-workspace) :is(.conversation-scroll, .messages-scroll, .customer) {
+  scrollbar-color: #279c9e transparent;
+  scrollbar-width: thin;
+}
+.crm-app:not(.platform-admin-workspace) .conversation-scroll::-webkit-scrollbar-thumb,
+.crm-app:not(.platform-admin-workspace) .messages-scroll::-webkit-scrollbar-thumb,
+.crm-app:not(.platform-admin-workspace) .customer::-webkit-scrollbar-thumb {
+  background: #279c9e;
+  border-radius: 8px;
 }
 
 /* Prevent the workspace avatar from shrinking into an oval in compact headers. */
@@ -15826,6 +15835,14 @@ body.crm-dark .customer-rfm-chip b { color: #fff; }
 .followup-status-filter select { min-height: 40px; padding: 7px 10px; border: 1px solid #bacfca; border-radius: 9px; color: #203e42; background: #fff; font: inherit; }
 .crm-app:not(.platform-admin-workspace) .main > .orders-layout { gap: 12px; }
 .crm-app:not(.platform-admin-workspace) .main > .orders-layout > .products-header { padding: 16px 20px; min-height: 0; margin-block: 0; border-radius: 14px; }
+.crm-app:not(.platform-admin-workspace) .orders-layout > .products-table-wrap.sales-orders-scroll { max-height: min(56vh, 560px); overflow: auto; scrollbar-gutter: stable; scroll-padding-top: 64px; }
+.sales-orders-scroll .orders-table th { position: sticky; top: 0; z-index: 2; background: var(--owly-surface-soft, #f0f7f7); box-shadow: 0 1px 0 var(--owly-border, #d4e3e7); }
+.sales-orders-scroll:focus-visible { outline: 2px solid #17888c; outline-offset: 2px; }
+.inventory-report-scroll { max-height: 568px; overflow: auto; scrollbar-gutter: stable; scroll-padding-top: 48px; }
+.inventory-report-scroll .products-table { border-collapse: separate; border-spacing: 0; }
+.inventory-report-scroll .products-table td { box-sizing: border-box; height: 52px; padding: 12px 16px; line-height: 20px; white-space: nowrap; }
+.inventory-report-scroll .products-table th { box-sizing: border-box; height: 48px; padding: 12px 16px; position: sticky; top: 0; z-index: 2; background: var(--owly-surface-soft, #f0f7f7); box-shadow: 0 1px 0 var(--owly-border, #d4e3e7); }
+.inventory-report-scroll:focus-visible { outline: 2px solid #17888c; outline-offset: 2px; }
 .orders-layout > .products-header h2 { margin: 0; font-size: 1.35rem; line-height: 1.3; }
 .orders-layout > .products-header p { margin: 5px 0 0; font-size: .82rem; line-height: 1.5; }
 .orders-layout > .revenue-cards { margin: 0; gap: 10px; }

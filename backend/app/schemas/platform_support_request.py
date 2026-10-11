@@ -26,11 +26,26 @@ def clean_support_text(value: str) -> str:
 
 class SupportRequestCreate(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    provider: SupportProvider
+    provider: SupportProvider | None = None
+    providers: list[SupportProvider] | None = Field(default=None, min_length=1, max_length=6)
     description: str = Field(min_length=1, max_length=2000)
     idempotency_key: str = Field(min_length=8, max_length=180, pattern=r'^[A-Za-z0-9_-]+$')
 
     _clean_description = field_validator('description')(clean_support_text)
+
+    @model_validator(mode='after')
+    def selected_channels(self):
+        if self.providers is None:
+            if self.provider is None:
+                raise ValueError('Select at least one channel.')
+            self.providers = [self.provider]
+        if len(set(self.providers)) != len(self.providers):
+            raise ValueError('Channels must be unique.')
+        self.providers = sorted(self.providers)
+        if self.provider is not None and self.provider not in self.providers:
+            raise ValueError('Conflicting channel fields.')
+        self.provider = self.providers[0]
+        return self
 
 
 class SupportRequestUpdate(BaseModel):
@@ -70,6 +85,7 @@ class SupportRequestOut(BaseModel):
     id: int
     business_id: int
     provider: SupportProvider
+    providers: list[SupportProvider] | None = None
     description: str
     status: SupportStatus
     response: str | None
@@ -78,8 +94,14 @@ class SupportRequestOut(BaseModel):
     updated_at: datetime
     history: list[SupportHistoryOut]
 
+    @model_validator(mode='after')
+    def legacy_channels(self):
+        self.providers = self.providers or [self.provider]
+        return self
+
 
 class SupportRequestListOut(BaseModel):
+    channel_limit: int | None = None
     items: list[SupportRequestOut]
     total: int
     limit: int

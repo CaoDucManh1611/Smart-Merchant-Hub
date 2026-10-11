@@ -1,4 +1,5 @@
 export const ADMIN_SECTIONS = Object.freeze([
+  { id: 'support', title: 'Yêu cầu hỗ trợ', description: 'Tiếp nhận và phản hồi yêu cầu hỗ trợ kết nối của shop.', icon: 'M4 4h16v13H9l-5 4z M8 8h8 M8 12h5' },
   { id: 'overview', title: 'Tổng quan', description: 'Quản lý tenant, gói dịch vụ, module, kết nối và sức khỏe toàn bộ hệ thống.', icon: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z' },
   { id: 'approvals', title: 'Yêu cầu chờ duyệt', description: 'Duyệt gói để kích hoạt quyền sử dụng và bắt đầu chuẩn bị không gian dữ liệu riêng của shop.', icon: 'M9 3h6v4H9z M8 5H5v16h14V5h-3 M8 14l3 3 5-6' },
   { id: 'shops', title: 'Danh sách shop', description: 'Quản lý trạng thái và hạn mức; dữ liệu vận hành vẫn nằm trong workspace riêng.', icon: 'M3 10l2-7h14l2 7 M3 10h18 M5 10v11h14V10 M9 21v-7h6v7' },

@@ -12,6 +12,7 @@ from app.auth.dependencies import get_current_user
 from app.auth.platform import require_platform_admin
 from app.database.platform_session import get_platform_db
 from app.db.dependencies import get_db
+from app.services.quota_service import quota_snapshot
 from app.models.business import User
 from app.models.platform_support_request import PlatformSupportRequest, PlatformSupportRequestHistory
 from app.schemas.platform_support_request import (
@@ -40,12 +41,21 @@ def _replay(row, fingerprint, response):
     return row
 
 
+def _channel_limit(db, business_id):
+    snapshot = quota_snapshot(db, business_id)
+    if snapshot['plan_code'] is None:
+        return 0
+    limit = snapshot['resources']['connected_channels']['limit']
+    return 6 if limit is None else min(6, max(0, int(limit)))
+
+
 @router.post('/support/requests', response_model=SupportRequestOut, status_code=201)
 def create_support_request(payload: SupportRequestCreate, response: Response,
                            user: User = Depends(get_current_user),
                            db: Session = Depends(get_platform_db), legacy_db: Session = Depends(get_db)):
     business_id = _shop_id(user)
-    fingerprint = hashlib.sha256(json.dumps({'provider': payload.provider, 'description': payload.description},
+    channels = {'provider': payload.provider} if len(payload.providers) == 1 else {'providers': payload.providers}
+    fingerprint = hashlib.sha256(json.dumps({**channels, 'description': payload.description},
                                            sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     lookup = select(PlatformSupportRequest).where(PlatformSupportRequest.business_id == business_id,
                                                 PlatformSupportRequest.idempotency_key == payload.idempotency_key)
@@ -54,8 +64,11 @@ def create_support_request(payload: SupportRequestCreate, response: Response,
         if row is not None:
             return _replay(row, fingerprint, response)
         _sync_platform_business(db, legacy_db, business_id)
+        channel_limit = _channel_limit(db, business_id)
+        if len(payload.providers) > channel_limit:
+            raise HTTPException(422, {'code': 'support_channel_limit', 'limit': channel_limit})
         row = PlatformSupportRequest(business_id=business_id, created_by_user_id=user.id,
-                                     provider=payload.provider, description=payload.description,
+                                     provider=payload.provider, providers=payload.providers, description=payload.description,
                                      idempotency_key=payload.idempotency_key, request_fingerprint=fingerprint,
                                      status='open')
         row.history.append(PlatformSupportRequestHistory(actor_user_id=user.id, from_status=None, to_status='open'))
@@ -99,7 +112,13 @@ def _list(db, business_id, status, limit, offset):
 def list_own_support_requests(status: SupportStatus | None = None,
                               limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0),
                               user: User = Depends(get_current_user), db: Session = Depends(get_platform_db)):
-    return _list(db, _shop_id(user), status, limit, offset)
+    business_id = _shop_id(user)
+    result = _list(db, business_id, status, limit, offset)
+    try:
+        result['channel_limit'] = _channel_limit(db, business_id)
+    except SQLAlchemyError:
+        _unavailable(db)
+    return result
 
 
 @router.get('/platform/support-requests', response_model=SupportRequestListOut)

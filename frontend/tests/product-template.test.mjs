@@ -9,8 +9,15 @@ const orderTemplate = readFileSync(new URL("../public/templates/order-import-tem
 test("product import offers a downloadable CSV using supported import columns", () => {
   assert.match(app, /href="\/templates\/product-import-template\.csv" download="mau-san-pham\.csv"/);
   assert.match(app, /crmUiText\('Tải file mẫu sản phẩm'\)/);
-  assert.match(template, /^Mã sản phẩm,Tên sản phẩm,Giá,Tồn kho,Link sản phẩm,Tên tiếng Anh/);
+  assert.match(template, /^\uFEFFMã sản phẩm,Tên sản phẩm,Giá,Tồn kho,Link sản phẩm,Tên tiếng Anh/);
   assert.match(template, /THAY-MA-001,Áo thun cổ tròn,199000,10/);
+});
+
+test("product CSV includes the UTF-8 BOM required for direct opening in Excel", () => {
+  const bytes = readFileSync(new URL("../public/templates/product-import-template.csv", import.meta.url));
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+  assert.match(bytes.toString('utf8').replace(/^\uFEFF/, ''), /^Mã sản phẩm,Tên sản phẩm/);
+  assert.doesNotMatch(bytes.toString('utf8'), /\uFFFD/);
 });
 
 test("order import offers a CSV matching the supported import fields", () => {

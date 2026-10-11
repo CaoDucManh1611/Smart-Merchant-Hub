@@ -1,0 +1,71 @@
+TÀI LIỆU MẪU — KHO KIẾN THỨC SHOP
+
+HƯỚNG DẪN ĐIỀN
+1. Mở tệp bằng Notepad, Word hoặc trình soạn thảo văn bản.
+2. Thay mọi phần trong dấu <...> bằng thông tin thực tế. Không biết thông tin thì bỏ dòng đó, không tự đoán.
+3. Sao chép phần SẢN PHẨM cho mỗi sản phẩm; dùng đúng mã SKU trong danh mục của shop.
+4. Xóa phần hướng dẫn và ví dụ trước khi nhập. Lưu dưới định dạng TXT, mã hóa UTF-8 để giữ tiếng Việt.
+5. Trong Kho kiến thức, chọn “Nhập tệp” để nạp tệp đã điền; hoặc sao chép nội dung vào “Nhập văn bản”.
+6. Kiểm tra trạng thái “Sẵn sàng”, rồi thử hỏi trợ lý về thông tin vừa nhập.
+
+Chỉ ghi nội dung doanh nghiệp cho phép dùng để tư vấn khách hàng.
+Không ghi mật khẩu, token, thông tin riêng tư của khách hoặc dữ liệu thanh toán cá nhân.
+Giá và tồn kho thay đổi thường xuyên: cập nhật tại danh mục Sản phẩm; không dùng tài liệu này thay cho dữ liệu đơn hàng hoặc tồn kho.
+Mẫu chưa điền không nên được nhập vào hệ thống. Tải mẫu không tự tạo tài liệu trong Kho kiến thức.
+
+VÍ DỤ CÁCH VIẾT — CHỈ ĐỂ THAM KHẢO, KHÔNG PHẢI THÔNG TIN CỦA SHOP
+Tên sản phẩm: Bình giữ nhiệt 500 ml
+Màu sắc: Hồng, trắng
+Chất liệu: Thép không gỉ
+Phù hợp với: Người cần mang đồ uống khi đi làm
+Cách sử dụng: Rửa sạch trước lần đầu; đóng nắp kín sau khi sử dụng
+Câu hỏi: Bình có màu hồng không?
+Trả lời: Dòng bình này có phiên bản màu hồng. Tình trạng còn bán cần kiểm tra trong danh mục sản phẩm.
+
+--- BẮT ĐẦU NỘI DUNG CỦA SHOP ---
+
+1. THÔNG TIN SHOP
+Tên shop: <Tên doanh nghiệp hoặc cửa hàng>
+Lĩnh vực: <Shop bán gì hoặc cung cấp dịch vụ gì>
+Giờ tư vấn: <Ngày và giờ có nhân viên hỗ trợ>
+Kênh liên hệ công khai: <Hotline, email hỗ trợ hoặc trang liên hệ>
+Ngày cập nhật tài liệu: <Ngày/tháng/năm>
+
+2. SẢN PHẨM
+Mã SKU: <Mã đúng trong danh mục Sản phẩm>
+Tên sản phẩm: <Tên đầy đủ>
+Link sản phẩm: <Đường dẫn trang sản phẩm của shop>
+Nhóm sản phẩm: <Ví dụ: Đồ gia dụng, thời trang>
+Màu sắc / phiên bản: <Liệt kê phiên bản thực tế>
+Kích thước / dung tích: <Thông số và đơn vị>
+Chất liệu / thành phần: <Thông tin được xác nhận>
+Đặc điểm nổi bật: <Lợi ích thực tế, không phóng đại>
+Phù hợp với: <Nhu cầu hoặc đối tượng sử dụng>
+Cách sử dụng / bảo quản: <Hướng dẫn và lưu ý>
+Sản phẩm liên quan: <Mã SKU, tên sản phẩm và lý do phù hợp>
+Điểm cần lưu ý: <Giới hạn, điều kiện sử dụng hoặc cảnh báo nếu có>
+
+3. CÂU HỎI THƯỜNG GẶP
+Câu hỏi: <Câu hỏi khách thường hỏi>
+Trả lời: <Câu trả lời đúng, rõ ràng, ngắn gọn>
+
+Câu hỏi: <Câu hỏi tiếp theo>
+Trả lời: <Câu trả lời tương ứng>
+
+4. CHÍNH SÁCH GIAO HÀNG
+Khu vực giao hàng: <Khu vực được hỗ trợ>
+Thời gian dự kiến: <Thời gian và điều kiện áp dụng>
+Phí vận chuyển: <Quy tắc tính phí hoặc nơi kiểm tra phí>
+Quy trình đặt hàng: <Các bước cần khách xác nhận>
+
+5. ĐỔI TRẢ VÀ BẢO HÀNH
+Điều kiện đổi trả: <Trường hợp được chấp nhận>
+Thời hạn: <Số ngày và thời điểm bắt đầu tính>
+Trường hợp không áp dụng: <Ngoại lệ cụ thể>
+Quy trình hỗ trợ: <Các bước và kênh liên hệ>
+Bảo hành: <Phạm vi, thời gian hoặc ghi rõ không áp dụng nếu đúng>
+
+6. KHI CẦN NHÂN VIÊN HỖ TRỢ
+Trường hợp chuyển cho nhân viên: <Vấn đề cần xác minh hoặc xử lý thủ công>
+Thông tin được phép hỏi khách: <Chỉ thông tin cần thiết cho xử lý>
+Câu trả lời khi chưa đủ thông tin: <Cách thông báo và đề nghị nhân viên kiểm tra>

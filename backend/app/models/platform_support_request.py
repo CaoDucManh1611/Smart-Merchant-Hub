@@ -1,7 +1,7 @@
 """Shop-to-platform connection support; independent of CRM and support grants."""
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.bases import PlatformBase
@@ -22,6 +22,7 @@ class PlatformSupportRequest(PlatformBase):
     idempotency_key: Mapped[str] = mapped_column(String(180))
     request_fingerprint: Mapped[str] = mapped_column(String(64))
     provider: Mapped[str] = mapped_column(String(30))
+    providers: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default='open')
     response: Mapped[str | None] = mapped_column(Text, nullable=True)
