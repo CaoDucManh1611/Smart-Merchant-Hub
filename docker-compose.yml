@@ -73,6 +73,9 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      # Local Data_RAG checkpoints are mounted read-only; real-shop serving
+      # stays disabled unless a demo tenant is explicitly allowlisted.
+      - ./backend/artifacts/data_rag:/app/artifacts/data_rag:ro
       # Uploaded media must be visible to both the Docker backend and any
       # host FastAPI process used by the public tunnel.
       - ./backend/uploads:/app/uploads
@@ -137,6 +140,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      - ./backend/artifacts/data_rag:/app/artifacts/data_rag:ro
     healthcheck:
       test: ["CMD", "python", "-c", "from sqlalchemy import text; from app.database.platform_session import PlatformSessionLocal; from app.database.tenant_session import TenantSessionLocal; p=PlatformSessionLocal(); t=TenantSessionLocal(); p.execute(text('SELECT 1')); t.execute(text('SELECT 1')); p.close(); t.close()"]
       interval: 10s

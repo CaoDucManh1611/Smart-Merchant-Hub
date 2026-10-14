@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import ANY, patch
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -115,6 +116,28 @@ class TelegramOutboundApiTests(unittest.TestCase):
             self.assertIsNotNone(saved)
             self.assertEqual("telegram", saved.channel)
             self.assertEqual("Xin chào từ nhân viên", saved.content)
+
+    def test_send_text_shows_telegram_rejection_instead_of_connection_error(self):
+        request = httpx.Request("POST", "https://api.telegram.org/bot/sendMessage")
+        response_body = httpx.Response(
+            400,
+            request=request,
+            json={"ok": False, "description": "Bad Request: chat not found"},
+        )
+        error = httpx.HTTPStatusError(
+            "Telegram rejected the request",
+            request=request,
+            response=response_body,
+        )
+        with patch.object(TelegramAdapter, "send_message", side_effect=error):
+            response = self.client.post(
+                f"/api/conversations/{self.conversation_id}/send",
+                headers={"X-Business-Id": "1"},
+                data={"text": "Test provider error", "client_id": "telegram-provider-reject"},
+            )
+
+        self.assertEqual(502, response.status_code)
+        self.assertEqual("Bad Request: chat not found", response.json()["detail"])
 
     def test_safe_retry_and_sent_replay_use_one_delivery_key(self):
         calls = []

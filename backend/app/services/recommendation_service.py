@@ -15,12 +15,11 @@ from decimal import Decimal
 from uuid import uuid4
 from urllib.parse import urlsplit
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.customer import Customer
-from app.models.crm_extended import CustomerTag, Tag
 from app.models.customer_collection import CustomerConsent
 from app.models.customer_fact import CustomerFact
 from app.models.experimentation import BanditArmStat, BanditDecision, BanditPolicy, Experiment
@@ -34,15 +33,20 @@ from app.models.recommendation import (
 from app.models.sales import Order, OrderItem, Product
 from app.schemas.recommendation import RecommendationRequestCreate
 from app.services.recommendation_artifacts import RecommendationArtifactError, registry as artifact_registry
+from app.services.recommendation_artifacts import stated_budget
+from app.rag.topics import fold_topic_text
+from app.services.customer_fact_extractor import get_customer_fact_extraction_enabled
 from app.services.recommendation_interaction_service import (
     apply_recommendation_outcome,
     record_interaction,
     record_recommendation_impressions,
 )
+from app.services.order_metrics import completed_order_conditions, net_order_value
+from app.services.rfm_segments import RFM_RULES_VERSION, RFM_SEGMENT_KEYS, rfm_group, rfm_score
 
 
-REVENUE_ORDER_STATUSES = ("confirmed", "processing", "shipped", "delivered", "completed", "paid")
-MODEL_VERSION = "item_affinity_v1"
+REVENUE_ORDER_STATUSES = ("delivered", "completed")
+MODEL_VERSION = "item_affinity_rfm_v3"
 SEGMENT_MODEL_VERSION = "rfm_kmeans_v2"
 STRATEGIES = {"balanced", "personalized", "popular", "rag"}
 MIN_BANDIT_TRAINING_EVENTS = 20
@@ -68,6 +72,24 @@ PRODUCT_COLOR_ALIASES = {
     "brown": ("brown", "nâu", "nau"),
     "gray": ("gray", "grey", "xám", "xam"),
 }
+PURCHASE_FACET_KEYS = {
+    "category": ("category", "product_category", "danh_muc"),
+    "brand": ("brand", "product_brand", "manufacturer", "thuong_hieu"),
+    "product_type": ("product_type", "product_group", "type", "loai_san_pham"),
+    "tags": ("tags", "tag", "labels", "nhan"),
+    "style": ("style", "collection", "phong_cach", "bo_suu_tap"),
+    "material": ("material", "chat_lieu"),
+    "color": ("color", "colors", "colour", "colours", "mau", "mau_sac"),
+}
+PURCHASE_FACET_WEIGHTS = {
+    "category": 1.0,
+    "brand": 0.9,
+    "product_type": 0.9,
+    "tags": 0.75,
+    "style": 0.75,
+    "material": 0.65,
+    "color": 0.65,
+}
 
 
 class RecommendationServiceError(ValueError):
@@ -79,6 +101,24 @@ class RecommendationServiceError(ValueError):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _completed_order_conditions():
+    return completed_order_conditions(_now())
+
+
+def _customer_product_signal_conditions():
+    """Use non-cancelled orders as product-interest signals, independent of full payment."""
+    return (
+        Order.status.in_(("confirmed", "processing", "shipped", "delivered", "completed")),
+        Order.payment_status.notin_(("refunded", "failed")),
+        Order.total_amount > Order.refunded_amount,
+        Order.created_at <= _now(),
+    )
+
+
+def _net_order_value(order: Order) -> Decimal:
+    return net_order_value(order)
 
 
 def _context_hash(context: dict) -> str:
@@ -262,7 +302,7 @@ def _recent_and_historical_products(db: Session, business_id: int, customer_id: 
     base = db.query(OrderItem.product_id, Order.created_at).join(Order, Order.id == OrderItem.order_id).filter(
         Order.business_id == business_id,
         Order.customer_id == customer_id,
-        Order.status.in_(REVENUE_ORDER_STATUSES),
+        *_customer_product_signal_conditions(),
     )
     rows = base.all()
     historical = {int(product_id) for product_id, _ in rows}
@@ -285,14 +325,14 @@ def _customer_recommendation_features(db: Session, business_id: int, customer_id
     orders = db.query(Order).filter(
         Order.business_id == business_id,
         Order.customer_id == customer_id,
-        Order.status.in_(REVENUE_ORDER_STATUSES),
+        *_completed_order_conditions(),
     ).all()
     order_ids = [order.id for order in orders]
     item_rows = []
     if order_ids:
         item_rows = db.query(OrderItem.product_id, OrderItem.quantity).filter(OrderItem.order_id.in_(order_ids)).all()
     latest = max((order.created_at for order in orders if order.created_at), default=None)
-    monetary = float(sum((Decimal(order.total_amount or 0) for order in orders), Decimal("0")))
+    monetary = float(sum((_net_order_value(order) for order in orders), Decimal("0")))
     frequency = len(orders)
     return {
         "recency_days": float((_now() - latest).days if latest else 365),
@@ -323,7 +363,7 @@ def _co_purchase_counts(db: Session, business_id: int, historical_products: set[
         return Counter()
     related_order_ids = select(OrderItem.order_id).join(Order, Order.id == OrderItem.order_id).where(
         Order.business_id == business_id,
-        Order.status.in_(REVENUE_ORDER_STATUSES),
+        *_completed_order_conditions(),
         OrderItem.product_id.in_(historical_products),
     )
     rows = db.query(OrderItem.product_id, func.count(OrderItem.id)).filter(
@@ -332,10 +372,86 @@ def _co_purchase_counts(db: Session, business_id: int, historical_products: set[
     return Counter({int(product_id): int(count) for product_id, count in rows})
 
 
+def _facets_from_metadata(metadata: object) -> dict[str, set[str]]:
+    metadata = metadata if isinstance(metadata, dict) else {}
+    facets: dict[str, set[str]] = {}
+    for facet, aliases in PURCHASE_FACET_KEYS.items():
+        values = []
+        for key in aliases:
+            value = metadata.get(key)
+            values.extend(value if isinstance(value, (list, tuple, set)) else [value])
+        normalized = {
+            fold_topic_text(" ".join(str(value).split()))
+            for value in values
+            if isinstance(value, (str, int, float)) and str(value).strip()
+        }
+        normalized.discard("")
+        if normalized:
+            facets[facet] = normalized
+    return facets
+
+
+def _product_facets(product: Product) -> dict[str, set[str]]:
+    facets = _facets_from_metadata(product.metadata_)
+    if "category" not in facets:
+        match = re.search(r"\bthuộc\s+nhóm\s+([^;,.]+)", product.description or "", re.IGNORECASE)
+        if match:
+            category = fold_topic_text(match.group(1).strip())
+            if category:
+                facets["category"] = {category}
+    return facets
+
+
+def _customer_purchase_facets(db: Session, business_id: int, customer_id: int | None) -> dict[str, Counter]:
+    """Learn product attributes from completed orders without asking customers to type them."""
+    if customer_id is None:
+        return {}
+    rows = db.query(OrderItem.quantity, Order.created_at, Product).join(
+        Order, Order.id == OrderItem.order_id,
+    ).join(
+        Product, Product.id == OrderItem.product_id,
+    ).filter(
+        Order.business_id == business_id,
+        Order.customer_id == customer_id,
+        Product.business_id == business_id,
+        *_customer_product_signal_conditions(),
+    ).order_by(Order.created_at.desc()).limit(1000).all()
+    profile: dict[str, Counter] = defaultdict(Counter)
+    now = _now()
+    for quantity, created_at, product in rows:
+        days_old = max(0, (now - created_at).days) if created_at else 180
+        recency_weight = 0.5 ** (days_old / 180)
+        try:
+            quantity_weight = min(5, max(1, int(quantity or 1)))
+        except (TypeError, ValueError):
+            quantity_weight = 1
+        for facet, values in _product_facets(product).items():
+            for value in values:
+                profile[facet][value] += recency_weight * quantity_weight
+    return profile
+
+
+def _purchase_facet_affinity(profile: dict[str, Counter], product: Product) -> tuple[float, list[str]]:
+    candidate_facets = _product_facets(product)
+    matches = []
+    for facet, values in candidate_facets.items():
+        history = profile.get(facet)
+        if not history:
+            continue
+        matched = sum(history[value] for value in values)
+        if matched:
+            matches.append((PURCHASE_FACET_WEIGHTS[facet] * min(1.0, matched / max(history.values())), facet))
+    if not matches:
+        return 0.0, []
+    matches.sort(reverse=True)
+    score = min(1.0, matches[0][0] + (0.25 * matches[1][0] if len(matches) > 1 else 0.0))
+    return score, sorted(facet for _score, facet in matches)
+
+
 def _popular_counts(db: Session, business_id: int) -> Counter:
     rows = db.query(OrderItem.product_id, func.count(OrderItem.id)).join(Order, Order.id == OrderItem.order_id).filter(
         Order.business_id == business_id,
-        Order.status.in_(REVENUE_ORDER_STATUSES),
+        *_completed_order_conditions(),
     ).group_by(OrderItem.product_id).all()
     return Counter({int(product_id): int(count) for product_id, count in rows})
 
@@ -446,6 +562,8 @@ def _preferred_color(db: Session, business_id: int, customer_id: int | None) -> 
         CustomerFact.fact_type == "preference",
         CustomerFact.fact_key.in_(("preferred_color", "favorite_color", "color")),
         CustomerFact.confidence >= 0.65,
+        or_(CustomerFact.valid_from.is_(None), CustomerFact.valid_from <= _now()),
+        or_(CustomerFact.valid_until.is_(None), CustomerFact.valid_until > _now()),
     ).order_by(CustomerFact.is_verified.desc(), CustomerFact.updated_at.desc()).first()
     color = fact.fact_value_json if fact is not None else None
     if isinstance(color, str) and len(color.strip()) <= 80:
@@ -463,7 +581,7 @@ def _preferred_color(db: Session, business_id: int, customer_id: int | None) -> 
     ).filter(
         Order.business_id == business_id,
         Order.customer_id == customer_id,
-        Order.status.in_(REVENUE_ORDER_STATUSES),
+        *_customer_product_signal_conditions(),
         Product.business_id == business_id,
     ).group_by(Product.id).all()
     color_counts: Counter[str] = Counter()
@@ -477,8 +595,49 @@ def _preferred_color(db: Session, business_id: int, customer_id: int | None) -> 
     return None, None
 
 
+def _stated_preference_values(db: Session, business_id: int, customer_id: int | None) -> list[str]:
+    if customer_id is None or not _personalization_allowed(db, business_id, customer_id):
+        return []
+    keys = (
+        "interested_category", "preferred_category", "preferred_product_group",
+        "preferred_brand", "preferred_size", "preferred_style",
+    )
+    rows = db.query(CustomerFact.fact_key, CustomerFact.fact_value_json).filter(
+        CustomerFact.business_id == business_id,
+        CustomerFact.customer_id == customer_id,
+        CustomerFact.fact_key.in_(keys),
+        CustomerFact.confidence >= 0.65,
+        or_(CustomerFact.valid_from.is_(None), CustomerFact.valid_from <= _now()),
+        or_(CustomerFact.valid_until.is_(None), CustomerFact.valid_until > _now()),
+    ).order_by(
+        CustomerFact.is_verified.desc(), CustomerFact.updated_at.desc(), CustomerFact.id.desc(),
+    ).all()
+    values = {}
+    for key, value in rows:
+        if key in values or not isinstance(value, str):
+            continue
+        clean = " ".join(value.split())
+        if 1 <= len(clean) <= 80 and not re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", clean):
+            values[key] = clean
+    return list(values.values())
+
+
+def _stated_preference_overlap(values: list[str], product: Product) -> float:
+    metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+    product_text = fold_topic_text(
+        f"{product.name} {product.description or ''} {metadata}"
+    )
+    product_tokens = set(_tokens(product_text))
+    scores = []
+    for value in values:
+        tokens = set(_tokens(fold_topic_text(value)))
+        if tokens:
+            scores.append(len(tokens & product_tokens) / len(tokens))
+    return max(scores, default=0.0)
+
+
 def _personalization_allowed(db: Session, business_id: int, customer_id: int | None) -> bool:
-    if customer_id is None:
+    if customer_id is None or not get_customer_fact_extraction_enabled(db, business_id):
         return False
     customer = db.query(Customer.id).filter(
         Customer.id == customer_id,
@@ -492,17 +651,62 @@ def _personalization_allowed(db: Session, business_id: int, customer_id: int | N
         CustomerConsent.customer_id == customer_id,
         CustomerConsent.purpose == "personalization",
     ).order_by(CustomerConsent.id.desc()).first()
-    return consent is None or consent.status != "revoked"
+    return consent is not None and consent.status == "granted"
 
 
-def _score(strategy: str, affinity: float, popularity: float, rag: float, lexical: float) -> float:
+def _filter_query_candidates(products: list[Product], query: str | None) -> list[Product]:
+    text = fold_topic_text(query)
+    budget = stated_budget(query or "")
+    color = next((name for name, aliases in PRODUCT_COLOR_ALIASES.items()
+                  if any(f" {fold_topic_text(alias)} " in f" {text} " for alias in aliases)), None)
+    categories = {fold_topic_text(str((p.metadata_ or {}).get("category") or "")) for p in products}
+    mentioned = {category for category in categories if category and f" {category} " in f" {text} "}
+    return [p for p in products
+            if (budget is None or float(p.price or 0) <= budget)
+            and (color is None or _product_matches_color(p, color))
+            and (not mentioned or fold_topic_text(str((p.metadata_ or {}).get("category") or "")) in mentioned)]
+
+
+def _recommendation_weights(strategy: str, rfm_segment: str | None = None) -> dict[str, float]:
     weights = {
         "balanced": (0.45, 0.20, 0.30, 0.05),
         "personalized": (0.70, 0.15, 0.10, 0.05),
         "popular": (0.10, 0.75, 0.10, 0.05),
         "rag": (0.20, 0.10, 0.65, 0.05),
     }[strategy]
-    return sum(value * weight for value, weight in zip((affinity, popularity, rag, lexical), weights))
+    # RFM gently changes the balance between customer affinity and broad
+    # discovery. It never overrides stock, tenant, consent, or explicit query
+    # filters, and unknown segments keep the existing strategy weights.
+    multipliers = {
+        "high_value": (1.12, 0.92, 1.00, 0.96),
+        "loyal": (1.12, 0.92, 1.00, 0.96),
+        "potential": (1.00, 0.96, 1.08, 1.08),
+        "needs_attention": (1.08, 1.00, 1.00, 1.00),
+        "at_risk": (1.08, 1.00, 1.00, 1.00),
+        "new_customer": (0.65, 1.12, 1.08, 1.12),
+        "no_purchase": (0.65, 1.12, 1.08, 1.12),
+    }.get(str(rfm_segment or ""), (1.0, 1.0, 1.0, 1.0))
+    adjusted = [weight * multiplier for weight, multiplier in zip(weights, multipliers)]
+    total = sum(adjusted) or 1.0
+    return dict(zip(("affinity", "popularity", "rag", "query"), (weight / total for weight in adjusted)))
+
+
+def _score(
+    strategy: str,
+    affinity: float,
+    popularity: float,
+    rag: float,
+    lexical: float,
+    *,
+    rfm_segment: str | None = None,
+) -> float:
+    weights = _recommendation_weights(strategy, rfm_segment)
+    return (
+        affinity * weights["affinity"]
+        + popularity * weights["popularity"]
+        + rag * weights["rag"]
+        + lexical * weights["query"]
+    )
 
 
 def serve_recommendations(db: Session, *, business_id: int, payload: RecommendationRequestCreate) -> RecommendationRequest:
@@ -522,6 +726,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
     learning_context = {
         **selection_payload.context,
         "rfm_segment": rfm_segment,
+        "rfm_rules_version": RFM_RULES_VERSION,
         "source_channel": customer.channel,
     } if personalized_id is not None and customer is not None else {}
     strategy, bandit_decision_id = _select_strategy(
@@ -531,6 +736,11 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         subject_key=subject_key,
         context=learning_context,
     )
+    ranking_weights = _recommendation_weights(
+        strategy,
+        rfm_segment if personalized_id is not None else None,
+    )
+    request_context = {**learning_context, "ranking_weights": ranking_weights}
     recent, historical = _recent_and_historical_products(db, business_id, personalized_id)
     candidates = db.query(Product).filter(
         Product.business_id == business_id,
@@ -538,18 +748,34 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         Product.stock_quantity > Product.reserved_quantity,
     ).order_by(Product.id.asc()).all()
     candidates = [product for product in candidates if product.id not in recent]
+    candidates = _filter_query_candidates(candidates, payload.query)
+    data_rag_scores, data_rag_status = {}, "disabled"
     customer_features = _customer_recommendation_features(db, business_id, personalized_id)
     artifact_segment, linucb_scores, ncf_scores = _demo_artifact_scores(customer if personalized_id else None, candidates, customer_features)
     popularity = _popular_counts(db, business_id)
     affinity = _co_purchase_counts(db, business_id, historical)
     interaction_affinity = _interaction_scores(db, business_id=business_id, customer_id=personalized_id) if personalized_id else Counter()
+    purchase_facets = _customer_purchase_facets(db, business_id, personalized_id)
     interaction_popularity = _interaction_scores(db, business_id=business_id)
     historic_tokens = _historic_query_tokens(db, business_id, personalized_id)
     preferred_color, color_signal = _preferred_color(db, business_id, personalized_id)
+    stated_preferences = _stated_preference_values(db, business_id, personalized_id)
+    available_personalization_signals = set()
+    if personalized_id is not None:
+        if historical:
+            available_personalization_signals.add("order_history")
+        if any(value != 0 for value in interaction_affinity.values()):
+            available_personalization_signals.add("product_interest")
+        if stated_preferences or color_signal == "explicit_color_preference":
+            available_personalization_signals.add("stated_preferences")
+        if historic_tokens:
+            available_personalization_signals.add("past_questions")
+        if profile and profile.segment_label and profile.segment_label != "unclassified":
+            available_personalization_signals.add("rfm_segment")
     rag_scores = {candidate.product_id: candidate.relevance for candidate in payload.rag_candidates}
     popularity_signal = Counter(popularity)
     popularity_signal.update(interaction_popularity)
-    max_popularity = max(popularity_signal.values(), default=1)
+    max_popularity = max(1, max(popularity_signal.values(), default=0))
     max_affinity = max(
         max(affinity.values(), default=0),
         max((abs(value) for value in interaction_affinity.values()), default=0),
@@ -559,14 +785,27 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
     for product in candidates:
         co_purchase_score = float(affinity.get(product.id, 0) / max_affinity)
         interaction_score = float(interaction_affinity.get(product.id, 0) / max_affinity)
-        affinity_score = max(-1.0, min(1.0, 0.65 * co_purchase_score + 0.35 * interaction_score))
+        purchase_facet_score, matched_purchase_facets = _purchase_facet_affinity(purchase_facets, product)
+        affinity_score = max(-1.0, min(1.0,
+            0.50 * co_purchase_score + 0.25 * interaction_score + 0.25 * purchase_facet_score
+        ))
         popularity_score = float(popularity_signal.get(product.id, 0) / max_popularity)
         rag_score = float(rag_scores.get(product.id, 0.0))
         current_query_score = _query_overlap(payload.query, product)
         historic_query_score = _historic_interest_overlap(historic_tokens, product)
         lexical_score = max(current_query_score, 0.35 * historic_query_score)
-        score = _score(strategy, affinity_score, popularity_score, rag_score, lexical_score)
+        score = _score(
+            strategy,
+            affinity_score,
+            popularity_score,
+            rag_score,
+            lexical_score,
+            rfm_segment=rfm_segment if personalized_id is not None else None,
+        )
         color_match = _product_matches_color(product, preferred_color)
+        preference_score = _stated_preference_overlap(stated_preferences, product)
+        if purchase_facet_score > 0:
+            score += 0.18 * purchase_facet_score
         if color_match:
             score += 0.30
         sku = str(product.sku)
@@ -585,6 +824,14 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             reason = "rag_relevance"
         elif color_match:
             reason = color_signal or "color_affinity"
+        elif purchase_facet_score > 0:
+            reason = (
+                "purchase_history_category_affinity"
+                if matched_purchase_facets == ["category"]
+                else "purchase_history_affinity"
+            )
+        elif preference_score > 0:
+            reason = "stated_preference_affinity"
         elif interaction_score > 0:
             reason = "customer_interaction_affinity"
         elif affinity_score > 0:
@@ -595,6 +842,19 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             reason = "tenant_popularity"
         else:
             reason = "eligible_catalog_fallback"
+        if preference_score > 0:
+            score += 0.20 * preference_score
+        item_signals = set()
+        if co_purchase_score > 0 or purchase_facet_score > 0 or (color_match and color_signal == "purchased_color_affinity"):
+            item_signals.add("order_history")
+        if interaction_score > 0:
+            item_signals.add("product_interest")
+        if preference_score > 0 or (color_match and color_signal == "explicit_color_preference"):
+            item_signals.add("stated_preferences")
+        if historic_query_score > 0:
+            item_signals.add("past_questions")
+        if personalized_id is not None and rfm_segment and rfm_segment != "unclassified":
+            item_signals.add("rfm_segment")
         scored_items.append({
             "product_id": product.id,
             "sku": product.sku,
@@ -603,10 +863,35 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             "available": max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0),
             "product_url": safe_http_url(product.product_url),
             "score": round(score, 6),
+            "model_score": round(data_rag_scores[product.id], 6) if product.id in data_rag_scores else None,
             "reason": reason,
+            "personalization_signals": sorted(item_signals),
+            "purchase_facets": matched_purchase_facets,
         })
     scored_items.sort(key=lambda item: (-item["score"], item["product_id"]))
+    shortlist = scored_items[:3]
+    product_map = {product.id: product for product in candidates}
+    try:
+        data_rag_scores = artifact_registry.data_rag_scores(
+            business_id, [product_map[item["product_id"]] for item in shortlist], payload.query
+        )
+        if data_rag_scores:
+            data_rag_status = "ready"
+            for item in shortlist:
+                item["model_score"] = round(data_rag_scores[item["product_id"]], 6)
+                item["score"] = item["model_score"]
+                item["reason"] = "data_rag_demo_rerank"
+            # Preserve baseline order when the model assigns an equal score.
+            shortlist.sort(key=lambda item: -item["score"])
+            scored_items = shortlist + scored_items[3:]
+    except (RecommendationArtifactError, KeyError, TypeError, ValueError):
+        data_rag_scores, data_rag_status = {}, "unavailable"
     served_items = scored_items[:payload.limit]
+    used_personalization_signals = sorted({
+        signal
+        for item in served_items
+        for signal in item.get("personalization_signals", [])
+    })
     request_id = str(uuid4())
     for item in served_items:
         if item.get("product_url"):
@@ -618,6 +903,8 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             if click_url:
                 item["click_url"] = click_url
     model_versions = [MODEL_VERSION]
+    if data_rag_scores:
+        model_versions.append("data_rag_demo_v1")
     if ncf_scores:
         model_versions.append("ncf_bpr_uci_demo")
     if linucb_scores:
@@ -631,15 +918,19 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         strategy=strategy,
         model_version="+".join(model_versions),
         context={
-            **learning_context,
+            **request_context,
             "query": payload.query if personalized_id is not None else "",
             "rag_candidate_count": len(payload.rag_candidates),
             "eligible_candidate_count": len(scored_items),
             "artifact_segment": artifact_segment,
+            "data_rag_status": data_rag_status,
             "linucb_matched_skus": len(linucb_scores),
             "ncf_matched_skus": len(ncf_scores),
             "customer_interaction_product_count": len(interaction_affinity),
             "historic_interest_token_count": len(historic_tokens),
+            "personalization_applied": bool(used_personalization_signals),
+            "personalization_signals": used_personalization_signals,
+            "available_personalization_signals": sorted(available_personalization_signals),
         },
         served_items=served_items,
     )
@@ -737,15 +1028,22 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
             CustomerConsent.purpose == "personalization",
         ).order_by(CustomerConsent.id.asc()).all()
         latest_consent = {int(customer_id): status for customer_id, status in consent_rows}
+        personalization_enabled = get_customer_fact_extraction_enabled(db, business_id)
         customers = [customer for customer in db.query(Customer).filter(
             Customer.business_id == business_id,
             Customer.status != "merged",
             Customer.fact_extraction_opt_out.is_(False),
         ).order_by(Customer.id.asc()).all()
-            if latest_consent.get(customer.id) != "revoked"]
+            if personalization_enabled and latest_consent.get(customer.id) == "granted"]
+        eligible_customer_ids = {customer.id for customer in customers}
+        for profile in db.query(RecommendationCustomerProfile).filter(
+            RecommendationCustomerProfile.business_id == business_id,
+        ).all():
+            if profile.customer_id not in eligible_customer_ids:
+                db.delete(profile)
         orders = db.query(Order).filter(
             Order.business_id == business_id,
-            Order.status.in_(REVENUE_ORDER_STATUSES),
+            *_completed_order_conditions(),
         ).all()
         by_customer: defaultdict[int, list[Order]] = defaultdict(list)
         for order in orders:
@@ -755,7 +1053,7 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
             Order, Order.id == OrderItem.order_id
         ).filter(
             Order.business_id == business_id,
-            Order.status.in_(REVENUE_ORDER_STATUSES),
+            *_completed_order_conditions(),
         ).all()
         items_by_customer: defaultdict[int, list[tuple[int, int]]] = defaultdict(list)
         for customer_id, product_id, quantity in item_rows:
@@ -766,7 +1064,7 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
             customer_orders = by_customer.get(customer.id, [])
             latest = max((order.created_at for order in customer_orders if order.created_at), default=None)
             customer_items = items_by_customer.get(customer.id, [])
-            monetary = float(sum((Decimal(order.total_amount or 0) for order in customer_orders), Decimal("0")))
+            monetary = float(sum((_net_order_value(order) for order in customer_orders), Decimal("0")))
             profiles.append({
                 "customer_id": customer.id,
                 "recency_days": (now - latest).days if latest else 365,
@@ -777,77 +1075,76 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
                 "avg_order_value": monetary / max(1, len(customer_orders)),
             })
         if not profiles:
-            run.status, run.metrics, run.artifact, run.completed_at = "succeeded", {"customers": 0, "clusters": 0}, {"model_version": SEGMENT_MODEL_VERSION}, _now()
+            run.status, run.metrics, run.artifact, run.completed_at = "succeeded", {"customers": 0, "clusters": 0}, {
+                "model_version": SEGMENT_MODEL_VERSION, "segmenter_version": RFM_RULES_VERSION,
+            }, _now()
             db.commit()
             return run
+        buyers = [profile for profile in profiles if profile["frequency"] > 0]
+        labels = []
+        profile_model_version, algorithm = SEGMENT_MODEL_VERSION, "deterministic_rfm_kmeans"
         try:
-            labels = [artifact_registry.demo_segmentation_label(profile) for profile in profiles]
-        except RecommendationArtifactError:
+            imported = [artifact_registry.data_rag_segment(business_id, profile) for profile in buyers]
+            if imported and all(label is not None for label in imported):
+                labels = [int(label) for label in imported]
+                profile_model_version, algorithm = "data_rag_rfm_demo_v1", "imported_data_rag_kmeans"
+            else:
+                imported = [artifact_registry.demo_segmentation_label(profile) for profile in buyers]
+                if imported and all(label is not None for label in imported):
+                    labels = [int(label) for label in imported]
+                    profile_model_version, algorithm = "uci_kmeans_demo_v1", "imported_uci_kmeans"
+        except (RecommendationArtifactError, KeyError, TypeError, ValueError):
             labels = []
-        use_imported_model = len(labels) == len(profiles) and all(label is not None for label in labels)
-        if use_imported_model:
-            labels = [int(label) for label in labels]
-            profile_model_version = "uci_kmeans_demo_v1"
-            algorithm = "imported_uci_kmeans"
-        else:
-            raw = [[float(profile["recency_days"]), float(profile["frequency"]), float(profile["monetary"])] for profile in profiles]
-            means = [sum(vector[index] for vector in raw) / len(raw) for index in range(3)]
-            deviations = [math.sqrt(sum((vector[index] - means[index]) ** 2 for vector in raw) / len(raw)) or 1.0 for index in range(3)]
-            normalized = [[(vector[index] - means[index]) / deviations[index] for index in range(3)] for vector in raw]
-            cluster_count = min(4, len(profiles))
-            labels = _kmeans(normalized, cluster_count)
-            profile_model_version = SEGMENT_MODEL_VERSION
-            algorithm = "deterministic_rfm_kmeans"
-
-        cluster_quality: dict[int, float] = {}
-        for label in set(labels):
-            if use_imported_model:
-                cluster_quality[label] = -float(label)
+        if buyers and not labels:
+            raw = [[math.log1p(max(0.0, float(profile[key]))) for key in ("recency_days", "frequency", "monetary")] for profile in buyers]
+            means = [sum(v[i] for v in raw) / len(raw) for i in range(3)]
+            deviations = [math.sqrt(sum((v[i] - means[i]) ** 2 for v in raw) / len(raw)) or 1.0 for i in range(3)]
+            normalized = [[(v[i] - means[i]) / deviations[i] for i in range(3)] for v in raw]
+            labels = _kmeans(normalized, min(4, len(buyers)))
+        by_customer = {p["customer_id"]: label for p, label in zip(buyers, labels)}
+        labels = [by_customer.get(p["customer_id"], -1) for p in profiles]
+        buyers = [profile for profile in profiles if profile["frequency"] > 0]
+        recencies = [float(profile["recency_days"]) for profile in buyers]
+        frequencies = [float(profile["frequency"]) for profile in buyers]
+        monetary_values = [float(profile["monetary"]) for profile in buyers]
+        segment_by_customer: dict[int, tuple[str, str, dict[str, int] | None]] = {}
+        for profile in profiles:
+            customer_id = int(profile["customer_id"])
+            if not profile["frequency"]:
+                segment_by_customer[customer_id] = ("no_purchase", "RFM · Chưa mua", None)
                 continue
-            members = [vector for vector, assigned in zip(normalized, labels) if assigned == label]
-            center = [sum(vector[index] for vector in members) / len(members) for index in range(3)]
-            # Higher frequency/value and more recent purchasing rank ahead of dormant clusters.
-            cluster_quality[label] = center[1] + center[2] - center[0]
-        ordered_labels = sorted(set(labels), key=lambda label: (-cluster_quality[label], label))
-        display_rank = {label: rank for rank, label in enumerate(ordered_labels, start=1)}
-        desired_tags: set[tuple[int, int]] = set()
-        for rank in display_rank.values():
-            tag_name = f"RFM · AI nhóm {rank}"
-            tag = db.query(Tag).filter(Tag.business_id == business_id, Tag.name == tag_name).first()
-            if tag is None:
-                tag = Tag(business_id=business_id, name=tag_name, color="#2b9b99")
-                db.add(tag)
-                db.flush()
-            for profile, label in zip(profiles, labels):
-                if display_rank[label] == rank:
-                    desired_tags.add((int(profile["customer_id"]), int(tag.id)))
-
-        managed_tags = db.query(Tag).filter(
-            Tag.business_id == business_id,
-            Tag.name.like("RFM · AI nhóm %"),
-        ).all()
-        managed_tag_ids = [tag.id for tag in managed_tags]
-        existing_links = db.query(CustomerTag).filter(
-            CustomerTag.business_id == business_id,
-            CustomerTag.tag_id.in_(managed_tag_ids),
-        ).all() if managed_tag_ids else []
-        existing_pairs = {(int(link.customer_id), int(link.tag_id)): link for link in existing_links}
-        for pair, link in existing_pairs.items():
-            if pair not in desired_tags:
-                db.delete(link)
-        for customer_id, tag_id in desired_tags - set(existing_pairs):
-            db.add(CustomerTag(business_id=business_id, customer_id=customer_id, tag_id=tag_id))
+            recency_score = rfm_score(float(profile["recency_days"]), recencies, lower_is_better=True)
+            frequency_score = rfm_score(float(profile["frequency"]), frequencies)
+            monetary_score = rfm_score(float(profile["monetary"]), monetary_values)
+            first_purchase_recent = profile["frequency"] == 1 and profile["recency_days"] <= 30
+            name = rfm_group(
+                recency_score,
+                frequency_score,
+                monetary_score,
+                first_purchase_recent=first_purchase_recent,
+            )
+            segment_by_customer[customer_id] = (
+                RFM_SEGMENT_KEYS[name],
+                name,
+                {"recency": recency_score, "frequency": frequency_score, "monetary": monetary_score},
+            )
+        group_counts: Counter[str] = Counter(name for _, name, _ in segment_by_customer.values())
 
         for profile, label in zip(profiles, labels):
-            rank = display_rank[label]
+            segment_key, segment_name, rfm_scores = segment_by_customer[int(profile["customer_id"])]
             row = db.query(RecommendationCustomerProfile).filter(
                 RecommendationCustomerProfile.business_id == business_id,
                 RecommendationCustomerProfile.customer_id == profile["customer_id"],
             ).first()
             values = {
-                "segment_label": f"rfm_cluster_{rank}",
-                "features": {key: profile[key] for key in ("recency_days", "frequency", "monetary", "total_items", "distinct_products", "avg_order_value")},
-                "model_version": profile_model_version,
+                "segment_label": segment_key,
+                "features": {**{key: profile[key] for key in ("recency_days", "frequency", "monetary", "total_items", "distinct_products", "avg_order_value")},
+                             "has_completed_order": profile["frequency"] > 0, "cluster_id": label if label >= 0 else None,
+                             "segment_name": segment_name,
+                             "rfm_scores": rfm_scores, "rfm_rules_version": RFM_RULES_VERSION,
+                             "cluster_model_version": profile_model_version,
+                             "as_of": now.isoformat(), "basis": "all_completed_or_paid_delivered_net_of_refunds"},
+                "model_version": RFM_RULES_VERSION,
                 "trained_at": _now(),
             }
             if row is None:
@@ -858,14 +1155,15 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
         run.status = "succeeded"
         run.metrics = {
             "customers": len(profiles),
-            "clusters": len(ordered_labels),
+            "clusters": len(set(labels) - {-1}),
             "orders": len(orders),
-            "groups": {
-                f"RFM · AI nhóm {display_rank[label]}": sum(1 for assigned in labels if assigned == label)
-                for label in ordered_labels
-            },
+            "groups": dict(group_counts),
         }
-        run.artifact = {"model_version": profile_model_version, "algorithm": algorithm}
+        run.artifact = {
+            "model_version": profile_model_version,
+            "segmenter_version": RFM_RULES_VERSION,
+            "algorithm": algorithm,
+        }
         run.completed_at = _now()
         db.commit()
     except Exception as exc:

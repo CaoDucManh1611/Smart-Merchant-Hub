@@ -111,6 +111,64 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(200, listed.status_code, listed.text)
         self.assertTrue(next(row for row in listed.json() if row["subscription_id"] == request_id)["reconciliation_required"])
 
+    def test_legacy_downgrade_request_cannot_be_approved(self):
+        with Session(self.engine) as db:
+            plan = ServicePlan(code="legacy-downgrade-plan", name="Legacy Downgrade", price=Decimal("0"))
+            db.add(plan)
+            db.flush()
+            request = Subscription(
+                business_id=self.business_id,
+                plan_id=plan.id,
+                status="pending",
+                change_kind="downgrade",
+            )
+            db.add(request)
+            db.commit()
+            request_id = request.id
+
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        response = self.client.post(f"/api/platform/subscription-requests/{request_id}/approve", headers=headers)
+
+        self.assertEqual(409, response.status_code, response.text)
+        self.assertIn("Không thể duyệt yêu cầu hạ gói", response.json()["detail"])
+        with Session(self.engine) as db:
+            self.assertEqual("pending", db.get(Subscription, request_id).status)
+
+    def test_paid_request_cannot_be_approved_from_customer_claim_alone(self):
+        with Session(self.engine) as db:
+            plan = ServicePlan(code="unpaid-approval-plan", name="Unpaid", price=Decimal("100000"))
+            db.add(plan)
+            db.flush()
+            request = Subscription(
+                business_id=self.business_id,
+                plan_id=plan.id,
+                status="pending",
+                quoted_amount=Decimal("100000"),
+            )
+            db.add(request)
+            db.commit()
+            request_id = request.id
+
+        headers = {"Authorization": f"Bearer {self.login('platform-admin@test', 'platform-password')}"}
+        rejected = self.client.post(f"/api/platform/subscription-requests/{request_id}/approve", headers=headers)
+        self.assertEqual(409, rejected.status_code, rejected.text)
+        self.assertIn("Chưa ghi nhận khoản thanh toán", rejected.json()["detail"])
+        with Session(self.engine) as db:
+            self.assertEqual("pending", db.get(Subscription, request_id).status)
+            db.add(Payment(
+                business_id=self.business_id,
+                subscription_id=request_id,
+                amount=Decimal("100000"),
+                currency="VND",
+                provider="payos",
+                provider_transaction_id="unresolved-receipt",
+                status="paid",
+                raw_response={"reconciliation_required": True},
+            ))
+            db.commit()
+        unresolved = self.client.post(f"/api/platform/subscription-requests/{request_id}/approve", headers=headers)
+        self.assertEqual(409, unresolved.status_code, unresolved.text)
+
     def test_platform_member_lists_and_suspends_shop_with_audit(self):
         token = self.login("platform-admin@test", "platform-password")
         headers = {"Authorization": f"Bearer {token}", "X-Business-Id": str(self.other_business_id)}
@@ -361,6 +419,7 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(self.other_business_id, request_item["business_id"])
         self.assertEqual("approval-plan", request_item["plan_code"])
         self.assertEqual("pending", request_item["status"])
+        self.assertFalse(request_item["payment_received"])
         self.assertEqual("Latest Submitter", request_item["requester_name"])
         self.assertEqual("latest-submit@test", request_item["requester_email"])
         self.assertEqual(
@@ -373,6 +432,18 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual("Latest Shop Name", request_item["requested_shop_name"])
         self.assertEqual(["Facebook", "Zalo"], request_item["requested_channels"])
         self.assertEqual("Latest request note.", request_item["request_notes"])
+
+        with Session(self.engine) as db:
+            db.add(Payment(
+                business_id=self.other_business_id,
+                subscription_id=pending_id,
+                amount=Decimal("199000"),
+                currency="VND",
+                provider="manual",
+                provider_transaction_id="approval-flow-receipt",
+                status="paid",
+            ))
+            db.commit()
 
         provisioned = SimpleNamespace(
             business_id=self.other_business_id,
@@ -647,8 +718,18 @@ class PlatformApiTests(unittest.TestCase):
             plan = ServicePlan(code="rental-only-plan", name="Rental Only Plan", price=Decimal("400000"))
             db.add_all([business, plan])
             db.flush()
-            rental = Subscription(business_id=business.id, plan_id=plan.id, service_type="chatbot", status="pending")
+            rental = Subscription(business_id=business.id, plan_id=plan.id, service_type="chatbot", status="pending", quoted_amount=Decimal("400000"))
             db.add(rental)
+            db.flush()
+            db.add(Payment(
+                business_id=business.id,
+                subscription_id=rental.id,
+                amount=Decimal("400000"),
+                currency="VND",
+                provider="manual",
+                provider_transaction_id="rental-approval-receipt",
+                status="paid",
+            ))
             db.commit()
             business_id, rental_id = business.id, rental.id
         registry = SimpleNamespace(business_id=business_id, schema_name=f"tenant_{business_id}", state="active", feature_enabled=True, tenant_revision="test", migration_error=None)

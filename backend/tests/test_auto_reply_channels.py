@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.services.auto_reply_service import (
     _social_reply,
     _claim_auto_reply,
+    _deterministic_customer_reply,
     _send_channel_reply,
     format_product_catalog_reply,
     process_rag_auto_reply,
@@ -37,6 +38,32 @@ def test_short_greeting_does_not_reuse_product_context():
     assert _social_reply("shop nha") is not None
 
 
+@pytest.mark.parametrize(
+    ("query", "expected_route", "source_type"),
+    [
+        ("Sản phẩm nào bán chạy nhất tháng này?", "sales_rank", "crm_sales_rank"),
+        ("Doanh thu tháng này bao nhiêu?", "sales_revenue", "crm_sales_summary"),
+    ],
+)
+def test_sales_questions_on_channel_bot_use_crm_not_rag(query, expected_route, source_type):
+    from app.schemas.rag import ChatResponse
+
+    metadata = {}
+    response = ChatResponse(
+        answer="Số liệu lấy trực tiếp từ CRM.", sources=[], chunks_found=0,
+        data_sources=[{"type": source_type, "period": "2026-10"}],
+    )
+    with patch("app.services.crm_knowledge._monthly_bestseller_reply", return_value=response), \
+         patch("app.services.crm_knowledge._monthly_revenue_reply", return_value=response):
+        reply, route = _deterministic_customer_reply(
+            Mock(), business_id=7, conversation_id=3, query_text=query, reply_metadata=metadata,
+        )
+
+    assert reply == response.answer
+    assert route == expected_route
+    assert metadata["crm_data_sources"][0]["type"] == source_type
+
+
 def test_shopee_bridge_auth_error_does_not_force_human_takeover():
     db = Mock()
     conversation = Mock(bot_mode="auto")
@@ -50,7 +77,74 @@ def test_shopee_bridge_auth_error_does_not_force_human_takeover():
     assert error.value.status_code == 401
     assert conversation.bot_mode == "auto"
     handoff.assert_not_called()
+
+
+def test_delivery_unknown_pauses_bot_and_notifies_staff_without_retry():
+    from app.services.auto_reply_service import _notify_rag_handoff_required
+
+    conversation = Mock(
+        id=7, customer_id=8, assigned_user_id=None,
+        bot_mode="auto", resolution_outcome=None,
+    )
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = conversation
+    unknown = HTTPException(409, detail={"code": "delivery_unknown"})
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+         patch("app.services.auto_reply_service._latest_inbound_image_url", return_value=None), \
+         patch("app.services.auto_reply_service.send_text_reply", side_effect=unknown) as send, \
+         patch("app.services.auto_reply_service.create_notification") as notify, \
+         patch("app.services.auto_reply_service._notify_rag_handoff_required",
+               wraps=_notify_rag_handoff_required) as handoff:
+        result = process_rag_auto_reply(db, 7, "shopee", "hello", 4)
+
+    assert result is True
+    assert send.call_count == 1
+    handoff.assert_called_once()
+    assert handoff.call_args.kwargs["reason"] == "delivery_unknown"
+    assert conversation.bot_mode == "human"
+    assert conversation.resolution_outcome == "needs_human"
+    notify.assert_called_once()
 from app.services.quota_service import QuotaDecision, QuotaExceededError
+
+
+@pytest.mark.parametrize("channel", ["facebook", "instagram", "telegram", "zalo", "tiktok", "shopee"])
+def test_product_attributes_use_same_current_crm_context_on_all_channels(channel):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from app.rag.retriever import RetrievedChunk
+    product = SimpleNamespace(id=1, sku="DM-APP-001", name="Áo hồng", description="Cotton",
+                              price=100000, stock_quantity=20, reserved_quantity=2)
+    evidence = RetrievedChunk(12, 7, "DM-APP-001 có thành phần cotton. Giá cũ 999000 VND.", .9, {})
+    with ExitStack() as stack:
+        def mock(name, **kwargs):
+            return stack.enter_context(patch("app.services.auto_reply_service." + name, **kwargs))
+        mock("get_auto_reply_enabled", return_value=True)
+        mock("is_business_open", return_value=True)
+        mock("_latest_inbound_image_url", return_value=None)
+        mock("customer_order_reply", return_value=None)
+        mock("_find_exact_product", return_value=(product, "DM-APP-001"))
+        mock("retrieve", return_value=[evidence])
+        mock("build_agent_memory", return_value={
+            "history": [],
+            "facts": [{"key": "preferred_color", "value": "hồng", "verified": False}],
+        })
+        mock("record_explicit_chat_recommendation_decline", return_value=None)
+        mock("select_chatbot_reply_choice", return_value=None)
+        mock("record_quota_usage")
+        mock("estimate_ai_cost", return_value=Decimal("0"))
+        stack.enter_context(patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None))
+        model = mock("call_llm", return_value="DM-APP-001: cotton [Nguồn 2]; giá 100000 VND [Nguồn 1].")
+        mock("_get_conversation_recipient", return_value=(channel, "fixture-customer"))
+        send = mock("_send_channel_reply", return_value={"message_id": "fixture-out-1"})
+        save = mock("_save_auto_reply_outbound")
+        assert process_rag_auto_reply(Mock(), 4, channel, "DM-APP-001 thành phần gì?", 1)
+        assert "CURRENT_CRM_PRODUCT" in str(model.call_args.args[0])
+        assert "preferred_color" in str(model.call_args.args[0])
+        assert send.call_args.kwargs["channel"] == channel
+        assert "100000 VND" in send.call_args.kwargs["text"]
+        assert "999000" not in send.call_args.kwargs["text"]
+        assert save.call_args.kwargs["source_document_ids"] == [7]
 
 
 def test_shopee_suppresses_same_auto_reply_within_short_cooldown():
@@ -363,7 +457,7 @@ def test_instagram_image_is_passed_to_vision_model_and_gets_a_reply():
             db=db,
             conversation_id=4,
             channel="instagram",
-            query_text="Khách gửi ảnh đính kèm.",
+            query_text="Màu gì trong ảnh?",
             business_id=1,
         )
 
@@ -551,3 +645,29 @@ def test_uncited_rag_auto_reply_hands_off_without_sending_generated_text():
     assert "Giá bịa" not in send.call_args.kwargs["text"]
     assert "chưa có đủ thông tin" in send.call_args.kwargs["text"].lower()
     handoff.assert_called_once()
+
+
+def test_empty_rag_answer_sends_one_safe_handoff_reply():
+    db = Mock()
+    chunk = Mock(document_id=3, similarity=0.9, content="Chính sách đổi trả cần nhân viên xác nhận.")
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+        patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
+        patch("app.services.auto_reply_service.retrieve", return_value=[chunk]), \
+        patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
+        patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "q"}]), \
+        patch("app.services.auto_reply_service.record_quota_usage"), \
+        patch("app.services.auto_reply_service.call_llm", return_value="") as call_llm, \
+        patch("app.services.auto_reply_service._notify_rag_handoff_required") as handoff, \
+        patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "safe-1"}) as send:
+        result = process_rag_auto_reply(
+            db=db, conversation_id=4, channel="telegram",
+            query_text="Chính sách đổi trả ra sao?", business_id=1,
+        )
+
+    assert result is True
+    call_llm.assert_called_once()
+    send.assert_called_once()
+    handoff.assert_called_once()
+    assert "đang gặp sự cố" in send.call_args.kwargs["text"].lower()

@@ -6,19 +6,27 @@ may not always be represented well by an embedding model.
 """
 
 import logging
+import json
+import math
 import re
 import time
+import unicodedata
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.rag.embedder import embed_query
+from app.rag.embedder import embed_query, _validate_vectors
 from app.rag.run_logger import query_metadata
 from app.rag.topics import infer_query_topic, topic_matches
+from app.rag.topics import fold_topic_text
+from app.rag.lexical import contains, identifiers, query_terms
 
 logger = logging.getLogger(__name__)
+
+_LEXICAL_MINIMUM_SIMILARITY = 0.2
 
 _STOP_WORDS = {
     "bao", "bên", "bạn", "có", "cho", "của", "giá", "gì", "hỏi",
@@ -40,12 +48,24 @@ class RetrievedChunk:
     chunk_index: int | None = None
 
 
+def _metadata_dict(value: object) -> dict | None:
+    """Normalize JSON metadata returned by SQL text queries across dialects."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+    return value if isinstance(value, dict) else None
+
+
 def retrieve(
     query: str,
     db: Session,
     business_id: int,
     top_k: int | None = None,
     similarity_threshold: float | None = None,
+    query_embedding: list[float] | None = None,
+    diagnostics: dict | None = None,
 ) -> list[RetrievedChunk]:
     """
     Tìm các chunks liên quan nhất với query.
@@ -60,6 +80,8 @@ def retrieve(
         Danh sách RetrievedChunk, sắp xếp theo similarity giảm dần
     """
     query = (query or "").strip()
+    if diagnostics is not None:
+        diagnostics.update(retrieval_mode="hybrid", retrieval_fallback_stage=None, retrieval_error_type=None)
     if not query:
         return []
 
@@ -79,7 +101,12 @@ def retrieve(
         max(top_k * 3, top_k),
         business_id=business_id,
         query_topic=query_topic,
-        similarity_threshold=similarity_threshold,
+        # Lexical coverage is not on the same scale as cosine similarity;
+        # keep a separate floor so mixed questions retain every relevant source.
+        similarity_threshold=(
+            min(similarity_threshold, _LEXICAL_MINIMUM_SIMILARITY)
+            if similarity_threshold is not None else None
+        ),
     )
     vector_results: list[RetrievedChunk] = []
 
@@ -93,8 +120,12 @@ def retrieve(
         query_meta["query_hash"],
     )
     try:
-        query_vector = embed_query(query)
+        query_vector = (_validate_vectors([query_embedding], expected_count=1)[0]
+                        if query_embedding is not None else embed_query(query))
     except Exception as error:
+        if diagnostics is not None:
+            diagnostics.update(retrieval_mode="lexical", retrieval_fallback_stage="embedding",
+                               retrieval_error_type=type(error).__name__)
         logger.warning(
             "Vector query unavailable; using lexical retrieval: error_type=%s",
             type(error).__name__,
@@ -106,7 +137,11 @@ def retrieve(
             min(len(lexical_results), top_k),
             (time.perf_counter() - started) * 1000,
         )
-        return _expand_parent_neighbors(lexical_results[:top_k], db, business_id, top_k)
+        return _expand_parent_neighbors(
+            _diverse_candidates(lexical_results, top_k,
+                                max_per_document=4 if query_topic == "products" else 2),
+            db, business_id, top_k,
+        )
 
     # Search pgvector using a bound parameter.  Do not interpolate the vector
     # into SQL even though it currently comes from a trusted provider.
@@ -126,21 +161,26 @@ def retrieve(
           AND d.business_id = :business_id
           AND dc.embedding IS NOT NULL
           AND 1 - (dc.embedding <=> CAST(:query_vector AS vector)) >= :threshold
-        ORDER BY dc.embedding <=> CAST(:query_vector AS vector)
+        ORDER BY dc.embedding <=> CAST(:query_vector AS vector), dc.id
         LIMIT :top_k
     """
 
     try:
-        rows = db.execute(
-            sa_text(raw_sql),
-            {
-                "query_vector": vector_str,
-                "business_id": business_id,
-                "threshold": similarity_threshold,
-                "top_k": max(top_k * 3, top_k),
-            },
-        ).fetchall()
+        begin_nested = getattr(db, "begin_nested", None)
+        with begin_nested() if callable(begin_nested) else nullcontext():
+            rows = db.execute(
+                sa_text(raw_sql),
+                {
+                    "query_vector": vector_str,
+                    "business_id": business_id,
+                    "threshold": similarity_threshold,
+                    "top_k": max(top_k * 3, top_k),
+                },
+            ).fetchall()
     except Exception as error:
+        if diagnostics is not None:
+            diagnostics.update(retrieval_mode="lexical", retrieval_fallback_stage="vector_search",
+                               retrieval_error_type=type(error).__name__)
         logger.warning(
             "pgvector search unavailable; using lexical retrieval: error_type=%s",
             type(error).__name__,
@@ -152,24 +192,35 @@ def retrieve(
             min(len(lexical_results), top_k),
             (time.perf_counter() - started) * 1000,
         )
-        return _expand_parent_neighbors(lexical_results[:top_k], db, business_id, top_k)
+        return _expand_parent_neighbors(
+            _diverse_candidates(lexical_results, top_k,
+                                max_per_document=4 if query_topic == "products" else 2),
+            db, business_id, top_k,
+        )
 
     vector_results = []
     for row in rows:
         row_data = row._mapping
+        if identifiers(query) and not any(
+            re.search(r"(?<![\w-])" + re.escape(sku) + r"(?![\w-])", row_data["content"].casefold())
+            for sku in identifiers(query)
+        ):
+            continue
         vector_results.append(
             RetrievedChunk(
                 chunk_id=row_data["id"],
                 document_id=row_data["document_id"],
                 content=row_data["content"],
                 similarity=float(row_data["similarity"]),
-                metadata=row_data["chunk_metadata"],
+                metadata=_metadata_dict(row_data["chunk_metadata"]),
                 filename=row_data["source_filename"],
                 chunk_index=row_data["chunk_index"],
             )
         )
 
     results = _merge_hybrid_results(vector_results, lexical_results, top_k, topic=query_topic)
+    if diagnostics is not None:
+        diagnostics.update(retrieval_vector_hits=len(vector_results), retrieval_lexical_hits=len(lexical_results))
 
     logger.info(
         "Retrieved %d chunks (top_k=%d, threshold=%.2f, topic=%s, lexical=%d, vector=%d, duration_ms=%.2f)",
@@ -183,6 +234,27 @@ def retrieve(
     )
 
     return _expand_parent_neighbors(results, db, business_id, top_k)
+
+
+def _is_catalog_product_chunk(item: RetrievedChunk) -> bool:
+    """Recognize direct product evidence, not a guide merely mentioning a SKU."""
+    if (item.metadata or {}).get("sku"):
+        return True
+    return bool(re.search(r"(?im)^\s*sku\s*[,|]", item.content))
+
+
+def _diverse_candidates(
+    results: list[RetrievedChunk], top_k: int, *, max_per_document: int = 2,
+) -> list[RetrievedChunk]:
+    counts, selected, deferred = {}, [], []
+    for result in results:
+        count = counts.get(result.document_id, 0)
+        if count < max_per_document:
+            selected.append(result)
+            counts[result.document_id] = count + 1
+        else:
+            deferred.append(result)
+    return (selected + deferred)[:top_k]
 
 
 def _expand_parent_neighbors(
@@ -208,15 +280,17 @@ def _expand_parent_neighbors(
             if not whole_parent:
                 start, end = max(start, lead.chunk_index - 1), min(end, lead.chunk_index + 1)
             try:
-                rows = db.execute(sa_text("""
-                    SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
-                           d.filename AS source_filename, dc.chunk_index
-                    FROM document_chunks dc JOIN documents d ON d.id = dc.document_id
-                    WHERE d.status = 'ready' AND d.business_id = :business_id
-                      AND d.id = :document_id AND dc.chunk_index BETWEEN :start_index AND :end_index
-                    ORDER BY dc.chunk_index LIMIT 16
-                """), {"business_id": business_id, "document_id": lead.document_id,
-                        "start_index": start, "end_index": end}).fetchall()
+                begin_nested = getattr(db, "begin_nested", None)
+                with begin_nested() if callable(begin_nested) else nullcontext():
+                    rows = db.execute(sa_text("""
+                        SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
+                               d.filename AS source_filename, dc.chunk_index
+                        FROM document_chunks dc JOIN documents d ON d.id = dc.document_id
+                        WHERE d.status = 'ready' AND d.business_id = :business_id
+                          AND d.id = :document_id AND dc.chunk_index BETWEEN :start_index AND :end_index
+                        ORDER BY dc.chunk_index LIMIT 16
+                    """), {"business_id": business_id, "document_id": lead.document_id,
+                            "start_index": start, "end_index": end}).fetchall()
             except Exception as error:
                 logger.warning("Parent retrieval unavailable: %s", type(error).__name__)
                 expanded.append(lead)
@@ -225,7 +299,7 @@ def _expand_parent_neighbors(
             for row in rows:
                 data = row._mapping
                 if (data["document_id"] == lead.document_id
-                        and (data["chunk_metadata"] or {}).get("parent_id") == metadata["parent_id"]
+                        and (_metadata_dict(data["chunk_metadata"]) or {}).get("parent_id") == metadata["parent_id"]
                         and start <= data["chunk_index"] <= end):
                     evidence[data["chunk_index"]] = (data["id"], data["content"])
             budget = min(6000, remaining_context + len(lead.content))
@@ -277,7 +351,7 @@ def _expand_parent_neighbors(
     neighbors = []
     for row in rows:
         data = row._mapping
-        metadata = data["chunk_metadata"] or {}
+        metadata = _metadata_dict(data["chunk_metadata"]) or {}
         if metadata.get("parent_id") != parent_id or data["id"] in seen:
             continue
         neighbors.append(RetrievedChunk(
@@ -301,13 +375,15 @@ def _merge_hybrid_results(
     for item in vector_results:
         # Semantic search is the primary signal.
         topic_bonus = 0.15 if topic_matches(item.metadata, topic) else 0
-        merged[item.chunk_id] = (item, 0.65 * item.similarity + topic_bonus)
+        product_bonus = 0.3 if topic == "products" and _is_catalog_product_chunk(item) else 0
+        merged[item.chunk_id] = (item, 0.65 * item.similarity + topic_bonus + product_bonus)
 
     for item in lexical_results:
         existing = merged.get(item.chunk_id)
         if existing is None:
             topic_bonus = 0.15 if topic_matches(item.metadata, topic) else 0
-            merged[item.chunk_id] = (item, 0.35 * item.similarity + topic_bonus)
+            product_bonus = 0.3 if topic == "products" and _is_catalog_product_chunk(item) else 0
+            merged[item.chunk_id] = (item, 0.35 * item.similarity + topic_bonus + product_bonus)
             continue
 
         current_item, current_score = existing
@@ -318,7 +394,10 @@ def _merge_hybrid_results(
         )
 
     ranked = sorted(merged.values(), key=lambda pair: pair[1], reverse=True)
-    return [item for item, _score in ranked[:top_k]]
+    return _diverse_candidates(
+        [item for item, _score in ranked], top_k,
+        max_per_document=4 if topic == "products" else 2,
+    )
 
 
 def _retrieve_lexical(
@@ -329,98 +408,115 @@ def _retrieve_lexical(
     query_topic: str | None = None,
     similarity_threshold: float | None = None,
 ) -> list[RetrievedChunk]:
-    """Tìm kiếm từ khóa trong toàn bộ chunks, kể cả chunk không có vector."""
-    identifiers = list(
-        dict.fromkeys(
-            match.lower()
-            for match in re.findall(
-                r"\b[A-Za-z]{2,10}-\d{3,}\b",
-                query,
-            )
-        )
-    )
-    tokens = [
-        token.lower()
-        for token in re.findall(r"[\wÀ-ỹ]+", query, flags=re.UNICODE)
-        if len(token) >= 2 and token.lower() not in _STOP_WORDS
-    ]
-    if not tokens and not identifiers:
+    """Rank bounded, tenant-scoped candidates by normalized concept coverage."""
+    sku_codes = identifiers(query)
+    terms = query_terms(query)
+    # A preference is useful for selecting matching products, but generic
+    # preference guidelines are not evidence that a particular item is stocked.
+    if query_topic == "products" and len(terms) > 1:
+        terms = [aliases for aliases in terms if aliases[0] != "preference"]
+    if not terms and not sku_codes:
         return []
 
-    token_conditions = [
-        f"LOWER(dc.content) LIKE :term_{index}"
-        for index in range(len(tokens))
-    ]
-    identifier_conditions = [
-        f"LOWER(dc.content) LIKE :identifier_{index}"
-        for index in range(len(identifiers))
-    ]
-    conditions = " OR ".join(identifier_conditions + token_conditions)
-    params = {
-        f"term_{index}": f"%{token}%"
-        for index, token in enumerate(tokens)
-    }
-    params.update(
-        {
-            f"identifier_{index}": f"%{identifier}%"
-            for index, identifier in enumerate(identifiers)
-        }
-    )
-    match_count_order = " + ".join(
-        f"CASE WHEN {condition} THEN 1 ELSE 0 END"
-        for condition in token_conditions
-    ) or "0"
-    order_parts = []
-    if identifier_conditions:
-        order_parts.append(
-            "CASE WHEN (" + " OR ".join(identifier_conditions) + ") THEN 0 ELSE 1 END"
+    params = {"business_id": business_id, "candidate_limit": max(200, top_k * 40)}
+    dialect = getattr(getattr(db, "bind", None), "dialect", None)
+    if getattr(dialect, "name", "") == "sqlite":
+        # SQLite QA uses the same folding function as production ranking.
+        db.connection().connection.driver_connection.create_function("rag_fold", 1, fold_topic_text)
+        searchable = (
+            "COALESCE(CAST(dc.content AS TEXT), '') || ' ' "
+            "|| COALESCE(json_extract(dc.metadata, '$.section'), '') || ' ' "
+            "|| COALESCE(json_extract(dc.metadata, '$.context'), '')"
         )
-    order_parts.extend((f"({match_count_order}) DESC", "dc.id"))
-    candidate_order = ", ".join(order_parts)
-    rows = db.execute(
-        sa_text(
-            f"""
-            SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
-                   d.filename AS source_filename, dc.chunk_index
-            FROM document_chunks dc
-            JOIN documents d ON d.id = dc.document_id
-            WHERE d.status = 'ready'
-              AND d.business_id = :business_id
-              AND ({conditions})
-            ORDER BY {candidate_order}
-            LIMIT :candidate_limit
-            """
-        ),
-        {**params, "business_id": business_id, "candidate_limit": max(100, top_k * 40)},
-    ).fetchall()
+        search_sql = f"rag_fold({searchable})"
+    else:
+        accents = "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
+        params["fold_from"] = accents
+        params["fold_to"] = "".join(
+            "d" if c == "đ" else "".join(x for x in unicodedata.normalize("NFKD", c) if not unicodedata.combining(x))
+            for c in accents
+        )
+        searchable = (
+            "COALESCE(CAST(dc.content AS TEXT), '') || ' ' "
+            "|| COALESCE(dc.metadata ->> 'section', '') || ' ' "
+            "|| COALESCE(dc.metadata ->> 'context', '')"
+        )
+        search_sql = f"REPLACE(REPLACE(translate(LOWER({searchable}), :fold_from, :fold_to), '-', ' '), '/', ' ')"
 
-    scored: list[tuple[float, RetrievedChunk]] = []
-    for row in rows:
-        row_data = row._mapping
-        content = row_data["content"]
-        content_lower = content.lower()
-        content_tokens = set(re.findall(r"[\wÀ-ỹ]+", content_lower, flags=re.UNICODE))
-        matched = sum(token in content_tokens for token in tokens)
-        coverage = matched / len(tokens) if tokens else 0
-        exact_identifier = any(
-            identifier in content_lower
-            for identifier in identifiers
+    normalized_column = search_sql
+    search_sql = "sc.search_text"
+    conditions = []
+    for index, aliases in enumerate(terms):
+        alternatives = []
+        for alias_index, alias in enumerate(aliases):
+            key = f"term_{index}_{alias_index}"
+            params[key] = f"%{alias}%"
+            alternatives.append(f"{search_sql} LIKE :{key}")
+        conditions.append("(" + " OR ".join(alternatives) + ")")
+    sku_conditions = []
+    for index, sku in enumerate(sku_codes):
+        key = f"identifier_{index}"
+        params[key] = f"%{sku}%"
+        sku_conditions.append(f"LOWER(sc.content) LIKE :{key}")
+    all_conditions = sku_conditions + conditions
+    match_count = " + ".join(f"CASE WHEN {condition} THEN 1 ELSE 0 END" for condition in conditions) or "0"
+    sku_order = ("CASE WHEN (" + " OR ".join(sku_conditions) + ") THEN 0 ELSE 1 END, ") if sku_conditions else ""
+    rows = db.execute(sa_text(f"""
+        WITH scoped AS MATERIALIZED (
+            SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
+                   d.filename AS source_filename, dc.chunk_index,
+                   {normalized_column} AS search_text
+            FROM document_chunks dc JOIN documents d ON d.id = dc.document_id
+            WHERE d.status = 'ready' AND d.business_id = :business_id
         )
-        phrase_bonus = 0.12 if " ".join(tokens[:2]) in content_lower else 0
-        identifier_bonus = 0.35 if exact_identifier else 0
-        score = min(0.99, coverage * 0.7 + phrase_bonus + identifier_bonus)
+        SELECT * FROM scoped sc WHERE ({" OR ".join(all_conditions)})
+        ORDER BY {sku_order}({match_count}) DESC, sc.id
+        LIMIT :candidate_limit
+    """), params).fetchall()
+
+    candidates = []
+    for row in rows:
+        data = row._mapping
+        metadata = _metadata_dict(data["chunk_metadata"]) or {}
+        searchable = " ".join((
+            data["content"],
+            str(metadata.get("section") or ""),
+            str(metadata.get("context") or ""),
+        ))
+        folded = fold_topic_text(searchable)
+        matches = [any(contains(folded, alias) for alias in aliases) for aliases in terms]
+        exact_sku = any(re.search(r"(?<![\w-])" + re.escape(sku) + r"(?![\w-])", data["content"].casefold()) for sku in sku_codes)
+        if sku_codes and not exact_sku:
+            continue
+        candidates.append((data, matches, exact_sku))
+    # Rare observed concepts weigh more; unmatched concepts get neutral weight
+    # so one incidental overlap cannot score like a complete answer.
+    weights = []
+    for index, aliases in enumerate(terms):
+        document_frequency = sum(flags[index] for _, flags, _ in candidates)
+        if not document_frequency:
+            weights.append(1)
+            continue
+        weight = 1 + math.log((len(candidates) + 1) / (1 + document_frequency))
+        # An exact amount can help rank a policy, but an unlisted requested
+        # quantity should not hide the product or policy that covers the rest.
+        if len(aliases) == 1 and aliases[0].isdigit():
+            weight *= 0.25
+        weights.append(weight)
+    scored = []
+    for data, matches, exact_sku in candidates:
+        coverage = sum(weight for weight, match in zip(weights, matches) if match) / max(sum(weights), 1)
+        score = min(0.99, 0.75 * coverage + (0.65 if exact_sku else 0))
         if similarity_threshold is not None and score < similarity_threshold:
             continue
-        topic_bonus = 0.15 if topic_matches(row_data["chunk_metadata"], query_topic) else 0
-        scored.append((score + topic_bonus, RetrievedChunk(
-                chunk_id=row_data["id"],
-                document_id=row_data["document_id"],
-                content=content,
-                similarity=score,
-                metadata=row_data["chunk_metadata"],
-                filename=row_data["source_filename"],
-                chunk_index=row_data["chunk_index"],
-            )))
-
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [item for _rank, item in scored[:top_k]]
+        metadata = _metadata_dict(data["chunk_metadata"])
+        chunk = RetrievedChunk(
+            chunk_id=data["id"], document_id=data["document_id"],
+            content=data["content"], similarity=score, metadata=metadata,
+            filename=data["source_filename"], chunk_index=data["chunk_index"],
+        )
+        rank = (score + (0.08 if topic_matches(metadata, query_topic) else 0)
+                + (0.3 if query_topic == "products" and _is_catalog_product_chunk(chunk) else 0))
+        scored.append((rank, chunk))
+    scored.sort(key=lambda item: (-item[0], item[1].chunk_id))
+    return [item for _, item in scored[:top_k]]

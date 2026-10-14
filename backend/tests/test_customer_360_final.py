@@ -397,6 +397,35 @@ class Customer360FinalApiTests(unittest.TestCase):
                 total_amount=1000,
                 created_at=now - timedelta(days=365),
             ))
+            db.add_all([
+                Order(
+                    business_id=self.business_id,
+                    customer_id=self.duplicate_id,
+                    order_number="RFM-PENDING-1",
+                    status="confirmed",
+                    total_amount=5000000,
+                    created_at=now,
+                ),
+                Order(
+                    business_id=self.business_id,
+                    customer_id=self.duplicate_id,
+                    order_number="RFM-UNPAID-DELIVERY-1",
+                    status="delivered",
+                    payment_status="unpaid",
+                    total_amount=5000000,
+                    created_at=now,
+                ),
+                Order(
+                    business_id=self.business_id,
+                    customer_id=self.duplicate_id,
+                    order_number="RFM-REFUNDED-1",
+                    status="completed",
+                    payment_status="refunded",
+                    total_amount=5000000,
+                    refunded_amount=5000000,
+                    created_at=now,
+                ),
+            ])
             db.add(Order(
                 business_id=self.other_business_id,
                 customer_id=self.cross_tenant_id,
@@ -454,6 +483,70 @@ class Customer360FinalApiTests(unittest.TestCase):
         self.assertEqual(200, other_response.status_code, other_response.text)
         self.assertEqual(1, other_response.json()["customer_count"])
 
+    def test_rfm_classification_uses_net_value_after_partial_refunds(self):
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            db.add_all([
+                Order(
+                    business_id=self.business_id,
+                    customer_id=self.survivor_id,
+                    order_number=f"RFM-NET-A-{index}",
+                    status="completed",
+                    total_amount=50000,
+                    created_at=now,
+                )
+                for index in range(3)
+            ])
+            db.add(Order(
+                business_id=self.business_id,
+                customer_id=self.survivor_id,
+                order_number="RFM-NET-A-REFUND",
+                status="completed",
+                payment_status="paid",
+                total_amount=5000000,
+                refunded_amount=4999900,
+                created_at=now,
+            ))
+            db.add_all([
+                Order(
+                    business_id=self.business_id,
+                    customer_id=self.another_id,
+                    order_number=f"RFM-NET-B-{index}",
+                    status="completed",
+                    total_amount=100000,
+                    created_at=now,
+                )
+                for index in range(4)
+            ])
+            db.add(Order(
+                business_id=self.business_id,
+                customer_id=self.duplicate_id,
+                order_number="RFM-NET-OLD",
+                status="completed",
+                total_amount=1000,
+                created_at=now - timedelta(days=365),
+            ))
+            db.commit()
+
+        response = self.client.post("/api/customers/rfm/classify", headers=self.headers())
+        self.assertEqual(200, response.status_code, response.text)
+
+        with Session(self.engine) as db:
+            assigned = {
+                customer_id: tag_name
+                for customer_id, tag_name in db.query(CustomerTag.customer_id, Tag.name).join(
+                    Tag, Tag.id == CustomerTag.tag_id,
+                ).filter(
+                    CustomerTag.business_id == self.business_id,
+                    CustomerTag.customer_id.in_((self.survivor_id, self.another_id, self.duplicate_id)),
+                    Tag.business_id == self.business_id,
+                    Tag.name.like("RFM · %"),
+                ).all()
+            }
+        self.assertEqual("RFM · Trung thành", assigned[self.survivor_id])
+        self.assertEqual("RFM · Giá trị cao", assigned[self.another_id])
+        self.assertEqual("RFM · Nguy cơ rời bỏ", assigned[self.duplicate_id])
+
     def test_customer_fact_opt_out_is_tenant_scoped_and_deletes_only_inferred_facts(self):
         with Session(self.engine) as db:
             db.add_all([
@@ -477,6 +570,13 @@ class Customer360FinalApiTests(unittest.TestCase):
                     is_verified=True,
                 ),
             ])
+            rfm_tag = Tag(business_id=self.business_id, name="RFM · AI nhóm 1")
+            db.add(rfm_tag)
+            db.flush()
+            rfm_tag_id = rfm_tag.id
+            db.add(CustomerTag(
+                business_id=self.business_id, customer_id=self.survivor_id, tag_id=rfm_tag.id,
+            ))
             db.commit()
 
         response = self.client.patch(
@@ -496,6 +596,11 @@ class Customer360FinalApiTests(unittest.TestCase):
             self.assertEqual(1, db.query(CustomerFact).filter(
                 CustomerFact.customer_id == self.survivor_id,
                 CustomerFact.source_type == "manual",
+            ).count())
+            self.assertEqual(0, db.query(CustomerTag).filter(
+                CustomerTag.business_id == self.business_id,
+                CustomerTag.customer_id == self.survivor_id,
+                CustomerTag.tag_id == rfm_tag_id,
             ).count())
 
         cross_tenant = self.client.patch(

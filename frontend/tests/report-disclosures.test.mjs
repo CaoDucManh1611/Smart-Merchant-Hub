@@ -25,5 +25,5 @@ test('reports show four primary metrics and collapse optional content without dr
     assert.equal(details.children.find(n => n.type === 1).tag, 'summary');
     assert.ok(!details.props.some(p => p.name === 'open'));
   }
-  for (const feature of ['downloadReportCsv', 'openCommerceReportRecord(record)', 'recalculateRevenueAttribution', 'inventory-report-scroll', 'v-for="item in inventoryReport.items"']) assert.ok(source.includes(feature));
+  for (const feature of ['downloadReportCsv', 'openCommerceReportRecord(record)', 'recalculateRevenueAttribution', 'inventory-report-scroll', 'v-for="item in inventoryReport.items.slice(0, inventoryReportVisibleCount)"']) assert.ok(source.includes(feature));
 });

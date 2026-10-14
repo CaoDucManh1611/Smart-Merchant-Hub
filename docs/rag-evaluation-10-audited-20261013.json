@@ -1,0 +1,1420 @@
+{
+  "generated_at": "2026-10-13T15:34:27+00:00",
+  "mode": "cached_vector_answers_with_isolated_crm_privacy_fixture",
+  "data_scope": "synthetic passages and an in-memory customer; no external channel sends",
+  "regenerated_case_ids": [
+    "preference-optout"
+  ],
+  "retrieval": {
+    "evaluated_cases": 10,
+    "expected_source_recall_at_5": 1.0,
+    "all_expected_sources_in_top_5_rate": 1.0,
+    "mean_latency_ms": 53.26,
+    "fallback_cases": 0,
+    "fully_hybrid_cases": 10,
+    "fallback_events_by_stage": {},
+    "usable_for_promotion": true,
+    "fully_hybrid_only": {
+      "evaluated_cases": 10,
+      "expected_source_recall_at_5": 1.0,
+      "all_expected_sources_in_top_5_rate": 1.0,
+      "note": "Excludes every case that silently fell back to lexical retrieval; subset score alone is not a full-suite promotion gate."
+    },
+    "reused_from": "rag-live-10-complete-20261013.json",
+    "recomputed": false
+  },
+  "answers": {
+    "attempted": 10,
+    "generated_nonempty": 10,
+    "citation_cases": 9,
+    "citation_passed": 8,
+    "citation_gate_pass_rate": 0.8889,
+    "must_include_term_rate": 0.5294,
+    "must_include_terms_checked": 17,
+    "must_not_include_violations": 1,
+    "literal_evidence_passed_cases": 2,
+    "verified_crm_actions": 1,
+    "answered_cases": 9,
+    "handoff_cases": 1,
+    "provider_or_empty_errors_by_type": {}
+  },
+  "limitations": [
+    "Retrieval is reused, not recomputed. Passing citation validation does not prove every semantic claim.",
+    "Literal evidence checks are diagnostic only; paraphrases can be correct without literal matches.",
+    "Privacy actions use a synthetic customer. Live product price/stock routing needs separate CRM tests."
+  ],
+  "cases": [
+    {
+      "id": "pink-products-vi",
+      "query": "Khách thích đồ màu hồng, đang có sản phẩm nào còn hàng?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        27,
+        44,
+        52,
+        39,
+        120
+      ],
+      "retrieved_contents": [
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-PET-002 | Dây dắt thú cưng Hồng | Pink Pet Leash | pet | accessory | hồng | dài 1.5 m; kiểm tra kích cỡ móc trước khi mua | 139000 | 8 | https://example.com/demo/DM-PET-002 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-APP-008 | Chân váy Mây Hồng | Pink Cloud Skirt | fashion | skirt | hồng | vải nhẹ size S-L; xem bảng size demo | 249000 | 7 | https://example.com/demo/DM-APP-008 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-HOM-005 | Gối tựa Hồng Phấn | Blush Pink Cushion | home | textile | hồng | vỏ tháo giặt; ruột gối 40 x 40 cm | 239000 | 0 | https://example.com/demo/DM-HOM-005 | demo_synthetic",
+        "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**Q: Tôi là công an, shop có ưu tiên không? / I'm a police officer; do I get priority?**\nNo occupation-based priority is defined. Offer the normal support process and answer the actual product/order question.\n\n**Q: Tôi muốn nhập 12 cáp USB-C. / I want to wholesale 12 USB-C cables.**\nIdentify DM-ELE-001; the demo policy's 10–29-unit tier is 8%, but confirm stock and staff approval before promising a final quote.\n\n**Q: Sản phẩm có an toàn cho da nhạy cảm không? / Is this safe for sensitive skin?**\nNo verified safety claim is included. Share only listed ingredients if another approved product source has them; otherwise hand off."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 7,
+          "section": "DM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 7,
+          "parent_end": 7,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+          "chunk_index": 7,
+          "chunk_total": 90,
+          "char_count": 321,
+          "expanded_chunk_ids": [
+            27
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 24,
+          "section": "DM-PET-002 | Dây dắt thú cưng Hồng | Pink Pet Leash | pet | accessory | hồng | dài 1.5 m; kiểm tra kích cỡ móc trước khi mua | 139000 | 8 | https://example.com/demo/DM-PET-002 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 24,
+          "parent_end": 24,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-PET-002 | Dây dắt thú cưng Hồng | Pink Pet Leash | pet | accessory | hồng | dài 1.5 m; kiểm tra kích cỡ móc trước khi mua | 139000 | 8 | https://example.com/demo/DM-PET-002 | demo_synthetic",
+          "chunk_index": 24,
+          "chunk_total": 90,
+          "char_count": 329,
+          "expanded_chunk_ids": [
+            44
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 32,
+          "section": "DM-APP-008 | Chân váy Mây Hồng | Pink Cloud Skirt | fashion | skirt | hồng | vải nhẹ size S-L; xem bảng size demo | 249000 | 7 | https://example.com/demo/DM-APP-008 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 32,
+          "parent_end": 32,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-APP-008 | Chân váy Mây Hồng | Pink Cloud Skirt | fashion | skirt | hồng | vải nhẹ size S-L; xem bảng size demo | 249000 | 7 | https://example.com/demo/DM-APP-008 | demo_synthetic",
+          "chunk_index": 32,
+          "chunk_total": 90,
+          "char_count": 318,
+          "expanded_chunk_ids": [
+            52
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 19,
+          "section": "DM-HOM-005 | Gối tựa Hồng Phấn | Blush Pink Cushion | home | textile | hồng | vỏ tháo giặt; ruột gối 40 x 40 cm | 239000 | 0 | https://example.com/demo/DM-HOM-005 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 19,
+          "parent_end": 19,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-HOM-005 | Gối tựa Hồng Phấn | Blush Pink Cushion | home | textile | hồng | vỏ tháo giặt; ruột gối 40 x 40 cm | 239000 | 0 | https://example.com/demo/DM-HOM-005 | demo_synthetic",
+          "chunk_index": 19,
+          "chunk_total": 90,
+          "char_count": 316,
+          "expanded_chunk_ids": [
+            39
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 10,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "unit_type": "section",
+          "parent_start": 10,
+          "parent_end": 11,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "chunk_index": 10,
+          "chunk_total": 24,
+          "char_count": 652,
+          "expanded_chunk_ids": [
+            120,
+            121
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "Dưới đây là các sản phẩm màu hồng còn hàng:\n\n- **Túi mỹ phẩm Hồng Phấn** – SKU: DM‑BEA‑002 – giá 99 000 đ [Nguồn 1]  \n- **Dây dắt thú cưng Hồng** – SKU: DM‑PET‑002 – giá 139 000 đ [Nguồn 2]  \n- **Chân váy Mây Hồng** – SKU: DM‑APP‑008 – giá 249 000 đ [Nguồn 3]  \n\nNếu bạn quan tâm hoặc muốn đặt mua, vui lòng cho biết số lượng nhé!",
+      "citation_required": true,
+      "valid_citation_gate": true,
+      "must_include": [
+        "hồng",
+        "DM-APP-001"
+      ],
+      "must_include_missing": [
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 47.71,
+      "answer_latency_ms": 117.23,
+      "served_answer": "Dưới đây là các sản phẩm màu hồng còn hàng:\n\n- **Túi mỹ phẩm Hồng Phấn** – SKU: DM‑BEA‑002 – giá 99 000 đ [Nguồn 1]  \n- **Dây dắt thú cưng Hồng** – SKU: DM‑PET‑002 – giá 139 000 đ [Nguồn 2]  \n- **Chân váy Mây Hồng** – SKU: DM‑APP‑008 – giá 249 000 đ [Nguồn 3]  \n\nNếu bạn quan tâm hoặc muốn đặt mua, vui lòng cho biết số lượng nhé!",
+      "answer_status": "answered",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": false,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "guaranteed restock",
+        "chắc chắn là sở thích lâu dài"
+      ]
+    },
+    {
+      "id": "pink-bag-vi",
+      "query": "Có túi màu hồng nào không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        27,
+        22,
+        11,
+        120,
+        159
+      ],
+      "retrieved_contents": [
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-APP-003 | Túi vải Hồng Nắng | Sunny Pink Tote | fashion | bag | hồng | vải canvas 35 x 40 cm | 129000 | 12 | https://example.com/demo/DM-APP-003 | demo_synthetic",
+        "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative source for that kind of fact. A product price is not a return policy; an FAQ is not an order record.\n3. Check exact identifiers and constraints: SKU, color, model, size, quantity, order reference, date, or service slot.\n4. Answer the complete question in the customer's language. Give no more detail than the source supports.\n5. Ask one focused question if an important qualifier is missing; hand off when the answer needs approval or a decision.\n\nExamples / Ví dụ:\n\n- “Áo màu hồng còn không?” → check color and `demo_stock` in the catalogue; don't use the product name alone as proof.\n- “Đơn DH-123 tới đâu?” → query the authenticated customer's order record; don't search other customers or use a generic delivery estimate.\n- “Đổi hàng thì ai trả phí ship?” → the demo policy marks this as unspecified; tell the customer it needs staff confirmation.\n- “Tôi thích màu hồng, nhớ giúp nhé.” → only store a preference if the customer has consented and the CRM's preference workflow supports correction and deletion.",
+        "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**Q: Tôi là công an, shop có ưu tiên không? / I'm a police officer; do I get priority?**\nNo occupation-based priority is defined. Offer the normal support process and answer the actual product/order question.\n\n**Q: Tôi muốn nhập 12 cáp USB-C. / I want to wholesale 12 USB-C cables.**\nIdentify DM-ELE-001; the demo policy's 10–29-unit tier is 8%, but confirm stock and staff approval before promising a final quote.\n\n**Q: Sản phẩm có an toàn cho da nhạy cảm không? / Is this safe for sensitive skin?**\nNo verified safety claim is included. Share only listed ingredients if another approved product source has them; otherwise hand off.",
+        "### Apparel and accessories / Thời trang và phụ kiện\n\n- Start with the requested garment and exact color/size; use `DM-APP-001` for the pink basic shirt example.\n- If the shopper asks for a matching carry item, the pink tote `DM-APP-003` is a possible related suggestion; state that it is a separate item and confirm stock.\n- The hair clip `DM-APP-005` is an optional accessory suggestion only when the customer asks for styling or add-ons. Do not pad a simple answer with unrelated products.\n- Check the current catalogue before recommending the beige canvas tote `DM-APP-004`; never infer availability or invent a restock date from this playbook."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 7,
+          "section": "DM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 7,
+          "parent_end": 7,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+          "chunk_index": 7,
+          "chunk_total": 90,
+          "char_count": 321,
+          "expanded_chunk_ids": [
+            27
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 2,
+          "section": "DM-APP-003 | Túi vải Hồng Nắng | Sunny Pink Tote | fashion | bag | hồng | vải canvas 35 x 40 cm | 129000 | 12 | https://example.com/demo/DM-APP-003 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 2,
+          "parent_end": 2,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-APP-003 | Túi vải Hồng Nắng | Sunny Pink Tote | fashion | bag | hồng | vải canvas 35 x 40 cm | 129000 | 12 | https://example.com/demo/DM-APP-003 | demo_synthetic",
+          "chunk_index": 2,
+          "chunk_total": 90,
+          "char_count": 301,
+          "expanded_chunk_ids": [
+            22
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 6,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "unit_type": "section",
+          "parent_start": 9,
+          "parent_end": 10,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "chunk_index": 10,
+          "chunk_total": 19,
+          "char_count": 546,
+          "expanded_chunk_ids": [
+            10,
+            11
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 10,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "unit_type": "section",
+          "parent_start": 10,
+          "parent_end": 11,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "chunk_index": 10,
+          "chunk_total": 24,
+          "char_count": 652,
+          "expanded_chunk_ids": [
+            120,
+            121
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 22,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Product-family discovery examples / Ví dụ gợi ý theo nhóm hàng > Apparel and accessories / Thời trang và phụ kiện",
+          "unit_type": "section",
+          "parent_start": 25,
+          "parent_end": 25,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Product-family discovery examples / Ví dụ gợi ý theo nhóm hàng > Apparel and accessories / Thời trang và phụ kiện",
+          "chunk_index": 25,
+          "chunk_total": 34,
+          "char_count": 648,
+          "expanded_chunk_ids": [
+            159
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "Có, shop hiện có hai loại túi màu hồng:\n\n- **Túi mỹ phẩm Hồng Phấn** – SKU: DM‑BEA‑002, giá 99 000 đ, còn 16 chiếc trong kho. [Nguồn 1]  \n- **Túi vải Hồng Nắng** – SKU: DM‑APP‑003, giá 129 000 đ, còn 12 chiếc trong kho. [Nguồn 2]",
+      "citation_required": true,
+      "valid_citation_gate": true,
+      "must_include": [
+        "DM-APP-003"
+      ],
+      "must_include_missing": [],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 74.94,
+      "answer_latency_ms": 1.99,
+      "served_answer": "Có, shop hiện có hai loại túi màu hồng:\n\n- **Túi mỹ phẩm Hồng Phấn** – SKU: DM‑BEA‑002, giá 99 000 đ, còn 16 chiếc trong kho. [Nguồn 1]  \n- **Túi vải Hồng Nắng** – SKU: DM‑APP‑003, giá 129 000 đ, còn 12 chiếc trong kho. [Nguồn 2]",
+      "answer_status": "answered",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": true,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "DM-APP-004"
+      ]
+    },
+    {
+      "id": "zero-stock-vi",
+      "query": "Gối hồng còn hàng không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        39,
+        120,
+        27,
+        124,
+        11
+      ],
+      "retrieved_contents": [
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-HOM-005 | Gối tựa Hồng Phấn | Blush Pink Cushion | home | textile | hồng | vỏ tháo giặt; ruột gối 40 x 40 cm | 239000 | 0 | https://example.com/demo/DM-HOM-005 | demo_synthetic",
+        "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**Q: Tôi là công an, shop có ưu tiên không? / I'm a police officer; do I get priority?**\nNo occupation-based priority is defined. Offer the normal support process and answer the actual product/order question.\n\n**Q: Tôi muốn nhập 12 cáp USB-C. / I want to wholesale 12 USB-C cables.**\nIdentify DM-ELE-001; the demo policy's 10–29-unit tier is 8%, but confirm stock and staff approval before promising a final quote.\n\n**Q: Sản phẩm có an toàn cho da nhạy cảm không? / Is this safe for sensitive skin?**\nNo verified safety claim is included. Share only listed ingredients if another approved product source has them; otherwise hand off.",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+        "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; check the carrier record for an existing order.\n\n**Can I get same-day or express delivery? / Có giao hỏa tốc trong ngày không?**\n\nSame-day and express options are not specified in this demo policy. Ask staff to check availability and fee before promising anything.\n\n**How much is shipping for a 300,000 VND order? / Đơn 300.000 đồng phí giao hàng bao nhiêu?**\n\nThe demo policy lists a 30,000 VND fee below 500,000 VND. This is a sample rule only; the final fee still needs to be checked for the destination and order.\n\n**Is shipping free for a 500,000 VND order? / Đơn 500.000 đồng có miễn phí ship không?**\n\nThe demo threshold is free shipping at 500,000 VND or above. Confirm eligible items, destination, and final payable amount in the order flow.\n\n**Where is my package now? / Đơn của tôi đang ở đâu?**\n\nDo not answer from this policy. Look up the signed-in customer's structured order/tracking record. Ask for the minimum order reference needed if no matching record is found.",
+        "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative source for that kind of fact. A product price is not a return policy; an FAQ is not an order record.\n3. Check exact identifiers and constraints: SKU, color, model, size, quantity, order reference, date, or service slot.\n4. Answer the complete question in the customer's language. Give no more detail than the source supports.\n5. Ask one focused question if an important qualifier is missing; hand off when the answer needs approval or a decision.\n\nExamples / Ví dụ:\n\n- “Áo màu hồng còn không?” → check color and `demo_stock` in the catalogue; don't use the product name alone as proof.\n- “Đơn DH-123 tới đâu?” → query the authenticated customer's order record; don't search other customers or use a generic delivery estimate.\n- “Đổi hàng thì ai trả phí ship?” → the demo policy marks this as unspecified; tell the customer it needs staff confirmation.\n- “Tôi thích màu hồng, nhớ giúp nhé.” → only store a preference if the customer has consented and the CRM's preference workflow supports correction and deletion."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 19,
+          "section": "DM-HOM-005 | Gối tựa Hồng Phấn | Blush Pink Cushion | home | textile | hồng | vỏ tháo giặt; ruột gối 40 x 40 cm | 239000 | 0 | https://example.com/demo/DM-HOM-005 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 19,
+          "parent_end": 19,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-HOM-005 | Gối tựa Hồng Phấn | Blush Pink Cushion | home | textile | hồng | vỏ tháo giặt; ruột gối 40 x 40 cm | 239000 | 0 | https://example.com/demo/DM-HOM-005 | demo_synthetic",
+          "chunk_index": 19,
+          "chunk_total": 90,
+          "char_count": 316,
+          "expanded_chunk_ids": [
+            39
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 10,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "unit_type": "section",
+          "parent_start": 10,
+          "parent_end": 11,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "chunk_index": 10,
+          "chunk_total": 24,
+          "char_count": 652,
+          "expanded_chunk_ids": [
+            120,
+            121
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 7,
+          "section": "DM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 7,
+          "parent_end": 7,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+          "chunk_index": 7,
+          "chunk_total": 90,
+          "char_count": 321,
+          "expanded_chunk_ids": [
+            27
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 12,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Delivery questions / Câu hỏi giao hàng",
+          "unit_type": "section",
+          "parent_start": 13,
+          "parent_end": 14,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Delivery questions / Câu hỏi giao hàng",
+          "chunk_index": 14,
+          "chunk_total": 24,
+          "char_count": 462,
+          "expanded_chunk_ids": [
+            123,
+            124
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 6,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "unit_type": "section",
+          "parent_start": 9,
+          "parent_end": 10,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "chunk_index": 10,
+          "chunk_total": 19,
+          "char_count": 546,
+          "expanded_chunk_ids": [
+            10,
+            11
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "Gối tựa Hồng Phấn (SKU: DM‑HOM‑005) hiện tại **hết hàng**.  \n[Nguồn 1]",
+      "citation_required": true,
+      "valid_citation_gate": true,
+      "must_include": [
+        "DM-HOM-005",
+        "hết hàng"
+      ],
+      "must_include_missing": [],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 88.23,
+      "answer_latency_ms": 1.31,
+      "served_answer": "Gối tựa Hồng Phấn (SKU: DM‑HOM‑005) hiện tại **hết hàng**.  \n[Nguồn 1]",
+      "answer_status": "answered",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": true,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "sắp về",
+        "ngày nhập hàng"
+      ]
+    },
+    {
+      "id": "wholesale-12",
+      "query": "Tôi muốn nhập sỉ 12 cáp USB-C, giá thế nào?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        120,
+        129,
+        30,
+        67,
+        155
+      ],
+      "retrieved_contents": [
+        "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**Q: Tôi là công an, shop có ưu tiên không? / I'm a police officer; do I get priority?**\nNo occupation-based priority is defined. Offer the normal support process and answer the actual product/order question.\n\n**Q: Tôi muốn nhập 12 cáp USB-C. / I want to wholesale 12 USB-C cables.**\nIdentify DM-ELE-001; the demo policy's 10–29-unit tier is 8%, but confirm stock and staff approval before promising a final quote.\n\n**Q: Sản phẩm có an toàn cho da nhạy cảm không? / Is this safe for sensitive skin?**\nNo verified safety claim is included. Share only listed ingredients if another approved product source has them; otherwise hand off.",
+        "### Wholesale and quotation questions / Bán sỉ và báo giá\n\n**What is the discount for 5 units? / Mua 5 món giảm bao nhiêu?**\n\nNo wholesale discount threshold is listed for fewer than 10 units. Do not extrapolate; ask staff whether another approved promotion applies.\n\n**What is the discount for 29 units? / Mua 29 món giảm bao nhiêu?**\n\nThe demo tier is 8% for 10–29 units of the same eligible SKU, subject to stock and staff approval. This is not a confirmed quote.\n\n**What is the discount for 30 units? / Mua 30 món giảm bao nhiêu?**\n\nThe demo tier is 12% for 30 or more units of the same eligible SKU, subject to stock and staff approval. Confirm SKU, quantity, fees, and final total first.\n\n**Can I combine wholesale and another sale? / Có cộng dồn với khuyến mãi khác không?**\n\nThe demo wholesale policy says the bulk discount is not combined with another promotion. Staff must confirm the eligible SKU and final terms.\n\n**Can you issue a company invoice or quotation? / Có xuất hóa đơn công ty hoặc báo giá không?**\n\nThe demo policy does not define invoice or quotation requirements. Collect the business need and route it to staff; do not promise tax treatment or document issuance.",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-001 | Cáp sạc USB-C 1 m | USB-C Cable 1 m | electronics | cable | đen | USB-C to USB-C; không kèm củ sạc | 89000 | 40 | https://example.com/demo/DM-ELE-001 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-006 | Cáp USB-C Mây 2 m | Cloud USB-C Cable 2 m | electronics | cable | đen | USB-C to USB-C; không kèm củ sạc | 129000 | 27 | https://example.com/demo/DM-ELE-006 | demo_synthetic",
+        "| Customer request | Primary source | Required check | Safe next step if missing |\n|---|---|---|---|\n| Wholesale price | Approved tier and current catalogue | Same SKU, quantity, stock, promotion conditions | Ask SKU/quantity and request staff approval |"
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 10,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "unit_type": "section",
+          "parent_start": 10,
+          "parent_end": 11,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "chunk_index": 10,
+          "chunk_total": 24,
+          "char_count": 652,
+          "expanded_chunk_ids": [
+            120,
+            121
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 15,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Wholesale and quotation questions / Bán sỉ và báo giá",
+          "unit_type": "section",
+          "parent_start": 19,
+          "parent_end": 20,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Wholesale and quotation questions / Bán sỉ và báo giá",
+          "chunk_index": 19,
+          "chunk_total": 24,
+          "char_count": 781,
+          "expanded_chunk_ids": [
+            129,
+            130
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 10,
+          "section": "DM-ELE-001 | Cáp sạc USB-C 1 m | USB-C Cable 1 m | electronics | cable | đen | USB-C to USB-C; không kèm củ sạc | 89000 | 40 | https://example.com/demo/DM-ELE-001 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 10,
+          "parent_end": 10,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-ELE-001 | Cáp sạc USB-C 1 m | USB-C Cable 1 m | electronics | cable | đen | USB-C to USB-C; không kèm củ sạc | 89000 | 40 | https://example.com/demo/DM-ELE-001 | demo_synthetic",
+          "chunk_index": 10,
+          "chunk_total": 90,
+          "char_count": 316,
+          "expanded_chunk_ids": [
+            30
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 47,
+          "section": "DM-ELE-006 | Cáp USB-C Mây 2 m | Cloud USB-C Cable 2 m | electronics | cable | đen | USB-C to USB-C; không kèm củ sạc | 129000 | 27 | https://example.com/demo/DM-ELE-006 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 47,
+          "parent_end": 47,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-ELE-006 | Cáp USB-C Mây 2 m | Cloud USB-C Cable 2 m | electronics | cable | đen | USB-C to USB-C; không kèm củ sạc | 129000 | 27 | https://example.com/demo/DM-ELE-006 | demo_synthetic",
+          "chunk_index": 47,
+          "chunk_total": 90,
+          "char_count": 323,
+          "expanded_chunk_ids": [
+            67
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 18,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Retrieval cards by request type / Thẻ truy xuất theo loại câu hỏi",
+          "unit_type": "table_row",
+          "parent_start": 21,
+          "parent_end": 21,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Retrieval cards by request type / Thẻ truy xuất theo loại câu hỏi",
+          "chunk_index": 21,
+          "chunk_total": 34,
+          "char_count": 254,
+          "expanded_chunk_ids": [
+            155
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "Đơn giá gốc của cáp USB‑C 1 m (SKU DM‑ELE‑001) là 89 000 VND mỗi chiếc.  \nTheo chính sách demo, khi mua từ 10–29 chiếc (bao gồm 12 chiếc) sẽ được giảm 8 % trên giá gốc, nhưng cần xác nhận tồn kho và phê duyệt nhân viên trước khi cung cấp báo giá cuối cùng.  \n\n- Đơn giá gốc: 89 000 VND [Nguồn 3]  \n- Mức giảm 8 % cho 10–29 đơn vị: cần xác nhận tồn kho và phê duyệt nhân viên [Nguồn 1] [Nguồn 2]  \n\nNếu bạn muốn biết giá cụ thể sau khi xác nhận, vui lòng liên hệ với nhân viên bán hàng để được hỗ trợ.",
+      "citation_required": true,
+      "valid_citation_gate": true,
+      "must_include": [
+        "DM-ELE-001",
+        "8%"
+      ],
+      "must_include_missing": [
+        "8%"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 40.01,
+      "answer_latency_ms": 4.37,
+      "served_answer": "Đơn giá gốc của cáp USB‑C 1 m (SKU DM‑ELE‑001) là 89 000 VND mỗi chiếc.  \nTheo chính sách demo, khi mua từ 10–29 chiếc (bao gồm 12 chiếc) sẽ được giảm 8 % trên giá gốc, nhưng cần xác nhận tồn kho và phê duyệt nhân viên trước khi cung cấp báo giá cuối cùng.  \n\n- Đơn giá gốc: 89 000 VND [Nguồn 3]  \n- Mức giảm 8 % cho 10–29 đơn vị: cần xác nhận tồn kho và phê duyệt nhân viên [Nguồn 1] [Nguồn 2]  \n\nNếu bạn muốn biết giá cụ thể sau khi xác nhận, vui lòng liên hệ với nhân viên bán hàng để được hỗ trợ.",
+      "answer_status": "answered",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": false,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "giá cuối cùng đã chốt"
+      ]
+    },
+    {
+      "id": "delivery-policy",
+      "query": "Đơn giao mất bao lâu và phí ship bao nhiêu?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        123,
+        11,
+        152,
+        5
+      ],
+      "retrieved_contents": [
+        "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; check the carrier record for an existing order.\n\n**Can I get same-day or express delivery? / Có giao hỏa tốc trong ngày không?**\n\nSame-day and express options are not specified in this demo policy. Ask staff to check availability and fee before promising anything.\n\n**How much is shipping for a 300,000 VND order? / Đơn 300.000 đồng phí giao hàng bao nhiêu?**\n\nThe demo policy lists a 30,000 VND fee below 500,000 VND. This is a sample rule only; the final fee still needs to be checked for the destination and order.\n\n**Is shipping free for a 500,000 VND order? / Đơn 500.000 đồng có miễn phí ship không?**\n\nThe demo threshold is free shipping at 500,000 VND or above. Confirm eligible items, destination, and final payable amount in the order flow.\n\n**Where is my package now? / Đơn của tôi đang ở đâu?**\n\nDo not answer from this policy. Look up the signed-in customer's structured order/tracking record. Ask for the minimum order reference needed if no matching record is found.",
+        "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative source for that kind of fact. A product price is not a return policy; an FAQ is not an order record.\n3. Check exact identifiers and constraints: SKU, color, model, size, quantity, order reference, date, or service slot.\n4. Answer the complete question in the customer's language. Give no more detail than the source supports.\n5. Ask one focused question if an important qualifier is missing; hand off when the answer needs approval or a decision.\n\nExamples / Ví dụ:\n\n- “Áo màu hồng còn không?” → check color and `demo_stock` in the catalogue; don't use the product name alone as proof.\n- “Đơn DH-123 tới đâu?” → query the authenticated customer's order record; don't search other customers or use a generic delivery estimate.\n- “Đổi hàng thì ai trả phí ship?” → the demo policy marks this as unspecified; tell the customer it needs staff confirmation.\n- “Tôi thích màu hồng, nhớ giúp nhé.” → only store a preference if the customer has consented and the CRM's preference workflow supports correction and deletion.",
+        "| Customer request | Primary source | Required check | Safe next step if missing |\n|---|---|---|---|\n| Delivery estimate | Shop policy | Confirmed order and destination; for existing orders use tracking | Avoid exact arrival promises |",
+        "## Example response policy / Quy tắc trả lời mẫu\n\n- Be conversational, answer the complete question in one natural response, and avoid exposing internal labels, raw JSON, or template tokens.\n- Recommend verified matching products first. For an explicit pink preference, rank in-stock pink items first, then explain why; do not assume pink is a permanent preference based on one order.\n- Mention no more than three relevant products at first. Include the confirmed demo price and a placeholder link only in a test environment. Ask a short follow-up if color, size, quantity, or use is unclear.\n- Never promise discounts, stock, shipping dates, return eligibility, or outcomes beyond the source.\n- If the customer wants a human, or the question needs an unverified decision, hand off without making up an answer."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 12,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Delivery questions / Câu hỏi giao hàng",
+          "unit_type": "section",
+          "parent_start": 13,
+          "parent_end": 14,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Delivery questions / Câu hỏi giao hàng",
+          "chunk_index": 13,
+          "chunk_total": 24,
+          "char_count": 754,
+          "expanded_chunk_ids": [
+            123,
+            124
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 6,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "unit_type": "section",
+          "parent_start": 9,
+          "parent_end": 10,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "chunk_index": 10,
+          "chunk_total": 19,
+          "char_count": 546,
+          "expanded_chunk_ids": [
+            10,
+            11
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 15,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Retrieval cards by request type / Thẻ truy xuất theo loại câu hỏi",
+          "unit_type": "table_row",
+          "parent_start": 18,
+          "parent_end": 18,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Retrieval cards by request type / Thẻ truy xuất theo loại câu hỏi",
+          "chunk_index": 18,
+          "chunk_total": 34,
+          "char_count": 235,
+          "expanded_chunk_ids": [
+            152
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 3,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > Example response policy / Quy tắc trả lời mẫu",
+          "unit_type": "section",
+          "parent_start": 4,
+          "parent_end": 5,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > Example response policy / Quy tắc trả lời mẫu",
+          "chunk_index": 4,
+          "chunk_total": 19,
+          "char_count": 48,
+          "expanded_chunk_ids": [
+            5,
+            6
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "Đơn hàng thường được giao trong khoảng **2–5 ngày làm việc** sau khi xác nhận đơn, nhưng không có ngày giao chính xác được cam kết.  \nPhí vận chuyển phụ thuộc vào tổng giá trị đơn:\n\n- **Dưới 500 000 VND**: phí 30 000 VND.  \n- **≥ 500 000 VND**: miễn phí ship.  \n\nVui lòng kiểm tra lại tổng tiền và địa chỉ giao hàng để biết chính xác phí cuối cùng. [Nguồn 1]",
+      "citation_required": true,
+      "valid_citation_gate": true,
+      "must_include": [
+        "2–5 ngày làm việc",
+        "30.000"
+      ],
+      "must_include_missing": [
+        "30.000"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 52.35,
+      "answer_latency_ms": 3.08,
+      "served_answer": "Đơn hàng thường được giao trong khoảng **2–5 ngày làm việc** sau khi xác nhận đơn, nhưng không có ngày giao chính xác được cam kết.  \nPhí vận chuyển phụ thuộc vào tổng giá trị đơn:\n\n- **Dưới 500 000 VND**: phí 30 000 VND.  \n- **≥ 500 000 VND**: miễn phí ship.  \n\nVui lòng kiểm tra lại tổng tiền và địa chỉ giao hàng để biết chính xác phí cuối cùng. [Nguồn 1]",
+      "answer_status": "answered",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": false,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "chắc chắn giao đúng ngày"
+      ]
+    },
+    {
+      "id": "return-refund",
+      "query": "Can I return this and get an automatic refund?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        128,
+        113,
+        154,
+        167,
+        5
+      ],
+      "retrieved_contents": [
+        "### Returns, exchanges, and refunds / Đổi hàng và hoàn tiền\n\n**The item arrived damaged. What should I do? / Hàng bị hỏng khi nhận thì làm sao?**\n\nAsk for the order reference and a photo of the issue, then hand off for review. Do not promise replacement or refund before staff confirms eligibility.\n\n**I removed the tag or opened the package. Can I return it? / Tôi tháo tem hoặc mở hộp rồi có trả được không?**\n\nThe demo eligibility requires an unused item with original tags/packaging and proof of purchase. Staff must review the actual case; the assistant must not approve or reject it automatically.\n\n**Who pays return shipping? / Phí gửi hàng trả lại ai chịu?**\n\nThis is not specified. Say so and ask staff to confirm; do not assume that either party pays.\n\n**When will I receive a refund? / Bao lâu được hoàn tiền?**\n\nNo refund timing is specified and no automatic refund is promised. A staff member must confirm eligibility and the payment workflow.\n\n**Can I cancel after the order was packed? / Đơn đóng gói rồi có hủy được không?**\n\nThe demo policy does not define a cancellation cutoff. Check the actual order state and hand off; do not mark it cancelled unless the CRM confirms the change.",
+        "## Return and exchange / Đổi trả\n\n- Test window: contact the shop within 7 days after delivery.\n- Test eligibility: unused item, original tags/packaging, proof of purchase. Eligibility still requires staff review; the assistant must not promise approval or refund.\n- Report damaged/wrong items promptly with order number and a photo of the issue. Do not ask for unnecessary identity documents.\n- Shipping cost for a return is not specified in this demo policy; ask staff to confirm.\n- English: Contact the demo shop within 7 days. Items must be unused with original packaging and proof of purchase. Staff confirms eligibility; no automatic refund is promised.",
+        "| Customer request | Primary source | Required check | Safe next step if missing |\n|---|---|---|---|\n| Return, refund, or cancellation | Current policy plus order state | Time window, item condition, recorded status | Staff review; never claim completed action prematurely |",
+        "## Negative retrieval checks / Trường hợp cần tránh\n\n- A general delivery estimate must not override a live order tracking status.\n- A product title containing “pink” must not override a conflicting structured `color` value.\n- A zero-stock item must not be described as available because similar items are in stock.\n- A wholesale threshold must not be applied to mixed SKUs unless the policy explicitly allows it.\n- An old conversation, test customer, or another tenant's record must never be used to answer a current customer's private order question.\n- A retrieved document is evidence for an answer, not authorization to issue a refund, change payment state, cancel an order, or confirm an appointment.",
+        "## Example response policy / Quy tắc trả lời mẫu\n\n- Be conversational, answer the complete question in one natural response, and avoid exposing internal labels, raw JSON, or template tokens.\n- Recommend verified matching products first. For an explicit pink preference, rank in-stock pink items first, then explain why; do not assume pink is a permanent preference based on one order.\n- Mention no more than three relevant products at first. Include the confirmed demo price and a placeholder link only in a test environment. Ask a short follow-up if color, size, quantity, or use is unclear.\n- Never promise discounts, stock, shipping dates, return eligibility, or outcomes beyond the source.\n- If the customer wants a human, or the question needs an unverified decision, hand off without making up an answer."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 14,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Returns, exchanges, and refunds / Đổi hàng và hoàn tiền",
+          "unit_type": "section",
+          "parent_start": 17,
+          "parent_end": 18,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Returns, exchanges, and refunds / Đổi hàng và hoàn tiền",
+          "chunk_index": 18,
+          "chunk_total": 24,
+          "char_count": 437,
+          "expanded_chunk_ids": [
+            127,
+            128
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 3,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Return and exchange / Đổi trả",
+          "unit_type": "section",
+          "parent_start": 3,
+          "parent_end": 3,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Return and exchange / Đổi trả",
+          "chunk_index": 3,
+          "chunk_total": 24,
+          "char_count": 659,
+          "expanded_chunk_ids": [
+            113
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 17,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Retrieval cards by request type / Thẻ truy xuất theo loại câu hỏi",
+          "unit_type": "table_row",
+          "parent_start": 20,
+          "parent_end": 20,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Retrieval cards by request type / Thẻ truy xuất theo loại câu hỏi",
+          "chunk_index": 20,
+          "chunk_total": 34,
+          "char_count": 274,
+          "expanded_chunk_ids": [
+            154
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 29,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Negative retrieval checks / Trường hợp cần tránh",
+          "unit_type": "section",
+          "parent_start": 33,
+          "parent_end": 33,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Negative retrieval checks / Trường hợp cần tránh",
+          "chunk_index": 33,
+          "chunk_total": 34,
+          "char_count": 705,
+          "expanded_chunk_ids": [
+            167
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 3,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > Example response policy / Quy tắc trả lời mẫu",
+          "unit_type": "section",
+          "parent_start": 4,
+          "parent_end": 5,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > Example response policy / Quy tắc trả lời mẫu",
+          "chunk_index": 4,
+          "chunk_total": 19,
+          "char_count": 48,
+          "expanded_chunk_ids": [
+            5,
+            6
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "I’m sorry, but I can’t confirm an automatic refund right now.  \nTo process a return, please provide your order reference and a photo of the issue. The item must be unused, still in its original tags/packaging, and you’ll need proof of purchase. Once the staff reviews the case, they’ll let you know if a refund is eligible and when it will be processed.  \n\n- Return window: within 7 days after delivery.  \n- No refund timing or automatic refund is guaranteed.  \n- Shipping cost for the return is not specified; the staff will confirm who covers it.  \n\nFeel free to share the order number and photo, and I’ll forward the request to the team.  \n[Source 1] [Source 2]",
+      "citation_required": true,
+      "valid_citation_gate": true,
+      "must_include": [
+        "within 7 days",
+        "staff confirms"
+      ],
+      "must_include_missing": [
+        "staff confirms"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 37.2,
+      "answer_latency_ms": 3.33,
+      "served_answer": "I’m sorry, but I can’t confirm an automatic refund right now.  \nTo process a return, please provide your order reference and a photo of the issue. The item must be unused, still in its original tags/packaging, and you’ll need proof of purchase. Once the staff reviews the case, they’ll let you know if a refund is eligible and when it will be processed.  \n\n- Return window: within 7 days after delivery.  \n- No refund timing or automatic refund is guaranteed.  \n- Shipping cost for the return is not specified; the staff will confirm who covers it.  \n\nFeel free to share the order number and photo, and I’ll forward the request to the team.  \n[Source 1] [Source 2]",
+      "answer_status": "answered",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": false,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "automatic refund approved"
+      ]
+    },
+    {
+      "id": "allergen-handoff",
+      "query": "Are these sesame cookies safe for someone with a severe allergy?",
+      "expected_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        41,
+        162,
+        143,
+        118,
+        7
+      ],
+      "retrieved_contents": [
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-002 | Bánh quy mè | Mixed Sesame Cookies | food | snack | vàng | gói 150 g; dị ứng: cần xác nhận nhãn tại lô hàng | 69000 | 17 | https://example.com/demo/DM-FOO-002 | demo_synthetic",
+        "### Home, food, pets, and stationery / Nhà cửa, thực phẩm, thú cưng và văn phòng phẩm\n\n- Match dimensions, capacity, cleaning method, and use environment for home goods. Do not imply microwave/dishwasher safety unless explicitly listed.\n- Food ingredients and allergen labels must be checked on the exact batch. The sample sesame cookie row requires label confirmation and must not be called allergen-free.\n- For pet products, ask for relevant size or clip compatibility if not listed; never make veterinary claims.\n- For stationery, confirm paper size, page count, ink color, and tip size from the catalogue before answering.",
+        "### Food, supplements, and personal care\n\nDo not infer allergy safety, nutrition, diagnosis, treatment, certification, or efficacy from a product name. Require verified label/specification and route uncertain safety questions to a human.",
+        "## Product and safety questions / Tư vấn sản phẩm và an toàn\n\n- Product name, demo price, color, and demo stock come only from `demo-products.vi-en.csv` for this test pack.\n- Do not transform “demo stock 0” into “coming soon” or a restock date. Say it is unavailable in the demo catalogue and ask staff about alternatives.\n- Beauty ingredients, skin compatibility, food allergens, medical effects, electrical compatibility, pet suitability, and warranty duration are not fully specified here. Do not claim safety, diagnosis, certification, compatibility, or warranty coverage without verified source data.\n- English: Use the product record for listed attributes. If ingredients, allergens, device compatibility, warranty, or safety are missing, state that they are unconfirmed and hand off.",
+        "## Industry test personas / Tình huống đa ngành\n\n- “Tôi là công an, món này có màu hồng không?” — answer the catalogue color question normally; do not request proof of occupation or change service.\n- “Tôi có shop, muốn nhập sỉ” — use only the fictional wholesale policy in `demo-support-policies.vi-en.md`; ask for SKU and quantity.\n- “I manage a salon; is this safe for sensitive skin?” — do not make a medical/safety claim unless the product source explicitly supports it; offer ingredients and human follow-up.\n- “Can this adapter work with my device?” — ask for the device model if compatibility is not in the source.\n- “Does this food contain an allergen?” — use verified label data only. If absent, stop and ask staff to confirm."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 21,
+          "section": "DM-FOO-002 | Bánh quy mè | Mixed Sesame Cookies | food | snack | vàng | gói 150 g; dị ứng: cần xác nhận nhãn tại lô hàng | 69000 | 17 | https://example.com/demo/DM-FOO-002 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 21,
+          "parent_end": 21,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-FOO-002 | Bánh quy mè | Mixed Sesame Cookies | food | snack | vàng | gói 150 g; dị ứng: cần xác nhận nhãn tại lô hàng | 69000 | 17 | https://example.com/demo/DM-FOO-002 | demo_synthetic",
+          "chunk_index": 21,
+          "chunk_total": 90,
+          "char_count": 325,
+          "expanded_chunk_ids": [
+            41
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 25,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Product-family discovery examples / Ví dụ gợi ý theo nhóm hàng > Home, food, pets, and stationery / Nhà cửa, thực phẩm, thú cưng và văn phòng phẩm",
+          "unit_type": "section",
+          "parent_start": 28,
+          "parent_end": 28,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Product-family discovery examples / Ví dụ gợi ý theo nhóm hàng > Home, food, pets, and stationery / Nhà cửa, thực phẩm, thú cưng và văn phòng phẩm",
+          "chunk_index": 28,
+          "chunk_total": 34,
+          "char_count": 626,
+          "expanded_chunk_ids": [
+            162
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 6,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Industry-specific checks > Food, supplements, and personal care",
+          "unit_type": "section",
+          "parent_start": 9,
+          "parent_end": 9,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Industry-specific checks > Food, supplements, and personal care",
+          "chunk_index": 9,
+          "chunk_total": 34,
+          "char_count": 237,
+          "expanded_chunk_ids": [
+            143
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 8,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Product and safety questions / Tư vấn sản phẩm và an toàn",
+          "unit_type": "section",
+          "parent_start": 8,
+          "parent_end": 8,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Product and safety questions / Tư vấn sản phẩm và an toàn",
+          "chunk_index": 8,
+          "chunk_total": 24,
+          "char_count": 790,
+          "expanded_chunk_ids": [
+            118
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 4,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > Industry test personas / Tình huống đa ngành",
+          "unit_type": "section",
+          "parent_start": 6,
+          "parent_end": 6,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > Industry test personas / Tình huống đa ngành",
+          "chunk_index": 6,
+          "chunk_total": 19,
+          "char_count": 735,
+          "expanded_chunk_ids": [
+            7
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "I’m sorry, but the catalog entry for the Mixed Sesame Cookies (SKU DM‑FOO‑002) indicates that allergen information must be confirmed on the specific batch. The product is not listed as allergen‑free, and we don’t have a verified label that guarantees it is safe for severe sesame allergies.  \nPlease contact a staff member to confirm the allergen status for your specific batch.  \n\n[Source 1] [Source 2]",
+      "citation_required": true,
+      "valid_citation_gate": true,
+      "must_include": [
+        "confirm the label",
+        "staff"
+      ],
+      "must_include_missing": [
+        "confirm the label"
+      ],
+      "must_not_include_found": [
+        "allergen-free"
+      ],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 42.27,
+      "answer_latency_ms": 2.06,
+      "served_answer": "I’m sorry, but the catalog entry for the Mixed Sesame Cookies (SKU DM‑FOO‑002) indicates that allergen information must be confirmed on the specific batch. The product is not listed as allergen‑free, and we don’t have a verified label that guarantees it is safe for severe sesame allergies.  \nPlease contact a staff member to confirm the allergen status for your specific batch.  \n\n[Source 1] [Source 2]",
+      "answer_status": "answered",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": false,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "allergen-free"
+      ]
+    },
+    {
+      "id": "preference-optout",
+      "query": "Please don't remember that I like pink.",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        137,
+        11,
+        165,
+        119,
+        4
+      ],
+      "retrieved_contents": [
+        "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives.\n\nUse color, category, size, brand, and use-case only when available in structured catalogue or a cited shop source.\n\n3. Treat purchase history as evidence with strength, not identity: one purchase is weak; repeated recent purchases are stronger; an explicit “I like pink” is stronger still.\n\nPreferences can expire or be corrected.\n\n4. Do not infer sensitive traits or target a person from occupation, health, religion, political views, legal status, or protected characteristics.\n\nAn occupation mentioned casually is not a marketing segment.\n\n5. Explain briefly why each item matches and limit the first answer to a few options.\n\nVerify stock and price immediately before quoting.",
+        "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative source for that kind of fact. A product price is not a return policy; an FAQ is not an order record.\n3. Check exact identifiers and constraints: SKU, color, model, size, quantity, order reference, date, or service slot.\n4. Answer the complete question in the customer's language. Give no more detail than the source supports.\n5. Ask one focused question if an important qualifier is missing; hand off when the answer needs approval or a decision.\n\nExamples / Ví dụ:\n\n- “Áo màu hồng còn không?” → check color and `demo_stock` in the catalogue; don't use the product name alone as proof.\n- “Đơn DH-123 tới đâu?” → query the authenticated customer's order record; don't search other customers or use a generic delivery estimate.\n- “Đổi hàng thì ai trả phí ship?” → the demo policy marks this as unspecified; tell the customer it needs staff confirmation.\n- “Tôi thích màu hồng, nhớ giúp nhé.” → only store a preference if the customer has consented and the CRM's preference workflow supports correction and deletion.",
+        "## Customer preference evidence / Độ tin cậy sở thích\n\nUse a documented human handoff (also called a `handoff`) whenever safety, privacy, policy approval, or an uncertain commercial decision needs staff review.\n\nKeep separate signals instead of storing a single permanent label:\n\n1. **Current request:** “show me pink items” applies to the current answer only.\n2. **Explicit preference:** “I usually prefer pink” may be saved if consent and retention rules permit; store the source, date, and confidence.\n3. **Repeated behavior:** several completed purchases can add evidence, but use completed/non-refunded order lines and avoid inferring from a one-off gift or return.\n4. **Correction or opt-out:** a customer's correction overrides a weaker inference. A request not to remember must stop future extraction and use the product privacy workflow.\n\nDo not infer gender, age, income, occupation, health, religion, or legal status from color, category, or purchase behavior. Do not use those traits to rank offers.",
+        "## Customer care and privacy / Chăm sóc và quyền riêng tư\n\n- Use only conversation and order facts needed to answer the customer. A stated color preference may help rank products; it is not proof of a permanent preference.\n- If the customer asks not to remember a preference, stop future extraction and use the product only for the current conversation. Route deletion requests to the shop's privacy workflow.\n- A customer's job, including police officer, is not a discount tier, identity-verification trigger, or targeting feature.\n- Ask for a human when the policy or record does not answer the question. Keep one complete, natural response instead of sending fragments.",
+        "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a real shop's source does not contain the requested fact, say that the information is not yet confirmed and ask a staff member to check.\n\nNever copy a demo value into a real-shop answer.\n\n3. Structured customer order records are the source for that customer's order status.\n\nNever retrieve a different customer's order from RAG.\n\n4. A customer's single purchase is only a weak preference signal.\n\nExplicit statements such as “mình thích màu hồng” are stronger; ask before saving sensitive or ambiguous preferences and honor a request not to remember them.\n\n5. Do not infer or store sensitive traits (including occupation, health, religion, or legal status) to personalize offers.\n\nA customer who says they are a police officer receives the same respectful support as anyone else; ask only for information necessary to fulfill the request."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 2,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Recommendation behavior",
+          "unit_type": "section",
+          "parent_start": 3,
+          "parent_end": 4,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Recommendation behavior",
+          "chunk_index": 3,
+          "chunk_total": 34,
+          "char_count": 783,
+          "expanded_chunk_ids": [
+            137,
+            138
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 6,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "unit_type": "section",
+          "parent_start": 9,
+          "parent_end": 10,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "chunk_index": 10,
+          "chunk_total": 19,
+          "char_count": 546,
+          "expanded_chunk_ids": [
+            10,
+            11
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 27,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Customer preference evidence / Độ tin cậy sở thích",
+          "unit_type": "section",
+          "parent_start": 30,
+          "parent_end": 31,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Customer preference evidence / Độ tin cậy sở thích",
+          "chunk_index": 31,
+          "chunk_total": 34,
+          "char_count": 731,
+          "expanded_chunk_ids": [
+            164,
+            165
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 9,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Customer care and privacy / Chăm sóc và quyền riêng tư",
+          "unit_type": "section",
+          "parent_start": 9,
+          "parent_end": 9,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Customer care and privacy / Chăm sóc và quyền riêng tư",
+          "chunk_index": 9,
+          "chunk_total": 24,
+          "char_count": 672,
+          "expanded_chunk_ids": [
+            119
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 2,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > Data boundaries / Ranh giới dữ liệu",
+          "unit_type": "section",
+          "parent_start": 2,
+          "parent_end": 3,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > Data boundaries / Ranh giới dữ liệu",
+          "chunk_index": 3,
+          "chunk_total": 19,
+          "char_count": 281,
+          "expanded_chunk_ids": [
+            3,
+            4
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "I've stopped saving preferences and using saved preferences to personalize suggestions for your profile. Existing records have not been deleted; shop staff can help with a deletion request.",
+      "citation_required": false,
+      "valid_citation_gate": null,
+      "must_include": [
+        "stop future extraction"
+      ],
+      "must_include_missing": [
+        "stop future extraction"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 48.57,
+      "answer_latency_ms": 7.88,
+      "served_answer": "I've stopped saving preferences and using saved preferences to personalize suggestions for your profile. Existing records have not been deleted; shop staff can help with a deletion request.",
+      "answer_status": "answered",
+      "answer_method": "isolated_crm_privacy_action",
+      "literal_evidence_passed": false,
+      "answer_origin": "crm_fixture",
+      "must_not_include": [
+        "keep the inferred preference"
+      ]
+    },
+    {
+      "id": "missing-refund-fee",
+      "query": "Nếu trả hàng thì phí vận chuyển ai trả?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        127,
+        113,
+        5,
+        154,
+        11
+      ],
+      "retrieved_contents": [
+        "### Returns, exchanges, and refunds / Đổi hàng và hoàn tiền\n\n**The item arrived damaged. What should I do? / Hàng bị hỏng khi nhận thì làm sao?**\n\nAsk for the order reference and a photo of the issue, then hand off for review. Do not promise replacement or refund before staff confirms eligibility.\n\n**I removed the tag or opened the package. Can I return it? / Tôi tháo tem hoặc mở hộp rồi có trả được không?**\n\nThe demo eligibility requires an unused item with original tags/packaging and proof of purchase. Staff must review the actual case; the assistant must not approve or reject it automatically.\n\n**Who pays return shipping? / Phí gửi hàng trả lại ai chịu?**\n\nThis is not specified. Say so and ask staff to confirm; do not assume that either party pays.\n\n**When will I receive a refund? / Bao lâu được hoàn tiền?**\n\nNo refund timing is specified and no automatic refund is promised. A staff member must confirm eligibility and the payment workflow.\n\n**Can I cancel after the order was packed? / Đơn đóng gói rồi có hủy được không?**\n\nThe demo policy does not define a cancellation cutoff. Check the actual order state and hand off; do not mark it cancelled unless the CRM confirms the change.",
+        "## Return and exchange / Đổi trả\n\n- Test window: contact the shop within 7 days after delivery.\n- Test eligibility: unused item, original tags/packaging, proof of purchase. Eligibility still requires staff review; the assistant must not promise approval or refund.\n- Report damaged/wrong items promptly with order number and a photo of the issue. Do not ask for unnecessary identity documents.\n- Shipping cost for a return is not specified in this demo policy; ask staff to confirm.\n- English: Contact the demo shop within 7 days. Items must be unused with original packaging and proof of purchase. Staff confirms eligibility; no automatic refund is promised.",
+        "## Example response policy / Quy tắc trả lời mẫu\n\n- Be conversational, answer the complete question in one natural response, and avoid exposing internal labels, raw JSON, or template tokens.\n- Recommend verified matching products first. For an explicit pink preference, rank in-stock pink items first, then explain why; do not assume pink is a permanent preference based on one order.\n- Mention no more than three relevant products at first. Include the confirmed demo price and a placeholder link only in a test environment. Ask a short follow-up if color, size, quantity, or use is unclear.\n- Never promise discounts, stock, shipping dates, return eligibility, or outcomes beyond the source.\n- If the customer wants a human, or the question needs an unverified decision, hand off without making up an answer.",
+        "| Customer request | Primary source | Required check | Safe next step if missing |\n|---|---|---|---|\n| Return, refund, or cancellation | Current policy plus order state | Time window, item condition, recorded status | Staff review; never claim completed action prematurely |",
+        "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative source for that kind of fact. A product price is not a return policy; an FAQ is not an order record.\n3. Check exact identifiers and constraints: SKU, color, model, size, quantity, order reference, date, or service slot.\n4. Answer the complete question in the customer's language. Give no more detail than the source supports.\n5. Ask one focused question if an important qualifier is missing; hand off when the answer needs approval or a decision.\n\nExamples / Ví dụ:\n\n- “Áo màu hồng còn không?” → check color and `demo_stock` in the catalogue; don't use the product name alone as proof.\n- “Đơn DH-123 tới đâu?” → query the authenticated customer's order record; don't search other customers or use a generic delivery estimate.\n- “Đổi hàng thì ai trả phí ship?” → the demo policy marks this as unspecified; tell the customer it needs staff confirmation.\n- “Tôi thích màu hồng, nhớ giúp nhé.” → only store a preference if the customer has consented and the CRM's preference workflow supports correction and deletion."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 14,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Returns, exchanges, and refunds / Đổi hàng và hoàn tiền",
+          "unit_type": "section",
+          "parent_start": 17,
+          "parent_end": 18,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Extended policy reference / Tra cứu chính sách mở rộng > Returns, exchanges, and refunds / Đổi hàng và hoàn tiền",
+          "chunk_index": 17,
+          "chunk_total": 24,
+          "char_count": 761,
+          "expanded_chunk_ids": [
+            127,
+            128
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 3,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Return and exchange / Đổi trả",
+          "unit_type": "section",
+          "parent_start": 3,
+          "parent_end": 3,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Return and exchange / Đổi trả",
+          "chunk_index": 3,
+          "chunk_total": 24,
+          "char_count": 659,
+          "expanded_chunk_ids": [
+            113
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 3,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > Example response policy / Quy tắc trả lời mẫu",
+          "unit_type": "section",
+          "parent_start": 4,
+          "parent_end": 5,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > Example response policy / Quy tắc trả lời mẫu",
+          "chunk_index": 4,
+          "chunk_total": 19,
+          "char_count": 48,
+          "expanded_chunk_ids": [
+            5,
+            6
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 17,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Retrieval cards by request type / Thẻ truy xuất theo loại câu hỏi",
+          "unit_type": "table_row",
+          "parent_start": 20,
+          "parent_end": 20,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Retrieval cards by request type / Thẻ truy xuất theo loại câu hỏi",
+          "chunk_index": 20,
+          "chunk_total": 34,
+          "char_count": 274,
+          "expanded_chunk_ids": [
+            154
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-store-profile.vi-en.md",
+          "parent_id": 6,
+          "section": "Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "unit_type": "section",
+          "parent_start": 9,
+          "parent_end": 10,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-store-profile.vi-en.md\nSection: Demo shop profile / Hồ sơ shop minh họa > How to answer / Luồng trả lời đề xuất",
+          "chunk_index": 10,
+          "chunk_total": 19,
+          "char_count": 546,
+          "expanded_chunk_ids": [
+            10,
+            11
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "Phí gửi hàng trả lại chưa được quy định trong chính sách demo. Bạn nên liên hệ với nhân viên để xác nhận chi phí. [Nguồn 1] [Nguồn 2]",
+      "citation_required": true,
+      "valid_citation_gate": true,
+      "must_include": [
+        "chưa được quy định",
+        "hỏi nhân viên"
+      ],
+      "must_include_missing": [
+        "hỏi nhân viên"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 54.85,
+      "answer_latency_ms": 2.95,
+      "served_answer": "Phí gửi hàng trả lại chưa được quy định trong chính sách demo. Bạn nên liên hệ với nhân viên để xác nhận chi phí. [Nguồn 1] [Nguồn 2]",
+      "answer_status": "answered",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": false,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "khách trả phí"
+      ]
+    },
+    {
+      "id": "beauty-product-boundary-en",
+      "query": "Will this cleanser treat my acne?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        160,
+        26,
+        60,
+        121
+      ],
+      "retrieved_contents": [
+        "### Beauty and personal care / Làm đẹp và chăm sóc cá nhân\n\n- Separate cosmetic accessories from skincare products: a pouch or headband is not a cosmetic treatment.\n- For cleanser or moisturizer questions, retrieve only the listed size/ingredients. This demo pack contains no verified clinical outcomes, allergy profile, or suitability guarantee.\n- Ask about customer-stated preference or requested use; do not infer a condition from a product click or purchase.",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-001 | Sữa rửa mặt Dịu Mây | Soft Cloud Cleanser | beauty | skincare | trắng | chai 150 ml không có tuyên bố điều trị | 189000 | 20 | https://example.com/demo/DM-BEA-001 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-006 | Son dưỡng Mây Hồng | Pink Cloud Lip Balm | beauty | lip care | hồng | tuýp 5 g; không có tuyên bố điều trị | 89000 | 28 | https://example.com/demo/DM-BEA-006 | demo_synthetic",
+        "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**Q: Tôi là công an, shop có ưu tiên không? / I'm a police officer; do I get priority?**\nNo occupation-based priority is defined. Offer the normal support process and answer the actual product/order question.\n\n**Q: Tôi muốn nhập 12 cáp USB-C. / I want to wholesale 12 USB-C cables.**\nIdentify DM-ELE-001; the demo policy's 10–29-unit tier is 8%, but confirm stock and staff approval before promising a final quote.\n\n**Q: Sản phẩm có an toàn cho da nhạy cảm không? / Is this safe for sensitive skin?**\nNo verified safety claim is included. Share only listed ingredients if another approved product source has them; otherwise hand off."
+      ],
+      "retrieved_metadata": [
+        {
+          "source": "demo-industry-playbook.vi-en.md",
+          "parent_id": 23,
+          "section": "RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Product-family discovery examples / Ví dụ gợi ý theo nhóm hàng > Beauty and personal care / Làm đẹp và chăm sóc cá nhân",
+          "unit_type": "section",
+          "parent_start": 26,
+          "parent_end": 26,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-industry-playbook.vi-en.md\nSection: RAG playbook for a multi-industry CRM / Cẩm nang RAG CRM đa ngành > Product-family discovery examples / Ví dụ gợi ý theo nhóm hàng > Beauty and personal care / Làm đẹp và chăm sóc cá nhân",
+          "chunk_index": 26,
+          "chunk_total": 34,
+          "char_count": 462,
+          "expanded_chunk_ids": [
+            160
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 6,
+          "section": "DM-BEA-001 | Sữa rửa mặt Dịu Mây | Soft Cloud Cleanser | beauty | skincare | trắng | chai 150 ml không có tuyên bố điều trị | 189000 | 20 | https://example.com/demo/DM-BEA-001 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 6,
+          "parent_end": 6,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-BEA-001 | Sữa rửa mặt Dịu Mây | Soft Cloud Cleanser | beauty | skincare | trắng | chai 150 ml không có tuyên bố điều trị | 189000 | 20 | https://example.com/demo/DM-BEA-001 | demo_synthetic",
+          "chunk_index": 6,
+          "chunk_total": 90,
+          "char_count": 329,
+          "expanded_chunk_ids": [
+            26
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-products.vi-en.csv",
+          "parent_id": 40,
+          "section": "DM-BEA-006 | Son dưỡng Mây Hồng | Pink Cloud Lip Balm | beauty | lip care | hồng | tuýp 5 g; không có tuyên bố điều trị | 89000 | 28 | https://example.com/demo/DM-BEA-006 | demo_synthetic",
+          "unit_type": "product",
+          "parent_start": 40,
+          "parent_end": 40,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-products.vi-en.csv\nSection: DM-BEA-006 | Son dưỡng Mây Hồng | Pink Cloud Lip Balm | beauty | lip care | hồng | tuýp 5 g; không có tuyên bố điều trị | 89000 | 28 | https://example.com/demo/DM-BEA-006 | demo_synthetic",
+          "chunk_index": 40,
+          "chunk_total": 90,
+          "char_count": 324,
+          "expanded_chunk_ids": [
+            60
+          ],
+          "retrieval_context": "parent"
+        },
+        {
+          "source": "demo-support-policies.vi-en.md",
+          "parent_id": 10,
+          "section": "Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "unit_type": "section",
+          "parent_start": 10,
+          "parent_end": 11,
+          "chunking_version": "structure-semantic-context-v2",
+          "context": "Document: demo-support-policies.vi-en.md\nSection: Demo support policy and FAQ / Chính sách hỗ trợ demo > Test FAQ / Câu hỏi mẫu",
+          "chunk_index": 11,
+          "chunk_total": 24,
+          "char_count": 217,
+          "expanded_chunk_ids": [
+            120,
+            121
+          ],
+          "retrieval_context": "parent"
+        }
+      ],
+      "answer": "I’m sorry, but the Soft Cloud Cleanser (SKU: DM‑BEA‑001) does not have any verified clinical claim that it treats acne. The product is listed only as a cleanser with no treatment or safety claims. [Source 1] [Source 2]",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "no treatment claim"
+      ],
+      "must_include_missing": [
+        "no treatment claim"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [],
+      "retrieval_mode": "hybrid",
+      "retrieval_latency_ms": 46.49,
+      "answer_latency_ms": 1.22,
+      "served_answer": "I couldn't find a reliable source in the knowledge base. A staff member should verify this before replying.",
+      "answer_status": "handoff_required",
+      "answer_method": "cached_vector_context",
+      "literal_evidence_passed": false,
+      "answer_origin": "reused",
+      "must_not_include": [
+        "treats acne"
+      ]
+    }
+  ]
+}

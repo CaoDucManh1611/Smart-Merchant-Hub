@@ -10,3 +10,8 @@ export function safeProductUrl(value) {
     return null;
   }
 }
+
+export function safeProductImageUrl(value) {
+  const safe = safeProductUrl(value);
+  return safe && new URL(safe).protocol === "https:" ? safe : null;
+}

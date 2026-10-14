@@ -175,7 +175,7 @@ def login(
         device_label=(x_device_label or "").strip()[:120] or None,
         user_agent_hash=hashlib.sha256(request.headers.get("user-agent", "").encode()).hexdigest(),
         ip_hash=hashlib.sha256((request.client.host if request.client else "unknown").encode()).hexdigest(),
-        mfa_verified=user.mfa_status != "enabled",
+        mfa_verified=False,
     ))
     if user.business_id is not None:
         record_audit(
@@ -605,9 +605,27 @@ def list_sessions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return db.query(AuthSession).filter(
+    sessions = db.query(AuthSession).filter(
         AuthSession.user_id == user.id,
     ).order_by(AuthSession.created_at.desc(), AuthSession.id.desc()).all()
+    if not sessions:
+        return []
+
+    verified_session_ids = {
+        resource_id
+        for (resource_id,) in db.query(AuditLog.resource_id).filter(
+            AuditLog.user_id == user.id,
+            AuditLog.action == "mfa_verified",
+            AuditLog.resource_type == "auth_session",
+            AuditLog.resource_id.in_([str(session.id) for session in sessions]),
+        ).all()
+    }
+    return [
+        AuthSessionOut.model_validate(session).model_copy(update={
+            "mfa_verified": session.mfa_verified and str(session.id) in verified_session_ids,
+        })
+        for session in sessions
+    ]
 
 
 @router.post("/sessions/{session_id}/revoke", status_code=204)

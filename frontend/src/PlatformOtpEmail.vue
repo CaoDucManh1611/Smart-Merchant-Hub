@@ -5,7 +5,6 @@ import { apiFetch } from "./api-client.js";
 const props = defineProps({ apiBase: { type: String, default: "/api" } });
 const config = ref({ enabled: false, username: "", from_email: "", from_name: "Smart Merchant Hub", password_configured: false });
 const password = ref("");
-const recipient = ref("");
 const busy = ref(false);
 const loaded = ref(false);
 const error = ref("");
@@ -36,20 +35,9 @@ async function save() {
   notice.value = "";
   try {
     config.value = await request("PUT", "", { ...config.value, password: password.value });
-    notice.value = "Đã lưu cấu hình. Hãy gửi email thử trước khi cho khách đăng ký.";
+    notice.value = "Đã lưu cấu hình email.";
   } catch (e) { error.value = e.message; }
   finally { password.value = ""; busy.value = false; }
-}
-
-async function sendTest() {
-  busy.value = true;
-  error.value = "";
-  notice.value = "";
-  try {
-    await request("POST", "/test", { email: recipient.value });
-    notice.value = "Đã gửi email thử. Kiểm tra hộp thư đến và thư rác của email nhận.";
-  } catch (e) { error.value = e.message; }
-  finally { busy.value = false; }
 }
 
 onMounted(load);
@@ -78,11 +66,6 @@ onMounted(load);
           <button class="primary-btn" type="submit">{{ busy ? 'Đang xử lý…' : 'Lưu cấu hình email' }}</button>
         </fieldset>
       </form>
-      <form class="otp-email-test" @submit.prevent="sendTest">
-        <label>Email nhận thử<input v-model.trim="recipient" type="email" required placeholder="Email của bạn để kiểm tra" :disabled="busy" /></label>
-        <button class="settings-refresh" type="submit" :disabled="busy || !config.enabled || !config.password_configured">Gửi email thử</button>
-        <small>Email thử dùng cấu hình đã lưu. Khách không cần nhập mật khẩu Gmail.</small>
-      </form>
     </template>
   </article>
 </template>
@@ -92,13 +75,10 @@ onMounted(load);
 .otp-email-panel fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .otp-email-toggle { display: flex; align-items: center; gap: 10px; margin: 16px 0; }
 .otp-email-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.otp-email-fields label, .otp-email-test label { display: grid; gap: 8px; font-weight: 600; }
+.otp-email-fields label { display: grid; gap: 8px; font-weight: 600; }
 .otp-email-panel input:not([type="checkbox"]) { width: 100%; min-width: 0; box-sizing: border-box; padding: 12px; border: 1px solid var(--border, #cbdde0); border-radius: 10px; color: inherit; background: var(--surface, transparent); }
 .otp-email-panel input:focus-visible { outline: 2px solid #00857e; outline-offset: 2px; }
 .otp-email-panel p, .otp-email-panel small { line-height: 1.6; }
 .otp-email-panel a { color: inherit; text-decoration: underline; }
-.otp-email-test { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border, #cbdde0); display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
-.otp-email-test label { flex: 1 1 240px; }
-.otp-email-test small { flex-basis: 100%; }
 @media (max-width: 640px) { .otp-email-fields { grid-template-columns: 1fr; } .otp-email-panel { padding: 16px; } }
 </style>

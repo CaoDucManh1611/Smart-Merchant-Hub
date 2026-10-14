@@ -3,7 +3,8 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin_access
@@ -13,7 +14,20 @@ from app.models.lead import Lead
 from app.schemas.crm_config import CrmWorkspaceConfigUpdate
 from app.services.audit_service import record_audit
 from app.services.crm_workspace_config import get_crm_workspace_config, validate_customer_custom_fields
-from app.services.shop_otp_email import read_shop_otp_email, save_shop_otp_email
+from app.services.shop_otp_email import (
+    _EMAIL_RE,
+    claim_shop_test_email_slot,
+    get_shop_otp_smtp_config,
+    read_shop_otp_email,
+    save_shop_otp_email,
+)
+from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, send_smtp_test_email
+from app.services.shop_bank_transfer import (
+    BankTransferSettingsUpdate,
+    read_shop_bank_transfer,
+    save_shop_bank_transfer,
+    validate_shop_bank_transfer,
+)
 from app.models.business import User
 from app.tenancy.context import TenantContext
 from app.tenancy.crm_session import get_tenant_db
@@ -38,6 +52,68 @@ class ShopOtpEmailUpdate(BaseModel):
     password: str = Field(default="", max_length=200)
     from_email: str = Field(default="", max_length=255)
     from_name: str = Field(default="", max_length=120)
+
+
+class ShopOtpEmailTest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not _EMAIL_RE.fullmatch(value):
+            raise ValueError("Email nhận thử không hợp lệ.")
+        return value
+
+
+@router.get("/bank-transfer")
+def read_bank_transfer_settings(
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    _actor: User | None = Depends(require_admin_access),
+):
+    return read_shop_bank_transfer(db, tenant.business_id)
+
+
+@router.put("/bank-transfer")
+def update_bank_transfer_settings(
+    payload: BankTransferSettingsUpdate,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    try:
+        result = save_shop_bank_transfer(db, tenant.business_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="shop_bank_transfer_settings_updated",
+        resource_type="business_setting",
+        resource_id="shop.bank_transfer",
+        metadata={
+            "enabled": bool(result["enabled"]),
+            "bank_bin": result["bank_bin"],
+            "account_last4": str(result["account_number"] or "")[-4:],
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/bank-transfer/validate")
+def validate_bank_transfer_settings(
+    payload: BankTransferSettingsUpdate,
+    _db: Session = Depends(get_tenant_db),
+    _tenant: TenantContext = Depends(get_tenant_context),
+    _actor: User | None = Depends(require_admin_access),
+):
+    try:
+        return validate_shop_bank_transfer(payload)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
 
 
 @router.get("/otp-email")
@@ -71,6 +147,37 @@ def update_otp_email_settings(
     )
     db.commit()
     return result
+
+
+@router.post("/otp-email/test")
+def test_shop_otp_email(
+    payload: ShopOtpEmailTest,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_admin_access),
+):
+    try:
+        config = get_shop_otp_smtp_config(db, tenant.business_id)
+        if config is None:
+            raise OtpDeliveryNotConfigured("Shop SMTP is disabled")
+        if not claim_shop_test_email_slot(db, tenant.business_id):
+            raise HTTPException(429, "Vui lòng chờ 60 giây trước khi gửi email thử tiếp theo.", headers={"Retry-After": "60"})
+        send_smtp_test_email(destination=payload.email, smtp_config=config)
+    except HTTPException:
+        raise
+    except (OtpDeliveryError, OtpDeliveryNotConfigured, ValueError, OSError, SQLAlchemyError) as error:
+        raise HTTPException(503, "Chưa gửi được email thử. Kiểm tra cấu hình SMTP đã lưu và kết nối rồi thử lại.") from error
+    record_audit(
+        db,
+        business_id=tenant.business_id,
+        user_id=actor.id if actor else None,
+        action="shop_otp_email_test",
+        resource_type="business_setting",
+        resource_id="otp.smtp",
+        metadata={"status": "smtp_accepted"},
+    )
+    db.commit()
+    return {"status": "smtp_accepted", "email": payload.email}
 
 
 @router.get("/modules")

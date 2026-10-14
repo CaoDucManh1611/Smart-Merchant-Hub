@@ -23,7 +23,7 @@ def setup():
         shop = Business(name='VietQR Test', slug='vietqr-test')
         plan = ServicePlan(code='vietqr-test', name='Test', price=Decimal('400000'))
         db.add_all([shop, plan]); db.flush()
-        sub = Subscription(business_id=shop.id, plan_id=plan.id, status='pending',
+        sub = Subscription(business_id=shop.id, plan_id=plan.id, status='awaiting_payment',
                            quoted_amount=400000, quoted_currency='VND', change_kind='upgrade')
         db.add(sub); db.commit()
         service.save(db, service.PaymentSettingsUpdate(enabled=True, bank_bin='970422',
@@ -63,7 +63,7 @@ def test_local_qr_frozen_idempotent_without_payment_or_activation(setup, monkeyp
     assert again.id == first.id and again.amount == 400000 and again.bank_bin == '970422'
     assert payment_status(db, sub).status == 'pending'
     assert payment_status(db, sub).provider == 'vietqr'
-    assert sub.status == 'pending' and db.scalar(select(Payment.id)) is None
+    assert sub.status == 'awaiting_payment' and db.scalar(select(Payment.id)) is None
     sdk.assert_not_called()
 
 
@@ -74,7 +74,7 @@ def test_manual_receipt_updates_shop_status_without_activating_plan(setup):
                    currency='VND', provider='manual', provider_transaction_id='BANK-TEST', status='paid'))
     db.commit()
     result = payment_status(db, sub)
-    assert result.status == 'paid' and result.qr_code is None and result.approval_status == 'pending'
+    assert result.status == 'paid' and result.qr_code is None and result.approval_status == 'awaiting_payment'
 
 
 def test_downgrade_never_creates_payment_or_refund(setup):

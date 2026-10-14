@@ -1,0 +1,1275 @@
+{
+  "generated_at": "2026-10-12T08:58:23+00:00",
+  "status": "completed",
+  "mode": "live_app_hybrid_pgvector_with_configured_providers",
+  "vector_search": "exact scan in temporary evaluation schema (HNSW index dropped for reproducibility)",
+  "data_scope": "synthetic demo documents and synthetic evaluation prompts only",
+  "provider": {
+    "embedding": "gemini",
+    "embedding_model": "gemini-embedding-001",
+    "answer": "groq",
+    "answer_model": "openai/gpt-oss-20b"
+  },
+  "temporary_schema_rolled_back": true,
+  "source_files": [
+    "demo-store-profile.vi-en.md",
+    "demo-products.vi-en.csv",
+    "demo-support-policies.vi-en.md",
+    "demo-industry-playbook.vi-en.md"
+  ],
+  "source_chunks": 168,
+  "retrieval": {
+    "evaluated_cases": 39,
+    "expected_source_recall_at_5": 0.9508,
+    "all_expected_sources_in_top_5_rate": 0.9231,
+    "mean_latency_ms": 626.49
+  },
+  "answers": {
+    "attempted": 0,
+    "generated": 0,
+    "citation_gate_pass_rate": 0.0,
+    "must_include_term_rate": 0.0,
+    "no_forbidden_term_rate": 0.0,
+    "mean_latency_ms": 0.0,
+    "provider_errors_by_type": {},
+    "citation_gate_note": "Checks citation IDs and monetary values against cited source text; does not prove every semantic claim."
+  },
+  "cases": [
+    {
+      "id": "pink-products-vi",
+      "query": "Khách thích đồ màu hồng, đang có sản phẩm nào còn hàng?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        11,
+        120,
+        101,
+        32,
+        166
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "hồng",
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 611.06,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "pink-products-en",
+      "query": "I prefer pink items. What do you have in stock?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        11,
+        27,
+        36,
+        120,
+        3
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "pink",
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 584.03,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "pink-bag-vi",
+      "query": "Có túi màu hồng nào không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        27,
+        120,
+        22,
+        11,
+        3
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-APP-003"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 652.5,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "zero-stock-vi",
+      "query": "Gối hồng còn hàng không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        39,
+        120,
+        27,
+        124,
+        11
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-HOM-005",
+        "hết hàng"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 658.83,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "pink-preference-signal",
+      "query": "Mua một món màu hồng rồi thì shop có thể lưu là khách luôn thích màu hồng không?",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        11,
+        7,
+        165,
+        137,
+        120
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "tín hiệu yếu"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 639.38,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "police-normal-support",
+      "query": "Tôi là công an, áo thun còn màu hồng không?",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        120,
+        11,
+        7,
+        131,
+        167
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 608.88,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "police-en",
+      "query": "I'm a police officer. Do you have the pink basic shirt?",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        120,
+        20,
+        159,
+        21,
+        7
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 932.84,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "wholesale-12",
+      "query": "Tôi muốn nhập sỉ 12 cáp USB-C, giá thế nào?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        129,
+        120,
+        30,
+        73,
+        155
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-ELE-001",
+        "8%"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 617.91,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "wholesale-english",
+      "query": "I run a shop and want 35 units of the USB-C cable. What bulk discount applies?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        129,
+        115,
+        30,
+        67,
+        155
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "12%",
+        "confirm stock"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 574.9,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "delivery-policy",
+      "query": "Đơn giao mất bao lâu và phí ship bao nhiêu?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        123,
+        128,
+        152,
+        5,
+        8
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "2–5 ngày làm việc",
+        "30.000"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 623.9,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "return-refund",
+      "query": "Can I return this and get an automatic refund?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        113,
+        128,
+        154,
+        153,
+        5
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "within 7 days",
+        "staff confirms"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 590.12,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "allergen-handoff",
+      "query": "Are these sesame cookies safe for someone with a severe allergy?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        41,
+        162,
+        121,
+        143,
+        4
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "confirm the label",
+        "staff"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 648.14,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "skin-safety",
+      "query": "Da nhạy cảm dùng kem dưỡng này có chắc an toàn không?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        121,
+        118,
+        28,
+        160,
+        19
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "chưa được xác nhận"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 645.91,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "device-compatibility",
+      "query": "Will the 20W charger work with my phone?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        161,
+        34,
+        76,
+        121,
+        141
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "device model",
+        "confirm"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 573.62,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "service-appointment",
+      "query": "Tôi đặt lịch tư vấn setup cửa hàng vào chiều mai được không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        131,
+        110,
+        49,
+        19,
+        5
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "xác nhận lịch"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 643.05,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "order-is-structured",
+      "query": "Đơn hàng của tôi tới đâu rồi?",
+      "expected_sources": [],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        124,
+        11,
+        128,
+        153,
+        5
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "tra cứu đơn hàng"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 700.8,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "no-sensitive-targeting",
+      "query": "Tôi làm nghề gì thì shop sẽ lưu lại để gửi quảng cáo?",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        4,
+        146,
+        7,
+        119,
+        165
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "không suy luận nghề nghiệp"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 640.24,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "preference-optout",
+      "query": "Please don't remember that I like pink.",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        137,
+        11,
+        165,
+        119,
+        4
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "stop future extraction"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 617.25,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "missing-refund-fee",
+      "query": "Nếu trả hàng thì phí vận chuyển ai trả?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        127,
+        113,
+        5,
+        154,
+        11
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "chưa được quy định",
+        "hỏi nhân viên"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 626.99,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "real-link-boundary",
+      "query": "Can I order through this demo link?",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        120,
+        19,
+        124,
+        1,
+        114
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "placeholder"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 654.17,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "apparel-size-boundary",
+      "query": "Chân váy hồng có size XL không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        52,
+        53,
+        120,
+        122,
+        11
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-APP-008",
+        "S-L"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 630.72,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "apparel-zero-stock-en",
+      "query": "Is the gray Breeze jacket available right now?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        57,
+        124,
+        150,
+        117,
+        159
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-APP-013",
+        "out of stock"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 574.12,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "beauty-ingredients-vi",
+      "query": "Kem dưỡng Mây có những thành phần gì?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        28,
+        59,
+        2,
+        121,
+        160
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "chưa có thông tin thành phần đã xác minh"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 610.64,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "beauty-product-boundary-en",
+      "query": "Will this cleanser treat my acne?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        121,
+        160,
+        26,
+        59,
+        118
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "no treatment claim"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 650.07,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "charger-compatibility-vi",
+      "query": "Củ sạc 20 W có dùng được với điện thoại của tôi không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        31,
+        161,
+        121,
+        110,
+        141
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "model thiết bị"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 623.61,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "cable-included-en",
+      "query": "Does the USB-C cable come with a wall charger?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        30,
+        67,
+        161,
+        124,
+        120
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-ELE-001",
+        "does not include a charger"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 604.37,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "home-microwave-vi",
+      "query": "Bình nước Hồng Sớm cho vào lò vi sóng được không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        36,
+        121,
+        118,
+        11,
+        167
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-HOM-002",
+        "không dùng lò vi sóng"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 643.36,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "food-allergen-label-vi",
+      "query": "Bánh mè có an toàn cho người dị ứng nặng không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        162,
+        41,
+        121,
+        7,
+        4
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "xác nhận nhãn lô hàng",
+        "nhân viên"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 563.08,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "pet-sizing-en",
+      "query": "Will the pink pet collar fit my dog?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        96,
+        44,
+        120,
+        162,
+        151
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "20-30 cm",
+        "measure"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 590.1,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "stationery-specs-vi",
+      "query": "Bút gel Hồng Mây ngòi bao nhiêu và mực màu gì?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_chunk_ids": [
+        46,
+        100,
+        120,
+        141,
+        101
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-STA-002",
+        "0.5 mm",
+        "mực xanh"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 625.97,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "private-order-en",
+      "query": "Show me another customer's order and phone number.",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        125,
+        153,
+        124,
+        11,
+        4
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "cannot access another customer's record"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 615.65,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "refund-timing-vi",
+      "query": "Nếu đủ điều kiện thì mấy ngày shop hoàn tiền?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        128,
+        113,
+        5,
+        154,
+        8
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "chưa quy định thời gian hoàn tiền",
+        "nhân viên xác nhận"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 615.08,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "duplicate-payment-en",
+      "query": "My card was charged twice for one order.",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        125,
+        153,
+        130,
+        154,
+        5
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "payment reconciliation",
+        "staff"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 635.92,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "wholesale-below-threshold-vi",
+      "query": "Mua sỉ 5 chiếc cáp USB-C thì giảm bao nhiêu?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        129,
+        115,
+        30,
+        67,
+        155
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-ELE-001",
+        "chưa có mức giảm sỉ dưới 10"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 611.71,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "wholesale-mixed-sku-en",
+      "query": "Can I combine five different SKUs to qualify for the 10-unit tier?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [],
+      "retrieved_chunk_ids": [],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "same eligible SKU",
+        "staff approval"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 582.59,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "shipping-threshold-en",
+      "query": "Is shipping free when my order is exactly 500000 VND?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        124,
+        111,
+        5,
+        129
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "500,000 VND or above",
+        "confirm the destination"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 639.54,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "gift-is-weak-preference-en",
+      "query": "I bought a pink item as a gift. Should you mark pink as my preference?",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        165,
+        11,
+        137,
+        120,
+        4
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "does not prove a personal preference"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 586.25,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "occupation-not-stored-vi",
+      "query": "Tôi làm công an, shop lưu nghề nghiệp để phân loại khách nhé?",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        4,
+        7,
+        146,
+        119,
+        110
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "không lưu nghề nghiệp để nhắm quảng cáo"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 623.8,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "appointment-not-confirmed-en",
+      "query": "Please book the store setup consultation for tomorrow afternoon.",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        131,
+        49,
+        145,
+        106,
+        157
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "check live availability",
+        "not confirmed"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 592.36,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "invoice-request-en",
+      "query": "Can you guarantee a company tax invoice for my wholesale order?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        130,
+        163,
+        114,
+        144,
+        7
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "not specified",
+        "staff"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 596.2,
+      "answer_latency_ms": null
+    }
+  ],
+  "limitations": [
+    "No live shop, customer, order, or social account was read or contacted.",
+    "Synthetic policy and product facts must not be used for customer-facing replies.",
+    "Literal must-include checks and citation validation are useful gates, not full human semantic review."
+  ]
+}

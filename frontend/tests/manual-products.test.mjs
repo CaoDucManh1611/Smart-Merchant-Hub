@@ -20,7 +20,7 @@ function setup(overrides = {}) {
     productForm: { value: { id: null, sku: ' NEW-1 ', name: ' Bình nước ', description: '', product_url: '', price: 125000, stock_quantity: 4, status: 'active', ...overrides } },
     productSaving: { value: false }, productError: { value: '' }, productUploadNotice: { value: '' },
     products: { value: [{ id: 1, sku: 'OLD-1' }] }, API_BASE: '/api',
-    safeProductUrl: () => null, t: (s) => s, friendlyErrorMessage: (e) => e.message,
+    safeProductUrl: () => null, safeProductImageUrl: () => null, t: (s) => s, friendlyErrorMessage: (e) => e.message,
     apiFetch: async (url, options) => { calls.push({ url, ...options }); return { ok: true }; },
     resetProductForm: () => {}, fetchProducts: async () => {},
   };

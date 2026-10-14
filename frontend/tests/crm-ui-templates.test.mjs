@@ -42,10 +42,23 @@ test("payment re-entry is prominent above the plan catalogue and retains the exi
 
 test("selecting a plan with a pending request restores its frozen quote before submission", () => {
   const select = app.slice(app.indexOf('function selectServicePlan('), app.indexOf('function selectServiceMode('));
-  assert.match(select, /existing\?\.status === 'pending' && existing\.plan_code === servicePlanCodeForPurchase\(planCode\)/);
+  assert.match(select, /\['awaiting_payment', 'pending'\]\.includes\(existing\?\.status\) && existing\.plan_code === servicePlanCodeForPurchase\(planCode\)/);
   assert.match(select, /serviceCheckoutRequest\.value = existing/);
   assert.match(select, /serviceRequestSubmitted\.value = true/);
-  assert.match(select, /void loadServicePayment\(\)/);
+  assert.match(select, /void loadServicePayment\(existing\.status === 'awaiting_payment'\)/);
+});
+
+test("paid checkout creates a QR first, then lets the shop report payment or cancel", () => {
+  const app = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
+  const checkout = readFileSync(new URL("../src/ServiceCheckout.vue", import.meta.url), "utf8");
+  assert.match(app, /if \(detail\.status === "awaiting_payment"\) await loadServicePayment\(true\)/);
+  assert.match(app, /payment\/confirm/);
+  assert.match(app, /subscription\/\$\{request\.id\}\/cancel/);
+  assert.match(checkout, /@click="emit\('confirm-payment'\)"/);
+  assert.match(checkout, /Hủy đơn thanh toán và chọn gói khác/);
+  assert.match(checkout, /status !== 'awaiting_payment'/);
+  assert.match(app, /Number\(request\.quoted_amount\) > 0 && !request\.payment_received/);
+  assert.match(app, /customer_reported_payment \? t\('Khách báo đã thanh toán/);
 });
 
 test("product editor sends and safely displays the API product URL", () => {
@@ -69,4 +82,24 @@ test("plan payment confirmation is an inline checkout state, not a modal", () =>
   assert.match(checkout, /checkout-transfer-layout/);
   assert.match(checkout, /class="checkout-summary-art"[^>]*aria-hidden="true"/);
   assert.match(checkout, /\.checkout-card,\.checkout-qr-card \{ animation:none; \}/);
+});
+
+test("login password visibility toggles without replacing the bound password field", () => {
+  const passwordField = app.slice(app.indexOf('class="login-password-field"'), app.indexOf('class="login-options-row"'));
+  assert.match(passwordField, /:type="loginPasswordVisible \? 'text' : 'password'"/);
+  assert.match(passwordField, /v-model="loginForm\.password"/);
+  assert.match(passwordField, /:aria-pressed="loginPasswordVisible"/);
+  assert.match(passwordField, /@click="loginPasswordVisible = !loginPasswordVisible"/);
+  assert.match(style, /\.login-password-control \{ display:grid; grid-template-columns:minmax\(0,1fr\) 40px;/);
+  assert.match(style, /\.login-password-control input::-ms-reveal \{ display:none; \}/);
+  assert.match(style, /\.login-password-toggle \{ position:relative;.*grid-column:2; grid-row:1;/);
+  assert.match(style, /\.login-password-toggle:focus-visible/);
+});
+
+test("pending payment review keeps the status and cancel action in a responsive row", () => {
+  const checkout = readFileSync(new URL("../src/ServiceCheckout.vue", import.meta.url), "utf8");
+  assert.match(checkout, /status === 'pending'\" class="checkout-payment-review-row"/);
+  assert.match(checkout, /\.checkout-payment-review-row \{ display:flex; flex-wrap:wrap;/);
+  assert.match(checkout, /\.checkout-payment > small \{ display:block;/);
+  assert.match(checkout, /status === 'awaiting_payment' && payment\?\.status === 'pending'/);
 });

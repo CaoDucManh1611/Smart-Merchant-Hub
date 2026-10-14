@@ -224,6 +224,8 @@ class PlatformSubscriptionRequestOut(BaseModel):
     plan_name: str
     service_type: Literal["package", "chatbot"] = "package"
     status: Literal["pending"] = "pending"
+    customer_reported_payment: bool = False
+    payment_received: bool = False
     created_at: datetime | None = None
 
 

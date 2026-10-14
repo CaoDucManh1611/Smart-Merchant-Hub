@@ -14,5 +14,5 @@ export function planChangeKind(current, selected) {
 }
 
 export function checkoutRequestLabel(status) {
-  return { pending: 'Đang chờ admin duyệt', active: 'Gói đã được kích hoạt', cancelled: 'Yêu cầu đã bị từ chối hoặc hủy', expired: 'Yêu cầu đã hết hiệu lực' }[status] || 'Đã ghi nhận yêu cầu';
+  return { awaiting_payment: 'Đang chờ thanh toán', pending: 'Đang chờ admin duyệt', active: 'Gói đã được kích hoạt', cancelled: 'Yêu cầu đã bị từ chối hoặc hủy', expired: 'Yêu cầu đã hết hiệu lực' }[status] || 'Đã ghi nhận yêu cầu';
 }

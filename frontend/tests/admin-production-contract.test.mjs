@@ -16,15 +16,13 @@ test("platform admin loads shop subscription, payment and quota details through 
   assert.match(appSource, /deletePlatformPlan/);
   assert.match(appSource, /createLocalConnectorPairingCode/);
   assert.match(appSource, /connector-app/);
-  assert.match(templateSource, /Shopee Seller Chat/);
-  assert.match(templateSource, /Tải bộ ZIP Shopee/);
-  assert.match(templateSource, /Tải bộ ZIP TikTok/);
-  assert.match(templateSource, /Giải nén ZIP rồi chạy SmartMerchantTikTok\.exe/);
-  assert.match(templateSource, /Giải nén ZIP rồi chạy SmartMerchantShopee\.exe/);
-  assert.match(templateSource, /Tải ZIP Meta/);
-  assert.match(templateSource, /Tải ZIP Instagram/);
-  assert.match(appSource, /SmartMerchantMessenger\.zip/);
-  assert.match(appSource, /SmartMerchantInstagram\.zip/);
+  assert.match(templateSource, /channelModalTab === 'shopee' \? 'Shopee'/);
+  assert.match(templateSource, /Tải ứng dụng kết nối Shopee/);
+  assert.match(templateSource, /Tải ứng dụng kết nối TikTok/);
+  assert.match(templateSource, /Tạo mã kết nối bên dưới, nhập vào ứng dụng rồi đăng nhập Shopee trong trình duyệt\./);
+  assert.match(templateSource, /Tạo mã kết nối, nhập vào ứng dụng rồi đăng nhập TikTok Shop trong trình duyệt\./);
+  assert.match(appSource, /channels\/\$\{channelType\}\/connector-app\/download-ticket/);
+  assert.match(appSource, /channels\/\$\{channelType\}\/connector-app\/file\?ticket=/);
   assert.match(templateSource, /Gói đang dùng/);
   assert.match(templateSource, /Trạng thái thanh toán/);
   assert.match(templateSource, /Dung lượng tra cứu/);
@@ -53,7 +51,7 @@ test("connector downloads make one ZIP save through the browser", () => {
 });
 
 test("Facebook and Instagram open focused connector dialogs", () => {
-  assert.match(templateSource, /channelModalTab === 'facebook' \? 'Kết nối Meta' : channelModalTab === 'instagram' \? 'Kết nối Instagram'/);
+  assert.match(templateSource, /channelModalTab === 'facebook' \? 'Kết nối Facebook' : channelModalTab === 'instagram' \? 'Kết nối Instagram'/);
   assert.doesNotMatch(templateSource, /meta-oauth-section/);
   assert.match(templateSource, /class="settings-card meta-business-suite-bridge-card"/);
   assert.match(templateSource, /v-if="channelModalTab !== 'instagram'" class="primary-btn bot-connect-submit"[^>]*@click="downloadMessengerConnectorApp"/);
@@ -84,8 +82,8 @@ test("social channel cards distinguish reserved plan slots from live connectors"
   assert.match(appSource, /detail\.filter\(\(item\) => \["facebook", "instagram", "telegram", "zalo", "tiktok", "shopee"\]/);
   assert.match(appSource, /const socialChannelOnlineCount = computed/);
   assert.match(appSource, /function isSocialChannelOnline\(channelType\)/);
-  assert.match(templateSource, /Hạn mức đã cấp:/);
-  assert.match(templateSource, /Kênh đang trực tuyến:/);
+  assert.match(templateSource, /Kênh đã dùng/);
+  assert.match(templateSource, /socialChannelOnlineCount \}\} \/ 6/);
   assert.match(templateSource, /metaChannelStatus\('facebook'\)/);
   assert.match(templateSource, /metaChannelStatus\('instagram'\)/);
   assert.match(templateSource, /offline: metaChannelIsOffline\('facebook'\)/);

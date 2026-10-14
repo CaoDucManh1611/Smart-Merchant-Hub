@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     PAYOS_EXPECTED_ACCOUNT_NUMBER: str = ""
     PAYOS_EXPECTED_BANK_BIN: str = ""
     PAYOS_PAYMENT_TTL_SECONDS: int = 900
+    MONAPAY_WEBHOOK_SECRET: str = ""
     # Optional shared secret used by the local Zalo personal-account bridge.
     # Keep empty for development only; production must configure it before
     # accepting bridge events.
@@ -164,9 +165,11 @@ class Settings(BaseSettings):
     # not belong to a production tenant.
     RECOMMENDATION_ARTIFACT_DIR: str = "artifacts"
     RECOMMENDATION_ARTIFACT_MODE: str = "fallback"
-    # Extract durable customer facts in a background worker. Keep this
-    # opt-in so a deployment never starts making LLM calls unexpectedly.
-    CUSTOMER_FACT_EXTRACTION_ENABLED: bool = False
+    # Comma-separated demo tenant IDs; Data_RAG checkpoints are opt-in.
+    RECOMMENDATION_DATA_RAG_BUSINESS_IDS: str = ""
+    # Extract customer facts by default for customers who granted consent.
+    # A tenant setting or this environment variable can still turn it off.
+    CUSTOMER_FACT_EXTRACTION_ENABLED: bool = True
     # False keeps embeddings for every seeded document so semantic retrieval
     # is available. Set to true only when intentionally using lexical fallback.
     RAG_AUTO_SEED_FAST_MODE: bool = False

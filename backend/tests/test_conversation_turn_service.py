@@ -8,7 +8,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.database.bases import TenantBase
 from app.models import Business, Conversation, Customer, Message, CrmJob, CustomerFact, CustomerProductInteraction, RecommendationRequest
+from app.models.canned_response import CannedResponse
 from app.models.customer_collection import CustomerConsent
+from app.models.business_setting import BusinessSetting
 from app.models.experimentation import BanditDecision, Experiment
 from app.services.conversation_turn_service import dispatch_chatbot_turn, schedule_chatbot_turn
 from app.services.customer_collection_flow import CollectionFlowResult
@@ -81,6 +83,51 @@ class ConversationTurnTests(unittest.TestCase):
             self.assertEqual(["tôi muốn áo", "màu hồng", "size M"], collect.call_args.kwargs["form_fragments"])
             send.assert_called_once()
             rag.assert_not_called()
+
+    def test_saved_shortcut_command_sends_exact_template_without_ai_or_collection(self):
+        with Session(self.engine) as db:
+            conversation = db.get(Conversation, self.conversation_id)
+            conversation.channel = "telegram"
+            previous = db.query(Message).order_by(Message.id.desc()).first()
+            db.add(CannedResponse(
+                business_id=self.business_id,
+                shortcut="/cod",
+                title="COD",
+                content="Shop hỗ trợ thanh toán COD.",
+            ))
+            source = Message(
+                conversation_id=self.conversation_id,
+                channel="telegram",
+                direction="inbound",
+                content="/COD@shop_bot",
+                received_at=previous.received_at + timedelta(minutes=1),
+            )
+            db.add(source)
+            db.flush()
+            db.add(Message(
+                conversation_id=self.conversation_id,
+                channel="telegram",
+                direction="inbound",
+                content="Cảm ơn shop",
+                received_at=source.received_at + timedelta(seconds=1),
+            ))
+            db.commit()
+
+            with patch("app.services.customer_collection_flow.advance_customer_collection") as collect, \
+                 patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+                 patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+                 patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "test"}) as send, \
+                 patch("app.services.auto_reply_service.retrieve") as retrieve:
+                self.assertTrue(dispatch_chatbot_turn(
+                    db,
+                    business_id=self.business_id,
+                    payload={"conversation_id": self.conversation_id, "message_id": source.id},
+                ))
+
+            self.assertEqual("Shop hỗ trợ thanh toán COD.", send.call_args.kwargs["text"])
+            self.assertEqual("telegram", send.call_args.kwargs["channel"])
+            collect.assert_not_called()
+            retrieve.assert_not_called()
 
     def test_collection_is_not_applied_twice_when_delivery_retries(self):
         with Session(self.engine) as db:
@@ -250,6 +297,16 @@ class ConversationTurnTests(unittest.TestCase):
             db.add(CustomerFact(business_id=self.business_id, customer_id=customer.id,
                 fact_type="preference", fact_key="preferred_color", fact_value_json="hồng",
                 confidence=0.9, source_type="extracted", is_verified=False))
+            db.commit()
+            # A fact alone cannot enable personalization without the shop
+            # setting and the customer's explicit consent.
+            self.assertEqual((None, None), _preferred_color(db, self.business_id, customer.id))
+            db.add_all([
+                BusinessSetting(business_id=self.business_id,
+                                key="customer_fact_extraction_enabled", value="true"),
+                CustomerConsent(business_id=self.business_id, customer_id=customer.id,
+                                purpose="personalization", status="granted"),
+            ])
             db.commit()
             self.assertEqual(("pink", "explicit_color_preference"), _preferred_color(db, self.business_id, customer.id))
             self.assertEqual((None, None), _preferred_color(db, self.other_id, customer.id))

@@ -6,10 +6,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.models.business import Business
+from app.models.business_setting import BusinessSetting
 from app.models.chatbot import ChatbotConfig
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_fact import CustomerFact
+from app.models.customer_collection import CustomerConsent
 from app.models.message import Message
 from app.models.sales import Product
 from app.services.chatbot_agent import (
@@ -37,9 +39,12 @@ class ChatbotAgentToolTests(unittest.TestCase):
             db.add(conversation)
             db.flush()
             db.add_all([
+                BusinessSetting(business_id=business.id, key="customer_fact_extraction_enabled", value="true"),
+                CustomerConsent(business_id=business.id, customer_id=customer.id, purpose="personalization", status="granted"),
                 Message(conversation_id=conversation.id, channel="telegram", direction="inbound", sender_type="customer", content="Tôi cần serum"),
                 Message(conversation_id=conversation.id, channel="telegram", direction="outbound", sender_type="bot", content="Shop có serum Vitamin C"),
-                CustomerFact(business_id=business.id, customer_id=customer.id, fact_type="preference", fact_key="skin_type", fact_value_json="dry"),
+                CustomerFact(business_id=business.id, customer_id=customer.id, fact_type="preference", fact_key="preferred_color", fact_value_json="hồng"),
+                CustomerFact(business_id=business.id, customer_id=customer.id, fact_type="profile", fact_key="skin_type", fact_value_json="dry"),
                 Product(business_id=business.id, sku="SERUM-01", name="Serum Vitamin C", price=200000, stock_quantity=7, status="active"),
                 ChatbotConfig(business_id=business.id, business_hours={"timezone": "Asia/Ho_Chi_Minh", "mon": [["08:00", "17:00"]]}),
             ])
@@ -51,8 +56,31 @@ class ChatbotAgentToolTests(unittest.TestCase):
             memory = build_agent_memory(db, self.business_id, self.conversation_id)
             self.assertEqual(self.customer_id, memory["customer_id"])
             self.assertEqual(2, len(memory["history"]))
-            self.assertEqual("dry", memory["facts"][0]["value"])
+            self.assertEqual("preferred_color", memory["facts"][0]["key"])
+            self.assertEqual("hồng", memory["facts"][0]["value"])
+            self.assertNotIn("skin_type", {fact["key"] for fact in memory["facts"]})
             self.assertEqual("Serum Vitamin C", memory["recent_products"][0]["name"])
+
+    def test_memory_requires_shop_setting_and_explicit_customer_consent(self):
+        with Session(self.engine) as db:
+            setting = db.query(BusinessSetting).filter(
+                BusinessSetting.business_id == self.business_id,
+                BusinessSetting.key == "customer_fact_extraction_enabled",
+            ).one()
+            consent = db.query(CustomerConsent).filter(
+                CustomerConsent.business_id == self.business_id,
+                CustomerConsent.customer_id == self.customer_id,
+                CustomerConsent.purpose == "personalization",
+            ).one()
+            consent.status = "revoked"
+            db.commit()
+            self.assertEqual([], build_agent_memory(db, self.business_id, self.conversation_id)["facts"])
+            consent.status = "granted"
+            setting.value = "false"
+            db.commit()
+            self.assertEqual([], build_agent_memory(db, self.business_id, self.conversation_id)["facts"])
+            setting.value = "true"
+            db.commit()
 
     def test_controlled_tools_are_tenant_scoped(self):
         with Session(self.engine) as db:

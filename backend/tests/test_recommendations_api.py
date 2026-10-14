@@ -5,16 +5,21 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
+from fastapi import Header
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.database.bases import TenantBase
 from app.db.dependencies import get_db
+from app.auth.dependencies import get_current_user
 from app.main import app
 from app.models.business import Business
+from app.models.business_setting import BusinessSetting
 from app.models.conversation import Conversation
 from app.models.customer import Customer
+from app.models.customer_collection import CustomerConsent
 from app.models.customer_fact import CustomerFact
 from app.models.crm_job import CrmJob
 from app.models.crm_extended import CustomerTag, Tag
@@ -28,10 +33,23 @@ from app.models.recommendation import (
 )
 from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
+from app.tenancy.crm_session import get_tenant_db
+from app.tenancy.context import TenantContext
+from app.tenancy.dependencies import get_tenant_context
 from app.services.crm_job_worker import _dispatch_weekly_customer_learning, dispatch_business_crm_jobs
 from app.services.order_service import transition_sales_order
 from app.services.recommendation_interaction_service import record_order_purchase_interactions
-from app.services.recommendation_service import _personalization_allowed, _preferred_color, _product_matches_color
+from app.services.recommendation_service import (
+    _recommendation_weights,
+    _score,
+    _personalization_allowed,
+    _preferred_color,
+    _customer_purchase_facets,
+    _product_matches_color,
+    _recent_and_historical_products,
+    _stated_preference_overlap,
+    _stated_preference_values,
+)
 from app.services.recommendation_interaction_service import (
     record_explicit_chat_recommendation_decline,
     record_order_refund_interactions,
@@ -43,6 +61,7 @@ class RecommendationApiTests(unittest.TestCase):
     def setUpClass(cls):
         cls.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Business.metadata.create_all(cls.engine)
+        TenantBase.metadata.create_all(cls.engine)
         with Session(cls.engine) as db:
             business = Business(name="Recommendations", slug="recommendations")
             other_business = Business(name="Other tenant", slug="other-tenant")
@@ -56,6 +75,14 @@ class RecommendationApiTests(unittest.TestCase):
             db.add_all([customer, second_customer])
             db.flush()
             cls.customer_id = customer.id
+            db.add_all([
+                CustomerConsent(business_id=business.id, customer_id=customer.id,
+                                purpose="personalization", status="granted"),
+                CustomerConsent(business_id=business.id, customer_id=second_customer.id,
+                                purpose="personalization", status="granted"),
+                BusinessSetting(business_id=business.id,
+                                key="customer_fact_extraction_enabled", value="true"),
+            ])
 
             products = [
                 Product(business_id=business.id, sku="P-ONE", name="Product one", price=Decimal("10"), stock_quantity=5),
@@ -94,7 +121,17 @@ class RecommendationApiTests(unittest.TestCase):
             with Session(cls.engine) as db:
                 yield db
 
+        def override_get_tenant_context(x_business_id: str | None = Header(default=None, alias="X-Business-Id")):
+            return TenantContext(int(x_business_id or cls.business_id), "test")
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_tenant_db] = override_get_db
+        app.dependency_overrides[get_tenant_context] = override_get_tenant_context
+        # Chat routes now require an authenticated actor; keep these local API
+        # tests focused on retrieval/answer behavior instead of bearer auth.
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=1, business_id=cls.business_id, role="owner", is_active=True,
+        )
         cls.client = TestClient(app)
 
     @classmethod
@@ -131,6 +168,26 @@ class RecommendationApiTests(unittest.TestCase):
         self.assertEqual(201, second.status_code, second.text)
         self.assertEqual(first.json()["id"], second.json()["id"])
         self.assertEqual(1.0, first.json()["reward"])
+
+    def test_rfm_segment_shifts_rank_between_personal_affinity_and_discovery(self):
+        high_value = _recommendation_weights("balanced", "high_value")
+        new_customer = _recommendation_weights("balanced", "no_purchase")
+        for weights in (high_value, new_customer):
+            self.assertAlmostEqual(1.0, sum(weights.values()))
+        self.assertGreater(high_value["affinity"], new_customer["affinity"])
+        self.assertGreater(new_customer["popularity"], high_value["popularity"])
+        self.assertGreater(
+            _score("balanced", 1.0, 0.0, 0.0, 0.0, rfm_segment="high_value"),
+            _score("balanced", 1.0, 0.0, 0.0, 0.0, rfm_segment="no_purchase"),
+        )
+        self.assertGreater(
+            _score("balanced", 0.0, 1.0, 0.0, 0.0, rfm_segment="no_purchase"),
+            _score("balanced", 0.0, 1.0, 0.0, 0.0, rfm_segment="high_value"),
+        )
+        self.assertGreater(
+            _recommendation_weights("balanced", "unclassified")["affinity"],
+            0.0,
+        )
 
     def test_rejects_customer_from_another_tenant(self):
         response = self.client.post(
@@ -193,6 +250,66 @@ class RecommendationApiTests(unittest.TestCase):
             self.assertTrue(_product_matches_color(pink_candidate, color))
             self.assertFalse(_product_matches_color(blue_candidate, color))
 
+    def test_confirmed_orders_inform_product_history_while_cancelled_orders_do_not(self):
+        with Session(self.engine) as db:
+            confirmed_product = Product(
+                business_id=self.business_id,
+                sku="CONFIRMED-HISTORY",
+                name="Confirmed order product",
+                price=Decimal("25"),
+                stock_quantity=5,
+                metadata_={"category": "apparel"},
+            )
+            cancelled_product = Product(
+                business_id=self.business_id,
+                sku="CANCELLED-HISTORY",
+                name="Cancelled order product",
+                price=Decimal("35"),
+                stock_quantity=5,
+            )
+            delivered_product = Product(
+                business_id=self.business_id,
+                sku="DELIVERED-PARTIAL-HISTORY",
+                name="Delivered partial payment product",
+                price=Decimal("45"),
+                stock_quantity=5,
+                metadata_={"category": "kitchen"},
+            )
+            db.add_all([confirmed_product, cancelled_product, delivered_product])
+            db.flush()
+            for suffix, status, product, payment_status in (
+                ("confirmed", "confirmed", confirmed_product, "unpaid"),
+                ("cancelled", "cancelled", cancelled_product, "unpaid"),
+                ("delivered-partial", "delivered", delivered_product, "partial"),
+            ):
+                order = Order(
+                    business_id=self.business_id,
+                    customer_id=self.customer_id,
+                    order_number=f"HISTORY-{suffix.upper()}",
+                    status=status,
+                    payment_status=payment_status,
+                    total_amount=product.price,
+                )
+                db.add(order)
+                db.flush()
+                db.add(OrderItem(
+                    order_id=order.id,
+                    product_id=product.id,
+                    quantity=1,
+                    unit_price=product.price,
+                    line_total=product.price,
+                ))
+            db.flush()
+
+            _, historical = _recent_and_historical_products(db, self.business_id, self.customer_id)
+            purchase_facets = _customer_purchase_facets(db, self.business_id, self.customer_id)
+
+            self.assertIn(confirmed_product.id, historical)
+            self.assertIn(delivered_product.id, historical)
+            self.assertNotIn(cancelled_product.id, historical)
+            self.assertGreater(purchase_facets["category"]["apparel"], 0)
+            self.assertGreater(purchase_facets["category"]["kitchen"], 0)
+
     def test_customer_fact_opt_out_disables_personalized_ranking(self):
         with Session(self.engine) as db:
             customer = db.get(Customer, self.customer_id)
@@ -212,6 +329,18 @@ class RecommendationApiTests(unittest.TestCase):
             db.commit()
             self.assertFalse(_personalization_allowed(db, self.business_id, self.customer_id))
             self.assertEqual((None, None), _preferred_color(db, self.business_id, self.customer_id))
+            consent = db.query(CustomerConsent).filter(
+                CustomerConsent.business_id == self.business_id,
+                CustomerConsent.customer_id == self.customer_id,
+                CustomerConsent.purpose == "personalization",
+            ).one()
+            customer.fact_extraction_opt_out = False
+            consent.status = "revoked"
+            db.commit()
+            self.assertFalse(_personalization_allowed(db, self.business_id, self.customer_id))
+            consent.status = "granted"
+            customer.fact_extraction_opt_out = True
+            db.commit()
 
         ranked = self.client.post(
             "/api/recommendations",
@@ -231,6 +360,163 @@ class RecommendationApiTests(unittest.TestCase):
                 CustomerFact.customer_id == self.customer_id,
                 CustomerFact.fact_key == "preferred_color",
                 CustomerFact.source_type == "manual",
+            ).delete(synchronize_session=False)
+            db.commit()
+
+    def test_consented_stated_category_preference_matches_catalog(self):
+        with Session(self.engine) as db:
+            customer = db.get(Customer, self.customer_id)
+            customer.fact_extraction_opt_out = False
+            product = Product(
+                business_id=self.business_id,
+                sku="P-SKINCARE-PREF",
+                name="Serum dưỡng da",
+                price=Decimal("25"),
+                stock_quantity=4,
+                metadata_={"category": "chăm sóc da"},
+            )
+            fact = CustomerFact(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                fact_type="preference",
+                fact_key="preferred_category",
+                fact_value_json="chăm sóc da",
+                confidence=0.95,
+                source_type="extracted",
+            )
+            db.add_all([product, fact])
+            db.flush()
+
+            preferences = _stated_preference_values(db, self.business_id, self.customer_id)
+            self.assertIn("chăm sóc da", preferences)
+            self.assertEqual(1.0, _stated_preference_overlap(preferences, product))
+
+            db.query(CustomerConsent).filter(
+                CustomerConsent.business_id == self.business_id,
+                CustomerConsent.customer_id == self.customer_id,
+                CustomerConsent.purpose == "personalization",
+            ).update({"status": "revoked"})
+            db.flush()
+            self.assertEqual([], _stated_preference_values(db, self.business_id, self.customer_id))
+
+            db.query(CustomerConsent).filter(
+                CustomerConsent.business_id == self.business_id,
+                CustomerConsent.customer_id == self.customer_id,
+                CustomerConsent.purpose == "personalization",
+            ).update({"status": "granted"})
+            db.query(CustomerFact).filter(CustomerFact.id == fact.id).delete()
+            db.delete(product)
+            db.commit()
+
+    def test_completed_order_facets_change_personalized_rank_and_explain_the_signal(self):
+        with Session(self.engine) as db:
+            purchased = Product(
+                business_id=self.business_id,
+                sku="PROFILE-SKINCARE-BOUGHT",
+                name="Serum mua trước đây",
+                description="Sản phẩm demo thuộc nhóm chăm sóc da; dùng hằng ngày.",
+                price=Decimal("80"),
+                stock_quantity=0,
+            )
+            matched = Product(
+                business_id=self.business_id,
+                sku="PROFILE-SKINCARE-MATCH",
+                name="Kem dưỡng mới",
+                description="Sản phẩm demo thuộc nhóm chăm sóc da; dùng ban đêm.",
+                price=Decimal("90"),
+                stock_quantity=5,
+            )
+            unrelated = Product(
+                business_id=self.business_id,
+                sku="PROFILE-HARDWARE-OTHER",
+                name="Đèn bàn",
+                price=Decimal("90"),
+                stock_quantity=5,
+                metadata_={"category": "đồ gia dụng", "brand": "Bright"},
+            )
+            db.add_all([purchased, matched, unrelated])
+            db.flush()
+            order = Order(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                order_number="PROFILE-FACET-ORDER",
+                status="completed",
+                total_amount=Decimal("80"),
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=45),
+            )
+            db.add(order)
+            db.flush()
+            db.add(OrderItem(
+                order_id=order.id,
+                product_id=purchased.id,
+                quantity=1,
+                unit_price=Decimal("80"),
+                line_total=Decimal("80"),
+            ))
+            db.commit()
+            matched_id, unrelated_id = matched.id, unrelated.id
+            order_id = order.id
+            temporary_product_ids = [purchased.id, matched.id, unrelated.id]
+
+        response = self.client.post(
+            "/api/recommendations",
+            headers=self.headers(),
+            json={"customer_id": self.customer_id, "limit": 20},
+        )
+        self.assertEqual(201, response.status_code, response.text)
+        payload = response.json()
+        by_id = {item["product_id"]: item for item in payload["items"]}
+        self.assertIn(matched_id, by_id)
+        self.assertIn(unrelated_id, by_id)
+        self.assertGreater(by_id[matched_id]["score"], by_id[unrelated_id]["score"])
+        self.assertEqual("purchase_history_category_affinity", by_id[matched_id]["reason"])
+        self.assertEqual(["category"], by_id[matched_id]["purchase_facets"])
+        self.assertIn("order_history", by_id[matched_id]["personalization_signals"])
+        self.assertTrue(payload["personalization_applied"])
+        self.assertIn("order_history", payload["personalization_signals"])
+        with Session(self.engine) as db:
+            db.query(OrderItem).filter(OrderItem.order_id == order_id).delete(synchronize_session=False)
+            db.query(Order).filter(Order.id == order_id).delete(synchronize_session=False)
+            db.query(Product).filter(Product.id.in_(temporary_product_ids)).delete(synchronize_session=False)
+            db.commit()
+
+    def test_consent_does_not_claim_personalization_without_customer_signals(self):
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="telegram",
+                external_user_id="recommendation-cold-start",
+            )
+            db.add(customer)
+            db.flush()
+            customer_id = customer.id
+            db.add(CustomerConsent(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                purpose="personalization",
+                status="granted",
+            ))
+            db.commit()
+
+        response = self.client.post(
+            "/api/recommendations",
+            headers=self.headers(),
+            json={"customer_id": customer_id, "limit": 3},
+        )
+        self.assertEqual(201, response.status_code, response.text)
+        payload = response.json()
+        self.assertEqual(customer_id, payload["customer_id"])
+        self.assertFalse(payload["personalization_applied"])
+        self.assertEqual([], payload["personalization_signals"])
+        self.assertEqual([], payload["available_personalization_signals"])
+        with Session(self.engine) as db:
+            db.query(CustomerConsent).filter(
+                CustomerConsent.business_id == self.business_id,
+                CustomerConsent.customer_id == customer_id,
+            ).delete(synchronize_session=False)
+            db.query(Customer).filter(
+                Customer.business_id == self.business_id,
+                Customer.id == customer_id,
             ).delete(synchronize_session=False)
             db.commit()
 
@@ -611,14 +897,14 @@ class RecommendationApiTests(unittest.TestCase):
         self.assertIn('"replace": true', response.text)
         self.assertIn("Trợ lý đang gặp sự cố", response.text)
 
-    @patch("app.api.chat.call_llm", return_value="Giá là 10.000 đồng [Nguồn 1].")
+    @patch("app.api.chat.call_llm", return_value="Phí đổi trả là 10.000 đồng [Nguồn 1].")
     @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
     @patch("app.api.chat.retrieve")
     def test_chat_citations_include_document_and_chunk_identity(self, retrieve, *_mocks):
         retrieve.return_value = [SimpleNamespace(
             chunk_id=12,
             document_id=7,
-            content="Giá sản phẩm là 10.000 đồng.",
+            content="Phí đổi trả là 10.000 đồng.",
             similarity=0.91,
             metadata={"topic": "pricing"},
             filename="bang-gia.txt",
@@ -627,7 +913,7 @@ class RecommendationApiTests(unittest.TestCase):
         response = self.client.post(
             "/api/chat",
             headers=self.headers(),
-            json={"query": "Giá sản phẩm là bao nhiêu?"},
+            json={"query": "Chính sách đổi trả thế nào?"},
         )
 
         self.assertEqual(200, response.status_code, response.text)
@@ -636,27 +922,87 @@ class RecommendationApiTests(unittest.TestCase):
         self.assertEqual(
             {
                 "document_id": 7,
-                "content": "Giá sản phẩm là 10.000 đồng.",
+                "content": "Phí đổi trả là 10.000 đồng.",
                 "similarity": 0.91,
                 "metadata": {"topic": "pricing"},
                 "citation_id": 1,
                 "chunk_id": 12,
                 "filename": "bang-gia.txt",
                 "chunk_index": 2,
+                "source_type": None,
+                "record_id": None,
+                "customer_id": None,
+                "deal_id": None,
+                "owner_user_id": None,
+                "stage": None,
+                "status": None,
+                "updated_at": None,
             },
             response.json()["sources"][0],
         )
 
-    @patch("app.api.chat.call_llm", return_value="Giá là 10.000 đồng.")
+    def test_chat_citation_guard_treats_customer_quantity_as_input_in_both_modes(self):
+        source = SimpleNamespace(
+            chunk_id=31,
+            document_id=9,
+            content="Wholesale: 10–29 units receive an 8% discount.",
+            similarity=0.91,
+            metadata={},
+            filename="wholesale-policy.md",
+            chunk_index=0,
+        )
+        query = "I want 12 units; what discount applies?"
+        answer = "For 12 units, an 8% discount applies. [Source 1]"
+
+        async def stream(_messages):
+            yield answer
+
+        for path in ("/api/chat", "/api/chat/stream"):
+            with self.subTest(path=path), patch("app.api.chat.retrieve", return_value=[source]), \
+                 patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0}), \
+                 patch("app.api.chat.call_llm", return_value=answer), \
+                 patch("app.api.chat.stream_llm", side_effect=stream):
+                response = self.client.post(path, headers=self.headers(), json={"query": query})
+
+            self.assertEqual(200, response.status_code, response.text)
+            if path == "/api/chat":
+                self.assertEqual("answered", response.json()["answer_status"])
+            else:
+                self.assertIn('"answer_status": "answered"', response.text)
+
+    def test_product_knowledge_sync_and_stream_use_current_catalog_price(self):
+        import json
+        evidence = SimpleNamespace(chunk_id=12, document_id=7,
+            content="Product one có thành phần cotton. Giá cũ 10000 VND.",
+            similarity=.9, metadata={}, filename="product.md", chunk_index=0)
+        for path in ("/api/chat", "/api/chat/stream"):
+            for amount, expected in ((10, "answered"), (10000, "no_context")):
+                answer = f"Cotton [Nguồn 2]; giá {amount} VND [Nguồn 1]."
+                async def stream(_messages):
+                    yield answer
+                with self.subTest(path=path, amount=amount), patch("app.api.chat.retrieve", return_value=[evidence]), \
+                     patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0}), \
+                     patch("app.api.chat.call_llm", return_value=answer), patch("app.api.chat.stream_llm", side_effect=stream):
+                    response = self.client.post(path, headers=self.headers(),
+                                                json={"query": "Product one thành phần gì?"})
+                    self.assertEqual(200, response.status_code, response.text)
+                    payload = response.json() if path == "/api/chat" else next(
+                        event for event in (json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: "))
+                        if event["type"] == "done")
+                    self.assertEqual(expected, payload["answer_status"])
+                    if expected == "answered":
+                        self.assertEqual(10, payload["data_sources"][0]["price"])
+
+    @patch("app.api.chat.call_llm", return_value="Phí đổi trả là 10.000 đồng.")
     @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
     @patch("app.api.chat.retrieve")
     def test_chat_rejects_uncited_llm_answer(self, retrieve, *_mocks):
         retrieve.return_value = [SimpleNamespace(
-            chunk_id=12, document_id=7, content="Giá sản phẩm là 10.000 đồng.",
+            chunk_id=12, document_id=7, content="Phí đổi trả là 10.000 đồng.",
             similarity=0.91, metadata={}, filename="bang-gia.txt", chunk_index=0,
         )]
         response = self.client.post(
-            "/api/chat", headers=self.headers(), json={"query": "Giá sản phẩm?"},
+            "/api/chat", headers=self.headers(), json={"query": "Chính sách đổi trả thế nào?"},
         )
         self.assertEqual(200, response.status_code, response.text)
         self.assertEqual("no_context", response.json()["answer_status"])
@@ -779,16 +1125,16 @@ class RecommendationApiTests(unittest.TestCase):
             profiles = db.query(RecommendationCustomerProfile).filter_by(business_id=self.business_id).all()
             self.assertEqual("succeeded", run.status)
             self.assertEqual(2, len(profiles))
-            self.assertTrue(all(profile.segment_label.startswith("rfm_cluster_") for profile in profiles))
-            ai_tags = db.query(Tag).filter(
+            self.assertTrue(all(profile.segment_label in {
+                "no_purchase", "new_customer", "high_value", "loyal", "potential",
+                "needs_attention", "at_risk", "regular",
+            } for profile in profiles))
+            self.assertTrue(all("segment_name" in profile.features for profile in profiles))
+            self.assertTrue(all(profile.features["rfm_rules_version"] == "rfm_percentile_v1" for profile in profiles))
+            self.assertFalse(db.query(Tag).filter(
                 Tag.business_id == self.business_id,
                 Tag.name.like("RFM · AI nhóm %"),
-            ).all()
-            self.assertTrue(ai_tags)
-            self.assertEqual(2, db.query(CustomerTag).filter(
-                CustomerTag.business_id == self.business_id,
-                CustomerTag.tag_id.in_([tag.id for tag in ai_tags]),
-            ).count())
+            ).first())
 
             experiment = Experiment(
                 business_id=self.business_id,

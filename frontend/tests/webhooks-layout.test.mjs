@@ -9,8 +9,17 @@ test('webhook redesign preserves status refresh and connection navigation', () =
   assert.match(view, /@click="refreshWebhookStatus"/);
   assert.match(view, /:disabled="botConnectionLoading \|\| metaLoading"/);
   assert.match(view, /@click="openChannels"/);
-  assert.match(view, /connection.webhook_status === 'connected'/);
-  assert.match(view, /metaStatus.instagram_account_id/);
+  assert.match(view, /v-for="platform in webhookPlatformStatuses"/);
+  assert.match(view, /platform.active \? 'Đang hoạt động' : platform.disconnected \? 'Đã ngắt' : 'Không hoạt động'/);
+  for (const channel of ['facebook', 'instagram', 'telegram', 'zalo', 'tiktok', 'shopee']) {
+    assert.match(source, new RegExp(`channel_type: "${channel}"`));
+  }
+  assert.match(source, /const active = isSocialChannelOnline\(platform\.channel_type\)/);
+  assert.match(source, /item\.webhook_status === "disconnected"/);
+  assert.match(source, /item\.webhook_status === "disconnected"/);
+  assert.doesNotMatch(view, /'Cần kiểm tra'|'Đã kết nối'|'Chưa kết nối'|điểm nhận sự kiện|mã bảo vệ|Tin không hợp lệ|Thử lại không tạo/);
+  assert.match(view, /<h2>\{\{ t\('Trạng thái nhận tin'\) \}\}<\/h2>/);
+  assert.match(source, /metaStatus\.value\.connected && metaStatus\.value\.instagram_account_id/);
   assert.match(view, /class="webhook-heading-icon" aria-hidden="true"/);
 });
 test('webhook typography and responsive cards have a reduced-motion alternative', () => {

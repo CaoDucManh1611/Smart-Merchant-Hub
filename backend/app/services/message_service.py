@@ -1370,6 +1370,7 @@ def process_and_save_message(
                 avatar_url = build_customer_avatar_url(
                     customer_id=customer.id,
                     business_id=int(business_id),
+                    channel=channel,
                 )
         except Exception:
             # Avatar enrichment is optional; never reject an otherwise valid

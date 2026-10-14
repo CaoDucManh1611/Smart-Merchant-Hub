@@ -10,10 +10,10 @@ from app.models.setting import AppSetting
 from app.models.subscription_payment_attempt import SubscriptionPaymentAttempt as Attempt
 from app.services.platform_payment_settings import lock_configuration
 from app.services.subscription_payment_service import lock_subscription, get_attempt, now, payment_status, quoted_amount
+from app.services.vietnam_banks import BANKS
 
 PREFIX = 'platform.vietqr.'
 # Snapshot from https://api.vietqr.io/v2/banks, 2026-10-11; no runtime network dependency.
-BANKS = dict(zip('970415 970436 970418 970405 970448 970422 970407 970416 970432 970423 970403 970437 970454 970441 970443 970431 970426 970400 970409 970412 970419 970424 970425 970427 970428 970430 970433 970438 970440 970446 970449 970452 668888 422589 970457'.split(), 'VietinBank Vietcombank BIDV Agribank OCB MBBank Techcombank ACB VPBank TPBank Sacombank HDBank BVBank VIB SHB Eximbank MSB SaigonBank BacABank PVcomBank NCB ShinhanBank ABBANK VietABank NamABank PGBank VietBank BaoVietBank SeABank COOPBANK LPBank KienLongBank KBank CIMB Woori'.split()))
 
 class PaymentSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -75,7 +75,7 @@ def qr_content(bank_bin, account_number, amount, reference):
 def create_payment(db, sub):
     sub = lock_subscription(db, sub.id)
     if sub.change_kind == 'downgrade': raise HTTPException(409, 'Downgrade does not require payment or refund')
-    if sub.status not in {'pending', 'active'}: raise HTTPException(409, 'Subscription is no longer payable')
+    if sub.status not in {'awaiting_payment', 'pending', 'active'}: raise HTTPException(409, 'Subscription is no longer payable')
     attempt = get_attempt(db, sub.id)
     if payment_status(db, sub, attempt).status in {'paid', 'refunded'} or attempt is not None:
         return attempt

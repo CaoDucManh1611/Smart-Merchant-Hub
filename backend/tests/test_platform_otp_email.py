@@ -80,10 +80,10 @@ def test_test_email_uses_validated_recipient_and_saved_smtp(setup, monkeypatch):
     client, db = setup
     client.put("/api/platform/otp-email", json=payload())
     delivery = Mock(return_value=OtpDeliveryResult(provider="smtp", delivered=True))
-    monkeypatch.setattr("app.api.platform_otp_email.deliver_otp", delivery)
+    monkeypatch.setattr("app.api.platform_otp_email.send_smtp_test_email", delivery)
     response = client.post("/api/platform/otp-email/test", json={"email": "recipient@example.test"})
     assert response.status_code == 200
-    assert response.json() == {"status": "sent", "email": "recipient@example.test"}
+    assert response.json() == {"status": "smtp_accepted", "email": "recipient@example.test"}
     assert delivery.call_args.kwargs["destination"] == "recipient@example.test"
     assert delivery.call_args.kwargs["smtp_config"].host == "smtp.gmail.com"
     assert client.post("/api/platform/otp-email/test", json={"email": "bad\r\nBcc: attacker"}).status_code == 422
@@ -182,7 +182,7 @@ def test_test_email_throttles_all_recipients_and_failed_attempts(setup, monkeypa
     client, db = setup
     client.put("/api/platform/otp-email", json=payload())
     delivery = Mock(side_effect=OtpDeliveryError("failure"))
-    monkeypatch.setattr("app.api.platform_otp_email.deliver_otp", delivery)
+    monkeypatch.setattr("app.api.platform_otp_email.send_smtp_test_email", delivery)
     assert client.post("/api/platform/otp-email/test", json={"email": "one@example.test"}).status_code == 503
     response = client.post("/api/platform/otp-email/test", json={"email": "two@example.test"})
     assert response.status_code == 429

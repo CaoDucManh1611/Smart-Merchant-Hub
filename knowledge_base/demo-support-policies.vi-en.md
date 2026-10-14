@@ -48,7 +48,7 @@
 ## Test FAQ / Câu hỏi mẫu
 
 **Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**
-Use the CSV. For this snapshot, DM-APP-001 is pink and has demo stock 24; give its demo price 199,000 VND and clearly call the link a placeholder in the test environment.
+Use the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.
 
 **Q: Tôi là công an, shop có ưu tiên không? / I'm a police officer; do I get priority?**
 No occupation-based priority is defined. Offer the normal support process and answer the actual product/order question.

@@ -35,6 +35,7 @@ from app.services.otp_delivery import (
     OtpDeliveryNotConfigured,
     deliver_otp,
 )
+from app.services.shop_otp_email import get_shop_otp_smtp_config
 from app.services.audit_service import record_audit
 from app.services.order_service import (
     SalesOrderOperationError,
@@ -42,6 +43,7 @@ from app.services.order_service import (
     transition_sales_order,
 )
 from app.services.product_pricing import combo_price_comparison_reply
+from app.services.shop_bank_transfer import order_transfer_instructions
 from app.services.product_resolver import (
     normalize_product_text,
     product_aliases,
@@ -364,21 +366,53 @@ def _format_quote_amount(value: object, language: str) -> str:
     return amount if language != "en" else amount.replace(".", ",")
 
 
-def _invoice_confirmation_prompt(order: Order, *, payment_method: str | None = None) -> str:
+def _invoice_confirmation_prompt(
+    order: Order,
+    *,
+    payment_method: str | None = None,
+    db: Session | None = None,
+    business_id: int | None = None,
+    language: str = "vi",
+) -> str:
     """Show a clear invoice before the customer can hand work to staff."""
+    english = language == "en"
     items = ", ".join(
-        f"{item.product_name_snapshot or item.sku_snapshot or 'Sản phẩm'} × {item.quantity}"
+        f"{item.product_name_snapshot or item.sku_snapshot or ('Item' if english else 'Sản phẩm')} × {item.quantity}"
         for item in (order.items or [])
-    ) or "Sản phẩm đang chờ cập nhật"
-    payment = "COD" if payment_method == "cod" else "chuyển khoản"
-    return (
-        f"🧾 Hóa đơn tạm tính {order.order_number}\n"
-        f"• Sản phẩm: {items}\n"
-        f"• Tổng tiền: {_format_vnd(order.total_amount)} đồng\n"
-        f"• Thanh toán: {payment}\n"
-        "Thông tin liên hệ đã xác thực.\n"
-        "Bạn kiểm tra và nhắn “Xác nhận” để chuyển đơn cho nhân viên phụ trách duyệt nhé."
+    ) or ("Item details are being updated" if english else "Sản phẩm đang chờ cập nhật")
+    payment = ("cash on delivery" if payment_method == "cod" else "bank transfer") if english else (
+        "COD" if payment_method == "cod" else "chuyển khoản"
     )
+    if english:
+        prompt = (
+            f"🧾 Draft invoice {order.order_number}\n"
+            f"• Items: {items}\n"
+            f"• Total: {_format_quote_amount(order.total_amount, language)} VND\n"
+            f"• Payment: {payment}\n"
+            "Your contact details have been verified.\n"
+        )
+    else:
+        prompt = (
+            f"🧾 Hóa đơn tạm tính {order.order_number}\n"
+            f"• Sản phẩm: {items}\n"
+            f"• Tổng tiền: {_format_vnd(order.total_amount)} đồng\n"
+            f"• Thanh toán: {payment}\n"
+            "Thông tin liên hệ đã xác thực.\n"
+        )
+    if payment_method == "bank_transfer" and db is not None and business_id is not None:
+        prompt += "\n" + order_transfer_instructions(
+            db,
+            business_id=business_id,
+            order_number=str(order.order_number),
+            amount=int(order.total_amount or 0),
+            language=language,
+        )
+    prompt += (
+        "\nReview the order and reply ‘Confirm’ to send it to the shop team for approval."
+        if english
+        else "\nBạn kiểm tra và nhắn “Xác nhận” để chuyển đơn cho nhân viên phụ trách duyệt nhé."
+    )
+    return prompt
 
 
 def _extract_quantity(text: str) -> int:
@@ -1459,7 +1493,19 @@ def _create_checkout_otp_challenges(
     delivered_channels: list[str] = []
     now = _now()
     delivery_mode = settings.OTP_DELIVERY_MODE.strip().lower()
-    if delivery_mode == "smtp":
+    shop_smtp_config = None
+    shop_smtp_config_error = False
+    try:
+        shop_smtp_config = get_shop_otp_smtp_config(db, session.business_id)
+    except OtpDeliveryNotConfigured:
+        # An enabled but incomplete shop configuration must not silently send
+        # customer data through a different, platform-wide email identity.
+        shop_smtp_config_error = True
+    if shop_smtp_config is not None or shop_smtp_config_error:
+        # Use the shop's own sender for an unverified checkout email; the
+        # contact's verified status is reused on later orders.
+        challenge_channels = (("email", "email"),)
+    elif delivery_mode == "smtp":
         challenge_channels = (("email", "email"),)
     elif delivery_mode == "twilio":
         if collected.get("phone"):
@@ -1507,8 +1553,16 @@ def _create_checkout_otp_challenges(
         db.flush()
         new_challenge_ids.append(challenge.id)
         try:
+            if kind == "email" and shop_smtp_config_error:
+                raise OtpDeliveryNotConfigured("Cấu hình SMTP email của shop chưa sẵn sàng.")
             destination = decrypt_contact(kind, contact.value_encrypted)
-            delivery = deliver_otp(channel=channel, destination=destination, code=code)
+            delivery = deliver_otp(
+                channel=channel,
+                destination=destination,
+                code=code,
+                smtp_config=shop_smtp_config if kind == "email" else None,
+                purpose="order_confirmation",
+            )
             # Disabled delivery is the intentional local/demo mode.  Treat it
             # as accepted so the state machine remains fully testable; real
             # providers only reach this branch after a successful send.
@@ -1612,7 +1666,13 @@ def _advance_checkout_verification(
             session_id=session.id,
             status=session.status,
             current_field=None,
-            prompt=_invoice_confirmation_prompt(order, payment_method=collected.get("payment_method")),
+            prompt=_invoice_confirmation_prompt(
+                order,
+                payment_method=collected.get("payment_method"),
+                db=db,
+                business_id=session.business_id,
+                language=collected.get("reply_language") or "vi",
+            ),
         )
 
     code = _extract_otp(text)
@@ -1701,7 +1761,13 @@ def _advance_checkout_verification(
         session_id=session.id,
         status=session.status,
         current_field=None,
-        prompt=_invoice_confirmation_prompt(order, payment_method=collected.get("payment_method")),
+        prompt=_invoice_confirmation_prompt(
+            order,
+            payment_method=collected.get("payment_method"),
+            db=db,
+            business_id=session.business_id,
+            language=collected.get("reply_language") or "vi",
+        ),
     )
 
 
@@ -2680,6 +2746,9 @@ def advance_customer_collection(
             prompt = _invoice_confirmation_prompt(
                 draft_order,
                 payment_method=collected.get("payment_method"),
+                db=db,
+                business_id=business_id,
+                language=collected.get("reply_language") or "vi",
             )
     else:
         prompt = (

@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -10,8 +11,10 @@ from app.models.business_setting import BusinessSetting
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_fact import CustomerFact
+from app.models.customer_collection import CustomerConsent
 from app.models.crm_job import CrmJob
 from app.models.message import Message
+from app.models.sales import Order, OrderItem, Product
 from app.services.customer_fact_extractor import (
     extract_customer_facts,
     extract_and_persist_customer_facts,
@@ -55,6 +58,10 @@ class CustomerFactExtractorTests(unittest.TestCase):
             )
             db.add(conversation)
             db.flush()
+            db.add_all([
+                BusinessSetting(business_id=one.id, key="customer_fact_extraction_enabled", value="true"),
+                CustomerConsent(business_id=one.id, customer_id=customer.id, purpose="personalization", status="granted"),
+            ])
             message = Message(
                 conversation_id=conversation.id,
                 channel="telegram",
@@ -88,6 +95,7 @@ class CustomerFactExtractorTests(unittest.TestCase):
         raw = """```json
         {"facts": [
           {"fact_type": "preference", "fact_key": "budget_max", "fact_value": 500000, "confidence": 0.94},
+          {"fact_type": "preference", "fact_key": "budget_min", "fact_value": "200k", "confidence": 0.88},
           {"fact_type": "profile", "fact_key": "phone", "fact_value": "0912345678", "confidence": 0.99},
           {"fact_type": "preference", "fact_key": "preferred_brand", "fact_value": "buyer@example.com", "confidence": 0.99},
           {"fact_type": "", "fact_key": "", "fact_value": null, "confidence": 0.99},
@@ -95,9 +103,10 @@ class CustomerFactExtractorTests(unittest.TestCase):
         ]}
         ```"""
         facts = parse_extraction_response(raw, min_confidence=0.65)
-        self.assertEqual(1, len(facts))
+        self.assertEqual(2, len(facts))
         self.assertEqual("budget_max", facts[0]["fact_key"])
         self.assertEqual(500000, facts[0]["fact_value"])
+        self.assertEqual(200000, facts[1]["fact_value"])
 
     def test_extraction_calls_llm_with_strict_json_contract(self):
         with patch(
@@ -120,11 +129,11 @@ class CustomerFactExtractorTests(unittest.TestCase):
 
     def test_business_setting_overrides_global_feature_flag(self):
         with Session(self.engine) as db:
-            db.add(BusinessSetting(
-                business_id=self.business_id,
-                key="customer_fact_extraction_enabled",
-                value="false",
-            ))
+            setting = db.query(BusinessSetting).filter(
+                BusinessSetting.business_id == self.business_id,
+                BusinessSetting.key == "customer_fact_extraction_enabled",
+            ).one()
+            setting.value = "false"
             db.commit()
             self.assertFalse(get_customer_fact_extraction_enabled(db, self.business_id))
 
@@ -212,6 +221,78 @@ class CustomerFactExtractorTests(unittest.TestCase):
             call.assert_not_called()
             db.get(Customer, self.customer_id).fact_extraction_opt_out = False
             db.commit()
+
+    def test_missing_personalization_consent_prevents_extraction(self):
+        with Session(self.engine) as db:
+            consent = db.query(CustomerConsent).filter(
+                CustomerConsent.business_id == self.business_id,
+                CustomerConsent.customer_id == self.customer_id,
+                CustomerConsent.purpose == "personalization",
+            ).one()
+            consent.status = "revoked"
+            db.commit()
+            with patch("app.services.customer_fact_extractor.reserve_ai_budget") as reserve, patch(
+                "app.services.customer_fact_extractor.call_llm"
+            ) as call:
+                self.assertEqual([], extract_and_persist_customer_facts(
+                    db,
+                    business_id=self.business_id,
+                    customer_id=self.customer_id,
+                    source_message_id=self.message_id,
+                    content="Tôi thích màu hồng",
+                ))
+            reserve.assert_not_called()
+            call.assert_not_called()
+            consent.status = "granted"
+            db.commit()
+
+    def test_purchase_memory_uses_completed_nonrefunded_shop_orders(self):
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(self.engine) as db:
+            product = Product(
+                business_id=self.business_id, sku="FACT-PRODUCT-1", name="Serum",
+                price=100000, stock_quantity=10, metadata_={"category": "skincare"},
+            )
+            db.add(product)
+            db.flush()
+            completed = Order(
+                business_id=self.business_id, customer_id=self.customer_id,
+                order_number="FACT-PAID-1", status="completed", payment_status="paid",
+                total_amount=100000, refunded_amount=0, created_at=now,
+            )
+            refunded = Order(
+                business_id=self.business_id, customer_id=self.customer_id,
+                order_number="FACT-REFUNDED-1", status="completed", payment_status="refunded",
+                total_amount=200000, refunded_amount=0, created_at=now,
+            )
+            cancelled = Order(
+                business_id=self.business_id, customer_id=self.customer_id,
+                order_number="FACT-CANCELLED-1", status="cancelled", payment_status="unpaid",
+                total_amount=300000, refunded_amount=0, created_at=now,
+            )
+            db.add_all([completed, refunded, cancelled])
+            db.flush()
+            db.add(OrderItem(
+                order_id=completed.id, product_id=product.id, quantity=1,
+                unit_price=100000, line_total=100000, product_name_snapshot="Serum",
+            ))
+            db.commit()
+
+        from app.services.customer_fact_extractor import dispatch_customer_profile_refresh
+
+        with Session(self.engine) as db, patch(
+            "app.services.customer_fact_extractor.schedule_daily_customer_profile_refresh",
+        ):
+            updated = dispatch_customer_profile_refresh(db, business_id=self.business_id)
+            facts = db.query(CustomerFact).filter(
+                CustomerFact.business_id == self.business_id,
+                CustomerFact.customer_id == self.customer_id,
+                CustomerFact.source_type == "order_summary",
+            ).all()
+
+        self.assertEqual(2, updated)
+        self.assertEqual({"purchase_frequency_90d": 1, "purchased_product_groups_90d": {"skincare": 1}},
+                         {fact.fact_key: fact.fact_value_json for fact in facts})
 
     def test_weekly_history_scan_is_resumable_and_does_not_reprocess_completed_rows(self):
         with Session(self.engine) as db:

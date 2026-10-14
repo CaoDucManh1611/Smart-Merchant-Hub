@@ -20,3 +20,8 @@ test('rejected request is not displayed as activated', () => {
   assert.notEqual(checkoutRequestLabel('cancelled'), checkoutRequestLabel('active'));
   assert.match(checkoutRequestLabel('cancelled'), /hủy/);
 });
+
+test('paid plans show payment before admin review', () => {
+  assert.match(checkoutRequestLabel('awaiting_payment'), /thanh toán/);
+  assert.match(checkoutRequestLabel('pending'), /admin duyệt/);
+});

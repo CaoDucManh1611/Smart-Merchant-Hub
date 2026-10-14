@@ -47,6 +47,7 @@ from app.schemas.platform import (
     ProvisioningRequest,
 )
 from app.services.audit_service import record_audit
+from app.services.subscription_payment_service import paid_receipt
 from app.services.quota_service import PLAN_LIMIT_FIELDS, quota_period_start
 from app.services.privacy_service import get_or_create_request
 from app.services.tenant_schema_service import ensure_registry, update_registry
@@ -312,10 +313,31 @@ def _subscription_request_out(db: Session, row: Subscription) -> PlatformSubscri
     if requested_at is not None and requested_at.tzinfo is None:
         # All legacy subscription/audit timestamps are stored as naive UTC.
         requested_at = requested_at.replace(tzinfo=timezone.utc)
+    payment_report = db.scalar(
+        select(AuditLog.id)
+        .where(
+            AuditLog.business_id == business.id,
+            AuditLog.action == "subscription_customer_reported_payment",
+            AuditLog.resource_type == "subscription",
+            AuditLog.resource_id == str(row.id),
+        )
+        .limit(1)
+    )
+    receipt = paid_receipt(db, row)
+    from app.api.onboarding import _chatbot_rental_price
+    expected_amount = row.quoted_amount if row.quoted_amount is not None else (
+        _chatbot_rental_price(row.plan) if row.service_type == "chatbot" else row.plan.price
+    )
+    payment_received = bool(
+        receipt is not None
+        and receipt.business_id == business.id
+        and receipt.amount == expected_amount
+        and not _payment_needs_reconciliation(receipt)
+    )
     return PlatformSubscriptionRequestOut(
         subscription_id=row.id,
         change_kind=row.change_kind,
-        quoted_amount=row.quoted_amount,
+        quoted_amount=expected_amount,
         business_id=business.id,
         shop_name=business.name,
         shop_slug=business.slug,
@@ -335,6 +357,8 @@ def _subscription_request_out(db: Session, row: Subscription) -> PlatformSubscri
         plan_name=row.plan.name,
         service_type=row.service_type or "package",
         status="pending",
+        customer_reported_payment=payment_report is not None,
+        payment_received=payment_received,
         created_at=row.created_at,
     )
 
@@ -353,6 +377,11 @@ def _payment_out(row: Payment) -> PlatformPaymentOut:
         paid_at=row.paid_at,
         created_at=row.created_at,
     )
+
+
+def _payment_needs_reconciliation(row: Payment | None) -> bool:
+    evidence = row.raw_response if row is not None and isinstance(row.raw_response, dict) else {}
+    return bool(evidence.get("reconciliation_required") or evidence.get("payos_verified_payments_pending_review"))
 
 
 @router.get("/plans", response_model=list[PlatformPlanOut])
@@ -518,12 +547,31 @@ def approve_subscription_request(
         raise HTTPException(status_code=404, detail="Yêu cầu gói dịch vụ không tồn tại.")
     if row.status != "pending":
         raise HTTPException(status_code=409, detail="Yêu cầu này không còn ở trạng thái chờ duyệt.")
+    if row.change_kind == "downgrade":
+        service_label = "trợ lý" if row.service_type == "chatbot" else "gói"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Không thể duyệt yêu cầu hạ {service_label} cũ. Shop cần đăng ký {service_label} hiện tại hoặc cao hơn.",
+        )
     plan = db.get(ServicePlan, row.plan_id)
     if plan is None or plan.status != "active":
         raise HTTPException(status_code=409, detail="Gói dịch vụ đã ngừng bán và không thể duyệt.")
     business = db.get(Business, row.business_id)
     if business is None:
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+
+    from app.api.onboarding import _chatbot_rental_price
+    expected_amount = row.quoted_amount if row.quoted_amount is not None else (
+        _chatbot_rental_price(plan) if row.service_type == "chatbot" else plan.price
+    )
+    if expected_amount > 0:
+        receipt = paid_receipt(db, row)
+        if (receipt is None or receipt.business_id != business.id or receipt.amount != expected_amount
+                or _payment_needs_reconciliation(receipt)):
+            raise HTTPException(
+                status_code=409,
+                detail="Chưa ghi nhận khoản thanh toán đúng số tiền. Hãy xác nhận tiền đã vào tài khoản trước khi duyệt gói.",
+            )
 
     # Keep at most one active package. Existing active access remains usable
     # until this point, so requesting an upgrade never locks a shop early.
@@ -776,7 +824,10 @@ def record_shop_payment(
         if existing.status == "pending" and payload.status == "paid" and payload.amount != expected_amount:
             raise HTTPException(status_code=409, detail="Số tiền thanh toán không khớp giá gói dịch vụ.")
         changed = _apply_payment_status(existing, payload)
-        if changed:
+        request_advanced = payload.status == "paid" and subscription.status == "awaiting_payment"
+        if request_advanced:
+            subscription.status = "pending"
+        if changed or request_advanced:
             record_audit(
                 db,
                 business_id=business_id,
@@ -807,6 +858,8 @@ def record_shop_payment(
     if payment.status == "paid" and payment.paid_at is None:
         payment.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.add(payment)
+    if payment.status == "paid" and subscription.status == "awaiting_payment":
+        subscription.status = "pending"
     try:
         db.flush()
     except IntegrityError as exc:

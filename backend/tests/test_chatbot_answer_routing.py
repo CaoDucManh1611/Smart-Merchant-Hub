@@ -87,6 +87,11 @@ def test_unknown_sku_never_falls_back_to_full_catalogue():
     assert text == PRODUCT_NOT_FOUND_REPLY
 
 
+def test_longer_unknown_sku_does_not_match_shorter_catalog_sku():
+    product, _ = _find_exact_product(_db(), 1, "serum010 còn hàng không?", conversation_id=1)
+    assert product is None
+
+
 def test_product_hint_ignores_prefatory_clause():
     hint = _product_hint("Kiểm thử sau khi bật bot: giá bộ dao bếp 5 món là bao nhiêu?")
     assert "bếp" in hint and "Kiểm" not in hint
@@ -360,6 +365,7 @@ def test_live_recommendation_uses_customer_ranking_and_keeps_request_trace():
                 "price": 129000,
                 "available": 4,
                 "click_url": "https://crm.example/click/17",
+                "reason": "explicit_color_preference",
             }
         ],
     )
@@ -378,6 +384,7 @@ def test_live_recommendation_uses_customer_ranking_and_keeps_request_trace():
 
     assert reply is not None
     assert "Túi hồng" in reply
+    assert "Lý do: đúng màu bạn đã chọn" in reply
     assert "https://crm.example/click/17" in reply
     experiment.assert_called_once_with(db, business_id=3)
     payload = serve.call_args.kwargs["payload"]
@@ -460,6 +467,31 @@ def test_attribute_followup_resolves_product_from_prior_customer_turn(monkeypatc
         _DB([product]), business_id=1, text="Màu hồng không ạ?", conversation_id=55,
     )
     assert retrieval_query == f"{product.name}\nMàu hồng không ạ?"
+
+
+def test_new_product_type_does_not_inherit_unrelated_product_from_history(monkeypatch):
+    product = _db().rows[0]
+    resolver_calls = []
+    monkeypatch.setattr(
+        auto_reply_service,
+        "resolve_product",
+        lambda *_args, **_kwargs: resolver_calls.append(True) or product,
+    )
+    query = "Chiếc váy này giá bao nhiêu vậy?"
+
+    retrieval_query = _contextual_retrieval_query(
+        _DB([product]),
+        business_id=1,
+        text=query,
+        conversation_id=55,
+        conversation_history=[
+            {"role": "user", "content": "Điện gia dụng mẫu 01 còn hàng không?"},
+            {"role": "assistant", "content": "Còn hàng."},
+        ],
+    )
+
+    assert retrieval_query == query
+    assert resolver_calls == []
 
 
 def test_product_detail_followup_uses_last_product_instead_of_listing_catalog(monkeypatch):

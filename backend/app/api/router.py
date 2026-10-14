@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from app.api import auth, conversations, documents, chat, meta_oauth, customers, customer_collection, sales, purchase_orders, suppliers, inventory, payments, leads, tickets, team, workflows, reports, notifications, experimentation, media, revenue, chatbot, platform, privacy, usage, onboarding, support, recommendations, workspace, appointments, commercial
 from app.api import customer_avatar, facebook, instagram, local_connectors, shopee, tiktok, telegram, zalo, zalo_personal, webhooks
-from app.api import subscription_payments, platform_support_requests
+from app.api import subscription_payments, monapay_webhooks, platform_support_requests
 from app.api import platform_otp_email
 from app.api import platform_payment_settings
 
@@ -18,6 +18,7 @@ api_router.include_router(appointments.router, tags=["Appointments"])
 api_router.include_router(commercial.router, tags=["Quotes and projects"])
 api_router.include_router(onboarding.router, tags=["Self-service onboarding"])
 api_router.include_router(subscription_payments.router, tags=["Subscription checkout"])
+api_router.include_router(monapay_webhooks.router, tags=["MONA Pay webhooks"])
 api_router.include_router(platform_support_requests.router)
 api_router.include_router(local_connectors.router)
 api_router.include_router(support.router, tags=["Temporary support access"])

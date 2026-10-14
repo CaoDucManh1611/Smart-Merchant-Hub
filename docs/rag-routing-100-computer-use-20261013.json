@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-10-13T15:07:50+00:00",
+  "case_count": 100,
+  "isolation": "One input turn per case ID; no conversation history or previous answer is carried forward.",
+  "routing": {
+    "passed": 100,
+    "accuracy": 1.0,
+    "failures": []
+  },
+  "answer_quality": {
+    "status": "not_run",
+    "reason": "Pass --predictions to score answers, citations, handoff and latency."
+  }
+}

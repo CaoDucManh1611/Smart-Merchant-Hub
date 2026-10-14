@@ -22,7 +22,7 @@ const props = defineProps({
   quotedAmount: { type: [String, Number], default: null },
 });
 
-const emit = defineEmits(["back", "submit", "refresh", "pay", "reprice"]);
+const emit = defineEmits(["back", "submit", "refresh", "pay", "confirm-payment", "cancel-request", "reprice"]);
 const qrImage = ref('');
 const qrError = ref('');
 watch(() => props.payment?.qr_code, async (code, _, cleanup) => {
@@ -42,6 +42,13 @@ const payableAmount = computed(() => checkoutAmount(props.quotedAmount, props.pa
 const quotedPrice = computed(() => payableAmount.value == null ? props.plan?.price : formatMoney(payableAmount.value));
 const priceChanged = computed(() => props.submitted && payableAmount.value != null && props.plan?.raw_price != null && Number(payableAmount.value) !== Number(props.plan.raw_price));
 const paymentLabel = computed(() => ({ paid: 'Đã nhận tiền', refunded: 'Đã hoàn tiền', pending: 'Chờ nhận tiền', creating: 'Đang chuẩn bị thanh toán', expired: 'Thanh toán đã hết hạn', cancelled: 'Thanh toán đã hủy', failed: 'Chưa tạo được thanh toán', reconciliation_required: 'Cần admin đối soát' }[props.payment?.status] || 'Chưa ghi nhận thanh toán'));
+const paymentStageLabel = computed(() => {
+  if (props.status === 'pending') return props.payment?.status === 'paid' ? t('Đã nhận tiền · đang chờ admin duyệt') : t('Đã gửi xác nhận · chờ admin đối soát');
+  return props.status === 'awaiting_payment' ? t('Đang chờ bạn thanh toán') : t(paymentLabel.value);
+});
+const canCancelRequest = computed(() => ['awaiting_payment', 'pending'].includes(props.status)
+  && !['paid', 'refunded', 'reconciliation_required'].includes(props.payment?.status)
+  && !props.payment?.reconciliation_required);
 const checkoutUrl = computed(() => {
   try {
     const url = new URL(props.payment?.checkout_url || '');
@@ -185,10 +192,10 @@ function planName(plan, fallback) {
           <div v-if="buyer?.name"><dt>{{ copy.registrant }}</dt><dd>{{ buyer.name }}</dd></div>
           <div v-if="buyer?.email"><dt>{{ copy.email }}</dt><dd>{{ buyer.email }}</dd></div>
         </dl>
-        <button v-if="priceChanged && status === 'pending' && payment?.status !== 'paid' && !payment?.reconciliation_required" type="button" class="checkout-back" @click="emit('reprice')">Tạo yêu cầu theo giá mới</button>
+        <button v-if="priceChanged && ['awaiting_payment', 'pending'].includes(status) && payment?.status !== 'paid' && !payment?.reconciliation_required" type="button" class="checkout-back" @click="emit('reprice')">Tạo yêu cầu theo giá mới</button>
 
         <div v-if="error" class="checkout-error" role="alert">{{ error }}</div>
-        <div v-if="submitted" class="checkout-confirmation" role="status">
+        <div v-if="submitted && status !== 'awaiting_payment'" class="checkout-confirmation" role="status">
           <span class="checkout-confirmation-icon" aria-hidden="true">✓</span>
           <div>
             <strong>{{ t(checkoutRequestLabel(status)) }}</strong>
@@ -198,11 +205,17 @@ function planName(plan, fallback) {
           <button type="button" class="checkout-refresh" @click="emit('refresh')">{{ copy.refresh }}</button>
         </div>
         <section v-if="submitted && !isDowngrade() && Number(quotedAmount ?? plan?.raw_price ?? 0) > 0" class="checkout-payment" aria-labelledby="checkout-payment-title">
-          <h2 id="checkout-payment-title">Thông tin thanh toán</h2>
-          <p>Quét VietQR bằng ứng dụng ngân hàng và kiểm tra người nhận, số tiền, nội dung trước khi chuyển. Chờ admin xác nhận thực nhận tiền; thanh toán và duyệt gói là hai bước riêng.</p>
-          <p role="status" class="checkout-payment-status" :class="{ 'is-paid': payment?.status === 'paid' }"><strong>{{ paymentLabel }}</strong></p>
+          <h2 id="checkout-payment-title">{{ t(status === 'pending' ? 'Theo dõi thanh toán' : 'Thông tin thanh toán') }}</h2>
+          <p v-if="status === 'awaiting_payment'">{{ t('Quét VietQR bằng ứng dụng ngân hàng, kiểm tra người nhận, số tiền và nội dung trước khi chuyển. Sau khi chuyển xong, bấm xác nhận bên dưới.') }}</p>
+          <p v-else-if="status === 'pending'">{{ t('Xác nhận của bạn đã được gửi. Trạng thái thanh toán sẽ cập nhật sau khi admin đối soát với ngân hàng.') }}</p>
+          <p v-else>{{ t('Thanh toán và duyệt gói là hai bước riêng.') }}</p>
+          <p v-if="status === 'awaiting_payment'" role="status" class="checkout-payment-status" :class="{ 'is-paid': payment?.status === 'paid' }"><strong>{{ paymentStageLabel }}</strong></p>
+          <div v-else-if="status === 'pending'" class="checkout-payment-review-row">
+            <p role="status" class="checkout-payment-status" :class="{ 'is-paid': payment?.status === 'paid' }"><strong>{{ paymentStageLabel }}</strong></p>
+            <button v-if="canCancelRequest" type="button" class="checkout-cancel-payment" :disabled="paymentLoading" @click="emit('cancel-request')">{{ t('Hủy đơn thanh toán và chọn gói khác') }}</button>
+          </div>
           <p v-if="payment?.reconciliation_required" class="checkout-error">Giao dịch cần admin đối soát; không tự kích hoạt hoặc hoàn tiền.</p>
-          <template v-if="payment?.status === 'pending'">
+          <template v-if="status === 'awaiting_payment' && payment?.status === 'pending'">
             <div class="checkout-transfer-layout">
             <div class="checkout-qr-card">
             <span class="checkout-qr-brand">VietQR <span>· Chuyển khoản ngân hàng</span></span>
@@ -221,8 +234,14 @@ function planName(plan, fallback) {
             <a v-if="checkoutUrl && payment.provider !== 'vietqr'" :href="checkoutUrl" target="_blank" rel="noopener noreferrer" class="checkout-back">Mở trang thanh toán</a>
           </template>
           <p v-if="paymentError || qrError" class="checkout-error" role="alert">{{ paymentError || qrError }}</p>
-          <button v-if="!payment || payment.status === 'not_created' || payment.status === 'creating' || payment.status === 'failed'" type="button" class="checkout-submit" :disabled="paymentLoading || status === 'cancelled' || status === 'expired'" @click="emit('pay')">{{ paymentLoading ? 'Đang chuẩn bị thanh toán…' : 'Tạo QR thanh toán' }}</button>
-          <small>VietQR không tự xác nhận đã nhận tiền. Chỉ ghi nhận thanh toán khi admin xác nhận thực nhận tiền. Không dựa vào ảnh biên lai hay nút bấm của khách.</small>
+          <button v-if="status === 'awaiting_payment' && (!payment || payment.status === 'not_created' || payment.status === 'creating' || payment.status === 'failed')" type="button" class="checkout-submit" :disabled="paymentLoading || status === 'cancelled' || status === 'expired'" @click="emit('pay')">{{ paymentLoading ? 'Đang chuẩn bị thanh toán…' : 'Tạo QR thanh toán' }}</button>
+          <div v-if="status === 'awaiting_payment' && payment?.status === 'pending'" class="checkout-payment-actions">
+            <button type="button" class="checkout-submit" :disabled="paymentLoading" @click="emit('confirm-payment')">{{ t(paymentLoading ? 'Đang gửi xác nhận…' : 'Tôi đã thanh toán') }}</button>
+            <button type="button" class="checkout-cancel-payment" :disabled="paymentLoading" @click="emit('cancel-request')">{{ t('Hủy đơn thanh toán và chọn gói khác') }}</button>
+          </div>
+          <small v-if="status === 'awaiting_payment'">{{ t('Nút xác nhận chỉ gửi thông báo cho admin, không tự xác nhận đã nhận tiền hay kích hoạt gói.') }}</small>
+          <small v-else-if="status === 'pending'">{{ t('Nút xác nhận của khách không thay thế việc admin kiểm tra tiền đã vào tài khoản.') }}</small>
+          <small v-else>{{ t('Admin chỉ duyệt sau khi admin xác nhận thực nhận tiền đã vào tài khoản.') }}</small>
         </section>
       </section>
 
@@ -340,6 +359,14 @@ function planName(plan, fallback) {
 .checkout-payment-status { display:inline-flex; align-items:center; gap:8px; margin:0 0 14px; padding:7px 12px; border-radius:999px; border:1px solid var(--checkout-line); }
 .checkout-payment-status::before { content:''; width:7px; height:7px; border-radius:50%; background:#be831c; }
 .checkout-payment-status.is-paid::before { background:var(--checkout-accent); }
+.checkout-payment-review-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:4px 0 12px; }
+.checkout-payment-review-row .checkout-payment-status { margin:0; }
+.checkout-payment > small { display:block; margin-top:12px; }
+.checkout-payment-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:4px 0 12px; }
+.checkout-payment-actions .checkout-submit { width:auto; margin:0; }
+.checkout-cancel-payment { min-height:42px; padding:9px 14px; border:1px solid var(--checkout-line); border-radius:11px; background:transparent; color:var(--checkout-muted); font:inherit; font-size:13px; cursor:pointer; }
+.checkout-cancel-payment:hover:not(:disabled) { border-color:#a85a56; color:#ffd8d5; }
+.checkout-cancel-payment:disabled { opacity:.58; cursor:not-allowed; }
 .checkout-transfer-layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:20px; align-items:start; margin:4px 0 20px; }
 .checkout-qr-card { padding:14px; border:1px solid var(--checkout-line); border-radius:18px; background:#fff; text-align:center; color:#173b42; animation:checkout-reveal .35s ease-out both; }
 .checkout-qr-brand { display:block; font-weight:850; font-size:16px; color:#087d79; }

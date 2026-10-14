@@ -35,6 +35,7 @@ from app.models.document import Document, DocumentChunk
 from app.models.setting import AppSetting
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.subscription_payment_attempt import SubscriptionPaymentAttempt
+from app.models.monapay_transaction import MonaIncomingTransaction
 from app.models.platform_support_request import PlatformSupportRequest, PlatformSupportRequestHistory
 from app.models.channel import Channel, ChannelEvent
 from app.models.channel_outbound_attempt import ChannelOutboundAttempt
@@ -108,6 +109,7 @@ __all__ = [
     "Subscription",
     "Payment",
     "SubscriptionPaymentAttempt",
+    "MonaIncomingTransaction",
     "PlatformSupportRequest",
     "PlatformSupportRequestHistory",
     "Channel",

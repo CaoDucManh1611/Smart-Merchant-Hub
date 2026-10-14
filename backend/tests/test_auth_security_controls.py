@@ -85,8 +85,38 @@ class AuthSecurityControlTests(unittest.TestCase):
         session = sessions.json()[0]
         self.assertEqual("Laptop", session["device_label"])
         self.assertNotIn("test-agent", str(session))
+        self.assertFalse(session["mfa_verified"])
         self.assertEqual(204, self.client.post(f"/api/auth/sessions/{session['id']}/revoke", headers=headers).status_code)
         self.assertEqual(401, self.client.get("/api/auth/me", headers=headers).status_code)
+
+    def test_session_is_only_reported_mfa_verified_after_a_verified_audit_event(self):
+        body = self.login()
+        headers = {"Authorization": f"Bearer {body['access_token']}", "X-Business-Id": str(self.business_id)}
+        sessions = self.client.get("/api/auth/sessions", headers=headers).json()
+        session_id = sessions[0]["id"]
+        self.assertFalse(sessions[0]["mfa_verified"])
+
+        # Older sessions stored `true` when MFA was disabled. Without a successful
+        # verification event, that legacy value must not be shown as verified.
+        with Session(self.engine) as db:
+            session = db.get(AuthSession, session_id)
+            session.mfa_verified = True
+            db.commit()
+        sessions = self.client.get("/api/auth/sessions", headers=headers).json()
+        self.assertFalse(next(item for item in sessions if item["id"] == session_id)["mfa_verified"])
+
+        with Session(self.engine) as db:
+            db.add(AuditLog(
+                business_id=self.business_id,
+                user_id=db.scalar(select(User.id).where(User.email == "security-owner@example.test")),
+                action="mfa_verified",
+                resource_type="auth_session",
+                resource_id=str(session_id),
+                metadata_={"status": "enabled"},
+            ))
+            db.commit()
+        sessions = self.client.get("/api/auth/sessions", headers=headers).json()
+        self.assertTrue(next(item for item in sessions if item["id"] == session_id)["mfa_verified"])
 
     def test_mfa_prepare_returns_provisioning_payload_without_storing_raw_secret(self):
         body = self.login()

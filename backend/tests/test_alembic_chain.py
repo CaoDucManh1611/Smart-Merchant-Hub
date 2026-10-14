@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+import sqlalchemy as sa
 
 
 class AlembicChainTests(unittest.TestCase):
@@ -110,7 +111,10 @@ class AlembicChainTests(unittest.TestCase):
         config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
         scripts = ScriptDirectory.from_config(config)
 
-        self.assertEqual(["20261005_0056"], scripts.get_heads())
+        self.assertEqual(["20261014_0060"], scripts.get_heads())
+        self.assertEqual("20261012_0059", scripts.get_revision("20261014_0060").down_revision)
+        self.assertEqual("20261011_0058", scripts.get_revision("20261012_0059").down_revision)
+        self.assertEqual("20261011_0057", scripts.get_revision("20261011_0058").down_revision)
         self.assertEqual("20260923_0055", scripts.get_revision("20261005_0056").down_revision)
         self.assertEqual("20260919_0045", scripts.get_revision("20260919_0046").down_revision)
         self.assertEqual("20260919_0044", scripts.get_revision("20260919_0045").down_revision)
@@ -131,6 +135,42 @@ class AlembicChainTests(unittest.TestCase):
         self.assertEqual("20260903_0006", scripts.get_revision("20260903_0007").down_revision)
         self.assertEqual("20260903_0001", scripts.get_revision("20260903_0002").down_revision)
         self.assertIsNone(scripts.get_revision("20260903_0001").down_revision)
+
+    def test_chatbot_price_migration_updates_only_the_previous_default(self):
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "20261014_0060_full_service_chatbot_price.py"
+        )
+        spec = spec_from_file_location("full_service_chatbot_price_migration", migration_path)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        engine = sa.create_engine("sqlite://")
+        metadata = sa.MetaData()
+        plans = sa.Table(
+            "service_plans",
+            metadata,
+            sa.Column("id", sa.Integer, primary_key=True),
+            sa.Column("code", sa.String(50), nullable=False),
+            sa.Column("features", sa.JSON),
+        )
+        metadata.create_all(engine)
+
+        with engine.begin() as connection:
+            connection.execute(plans.insert(), [
+                {"code": "pro", "features": {"chatbot_rental_price": 1_500_000}},
+                {"code": "pro", "features": {"chatbot_rental_price": 2_200_000}},
+                {"code": "growth", "features": {"chatbot_rental_price": 400_000}},
+            ])
+            with patch.object(module.op, "get_bind", return_value=connection):
+                module.upgrade()
+            values = connection.execute(sa.select(plans.c.code, plans.c.features)).all()
+
+        self.assertEqual(
+            [("pro", 3_000_000), ("pro", 2_200_000), ("growth", 400_000)],
+            [(code, features["chatbot_rental_price"]) for code, features in values],
+        )
 
 
 if __name__ == "__main__":

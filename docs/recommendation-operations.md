@@ -11,6 +11,14 @@ small lexical signal from that customer's earlier `ask` and `search` queries.
 All candidates are still filtered to the active tenant catalog and available
 stock before either signal is evaluated.
 
+For customers with active personalization consent, the saved RFM business
+segment adjusts the balanced scorer's component weights: loyal/high-value
+segments lean slightly more on purchase affinity, while new/no-purchase
+segments lean toward catalog popularity and the current product query. Other
+strategies receive the same small, normalized segment adjustment. The effective
+weights and RFM rule version are stored with the recommendation request. Missing
+or stale-unclassified profiles keep the base strategy weights.
+
 The RAG service should pass its candidate product ids and normalized relevance scores in
 `rag_candidates`. It must not bypass the availability and tenant filters.
 
@@ -45,7 +53,11 @@ The RAG `POST /api/chat` and `/api/chat/stream` requests accept an optional
 idempotent `purchase` event per order item. A fully refunded order emits the
 matching negative `refund` events.
 
-`POST /api/recommendations/training/segments` queues a tenant-scoped deterministic RFM KMeans
-job. The CRM worker executes `recommendations.train_segments` and stores `cluster_N` profiles.
-Run it after importing orders and on a scheduled cadence. This profile model is isolated from the
-NCF checkpoint: a real tenant NCF artefact is attached only after training on that tenant's product ids.
+`POST /api/recommendations/training/segments` queues a tenant-scoped RFM profile job. The CRM
+worker executes `recommendations.train_segments` and stores stable business segment keys, the
+human-readable group, percentile scores, rule version, and `as_of` timestamp. Any model cluster id
+is retained only as analysis metadata; it is not shown as the customer's label. Run the job after
+importing orders and on a scheduled cadence. Personalization profiles are built only for customers
+with consent. Current live purchase-based ranking uses tenant-scoped item co-occurrence and order
+history; imported NCF/LinUCB checkpoints are public-data demo artifacts, not models trained on a
+shop's live orders. Training a production model per shop remains future work.

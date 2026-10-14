@@ -188,11 +188,11 @@ def payment_status(db, sub, attempt=None):
         terminal_receipt = receipt or refunded
         return SubscriptionPaymentOut(status="paid" if receipt else "refunded" if refunded else "not_created",
             amount=int(terminal_receipt.amount) if terminal_receipt else None, approval_status=sub.status,
-            reconciliation_required=bool(receipt and sub.status not in {"pending", "active"}))
+            reconciliation_required=bool(receipt and sub.status not in {"awaiting_payment", "pending", "active"}))
     status = "paid" if receipt else "refunded" if refunded else attempt.status
     if status == "pending" and attempt.expires_at <= now():
         status = "expired"
-    if status not in {"paid", "refunded"} and sub.status not in {"pending", "active"}:
+    if status not in {"paid", "refunded"} and sub.status not in {"awaiting_payment", "pending", "active"}:
         status = "cancelled"
     show_checkout = status == "pending"
     return SubscriptionPaymentOut(status=status, amount=attempt.amount, currency=attempt.currency,
@@ -202,7 +202,7 @@ def payment_status(db, sub, attempt=None):
         bank_name=attempt.bank_name, bin=attempt.bank_bin, account_name=attempt.account_name,
         account_number=attempt.account_number, reference=attempt.reference,
         expires_at=attempt.expires_at, approval_status=sub.status,
-        reconciliation_required=attempt.reconciliation_required or bool(receipt and sub.status not in {"pending", "active"}))
+        reconciliation_required=attempt.reconciliation_required or bool(receipt and sub.status not in {"awaiting_payment", "pending", "active"}))
 
 
 def receive_webhook(db, payload):
@@ -258,7 +258,7 @@ def receive_webhook(db, payload):
         if existing.provider == "payos":
             return {"accepted": True}
         manual_receipt = existing
-    attempt.reconciliation_required = bool(attempt.reconciliation_required or paid_receipt(db, sub) or sub.status not in {"pending", "active"}
+    attempt.reconciliation_required = bool(attempt.reconciliation_required or paid_receipt(db, sub) or sub.status not in {"awaiting_payment", "pending", "active"}
                                            or attempt.expires_at <= now())
     attempt.status = "paid"
     attempt.provider_transaction_reference = data.reference
@@ -279,6 +279,8 @@ def receive_webhook(db, payload):
                        status="paid", paid_at=now(), raw_response={"order_code": attempt.order_code,
                        "payment_link_id": attempt.payment_link_id, "reference": data.reference,
                        "reconciliation_required": attempt.reconciliation_required}))
+    if sub.status == "awaiting_payment" and not attempt.reconciliation_required:
+        sub.status = "pending"
     try:
         db.commit()
     except IntegrityError as exc:

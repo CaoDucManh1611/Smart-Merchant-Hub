@@ -29,8 +29,17 @@ test("customer CSV and consent flows require preview and evidence before saving"
   assert.match(appSource, /customers\/import\/preview/);
   assert.match(appSource, /preview\.errors\?\.length/);
   assert.match(templateSource, /customerImportPreview\.errors\?\.length/);
+  assert.match(appSource, /\.customer-import-card \.customer-import-file \{[^}]*color-scheme: light/);
+  assert.match(appSource, /body\.crm-dark \.customer-import-card \.customer-import-file \{[^}]*color-scheme: dark; background: #1a1e20/);
+  assert.match(appSource, /body\.crm-dark \.customer-import-card input::file-selector-button \{ color: #d8ffff; background: #173f43/);
   assert.match(appSource, /consentEvidenceMessageId\.value/);
   assert.match(appSource, /evidence_message_id: status === "granted" \? evidenceId : null/);
+  assert.match(appSource, /customerConsentActionError\.value = "Chọn tin nhắn khách đã gửi[\s\S]*?await openCustomerMessageSearch\(true\)/);
+  assert.match(appSource, /item\?\.direction === "inbound"[\s\S]*?item\?\.sender_type === "customer"[\s\S]*?item\?\.content/);
+  assert.match(appSource, /function handleCustomerMessageSearchResult\(item\)[\s\S]*?Chỉ tin nhắn văn bản do khách gửi mới có thể làm bằng chứng/);
+  assert.match(templateSource, /openCustomerMessageSearch\(true\)/);
+  assert.match(templateSource, /@click="handleCustomerMessageSearchResult\(item\)"/);
+  assert.match(templateSource, /Đã chọn tin nhắn #[\s\S]*?customerMessageSearchPreview\(consentEvidenceMessage\)/);
   assert.match(templateSource, /item\.status === 'scheduled'/);
 });
 
@@ -129,6 +138,7 @@ test("customer 360 shows bought products and staff can process a customer-confir
   assert.match(templateSource, /Đồng ý đơn/);
   assert.match(templateSource, /class="customer-order-items"/);
   assert.match(templateSource, /order\.items\.map/);
+  assert.match(templateSource, /item\.product_name_snapshot \|\| item\.product_name/);
 });
 
 test("service plans declare channel limits without preselecting channels and include the 3-platform tier", () => {
@@ -187,9 +197,10 @@ test("tenant identity comes from the authenticated session, never a hardcoded br
   assert.doesNotMatch(apiClientSource, /X-Business-Id|BUSINESS_ID/);
   assert.match(authContextSource, /AUTH_TOKEN_KEY/);
   assert.match(appSource, /function openSettings\(\)\s*\{[\s\S]*?if \(!authUser\.value\) return;/);
-  for (const card of ["quota-card", "channel-connect-card", "chatbot-runtime-card", "followup-card", "csat-card", "team-card"]) {
+  for (const card of ["quota-card", "channel-connect-card", "chatbot-runtime-card", "followup-card", "team-card"]) {
     assert.match(appSource, new RegExp(`<div v-if="authUser" class="settings-card ${card}"`));
   }
+  assert.doesNotMatch(appSource, /csat-card|Đánh giá hài lòng/);
 });
 
 test("customer avatars use the local API proxy and fall back when providers reject stale URLs", () => {
@@ -366,6 +377,13 @@ test("Knowledge Base keeps refresh visible above the horizontally scrollable doc
   assert.match(headerStyle[0], /min-width:\s*0/);
   assert.match(headerStyle[0], /box-sizing:\s*border-box/);
   assert.match(appSource, /\.docs-table-card \{ overflow-x: auto;/);
+});
+
+test("Knowledge Base warns before either document or chunk quota is reached", () => {
+  assert.match(appSource, /const knowledgeQuotaNearLimit = computed\(\(\) => \{[\s\S]*?knowledgeDocumentUsage\.value, knowledgeChunkUsage\.value[\s\S]*?used >= limit \* warningRatio/);
+  assert.match(templateSource, /v-else-if="knowledgeQuotaNearLimit"[\s\S]*?Kho kiến thức sắp chạm hạn mức/);
+  assert.match(appSource, /knowledgeDocumentQuotaReached \|\| knowledgeQuotaNearLimit/);
+  assert.match(templateSource, /quotaSnapshot\?\.plan_name \? t\(quotaSnapshot\.plan_name\)/);
 });
 
 test("mobile CRM header wraps its actions instead of clipping them", () => {
@@ -569,17 +587,21 @@ test("shop self-service signup verifies email before creating a shop", () => {
   assert.match(appSource, /provider-errors/);
 });
 
-test("channel onboarding exposes guided Telegram and Zalo Bot Creator token verification", () => {
+test("channel onboarding exposes guided Telegram and Zalo token verification", () => {
   assert.match(appSource, /botConnections/);
-  assert.match(appSource, /Kết nối Telegram\/Zalo/);
-  assert.match(appSource, /Quét QR để tạo bot/);
-  assert.match(appSource, /Sao chép token/);
+  assert.match(appSource, /const botGuideUrls = Object\.freeze\(/);
+  assert.match(appSource, /telegram: "https:\/\/t\.me\/BotFather"/);
+  assert.match(appSource, /zalo: "https:\/\/docs\.zaloplatforms\.com\/docs\/BOT\/create_bot"/);
+  assert.match(appSource, /function botQrUrl\(channelType\)/);
+  assert.match(appSource, /Sao chép mã truy cập được cấp\./);
   assert.match(appSource, /Kiểm tra và kết nối/);
   assert.match(appSource, /channels\/verify/);
+  assert.match(appSource, /access_token: token/);
+  assert.match(templateSource, /:href="botGuideUrl\(channelModalTab\)"/);
   assert.match(appSource, /async function retryLocalConnector/);
   assert.match(appSource, /channels\/\$\{connection\.channel_type\}\/retry/);
   assert.match(appSource, /BotFather/);
-  assert.match(appSource, /Zalo Bot Manager/);
+  assert.match(appSource, /docs\.zaloplatforms\.com\/docs\/BOT\/create_bot/);
   assert.match(appSource, /access_token: token/);
   assert.doesNotMatch(appSource, /`personal:\$\{token\}`/);
     assert.match(styleSource, /\.channel-connect-card/);
@@ -590,7 +612,7 @@ test("channel onboarding exposes guided Telegram and Zalo Bot Creator token veri
     assert.match(appSource, /currentTab === 'channels'/);
     assert.match(appSource, /currentTab === 'webhooks'/);
     assert.match(appSource, /Kết nối mạng xã hội/);
-    assert.match(appSource, /<h2>Nhận sự kiện<\/h2>/);
+    assert.match(appSource, /<h2>\{\{ t\('Trạng thái nhận tin'\) \}\}<\/h2>/);
     assert.match(appSource, /webhook-card/);
     assert.match(appSource, /refreshWebhookStatus/);
   });
@@ -609,7 +631,6 @@ test("P1 conversation revenue metrics are visible in the AI dashboard", () => {
   assert.match(appSource, /recovered_revenue/);
   assert.match(appSource, /recovered_orders/);
   assert.match(appSource, /Bot phản hồi, chưa bàn giao/);
-  assert.match(appSource, /bot_resolution_rate/);
 });
 
 test("P2 workflow builder exposes durable trigger, action and run controls", () => {
@@ -734,6 +755,27 @@ test("Customer 360 displays the collected profile name, email, and phone", () =>
   assert.match(appSource, /customer360\.name/);
 });
 
+test("product advice reports real personalization signals and drafts proactive preference questions", () => {
+  assert.match(appSource, /personalization_applied && result\.personalization_signals\?\.length/);
+  assert.match(appSource, /available_personalization_signals/);
+  assert.match(appSource, /purchase_history_affinity/);
+  assert.match(appSource, /purchase_history_category_affinity/);
+  assert.match(appSource, /Các gợi ý hiện chỉ khớp theo danh mục/);
+  assert.match(appSource, /Khớp thông tin quan tâm đã ghi nhận/);
+  assert.match(appSource, /function customerProductSuggestionNeedsIntake\(\)/);
+  assert.match(appSource, /function draftCustomerPreferenceQuestion\(\)[\s\S]*?draft\.value = uiLocale/);
+  assert.match(appSource, /Soạn câu hỏi tìm hiểu nhu cầu/);
+  assert.match(appSource, /customer-product-intake-action/);
+});
+
+test("Customer 360 translates stored fact keys and duplicate-match labels into Vietnamese", () => {
+  assert.match(appSource, /interested_category: "Danh mục quan tâm"/);
+  assert.match(appSource, /purchase_frequency_90d: "Số lần mua trong 90 ngày"/);
+  assert.match(appSource, /function customerMergeConfidenceLabel\(label\)/);
+  assert.match(appSource, /Lịch sử gộp hồ sơ/);
+  assert.doesNotMatch(appSource, /Lịch sử merge/);
+});
+
 test("Customer 360 projects one primary contact/address and keeps history expandable", () => {
   assert.match(appSource, /customer360PrimaryContacts/);
   assert.match(appSource, /customer360VisibleAddresses/);
@@ -782,11 +824,8 @@ test("Internal notes save without referencing an unrelated media variable", () =
   assert.doesNotMatch(internalNoteHandler, /removePendingMedia\(media\.id\)/);
 });
 
-test("chatbot settings expose CSAT results for resolved conversations", () => {
-  assert.match(appSource, /csatSummary/);
-  assert.match(appSource, /\/chatbot\/csat/);
-  assert.match(appSource, /Điểm hài lòng/);
-  assert.match(appSource, /Tỷ lệ hài lòng/);
+test("settings do not render or poll the CSAT dashboard", () => {
+  assert.doesNotMatch(appSource, /csat-card|csatSummary|\/chatbot\/csat|Đánh giá hài lòng/);
 });
 
 test("Customer 360 details use a scrollable panel so the full profile remains visible", () => {
@@ -974,18 +1013,16 @@ test("network-backed controls expose busy, success, and failure feedback", () =>
   assert.match(templateSource, /:disabled="autoReplySaving"/);
   assert.match(appSource, /followupNotice\.value/);
   assert.match(appSource, /followupError\.value/);
-  assert.match(appSource, /csatError\.value/);
   assert.match(templateSource, /v-if="followupError"[^>]+role="alert"/);
-  assert.match(templateSource, /v-if="csatError"[^>]+role="alert"/);
   assert.doesNotMatch(templateSource, /class="btn-meta-connect"/);
   assert.match(templateSource, /class="settings-card meta-business-suite-bridge-card"[\s\S]*?:disabled="localConnectorDownloading"/);
   assert.match(templateSource, /v-if="metaStatus\.connected" class="meta-oauth-footer"[\s\S]*@click="disconnectMeta"/);
-  assert.match(appSource, /async function disconnectMeta\(\)[\s\S]*Ngắt liên kết Meta API/);
+  assert.match(appSource, /async function disconnectMeta\(\)[\s\S]*Ngắt quyền Meta/);
 });
 
 test("destructive follow-up cancellation requires confirmation and reports errors", () => {
   const start = appSource.indexOf("async function cancelFollowup");
-  const end = appSource.indexOf("async function fetchCsat", start);
+  const end = appSource.indexOf("onUnmounted(() =>", start);
   const body = appSource.slice(start, end);
   assert.match(body, /requestConfirmation\("Hủy lịch chăm sóc này\?"/);
   assert.match(body, /if \(!response\.ok\)/);

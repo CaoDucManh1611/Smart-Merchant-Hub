@@ -94,9 +94,10 @@
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage strong { color: var(--ops-ink); }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage b { color: var(--ops-accent); font-variant-numeric: tabular-nums; }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-usage-separator { padding-inline: 3px; }
-.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage.at-document-limit { border-color: #d9ad69; background: #fff8e9; }
-.crm-app.crm-dark .rag-docs-layout .knowledge-plan-usage.at-document-limit { background: #3b3327; border-color: #8c6a37; }
+.crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-plan-usage.has-quota-warning { border-color: #d9ad69; background: #fff8e9; }
+.crm-app.crm-dark .rag-docs-layout .knowledge-plan-usage.has-quota-warning { background: #3b3327; border-color: #8c6a37; }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .knowledge-quota-warning { margin: 8px 2px; color: #9b5d13 !important; font-size: 12px; }
+.crm-app.crm-dark .rag-docs-layout .knowledge-quota-warning { color: #f1c87b !important; }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .upload-dropzone.quota-locked { opacity: .65; cursor: not-allowed; }
 .crm-app:not(.platform-admin-workspace) .rag-docs-layout .import-choice-row button:disabled { opacity: .5; cursor: not-allowed; }
 .crm-app:not(.platform-admin-workspace) :is(.products-layout, .rag-docs-layout) .upload-icon { font-size: 11px !important; font-weight: 650; letter-spacing: 1px; color: var(--ops-accent); }
@@ -323,8 +324,8 @@
   border-radius: 14px !important;
 }
 .crm-app:not(.platform-admin-workspace) .channel-modal--meta .channel-modal-mark,
-.crm-app:not(.platform-admin-workspace) .channel-modal--facebook .channel-modal-mark { background-image: url('/brand/platforms/facebook.svg') !important; }
-.crm-app:not(.platform-admin-workspace) .channel-modal--instagram .channel-modal-mark { background-image: url('/brand/platforms/instagram.svg') !important; }
+.crm-app:not(.platform-admin-workspace) .channel-modal--facebook .channel-modal-mark,
+.crm-app:not(.platform-admin-workspace) .channel-modal--instagram .channel-modal-mark { background-image: none !important; }
 .crm-app:not(.platform-admin-workspace) .channel-modal--telegram .channel-modal-mark,
 .crm-app:not(.platform-admin-workspace) .channel-modal--telegram .bot-provider-heading > .channel-card-icon { background-image: url('/brand/platforms/telegram.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .channel-modal--zalo .channel-modal-mark,
@@ -332,7 +333,9 @@
 .crm-app:not(.platform-admin-workspace) .channel-modal--tiktok .channel-modal-mark { background-image: url('/brand/platforms/tiktok.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .channel-modal--shopee .channel-modal-mark { background-image: url('/brand/platforms/shopee.svg') !important; }
 .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon::after,
-.crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark::after {
+.crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark::after,
+.crm-app:not(.platform-admin-workspace) .channel-modal .meta-bridge-icon::after,
+.crm-app:not(.platform-admin-workspace) .channel-modal .tiktok-guide-logo-wrap::after {
   content: "";
   position: absolute;
   z-index: 1;
@@ -349,6 +352,8 @@
 }
 body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon::after,
 body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark::after,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .channel-modal .meta-bridge-icon::after,
+body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) .channel-modal .tiktok-guide-logo-wrap::after,
 body:not(.crm-dark) .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark)::after {
   background: linear-gradient(90deg, transparent 34%, rgba(8, 127, 125, .16) 42%, rgba(255, 255, 255, .92) 48%, #fff 52%, rgba(8, 127, 125, .16) 58%, transparent 66%);
 }
@@ -372,7 +377,9 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) .channel-modal--tiktok .ch
 }
 .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee),
 .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon,
-.crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark { animation: crm-social-logo-rock 3.4s ease-in-out infinite; transform-origin: center; }
+.crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark,
+.crm-app:not(.platform-admin-workspace) .channel-modal .meta-bridge-icon,
+.crm-app:not(.platform-admin-workspace) .channel-modal .tiktok-guide-logo-wrap { animation: crm-social-logo-rock 3.4s ease-in-out infinite; transform-origin: center; }
 .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark) img { animation: crm-social-logo-rock 3.4s ease-in-out infinite; transform-origin: center; }
 .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark)::after {
   left: 0;
@@ -391,9 +398,13 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .si
 @media (prefers-reduced-motion: reduce) {
   .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon::after,
   .crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark::after,
+  .crm-app:not(.platform-admin-workspace) .channel-modal .meta-bridge-icon::after,
+  .crm-app:not(.platform-admin-workspace) .channel-modal .tiktok-guide-logo-wrap::after,
   .crm-app:not(.platform-admin-workspace) .layout .social-icon:is(.facebook, .instagram, .telegram, .zalo, .tiktok, .shopee),
   .crm-app:not(.platform-admin-workspace) .channels-layout .channel-card-icon,
   .crm-app:not(.platform-admin-workspace) .channel-modal .channel-modal-mark,
+  .crm-app:not(.platform-admin-workspace) .channel-modal .meta-bridge-icon,
+  .crm-app:not(.platform-admin-workspace) .channel-modal .tiktok-guide-logo-wrap,
   .crm-app:not(.platform-admin-workspace) :is(.smh-channel-mark, .signup-platform-mark) img { animation: none !important; }
 }
 .crm-app:not(.platform-admin-workspace) .main > .products-layout.reports-layout {
@@ -691,3 +702,42 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) :is(.business-hours-layout
   color: #087f7b;
 }
 .smh-site :is(.smh-preview-caption button, .smh-channel-motion, .smh-story-pause)[aria-pressed="true"]::after { content: '▷'; }
+
+/* On phones, let the page own vertical scrolling instead of nesting a fixed
+   knowledge-base scroller inside the already scrollable app workspace. */
+@media (max-width: 600px) {
+  .crm-app:not(.platform-admin-workspace) .main > .rag-docs-layout {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .rag-docs-layout .rag-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .rag-docs-layout .stat-card {
+    min-width: 0;
+    padding: 9px 4px;
+    text-align: center;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .rag-docs-layout .stat-num {
+    font-size: clamp(16px, 5vw, 20px);
+  }
+
+  .crm-app:not(.platform-admin-workspace) .rag-docs-layout .stat-label {
+    font-size: 10px;
+    line-height: 1.25;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-fields.has-outcome {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-shell .chat-tool-fields .conversation-assignment select {
+    min-height: 36px;
+  }
+}

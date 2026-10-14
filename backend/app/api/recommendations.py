@@ -1,5 +1,6 @@
 """Tenant-scoped product recommendation serving and feedback endpoints."""
 
+from types import SimpleNamespace
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -19,6 +20,7 @@ from app.schemas.recommendation import (
     RecommendationRequestCreate,
     RecommendationResponse,
     RecommendationTrainingScheduleOut,
+    RecommendationDemoPreviewRequest,
 )
 from app.services.job_service import enqueue_job
 from app.services.recommendation_service import (
@@ -27,8 +29,9 @@ from app.services.recommendation_service import (
     safe_http_url,
     serve_recommendations,
     verify_recommendation_click_signature,
+    _filter_query_candidates,
 )
-from app.services.recommendation_artifacts import recommendation_artifact_status
+from app.services.recommendation_artifacts import RecommendationArtifactError, recommendation_artifact_status, registry as artifact_registry
 from app.services.recommendation_interaction_service import (
     RecommendationInteractionError,
     record_interaction,
@@ -107,6 +110,42 @@ def artifacts_status():
     return recommendation_artifact_status()
 
 
+@router.post("/demo/preview", dependencies=[Depends(require_admin_access)])
+def preview_data_rag(payload: RecommendationDemoPreviewRequest):
+    """Read-only preview of the supplied synthetic catalog and trusted checkpoints."""
+    try:
+        catalog = artifact_registry.data_rag_asset("catalog.json")
+        report = artifact_registry.data_rag_asset("training_report.json")
+        products = [SimpleNamespace(
+            id=int(row["product_id"]), sku=row["sku"], name=row["name"],
+            price=float(row["price"]), stock_quantity=int(row["stock"]), reserved_quantity=0,
+            description="", metadata_={"color": row["color"], "category": row["category"]},
+        ) for row in catalog if int(row["stock"]) > 0]
+        eligible = _filter_query_candidates(products, payload.query)
+        shortlist = eligible[:3]
+        scores = artifact_registry.data_rag_scores(0, shortlist, payload.query, preview=True)
+        items = [{
+            "product_id": p.id, "sku": p.sku, "name": p.name, "price": p.price,
+            "available": p.stock_quantity, "baseline_position": i,
+            "model_score": round(scores[p.id], 6),
+        } for i, p in enumerate(shortlist, 1)]
+        features = {"recency_days": float(payload.recency_days), "frequency": float(payload.frequency),
+                    "monetary": payload.monetary if payload.frequency else 0.0}
+        segment = artifact_registry.data_rag_segment(0, features, preview=True)
+        return {
+            "model_version": "data_rag_demo_v1", "data_scope": "synthetic",
+            "eligible_candidates": len(eligible), "shortlist_size": len(items),
+            "baseline": items, "ranked": sorted(items, key=lambda item: (-item["model_score"], item["baseline_position"])),
+            "rfm": {"features": features, "cluster_id": segment,
+                    "segment": "new_customer" if segment is None else f"data_rag_cluster_{segment}",
+                    "training_cluster_summary": report["rfm"]["clusters"].get(str(segment)) if segment is not None else None},
+            "held_out_metrics": report["product_ranker"]["metrics"]["test"],
+        }
+    except (OSError, ValueError, KeyError, TypeError, RecommendationArtifactError):
+        raise HTTPException(503, "Chưa có bộ mô hình thử nghiệm hợp lệ. Hãy cài bộ kết quả huấn luyện.")
+
+
+
 @router.post(
     "/interactions",
     response_model=RecommendationInteractionOut,
@@ -183,6 +222,7 @@ def recommend(
             RecommendationCustomerProfile.business_id == tenant.business_id,
             RecommendationCustomerProfile.customer_id == row.customer_id,
         ).first()
+    context = row.context if isinstance(row.context, dict) else {}
     return RecommendationResponse(
         request_id=row.request_id,
         customer_id=row.customer_id,
@@ -190,6 +230,9 @@ def recommend(
         strategy=row.strategy,
         model_version=row.model_version,
         candidate_count=int((row.context or {}).get("eligible_candidate_count", len(row.served_items or []))),
+        personalization_applied=bool(context.get("personalization_applied")),
+        personalization_signals=context.get("personalization_signals") or [],
+        available_personalization_signals=context.get("available_personalization_signals") or [],
         items=row.served_items or [],
         created_at=row.created_at,
     )

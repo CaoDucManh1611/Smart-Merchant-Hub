@@ -8,8 +8,7 @@ from app.auth.platform import require_platform_admin
 from app.db.dependencies import get_db
 from app.schemas.platform_otp_email import PlatformOtpEmailOut, PlatformOtpEmailTest, PlatformOtpEmailUpdate
 from app.services.platform_otp_email import read_platform_otp_email, save_platform_otp_email, get_platform_otp_smtp_config, claim_test_email_slot
-from app.services.otp_delivery import deliver_otp, OtpDeliveryError, OtpDeliveryNotConfigured
-from app.services.customer_collection import generate_verification_code
+from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, send_smtp_test_email
 
 class RedactedValidationRoute(APIRoute):
     def get_route_handler(self):
@@ -55,10 +54,7 @@ def test_email(payload: PlatformOtpEmailTest, db=Depends(get_db)):
             raise OtpDeliveryNotConfigured("Enable the platform sender first")
         if not claim_test_email_slot(db):
             raise HTTPException(429, "Vui lòng chờ 60 giây trước khi gửi email thử tiếp theo.", headers={"Retry-After": "60"})
-        result = deliver_otp(channel="email", destination=payload.email,
-            code=generate_verification_code(), smtp_config=config)
-        if not result.delivered or result.provider != "smtp":
-            raise OtpDeliveryError("SMTP delivery required")
+        send_smtp_test_email(destination=payload.email, smtp_config=config)
     except (OtpDeliveryError, OtpDeliveryNotConfigured, ValueError, OSError, SQLAlchemyError) as error:
         raise HTTPException(503, "Chưa gửi được email thử. Bật cấu hình, kiểm tra tài khoản Gmail, mật khẩu ứng dụng và kết nối SMTP rồi thử lại.") from error
-    return {"status": "sent", "email": payload.email}
+    return {"status": "smtp_accepted", "email": payload.email}

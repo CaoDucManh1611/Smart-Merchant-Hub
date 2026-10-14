@@ -16,7 +16,11 @@ from app.models.channel import Channel
 from app.models.customer import Customer
 from app.models.customer_identity import CustomerIdentity
 from app.services.channel_credentials import decrypt_token
-from app.services.customer_avatar import is_trusted_meta_avatar_url, verify_customer_avatar_url
+from app.services.customer_avatar import (
+    PROVIDER_PROXY_CHANNELS,
+    is_trusted_meta_avatar_url,
+    verify_customer_avatar_url,
+)
 from app.services.message_service import fetch_instagram_customer_profile
 from app.tenancy.context import TenantContext, resolve_tenant_context
 from app.tenancy.schema import schema_name_for
@@ -32,6 +36,7 @@ def get_customer_avatar(
     business_id: int | None = Query(default=None),
     expires: int | None = Query(default=None),
     signature: str | None = Query(default=None),
+    channel: str | None = Query(default=None),
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
 ):
     """Stream a provider profile photo without exposing channel credentials."""
@@ -52,6 +57,7 @@ def get_customer_avatar(
                 business_id=business_id,
                 expires=expires,
                 signature=signature,
+                channel=channel,
             )
         ):
             raise HTTPException(status_code=401, detail="Tenant context is required") from None
@@ -62,10 +68,17 @@ def get_customer_avatar(
     # multi-tenant runtime that session points at the control database, while
     # customers and channels live in ``shop_<business_id>``.
     with tenant_session(schema_name_for(tenant.business_id)) as db:
-        return _stream_customer_avatar(customer_id=customer_id, tenant=tenant, db=db)
+        return _stream_customer_avatar(
+            customer_id=customer_id,
+            tenant=tenant,
+            db=db,
+            channel=channel,
+        )
 
 
-def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Session):
+def _stream_customer_avatar(
+    *, customer_id: int, tenant: TenantContext, db: Session, channel: str | None = None
+):
     customer = db.scalar(
         select(Customer).where(
             Customer.id == customer_id,
@@ -75,12 +88,26 @@ def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Sess
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer avatar not found")
 
+    avatar_channel = str(channel or customer.channel or "").strip().lower()
+    if avatar_channel not in PROVIDER_PROXY_CHANNELS:
+        latest_provider_identity = db.scalar(
+            select(CustomerIdentity)
+            .where(
+                CustomerIdentity.business_id == tenant.business_id,
+                CustomerIdentity.customer_id == customer.id,
+                CustomerIdentity.channel.in_(PROVIDER_PROXY_CHANNELS),
+            )
+            .order_by(CustomerIdentity.last_seen_at.desc())
+        )
+        if latest_provider_identity is not None:
+            avatar_channel = latest_provider_identity.channel
+
     identity = db.scalar(
         select(CustomerIdentity)
         .where(
             CustomerIdentity.business_id == tenant.business_id,
             CustomerIdentity.customer_id == customer.id,
-            CustomerIdentity.channel == customer.channel,
+            CustomerIdentity.channel == avatar_channel,
         )
         .order_by(CustomerIdentity.last_seen_at.desc())
     )
@@ -94,7 +121,7 @@ def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Sess
         # trying Graph API here would turn a valid avatar into a broken image.
         provider_url = (
             str(customer.avatar_url or "").strip()
-            if customer.channel == "instagram"
+            if avatar_channel == "instagram"
             and is_trusted_meta_avatar_url(customer.avatar_url)
             else ""
         )
@@ -103,7 +130,7 @@ def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Sess
             channel = db.scalar(
                 select(Channel).where(
                     Channel.business_id == tenant.business_id,
-                    Channel.channel_type == customer.channel,
+                    Channel.channel_type == avatar_channel,
                     Channel.external_account_id == identity.external_account_id,
                     Channel.status == "active",
                 )
@@ -115,7 +142,7 @@ def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Sess
                 active_channels = db.scalars(
                     select(Channel).where(
                         Channel.business_id == tenant.business_id,
-                        Channel.channel_type == customer.channel,
+                        Channel.channel_type == avatar_channel,
                         Channel.status == "active",
                     )
                 ).all()
@@ -127,7 +154,7 @@ def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Sess
                 channel.access_token_encrypted,
                 settings.CHANNEL_ENCRYPTION_KEY,
             )
-            if customer.channel == "telegram":
+            if avatar_channel == "telegram":
                 adapter = TelegramAdapter()
                 file_path = adapter.fetch_profile_avatar_file_path(
                     user_id=identity.external_user_id,
@@ -139,13 +166,13 @@ def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Sess
                     file_path=file_path,
                     access_token=access_token,
                 )
-            elif customer.channel == "zalo":
+            elif avatar_channel == "zalo":
                 profile = ZaloAdapter().fetch_user_profile(
                     user_id=identity.external_user_id,
                     access_token=access_token,
                 )
                 provider_url = str(profile.get("avatar_url") or "").strip()
-            elif customer.channel == "instagram":
+            elif avatar_channel == "instagram":
                 profile = fetch_instagram_customer_profile(
                     identity.external_user_id,
                     access_token=access_token,

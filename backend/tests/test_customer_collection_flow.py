@@ -34,6 +34,7 @@ from app.services.customer_collection_flow import (
     is_stock_query_request,
 )
 from app.services.customer_collection import contact_hash
+from app.services.otp_delivery import OtpDeliveryResult, OtpSmtpConfig
 
 
 class CustomerCollectionFlowTests(unittest.TestCase):
@@ -262,6 +263,119 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertEqual("cod", session.collected_fields["payment_method"])
             order = db.query(Order).filter_by(customer_id=customer.id, business_id=self.business_id).one()
             self.assertEqual(completed.draft_order_id, order.id)
+
+    def test_order_email_otp_is_sent_once_then_reused_for_later_orders(self):
+        smtp_config = OtpSmtpConfig(
+            host="smtp.example.com",
+            port=587,
+            username="shop@example.com",
+            password="test-secret",
+            from_email="shop@example.com",
+            from_name="Flow Shop",
+        )
+        with Session(self.engine) as db:
+            customer = Customer(
+                business_id=self.business_id,
+                channel="facebook",
+                external_user_id="shop-email-order-otp-user",
+            )
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                channel="facebook",
+            )
+            db.add(conversation)
+            db.flush()
+
+            with patch(
+                "app.services.customer_collection_flow.get_shop_otp_smtp_config",
+                return_value=smtp_config,
+            ), patch(
+                "app.services.customer_collection_flow.deliver_otp",
+                return_value=OtpDeliveryResult(provider="smtp", delivered=True),
+            ) as deliver:
+                advance_customer_collection(
+                    db, business_id=self.business_id, customer_id=customer.id,
+                    conversation_id=conversation.id, source_channel="facebook",
+                    text="Mình mua Serum Vitamin C Lunari",
+                )
+                advance_customer_collection(
+                    db, business_id=self.business_id, customer_id=customer.id,
+                    conversation_id=conversation.id, source_channel="facebook",
+                    text="Đồng ý đặt hàng",
+                )
+                result = advance_customer_collection(
+                    db, business_id=self.business_id, customer_id=customer.id,
+                    conversation_id=conversation.id, source_channel="facebook",
+                    text=(
+                        "Tên người nhận: Nguyễn Văn A\n"
+                        "Số điện thoại: 093 987 6543\n"
+                        "Email: order.otp@example.com\n"
+                        "Địa chỉ nhận hàng: 12 Nguyễn Huệ, Quận 1, TP.HCM\n"
+                        "Thanh toán: COD"
+                    ),
+                )
+
+            self.assertTrue(result.completed)
+            self.assertIn("Mã đã được gửi qua email bạn cung cấp", result.prompt)
+            deliver.assert_called_once()
+            self.assertEqual("email", deliver.call_args.kwargs["channel"])
+            self.assertEqual("order.otp@example.com", deliver.call_args.kwargs["destination"])
+            self.assertIs(smtp_config, deliver.call_args.kwargs["smtp_config"])
+            self.assertEqual("order_confirmation", deliver.call_args.kwargs["purpose"])
+
+            session = db.query(CustomerCollectionSession).filter_by(conversation_id=conversation.id).one()
+            challenge = db.query(CustomerVerificationChallenge).filter_by(customer_id=customer.id).one()
+            order = db.query(Order).filter_by(conversation_id=conversation.id).one()
+            self.assertTrue(session.collected_fields["otp_pending"])
+            self.assertEqual("sent", challenge.status)
+            self.assertTrue(order.metadata_["contact_verification_pending"])
+
+            contact = db.query(CustomerContact).filter_by(customer_id=customer.id, kind="email").one()
+            contact.verification_status = "verified"
+            db.commit()
+            later_conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                channel="facebook",
+            )
+            db.add(later_conversation)
+            db.flush()
+            with patch(
+                "app.services.customer_collection_flow.get_shop_otp_smtp_config",
+                return_value=smtp_config,
+            ), patch(
+                "app.services.customer_collection_flow.deliver_otp",
+            ) as later_deliver:
+                advance_customer_collection(
+                    db, business_id=self.business_id, customer_id=customer.id,
+                    conversation_id=later_conversation.id, source_channel="facebook",
+                    text="Mình mua Serum Vitamin C Lunari",
+                )
+                advance_customer_collection(
+                    db, business_id=self.business_id, customer_id=customer.id,
+                    conversation_id=later_conversation.id, source_channel="facebook",
+                    text="Đồng ý đặt hàng",
+                )
+                later_result = advance_customer_collection(
+                    db, business_id=self.business_id, customer_id=customer.id,
+                    conversation_id=later_conversation.id, source_channel="facebook",
+                    text=(
+                        "Tên người nhận: Nguyễn Văn A\n"
+                        "Số điện thoại: 093 987 6543\n"
+                        "Email: order.otp@example.com\n"
+                        "Địa chỉ nhận hàng: 12 Nguyễn Huệ, Quận 1, TP.HCM\n"
+                        "Thanh toán: COD"
+                    ),
+                )
+            self.assertIn("Thông tin liên hệ đã xác thực", later_result.prompt)
+            later_deliver.assert_not_called()
+            later_session = db.query(CustomerCollectionSession).filter_by(
+                conversation_id=later_conversation.id,
+            ).one()
+            self.assertFalse(later_session.collected_fields.get("otp_pending", False))
 
     def test_checkout_accepts_fields_grouped_from_separate_chat_messages(self):
         with Session(self.engine) as db:

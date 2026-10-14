@@ -15,7 +15,7 @@ from app.database.bases import PlatformBase, TenantBase
 from app.db.dependencies import get_db
 from app.main import app
 from app.models.auth_session import AuthSession
-from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.signup import SignupEmailChallenge
 from app.models.channel import Channel
 from app.models.sales import Product
@@ -70,6 +70,12 @@ class OnboardingApiTests(unittest.TestCase):
         me = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"})
         self.assertEqual(200, me.status_code, me.text)
         self.assertEqual(body["business_id"], me.json()["business_id"])
+        sessions = self.client.get(
+            "/api/auth/sessions",
+            headers={"Authorization": f"Bearer {body['access_token']}"},
+        )
+        self.assertEqual(200, sessions.status_code, sessions.text)
+        self.assertFalse(sessions.json()[0]["mfa_verified"])
 
     def test_regular_shop_member_can_read_provisioning_status(self):
         with Session(self.engine) as db:
@@ -282,7 +288,7 @@ class OnboardingApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(200, request.status_code, request.text)
-        self.assertEqual("pending", request.json()["status"])
+        self.assertEqual("awaiting_payment", request.json()["status"])
         repeated = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/subscription/purchase",
             headers={"Authorization": f"Bearer {created['access_token']}"},
@@ -304,7 +310,7 @@ class OnboardingApiTests(unittest.TestCase):
                 Subscription.business_id == created["business_id"],
             ).order_by(Subscription.id.desc()).first()
             self.assertIsNotNone(subscription)
-            self.assertEqual("pending", subscription.status)
+            self.assertEqual("awaiting_payment", subscription.status)
             self.assertEqual("chatbot", subscription.service_type)
             audit_events = db.query(AuditLog).filter(
                 AuditLog.business_id == created["business_id"],
@@ -323,6 +329,52 @@ class OnboardingApiTests(unittest.TestCase):
                 },
                 audit_events[-1].metadata_["request_details"],
             )
+
+        reported = self.client.post(
+            f"/api/onboarding/shops/{created['business_id']}/subscription/{request.json()['id']}/payment/confirm",
+            headers={"Authorization": f"Bearer {created['access_token']}"},
+        )
+        self.assertEqual(200, reported.status_code, reported.text)
+        self.assertEqual("pending", reported.json()["status"])
+        self.assertTrue(reported.json()["customer_reported_payment"])
+        with Session(self.engine) as db:
+            self.assertEqual("pending", db.get(Subscription, request.json()["id"]).status)
+            self.assertEqual(0, db.query(Payment).filter_by(subscription_id=request.json()["id"]).count())
+
+    def test_shop_can_cancel_unpaid_request_and_choose_another_plan(self):
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={
+                "shop_name": "Cancel Checkout Shop",
+                "owner_name": "Cancel Owner",
+                "owner_email": "cancel-checkout@onboarding.test",
+                "password": "strong-pass-1",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {created['access_token']}"}
+        base = f"/api/onboarding/shops/{created['business_id']}/subscription"
+        first = self.client.post(f"{base}/purchase", headers=headers, json={"plan_code": "growth", "service_type": "chatbot"})
+        self.assertEqual("awaiting_payment", first.json()["status"])
+        cancelled = self.client.post(f"{base}/{first.json()['id']}/cancel", headers=headers)
+        self.assertEqual(200, cancelled.status_code, cancelled.text)
+        self.assertEqual("cancelled", cancelled.json()["status"])
+        second = self.client.post(f"{base}/purchase", headers=headers, json={"plan_code": "scale", "service_type": "chatbot"})
+        self.assertEqual(200, second.status_code, second.text)
+        self.assertNotEqual(first.json()["id"], second.json()["id"])
+        self.assertEqual("awaiting_payment", second.json()["status"])
+        with Session(self.engine) as db:
+            db.add(Payment(
+                business_id=created["business_id"],
+                subscription_id=second.json()["id"],
+                amount=Decimal(str(second.json()["quoted_amount"])),
+                currency="VND",
+                provider="manual",
+                provider_transaction_id="cancel-guard-receipt",
+                status="paid",
+            ))
+            db.commit()
+        blocked_cancel = self.client.post(f"{base}/{second.json()['id']}/cancel", headers=headers)
+        self.assertEqual(409, blocked_cancel.status_code, blocked_cancel.text)
 
     def test_shop_agent_can_request_paid_plan_but_cannot_activate_demo(self):
         created = self.client.post(
@@ -364,7 +416,7 @@ class OnboardingApiTests(unittest.TestCase):
             json={"plan_code": "growth", "service_type": "chatbot"},
         )
         self.assertEqual(200, request.status_code, request.text)
-        self.assertEqual("pending", request.json()["status"])
+        self.assertEqual("awaiting_payment", request.json()["status"])
 
         demo = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/subscription/purchase",

@@ -1,0 +1,35 @@
+{
+  "status": "completed",
+  "data_scope": "synthetic offline Data_RAG holdout only; no real shop or customer data",
+  "product_ranking": {
+    "target_definition": "non-impression product interaction; a choice proxy, not a purchase/conversion label",
+    "model": {
+      "conversations": 10000,
+      "hit_at_1": 0.591,
+      "hit_at_2": 0.8559,
+      "mrr_at_3": 0.7714833333333333
+    },
+    "position_baseline": {
+      "conversations": 10000,
+      "hit_at_1": 0.323,
+      "hit_at_2": 0.6697,
+      "mrr_at_3": 0.60645
+    },
+    "model_source": "installed portable JSON checkpoint; same three-candidate limit as training",
+    "malformed_test_conversations": 0
+  },
+  "rfm": {
+    "customers": 10000,
+    "buyers": 9997,
+    "no_completed_order_customers": 3,
+    "portable_checkpoint_cluster_match": 1.0,
+    "portable_checkpoint_cluster_match_count": 9997,
+    "new_customers_not_forced_into_buyer_cluster": true,
+    "labels_are_arbitrary": true
+  },
+  "limitations": [
+    "Synthetic ranking labels indicate a non-impression interaction, not an order or revenue outcome.",
+    "RFM cluster IDs are mathematical groups and need shop-specific interpretation before customer-facing use.",
+    "This evaluates model loading and holdout behavior; it does not certify real-shop relevance or conversion lift."
+  ]
+}

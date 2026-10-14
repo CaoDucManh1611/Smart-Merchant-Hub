@@ -13,8 +13,10 @@ test("knowledge-base copy describes retrieval without claiming automatic trainin
 
 test("customer personalization uses compact facts and keeps opt-out controls visible", () => {
   assert.match(templateSource, /Cá nhân hóa khách hàng/);
-  assert.match(templateSource, /Chỉ lưu thông tin tóm tắt/);
-  assert.match(templateSource, /Ngừng lưu và xóa sở thích suy ra/);
+  assert.match(templateSource, /chỉ khách đã đồng ý/);
+  assert.match(templateSource, /thống kê đơn đã hoàn tất/);
+  assert.match(templateSource, /Quyền của khách hàng/);
+  assert.match(templateSource, /personalization.*marketing.*proactive_messages/);
   assert.match(appSource, /Đánh giá chưa tự thay đổi cách trợ lý trả lời/);
   assert.doesNotMatch(templateSource, /vector cho từng tin/);
 });

@@ -270,7 +270,7 @@ def _create_shop_records(
         device_label="onboarding",
         user_agent_hash=None,
         ip_hash=None,
-        mfa_verified=True,
+        mfa_verified=False,
     ))
     record_audit(
         db,
@@ -484,25 +484,31 @@ def purchase_shop_plan(
     service_type = payload.service_type
     current_active = _active_subscription_for(db, business_id, service_type=service_type)
     change_kind = _plan_change_kind(current_active, plan, service_type)
-    if service_type == "package" and change_kind != "downgrade":
+    role = (actor.role or "").strip().lower()
+    if plan.code == "demo" and role not in {"owner", "admin", "business_admin", "shop_admin"}:
+        raise HTTPException(status_code=403, detail="Chỉ chủ shop hoặc quản trị viên shop mới được kích hoạt gói Demo.")
+    if change_kind == "downgrade":
+        service_label = "trợ lý" if service_type == "chatbot" else "gói"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Hiện không hỗ trợ hạ {service_label}. Vui lòng chọn {service_label} hiện tại hoặc cao hơn.",
+        )
+    if service_type == "package":
         _validate_requested_channels(plan, payload.channels)
     # Older clients sent their selected CRM channels with chatbot requests.
     # Accept that payload for compatibility, but never validate or consume it
     # as chatbot quota; the assistant is an independent service.
 
-    role = (actor.role or "").strip().lower()
-    if plan.code == "demo" and role not in {"owner", "admin", "business_admin", "shop_admin"}:
-        raise HTTPException(status_code=403, detail="Chỉ chủ shop hoặc quản trị viên shop mới được kích hoạt gói Demo.")
-
-    # Only the free Demo package is immediate. Every rental or paid plan
-    # becomes a visible request in the control plane for an administrator.
-    if plan.code != "demo" or change_kind == "downgrade":
+    # Paid plans first wait for the shop to pay. Only after the customer
+    # reports payment (or a verified receipt arrives) do they enter the
+    # administrator approval queue.
+    if plan.code != "demo":
         current_pending = db.scalar(
             select(Subscription)
             .where(
                 Subscription.business_id == business_id,
                 Subscription.service_type == service_type,
-                Subscription.status == "pending",
+                Subscription.status.in_(["pending", "awaiting_payment"]),
             )
             .order_by(Subscription.id.desc())
             .with_for_update().execution_options(populate_existing=True)
@@ -531,7 +537,7 @@ def purchase_shop_plan(
                 business_id=business_id,
                 plan_id=plan.id,
                 service_type=service_type,
-                status="pending",
+                status="awaiting_payment" if current_price > 0 else "pending",
                 starts_at=None,
                 ends_at=None,
                 auto_renew=False,

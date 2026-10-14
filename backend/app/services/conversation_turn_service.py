@@ -16,6 +16,7 @@ from app.models.message import Message
 from app.services.job_service import enqueue_job
 
 logger = logging.getLogger(__name__)
+SHORTCUT_COMMAND = re.compile(r"^(/(?:[a-zA-Z0-9_-]+))(?:@[a-zA-Z0-9_]+)?$")
 
 
 def schedule_chatbot_turn(db: Session, *, business_id: int, conversation_id: int, message_id: int) -> None:
@@ -79,6 +80,8 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         return False
 
     turn_started = perf_counter()
+    shortcut_match = SHORTCUT_COMMAND.fullmatch((source.content or "").strip()) if not source_has_image else None
+    shortcut = shortcut_match.group(1).casefold() if shortcut_match else None
 
     wait = timedelta(seconds=max(1, min(int(settings.CONVERSATION_TURN_WAIT_SECONDS), 30)))
     source_time = source.received_at or datetime.now(timezone.utc).replace(tzinfo=None)
@@ -89,30 +92,35 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         Message.received_at <= source_time + wait,
         Message.received_at >= source_time,
     ).order_by(Message.id.asc()).first()
-    if later_fragment is not None:
+    if later_fragment is not None and shortcut is None:
         return False
 
     batch = [source]
-    previous = db.query(Message).filter(
-        Message.conversation_id == conversation_id,
-        Message.id < message_id,
-    ).order_by(Message.id.desc()).limit(12).all()
-    # ponytail: cap each turn at 12 fragments; raise only if measured channel traffic needs it.
-    for row in previous:
-        if row.direction != "inbound" or not row.content or not row.content.strip():
-            break
-        gap = (batch[0].received_at or source_time) - (row.received_at or source_time)
-        if not timedelta(0) <= gap <= wait:
-            break
-        batch.insert(0, row)
-        if len(batch) >= 12:
-            break
+    if shortcut is None:
+        previous = db.query(Message).filter(
+            Message.conversation_id == conversation_id,
+            Message.id < message_id,
+        ).order_by(Message.id.desc()).limit(12).all()
+        # ponytail: cap each turn at 12 fragments; raise only if measured channel traffic needs it.
+        for row in previous:
+            if not row.content or not row.content.strip():
+                break
+            if SHORTCUT_COMMAND.fullmatch(row.content.strip()):
+                break
+            if row.direction != "inbound":
+                break
+            gap = (batch[0].received_at or source_time) - (row.received_at or source_time)
+            if not timedelta(0) <= gap <= wait:
+                break
+            batch.insert(0, row)
+            if len(batch) >= 12:
+                break
     fragments = [row.content.strip() for row in batch if row.content and row.content.strip()]
     query = _merge_fragments(fragments) if fragments else ""
     if source_has_image:
         image_context = "Khách gửi ảnh đính kèm. Hãy xem ảnh khi trả lời; nếu chưa có câu hỏi rõ, hỏi một câu làm rõ."
         query = f"{query}\n\n{image_context}".strip()
-    if fragments and not source_has_image:
+    if fragments and not source_has_image and shortcut is None:
         from app.models.crm_job import CrmJob
         from app.services.customer_collection_flow import advance_customer_collection
         from app.services.auto_reply_service import send_text_reply

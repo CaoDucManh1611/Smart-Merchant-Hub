@@ -1,0 +1,521 @@
+{
+  "generated_at": "2026-10-13T05:54:42+00:00",
+  "status": "completed",
+  "mode": "live_app_lexical_fallback_retrieval_only",
+  "vector_search": "disabled intentionally; evaluates the application's lexical fallback",
+  "query_embedding_mode": "not used; no embedding API calls",
+  "data_scope": "synthetic demo documents and synthetic evaluation prompts only",
+  "provider": {
+    "embedding": "not_used_lexical_only",
+    "embedding_model": null,
+    "answer": "not_used",
+    "answer_model": null
+  },
+  "temporary_schema_rolled_back": true,
+  "source_files": [
+    "demo-store-profile.vi-en.md",
+    "demo-products.vi-en.csv",
+    "demo-support-policies.vi-en.md",
+    "demo-industry-playbook.vi-en.md"
+  ],
+  "source_chunks": 167,
+  "retrieval": {
+    "evaluated_cases": 10,
+    "expected_source_recall_at_5": 0.9286,
+    "all_expected_sources_in_top_5_rate": 0.9,
+    "mean_latency_ms": 50.55,
+    "fallback_cases": 10,
+    "fully_hybrid_cases": 0,
+    "fallback_events_by_stage": {
+      "embedding": 10
+    },
+    "usable_for_promotion": false,
+    "fully_hybrid_only": {
+      "evaluated_cases": 0,
+      "expected_source_recall_at_5": 0.0,
+      "all_expected_sources_in_top_5_rate": 0.0,
+      "note": "Excludes every case that silently fell back to lexical retrieval; subset score alone is not a full-suite promotion gate."
+    }
+  },
+  "answers": {
+    "attempted": 0,
+    "generated": 0,
+    "citation_gate_pass_rate": 0.0,
+    "citation_cases": 0,
+    "must_include_term_rate": 0.0,
+    "no_forbidden_term_rate": 0.0,
+    "mean_latency_ms": 0.0,
+    "provider_errors_by_type": {},
+    "citation_gate_note": "Checks citation IDs and monetary values against cited source text; does not prove every semantic claim."
+  },
+  "cases": [
+    {
+      "id": "pink-products-vi",
+      "query": "Khách thích đồ màu hồng, đang có sản phẩm nào còn hàng?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        3,
+        6,
+        137,
+        166,
+        124
+      ],
+      "retrieved_contents": [
+        "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a real shop's source does not contain the requested fact, say that the information is not yet confirmed and ask a staff member to check.\n\nNever copy a demo value into a real-shop answer.\n\n3. Structured customer order records are the source for that customer's order status.\n\nNever retrieve a different customer's order from RAG.\n\n4. A customer's single purchase is only a weak preference signal.\n\nExplicit statements such as “mình thích màu hồng” are stronger; ask before saving sensitive or ambiguous preferences and honor a request not to remember them.\n\n5. Do not infer or store sensitive traits (including occupation, health, religion, or legal status) to personalize offers.\n\nA customer who says they are a police officer receives the same respectful support as anyone else; ask only for information necessary to fulfill the request.",
+        "## Example response policy / Quy tắc trả lời mẫu\n\n- Be conversational, answer the complete question in one natural response, and avoid exposing internal labels, raw JSON, or template tokens.\n- Recommend verified matching products first. For an explicit pink preference, rank in-stock pink items first, then explain why; do not assume pink is a permanent preference based on one order.\n- Mention no more than three relevant products at first. Include the confirmed demo price and a placeholder link only in a test environment. Ask a short follow-up if color, size, quantity, or use is unclear.\n- Never promise discounts, stock, shipping dates, return eligibility, or outcomes beyond the source.\n- If the customer wants a human, or the question needs an unverified decision, hand off without making up an answer.",
+        "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives.\n\nUse color, category, size, brand, and use-case only when available in structured catalogue or a cited shop source.\n\n3. Treat purchase history as evidence with strength, not identity: one purchase is weak; repeated recent purchases are stronger; an explicit “I like pink” is stronger still.\n\nPreferences can expire or be corrected.\n\n4. Do not infer sensitive traits or target a person from occupation, health, religion, political views, legal status, or protected characteristics.\n\nAn occupation mentioned casually is not a marketing segment.\n\n5. Explain briefly why each item matches and limit the first answer to a few options.\n\nVerify stock and price immediately before quoting.",
+        "## Suggested short response patterns / Câu trả lời mẫu ngắn\n\n**Product price and availability:** Check the current catalogue or CRM record. This playbook intentionally does not duplicate changing product values.\n\n**Missing product qualifier:** “Mình kiểm tra được ốp theo mẫu máy. Bạn đang dùng model điện thoại nào?”\n\n**Policy not specified:** “Chính sách mẫu chưa ghi rõ bên nào chịu phí gửi trả. Mình chuyển nhân viên xác nhận để không báo sai nhé.”\n\n**Sensitive safety question:** “Nguồn hiện tại chưa xác nhận sản phẩm phù hợp với dị ứng đó. Bạn đừng dùng dựa trên suy đoán; mình nhờ nhân viên kiểm tra nhãn thành phần giúp bạn.”\n\n**English equivalent:** “I can't verify that from the current product record. Please share the exact model/label, or I can ask a staff member to confirm.”",
+        "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; check the carrier record for an existing order.\n\n**Can I get same-day or express delivery? / Có giao hỏa tốc trong ngày không?**\n\nSame-day and express options are not specified in this demo policy. Ask staff to check availability and fee before promising anything.\n\n**How much is shipping for a 300,000 VND order? / Đơn 300.000 đồng phí giao hàng bao nhiêu?**\n\nThe demo policy lists a 30,000 VND fee below 500,000 VND. This is a sample rule only; the final fee still needs to be checked for the destination and order.\n\n**Is shipping free for a 500,000 VND order? / Đơn 500.000 đồng có miễn phí ship không?**\n\nThe demo threshold is free shipping at 500,000 VND or above. Confirm eligible items, destination, and final payable amount in the order flow.\n\n**Where is my package now? / Đơn của tôi đang ở đâu?**\n\nDo not answer from this policy. Look up the signed-in customer's structured order/tracking record. Ask for the minimum order reference needed if no matching record is found."
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "hồng",
+        "DM-APP-001"
+      ],
+      "must_include_missing": [
+        "hồng",
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 57.9,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "pink-bag-vi",
+      "query": "Có túi màu hồng nào không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_chunk_ids": [
+        22,
+        27,
+        3,
+        6,
+        64
+      ],
+      "retrieved_contents": [
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-APP-003 | Túi vải Hồng Nắng | Sunny Pink Tote | fashion | bag | hồng | vải canvas 35 x 40 cm | 129000 | 12 | https://example.com/demo/DM-APP-003 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | beauty | accessory | hồng | vải chống thấm khóa kéo | 99000 | 16 | https://example.com/demo/DM-BEA-002 | demo_synthetic",
+        "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a real shop's source does not contain the requested fact, say that the information is not yet confirmed and ask a staff member to check.\n\nNever copy a demo value into a real-shop answer.\n\n3. Structured customer order records are the source for that customer's order status.\n\nNever retrieve a different customer's order from RAG.\n\n4. A customer's single purchase is only a weak preference signal.\n\nExplicit statements such as “mình thích màu hồng” are stronger; ask before saving sensitive or ambiguous preferences and honor a request not to remember them.\n\n5. Do not infer or store sensitive traits (including occupation, health, religion, or legal status) to personalize offers.\n\nA customer who says they are a police officer receives the same respectful support as anyone else; ask only for information necessary to fulfill the request.",
+        "## Example response policy / Quy tắc trả lời mẫu\n\n- Be conversational, answer the complete question in one natural response, and avoid exposing internal labels, raw JSON, or template tokens.\n- Recommend verified matching products first. For an explicit pink preference, rank in-stock pink items first, then explain why; do not assume pink is a permanent preference based on one order.\n- Mention no more than three relevant products at first. Include the confirmed demo price and a placeholder link only in a test environment. Ask a short follow-up if color, size, quantity, or use is unclear.\n- Never promise discounts, stock, shipping dates, return eligibility, or outcomes beyond the source.\n- If the customer wants a human, or the question needs an unverified decision, hand off without making up an answer.",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-010 | Túi cọ trang điểm Hồng | Pink Brush Pouch | beauty | accessory | hồng | vải canvas khóa kéo 20 cm | 79000 | 15 | https://example.com/demo/DM-BEA-010 | demo_synthetic"
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-APP-003"
+      ],
+      "must_include_missing": [
+        "DM-APP-003"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 41.19,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "zero-stock-vi",
+      "query": "Gối hồng còn hàng không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_chunk_ids": [
+        39,
+        159,
+        40,
+        41,
+        49
+      ],
+      "retrieved_contents": [
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-HOM-005 | Gối tựa Hồng Phấn | Blush Pink Cushion | home | textile | hồng | vỏ tháo giặt; ruột gối 40 x 40 cm | 239000 | 0 | https://example.com/demo/DM-HOM-005 | demo_synthetic",
+        "### Apparel and accessories / Thời trang và phụ kiện\n\n- Start with the requested garment and exact color/size; use `DM-APP-001` for the pink basic shirt example.\n- If the shopper asks for a matching carry item, the pink tote `DM-APP-003` is a possible related suggestion; state that it is a separate item and confirm stock.\n- The hair clip `DM-APP-005` is an optional accessory suggestion only when the customer asks for styling or add-ons. Do not pad a simple answer with unrelated products.\n- Check the current catalogue before recommending the beige canvas tote `DM-APP-004`; never infer availability or invent a restock date from this playbook.",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-001 | Trà gạo rang Mây | Roasted Rice Tea | food | beverage | nâu | hộp 10 gói; xem nhãn thành phần trước khi dùng | 79000 | 32 | https://example.com/demo/DM-FOO-001 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-002 | Bánh quy mè | Mixed Sesame Cookies | food | snack | vàng | gói 150 g; dị ứng: cần xác nhận nhãn tại lô hàng | 69000 | 17 | https://example.com/demo/DM-FOO-002 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-SVC-001 | Gói tư vấn setup cửa hàng | Store Setup Consultation | services | consulting | không áp dụng | buổi tư vấn demo 45 phút; cần xác nhận lịch | 300000 | 99 | https://example.com/demo/DM-SVC-001 | demo_synthetic"
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-HOM-005",
+        "hết hàng"
+      ],
+      "must_include_missing": [
+        "DM-HOM-005",
+        "hết hàng"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 54.19,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "wholesale-12",
+      "query": "Tôi muốn nhập sỉ 12 cáp USB-C, giá thế nào?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        120,
+        129,
+        30,
+        67,
+        161
+      ],
+      "retrieved_contents": [
+        "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**Q: Tôi là công an, shop có ưu tiên không? / I'm a police officer; do I get priority?**\nNo occupation-based priority is defined. Offer the normal support process and answer the actual product/order question.\n\n**Q: Tôi muốn nhập 12 cáp USB-C. / I want to wholesale 12 USB-C cables.**\nIdentify DM-ELE-001; the demo policy's 10–29-unit tier is 8%, but confirm stock and staff approval before promising a final quote.\n\n**Q: Sản phẩm có an toàn cho da nhạy cảm không? / Is this safe for sensitive skin?**\nNo verified safety claim is included. Share only listed ingredients if another approved product source has them; otherwise hand off.",
+        "### Wholesale and quotation questions / Bán sỉ và báo giá\n\n**What is the discount for 5 units? / Mua 5 món giảm bao nhiêu?**\n\nNo wholesale discount threshold is listed for fewer than 10 units. Do not extrapolate; ask staff whether another approved promotion applies.\n\n**What is the discount for 29 units? / Mua 29 món giảm bao nhiêu?**\n\nThe demo tier is 8% for 10–29 units of the same eligible SKU, subject to stock and staff approval. This is not a confirmed quote.\n\n**What is the discount for 30 units? / Mua 30 món giảm bao nhiêu?**\n\nThe demo tier is 12% for 30 or more units of the same eligible SKU, subject to stock and staff approval. Confirm SKU, quantity, fees, and final total first.\n\n**Can I combine wholesale and another sale? / Có cộng dồn với khuyến mãi khác không?**\n\nThe demo wholesale policy says the bulk discount is not combined with another promotion. Staff must confirm the eligible SKU and final terms.\n\n**Can you issue a company invoice or quotation? / Có xuất hóa đơn công ty hoặc báo giá không?**\n\nThe demo policy does not define invoice or quotation requirements. Collect the business need and route it to staff; do not promise tax treatment or document issuance.",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-001 | Cáp sạc USB-C 1 m | USB-C Cable 1 m | electronics | cable | đen | USB-C to USB-C; không kèm củ sạc | 89000 | 40 | https://example.com/demo/DM-ELE-001 | demo_synthetic",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-006 | Cáp USB-C Mây 2 m | Cloud USB-C Cable 2 m | electronics | cable | đen | USB-C to USB-C; không kèm củ sạc | 129000 | 27 | https://example.com/demo/DM-ELE-006 | demo_synthetic",
+        "### Electronics / Điện tử\n\n- Match connector type, wattage, model, and included components before recommending a cable or charger.\n- The demo USB-C cable does not include a charger. A related charger can be mentioned only as a separate item and device compatibility must be checked.\n- The phone case is limited to the device model printed on its package. Ask the model before quoting compatibility.\n- Do not claim a product supports fast charging, a particular device, or a warranty unless the record states it."
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-ELE-001",
+        "8%"
+      ],
+      "must_include_missing": [
+        "DM-ELE-001",
+        "8%"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 49.51,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "delivery-policy",
+      "query": "Đơn giao mất bao lâu và phí ship bao nhiêu?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        123,
+        11,
+        128,
+        111
+      ],
+      "retrieved_contents": [
+        "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; check the carrier record for an existing order.\n\n**Can I get same-day or express delivery? / Có giao hỏa tốc trong ngày không?**\n\nSame-day and express options are not specified in this demo policy. Ask staff to check availability and fee before promising anything.\n\n**How much is shipping for a 300,000 VND order? / Đơn 300.000 đồng phí giao hàng bao nhiêu?**\n\nThe demo policy lists a 30,000 VND fee below 500,000 VND. This is a sample rule only; the final fee still needs to be checked for the destination and order.\n\n**Is shipping free for a 500,000 VND order? / Đơn 500.000 đồng có miễn phí ship không?**\n\nThe demo threshold is free shipping at 500,000 VND or above. Confirm eligible items, destination, and final payable amount in the order flow.\n\n**Where is my package now? / Đơn của tôi đang ở đâu?**\n\nDo not answer from this policy. Look up the signed-in customer's structured order/tracking record. Ask for the minimum order reference needed if no matching record is found.",
+        "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative source for that kind of fact. A product price is not a return policy; an FAQ is not an order record.\n3. Check exact identifiers and constraints: SKU, color, model, size, quantity, order reference, date, or service slot.\n4. Answer the complete question in the customer's language. Give no more detail than the source supports.\n5. Ask one focused question if an important qualifier is missing; hand off when the answer needs approval or a decision.\n\nExamples / Ví dụ:\n\n- “Áo màu hồng còn không?” → check color and `demo_stock` in the catalogue; don't use the product name alone as proof.\n- “Đơn DH-123 tới đâu?” → query the authenticated customer's order record; don't search other customers or use a generic delivery estimate.\n- “Đổi hàng thì ai trả phí ship?” → the demo policy marks this as unspecified; tell the customer it needs staff confirmation.\n- “Tôi thích màu hồng, nhớ giúp nhé.” → only store a preference if the customer has consented and the CRM's preference workflow supports correction and deletion.",
+        "### Returns, exchanges, and refunds / Đổi hàng và hoàn tiền\n\n**The item arrived damaged. What should I do? / Hàng bị hỏng khi nhận thì làm sao?**\n\nAsk for the order reference and a photo of the issue, then hand off for review. Do not promise replacement or refund before staff confirms eligibility.\n\n**I removed the tag or opened the package. Can I return it? / Tôi tháo tem hoặc mở hộp rồi có trả được không?**\n\nThe demo eligibility requires an unused item with original tags/packaging and proof of purchase. Staff must review the actual case; the assistant must not approve or reject it automatically.\n\n**Who pays return shipping? / Phí gửi hàng trả lại ai chịu?**\n\nThis is not specified. Say so and ask staff to confirm; do not assume that either party pays.\n\n**When will I receive a refund? / Bao lâu được hoàn tiền?**\n\nNo refund timing is specified and no automatic refund is promised. A staff member must confirm eligibility and the payment workflow.\n\n**Can I cancel after the order was packed? / Đơn đóng gói rồi có hủy được không?**\n\nThe demo policy does not define a cancellation cutoff. Check the actual order state and hand off; do not mark it cancelled unless the CRM confirms the change.",
+        "## Delivery / Giao hàng\n\n- Test coverage: Vietnam nationwide, subject to carrier confirmation.\n- Test estimate: 2–5 business days after order confirmation. This is only a scenario value, not a carrier promise.\n- Test fee: 30,000 VND for orders below 500,000 VND; free shipping at or above 500,000 VND.\n- Do not promise an exact arrival time. For an existing order, use the structured order/tracking record instead of this FAQ.\n- English: The demo estimate is 2–5 business days. The final carrier status and delivery date must come from the order's tracking record."
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "2–5 ngày làm việc",
+        "30.000"
+      ],
+      "must_include_missing": [
+        "2–5 ngày làm việc",
+        "30.000"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 44.86,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "return-refund",
+      "query": "Can I return this and get an automatic refund?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        113,
+        128,
+        154,
+        165
+      ],
+      "retrieved_contents": [
+        "## Return and exchange / Đổi trả\n\n- Test window: contact the shop within 7 days after delivery.\n- Test eligibility: unused item, original tags/packaging, proof of purchase. Eligibility still requires staff review; the assistant must not promise approval or refund.\n- Report damaged/wrong items promptly with order number and a photo of the issue. Do not ask for unnecessary identity documents.\n- Shipping cost for a return is not specified in this demo policy; ask staff to confirm.\n- English: Contact the demo shop within 7 days. Items must be unused with original packaging and proof of purchase. Staff confirms eligibility; no automatic refund is promised.",
+        "### Returns, exchanges, and refunds / Đổi hàng và hoàn tiền\n\n**The item arrived damaged. What should I do? / Hàng bị hỏng khi nhận thì làm sao?**\n\nAsk for the order reference and a photo of the issue, then hand off for review. Do not promise replacement or refund before staff confirms eligibility.\n\n**I removed the tag or opened the package. Can I return it? / Tôi tháo tem hoặc mở hộp rồi có trả được không?**\n\nThe demo eligibility requires an unused item with original tags/packaging and proof of purchase. Staff must review the actual case; the assistant must not approve or reject it automatically.\n\n**Who pays return shipping? / Phí gửi hàng trả lại ai chịu?**\n\nThis is not specified. Say so and ask staff to confirm; do not assume that either party pays.\n\n**When will I receive a refund? / Bao lâu được hoàn tiền?**\n\nNo refund timing is specified and no automatic refund is promised. A staff member must confirm eligibility and the payment workflow.\n\n**Can I cancel after the order was packed? / Đơn đóng gói rồi có hủy được không?**\n\nThe demo policy does not define a cancellation cutoff. Check the actual order state and hand off; do not mark it cancelled unless the CRM confirms the change.",
+        "| Customer request | Primary source | Required check | Safe next step if missing |\n|---|---|---|---|\n| Return, refund, or cancellation | Current policy plus order state | Time window, item condition, recorded status | Staff review; never claim completed action prematurely |",
+        "## Customer preference evidence / Độ tin cậy sở thích\n\nUse a documented human handoff (also called a `handoff`) whenever safety, privacy, policy approval, or an uncertain commercial decision needs staff review.\n\nKeep separate signals instead of storing a single permanent label:\n\n1. **Current request:** “show me pink items” applies to the current answer only.\n2. **Explicit preference:** “I usually prefer pink” may be saved if consent and retention rules permit; store the source, date, and confidence.\n3. **Repeated behavior:** several completed purchases can add evidence, but use completed/non-refunded order lines and avoid inferring from a one-off gift or return.\n4. **Correction or opt-out:** a customer's correction overrides a weaker inference. A request not to remember must stop future extraction and use the product privacy workflow.\n\nDo not infer gender, age, income, occupation, health, religion, or legal status from color, category, or purchase behavior. Do not use those traits to rank offers."
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "within 7 days",
+        "staff confirms"
+      ],
+      "must_include_missing": [
+        "within 7 days",
+        "staff confirms"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 63.74,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "allergen-handoff",
+      "query": "Are these sesame cookies safe for someone with a severe allergy?",
+      "expected_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        162,
+        41,
+        7,
+        118,
+        143
+      ],
+      "retrieved_contents": [
+        "### Home, food, pets, and stationery / Nhà cửa, thực phẩm, thú cưng và văn phòng phẩm\n\n- Match dimensions, capacity, cleaning method, and use environment for home goods. Do not imply microwave/dishwasher safety unless explicitly listed.\n- Food ingredients and allergen labels must be checked on the exact batch. The sample sesame cookie row requires label confirmation and must not be called allergen-free.\n- For pet products, ask for relevant size or clip compatibility if not listed; never make veterinary claims.\n- For stationery, confirm paper size, page count, ink color, and tip size from the catalogue before answering.",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-002 | Bánh quy mè | Mixed Sesame Cookies | food | snack | vàng | gói 150 g; dị ứng: cần xác nhận nhãn tại lô hàng | 69000 | 17 | https://example.com/demo/DM-FOO-002 | demo_synthetic",
+        "## Industry test personas / Tình huống đa ngành\n\n- “Tôi là công an, món này có màu hồng không?” — answer the catalogue color question normally; do not request proof of occupation or change service.\n- “Tôi có shop, muốn nhập sỉ” — use only the fictional wholesale policy in `demo-support-policies.vi-en.md`; ask for SKU and quantity.\n- “I manage a salon; is this safe for sensitive skin?” — do not make a medical/safety claim unless the product source explicitly supports it; offer ingredients and human follow-up.\n- “Can this adapter work with my device?” — ask for the device model if compatibility is not in the source.\n- “Does this food contain an allergen?” — use verified label data only. If absent, stop and ask staff to confirm.",
+        "## Product and safety questions / Tư vấn sản phẩm và an toàn\n\n- Product name, demo price, color, and demo stock come only from `demo-products.vi-en.csv` for this test pack.\n- Do not transform “demo stock 0” into “coming soon” or a restock date. Say it is unavailable in the demo catalogue and ask staff about alternatives.\n- Beauty ingredients, skin compatibility, food allergens, medical effects, electrical compatibility, pet suitability, and warranty duration are not fully specified here. Do not claim safety, diagnosis, certification, compatibility, or warranty coverage without verified source data.\n- English: Use the product record for listed attributes. If ingredients, allergens, device compatibility, warranty, or safety are missing, state that they are unconfirmed and hand off.",
+        "### Food, supplements, and personal care\n\nDo not infer allergy safety, nutrition, diagnosis, treatment, certification, or efficacy from a product name. Require verified label/specification and route uncertain safety questions to a human."
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "confirm the label",
+        "staff"
+      ],
+      "must_include_missing": [
+        "confirm the label",
+        "staff"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 48.55,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "preference-optout",
+      "query": "Please don't remember that I like pink.",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        137,
+        11,
+        3,
+        165,
+        123
+      ],
+      "retrieved_contents": [
+        "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives.\n\nUse color, category, size, brand, and use-case only when available in structured catalogue or a cited shop source.\n\n3. Treat purchase history as evidence with strength, not identity: one purchase is weak; repeated recent purchases are stronger; an explicit “I like pink” is stronger still.\n\nPreferences can expire or be corrected.\n\n4. Do not infer sensitive traits or target a person from occupation, health, religion, political views, legal status, or protected characteristics.\n\nAn occupation mentioned casually is not a marketing segment.\n\n5. Explain briefly why each item matches and limit the first answer to a few options.\n\nVerify stock and price immediately before quoting.",
+        "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative source for that kind of fact. A product price is not a return policy; an FAQ is not an order record.\n3. Check exact identifiers and constraints: SKU, color, model, size, quantity, order reference, date, or service slot.\n4. Answer the complete question in the customer's language. Give no more detail than the source supports.\n5. Ask one focused question if an important qualifier is missing; hand off when the answer needs approval or a decision.\n\nExamples / Ví dụ:\n\n- “Áo màu hồng còn không?” → check color and `demo_stock` in the catalogue; don't use the product name alone as proof.\n- “Đơn DH-123 tới đâu?” → query the authenticated customer's order record; don't search other customers or use a generic delivery estimate.\n- “Đổi hàng thì ai trả phí ship?” → the demo policy marks this as unspecified; tell the customer it needs staff confirmation.\n- “Tôi thích màu hồng, nhớ giúp nhé.” → only store a preference if the customer has consented and the CRM's preference workflow supports correction and deletion.",
+        "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a real shop's source does not contain the requested fact, say that the information is not yet confirmed and ask a staff member to check.\n\nNever copy a demo value into a real-shop answer.\n\n3. Structured customer order records are the source for that customer's order status.\n\nNever retrieve a different customer's order from RAG.\n\n4. A customer's single purchase is only a weak preference signal.\n\nExplicit statements such as “mình thích màu hồng” are stronger; ask before saving sensitive or ambiguous preferences and honor a request not to remember them.\n\n5. Do not infer or store sensitive traits (including occupation, health, religion, or legal status) to personalize offers.\n\nA customer who says they are a police officer receives the same respectful support as anyone else; ask only for information necessary to fulfill the request.",
+        "## Customer preference evidence / Độ tin cậy sở thích\n\nUse a documented human handoff (also called a `handoff`) whenever safety, privacy, policy approval, or an uncertain commercial decision needs staff review.\n\nKeep separate signals instead of storing a single permanent label:\n\n1. **Current request:** “show me pink items” applies to the current answer only.\n2. **Explicit preference:** “I usually prefer pink” may be saved if consent and retention rules permit; store the source, date, and confidence.\n3. **Repeated behavior:** several completed purchases can add evidence, but use completed/non-refunded order lines and avoid inferring from a one-off gift or return.\n4. **Correction or opt-out:** a customer's correction overrides a weaker inference. A request not to remember must stop future extraction and use the product privacy workflow.\n\nDo not infer gender, age, income, occupation, health, religion, or legal status from color, category, or purchase behavior. Do not use those traits to rank offers.",
+        "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; check the carrier record for an existing order.\n\n**Can I get same-day or express delivery? / Có giao hỏa tốc trong ngày không?**\n\nSame-day and express options are not specified in this demo policy. Ask staff to check availability and fee before promising anything.\n\n**How much is shipping for a 300,000 VND order? / Đơn 300.000 đồng phí giao hàng bao nhiêu?**\n\nThe demo policy lists a 30,000 VND fee below 500,000 VND. This is a sample rule only; the final fee still needs to be checked for the destination and order.\n\n**Is shipping free for a 500,000 VND order? / Đơn 500.000 đồng có miễn phí ship không?**\n\nThe demo threshold is free shipping at 500,000 VND or above. Confirm eligible items, destination, and final payable amount in the order flow.\n\n**Where is my package now? / Đơn của tôi đang ở đâu?**\n\nDo not answer from this policy. Look up the signed-in customer's structured order/tracking record. Ask for the minimum order reference needed if no matching record is found."
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "stop future extraction"
+      ],
+      "must_include_missing": [
+        "stop future extraction"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 55.51,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "missing-refund-fee",
+      "query": "Nếu trả hàng thì phí vận chuyển ai trả?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        127,
+        11,
+        123,
+        3,
+        139
+      ],
+      "retrieved_contents": [
+        "### Returns, exchanges, and refunds / Đổi hàng và hoàn tiền\n\n**The item arrived damaged. What should I do? / Hàng bị hỏng khi nhận thì làm sao?**\n\nAsk for the order reference and a photo of the issue, then hand off for review. Do not promise replacement or refund before staff confirms eligibility.\n\n**I removed the tag or opened the package. Can I return it? / Tôi tháo tem hoặc mở hộp rồi có trả được không?**\n\nThe demo eligibility requires an unused item with original tags/packaging and proof of purchase. Staff must review the actual case; the assistant must not approve or reject it automatically.\n\n**Who pays return shipping? / Phí gửi hàng trả lại ai chịu?**\n\nThis is not specified. Say so and ask staff to confirm; do not assume that either party pays.\n\n**When will I receive a refund? / Bao lâu được hoàn tiền?**\n\nNo refund timing is specified and no automatic refund is promised. A staff member must confirm eligibility and the payment workflow.\n\n**Can I cancel after the order was packed? / Đơn đóng gói rồi có hủy được không?**\n\nThe demo policy does not define a cancellation cutoff. Check the actual order state and hand off; do not mark it cancelled unless the CRM confirms the change.",
+        "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative source for that kind of fact. A product price is not a return policy; an FAQ is not an order record.\n3. Check exact identifiers and constraints: SKU, color, model, size, quantity, order reference, date, or service slot.\n4. Answer the complete question in the customer's language. Give no more detail than the source supports.\n5. Ask one focused question if an important qualifier is missing; hand off when the answer needs approval or a decision.\n\nExamples / Ví dụ:\n\n- “Áo màu hồng còn không?” → check color and `demo_stock` in the catalogue; don't use the product name alone as proof.\n- “Đơn DH-123 tới đâu?” → query the authenticated customer's order record; don't search other customers or use a generic delivery estimate.\n- “Đổi hàng thì ai trả phí ship?” → the demo policy marks this as unspecified; tell the customer it needs staff confirmation.\n- “Tôi thích màu hồng, nhớ giúp nhé.” → only store a preference if the customer has consented and the CRM's preference workflow supports correction and deletion.",
+        "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; check the carrier record for an existing order.\n\n**Can I get same-day or express delivery? / Có giao hỏa tốc trong ngày không?**\n\nSame-day and express options are not specified in this demo policy. Ask staff to check availability and fee before promising anything.\n\n**How much is shipping for a 300,000 VND order? / Đơn 300.000 đồng phí giao hàng bao nhiêu?**\n\nThe demo policy lists a 30,000 VND fee below 500,000 VND. This is a sample rule only; the final fee still needs to be checked for the destination and order.\n\n**Is shipping free for a 500,000 VND order? / Đơn 500.000 đồng có miễn phí ship không?**\n\nThe demo threshold is free shipping at 500,000 VND or above. Confirm eligible items, destination, and final payable amount in the order flow.\n\n**Where is my package now? / Đơn của tôi đang ở đâu?**\n\nDo not answer from this policy. Look up the signed-in customer's structured order/tracking record. Ask for the minimum order reference needed if no matching record is found.",
+        "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a real shop's source does not contain the requested fact, say that the information is not yet confirmed and ask a staff member to check.\n\nNever copy a demo value into a real-shop answer.\n\n3. Structured customer order records are the source for that customer's order status.\n\nNever retrieve a different customer's order from RAG.\n\n4. A customer's single purchase is only a weak preference signal.\n\nExplicit statements such as “mình thích màu hồng” are stronger; ask before saving sensitive or ambiguous preferences and honor a request not to remember them.\n\n5. Do not infer or store sensitive traits (including occupation, health, religion, or legal status) to personalize offers.\n\nA customer who says they are a police officer receives the same respectful support as anyone else; ask only for information necessary to fulfill the request.",
+        "## RFM and customer labels\n\n- Calculate recency from the latest completed, non-refunded sale; frequency from distinct completed orders; monetary value from net paid value after refunds/discounts.\n- Define thresholds per tenant/industry and recalculate on a documented schedule.\n\nDo not apply a universal spending cutoff across unrelated sectors.\n- “Khách mới / New” means no prior completed order.\n\n“Khách quay lại / Returning” means at least one earlier completed order and a more recent one.\n\n“Khách quen / Regular” and “VIP” require explicit tenant thresholds and sufficient history.\n- Keep operational labels separate from AI guesses.\n\nDisplay the reason (e.g.\n\n“3 completed orders in 90 days”) and allow staff correction.\n- Avoid promoting a customer to VIP based only on a chat, a large unconfirmed cart, or a canceled/refunded purchase."
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "chưa được quy định",
+        "hỏi nhân viên"
+      ],
+      "must_include_missing": [
+        "chưa được quy định",
+        "hỏi nhân viên"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 47.38,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "beauty-product-boundary-en",
+      "query": "Will this cleanser treat my acne?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        26,
+        160,
+        60,
+        130,
+        137
+      ],
+      "retrieved_contents": [
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-001 | Sữa rửa mặt Dịu Mây | Soft Cloud Cleanser | beauty | skincare | trắng | chai 150 ml không có tuyên bố điều trị | 189000 | 20 | https://example.com/demo/DM-BEA-001 | demo_synthetic",
+        "### Beauty and personal care / Làm đẹp và chăm sóc cá nhân\n\n- Separate cosmetic accessories from skincare products: a pouch or headband is not a cosmetic treatment.\n- For cleanser or moisturizer questions, retrieve only the listed size/ingredients. This demo pack contains no verified clinical outcomes, allergy profile, or suitability guarantee.\n- Ask about customer-stated preference or requested use; do not infer a condition from a product click or purchase.",
+        "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-006 | Son dưỡng Mây Hồng | Pink Cloud Lip Balm | beauty | lip care | hồng | tuýp 5 g; không có tuyên bố điều trị | 89000 | 28 | https://example.com/demo/DM-BEA-006 | demo_synthetic",
+        "### Wholesale and quotation questions / Bán sỉ và báo giá\n\n**What is the discount for 5 units? / Mua 5 món giảm bao nhiêu?**\n\nNo wholesale discount threshold is listed for fewer than 10 units. Do not extrapolate; ask staff whether another approved promotion applies.\n\n**What is the discount for 29 units? / Mua 29 món giảm bao nhiêu?**\n\nThe demo tier is 8% for 10–29 units of the same eligible SKU, subject to stock and staff approval. This is not a confirmed quote.\n\n**What is the discount for 30 units? / Mua 30 món giảm bao nhiêu?**\n\nThe demo tier is 12% for 30 or more units of the same eligible SKU, subject to stock and staff approval. Confirm SKU, quantity, fees, and final total first.\n\n**Can I combine wholesale and another sale? / Có cộng dồn với khuyến mãi khác không?**\n\nThe demo wholesale policy says the bulk discount is not combined with another promotion. Staff must confirm the eligible SKU and final terms.\n\n**Can you issue a company invoice or quotation? / Có xuất hóa đơn công ty hoặc báo giá không?**\n\nThe demo policy does not define invoice or quotation requirements. Collect the business need and route it to staff; do not promise tax treatment or document issuance.",
+        "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives.\n\nUse color, category, size, brand, and use-case only when available in structured catalogue or a cited shop source.\n\n3. Treat purchase history as evidence with strength, not identity: one purchase is weak; repeated recent purchases are stronger; an explicit “I like pink” is stronger still.\n\nPreferences can expire or be corrected.\n\n4. Do not infer sensitive traits or target a person from occupation, health, religion, political views, legal status, or protected characteristics.\n\nAn occupation mentioned casually is not a marketing segment.\n\n5. Explain briefly why each item matches and limit the first answer to a few options.\n\nVerify stock and price immediately before quoting."
+      ],
+      "answer": "",
+      "citation_required": true,
+      "valid_citation_gate": false,
+      "must_include": [
+        "no treatment claim"
+      ],
+      "must_include_missing": [
+        "no treatment claim"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 42.63,
+      "answer_latency_ms": null
+    }
+  ],
+  "limitations": [
+    "No live shop, customer, order, or social account was read or contacted.",
+    "Synthetic policy and product facts must not be used for customer-facing replies.",
+    "This harness calls the knowledge retriever directly; it does not exercise intent routing or CRM tools, so it cannot validate live product price, stock, order, or sales answers.",
+    "Literal must-include checks and citation validation are useful gates, not full human semantic review."
+  ]
+}

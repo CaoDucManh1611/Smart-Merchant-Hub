@@ -82,8 +82,8 @@ The associations below are **demo merchandising ideas**, not observed sales or p
 
 - Start with the requested garment and exact color/size; use `DM-APP-001` for the pink basic shirt example.
 - If the shopper asks for a matching carry item, the pink tote `DM-APP-003` is a possible related suggestion; state that it is a separate item and confirm stock.
-- The hair clip `DM-APP-005` is an optional low-cost accessory suggestion only when the customer asks for styling or add-ons. Do not pad a simple answer with unrelated products.
-- The beige canvas tote `DM-APP-004` has zero demo stock. Do not recommend it as available or invent a restock date.
+- The hair clip `DM-APP-005` is an optional accessory suggestion only when the customer asks for styling or add-ons. Do not pad a simple answer with unrelated products.
+- Check the current catalogue before recommending the beige canvas tote `DM-APP-004`; never infer availability or invent a restock date from this playbook.
 
 ### Beauty and personal care / Làm đẹp và chăm sóc cá nhân
 
@@ -126,7 +126,7 @@ Do not infer gender, age, income, occupation, health, religion, or legal status 
 
 ## Suggested short response patterns / Câu trả lời mẫu ngắn
 
-**Known product fact:** “Áo thun Mây Basic màu hồng đang có 24 sản phẩm trong dữ liệu demo, giá mẫu 199.000₫. Đây là tồn kho giả lập; mình có thể kiểm tra bản ghi hiện tại của shop nếu bạn đang dùng shop thật.”
+**Product price and availability:** Check the current catalogue or CRM record. This playbook intentionally does not duplicate changing product values.
 
 **Missing product qualifier:** “Mình kiểm tra được ốp theo mẫu máy. Bạn đang dùng model điện thoại nào?”
 

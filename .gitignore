@@ -27,6 +27,7 @@ Thumbs.db
 rag_runs.json
 ngrok.exe
 /build/
+/backend/artifacts/data_rag/
 
 # Database backups are deployment artifacts, never source-controlled.
 backups/

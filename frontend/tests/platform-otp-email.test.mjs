@@ -12,7 +12,7 @@ const reply = (body, ok = true) => ({ ok, json: async () => body });
 function fixture(fetch) {
   let mounted;
   const context = vm.createContext({ ref: Vue.ref, onMounted: fn => { mounted = fn; }, defineProps: () => ({ apiBase: '/api' }), apiFetch: fetch });
-  vm.runInContext(descriptor.scriptSetup.content.replace(/^import .*;\s*$/gm, '') + '\nglobalThis.state = {config,password,recipient,busy,loaded,error,notice,load,save,sendTest};', context);
+  vm.runInContext(descriptor.scriptSetup.content.replace(/^import .*;\s*$/gm, '') + '\nglobalThis.state = {config,password,busy,loaded,error,notice,load,save};', context);
   return { state: context.state, mount: () => mounted() };
 }
 async function render(state) {
@@ -44,7 +44,7 @@ test('failed save clears password, renders alert and releases busy controls', as
   state.loaded.value = true; state.config.value = { ...saved }; state.password.value = 'FAKE-TEST-ONLY';
   const saving = state.save(); assert.equal(state.busy.value, true);
   const busyHtml = await render(state); assert.match(busyHtml, /<fieldset disabled/);
-  assert.match(busyHtml, /<button[^>]*disabled[^>]*>Gửi email thử/);
+  assert.doesNotMatch(busyHtml, /Gửi email thử/);
   release(reply({ detail: 'Cấu hình chưa hợp lệ.' }, false)); await saving;
   assert.equal(state.password.value, ''); assert.equal(state.busy.value, false); assert.equal(state.notice.value, '');
   const html = await render(state); assert.match(html, /role="alert"/); assert.match(html, /Cấu hình chưa hợp lệ/);
@@ -55,19 +55,11 @@ test('failed initial load shows retry and hides forms', async () => {
   await mount(); assert.equal(state.loaded.value, false); assert.equal(state.busy.value, false);
   const html = await render(state); assert.match(html, /role="alert"/); assert.match(html, /Tải lại/); assert.doesNotMatch(html, /<form/);
 });
-test('test email POST uses saved settings by sending only recipient; failures shown', async () => {
-  const calls = []; let fail = false;
-  const { state } = fixture(async (url, init) => { calls.push({ url, ...init }); return fail ? reply({ detail: 'Chưa thể gửi email thử.' }, false) : reply({ status: 'sent' }); });
-  state.config.value = { ...saved, username: 'unsaved@example.test' }; state.password.value = 'UNSAVED-FAKE-ONLY'; state.recipient.value = 'recipient@example.test';
-  await state.sendTest(); assert.equal(calls[0].method, 'POST'); assert.equal(calls[0].url, '/api/platform/otp-email/test');
-  assert.deepEqual(JSON.parse(calls[0].body), { email: 'recipient@example.test' }); assert.ok(state.notice.value);
-  fail = true; await state.sendTest(); assert.equal(state.notice.value, ''); assert.equal(state.error.value, 'Chưa thể gửi email thử.'); assert.equal(state.busy.value, false);
-});
-test('labels, password help and test eligibility render correctly', async () => {
+test('test email controls are removed while SMTP configuration remains', async () => {
   const { state } = fixture(async () => reply({ ...saved })); state.loaded.value = true;
   const html = await render(state);
-  for (const label of ['Gmail gửi', 'Email người gửi', 'Tên người gửi', 'Mật khẩu ứng dụng Gmail', 'Email nhận thử']) assert.ok(html.includes(`<label>${label}<input`), label);
+  for (const label of ['Gmail gửi', 'Email người gửi', 'Tên người gửi', 'Mật khẩu ứng dụng Gmail']) assert.ok(html.includes(`<label>${label}<input`), label);
+  assert.doesNotMatch(html, /Email nhận thử|Gửi email thử|otp-email-test/);
   assert.match(html, /type="password"[^>]*autocomplete="new-password"/); assert.match(html, /aria-describedby="otp-password-help"/); assert.match(html, /id="otp-password-help"/);
-  for (const config of [{ ...saved, enabled: false }, { ...saved, password_configured: false }]) { state.config.value = config; assert.match(await render(state), /<button[^>]*disabled[^>]*>Gửi email thử/); }
-  state.config.value = { ...saved }; assert.doesNotMatch(await render(state), /<button[^>]*disabled[^>]*>Gửi email thử/);
+  assert.match(html, /Lưu cấu hình email/);
 });

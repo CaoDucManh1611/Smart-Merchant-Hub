@@ -10,6 +10,7 @@ Hỗ trợ:
 
 import base64
 import logging
+from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 from functools import lru_cache
 
@@ -18,7 +19,11 @@ from app.services.api_key_pool import (
     ApiKeyPool,
     ApiKeyPoolUnavailable,
     call_with_key_rotation,
+    acquire_provider_request_slot,
     is_retryable_provider_error,
+    provider_call_started,
+    provider_call_failed,
+    provider_call_succeeded,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,8 +47,17 @@ def _embedding_pool() -> ApiKeyPool:
     )
 
 
-def _call_with_key_rotation(pool: ApiKeyPool, operation):
-    return call_with_key_rotation(pool, operation)
+def _call_with_key_rotation(pool: ApiKeyPool, operation, *, provider: str = "ai"):
+    return call_with_key_rotation(pool, operation, provider=provider)
+
+
+@asynccontextmanager
+async def _provider_stream_slot(provider: str):
+    semaphore = await acquire_provider_request_slot(provider)
+    try:
+        yield
+    finally:
+        semaphore.release()
 
 
 # =========================================================
@@ -73,6 +87,7 @@ def call_groq(messages: list[dict]) -> str:
             messages=messages,
             temperature=0.3,
         ).choices[0].message.content or "",
+        provider="groq",
     )
 
 
@@ -86,6 +101,7 @@ def call_groq_vision(messages: list[dict]) -> str:
             temperature=0.1,
             max_completion_tokens=512,
         ).choices[0].message.content or "",
+        provider="groq",
     )
 
 
@@ -95,30 +111,34 @@ async def stream_groq(
     """Gọi Groq Chat Completions API với streaming."""
     pool = _provider_pool("groq")
     attempted: set[str] = set()
-    max_attempts = pool.snapshot()["key_count"]
+    max_attempts = min(pool.snapshot()["key_count"], 3)
     if max_attempts <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
-    for attempt in range(max_attempts):
-        key = pool.next_key(exclude=attempted)
-        attempted.add(key)
-        emitted = False
-        try:
-            response = _groq_client(key).chat.completions.create(
-                model=settings.LLM_MODEL,
-                messages=messages,
-                temperature=0.3,
-                stream=True,
-            )
-            for chunk in response:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    emitted = True
-                    yield delta.content
-            return
-        except Exception as error:
-            pool.report_failure(key, error)
-            if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
-                raise
+    async with _provider_stream_slot("groq"):
+        for attempt in range(max_attempts):
+            key = pool.next_key(exclude=attempted)
+            attempted.add(key)
+            emitted = False
+            try:
+                provider_call_started("groq")
+                response = _groq_client(key).chat.completions.create(
+                    model=settings.LLM_MODEL,
+                    messages=messages,
+                    temperature=0.3,
+                    stream=True,
+                )
+                for chunk in response:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        emitted = True
+                        yield delta.content
+                provider_call_succeeded("groq")
+                return
+            except Exception as error:
+                pool.report_failure(key, error)
+                provider_call_failed("groq", error)
+                if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
+                    raise
 
 
 # =========================================================
@@ -201,27 +221,42 @@ def call_gemini(messages: list[dict]) -> str:
     return _call_with_key_rotation(
         _provider_pool("gemini"),
         lambda key: _call_gemini_once(messages, key),
+        provider="gemini",
     )
 
 
-def call_llm_with_image(messages: list[dict], image_bytes: bytes, mime_type: str) -> str:
-    """Route a single inbound image through a vision-capable provider model."""
-    image_data = base64.b64encode(image_bytes).decode("ascii")
+def call_llm_with_image(
+    messages: list[dict],
+    image_bytes: bytes,
+    mime_type: str,
+    *,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+) -> str:
+    """Route a customer image and optional labeled catalog photos to a vision model."""
+    def image_part(data: bytes, content_type: str) -> dict:
+        encoded = base64.b64encode(data).decode("ascii")
+        return {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{encoded}"}}
+
     multimodal = [dict(message) for message in messages]
-    image_part = {
-        "type": "image_url",
-        "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
-    }
     for message in reversed(multimodal):
         if message.get("role") != "user":
             continue
         content = message.get("content")
         parts = list(content) if isinstance(content, list) else [{"type": "text", "text": str(content or "")}]
-        parts.append(image_part)
+        parts.append(image_part(image_bytes, mime_type))
+        for label, reference_bytes, reference_mime in reference_images or []:
+            parts.append({"type": "text", "text": str(label)[:200]})
+            parts.append(image_part(reference_bytes, reference_mime))
         message["content"] = parts
         break
     else:
-        multimodal.append({"role": "user", "content": [image_part]})
+        parts = [image_part(image_bytes, mime_type)]
+        for label, reference_bytes, reference_mime in reference_images or []:
+            parts.extend([
+                {"type": "text", "text": str(label)[:200]},
+                image_part(reference_bytes, reference_mime),
+            ])
+        multimodal.append({"role": "user", "content": parts})
 
     provider = settings.LLM_PROVIDER.strip().lower()
     if provider == "groq":
@@ -246,6 +281,7 @@ def call_gemini_for_turn(fragments: list[str]) -> str:
     return _call_with_key_rotation(
         _provider_pool("gemini"),
         lambda key: _call_gemini_once(messages, key, settings.CONVERSATION_GEMINI_MODEL),
+        provider="gemini",
     )
 
 
@@ -270,6 +306,7 @@ def call_gemini_for_chunking(messages: list[dict]) -> str:
     return _call_with_key_rotation(
         _pool_for("gemini-chunking", tuple(keys), settings.API_KEY_COOLDOWN_SECONDS),
         lambda key: _call_gemini_once(messages, key, settings.CONVERSATION_GEMINI_MODEL),
+        provider="gemini-chunking",
     )
 
 
@@ -282,39 +319,43 @@ async def stream_gemini(
 
     pool = _provider_pool("gemini")
     attempted: set[str] = set()
-    max_attempts = pool.snapshot()["key_count"]
+    max_attempts = min(pool.snapshot()["key_count"], 3)
     if max_attempts <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
-    for attempt in range(max_attempts):
-        key = pool.next_key(exclude=attempted)
-        attempted.add(key)
-        emitted = False
-        try:
-            system_instruction, history = _messages_to_gemini_format(messages)
-            if not history:
+    async with _provider_stream_slot("gemini"):
+        for attempt in range(max_attempts):
+            key = pool.next_key(exclude=attempted)
+            attempted.add(key)
+            emitted = False
+            try:
+                provider_call_started("gemini")
+                system_instruction, history = _messages_to_gemini_format(messages)
+                if not history:
+                    return
+                contents = [
+                    types.Content(
+                        role=item["role"],
+                        parts=[types.Part.from_text(text=str(part)) for part in item["parts"]],
+                    )
+                    for item in history
+                ]
+                with genai.Client(api_key=key) as client:
+                    response = client.models.generate_content_stream(
+                        model=settings.LLM_MODEL.removeprefix("models/"),
+                        contents=contents,
+                        config=types.GenerateContentConfig(system_instruction=system_instruction or None),
+                    )
+                    for chunk in response:
+                        if chunk.text:
+                            emitted = True
+                            yield chunk.text
+                provider_call_succeeded("gemini")
                 return
-            contents = [
-                types.Content(
-                    role=item["role"],
-                    parts=[types.Part.from_text(text=str(part)) for part in item["parts"]],
-                )
-                for item in history
-            ]
-            with genai.Client(api_key=key) as client:
-                response = client.models.generate_content_stream(
-                    model=settings.LLM_MODEL.removeprefix("models/"),
-                    contents=contents,
-                    config=types.GenerateContentConfig(system_instruction=system_instruction or None),
-                )
-                for chunk in response:
-                    if chunk.text:
-                        emitted = True
-                        yield chunk.text
-            return
-        except Exception as error:
-            pool.report_failure(key, error)
-            if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
-                raise
+            except Exception as error:
+                pool.report_failure(key, error)
+                provider_call_failed("gemini", error)
+                if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
+                    raise
 
 
 # =========================================================
@@ -333,6 +374,7 @@ def call_openai(messages: list[dict]) -> str:
             messages=messages,
             temperature=0.3,
         ).choices[0].message.content or "",
+        provider="openai",
     )
 
 
@@ -344,30 +386,34 @@ async def stream_openai(
 
     pool = _provider_pool("openai")
     attempted: set[str] = set()
-    max_attempts = pool.snapshot()["key_count"]
+    max_attempts = min(pool.snapshot()["key_count"], 3)
     if max_attempts <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
-    for attempt in range(max_attempts):
-        key = pool.next_key(exclude=attempted)
-        attempted.add(key)
-        emitted = False
-        try:
-            response = OpenAI(api_key=key).chat.completions.create(
-                model=settings.LLM_MODEL,
-                messages=messages,
-                temperature=0.3,
-                stream=True,
-            )
-            for chunk in response:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    emitted = True
-                    yield delta.content
-            return
-        except Exception as error:
-            pool.report_failure(key, error)
-            if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
-                raise
+    async with _provider_stream_slot("openai"):
+        for attempt in range(max_attempts):
+            key = pool.next_key(exclude=attempted)
+            attempted.add(key)
+            emitted = False
+            try:
+                provider_call_started("openai")
+                response = OpenAI(api_key=key).chat.completions.create(
+                    model=settings.LLM_MODEL,
+                    messages=messages,
+                    temperature=0.3,
+                    stream=True,
+                )
+                for chunk in response:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        emitted = True
+                        yield delta.content
+                provider_call_succeeded("openai")
+                return
+            except Exception as error:
+                pool.report_failure(key, error)
+                provider_call_failed("openai", error)
+                if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
+                    raise
 
 
 # =========================================================
@@ -385,7 +431,7 @@ def call_llm(messages: list[dict]) -> str:
     Returns:
         Response text
     """
-    provider = settings.LLM_PROVIDER
+    provider = settings.LLM_PROVIDER.strip().lower()
 
     logger.info(
         "Calling LLM: %s/%s",
@@ -415,7 +461,7 @@ async def stream_llm(
     Yields:
         Từng phần text response
     """
-    provider = settings.LLM_PROVIDER
+    provider = settings.LLM_PROVIDER.strip().lower()
 
     logger.info(
         "Streaming LLM: %s/%s",

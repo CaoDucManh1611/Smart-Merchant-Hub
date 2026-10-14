@@ -54,6 +54,7 @@ from app.services.instagram_service import send_instagram_media
 from app.services.telegram_service import send_telegram_media
 from app.services.zalo_service import send_zalo_media, send_zalo_message
 from app.services.channel_retry import run_with_provider_retry
+from app.services.provider_circuit_breaker import ProviderCircuitOpen
 from app.services.channel_delivery import (
     claim_outbound_attempt,
     mark_outbound_attempt_failed,
@@ -66,6 +67,7 @@ from app.services.media_capabilities import supported_outbound_media_types, unsu
 from app.services.media_resolver import build_media_url
 from app.services.audit_service import record_audit
 from app.services.customer_avatar import refresh_customer_avatar_url
+from app.rag.run_logger import safe_error_message
 from app.contracts.channel_event import NormalizedAttachment, MediaType
 from app.integrations.telegram import TelegramAdapter
 from app.models.channel import Channel
@@ -842,6 +844,7 @@ def get_conversation_target(
         text("""
             SELECT
                 cv.id,
+                cv.business_id,
                 cv.channel,
                 cv.channel_id,
                 cv.customer_id,
@@ -877,20 +880,21 @@ def get_conversation_target(
         )
 
 
-    if not conversation[
-        "external_user_id"
-    ]:
+    from app.services.customer_identity import resolve_conversation_recipient
 
+    try:
+        _channel, recipient_id = resolve_conversation_recipient(
+            db,
+            conversation_id=conversation_id,
+            business_id=int(conversation["business_id"] or business_id or 0),
+        )
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Customer không có "
-                "external_user_id"
-            ),
-        )
+            detail="Không tìm thấy định danh khách hàng trên kênh hội thoại.",
+        ) from exc
 
-
-    return conversation
+    return {**dict(conversation), "external_user_id": recipient_id}
 
 
 def require_responsible_staff(
@@ -977,10 +981,31 @@ def send_telegram_text(
                 access_token=access_token,
             ),
         )
-    except Exception as exc:
+    except ProviderCircuitOpen as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram đang tạm dừng sau nhiều lần lỗi. Vui lòng thử lại sau ít phút.",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        try:
+            payload = exc.response.json()
+        except ValueError:
+            payload = {}
+        detail = payload.get("description") if isinstance(payload, dict) else None
         raise HTTPException(
             status_code=502,
-            detail="Telegram provider could not be reached",
+            detail=safe_error_message(detail, limit=300) if detail else "Telegram từ chối gửi tin nhắn.",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Không thể kết nối tới Telegram. Vui lòng thử lại sau.",
+        ) from exc
+    except Exception as exc:
+        logger.error("Telegram text send failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="Telegram không thể xử lý yêu cầu gửi tin.",
         ) from exc
     if result.get("ok") is False:
         description = result.get("description") or "Telegram rejected the message"

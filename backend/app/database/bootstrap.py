@@ -97,7 +97,7 @@ DEFAULT_PLANS = (
         "max_rag_chunks": 10000,
         "max_ai_calls": 25000,
         "max_ai_cost": Decimal("1500"),
-        "features": {"onboarding": True, "support": "dedicated", "display_name": "Gói Premium", "chatbot_rental_price": 1500000},
+        "features": {"onboarding": True, "support": "dedicated", "display_name": "Gói Premium", "chatbot_rental_price": 3000000},
     },
 )
 

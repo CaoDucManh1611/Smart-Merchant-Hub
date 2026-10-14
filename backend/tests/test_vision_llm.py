@@ -22,7 +22,7 @@ def test_groq_image_turn_uses_vision_model_and_inline_image():
     with patch.object(settings, "LLM_PROVIDER", "groq"), \
          patch.object(settings, "GROQ_VISION_MODEL", "qwen/qwen3.8-27b"), \
          patch.object(llm_caller, "_groq_client", return_value=client), \
-         patch.object(llm_caller, "_call_with_key_rotation", side_effect=lambda _pool, call: call("test-key")):
+         patch.object(llm_caller, "_call_with_key_rotation", side_effect=lambda _pool, call, **_kwargs: call("test-key")):
         answer = llm_caller.call_llm_with_image(messages, b"image-bytes", "image/jpeg")
 
     assert answer == "Ảnh có một chiếc áo màu hồng."

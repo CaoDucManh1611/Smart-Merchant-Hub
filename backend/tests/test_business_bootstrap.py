@@ -41,7 +41,7 @@ class DefaultBusinessBootstrapTests(unittest.TestCase):
         self.assertTrue(all(plan.status == "active" for plan in plans))
         self.assertEqual({"demo": 0, "starter": 1, "growth": 2, "scale": 4, "pro": 6}, {plan.code: plan.max_channels for plan in plans})
         self.assertEqual(
-            {"demo": 0, "starter": 100000, "growth": 400000, "scale": 1000000, "pro": 1500000},
+            {"demo": 0, "starter": 100000, "growth": 400000, "scale": 1000000, "pro": 3000000},
             {plan.code: int(plan.features["chatbot_rental_price"]) for plan in plans},
         )
 

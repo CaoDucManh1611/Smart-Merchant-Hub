@@ -135,7 +135,22 @@ class CustomerFactsApiTests(unittest.TestCase):
             headers={"X-Business-Id": "1"},
         )
         self.assertEqual(200, initial.status_code)
-        self.assertFalse(initial.json()["enabled"])
+        self.assertTrue(initial.json()["enabled"])
+
+        disabled = self.client.post(
+            "/api/customers/fact-extraction-status",
+            headers={"X-Business-Id": "1"},
+            json={"enabled": False},
+        )
+        self.assertEqual(200, disabled.status_code)
+        self.assertFalse(disabled.json()["enabled"])
+
+        other = self.client.get(
+            "/api/customers/fact-extraction-status",
+            headers={"X-Business-Id": "2"},
+        )
+        self.assertEqual(200, other.status_code)
+        self.assertTrue(other.json()["enabled"])
 
         enabled = self.client.post(
             "/api/customers/fact-extraction-status",
@@ -144,13 +159,6 @@ class CustomerFactsApiTests(unittest.TestCase):
         )
         self.assertEqual(200, enabled.status_code)
         self.assertTrue(enabled.json()["enabled"])
-
-        other = self.client.get(
-            "/api/customers/fact-extraction-status",
-            headers={"X-Business-Id": "2"},
-        )
-        self.assertEqual(200, other.status_code)
-        self.assertFalse(other.json()["enabled"])
 
 
 if __name__ == "__main__":

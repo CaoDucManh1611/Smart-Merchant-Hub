@@ -88,6 +88,12 @@ test("Vue static copy and accessible labels are routed through the active locale
 
 test("English covers all Vietnamese static Vue copy and localizes dates and currency", () => {
   const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
+  const appSource = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
+  const crmCopyBlock = appSource.match(/const crmEnglishCopy = \{([\s\S]*?)^\};/m)?.[1] || "";
+  const crmEnglishKeys = new Set(
+    [...crmCopyBlock.matchAll(/^\s*("(?:\\.|[^"\\])*")\s*:/gm)]
+      .map(([, key]) => JSON.parse(key)),
+  );
   const findVueFiles = (directory) => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
     return entry.isDirectory() ? findVueFiles(path) : entry.name.endsWith(".vue") ? [path] : [];
@@ -116,11 +122,15 @@ test("English covers all Vietnamese static Vue copy and localizes dates and curr
       }
       const checkExpression = (expression) => {
         if (!expression) return;
+        // Some forms keep both complete copies in one explicit locale switch.
+        if (/\buiLocale\s*===\s*['"]en['"]/.test(expression)) return;
         const strings = [...expression.matchAll(/'((?:\\.|[^'\\])*)'|"((?:\\.|[^"\\])*)"|`([^`]*)`/g)];
         for (const match of strings) {
           const value = match[1] ?? match[2] ?? match[3];
           const phrases = match[3] === undefined ? [value] : value.replace(/\$\{[^}]*\}/g, "\0").split("\0");
-          for (const phrase of phrases.map((item) => item.trim()).filter((item) => vietnamese(item) && t(item) === item)) {
+          for (const phrase of phrases.map((item) => item.trim()).filter((item) => (
+            vietnamese(item) && t(item) === item && !crmEnglishKeys.has(item)
+          ))) {
             untranslatedExpressionCopy.add(phrase);
           }
         }
@@ -143,7 +153,7 @@ test("English covers all Vietnamese static Vue copy and localizes dates and curr
   assert.match(formatMoney(1200000), /₫/);
   assert.match(formatDate("2026-09-26"), /Sep|September/);
   assert.match(formatDateTime("2026-09-26T08:30:00Z"), /AM|PM/);
-  const appVue = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
+  const appVue = appSource;
   assert.doesNotMatch(appVue, /\.toLocaleString\([^)]*\)\s*\}\}đ/, "VND displays must use the shared currency formatter");
   setLocale("vi");
   assert.match(formatMoney(1200000), /1\.200\.000/);
