@@ -470,3 +470,86 @@ def test_zalo_oa_history_resumes_and_records_checkpoint_without_reprocessing_web
         marker = db.scalar(select(ChannelEvent).where(ChannelEvent.external_event_id == "history-sync:zalo:user-1"))
         assert marker.status == "processed"
         assert marker.payload["offset"] == 3
+
+
+def test_meta_history_reuses_recent_ui_sent_reply_instead_of_adding_a_second_message():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Business.metadata.create_all(engine)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    content = "Mình đã giữ đơn nháp ở trạng thái chưa xác nhận. Khi cần mua lại cứ nhắn mình nhé."
+    with Session(engine) as db:
+        business = Business(name="Meta Shop", slug="meta-shop")
+        db.add(business)
+        db.flush()
+        channel = Channel(
+            business_id=business.id,
+            channel_type="instagram",
+            name="Instagram",
+            external_account_id="ig-page-1",
+            status="active",
+        )
+        db.add(channel)
+        db.flush()
+        customer = Customer(
+            business_id=business.id,
+            channel="instagram",
+            external_user_id="ig-thread-1",
+            name="Buyer",
+        )
+        db.add(customer)
+        db.flush()
+        conversation = Conversation(
+            business_id=business.id,
+            customer_id=customer.id,
+            channel_id=channel.id,
+            channel="instagram",
+        )
+        db.add(conversation)
+        db.flush()
+        bridge_sent = Message(
+            conversation_id=conversation.id,
+            channel="instagram",
+            external_user_id="ig-thread-1",
+            external_message_id="meta-ui:ig-thread-1:123",
+            sender_type="bot",
+            direction="outbound",
+            content=content,
+            media_type="image",
+            media_url="https://img.vietqr.io/image/970403-account.png?amount=1245000",
+            raw_payload={"message_id": "meta-ui"},
+            status="sent",
+            sent_at=now,
+            received_at=now,
+        )
+        imported_echo = Message(
+            conversation_id=conversation.id,
+            channel="instagram",
+            external_user_id="ig-thread-1",
+            external_message_id="ig-provider-message-1",
+            sender_type="staff",
+            direction="outbound",
+            content=content,
+            raw_payload={"history_import": True},
+            status="received",
+            received_at=now,
+        )
+        db.add_all([bridge_sent, imported_echo])
+        db.flush()
+        imported_id = imported_echo.id
+
+        result = local_connectors._coalesce_meta_ui_outbound_echo(
+            db,
+            "instagram",
+            {"direction": "outbound", "message_id": "ig-provider-message-1", "content": content, "created_at": now},
+            {"_created": True, "message_id": imported_id, "conversation_id": conversation.id},
+        )
+
+        messages = db.scalars(
+            select(Message).where(Message.conversation_id == conversation.id, Message.direction == "outbound")
+        ).all()
+        assert result["_created"] is False
+        assert len(messages) == 1
+        assert messages[0].external_message_id == "ig-provider-message-1"
+        assert messages[0].media_type == "image"
+        assert messages[0].media_url.startswith("https://img.vietqr.io/image/")
+        assert messages[0].raw_payload["provider_history_message_id"] == "ig-provider-message-1"

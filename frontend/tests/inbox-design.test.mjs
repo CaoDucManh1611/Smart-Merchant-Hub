@@ -34,9 +34,10 @@ test('expanded customer profile sections use readable form, empty and summary tr
   assert.match(css, /\.customer-timeline-summary/);
 });
 
-test('the product uses one Vietnamese-first typeface across CRM, marketing and signup', () => {
-  assert.match(globalCss, /family=Be\+Vietnam\+Pro/);
-  assert.match(globalCss, /--font-ui:\s*"Be Vietnam Pro"/);
+test('the product uses one natural, readable typeface across CRM, marketing and signup', () => {
+  assert.match(globalCss, /family=Source\+Sans\+3/);
+  assert.match(globalCss, /--font-ui:\s*"Source Sans 3"/);
+  assert.doesNotMatch(globalCss, /family=Inter/);
   assert.match(globalCss, /button,[\s\S]*?font-family:\s*var\(--font-ui\)/);
   assert.match(marketingSource, /font-family:var\(--font-ui\)/);
   assert.match(signupCss, /font-family:var\(--font-ui\)/);

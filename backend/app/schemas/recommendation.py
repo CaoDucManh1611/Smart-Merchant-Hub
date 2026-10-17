@@ -31,6 +31,7 @@ class RecommendationItemOut(BaseModel):
     score: float
     model_score: float | None = None
     reason: str
+    staff_interest_percent: int | None = None
     personalization_signals: list[str] = Field(default_factory=list)
     purchase_facets: list[str] = Field(default_factory=list)
 

@@ -46,7 +46,7 @@ from app.services.rfm_segments import RFM_RULES_VERSION, RFM_SEGMENT_KEYS, rfm_g
 
 
 REVENUE_ORDER_STATUSES = ("delivered", "completed")
-MODEL_VERSION = "item_affinity_rfm_v3"
+MODEL_VERSION = "item_affinity_rfm_v4"
 SEGMENT_MODEL_VERSION = "rfm_kmeans_v2"
 STRATEGIES = {"balanced", "personalized", "popular", "rag"}
 MIN_BANDIT_TRAINING_EVENTS = 20
@@ -489,6 +489,38 @@ def _interaction_scores(
     return signals
 
 
+def _manual_product_interest_scores(
+    db: Session,
+    *,
+    business_id: int,
+    customer_id: int | None,
+) -> Counter:
+    """Return decayed, staff-recorded interest scores without pooling customers."""
+    if customer_id is None:
+        return Counter()
+    rows = db.query(
+        CustomerProductInteraction.product_id,
+        CustomerProductInteraction.occurred_at,
+        CustomerProductInteraction.event_metadata,
+    ).filter(
+        CustomerProductInteraction.business_id == business_id,
+        CustomerProductInteraction.customer_id == customer_id,
+        CustomerProductInteraction.product_id.is_not(None),
+        CustomerProductInteraction.event_type == "staff_interest",
+    ).all()
+    scores: Counter = Counter()
+    now = _now()
+    for product_id, occurred_at, metadata in rows:
+        try:
+            interest = min(100.0, max(0.0, float((metadata or {}).get("interest_percent", 0)))) / 100
+        except (TypeError, ValueError):
+            continue
+        days_old = max(0, (now - occurred_at).days) if occurred_at else INTERACTION_HALF_LIFE_DAYS
+        decayed_interest = interest * (0.5 ** (days_old / INTERACTION_HALF_LIFE_DAYS))
+        scores[int(product_id)] = max(scores[int(product_id)], decayed_interest)
+    return scores
+
+
 def _historic_query_tokens(db: Session, business_id: int, customer_id: int | None) -> Counter:
     if customer_id is None:
         return Counter()
@@ -755,6 +787,9 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
     popularity = _popular_counts(db, business_id)
     affinity = _co_purchase_counts(db, business_id, historical)
     interaction_affinity = _interaction_scores(db, business_id=business_id, customer_id=personalized_id) if personalized_id else Counter()
+    manual_interest_scores = _manual_product_interest_scores(
+        db, business_id=business_id, customer_id=personalized_id
+    )
     purchase_facets = _customer_purchase_facets(db, business_id, personalized_id)
     interaction_popularity = _interaction_scores(db, business_id=business_id)
     historic_tokens = _historic_query_tokens(db, business_id, personalized_id)
@@ -765,6 +800,8 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         if historical:
             available_personalization_signals.add("order_history")
         if any(value != 0 for value in interaction_affinity.values()):
+            available_personalization_signals.add("product_interest")
+        if any(value > 0 for value in manual_interest_scores.values()):
             available_personalization_signals.add("product_interest")
         if stated_preferences or color_signal == "explicit_color_preference":
             available_personalization_signals.add("stated_preferences")
@@ -886,6 +923,16 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             scored_items = shortlist + scored_items[3:]
     except (RecommendationArtifactError, KeyError, TypeError, ValueError):
         data_rag_scores, data_rag_status = {}, "unavailable"
+    for item in scored_items:
+        interest_score = float(manual_interest_scores.get(int(item["product_id"]), 0.0))
+        if interest_score <= 0:
+            continue
+        item["score"] = round(float(item["score"]) + 0.30 * interest_score, 6)
+        item["staff_interest_percent"] = round(interest_score * 100)
+        item["personalization_signals"] = sorted(set(item["personalization_signals"]) | {"product_interest"})
+        if item["reason"] in {"eligible_catalog_fallback", "tenant_popularity"}:
+            item["reason"] = "staff_recorded_product_interest"
+    scored_items.sort(key=lambda item: (-item["score"], item["product_id"]))
     served_items = scored_items[:payload.limit]
     used_personalization_signals = sorted({
         signal
@@ -927,6 +974,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             "linucb_matched_skus": len(linucb_scores),
             "ncf_matched_skus": len(ncf_scores),
             "customer_interaction_product_count": len(interaction_affinity),
+            "staff_interest_product_count": len(manual_interest_scores),
             "historic_interest_token_count": len(historic_tokens),
             "personalization_applied": bool(used_personalization_signals),
             "personalization_signals": used_personalization_signals,

@@ -25,6 +25,25 @@ class PlatformShopListOut(BaseModel):
     total: int
 
 
+class PlatformChannelStatusOut(BaseModel):
+    id: int
+    channel_type: str
+    status: str
+    connected_at: datetime | None = None
+
+
+class PlatformShopConnectionsOut(BaseModel):
+    business_id: int
+    shop_name: str
+    channels: list[PlatformChannelStatusOut] = Field(default_factory=list)
+    unavailable: bool = False
+
+
+class PlatformShopConnectionsListOut(BaseModel):
+    items: list[PlatformShopConnectionsOut]
+    total: int
+
+
 class PlatformStatusUpdate(BaseModel):
     status: Literal["active", "suspended"]
 

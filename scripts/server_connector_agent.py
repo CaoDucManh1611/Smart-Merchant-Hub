@@ -298,7 +298,8 @@ class AgentHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length") or "0")
-            if length < 0 or length > 16384:
+            max_length = 36 * 1024 * 1024 if parts[5] == "send" else 16384
+            if length < 0 or length > max_length:
                 raise ValueError("invalid body size")
             payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
             if parts[5] == "send":

@@ -1,7 +1,8 @@
 <script setup>
-import { ref, watch } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { formatDateTime, t } from './i18n.js';
 const props = defineProps({ request: Function, baseUrl: String, active: Boolean, adminId: Number });
+const emit = defineEmits(['count']);
 const items = ref([]), total = ref(0), offset = ref(0), loading = ref(false), saving = ref(null), error = ref(''), notice = ref(''), drafts = ref({});
 const labels = { open: 'Mới gửi', in_progress: 'Đang xử lý', resolved: 'Đã xử lý', closed: 'Đã đóng' };
 const transitions = { open: ['in_progress'], in_progress: ['resolved'], resolved: ['in_progress', 'closed'], closed: [] };
@@ -11,7 +12,7 @@ async function load() {
   try {
     const result = await props.request(`${props.baseUrl}/platform/support-requests?limit=20&offset=${offset.value}`);
     if (!result.ok) throw new Error();
-    const data = await result.json(); items.value = data.items; total.value = data.total;
+    const data = await result.json(); items.value = data.items; total.value = data.total; emit('count', data.total);
   } catch { error.value = 'Không tải được yêu cầu hỗ trợ. Vui lòng thử lại.'; }
   finally { loading.value = false; }
 }
@@ -34,6 +35,7 @@ async function update(item, status) {
 }
 async function page(delta) { offset.value += delta; await load(); }
 watch(() => props.active, active => { if (active) load(); }, { immediate: true });
+onMounted(load);
 </script>
 
 <template>

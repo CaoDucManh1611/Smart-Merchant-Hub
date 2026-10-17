@@ -1,6 +1,8 @@
+import base64
 import json
 import logging
 import mimetypes
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -82,6 +84,25 @@ from app.auth.dependencies import require_write_access
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _is_instagram_app_update_notice(message: object) -> bool:
+    text = " ".join(str(message or "").split()).casefold()
+    plain = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(character)
+    ).replace("đ", "d")
+    vietnamese = "phien ban moi nhat cua ung dung instagram" in plain and (
+        "xem lai tin nhan nay" in plain or "xem loai tin nhan nay" in plain
+    )
+    english = "latest version of instagram" in plain and (
+        "to view this message" in plain
+        or "to see this message" in plain
+        or "to view this type of message" in plain
+        or "to see this type of message" in plain
+    )
+    return vietnamese or english
 
 
 def _log_meta_error(exc: MetaAPIError) -> None:
@@ -1045,6 +1066,7 @@ def send_tiktok_text(
     recipient_id: str,
     text_content: str,
     business_id: int,
+    media_payload: dict | None = None,
 ) -> tuple[dict, Channel]:
     """Ask the local ReLttk bridge to send a message on this conversation."""
     channel_id = conversation.get("channel_id")
@@ -1075,6 +1097,8 @@ def send_tiktok_text(
         raise HTTPException(status_code=503, detail="TikTok bridge credentials could not be decrypted") from exc
     if not bridge_secret:
         raise HTTPException(status_code=503, detail="TikTok bridge credentials are not configured")
+    if not str(text_content or "").strip() and not media_payload:
+        raise HTTPException(status_code=422, detail="Thiếu nội dung tin nhắn TikTok.")
 
     thread_id = _local_connector_thread_id(db, int(conversation["id"]), "tiktok")
     if not thread_id:
@@ -1111,9 +1135,10 @@ def send_tiktok_text(
                 "message": text_content or "",
                 "conversationId": int(conversation["id"]),
                 "recipientId": str(recipient_id or ""),
+                **(media_payload or {}),
             },
             headers=headers,
-            timeout=30,
+            timeout=75 if media_payload else 30,
         )
     except httpx.RequestError as exc:
         raise HTTPException(
@@ -1143,6 +1168,7 @@ def send_shopee_text(
     recipient_id: str,
     text_content: str,
     business_id: int,
+    media_payload: dict | None = None,
 ) -> tuple[dict, Channel]:
     """Send via the Shopee connector attached to the shop's local Edge session."""
     channel_id = conversation.get("channel_id")
@@ -1156,6 +1182,8 @@ def send_shopee_text(
     )
     if channel is None or not channel.access_token_encrypted:
         raise HTTPException(status_code=503, detail="Shopee connector chưa được ghép nối.")
+    if not str(text_content or "").strip() and not media_payload:
+        raise HTTPException(status_code=422, detail="Thiếu nội dung tin nhắn Shopee.")
 
     thread_id = _local_connector_thread_id(db, int(conversation["id"]), "shopee")
     if not thread_id:
@@ -1184,9 +1212,14 @@ def send_shopee_text(
     try:
         response = httpx.post(
             endpoint,
-            json={"threadId": thread_id, "message": text_content or "", "recipientId": str(recipient_id or "")},
+            json={
+                "threadId": thread_id,
+                "message": text_content or "",
+                "recipientId": str(recipient_id or ""),
+                **(media_payload or {}),
+            },
             headers=headers,
-            timeout=30,
+            timeout=75 if media_payload else 30,
         )
     except httpx.RequestError as exc:
         raise HTTPException(
@@ -1289,6 +1322,248 @@ def send_meta_text(
             raise HTTPException(status_code=409, detail=payload)
         raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi tin")
     return payload if isinstance(payload, dict) else {"status": "sent"}, channel
+
+
+def send_meta_image(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    image_url: str,
+    caption: str,
+    business_id: int,
+) -> tuple[dict, Channel]:
+    """Send an image reply through either Meta's API or its paired UI bridge."""
+    channel_type = str(conversation.get("channel") or "").strip().lower()
+    if channel_type not in {"facebook", "instagram"}:
+        raise HTTPException(status_code=400, detail="Meta bridge chỉ hỗ trợ Messenger và Instagram.")
+    parsed = urlsplit(str(image_url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=422, detail="Địa chỉ ảnh không hợp lệ.")
+
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(conversation.get("channel_id") or 0),
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        )
+    )
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f"Active {channel_type.title()} channel not found for this tenant")
+    config = channel.config if isinstance(channel.config, dict) else {}
+    if config.get("provider") != f"{channel_type}_local_connector":
+        sender = send_instagram_media if channel_type == "instagram" else send_facebook_media
+        return sender(
+            recipient_id=recipient_id,
+            media_type="image",
+            media_url=image_url,
+            caption=caption,
+            db=db,
+            business_id=business_id,
+        ), channel
+
+    if not channel.access_token_encrypted:
+        raise HTTPException(status_code=503, detail="Meta connector chưa có thông tin xác thực.")
+    try:
+        connector_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Meta connector credentials could not be decrypted") from exc
+    thread_id = _local_connector_thread_id(db, int(conversation["id"]), channel_type)
+    if not thread_id:
+        raise HTTPException(status_code=409, detail="Meta conversation chưa có thread_id để gửi tin")
+    server_managed = config.get("connector_execution_mode") == "server"
+    control_url = str(
+        settings.SERVER_CONNECTOR_AGENT_URL
+        if server_managed
+        else (settings.META_INSTAGRAM_BRIDGE_CONTROL_URL
+            if channel_type == "instagram"
+            else settings.META_MESSENGER_BRIDGE_CONTROL_URL)
+    ).strip().rstrip("/")
+    if not control_url:
+        raise HTTPException(status_code=503, detail=f"{channel_type.title()} outbound bridge chưa được cấu hình")
+    endpoint = (
+        f"{control_url}/internal/channels/{business_id}/{channel_type}/{channel.id}/send"
+        if server_managed else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-Meta-Bridge-Secret": connector_token}
+    )
+    if server_managed and not settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
+    image_payload = {"imageUrl": image_url}
+    is_vietqr = (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").lower().rstrip(".") == "img.vietqr.io"
+        and parsed.path.startswith("/image/")
+        and parsed.path.lower().endswith(".png")
+    )
+    if not is_vietqr:
+        # Push validated bytes to Edge. A paired connector token is not a Graph
+        # token, and Edge must not fetch arbitrary URLs on the shop's network.
+        public_base = urlsplit(get_public_base_url())
+        filename = Path(parsed.path).name
+        local_upload = (
+            (parsed.scheme, parsed.netloc) == (public_base.scheme, public_base.netloc)
+            and parsed.path in {
+                f"/api/conversations/uploads/{filename}",
+                f"/api/conversations/media-uploads/{filename}",
+            }
+            and len(Path(filename).stem) == 32
+            and all(character in "0123456789abcdef" for character in Path(filename).stem)
+        )
+        if local_upload:
+            image_bytes = (UPLOAD_DIR / filename).read_bytes()
+            if len(image_bytes) > MAX_IMAGE_SIZE:
+                raise HTTPException(status_code=422, detail="Ảnh quá lớn. Tối đa 8MB.")
+            image_bytes, _ = normalize_image_to_jpeg(image_bytes)
+        else:
+            from app.services.inbound_image_service import download_inbound_image_url
+
+            image_bytes, _ = download_inbound_image_url(image_url, channel_type="outbound")
+        if len(image_bytes) > MAX_IMAGE_SIZE:
+            raise HTTPException(status_code=422, detail="Ảnh quá lớn. Tối đa 8MB.")
+        image_payload = {"imageData": base64.b64encode(image_bytes).decode("ascii")}
+    try:
+        response = httpx.post(
+            endpoint,
+            json={
+                "threadId": thread_id,
+                "recipientId": str(recipient_id or ""),
+                "mediaType": "image",
+                **image_payload,
+                "message": caption,
+            },
+            headers=headers,
+            timeout=45,
+        )
+    except httpx.RequestError as exc:
+        inbox_name = "Instagram" if channel_type == "instagram" else "Messenger"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Không thể kết nối {inbox_name} bridge. Hãy mở connector trên máy đang đăng nhập Meta Business Suite.",
+        ) from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code >= 400:
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        if response.status_code == 409 and isinstance(payload, dict) and payload.get("code") == "delivery_unknown":
+            raise HTTPException(status_code=409, detail=payload)
+        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi ảnh")
+    return payload if isinstance(payload, dict) else {"status": "sent"}, channel
+
+
+def send_meta_media(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    media_type: str,
+    media_url: str,
+    caption: str,
+    business_id: int,
+    uploaded_media: dict | None = None,
+) -> tuple[dict, Channel]:
+    """Send Meta audio/video/files through its paired UI bridge or Graph API."""
+    channel_type = str(conversation.get("channel") or "").strip().lower()
+    if channel_type not in {"facebook", "instagram"}:
+        raise HTTPException(status_code=400, detail="Meta bridge chỉ hỗ trợ Messenger và Instagram.")
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(conversation.get("channel_id") or 0),
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        )
+    )
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f"Active {channel_type.title()} channel not found for this tenant")
+    config = channel.config if isinstance(channel.config, dict) else {}
+    if config.get("provider") != f"{channel_type}_local_connector":
+        graph_type = "image" if media_type == "sticker" else media_type
+        if media_type == "sticker":
+            check_public_image_url(media_url)
+        sender = send_instagram_media if channel_type == "instagram" else send_facebook_media
+        return sender(
+            recipient_id=recipient_id,
+            media_type=graph_type,
+            media_url=media_url,
+            caption=caption,
+            db=db,
+            business_id=business_id,
+        ), channel
+
+    if not uploaded_media or not isinstance(uploaded_media.get("upload_bytes"), bytes):
+        raise HTTPException(status_code=422, detail="Tải file lên từ CRM để gửi qua Meta connector.")
+    if len(uploaded_media["upload_bytes"]) > MAX_MEDIA_UPLOAD_SIZE:
+        raise HTTPException(status_code=422, detail="File media quá lớn. Tối đa 25MB.")
+    if not channel.access_token_encrypted:
+        raise HTTPException(status_code=503, detail="Meta connector chưa có thông tin xác thực.")
+    try:
+        connector_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Meta connector credentials could not be decrypted") from exc
+    thread_id = _local_connector_thread_id(db, int(conversation["id"]), channel_type)
+    if not thread_id:
+        raise HTTPException(status_code=409, detail="Meta conversation chưa có thread_id để gửi tin")
+    server_managed = config.get("connector_execution_mode") == "server"
+    control_url = str(
+        settings.SERVER_CONNECTOR_AGENT_URL
+        if server_managed
+        else (settings.META_INSTAGRAM_BRIDGE_CONTROL_URL if channel_type == "instagram" else settings.META_MESSENGER_BRIDGE_CONTROL_URL)
+    ).strip().rstrip("/")
+    if not control_url:
+        raise HTTPException(status_code=503, detail=f"{channel_type.title()} outbound bridge chưa được cấu hình")
+    endpoint = (
+        f"{control_url}/internal/channels/{business_id}/{channel_type}/{channel.id}/send"
+        if server_managed else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-Meta-Bridge-Secret": connector_token}
+    )
+    if server_managed and not settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
+    payload = {
+        "threadId": thread_id,
+        "recipientId": str(recipient_id or ""),
+        "mediaType": media_type,
+        "mediaData": base64.b64encode(uploaded_media["upload_bytes"]).decode("ascii"),
+        "fileName": str(uploaded_media.get("upload_filename") or "attachment"),
+        "contentType": str(uploaded_media.get("upload_content_type") or "application/octet-stream"),
+        "message": caption or "",
+    }
+    try:
+        response = httpx.post(endpoint, json=payload, headers=headers, timeout=75)
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Không thể kết nối {channel_type.title()} bridge.") from exc
+    try:
+        result = response.json()
+    except ValueError:
+        result = {}
+    if response.status_code >= 400:
+        detail = result.get("detail") if isinstance(result, dict) else None
+        if response.status_code == 409 and isinstance(result, dict) and result.get("code") == "delivery_unknown":
+            raise HTTPException(status_code=409, detail=result)
+        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi media")
+    return result if isinstance(result, dict) else {"status": "sent"}, channel
+
+
+def _local_connector_media_payload(uploaded_media: dict | None, media_type: str) -> dict:
+    if not uploaded_media or not isinstance(uploaded_media.get("upload_bytes"), bytes):
+        raise HTTPException(status_code=422, detail="Tải ảnh lên từ CRM để gửi qua connector.")
+    content = uploaded_media["upload_bytes"]
+    if len(content) > MAX_MEDIA_UPLOAD_SIZE:
+        raise HTTPException(status_code=422, detail="File media quá lớn. Tối đa 25MB.")
+    return {
+        "mediaType": media_type,
+        "mediaData": base64.b64encode(content).decode("ascii"),
+        "fileName": str(uploaded_media.get("upload_filename") or "image"),
+        "contentType": str(uploaded_media.get("upload_content_type") or "image/png"),
+    }
 
 
 def telegram_external_message_id(result: dict, channel: Channel) -> str | None:
@@ -1623,19 +1898,14 @@ async def send_and_save_outbound(
     if image_url:
         logger.info("Outbound channel send started: channel=%s operation=image", channel)
 
-        if channel == "facebook":
-            result = await run_in_threadpool(
-                send_facebook_image,
+        if channel in {"facebook", "instagram"}:
+            conversation = get_conversation_target(db, conversation_id, business_id)
+            result, _ = await run_in_threadpool(
+                send_meta_image,
+                conversation=conversation,
                 recipient_id=recipient_id,
                 image_url=image_url,
-                db=db,
-                business_id=business_id,
-            )
-        elif channel == "instagram":
-            result = await run_in_threadpool(
-                send_instagram_image,
-                recipient_id=recipient_id,
-                image_url=image_url,
+                caption="",
                 db=db,
                 business_id=business_id,
             )
@@ -2425,7 +2695,7 @@ def get_conversation_messages(
 
     conversation = db.execute(
         text("""
-            SELECT id
+            SELECT id, channel
 
             FROM conversations
 
@@ -2480,6 +2750,7 @@ def get_conversation_messages(
             )
 
         ORDER BY
+            m.received_at ASC NULLS FIRST,
             m.id ASC
     """)
 
@@ -2491,6 +2762,11 @@ def get_conversation_messages(
             "business_id": tenant.business_id,
         },
     ).mappings().all()
+    result = [
+        row for row in result
+        if str(conversation.channel or "").casefold() != "instagram"
+        or not _is_instagram_app_update_notice(row.get("content"))
+    ]
 
     # Return the complete canonical attachment list.  The legacy media_type
     # and media_url columns remain in each row for older clients.
@@ -3220,7 +3496,9 @@ async def _send_media_message(
     unsupported_detail = unsupported_media_detail(channel, media_type, channel_provider)
     if unsupported_detail:
         raise HTTPException(status_code=422, detail=unsupported_detail)
-    if media_type == "image":
+    if channel in {"tiktok", "shopee"} and media_type in {"image", "sticker"} and uploaded_media is None:
+        raise HTTPException(status_code=422, detail="Kênh này cần tải ảnh lên trực tiếp từ CRM để gửi.")
+    if media_type == "image" and channel not in {"facebook", "instagram", "tiktok", "shopee"}:
         check_public_image_url(media_url)
     recipient_id = str(conversation["external_user_id"])
     attempt_id, replay = _claim_outbound_delivery(
@@ -3243,25 +3521,47 @@ async def _send_media_message(
         }
 
     try:
-        if channel == "facebook":
-            result = await run_in_threadpool(
-                send_facebook_media,
-                recipient_id=recipient_id,
-                media_type=media_type,
-                media_url=media_url,
-                caption=body.caption,
+        if channel in {"facebook", "instagram"} and media_type == "image":
+            result, _ = await run_in_threadpool(
+                send_meta_image,
                 db=db,
+                conversation=conversation,
+                recipient_id=recipient_id,
+                image_url=media_url,
+                caption=body.caption or "",
                 business_id=tenant.business_id,
             )
-        elif channel == "instagram":
-            result = await run_in_threadpool(
-                send_instagram_media,
+        elif channel in {"facebook", "instagram"}:
+            result, _ = await run_in_threadpool(
+                send_meta_media,
+                db=db,
+                conversation=conversation,
                 recipient_id=recipient_id,
                 media_type=media_type,
                 media_url=media_url,
-                caption=body.caption,
-                db=db,
+                caption=body.caption or "",
                 business_id=tenant.business_id,
+                uploaded_media=uploaded_media,
+            )
+        elif channel == "tiktok":
+            result, _ = await run_in_threadpool(
+                send_tiktok_text,
+                db=db,
+                conversation=conversation,
+                recipient_id=recipient_id,
+                text_content=body.caption or "",
+                business_id=tenant.business_id,
+                media_payload=_local_connector_media_payload(uploaded_media, media_type),
+            )
+        elif channel == "shopee":
+            result, _ = await run_in_threadpool(
+                send_shopee_text,
+                db=db,
+                conversation=conversation,
+                recipient_id=recipient_id,
+                text_content=body.caption or "",
+                business_id=tenant.business_id,
+                media_payload=_local_connector_media_payload(uploaded_media, media_type),
             )
         elif channel == "telegram":
             telegram_kwargs = {
@@ -4422,7 +4722,29 @@ async def upload_and_send_generic_media(
     if len(file_bytes) > MAX_MEDIA_UPLOAD_SIZE:
         raise HTTPException(status_code=400, detail="File media quá lớn. Tối đa 25MB")
 
+    # TikTok Shop accepts JPEG/PNG chat images. Normalize sticker artwork to
+    # PNG so transparent backgrounds survive when Seller Center treats it as
+    # a regular image attachment. Keep PNG alpha and convert WebP/GIF safely.
+    if normalized_type == "sticker" or (
+        channel in {"tiktok", "shopee"} and normalized_type == "image"
+        and content_type not in {"image/jpeg", "image/png"}
+    ):
+        try:
+            with Image.open(BytesIO(file_bytes)) as image:
+                image.load()
+                has_alpha = "A" in image.getbands() or "transparency" in image.info
+                target_format = "PNG" if has_alpha or normalized_type == "sticker" else "JPEG"
+                if image.format != target_format:
+                    normalized = BytesIO()
+                    image.convert("RGBA" if target_format == "PNG" else "RGB").save(normalized, format=target_format)
+                    file_bytes = normalized.getvalue()
+                    content_type = "image/png" if target_format == "PNG" else "image/jpeg"
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="File ảnh/sticker không hợp lệ.") from exc
+
     suffix = Path(file.filename or "").suffix.lower()
+    if normalized_type == "sticker" or channel in {"tiktok", "shopee"} and normalized_type == "image":
+        suffix = mimetypes.guess_extension(content_type) or suffix
     if not suffix or len(suffix) > 10 or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789." for char in suffix):
         suffix = mimetypes.guess_extension(content_type) or ".bin"
     filename = f"{uuid.uuid4().hex}{suffix}"
@@ -4454,6 +4776,12 @@ async def upload_and_send_generic_media(
                 "upload_filename": upload_path.name,
                 "upload_content_type": upload_content_type,
                 "voice_note": telegram_voice_note,
+            }
+        elif channel in {"facebook", "instagram", "tiktok", "shopee"}:
+            uploaded_media = {
+                "upload_bytes": upload_path.read_bytes(),
+                "upload_filename": upload_path.name,
+                "upload_content_type": upload_content_type,
             }
         request_body = SendMediaRequest(
             media_type=normalized_type,

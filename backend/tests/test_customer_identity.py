@@ -69,6 +69,19 @@ class CustomerIdentityResolutionTests(unittest.TestCase):
             self.assertEqual(first.id, second.id)
             self.assertEqual(2, len(db.scalars(select(CustomerIdentity)).all()))
 
+    def test_old_connector_cannot_replace_name_or_identity_with_meta_ui_label(self):
+        with Session(self.engine) as db:
+            business = Business(name="Shop", slug="meta-profile-guard")
+            db.add(business)
+            db.commit()
+            customer = resolve_customer(db, business.id, "facebook", "buyer-1", "page-1", display_name="Phú Lê")
+            for label in ("Chia sẻ dữ liệu", "Trang cá nhân trên Facebook"):
+                same = resolve_customer(db, business.id, "facebook", "buyer-1", "page-1", display_name=label)
+                self.assertEqual(customer.id, same.id)
+                self.assertEqual("Phú Lê", same.name)
+                identity = db.scalar(select(CustomerIdentity).where(CustomerIdentity.customer_id == same.id))
+                self.assertEqual("Phú Lê", identity.display_name)
+
     def test_lower_priority_name_cannot_replace_a_stored_display_name(self):
         with Session(self.engine) as db:
             business = Business(name="Shop", slug="shop")

@@ -8,11 +8,23 @@ from app.services.auto_reply_service import (
     _social_reply,
     _claim_auto_reply,
     _deterministic_customer_reply,
+    _extract_vietqr_photo,
     _send_channel_reply,
     format_product_catalog_reply,
     process_rag_auto_reply,
     send_text_reply,
 )
+
+
+@pytest.mark.parametrize("label", ["Mã QR", "• Mã QR", "🧾 Mã QR"])
+def test_vietqr_invoice_marker_is_sent_as_image_even_with_display_prefix(label):
+    url = "https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=4980000&addInfo=CHAT26"
+    text = f"🧾 Hóa đơn tạm tính CHAT-26\n{label}: {url}\nShop xác nhận sau khi nhận tiền."
+
+    assert _extract_vietqr_photo(text) == (
+        url,
+        "🧾 Hóa đơn tạm tính CHAT-26\nShop xác nhận sau khi nhận tiền.",
+    )
 
 
 @pytest.mark.parametrize(
@@ -209,6 +221,142 @@ def test_auto_reply_dispatches_telegram_through_tenant_channel():
         recipient_id="12345",
         text="Serum Vitamin C giá 420.000 đồng.",
     )
+
+
+def test_telegram_order_qr_is_sent_as_photo_with_instructions_as_caption():
+    db = Mock()
+    text = (
+        "🏦 Thông tin chuyển khoản đơn CHAT-17\n"
+        "Ngân hàng: Sacombank\nChủ tài khoản: Ngo Long Thien\n"
+        "Số tiền: 249.000 đồng\nNội dung chuyển khoản: CHAT17\n"
+        "Mã QR: https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=249000&addInfo=CHAT17\n"
+        "Shop sẽ cập nhật thanh toán sau khi xác nhận tiền đã vào tài khoản."
+    )
+    with patch(
+        "app.services.auto_reply_service.send_telegram_media",
+        return_value={"ok": True, "result": {"message_id": 43}},
+    ) as send_photo, patch(
+        "app.services.auto_reply_service.send_telegram_message",
+    ) as send_text:
+        response = _send_channel_reply(
+            db=db,
+            conversation_id=7,
+            channel="telegram",
+            recipient_id="12345",
+            text=text,
+            business_id=1,
+        )
+
+    assert response["ok"] is True
+    send_photo.assert_called_once_with(
+        db=db,
+        business_id=1,
+        conversation_id=7,
+        recipient_id="12345",
+        media_type="image",
+        media_url="https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=249000&addInfo=CHAT17",
+        caption=(
+            "🏦 Thông tin chuyển khoản đơn CHAT-17\n"
+            "Ngân hàng: Sacombank\nChủ tài khoản: Ngo Long Thien\n"
+            "Số tiền: 249.000 đồng\nNội dung chuyển khoản: CHAT17\n"
+            "Shop sẽ cập nhật thanh toán sau khi xác nhận tiền đã vào tài khoản."
+        ),
+    )
+    send_text.assert_not_called()
+
+
+def test_facebook_and_instagram_order_qr_are_sent_as_images_without_the_url_text():
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = Mock(id=11, channel_id=5)
+    text = (
+        "Thông tin chuyển khoản CHAT-18\nNgân hàng: Sacombank\nSố tiền: 1.245.000 đồng\n"
+        "Mã QR: https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=1245000&addInfo=CHAT18\n"
+        "Shop xác nhận sau khi nhận được tiền."
+    )
+    caption = "Thông tin chuyển khoản CHAT-18\nNgân hàng: Sacombank\nSố tiền: 1.245.000 đồng\nShop xác nhận sau khi nhận được tiền."
+
+    for channel in ("facebook", "instagram"):
+        with patch(
+            "app.api.conversations.send_meta_image",
+            return_value=({"status": "sent", "message_id": f"{channel}:image-1"}, Mock()),
+        ) as send_image, patch("app.api.conversations.send_meta_text") as send_text:
+            response = _send_channel_reply(
+                db=db,
+                conversation_id=11,
+                channel=channel,
+                recipient_id="customer-1",
+                text=text,
+                business_id=4,
+            )
+
+        assert response["media_type"] == "image"
+        assert response["media_url"].startswith("https://img.vietqr.io/image/")
+        assert response["caption"] == caption
+        send_image.assert_called_once_with(
+            db=db,
+            conversation={"id": 11, "channel_id": 5, "channel": channel},
+            recipient_id="customer-1",
+            image_url="https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=1245000&addInfo=CHAT18",
+            caption=caption,
+            business_id=4,
+        )
+        send_text.assert_not_called()
+
+
+def test_auto_reply_persists_qr_caption_and_image_instead_of_url():
+    db = Mock()
+    text = (
+        "Thông tin chuyển khoản CHAT-18\nSố tiền: 1.245.000 đồng\n"
+        "Mã QR: https://img.vietqr.io/image/970403-account.png?amount=1245000\n"
+        "Shop sẽ xác nhận."
+    )
+    caption = "Thông tin chuyển khoản CHAT-18\nSố tiền: 1.245.000 đồng\nShop sẽ xác nhận."
+    with patch(
+        "app.services.auto_reply_service._get_conversation_recipient",
+        return_value=("instagram", "buyer-1"),
+    ), patch(
+        "app.services.auto_reply_service._send_channel_reply",
+        return_value={
+            "message_id": "meta-ui:thread-1:123",
+            "media_type": "image",
+            "media_url": "https://img.vietqr.io/image/970403-account.png?amount=1245000",
+            "caption": caption,
+        },
+    ), patch("app.services.auto_reply_service._save_auto_reply_outbound") as save:
+        send_text_reply(
+            db=db,
+            conversation_id=7,
+            channel="instagram",
+            text=text,
+            business_id=1,
+        )
+
+    saved = save.call_args.kwargs
+    assert saved["content"] == caption
+    assert saved["meta_response"]["media_type"] == "image"
+    assert saved["meta_response"]["media_url"].startswith("https://img.vietqr.io/image/")
+
+
+def test_telegram_untrusted_qr_url_stays_as_plain_text():
+    db = Mock()
+    text = "Mã QR: https://img.vietqr.io.attacker.test/image/qr.png"
+    with patch(
+        "app.services.auto_reply_service.send_telegram_message",
+        return_value={"ok": True},
+    ) as send_text, patch(
+        "app.services.auto_reply_service.send_telegram_media",
+    ) as send_photo:
+        _send_channel_reply(
+            db=db,
+            conversation_id=7,
+            channel="telegram",
+            recipient_id="12345",
+            text=text,
+            business_id=1,
+        )
+
+    send_text.assert_called_once()
+    send_photo.assert_not_called()
 
 
 def test_auto_reply_dispatches_zalo_through_tenant_channel():

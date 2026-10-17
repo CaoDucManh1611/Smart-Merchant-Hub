@@ -9,7 +9,7 @@ import json
 import re
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -19,7 +19,7 @@ from zipfile import ZIP_STORED, ZipFile
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin_access
@@ -30,10 +30,12 @@ from app.models.business import User
 from app.models.channel import Channel
 from app.models.customer_identity import CustomerIdentity
 from app.models.customer import Customer
+from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
 from app.models.platform_control import PlatformBusiness, TenantRegistry
 from app.services.audit_service import record_audit
 from app.services.channel_credentials import decrypt_token, encrypt_token
+from app.services.customer_avatar import marketplace_avatar_channel
 from app.services.customer_profile import normalize_avatar_url
 from app.services.message_service import process_and_save_message
 from app.services.realtime import manager
@@ -780,6 +782,66 @@ def _normalize_history_message(channel_type: str, item: object) -> dict | None:
     }
 
 
+def _coalesce_meta_ui_outbound_echo(db: Session, channel_type: str, normalized: dict, saved: dict) -> dict | None:
+    """Attach Meta's later provider ID to a reply already saved by the UI bridge."""
+    if (
+        channel_type not in {"facebook", "instagram"}
+        or normalized.get("direction") != "outbound"
+        or not saved.get("_created")
+        or not saved.get("message_id")
+        or not saved.get("conversation_id")
+    ):
+        return None
+    imported = db.get(Message, int(saved["message_id"]))
+    if imported is None:
+        return None
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=15)
+    candidates = db.scalars(
+        select(Message)
+        .where(
+            Message.conversation_id == int(saved["conversation_id"]),
+            Message.channel == channel_type,
+            Message.direction == "outbound",
+            Message.sender_type.in_(("bot", "staff")),
+            Message.status.in_(("sent", "received")),
+            Message.external_message_id.like("meta-ui:%"),
+            or_(Message.sent_at >= cutoff, Message.received_at >= cutoff),
+        )
+        .order_by(Message.id.desc())
+        .limit(25)
+    ).all()
+    imported_content = " ".join(str(normalized.get("content") or "").split())
+    existing = next(
+        (row for row in candidates if " ".join(str(row.content or "").split()) == imported_content),
+        None,
+    )
+    if existing is None:
+        return None
+
+    db.delete(imported)
+    db.flush()
+    existing.external_message_id = str(normalized["message_id"])
+    if normalized.get("created_at") is not None:
+        existing.received_at = normalized["created_at"]
+    existing.status = "sent"
+    existing.raw_payload = {
+        **(existing.raw_payload if isinstance(existing.raw_payload, dict) else {}),
+        "provider_history_message_id": str(normalized["message_id"]),
+    }
+    db.commit()
+    return {
+        "_created": False,
+        "message_id": existing.id,
+        "conversation_id": existing.conversation_id,
+        "external_message_id": existing.external_message_id,
+        "direction": existing.direction,
+        "content": existing.content,
+        "media_type": existing.media_type,
+        "media_url": existing.media_url,
+        "received_at": existing.received_at,
+    }
+
+
 def receive_local_connector_history(
     channel_type: str,
     payload: dict,
@@ -846,6 +908,9 @@ def receive_local_connector_history(
             )
             if not isinstance(saved, dict):
                 raise HTTPException(status_code=500, detail="Không thể lưu tin nhắn lịch sử.")
+            reconciled = _coalesce_meta_ui_outbound_echo(tenant_db, channel_type, normalized, saved)
+            if reconciled is not None:
+                saved = reconciled
             if saved.get("_created", True):
                 imported += 1
             else:
@@ -1034,7 +1099,10 @@ def _sync_local_connector_customer_avatars(
             avatar_url = avatars.get(identity.external_user_id)
             if customer.business_id != business_id or not avatar_url:
                 continue
-            if customer.avatar_url == avatar_url or (customer.avatar_url and not replace_existing):
+            if customer.avatar_url == avatar_url:
+                continue
+            existing_avatar_channel = marketplace_avatar_channel(customer.avatar_url)
+            if customer.avatar_url and not replace_existing and existing_avatar_channel != channel_type:
                 continue
             customer.avatar_url = avatar_url
             record_audit(

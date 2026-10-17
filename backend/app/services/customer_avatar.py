@@ -11,7 +11,19 @@ from app.core.config import settings
 
 
 CUSTOMER_AVATAR_TTL_SECONDS = 15 * 60
-PROVIDER_PROXY_CHANNELS = frozenset({"instagram", "telegram", "zalo"})
+PROVIDER_PROXY_CHANNELS = frozenset({"facebook", "instagram", "telegram", "zalo", "tiktok", "shopee"})
+MARKETPLACE_AVATAR_HOSTS = {
+    "tiktok": (
+        "tiktokcdn.com",
+        "tiktokcdn-us.com",
+        "tiktokcdn-eu.com",
+        "tiktokv.com",
+        "byteoversea.com",
+        "ibytedtos.com",
+        "byteimg.com",
+    ),
+    "shopee": ("susercontent.com", "shopee.vn"),
+}
 META_AVATAR_HOSTS = (
     "fbcdn.net",
     "cdninstagram.com",
@@ -35,6 +47,31 @@ def is_trusted_meta_avatar_url(value: object) -> bool:
     return any(
         hostname == host or hostname.endswith(f".{host}")
         for host in META_AVATAR_HOSTS
+    )
+
+
+def marketplace_avatar_channel(value: object) -> str | None:
+    """Identify HTTPS avatar URLs served by TikTok or Shopee CDNs."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = urlsplit(text)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return None
+    if parsed.scheme.lower() != "https" or not hostname:
+        return None
+    for channel, hosts in MARKETPLACE_AVATAR_HOSTS.items():
+        if any(hostname == host or hostname.endswith(f".{host}") for host in hosts):
+            return channel
+    return None
+
+
+def is_trusted_marketplace_avatar_url(value: object, channel: str | None = None) -> bool:
+    detected_channel = marketplace_avatar_channel(value)
+    return detected_channel is not None and (
+        not channel or detected_channel == str(channel).strip().lower()
     )
 
 
@@ -127,6 +164,15 @@ def refresh_customer_avatar_url(
             business_id=business_id,
             base_url=base_url,
             channel=source_channel,
+        )
+
+    marketplace_channel = marketplace_avatar_channel(text)
+    if marketplace_channel:
+        return build_customer_avatar_url(
+            customer_id=customer_id,
+            business_id=business_id,
+            base_url=base_url,
+            channel=marketplace_channel,
         )
 
     source_channel = str(channel or "").strip().lower()

@@ -81,6 +81,7 @@ const selectedLabel = computed(()=>props.mode === 'chatbot' ? copy.value.selecte
 <template>
   <section class="smh-pricing" :class="{ 'is-chatbot': mode === 'chatbot' }" :aria-label="copy.title">
     <header><h2>{{ copy.title }}</h2><p>{{ copy.subtitle }}</p></header>
+    <div class="smh-pricing-content" :class="{ 'is-chatbot-package': mode === 'chatbot' }">
     <div class="smh-pricing-grid">
       <article v-for="plan in displayedPlans" :key="plan.code" class="smh-price-card" :class="{ 'is-selected': authenticated && selected === plan.code, 'is-current': authenticated && currentPlan === plan.code }">
         <div class="smh-price-top"><h3>{{ planName(plan) }}</h3><span v-if="authenticated && selected === plan.code">{{ selectedLabel }}</span><span v-else-if="authenticated && currentPlan === plan.code" class="current-plan-label">{{ currentLabel }}</span></div>
@@ -111,18 +112,22 @@ const selectedLabel = computed(()=>props.mode === 'chatbot' ? copy.value.selecte
       <details><summary>{{ copy.managedDetails }}</summary><p>{{ copy.managedDetailsText }}</p></details>
     </section>
     <p class="smh-pricing-note">{{ copy.note }}</p>
+    </div>
     <button v-if="!authenticated" type="button" class="smh-pricing-login" @click="$emit('login')">{{ copy.login }}</button>
   </section>
 </template>
 <style>
 .smh-pricing { --price-ink:#183b3a; --price-muted:#536963; color:var(--price-ink); margin:28px auto 40px; width:100%; }
 .smh-pricing > header { text-align:center; margin-bottom:30px; }.smh-pricing h2 { font-size:34px;letter-spacing:-.035em;line-height:1.2;margin:0 0 12px; }.smh-pricing > header p { color:var(--price-muted);margin:0;font-size:16px;line-height:1.55; }
+.smh-pricing.is-chatbot .smh-pricing-content { display:grid;gap:20px;padding:26px;border:1px solid #d5dfda;border-radius:24px;background:linear-gradient(135deg,#f2f8f5,#fff); }
 .smh-pricing-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;align-items:stretch; }
 .smh-pricing.is-chatbot { max-width:1080px; }
 .smh-pricing.is-chatbot > header { margin-bottom:26px; }
 .smh-pricing.is-chatbot .smh-pricing-grid { grid-template-columns:minmax(0,1fr); }
 .smh-price-card { display:flex;flex-direction:column;min-height:620px;padding:25px 21px;border:1px solid #d5dfda;border-radius:18px;background:#fff;min-width:0;transition:background-color .2s,border-color .2s,box-shadow .2s; }
-.smh-pricing.is-chatbot .smh-price-card { display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);grid-template-areas:"top benefits" "description benefits" "amount benefits" "action benefits" "approval approval";column-gap:44px;row-gap:0;align-items:start;min-height:0;padding:34px 38px;border-radius:22px; }
+.smh-pricing.is-chatbot .smh-price-card { display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);grid-template-areas:"top benefits" "description benefits" "amount benefits" "action benefits" "approval approval";column-gap:44px;row-gap:0;align-items:start;min-height:0;padding:8px 4px 24px;border:0;border-bottom:1px solid #dce7e3;border-radius:0;background:transparent;box-shadow:none;transition:none; }
+.smh-pricing.is-chatbot .smh-price-card:hover,.smh-pricing.is-chatbot .smh-price-card:focus-within { background:transparent;border-color:#dce7e3;box-shadow:none; }
+.smh-pricing.is-chatbot .smh-price-card.is-selected { background:transparent;border-color:#dce7e3;box-shadow:none; }
 .smh-price-card:hover,.smh-price-card:focus-within { background:#eaf5ee;border-color:#087e77;box-shadow:0 0 0 3px #087e7714,0 8px 24px #087e7710; }
 .smh-price-top { display:flex;gap:8px;align-items:center;justify-content:space-between;min-height:27px; }.smh-price-top h3 { margin:0;font-size:20px;line-height:1.3; }.smh-price-top > span { font-size:11px;color:#086b62;font-weight:750; }
 .smh-price-top > .current-plan-label { color:#48645b; }
@@ -143,18 +148,20 @@ const selectedLabel = computed(()=>props.mode === 'chatbot' ? copy.value.selecte
 .smh-pricing.is-chatbot .smh-price-amount strong { color:#087e77;font-size:36px; }
 .smh-price-quota { margin:0 0 18px;padding:13px;border:1px solid #d5e5de;border-radius:14px;background:linear-gradient(120deg,#f1f8f4,#f7faf8); }.smh-price-quota > div { display:grid;grid-template-columns:38px minmax(0,1fr);grid-template-rows:auto auto;align-items:center;column-gap:11px;min-width:0; }.smh-price-quota dt { grid-column:2;color:var(--price-muted);font-size:11px;font-weight:650;line-height:1.35; }.smh-price-quota-icon { display:grid;place-items:center;grid-column:1;grid-row:1 / 3;width:38px;height:38px;border-radius:11px;background:#dcefeb;color:#087e77; }.smh-price-quota-icon svg { width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round; }.smh-price-quota dd { grid-column:2;margin:3px 0 0;color:var(--price-ink);font-size:15px;font-weight:800;line-height:1.3;white-space:nowrap; }
 .smh-pricing-note { text-align:center;font-size:13px;line-height:1.65;color:var(--price-muted);margin:24px auto 0;max-width:720px; }.smh-pricing-login { display:block;margin:16px auto 0;border:0;background:transparent;text-decoration:underline;color:#146c63;padding:12px;cursor:pointer;font:inherit;font-size:14px; }
+.smh-pricing.is-chatbot .smh-pricing-note { max-width:none;margin:0 auto;padding-top:16px;border-top:1px solid #dce7e3; }
 .smh-price-amount { min-height:72px; }.smh-price-amount strong { display:block;font-weight:650;white-space:nowrap; }.smh-price-amount > span { display:block;font-size:13px;letter-spacing:0;font-weight:400;color:var(--price-muted); }
-.smh-managed-service { display:grid;grid-template-columns:minmax(0,1.2fr) minmax(260px,.8fr);gap:22px 30px;margin-top:22px;padding:28px;border:1px solid #d5dfda;border-radius:22px;background:linear-gradient(125deg,#f2f8f5,#fff); }
+.smh-managed-service { display:grid;grid-template-columns:minmax(0,1.2fr) minmax(260px,.8fr);gap:22px 30px;margin-top:0;padding:24px;border:1px solid #d5dfda;border-radius:18px;background:linear-gradient(125deg,#f2f8f5,#fff); }
 .smh-managed-heading > span { color:#087e77;font-size:11px;font-weight:800;letter-spacing:.12em; }.smh-managed-heading h3 { margin:7px 0;font-size:22px;line-height:1.3; }.smh-managed-heading p,.smh-managed-price span { margin:0;color:var(--price-muted);font-size:14px;line-height:1.55; }
 .smh-managed-price { align-self:center;display:grid;gap:7px;padding:16px;border:1px solid #d5e5de;border-radius:14px;background:#fff; }.smh-managed-price strong { font-size:16px;line-height:1.4; }
 .smh-managed-service ol { grid-column:1 / -1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;list-style:none;padding:0;margin:0;counter-reset:rollout-step; }.smh-managed-service li { display:grid;align-content:start;gap:6px;min-height:126px;padding:17px;border:1px solid transparent;border-radius:15px;background:#eaf3ef;font-size:14px;line-height:1.5; }.smh-managed-service li::before { counter-increment:rollout-step;content:counter(rollout-step,decimal-leading-zero);color:#087e77;font-size:11px;font-weight:850;letter-spacing:.08em; }.smh-managed-service li span { color:var(--price-muted); }
 .smh-managed-service details { grid-column:1 / -1;border-top:1px solid #d5dfda;padding-top:13px;color:var(--price-muted);font-size:13px;line-height:1.6; }.smh-managed-service summary { width:max-content;max-width:100%;color:#087e77;font-weight:700;cursor:pointer; }.smh-managed-service details p { margin:8px 0 0; }
 body.crm-dark .smh-pricing { --price-ink:#f3f5f6;--price-muted:#b6c0c5; }
+body.crm-dark .smh-pricing.is-chatbot .smh-pricing-content { background:linear-gradient(135deg,#20292c,#202427);border-color:#3c4c4d; }
 body.crm-dark .smh-price-card { background:#202427;border-color:#394145; }
 body.crm-dark .smh-price-card:hover,body.crm-dark .smh-price-card:focus-within { background:#252a2d;border-color:#4a555a; }
 body.crm-dark .smh-price-card.is-selected { background:#173f43;border-color:#3c777a;box-shadow:0 0 0 2px rgba(60,119,122,.22),0 12px 30px rgba(0,0,0,.24); }
 body.crm-dark .smh-price-card.is-current:not(.is-selected) { border-color:#526b67; }
-body.crm-dark .smh-pricing.is-chatbot .smh-price-card { background:linear-gradient(135deg,#20292c,#202427);border-color:#3c4c4d; }
+body.crm-dark .smh-pricing.is-chatbot .smh-price-card,body.crm-dark .smh-pricing.is-chatbot .smh-price-card:hover,body.crm-dark .smh-pricing.is-chatbot .smh-price-card:focus-within,body.crm-dark .smh-pricing.is-chatbot .smh-price-card.is-selected { background:transparent;border-color:#3c4c4d;box-shadow:none; }
 body.crm-dark .smh-pricing.is-chatbot .smh-price-card li { background:#263336;border-color:#35494a; }
 body.crm-dark .smh-pricing.is-chatbot .smh-price-card > small { border-color:#3c4c4d; }
 body.crm-dark .smh-pricing.is-chatbot .smh-price-amount strong { color:#71d8d0; }
@@ -167,6 +174,7 @@ body.crm-dark .smh-managed-price { background:#202427;border-color:#3a4c4b; }
 body.crm-dark .smh-managed-service li { background:#263436;border-color:#35494a; }
 body.crm-dark .smh-managed-service li::before { color:#71d8d0; }
 body.crm-dark .smh-managed-service details { border-color:#3a4c4b; }
+body.crm-dark .smh-pricing.is-chatbot .smh-pricing-note { border-color:#3c4c4d; }
 body.crm-dark .smh-price-top > .current-plan-label { color:#c7d6cf; }
 body.crm-dark .smh-price-card > button { color:#f3f5f6;border-color:#4a555a; }
 body.crm-dark .smh-price-card:hover > button:not(:disabled),body.crm-dark .smh-price-card:focus-within > button:not(:disabled),body.crm-dark .smh-price-card.is-selected > button:not(:disabled) { background:#238b92;border-color:#39a7ad; }
@@ -174,8 +182,8 @@ body.crm-dark .smh-price-card > button.is-downgrade:disabled { color:var(--price
 body.crm-dark .smh-price-card > button:focus-visible,body.crm-dark .smh-pricing-login:focus-visible { outline-color:#39a7ad; }
 body.crm-dark .smh-price-card li svg { stroke:#39a7ad; }
 body.crm-dark .smh-price-top > span,body.crm-dark .smh-pricing-login { color:#8bd8d7; }
-@media(max-width:900px) { .smh-pricing.is-chatbot .smh-price-card { grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);column-gap:26px;padding:28px; }.smh-pricing.is-chatbot .smh-price-card ul { padding-left:20px; }.smh-managed-service ol { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-@media(max-width:700px) { .smh-pricing.is-chatbot .smh-price-card { grid-template-columns:1fr;grid-template-areas:"top" "description" "amount" "action" "benefits" "approval";padding:24px; }.smh-pricing.is-chatbot .smh-price-card ul { grid-template-columns:repeat(2,minmax(0,1fr));margin-top:24px;padding:20px 0 0;border-left:0;border-top:1px solid #dce7e3; }.smh-pricing.is-chatbot .smh-price-card > small { margin-top:18px; }.smh-managed-service { grid-template-columns:1fr;padding:22px; } }
+@media(max-width:900px) { .smh-pricing.is-chatbot .smh-pricing-content { padding:22px; }.smh-pricing.is-chatbot .smh-price-card { grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);column-gap:26px;padding:8px 4px 22px; }.smh-pricing.is-chatbot .smh-price-card ul { padding-left:20px; }.smh-managed-service ol { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:700px) { .smh-pricing.is-chatbot .smh-pricing-content { padding:18px; }.smh-pricing.is-chatbot .smh-price-card { grid-template-columns:1fr;grid-template-areas:"top" "description" "amount" "action" "benefits" "approval";padding:8px 2px 20px; }.smh-pricing.is-chatbot .smh-price-card ul { grid-template-columns:repeat(2,minmax(0,1fr));margin-top:24px;padding:20px 0 0;border-left:0;border-top:1px solid #dce7e3; }.smh-pricing.is-chatbot .smh-price-card > small { margin-top:18px; }.smh-managed-service { grid-template-columns:1fr;padding:20px; } }
 @media(max-width:600px) { .smh-pricing-grid { grid-template-columns:1fr; }.smh-price-description { min-height:0; }.smh-pricing h2 { font-size:28px; }.smh-price-card { min-height:0;padding:22px; }.smh-pricing.is-chatbot .smh-price-card { padding:22px; }.smh-pricing.is-chatbot .smh-price-card ul,.smh-managed-service ol { grid-template-columns:1fr; }.smh-managed-service { padding:20px; }.smh-managed-service li { min-height:0; } }
 @media(prefers-reduced-motion:reduce) { .smh-price-card,.smh-price-card > button { transition:none; } }
 </style>

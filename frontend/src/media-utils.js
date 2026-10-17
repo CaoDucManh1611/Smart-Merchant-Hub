@@ -16,6 +16,8 @@ export function visibleConversationMessages(messages = [], channel = "") {
   if (!["facebook", "instagram"].includes(String(channel).trim().toLowerCase())) return rows;
 
   const body = (message) => displayMessageText(message?.content, channel, message?.direction)
+    .replace(/https?:\/\/img\.vietqr\.io\/\S+/giu, " ")
+    .replace(/^\s*img\.vietqr\.io\s*$/gimu, " ")
     .replace(/\s+/g, " ").trim().toLocaleLowerCase();
   return rows.filter((message, messageIndex) => {
     if (message?.direction !== "outbound"

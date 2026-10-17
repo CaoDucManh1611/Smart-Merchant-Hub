@@ -1,4 +1,5 @@
 import sys
+import base64
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from tiktok_bot import (  # noqa: E402
     _select_all_seller_conversations,
     _seller_inbox_url,
     _strict_id_match,
+    _decode_outbound_image,
     _track_seller_conversation_changes,
     await_bridge_result,
     extract_seller_messages,
@@ -23,6 +25,28 @@ from tiktok_bot import (  # noqa: E402
     _remember_seller_profiles,
     _sync_seller_profiles,
 )
+
+
+def test_seller_center_connector_decodes_png_image_and_sticker_payloads():
+    image = b"\x89PNG\r\n\x1a\nimage-bytes"
+    for media_type in ("image", "sticker"):
+        decoded = _decode_outbound_image({
+            "mediaType": media_type,
+            "mediaData": base64.b64encode(image).decode(),
+            "fileName": "sticker.png",
+            "contentType": "image/png",
+        })
+        assert decoded == {"name": "sticker.png", "mimeType": "image/png", "buffer": image}
+
+
+def test_seller_center_connector_rejects_non_jpeg_png_media():
+    with pytest.raises(ValueError, match="PNG/JPEG"):
+        _decode_outbound_image({
+            "mediaType": "image",
+            "mediaData": base64.b64encode(b"not-an-image").decode(),
+            "fileName": "bad.png",
+            "contentType": "image/png",
+        })
 
 
 def test_normalizes_seller_center_inbox_message():

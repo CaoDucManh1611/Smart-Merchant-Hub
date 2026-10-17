@@ -6,15 +6,18 @@ import { outboundMediaAccept, outboundMediaTypes, supportsOutboundMedia } from "
 const appVue = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
 
 test("media picker exposes only attachments supported by the selected channel", () => {
-  assert.deepEqual(outboundMediaTypes("facebook"), ["image", "audio", "video", "file"]);
-  assert.deepEqual(outboundMediaTypes("instagram"), ["image", "audio", "video", "file"]);
+  assert.deepEqual(outboundMediaTypes("facebook"), ["image", "audio", "sticker", "video", "file"]);
+  assert.deepEqual(outboundMediaTypes("instagram"), ["image", "audio", "sticker", "video", "file"]);
   assert.deepEqual(outboundMediaTypes("telegram"), ["image", "audio", "video", "file", "sticker"]);
   assert.deepEqual(outboundMediaTypes("zalo", "bot"), ["image", "audio", "sticker"]);
   assert.deepEqual(outboundMediaTypes("zalo", "oa"), ["image"]);
-  assert.deepEqual(outboundMediaTypes("tiktok"), []);
-  assert.deepEqual(outboundMediaTypes("shopee"), []);
+  assert.deepEqual(outboundMediaTypes("tiktok"), ["image", "sticker"]);
+  assert.deepEqual(outboundMediaTypes("shopee"), ["image", "sticker"]);
   assert.equal(supportsOutboundMedia("zalo", "audio", "oa"), false);
   assert.equal(supportsOutboundMedia("telegram", "audio"), true);
+  assert.equal(supportsOutboundMedia("tiktok", "audio"), false);
+  assert.equal(supportsOutboundMedia("facebook", "sticker"), true);
+  assert.match(outboundMediaAccept("tiktok"), /image\/png/);
   assert.match(outboundMediaAccept("zalo", "oa"), /image\/jpeg/);
   assert.doesNotMatch(outboundMediaAccept("zalo", "oa"), /audio/);
 });

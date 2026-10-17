@@ -6,13 +6,15 @@ from app.services.telegram_media import normalize_telegram_voice_upload
 
 
 def test_channel_media_capabilities_match_the_outbound_adapters():
-    assert supported_outbound_media_types("facebook") == {"image", "audio", "video", "file"}
-    assert supported_outbound_media_types("instagram") == {"image", "audio", "video", "file"}
+    assert supported_outbound_media_types("facebook") == {"image", "audio", "sticker", "video", "file"}
+    assert supported_outbound_media_types("instagram") == {"image", "audio", "sticker", "video", "file"}
     assert supported_outbound_media_types("telegram") == {"image", "audio", "video", "file", "sticker"}
+    assert supported_outbound_media_types("tiktok") == {"image", "sticker"}
+    assert supported_outbound_media_types("shopee") == {"image", "sticker"}
     assert supported_outbound_media_types("zalo", "bot") == {"image", "audio", "sticker"}
     assert supported_outbound_media_types("zalo", "oa") == {"image"}
-    assert supported_outbound_media_types("tiktok") == set()
-    assert "chỉ gửi được tin nhắn văn bản" in unsupported_media_detail("shopee", "image")
+    assert "chưa hỗ trợ gửi audio" in unsupported_media_detail("tiktok", "audio")
+    assert "chưa hỗ trợ gửi audio" in unsupported_media_detail("shopee", "audio")
     assert "chưa hỗ trợ gửi audio" in unsupported_media_detail("zalo", "audio", "oa")
 
 

@@ -1,9 +1,9 @@
 const CHANNEL_MEDIA_TYPES = {
-  facebook: ["image", "audio", "video", "file"],
-  instagram: ["image", "audio", "video", "file"],
+  facebook: ["image", "audio", "sticker", "video", "file"],
+  instagram: ["image", "audio", "sticker", "video", "file"],
   telegram: ["image", "audio", "video", "file", "sticker"],
-  tiktok: [],
-  shopee: [],
+  tiktok: ["image", "sticker"],
+  shopee: ["image", "sticker"],
 };
 
 const MEDIA_ACCEPT = {

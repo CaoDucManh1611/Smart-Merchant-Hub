@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 import hashlib
@@ -459,7 +461,18 @@ async def _seller_conversation_rows(page) -> list[dict]:
             const usernameNode = row.querySelector('[data-testid="chat.chatroom.conversation_card_username"]');
             const username = usernameNode?.innerText?.trim() || '';
             const preview = usernameNode?.parentElement?.parentElement?.nextElementSibling?.querySelector('span')?.innerText?.trim() || '';
-            const avatar = row.querySelector('img')?.currentSrc || row.querySelector('img')?.getAttribute('src') || '';
+            const avatar = [...row.querySelectorAll('img')].flatMap(image => [
+              image.currentSrc, image.getAttribute('src'), image.getAttribute('data-src'),
+              image.getAttribute('data-lazy-src'),
+              ...(image.getAttribute('srcset') || '').split(',').map(item => item.trim().split(/\s+/, 1)[0])
+            ]).map(value => {
+              const raw = String(value || '').trim();
+              if (!raw || raw.startsWith('data:') || raw.startsWith('blob:')) return '';
+              try {
+                const url = new URL(raw, location.href);
+                return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
+              } catch { return ''; }
+            }).find(Boolean) || '';
             const unread = Number.parseInt(row.querySelector('.p-badge-number')?.innerText?.trim() || '0', 10) || 0;
             const handlersKey = Object.getOwnPropertyNames(row).find(key => key.startsWith('__reactEventHandlers$'));
             const children = row[handlersKey]?.children;
@@ -713,6 +726,118 @@ async def _send_seller_message(thread_id: str, text: str, recipient_id: str = ""
     return {"status": "sent", "message_id": f"tiktok-seller-ui:{thread_id}:{time.time_ns()}", "threadId": thread_id}
 
 
+def _decode_outbound_image(payload: dict) -> dict:
+    encoded = payload.get("mediaData")
+    if not isinstance(encoded, str) or len(encoded) > 36 * 1024 * 1024:
+        raise ValueError("Ảnh TikTok Shop không hợp lệ hoặc vượt quá 25MB.")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Dữ liệu ảnh TikTok Shop không hợp lệ.") from exc
+    if not content or len(content) > 25 * 1024 * 1024:
+        raise ValueError("Ảnh TikTok Shop không hợp lệ hoặc vượt quá 25MB.")
+    content_type = str(payload.get("contentType") or "").strip().lower()
+    signatures = {"image/png": content.startswith(b"\x89PNG\r\n\x1a\n"), "image/jpeg": content.startswith(b"\xff\xd8\xff")}
+    if content_type not in signatures or not signatures[content_type]:
+        raise ValueError("TikTok Shop chỉ nhận ảnh PNG/JPEG hợp lệ.")
+    filename = Path(str(payload.get("fileName") or "sticker.png")).name
+    if not filename or len(filename) > 120:
+        filename = "sticker.png" if payload.get("mediaType") == "sticker" else "image.png"
+    return {"name": filename, "mimeType": content_type, "buffer": content}
+
+
+async def _attach_seller_image(page, media_file: dict) -> None:
+    marker = await page.evaluate(
+        r"""() => {
+          for (const node of document.querySelectorAll('[data-smh-media-target]')) node.removeAttribute('data-smh-media-target');
+          const send = document.querySelector('#chat-input-send-button');
+          let area = send;
+          for (let depth = 0; area && depth < 8; depth++, area = area.parentElement) {
+            if (area.querySelector('input[type="file"]')) break;
+          }
+          const inputs = [...document.querySelectorAll('input[type="file"]')].filter(node =>
+            !node.disabled && (!node.accept || /image|\.png|\.jpe?g/i.test(node.accept)));
+          if (inputs.length) {
+            inputs[0].setAttribute('data-smh-media-target', 'input');
+            return 'input';
+          }
+          const visible = node => { const r=node.getBoundingClientRect(), s=getComputedStyle(node); return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden'; };
+          const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible).map(node => {
+            const r=node.getBoundingClientRect();
+            const name=[node.getAttribute('aria-label'),node.getAttribute('title'),node.getAttribute('data-testid'),node.innerText].join(' ').trim();
+            return {node,r,name};
+          }).filter(item => item.r.y > innerHeight * .48 && item.r.y < innerHeight * .99
+            && item.r.x > innerWidth * .12 && /(image|photo|picture|upload|attach|album|ảnh|đính kèm|图片|相册)/i.test(item.name));
+          if (!buttons.length) return '';
+          buttons[0].node.setAttribute('data-smh-media-target','button');
+          return 'button';
+        }"""
+    )
+    if marker == "input":
+        await page.locator('[data-smh-media-target="input"]').set_input_files(media_file)
+    elif marker == "button":
+        async with page.expect_file_chooser(timeout=5000) as chooser_info:
+            await page.locator('[data-smh-media-target="button"]').click(timeout=5000)
+        await (await chooser_info.value).set_files(media_file)
+    else:
+        raise RuntimeError("TikTok Seller Center không hiển thị nút gửi ảnh trong khung chat.")
+    await page.wait_for_timeout(500)
+
+
+async def _send_seller_image(thread_id: str, message: str, recipient_id: str, media: dict) -> dict:
+    global CONTROL_PAGE
+    if CONTROL_PAGE is None or CONTROL_PAGE.is_closed():
+        CONTROL_PAGE = next(
+            (page for page in (CONTROL_CONTEXT.pages if CONTROL_CONTEXT else [])
+             if not page.is_closed() and _is_seller_chat_url(page.url)),
+            None,
+        )
+    if CONTROL_PAGE is None or CONTROL_PAGE.is_closed():
+        raise RuntimeError("Edge TikTok Shop Seller Center chưa sẵn sàng.")
+    thread_id, message, recipient_id = str(thread_id or "").strip(), str(message or "").strip(), str(recipient_id or "").strip()
+    if not thread_id:
+        raise ValueError("Thiếu threadId TikTok Shop.")
+    row = await _strict_id_match(CONTROL_PAGE, thread_id, recipient_id)
+    if not row:
+        raise RuntimeError("Không tìm thấy đúng hội thoại đã đồng bộ trong Seller Center; mở hội thoại đó trong Edge rồi thử lại.")
+    if not row.get("recipientMatches"):
+        raise RuntimeError("Mã khách không khớp hội thoại Seller Center; đã hủy gửi để tránh nhầm khách.")
+    await CONTROL_PAGE.locator(f"#{row['rowId']}").click()
+    await CONTROL_PAGE.wait_for_selector("#chat-input-send-button", state="visible", timeout=8000)
+    await CONTROL_PAGE.wait_for_timeout(350)
+    before = await CONTROL_PAGE.locator('[data-testid="chat.chatroom.message_card"]:visible').count()
+    await _attach_seller_image(CONTROL_PAGE, media)
+    editor_index = await CONTROL_PAGE.evaluate(
+        r"""() => {
+          const send=document.querySelector('#chat-input-send-button'); if(!send) return -1;
+          for(let node=send.parentElement,depth=0;node&&depth<8;node=node.parentElement,depth++) {
+            const editors=[...node.querySelectorAll('[contenteditable="true"],textarea')].filter(e=>e.getClientRects().length&&!e.disabled&&!e.readOnly);
+            if(editors.length===1) return [...document.querySelectorAll('[contenteditable="true"]:not([disabled]),textarea:not([disabled])')].indexOf(editors[0]);
+          }
+          return -1;
+        }"""
+    )
+    if editor_index >= 0 and message:
+        await CONTROL_PAGE.locator("[contenteditable='true']:not([disabled]), textarea:not([disabled])").nth(editor_index).fill(message)
+    send_button = CONTROL_PAGE.locator("#chat-input-send-button")
+    if await send_button.count() != 1 or not await send_button.is_visible() or await send_button.is_disabled():
+        raise RuntimeError("TikTok Seller Center chưa bật nút gửi ảnh; file chưa được gửi.")
+    await send_button.click()
+    try:
+        await CONTROL_PAGE.wait_for_function(
+            r"""({before}) => {
+              const cards=[...document.querySelectorAll('[data-testid="chat.chatroom.message_card"]')].filter(e=>e.getClientRects().length);
+              const sent=cards.slice(before).some(card=>{const bubble=card.querySelector('.chatd-bubble-main--');return bubble&&!bubble.className.includes('--other')});
+              const editor=document.querySelector('[contenteditable="true"],textarea');
+              return sent && (!editor || !String(editor.value ?? editor.innerText ?? '').trim());
+            }""",
+            arg={"before": before}, timeout=15000,
+        )
+    except Exception as exc:
+        raise TikTokDeliveryUnknown("TikTok Seller Center chưa xác nhận ảnh đã gửi; hãy kiểm tra hội thoại trước khi thử lại.") from exc
+    return {"status": "sent", "message_id": f"tiktok-seller-image:{thread_id}:{time.time_ns()}", "threadId": thread_id}
+
+
 def _is_seller_chat_url(value: str) -> bool:
     parsed = urlparse(str(value or ""))
     return parsed.scheme == "https" and parsed.hostname == "seller-vn.tiktok.com" and parsed.path.startswith("/chat/inbox/")
@@ -771,7 +896,7 @@ class _TikTokControlHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > 65536:
+            if length <= 0 or length > 36 * 1024 * 1024:
                 raise ValueError("Payload TikTok Shop không hợp lệ.")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
@@ -780,10 +905,17 @@ class _TikTokControlHandler(BaseHTTPRequestHandler):
                 self._reply(503, {"detail": "TikTok Seller Center connector chưa sẵn sàng."})
                 return
             with CONTROL_SEND_LOCK:
-                future = asyncio.run_coroutine_threadsafe(
-                    _send_seller_message(payload.get("threadId"), payload.get("message"), payload.get("recipientId")),
-                    CONTROL_LOOP,
-                )
+                if str(payload.get("mediaType") or "").strip().lower() in {"image", "sticker"}:
+                    media = _decode_outbound_image(payload)
+                    future = asyncio.run_coroutine_threadsafe(
+                        _send_seller_image(payload.get("threadId"), payload.get("message"), payload.get("recipientId"), media),
+                        CONTROL_LOOP,
+                    )
+                else:
+                    future = asyncio.run_coroutine_threadsafe(
+                        _send_seller_message(payload.get("threadId"), payload.get("message"), payload.get("recipientId")),
+                        CONTROL_LOOP,
+                    )
                 result = await_bridge_result(future)
             self._reply(200, result)
         except TikTokDeliveryUnknown as exc:

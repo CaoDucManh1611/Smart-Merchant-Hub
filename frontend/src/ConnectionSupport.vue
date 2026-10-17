@@ -12,12 +12,22 @@ const emit = defineEmits(['created']);
 const providers = ref(Object.hasOwn(CHANNEL_LABELS, props.channel) ? [props.channel] : []);
 const channelLimit = ref(0);
 const channelMenu = ref(null);
+const channelMenuOpen = ref(false);
 function closeChannelMenu(event) {
-  if (channelMenu.value && !channelMenu.value.contains(event.target)) channelMenu.value.open = false;
+  if (channelMenu.value && !channelMenu.value.contains(event.target)) channelMenuOpen.value = false;
 }
 function escapeChannelMenu() {
-  channelMenu.value.open = false;
-  channelMenu.value.querySelector('summary').focus();
+  channelMenuOpen.value = false;
+  channelMenu.value?.querySelector('button')?.focus();
+}
+function channelDisabled(key) {
+  return saving.value || loading.value || (!providers.value.includes(key) && providers.value.length >= channelLimit.value);
+}
+function toggleChannel(key) {
+  if (channelDisabled(key)) return;
+  providers.value = providers.value.includes(key)
+    ? providers.value.filter(provider => provider !== key)
+    : [...providers.value, key];
 }
 const description = ref('');
 const saving = ref(false);
@@ -131,20 +141,22 @@ onUnmounted(() => document.removeEventListener('pointerdown', closeChannelMenu))
       <fieldset class="support-channels" aria-describedby="support-channel-limit">
         <legend>Kênh cần hỗ trợ</legend>
         <p id="support-channel-limit" role="status">Đã chọn {{ providers.length }} / {{ channelLimit }} kênh · Chung một yêu cầu hỗ trợ</p>
-        <details ref="channelMenu" class="support-channel-select" @keydown.esc.stop.prevent="escapeChannelMenu"
-          @focusout="!$event.currentTarget.contains($event.relatedTarget) && ($event.currentTarget.open = false)">
-          <summary aria-label="Chọn nền tảng cần hỗ trợ">
+        <div ref="channelMenu" class="support-channel-select" :class="{ open: channelMenuOpen }" @keydown.esc.stop.prevent="escapeChannelMenu"
+          @focusout="!$event.currentTarget.contains($event.relatedTarget) && (channelMenuOpen = false)">
+          <button type="button" class="support-channel-trigger" aria-label="Chọn nền tảng cần hỗ trợ"
+            aria-controls="support-channel-options" :aria-expanded="channelMenuOpen" @click="channelMenuOpen = !channelMenuOpen">
             <span>{{ providers.length ? providers.map(key => CHANNEL_LABELS[key]).join(', ') : 'Chọn nền tảng cần hỗ trợ' }}</span>
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" /></svg>
-          </summary>
-        <div class="support-channel-options">
-          <label v-for="(label, key) in CHANNEL_LABELS" :key="key" :class="{ selected: providers.includes(key) }">
-            <input type="checkbox" v-model="providers" :value="key"
-              :disabled="saving || loading || (!providers.includes(key) && providers.length >= channelLimit)" />
+          </button>
+        <div v-if="channelMenuOpen" id="support-channel-options" class="support-channel-options" role="group" aria-label="Nền tảng hỗ trợ">
+          <button v-for="(label, key) in CHANNEL_LABELS" :key="key" type="button" class="support-channel-option"
+            role="checkbox" :aria-checked="providers.includes(key)" :disabled="channelDisabled(key)"
+            :class="{ selected: providers.includes(key) }" @click="toggleChannel(key)">
+            <span class="support-channel-check" aria-hidden="true"><svg v-if="providers.includes(key)" viewBox="0 0 16 16"><path d="m3 8 3.2 3.2L13 4.5" /></svg></span>
             <span>{{ label }}</span>
-          </label>
+          </button>
         </div>
-        </details>
+        </div>
         <p v-if="!loading && !channelLimit">Gói hiện tại chưa có quyền kết nối kênh.</p>
       </fieldset>
       <label>Mô tả vấn đề
@@ -220,18 +232,19 @@ onUnmounted(() => document.removeEventListener('pointerdown', closeChannelMenu))
 .support-channels { border: 0; padding: 0; margin: 0; min-width: 0; }
 .support-channels legend { font-size: 13px; font-weight: 600; }
 .support-channel-select { position: relative; }
-.support-channel-select > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; box-sizing: border-box; border: 1px solid var(--support-border); border-radius: 8px; list-style: none; font-size: 13px; }
-.support-channel-select > summary::-webkit-details-marker { display: none; }
-.support-channel-select > summary span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.support-channel-select > summary svg { width: 18px; height: 18px; flex-shrink: 0; }
-.support-channel-select[open] > summary { border-color: #087f80; }
-.support-channel-select[open] > summary svg { transform: rotate(180deg); }
+.support-channel-trigger { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; box-sizing: border-box; text-align: left; font-size: 13px; cursor: pointer; }
+.support-channel-trigger span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.support-channel-trigger svg { width: 18px; height: 18px; flex-shrink: 0; transition: transform 160ms ease; }
+.support-channel-select.open .support-channel-trigger { border-color: #087f80; }
+.support-channel-select.open .support-channel-trigger svg { transform: rotate(180deg); }
 .support-channel-options { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; display: grid; gap: 2px; max-height: 260px; overflow-y: auto; padding: 6px; background: var(--support-bg); border: 1px solid var(--support-border); border-radius: 10px; box-shadow: 0 10px 24px #17203320; }
-.support-channel-options label { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 6px; cursor: pointer; }
-.support-channel-options label.selected, .support-channel-options label:hover { background: color-mix(in srgb, #087f80 10%, var(--support-bg)); }
-.support-channel-options input { width: 16px; height: 16px; flex-shrink: 0; accent-color: #087f80; }
-.support-channel-options label:has(input:disabled) { opacity: .6; cursor: not-allowed; }
-.support-channel-options input:focus-visible { outline: 3px solid #3980e8; outline-offset: 3px; }
+.support-channel-option { display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer; }
+.support-channel-option.selected,.support-channel-option:hover:not(:disabled) { background:color-mix(in srgb,#087f80 10%,var(--support-bg)); }
+.support-channel-check { display:grid;place-items:center;flex:0 0 16px;width:16px;height:16px;box-sizing:border-box;border:1px solid #8290a2;border-radius:3px;background:var(--support-bg);color:#fff; }
+.support-channel-check svg { width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round; }
+.support-channel-option[aria-checked='true'] .support-channel-check { border-color:#087f80;background:#087f80; }
+.support-content .support-channel-option:disabled { opacity:.6;cursor:not-allowed; }
+.support-channel-option:focus-visible { outline:3px solid #3980e8;outline-offset:2px; }
 .support-content select { width: 100%; box-sizing: border-box; }
 .support-history-panel > ul { max-height: 440px; overflow: auto; }
 .connection-support[open] .support-content { animation: support-reveal 160ms ease-out; }

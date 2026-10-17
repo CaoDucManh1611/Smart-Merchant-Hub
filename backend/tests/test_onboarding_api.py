@@ -1,12 +1,14 @@
 import unittest
+from contextlib import nullcontext
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.api import onboarding
 from app.api.router import api_router
 from app.auth.dependencies import issue_token, token_hash
 from app.auth.passwords import hash_password
@@ -76,6 +78,44 @@ class OnboardingApiTests(unittest.TestCase):
         )
         self.assertEqual(200, sessions.status_code, sessions.text)
         self.assertFalse(sessions.json()[0]["mfa_verified"])
+
+    def test_disconnect_reconnect_required_channel_releases_its_quota_slot(self):
+        with Session(self.engine) as db:
+            business = Business(name="Reconnect Shop", slug="reconnect-shop")
+            db.add(business)
+            db.flush()
+            channel = Channel(
+                business_id=business.id,
+                channel_type="telegram",
+                name="Telegram",
+                external_account_id="reconnect-bot",
+                status="reconnect_required",
+            )
+            db.add(channel)
+            db.commit()
+            business_id, channel_id = business.id, channel.id
+
+        actor = Mock(id=1)
+        platform_db = Mock()
+        with (
+            Session(self.engine) as tenant_db,
+            patch.object(onboarding, "_require_shop_admin"),
+            patch.object(onboarding, "tenant_session", return_value=nullcontext(tenant_db)),
+            patch.object(onboarding, "release_quota") as release_quota,
+            patch.object(onboarding, "deactivate_route_for_channel"),
+            patch.object(onboarding, "record_audit"),
+        ):
+            result = onboarding.disconnect_bot_channel(
+                business_id,
+                channel_id,
+                db=Mock(),
+                platform_db=platform_db,
+                actor=actor,
+            )
+            self.assertEqual("disconnected", tenant_db.get(Channel, channel_id).status)
+
+        self.assertFalse(result["connected"])
+        release_quota.assert_called_once_with(platform_db, business_id, "connected_channels")
 
     def test_regular_shop_member_can_read_provisioning_status(self):
         with Session(self.engine) as db:
@@ -545,6 +585,14 @@ class OnboardingApiTests(unittest.TestCase):
         self.assertEqual("12345", body["external_account_id"])
         self.assertEqual("Verify Bot", body["name"])
         self.assertEqual("connected", body["webhook_status"])
+        listed = self.client.get(
+            f"/api/onboarding/shops/{created['business_id']}/channels",
+            headers=headers,
+        )
+        self.assertEqual(200, listed.status_code, listed.text)
+        self.assertIn("no-store", listed.headers.get("cache-control", ""))
+        self.assertEqual("connected", listed.json()[0]["status"])
+        self.assertEqual("connected", listed.json()[0]["webhook_status"])
         self.assertEqual(3, len(calls))
         self.assertTrue(calls[1][0].endswith("/setWebhook"))
         self.assertEqual("https://crm.example.test/api/webhooks/telegram-verify", calls[1][1]["json"]["url"])

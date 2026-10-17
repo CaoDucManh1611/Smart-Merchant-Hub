@@ -17,8 +17,10 @@ from app.models.customer import Customer
 from app.models.customer_identity import CustomerIdentity
 from app.services.channel_credentials import decrypt_token
 from app.services.customer_avatar import (
+    MARKETPLACE_AVATAR_HOSTS,
     PROVIDER_PROXY_CHANNELS,
     is_trusted_meta_avatar_url,
+    is_trusted_marketplace_avatar_url,
     verify_customer_avatar_url,
 )
 from app.services.message_service import fetch_instagram_customer_profile
@@ -112,6 +114,21 @@ def _stream_customer_avatar(
         .order_by(CustomerIdentity.last_seen_at.desc())
     )
     if identity is None:
+        # A merged customer can keep its primary channel after its Facebook
+        # identity was removed. Fall back to the most recently linked provider
+        # identity so another channel's valid avatar does not become a 404.
+        identity = db.scalar(
+            select(CustomerIdentity)
+            .where(
+                CustomerIdentity.business_id == tenant.business_id,
+                CustomerIdentity.customer_id == customer.id,
+                CustomerIdentity.channel.in_(PROVIDER_PROXY_CHANNELS),
+            )
+            .order_by(CustomerIdentity.last_seen_at.desc())
+        )
+        if identity is not None:
+            avatar_channel = identity.channel
+    if identity is None:
         raise HTTPException(status_code=404, detail="Customer avatar not available")
 
     try:
@@ -121,10 +138,14 @@ def _stream_customer_avatar(
         # trying Graph API here would turn a valid avatar into a broken image.
         provider_url = (
             str(customer.avatar_url or "").strip()
-            if avatar_channel == "instagram"
+            if avatar_channel in {"facebook", "instagram"}
             and is_trusted_meta_avatar_url(customer.avatar_url)
             else ""
         )
+        if avatar_channel in MARKETPLACE_AVATAR_HOSTS and is_trusted_marketplace_avatar_url(
+            customer.avatar_url, avatar_channel
+        ):
+            provider_url = str(customer.avatar_url).strip()
 
         if not provider_url:
             channel = db.scalar(

@@ -3,7 +3,7 @@
 import asyncio
 import unittest
 from contextlib import nullcontext
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -102,11 +102,29 @@ class MetaOAuthTenantSecurityTests(unittest.TestCase):
         self.assertIsNone(route.response_model)
 
     def test_disconnect_revokes_only_the_current_tenants_credentials(self):
-        with patch.object(meta_oauth, "SessionLocal", self.session_factory):
+        with Session(self.engine) as db:
+            db.query(Channel).filter(
+                Channel.business_id == self.first_business_id,
+                Channel.channel_type == "facebook",
+            ).one().status = "reconnect_required"
+            db.commit()
+
+        platform_db = Mock()
+        with (
+            patch.object(meta_oauth, "SessionLocal", self.session_factory),
+            patch.object(meta_oauth, "PlatformSessionLocal", return_value=nullcontext(platform_db)),
+            patch.object(meta_oauth, "release_quota") as release_quota,
+            patch.object(meta_oauth, "deactivate_route_for_channel"),
+        ):
             response = asyncio.run(
                 meta_oauth.disconnect_meta(TenantContext(self.first_business_id, "test"))
             )
         self.assertEqual({"connected": False}, response)
+        self.assertEqual(2, release_quota.call_count)
+        release_quota.assert_has_calls([
+            call(platform_db, self.first_business_id, "connected_channels"),
+            call(platform_db, self.first_business_id, "connected_channels"),
+        ])
 
         with Session(self.engine) as db:
             first_channels = db.query(Channel).filter(

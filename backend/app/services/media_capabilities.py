@@ -2,11 +2,13 @@
 
 
 OUTBOUND_MEDIA_TYPES = {
-    "facebook": frozenset({"image", "audio", "video", "file"}),
-    "instagram": frozenset({"image", "audio", "video", "file"}),
+    "facebook": frozenset({"image", "audio", "sticker", "video", "file"}),
+    "instagram": frozenset({"image", "audio", "sticker", "video", "file"}),
     "telegram": frozenset({"image", "audio", "video", "file", "sticker"}),
-    "tiktok": frozenset(),
-    "shopee": frozenset(),
+    # TikTok Shop and Shopee accept sticker artwork as an image attachment.
+    # Their documented chat message types do not include audio or native stickers.
+    "tiktok": frozenset({"image", "sticker"}),
+    "shopee": frozenset({"image", "sticker"}),
 }
 
 

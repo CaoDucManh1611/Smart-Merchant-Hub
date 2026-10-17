@@ -579,10 +579,6 @@ def _undo_is_safe(
         raise HTTPException(status_code=409, detail="Trạng thái customer không còn phù hợp để hoàn tác.")
 
     manifest = operation["moved_records"] or {}
-    survivor_existing = manifest.get("survivor_existing", {})
-    expected_custom_fields = manifest.get("survivor_custom_fields_after")
-    if expected_custom_fields is not None and (survivor.custom_fields or {}) != expected_custom_fields:
-        raise HTTPException(status_code=409, detail="Không thể hoàn tác vì trường khách hàng đã được chỉnh sửa sau lần gộp.")
     moved = manifest.get("moved", {})
     models = {
         "conversations": Conversation,
@@ -596,13 +592,11 @@ def _undo_is_safe(
     }
     for key, model in models.items():
         moved_ids = {int(value) for value in moved.get(key, [])}
-        existing_ids = {int(value) for value in survivor_existing.get(key, [])}
         current_survivor_ids = set(_record_ids_for_customer(db, model, merge.business_id, survivor.id))
-        expected_ids = existing_ids | moved_ids
-        if current_survivor_ids != expected_ids:
+        if not moved_ids.issubset(current_survivor_ids):
             raise HTTPException(
                 status_code=409,
-                detail="Không thể hoàn tác vì hồ sơ sống đã thay đổi sau lần merge.",
+                detail="Không thể hoàn tác vì dữ liệu đã chuyển trong lần merge bị xóa hoặc chuyển sang hồ sơ khác.",
             )
         current_source_ids = set(_record_ids_for_customer(db, model, merge.business_id, source.id))
         if current_source_ids:
@@ -612,12 +606,11 @@ def _undo_is_safe(
             )
 
     moved_purchase_ids = {int(item["id"]) for item in moved.get("purchase_orders", [])}
-    existing_purchase_ids = {int(value) for value in survivor_existing.get("purchase_orders", [])}
     current_purchase_ids = set(_purchase_order_ids_for_customer(db, merge.business_id, survivor.id))
-    if current_purchase_ids != existing_purchase_ids | moved_purchase_ids:
+    if not moved_purchase_ids.issubset(current_purchase_ids):
         raise HTTPException(
             status_code=409,
-            detail="Không thể hoàn tác vì đơn nhập liên quan đã thay đổi sau lần merge.",
+            detail="Không thể hoàn tác vì đơn nhập đã chuyển trong lần merge bị xóa hoặc chuyển liên kết.",
         )
 
     for identity_data in (manifest.get("removed_duplicates", {}) or {}).get("identities", []):
@@ -699,7 +692,17 @@ def undo_customer_merge(
             tag_id=int(tag_data["tag_id"]),
         ))
 
-    if "survivor_custom_fields_before" in manifest:
+    before_fields = manifest.get("survivor_custom_fields_before")
+    after_fields = manifest.get("survivor_custom_fields_after")
+    if isinstance(before_fields, dict) and isinstance(after_fields, dict):
+        # Undo only source-only fields that are still unchanged. Keep profile
+        # fields edited or added on the surviving customer after the merge.
+        current_fields = dict(survivor.custom_fields or {})
+        for key, merged_value in after_fields.items():
+            if key not in before_fields and current_fields.get(key) == merged_value:
+                current_fields.pop(key, None)
+        survivor.custom_fields = current_fields
+    elif "survivor_custom_fields_before" in manifest:
         survivor.custom_fields = manifest["survivor_custom_fields_before"]
 
     source.status = "active"

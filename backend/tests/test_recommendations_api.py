@@ -43,6 +43,7 @@ from app.services.recommendation_service import (
     _recommendation_weights,
     _score,
     _personalization_allowed,
+    _manual_product_interest_scores,
     _preferred_color,
     _customer_purchase_facets,
     _product_matches_color,
@@ -168,6 +169,36 @@ class RecommendationApiTests(unittest.TestCase):
         self.assertEqual(201, second.status_code, second.text)
         self.assertEqual(first.json()["id"], second.json()["id"])
         self.assertEqual(1.0, first.json()["reward"])
+
+    def test_staff_recorded_product_interest_boosts_customer_360_suggestion(self):
+        with Session(self.engine) as db:
+            db.add(CustomerProductInteraction(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                product_id=self.product_ids[2],
+                event_type="staff_interest",
+                source="api",
+                idempotency_key="lead:interest-80",
+                event_metadata={"interest_percent": 80},
+                occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            ))
+            db.commit()
+            scores = _manual_product_interest_scores(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+            )
+        self.assertAlmostEqual(0.8, scores[self.product_ids[2]], places=2)
+
+        response = self.client.post(
+            "/api/recommendations",
+            headers=self.headers(),
+            json={"customer_id": self.customer_id, "limit": 20},
+        )
+        self.assertEqual(201, response.status_code, response.text)
+        item = next(item for item in response.json()["items"] if item["product_id"] == self.product_ids[2])
+        self.assertEqual(80, item["staff_interest_percent"])
+        self.assertIn("product_interest", item["personalization_signals"])
 
     def test_rfm_segment_shifts_rank_between_personal_affinity_and_discovery(self):
         high_value = _recommendation_weights("balanced", "high_value")

@@ -17,6 +17,7 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models.audit_log import AuditLog
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
+from app.models.channel import Channel
 from app.models.platform_control import PlatformAudit, PlatformProviderIncident
 from app.models.saas import PlatformMembership
 
@@ -209,6 +210,55 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(403, response.status_code)
         pending_requests = self.client.get("/api/platform/subscription-requests", headers=headers)
         self.assertEqual(403, pending_requests.status_code)
+
+    def test_platform_channel_connections_show_each_shops_providers_without_secrets(self):
+        with Session(self.engine) as db:
+            db.add_all([
+                Channel(business_id=self.business_id, channel_type="facebook", name="Private Facebook Page", external_account_id="platform-admin-facebook-private", status="active", access_token_encrypted="secret-facebook"),
+                Channel(business_id=self.business_id, channel_type="shopee", name="Shop Seller", external_account_id="platform-admin-shopee-private", status="pending_pairing", access_token_encrypted="secret-shopee"),
+                Channel(business_id=self.other_business_id, channel_type="tiktok", name="Other Seller", external_account_id="platform-admin-tiktok-private", status="reconnect_required", access_token_encrypted="secret-tiktok"),
+            ])
+            db.commit()
+
+        admin_token = self.login("platform-admin@test", "platform-password")
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        response = self.client.get("/api/platform/channel-connections", headers=headers)
+        self.assertEqual(200, response.status_code, response.text)
+        shops = {row["business_id"]: row for row in response.json()["items"]}
+        own_channels = {row["channel_type"]: row for row in shops[self.business_id]["channels"]}
+        other_channels = {row["channel_type"]: row for row in shops[self.other_business_id]["channels"]}
+        self.assertEqual("connected", own_channels["facebook"]["status"])
+        self.assertEqual("verifying", own_channels["shopee"]["status"])
+        self.assertEqual("reconnect_required", other_channels["tiktok"]["status"])
+        self.assertNotIn("tiktok", own_channels)
+        self.assertNotIn("facebook", other_channels)
+        for secret in ("secret-facebook", "secret-shopee", "secret-tiktok", "platform-admin-facebook-private", "Private Facebook Page"):
+            self.assertNotIn(secret, response.text)
+
+        page = self.client.get("/api/platform/channel-connections?limit=1&offset=1", headers=headers)
+        self.assertEqual(200, page.status_code, page.text)
+        self.assertEqual(self.other_business_id, page.json()["items"][0]["business_id"])
+        self.assertEqual(2, page.json()["total"])
+
+        agent_token = self.login("platform-agent@test", "agent-password")
+        denied = self.client.get("/api/platform/channel-connections", headers={"Authorization": f"Bearer {agent_token}"})
+        self.assertEqual(403, denied.status_code)
+
+    def test_platform_channel_connections_report_unavailable_instead_of_empty(self):
+        from contextlib import contextmanager
+        from sqlalchemy.exc import SQLAlchemyError
+
+        @contextmanager
+        def unavailable_tenant(_schema):
+            raise SQLAlchemyError("tenant temporarily unavailable")
+            yield  # pragma: no cover
+
+        token = self.login("platform-admin@test", "platform-password")
+        with patch("app.api.platform.tenant_session", unavailable_tenant):
+            response = self.client.get("/api/platform/channel-connections", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertTrue(all(row["unavailable"] for row in response.json()["items"]))
+        self.assertTrue(all(row["channels"] == [] for row in response.json()["items"]))
 
     def test_platform_admin_can_register_and_stage_tenant_schema(self):
         token = self.login("platform-admin@test", "platform-password")

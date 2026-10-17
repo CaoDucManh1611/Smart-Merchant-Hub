@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from concurrent.futures import Future
 import hashlib
 import json
@@ -28,6 +29,17 @@ def test_shopee_bridge_timeout_is_delivery_unknown_not_send_failure():
     with pytest.raises(shopee_bot.ShopeeDeliveryUnknown, match="chưa xác nhận"):
         shopee_bot.await_bridge_result(pending, timeout=0.001)
     pending.cancel()
+
+
+def test_shopee_connector_decodes_uploaded_png_as_image_attachment():
+    image = b"\x89PNG\r\n\x1a\nsticker"
+    decoded = shopee_bot._decode_outbound_image({
+        "mediaType": "sticker",
+        "mediaData": base64.b64encode(image).decode(),
+        "fileName": "sticker.png",
+        "contentType": "image/png",
+    })
+    assert decoded == {"name": "sticker.png", "mimeType": "image/png", "buffer": image}
 
 from app.api import conversations, local_connectors, onboarding
 from app.api.local_connectors import (
@@ -817,6 +829,68 @@ def test_connector_avatar_sync_only_fills_avatar_for_existing_shop_customer(monk
     assert customer.avatar_url == "https://cdn.example/buyer"
 
 
+@pytest.mark.parametrize(
+    ("channel_type", "sync_profiles", "old_avatar", "new_avatar"),
+    [
+        (
+            "shopee",
+            local_connectors.sync_shopee_customer_avatars,
+            "https://down-vn.img.susercontent.com/file/old",
+            "https://down-vn.img.susercontent.com/file/new",
+        ),
+        (
+            "tiktok",
+            local_connectors.sync_tiktok_customer_avatars,
+            "https://p16-sign.tiktokcdn-us.com/old.jpg",
+            "https://p16-sign.tiktokcdn-us.com/new.jpg",
+        ),
+    ],
+)
+def test_connector_avatar_sync_refreshes_same_marketplace_avatar(monkeypatch, channel_type, sync_profiles, old_avatar, new_avatar):
+    channel = type("ChannelRow", (), {"external_account_id": "shop-7"})()
+    customer = type("CustomerRow", (), {"id": 10, "business_id": 7, "avatar_url": old_avatar})()
+    identity = type("IdentityRow", (), {"external_user_id": "buyer-1", "customer": customer})()
+
+    class Rows:
+        @staticmethod
+        def all():
+            return [identity]
+
+    class TenantDb:
+        @staticmethod
+        def get(_model, _channel_id):
+            return channel
+
+        @staticmethod
+        def scalars(_query):
+            return Rows()
+
+        @staticmethod
+        def commit():
+            pass
+
+        @staticmethod
+        def add(_row):
+            pass
+
+    @contextmanager
+    def tenant_session(_schema):
+        yield TenantDb()
+
+    monkeypatch.setattr(local_connectors, "_connector_channel", lambda actual, *_args: (7, 11) if actual == channel_type else pytest.fail("wrong channel"))
+    monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
+    monkeypatch.setattr(local_connectors, "tenant_session", tenant_session)
+
+    result = sync_profiles(
+        {"profiles": [{"externalUserId": "buyer-1", "avatarUrl": new_avatar}]},
+        "Bearer connector-token",
+        object(),
+    )
+
+    assert result["updated"] == 1
+    assert customer.avatar_url == new_avatar
+
+
 def test_meta_instagram_profile_sync_repairs_an_existing_avatar(monkeypatch):
     channel = type("ChannelRow", (), {"external_account_id": "meta-ig-account"})()
     customer = type("CustomerRow", (), {
@@ -1030,6 +1104,55 @@ def test_meta_local_connector_sends_reply_to_channel_specific_bridge(monkeypatch
     assert sent["json"] == {"threadId": "thread-1", "message": "Chào bạn", "recipientId": "buyer-1"}
 
 
+@pytest.mark.parametrize(
+    ("channel_type", "setting_name", "port"),
+    [("facebook", "META_MESSENGER_BRIDGE_CONTROL_URL", 8093),
+     ("instagram", "META_INSTAGRAM_BRIDGE_CONTROL_URL", 8094)],
+)
+def test_meta_local_connector_sends_vietqr_as_image_with_caption(monkeypatch, channel_type, setting_name, port):
+    channel = type("ChannelRow", (), {
+        "id": 11,
+        "access_token_encrypted": "encrypted-token",
+        "config": {"provider": f"{channel_type}_local_connector"},
+    })()
+
+    class TenantDb:
+        @staticmethod
+        def scalar(_query):
+            return channel
+
+    response = type("Response", (), {
+        "status_code": 200,
+        "json": lambda _self: {"status": "sent", "message_id": "meta-ui:thread-1:123"},
+    })()
+    sent = {}
+    monkeypatch.setattr(conversations, "_local_connector_thread_id", lambda *_args: "thread-1")
+    monkeypatch.setattr(conversations, "decrypt_token", lambda *_args: "connector-token")
+    monkeypatch.setattr(conversations.settings, setting_name, f"http://host.docker.internal:{port}")
+    monkeypatch.setattr(conversations.httpx, "post", lambda url, **kwargs: (sent.update(url=url, **kwargs) or response))
+
+    result, returned_channel = conversations.send_meta_image(
+        db=TenantDb(),
+        conversation={"id": 22, "channel_id": 11, "channel": channel_type},
+        recipient_id="buyer-1",
+        image_url="https://img.vietqr.io/image/970403-account.png?amount=1000",
+        caption="Thông tin chuyển khoản CHAT-1",
+        business_id=7,
+    )
+
+    assert result["status"] == "sent"
+    assert returned_channel is channel
+    assert sent["url"] == f"http://host.docker.internal:{port}/send"
+    assert sent["headers"]["X-Meta-Bridge-Secret"] == "connector-token"
+    assert sent["json"] == {
+        "threadId": "thread-1",
+        "recipientId": "buyer-1",
+        "mediaType": "image",
+        "imageUrl": "https://img.vietqr.io/image/970403-account.png?amount=1000",
+        "message": "Thông tin chuyển khoản CHAT-1",
+    }
+
+
 def test_conversation_inbox_orders_preview_fields_by_each_message_timestamp():
     statements = []
 
@@ -1137,6 +1260,7 @@ def test_shopee_avatar_scripts_include_the_current_conversation(monkeypatch):
 
     posted = []
     monkeypatch.setattr(shopee_bot, "SYNCED_AVATAR_IDS", set())
+    monkeypatch.setattr(shopee_bot, "SYNCED_AVATAR_URLS", {})
     monkeypatch.setattr(shopee_bot, "post_profiles", lambda profiles: (
         posted.extend(profiles) or (200, '{"updated":1,"matchedExternalUserIds":["buyer-1"]}')
     ))
@@ -1156,6 +1280,7 @@ def test_shopee_avatar_ids_are_not_cached_before_customer_exists(monkeypatch):
             return [{"externalUserId": "buyer-2", "avatar": "https://cdn.example/avatar.png"}]
 
     monkeypatch.setattr(shopee_bot, "SYNCED_AVATAR_IDS", set())
+    monkeypatch.setattr(shopee_bot, "SYNCED_AVATAR_URLS", {})
     monkeypatch.setattr(
         shopee_bot,
         "post_profiles",
@@ -1165,6 +1290,32 @@ def test_shopee_avatar_ids_are_not_cached_before_customer_exists(monkeypatch):
     asyncio.run(shopee_bot.sync_visible_avatars(Page()))
 
     assert "buyer-2" not in shopee_bot.SYNCED_AVATAR_IDS
+
+
+def test_shopee_avatar_sync_posts_again_when_cdn_url_changes(monkeypatch):
+    class Page:
+        avatar_url = "https://cf.shopee.vn/file/old-avatar"
+
+        async def evaluate(self, _script):
+            return [{"externalUserId": "buyer-3", "avatar": self.avatar_url}]
+
+    page = Page()
+    posted = []
+    monkeypatch.setattr(shopee_bot, "SYNCED_AVATAR_IDS", set())
+    monkeypatch.setattr(shopee_bot, "SYNCED_AVATAR_URLS", {})
+    monkeypatch.setattr(shopee_bot, "post_profiles", lambda profiles: (
+        posted.extend(profiles) or (200, '{"updated":1,"matchedExternalUserIds":["buyer-3"]}')
+    ))
+
+    asyncio.run(shopee_bot.sync_visible_avatars(page))
+    asyncio.run(shopee_bot.sync_visible_avatars(page))
+    page.avatar_url = "https://cf.shopee.vn/file/new-avatar"
+    asyncio.run(shopee_bot.sync_visible_avatars(page))
+
+    assert [profile["avatarUrl"] for profile in posted] == [
+        "https://cf.shopee.vn/file/old-avatar",
+        "https://cf.shopee.vn/file/new-avatar",
+    ]
 
 
 def test_shopee_avatar_extractor_accepts_json_encoded_url_lists():

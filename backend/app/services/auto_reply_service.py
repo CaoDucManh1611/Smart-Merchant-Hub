@@ -50,7 +50,7 @@ from app.rag.prompt_builder import (
 from app.rag.llm_caller import call_llm, call_llm_with_image
 from app.rag.run_logger import RagRunLog, query_metadata
 from app.rag.topics import infer_query_topic
-from app.services.telegram_service import send_telegram_message
+from app.services.telegram_service import send_telegram_media, send_telegram_message
 from app.services.zalo_service import send_zalo_message
 from app.services.customer_collection_flow import is_browsing_request, is_greeting
 from app.services.chatbot_agent import build_agent_memory, is_business_open
@@ -80,6 +80,39 @@ from app.services.recommendation_interaction_service import record_explicit_chat
 
 logger = logging.getLogger(__name__)
 SAVED_REPLY_COMMAND = re.compile(r"^(/(?:[a-zA-Z0-9_-]+))(?:@[a-zA-Z0-9_]+)?$")
+
+
+def _extract_vietqr_photo(text: str) -> tuple[str, str] | None:
+    """Return an allowlisted VietQR image URL and the message without its URL line."""
+    lines = str(text or "").splitlines()
+    for index, line in enumerate(lines):
+        label, separator, value = line.partition(":")
+        label = re.sub(r"^[^\w]+", "", label.strip(), flags=re.UNICODE).casefold()
+        if not separator or label not in {"mã qr", "qr code"}:
+            continue
+        image_url = value.strip()
+        try:
+            parsed = urlsplit(image_url)
+            hostname = (parsed.hostname or "").lower().rstrip(".")
+        except ValueError:
+            continue
+        if (
+            parsed.scheme.lower() == "https"
+            and hostname == "img.vietqr.io"
+            and parsed.path.startswith("/image/")
+            and parsed.path.lower().endswith(".png")
+        ):
+            caption = "\n".join(lines[:index] + lines[index + 1:]).strip()
+            return image_url, caption
+    return None
+
+
+def _reply_content_without_vietqr_link(text: str, response: dict | None = None) -> str:
+    caption = response.get("caption") if isinstance(response, dict) else None
+    if caption is not None:
+        return str(caption).strip()
+    qr_photo = _extract_vietqr_photo(text)
+    return qr_photo[1] if qr_photo else text
 
 def _latest_inbound_image_url(
     db: Session,
@@ -553,6 +586,20 @@ def _send_channel_reply(
         ).first()
         if conversation is None:
             raise ValueError(f"Không tìm thấy hội thoại {conversation_id} trong shop.")
+        vietqr_photo = _extract_vietqr_photo(text)
+        if vietqr_photo:
+            from app.api.conversations import send_meta_image
+
+            image_url, caption = vietqr_photo
+            response, _ = send_meta_image(
+                db=db,
+                conversation={"id": conversation.id, "channel_id": conversation.channel_id, "channel": channel},
+                recipient_id=recipient_id,
+                image_url=image_url,
+                caption=caption,
+                business_id=business_id,
+            )
+            return {**response, "media_type": "image", "media_url": image_url, "caption": caption}
         from app.api.conversations import send_meta_text
 
         response, _ = send_meta_text(
@@ -564,6 +611,19 @@ def _send_channel_reply(
         )
         return response
     if channel == "telegram":
+        vietqr_photo = _extract_vietqr_photo(text)
+        if vietqr_photo:
+            image_url, caption = vietqr_photo
+            response = send_telegram_media(
+                db=db,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                recipient_id=recipient_id,
+                media_type="image",
+                media_url=image_url,
+                caption=caption,
+            )
+            return {**response, "media_type": "image", "media_url": image_url, "caption": caption}
         return send_telegram_message(
             db=db,
             business_id=business_id,
@@ -633,6 +693,10 @@ def _save_auto_reply_outbound(
     extra_metadata: dict | None = None,
 ) -> None:
     """Persist the external reply so it appears in the CRM inbox."""
+    media_type = str(meta_response.get("media_type") or "").strip() or None
+    media_url = str(meta_response.get("media_url") or "").strip() or None
+    if media_type and media_url:
+        content = _reply_content_without_vietqr_link(content, meta_response)
     conversation_business_id = db.query(Conversation.business_id).filter(
         Conversation.id == conversation_id,
     ).scalar()
@@ -643,6 +707,8 @@ def _save_auto_reply_outbound(
         if updated is not None:
             updated.external_message_id = external_message_id
             updated.content = content
+            updated.media_type = media_type
+            updated.media_url = media_url
             updated.raw_payload = meta_response
             updated.metadata_ = _reply_metadata(
                 source_document_ids, auto_reply_key, extra_metadata
@@ -673,6 +739,8 @@ def _save_auto_reply_outbound(
                 sender_type,
                 direction,
                 content,
+                media_type,
+                media_url,
                 raw_payload,
                 metadata
             )
@@ -685,6 +753,8 @@ def _save_auto_reply_outbound(
                 'bot',
                 'outbound',
                 :content,
+                :media_type,
+                :media_url,
                 CAST(:raw_payload AS JSONB),
                 CAST(:metadata AS JSONB)
             )
@@ -698,6 +768,8 @@ def _save_auto_reply_outbound(
             "external_message_id": external_message_id,
             "auto_reply_key": auto_reply_key,
             "content": content,
+            "media_type": media_type,
+            "media_url": media_url,
             "raw_payload": json.dumps(meta_response, ensure_ascii=False, default=str),
             "metadata": json.dumps(
                 _reply_metadata(source_document_ids, auto_reply_key, extra_metadata),
@@ -1728,7 +1800,7 @@ def send_text_reply(
             "channel": channel,
             "recipient_id": recipient_id,
             "external_message_id": response.get("message_id"),
-            "content": text,
+            "content": _reply_content_without_vietqr_link(text, response),
             "meta_response": response,
             "source_document_ids": [],
         }

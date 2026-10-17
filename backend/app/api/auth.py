@@ -198,14 +198,17 @@ def login(
 
 @router.post("/password-reset/request", status_code=202, response_model=PasswordResetRequestOut)
 def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
-    """Send a short-lived email code without disclosing whether an account exists."""
+    """Send a short-lived email code only to an active account's registered email."""
     email = payload.email
     query = db.query(User).filter(func.lower(User.email) == email, User.is_active.is_(True))
     if payload.shop_slug:
         query = query.join(Business, Business.id == User.business_id).filter(Business.slug == payload.shop_slug.strip().lower())
     users = query.with_for_update().limit(2).all()
     if len(users) != 1:
-        return {"status": "accepted", "expires_in": 600, "retry_after": 60}
+        raise HTTPException(
+            status_code=404,
+            detail="Email này không khớp với tài khoản trong hệ thống. Hãy kiểm tra lại email và mã shop.",
+        )
 
     user = users[0]
     now = datetime.now(timezone.utc).replace(tzinfo=None)

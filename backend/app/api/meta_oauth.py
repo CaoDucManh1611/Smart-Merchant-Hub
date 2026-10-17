@@ -22,7 +22,11 @@ from app.tenancy.dependencies import get_tenant_context
 from app.tenancy.oauth import consume_oauth_state, issue_oauth_state, register_oauth_state, verify_oauth_state
 from app.tenancy.schema import schema_name_for
 from app.tenancy.registry import register_webhook_route, deactivate_route_for_channel
-from app.services.channel_service import channel_credential_status, upsert_channel_connection
+from app.services.channel_service import (
+    QUOTA_HOLDING_CHANNEL_STATUSES,
+    channel_credential_status,
+    upsert_channel_connection,
+)
 from app.services.quota_service import QuotaExceededError, release_quota, reserve_quota
 
 
@@ -434,7 +438,7 @@ async def disconnect_meta(
         ).all()
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         for channel in channels:
-            if channel.status == "active":
+            if channel.status in QUOTA_HOLDING_CHANNEL_STATUSES:
                 active_channel_ids.append(int(channel.id))
             channel.status = "inactive"
             channel.access_token = None

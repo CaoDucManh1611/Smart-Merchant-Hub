@@ -9,6 +9,8 @@ from sqlalchemy.pool import StaticPool
 from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, Conversation, Customer, Lead
+from app.models.recommendation import CustomerProductInteraction
+from app.models.sales import Product
 
 
 class LeadPipelineApiTests(unittest.TestCase):
@@ -30,11 +32,13 @@ class LeadPipelineApiTests(unittest.TestCase):
             db.add_all([customer, other_customer])
             db.flush()
             conversation = Conversation(business_id=one.id, customer_id=customer.id, channel="telegram")
-            db.add(conversation)
+            product = Product(business_id=one.id, sku="LEAD-1", name="Serum", price=Decimal("100"), stock_quantity=10)
+            db.add_all([conversation, product])
             db.commit()
             cls.customer_id = customer.id
             cls.other_customer_id = other_customer.id
             cls.conversation_id = conversation.id
+            cls.product_id = product.id
 
         def override_get_db():
             with Session(cls.engine) as db:
@@ -54,6 +58,7 @@ class LeadPipelineApiTests(unittest.TestCase):
             json={
                 "title": "Serum follow-up",
                 "customer_id": self.customer_id,
+                "product_id": self.product_id,
                 "conversation_id": self.conversation_id,
                 "stage": "qualified",
                 "value": 840000,
@@ -65,6 +70,15 @@ class LeadPipelineApiTests(unittest.TestCase):
         self.assertEqual("qualified", body["stage"])
         self.assertEqual("telegram", body["source_channel"])
         self.assertEqual("840000.00", body["value"])
+        self.assertEqual(self.product_id, body["product_id"])
+        with Session(self.engine) as db:
+            signal = db.query(CustomerProductInteraction).filter_by(
+                business_id=1,
+                customer_id=self.customer_id,
+                product_id=self.product_id,
+                event_type="staff_interest",
+            ).one()
+            self.assertEqual(70, signal.event_metadata["interest_percent"])
 
         own = self.client.get("/api/leads", headers={"X-Business-Id": "1"})
         self.assertEqual(200, own.status_code)

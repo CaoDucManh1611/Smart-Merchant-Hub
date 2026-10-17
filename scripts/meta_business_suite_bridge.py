@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+from collections import Counter
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -13,7 +16,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -39,12 +44,17 @@ PACKAGE_DIR = Path(getattr(sys, "_MEIPASS", str(BASE)))
 RUNTIME = Path(os.getenv("SMART_MERCHANT_RUNTIME_DIR") or (Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SmartMerchantMetaBusinessSuite"))
 INBOX_ROOT = "https://business.facebook.com/latest/inbox"
 CONNECTOR_STARTED_AT = time.time()
+INBOX_POLL_INTERVAL_SECONDS = 1.0
 CONTROL_PAGE = None
 CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
 CONTROL_SECRET = ""
 CONTROL_SERVER: ThreadingHTTPServer | None = None
 CONTROL_SEND_LOCK = Lock()
-_META_GENERIC_NAMES = {"giới thiệu", "messenger", "instagram", "instagram direct", "inbox", "hộp thư đến"}
+_META_GENERIC_NAMES = {
+    "giới thiệu", "messenger", "instagram", "instagram direct", "inbox", "hộp thư đến", "facebook",
+    "chia sẻ dữ liệu", "chia sẽ dữ liệu", "share data", "data sharing",
+    "trang cá nhân trên facebook", "facebook profile", "ảnh đại diện", "profile picture", "profile photo",
+}
 # Bump this when the DOM parser changes so an existing paired shop gets one
 # fresh, full history pass instead of reusing an old "complete" checkpoint.
 META_HISTORY_PARSER_REVISION = "virtualized-history-timestamp-avatar-v8"
@@ -76,6 +86,25 @@ def await_bridge_result(future, timeout: float = 25) -> dict:
 def _usable_meta_name(value: object) -> str:
     name = " ".join(str(value or "").split()).strip()
     return "" if name.casefold() in _META_GENERIC_NAMES else name[:255]
+
+
+def _is_instagram_system_notice(message: object) -> bool:
+    text = " ".join(str(message or "").split()).casefold()
+    plain = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(character)
+    ).replace("đ", "d")
+    vietnamese = "phien ban moi nhat cua ung dung instagram" in plain and (
+        "xem lai tin nhan nay" in plain or "xem loai tin nhan nay" in plain
+    )
+    english = "latest version of instagram" in plain and (
+        "to view this message" in plain
+        or "to see this message" in plain
+        or "to view this type of message" in plain
+        or "to see this type of message" in plain
+    )
+    return vietnamese or english
 
 
 def parse_meta_datetime(value: object, *, now: datetime | None = None) -> str | None:
@@ -191,6 +220,10 @@ def normalize_meta_history(
         message_id = str(row.get("messageId") or "").strip()
         content = " ".join(str(row.get("message") or "").split())[:10000]
         direction = str(row.get("direction") or "").lower()
+        if channel_type == "instagram" and _is_instagram_system_notice(content):
+            continue
+        if direction == "outbound":
+            content = re.sub(r"\s+(?:Đã gửi|Đã xem|Sent|Seen)\s*$", "", content, flags=re.IGNORECASE).strip()
         if not message_id or not content or direction not in {"inbound", "outbound"}:
             continue
         normalized.append({
@@ -224,6 +257,18 @@ def _message_created_at(row: dict, *, now: datetime | None = None) -> str | None
     # A date separator belongs to a group of messages, not to every bubble.
     # Do not copy its time to all rows when a bubble has no own timestamp.
     return None
+
+
+def _message_arrived_since(value: object, cutoff: float | None) -> bool:
+    if cutoff is None or not value:
+        return False
+    try:
+        created_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return created_at.timestamp() >= cutoff
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 def _meta_inbox_url(channel_type: str, current_url: str = "") -> str:
@@ -392,11 +437,14 @@ async def _conversation_rows(page) -> list[dict]:
             const r = e.getBoundingClientRect();
             const text = (e.innerText || '').trim();
             const lines = text.split(/\n+/).map(line => line.trim()).filter(Boolean);
-            const ignored = new Set(['giới thiệu','messenger','instagram','instagram direct','inbox','hộp thư đến','facebook']);
+            const ignored = new Set(['giới thiệu','messenger','instagram','instagram direct','inbox','hộp thư đến','facebook',
+              'chia sẻ dữ liệu','chia sẽ dữ liệu','share data','data sharing','trang cá nhân trên facebook',
+              'facebook profile','ảnh đại diện','profile picture','profile photo']);
             const avatar = avatarFor(e, r, box);
             const altName = (avatar?.alt || '').replace(/^(?:profile picture|profile photo|ảnh đại diện)\s+(?:of|của)\s*/i, '')
               .replace(/(?:'s)?\s*(?:profile picture|profile photo|ảnh đại diện)$/i, '').trim();
-            const displayName = [altName, lines[0] || ''].find(value => value && !ignored.has(value.toLocaleLowerCase())) || '';
+            // The row title names the customer; avatar alt text can be a Meta action label.
+            const displayName = [lines[0] || '', altName].find(value => value && !ignored.has(value.toLocaleLowerCase())) || '';
             return {e, index, r, text, displayName, avatarUrl: avatar?.url || ''};
           }).filter(x => x.text.length > 4 && x.r.width > box.width * 0.8
             && x.r.height >= 55 && x.r.height <= 180
@@ -446,7 +494,7 @@ async def _open_meta_conversation(page, row: dict, channel_type: str = "") -> st
         raise RuntimeError("Không còn tìm thấy đúng dòng hội thoại Meta trong danh sách.")
 
     expected_name = " ".join(label.splitlines()[0].split()).casefold()
-    for _ in range(20):
+    for _ in range(32):
         await page.wait_for_timeout(250)
         thread_id = await _active_thread_id(page)
         if not thread_id:
@@ -456,7 +504,9 @@ async def _open_meta_conversation(page, row: dict, channel_type: str = "") -> st
         active_name = " ".join((await _active_display_name(page, "")).split()).casefold()
         if active_name and active_name == expected_name:
             return thread_id
-        raise RuntimeError(f"{channel_name} chưa xác nhận đã mở đúng hội thoại; chưa nhập lịch sử.")
+        # Meta may keep the previous URL/header briefly after a row click.
+        # Keep waiting instead of treating that transient state as a failed click.
+    raise RuntimeError(f"{channel_name} chưa cung cấp mã hội thoại sau khi chọn chat.")
 
 
 async def _scroll_meta_list(page) -> dict | None:
@@ -566,10 +616,12 @@ async def _active_display_name(page, fallback: str) -> str:
     return await page.evaluate(
         r"""(fallback) => {
           const vw = innerWidth;
-          const ignored = new Set(['giới thiệu','messenger','instagram','instagram direct','inbox','hộp thư đến']);
+          const ignored = new Set(['giới thiệu','messenger','instagram','instagram direct','inbox','hộp thư đến','facebook',
+            'chia sẻ dữ liệu','chia sẽ dữ liệu','share data','data sharing','trang cá nhân trên facebook',
+            'facebook profile','ảnh đại diện','profile picture','profile photo']);
           const candidates = [...document.querySelectorAll('[role="heading"],h1,h2,h3,h4')]
             .map(e => ({e, r: e.getBoundingClientRect(), text: (e.innerText || '').trim()}))
-            .filter(x => x.text && !ignored.has(x.text.toLocaleLowerCase()) && x.r.width && x.r.x > vw * 0.24 && x.r.x < vw * 0.85 && x.r.y > 80 && x.r.y < 310)
+            .filter(x => x.text && !x.e.closest('[role="dialog"]') && !ignored.has(x.text.toLocaleLowerCase()) && x.r.width && x.r.x > vw * 0.24 && x.r.x < vw * 0.85 && x.r.y > 80 && x.r.y < 310)
             .sort((a, b) => a.r.y - b.r.y);
           return candidates[0]?.text.slice(0, 255) || fallback || '';
         }""",
@@ -985,10 +1037,202 @@ def _dedupe_visible_message_rows(rows: list[dict]) -> list[dict]:
     return visible
 
 
-async def _send_meta_message(thread_id: object, message: object, recipient_id: object = "") -> dict:
+async def _visible_outbound_text_count(page, message: str) -> int:
+    """Count visible exact-text bubbles on the outgoing side of the chat."""
+    count = await page.evaluate(
+        r"""(messageText) => {
+          const wanted = (messageText || '').replace(/\s+/g, ' ').trim();
+          const vw = innerWidth, vh = innerHeight, positions = new Set();
+          if (!wanted) return 0;
+          for (const node of document.querySelectorAll('span,div,p')) {
+            const text = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+            if (text !== wanted) continue;
+            const r = node.getBoundingClientRect();
+            if (!r.width || !r.height || r.left + r.width / 2 <= vw * .48
+              || r.top < vh * .1 || r.bottom > vh * .86) continue;
+            positions.add(`${Math.round(r.left)}:${Math.round(r.top)}`);
+          }
+          return positions.size;
+        }""",
+        message,
+    )
+    return int(count or 0)
+
+
+def _download_vietqr_image(image_url: object) -> Path:
+    """Download only a bounded PNG from VietQR for the logged-in Meta UI."""
+    url = str(image_url or "").strip()
+    parsed = urlparse(url)
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").lower().rstrip(".") != "img.vietqr.io"
+        or not parsed.path.startswith("/image/")
+        or not parsed.path.lower().endswith(".png")
+    ):
+        raise ValueError("Chỉ hỗ trợ ảnh QR VietQR hợp lệ.")
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0 SmartMerchantHub"})
+    with urlopen(request, timeout=12) as response:
+        final = urlparse(str(response.geturl() or url))
+        if final.scheme != "https" or (final.hostname or "").lower().rstrip(".") != "img.vietqr.io":
+            raise ValueError("VietQR chuyển hướng đến địa chỉ ảnh không an toàn.")
+        image_bytes = response.read(5 * 1024 * 1024 + 1)
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise ValueError("Ảnh VietQR vượt quá dung lượng cho phép.")
+    if not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("VietQR không trả về ảnh PNG hợp lệ.")
+    with tempfile.NamedTemporaryFile(prefix="smart-merchant-vietqr-", suffix=".png", delete=False) as output:
+        output.write(image_bytes)
+        return Path(output.name)
+
+
+def _decode_meta_image(payload: dict) -> Path:
+    encoded = payload.get("mediaData", payload.get("imageData"))
+    if encoded is None:
+        return _download_vietqr_image(payload.get("imageUrl"))
+    if not isinstance(encoded, str) or len(encoded) > 12 * 1024 * 1024:
+        raise ValueError("Ảnh gửi qua Meta vượt quá dung lượng cho phép.")
+    try:
+        image = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Dữ liệu ảnh Meta không hợp lệ.") from exc
+    if len(image) > 8 * 1024 * 1024:
+        raise ValueError("Ảnh gửi qua Meta vượt quá dung lượng cho phép.")
+    if image.startswith(b"\xff\xd8\xff"):
+        suffix = ".jpg"
+    elif image.startswith(b"\x89PNG\r\n\x1a\n"):
+        suffix = ".png"
+    else:
+        raise ValueError("Chỉ hỗ trợ dữ liệu ảnh PNG/JPEG hợp lệ.")
+    with tempfile.NamedTemporaryFile(prefix="smart-merchant-meta-", suffix=suffix, delete=False) as output:
+        output.write(image)
+        return Path(output.name)
+
+
+def _decode_meta_attachment(payload: dict, media_type: str) -> Path:
+    if media_type in {"image", "sticker"}:
+        return _decode_meta_image(payload)
+    encoded = payload.get("mediaData")
+    if not isinstance(encoded, str) or len(encoded) > 36 * 1024 * 1024:
+        raise ValueError("File Meta không hợp lệ hoặc vượt quá 25MB.")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Dữ liệu media Meta không hợp lệ.") from exc
+    if not content or len(content) > 25 * 1024 * 1024:
+        raise ValueError("File Meta không hợp lệ hoặc vượt quá 25MB.")
+    content_type = str(payload.get("contentType") or "").strip().lower()
+    allowed = {
+        "audio/aac", "audio/flac", "audio/m4a", "audio/mp4", "audio/mpeg", "audio/ogg",
+        "audio/opus", "audio/wav", "audio/webm", "application/ogg", "video/mp4",
+        "video/mpeg", "video/quicktime", "video/webm", "application/pdf", "application/zip",
+        "application/x-7z-compressed", "application/x-rar-compressed", "application/octet-stream",
+        "text/csv", "text/plain", "application/msword", "application/rtf",
+        "application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+    if content_type not in allowed:
+        raise ValueError("Meta connector không nhận loại file này.")
+    suffix_by_type = {
+        "audio/aac": ".aac", "audio/flac": ".flac", "audio/m4a": ".m4a", "audio/mp4": ".m4a",
+        "audio/mpeg": ".mp3", "audio/ogg": ".ogg", "audio/opus": ".opus", "audio/wav": ".wav",
+        "audio/webm": ".webm", "application/ogg": ".ogg", "video/mp4": ".mp4",
+        "video/mpeg": ".mpeg", "video/quicktime": ".mov", "video/webm": ".webm",
+        "application/pdf": ".pdf", "application/zip": ".zip", "application/x-7z-compressed": ".7z",
+        "application/x-rar-compressed": ".rar", "text/csv": ".csv", "text/plain": ".txt",
+        "application/msword": ".doc", "application/rtf": ".rtf", "application/vnd.ms-excel": ".xls",
+        "application/vnd.ms-powerpoint": ".ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    }
+    requested_name = Path(str(payload.get("fileName") or "")).name
+    suffix = Path(requested_name).suffix.lower()
+    if not suffix or len(suffix) > 10 or not suffix[1:].isalnum():
+        suffix = suffix_by_type[content_type]
+    with tempfile.NamedTemporaryFile(prefix="smart-merchant-meta-", suffix=suffix, delete=False) as output:
+        output.write(content)
+        return Path(output.name)
+
+
+async def _visible_outbound_images(page) -> list[str]:
+    """Snapshot delivered image bubbles, excluding avatars and upload previews."""
+    return await page.evaluate(
+        r"""() => {
+          const editor = document.querySelector('[data-smart-merchant-meta-composer="active"]');
+          const bottom = editor?.getBoundingClientRect().top || innerHeight * .86;
+          const vw = innerWidth, vh = innerHeight;
+          return [...document.querySelectorAll('img')].filter(node => {
+            const r = node.getBoundingClientRect();
+            if (r.width < 48 || r.height < 48 || r.top < vh * .1 || r.bottom >= bottom
+              || r.left + r.width / 2 <= vw * .48 || r.right > vw * .98) return false;
+            if (node.closest('[role="dialog"], [contenteditable="true"]')) return false;
+            // A pending attachment preview has a remove button, unlike a sent bubble.
+            const container = node.closest('[data-message-id], [role="row"]') || node.parentElement?.parentElement;
+            if (!container || container.contains(editor)) return false;
+            const actions = [...container.querySelectorAll('button,[role="button"]')];
+            return !actions.some(button => /remove|delete|xóa|xoá|gỡ/i.test(
+              [button.getAttribute('aria-label'), button.getAttribute('title')].join(' ')));
+          }).map(node => (node.closest('[data-message-id]')?.getAttribute('data-message-id') || '')
+            + ':' + (node.currentSrc || node.src));
+        }"""
+    )
+
+
+async def _attach_meta_image(page, image_path: str | Path, media_type: str = "image") -> None:
+    target = await page.evaluate(
+        r"""(mediaType) => {
+          const vw = innerWidth, vh = innerHeight;
+          const visible = node => {
+            const r = node.getBoundingClientRect(), s = getComputedStyle(node);
+            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+          };
+          for (const node of document.querySelectorAll('[data-smart-merchant-meta-upload]')) node.removeAttribute('data-smart-merchant-meta-upload');
+          const wanted = mediaType === 'audio' ? /audio|\.mp3|\.m4a|\.ogg/i :
+            mediaType === 'video' ? /video|\.mp4|\.mov/i : mediaType === 'file' ? /pdf|file|\.doc/i : /image|\.png|\.jpe?g/i;
+          const inputs = [...document.querySelectorAll('input[type="file"]')].filter(node => !node.disabled)
+            .sort((a, b) => Number(wanted.test(b.accept || '')) - Number(wanted.test(a.accept || '')));
+          if (inputs[0]) {
+            inputs[0].setAttribute('data-smart-merchant-meta-upload', 'active');
+            return {hasInput: true};
+          }
+          const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible).map(node => {
+            const r = node.getBoundingClientRect();
+            const name = [node.getAttribute('aria-label'), node.getAttribute('title'), node.getAttribute('data-testid'), node.innerText].join(' ').trim();
+            return {node, r, name};
+          }).filter(item => item.r.x > vw * .2 && item.r.y > vh * .5 && item.r.y < vh * .96
+            && (mediaType === 'audio' ? /(attach|audio|file|đính kèm|tải lên)/i.test(item.name) :
+              /(attach|photo|image|ảnh|đính kèm|file|upload|tải lên)/i.test(item.name)));
+          if (buttons[0]) {
+            buttons[0].node.setAttribute('data-smart-merchant-meta-upload', 'active');
+            return {hasButton: true};
+          }
+          return {hasInput: false, hasButton: false};
+        }""",
+        media_type,
+    )
+    if target and target.get("hasInput"):
+        await page.locator('[data-smart-merchant-meta-upload="active"]').set_input_files(str(image_path))
+    elif target and target.get("hasButton"):
+        async with page.expect_file_chooser(timeout=5000) as chooser_info:
+            await page.locator('[data-smart-merchant-meta-upload="active"]').click(timeout=5000)
+        await (await chooser_info.value).set_files(str(image_path))
+    else:
+        raise RuntimeError("Meta không mở được nút đính kèm ảnh trong hộp thư.")
+    await page.wait_for_timeout(350)
+
+
+async def _send_meta_message(
+    thread_id: object,
+    message: object,
+    recipient_id: object = "",
+    image_path: str | Path | None = None,
+    media_type: str = "image",
+) -> dict:
     thread_id = str(thread_id or "").strip()
     message = str(message or "").strip()
-    if not thread_id or not message:
+    if not thread_id or (not message and image_path is None):
         raise ValueError("Thiếu mã hội thoại hoặc nội dung trả lời Meta.")
     page = CONTROL_PAGE
     if page is None or page.is_closed():
@@ -1019,14 +1263,15 @@ async def _send_meta_message(thread_id: object, message: object, recipient_id: o
             .filter(node => {
               if (!visible(node)) return false;
               const r = node.getBoundingClientRect();
-              if (r.x < vw * .20 || r.x > vw * .82 || r.y < vh * .52 || r.width < vw * .20) return false;
               const descriptor = [node.getAttribute('aria-label'), node.getAttribute('placeholder'), node.getAttribute('data-placeholder'), node.getAttribute('data-testid')].join(' ').toLocaleLowerCase();
-              return !/(search|tìm kiếm|tìm kiếm)/i.test(descriptor);
+              if (/(search|tìm kiếm)/i.test(descriptor)) return false;
+              const isReplyField = /(message|reply|trả lời|tin nhắn|soạn tin|gửi tin|viết tin)/i.test(descriptor);
+              return isReplyField || (r.x >= vw * .04 && r.right <= vw * .995 && r.y >= vh * .50 && r.width >= vw * .12);
             }).map(node => {
               const r = node.getBoundingClientRect();
               const descriptor = [node.getAttribute('aria-label'), node.getAttribute('placeholder'), node.getAttribute('data-placeholder'), node.getAttribute('data-testid')].join(' ').toLocaleLowerCase();
-              const score = (/message|reply|trả lời|tin nhắn|write/i.test(descriptor) ? 1000 : 0)
-                + (node.isContentEditable ? 100 : 0) + r.width - Math.abs(vh - r.bottom);
+              const score = (/message|reply|trả lời|tin nhắn|soạn tin|gửi tin|viết tin|write/i.test(descriptor) ? 1000000 : 0)
+                + (node.isContentEditable ? 100 : 0) + Math.min(r.width, vw) - Math.abs(vh - r.bottom);
               return {node, score, r};
             }).sort((a, b) => b.score - a.score);
           const editor = editors[0]?.node;
@@ -1053,10 +1298,16 @@ async def _send_meta_message(thread_id: object, message: object, recipient_id: o
     if not target:
         raise RuntimeError("Không nhận diện được ô trả lời trong hội thoại Meta đang mở.")
     existing_message_ids = set(target.get("messageIds") or [])
+    existing_outbound_count = await _visible_outbound_text_count(page, message)
+    is_image = media_type in {"image", "sticker"}
+    existing_images = Counter(await _visible_outbound_images(page)) if image_path is not None and is_image else Counter()
     composer = page.locator('[data-smart-merchant-meta-composer="active"]')
     await composer.fill(message)
-    send_target = await page.evaluate(
-        r"""() => {
+    if image_path is not None:
+        await _attach_meta_image(page, image_path, media_type)
+    for _ in range(40 if image_path is not None else 1):
+        send_target = await page.evaluate(
+            r"""() => {
           const editor = document.querySelector('[data-smart-merchant-meta-composer="active"]');
           if (!editor) return {hasButton: false};
           const vw = innerWidth, vh = innerHeight, er = editor.getBoundingClientRect();
@@ -1066,18 +1317,24 @@ async def _send_meta_message(thread_id: object, message: object, recipient_id: o
           };
           for (const node of document.querySelectorAll('[data-smart-merchant-meta-send]')) node.removeAttribute('data-smart-merchant-meta-send');
           const button = [...document.querySelectorAll('button,[role="button"]')]
-            .filter(visible).map(node => {
+            .filter(node => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true').map(node => {
               const r = node.getBoundingClientRect();
               const name = [node.getAttribute('aria-label'), node.getAttribute('title'), node.getAttribute('data-testid'), node.innerText].join(' ').trim();
               return {node, r, name, distance: Math.abs(r.y + r.height / 2 - (er.y + er.height / 2))};
-            }).filter(item => item.r.x > vw * .20 && item.r.x < vw * .82 && item.r.y > vh * .50
-              && item.distance < 100 && /(send|gửi|tin nhắn)/i.test(item.name))
+            }).filter(item => item.r.x > vw * .04 && item.r.x < vw * .995 && item.r.y > vh * .50
+              && item.distance < 160 && /(send|gửi)/i.test(item.name))
             .sort((a, b) => a.distance - b.distance)[0]?.node;
           if (button) button.setAttribute('data-smart-merchant-meta-send', 'active');
           return {hasButton: !!button};
         }"""
-    )
+        )
+        if send_target and send_target.get("hasButton"):
+            break
+        if image_path is not None:
+            await page.wait_for_timeout(250)
     button = page.locator('[data-smart-merchant-meta-send="active"]')
+    if image_path is not None and not (send_target and send_target.get("hasButton")):
+        raise RuntimeError("Meta chưa hiển thị nút gửi tệp đính kèm; chưa gửi tin.")
     try:
         if send_target and send_target.get("hasButton"):
             await button.click(timeout=5000)
@@ -1111,10 +1368,30 @@ async def _send_meta_message(thread_id: object, message: object, recipient_id: o
             }""",
             {"messageText": message, "existingMessageIds": list(existing_message_ids)},
         )
+        if image_path is not None:
+            if is_image and state and state.get("empty") and Counter(await _visible_outbound_images(page)) - existing_images:
+                return {
+                    "status": "sent",
+                    "message_id": state.get("messageId") or f"meta-ui:{thread_id}:{time.time_ns()}",
+                    "threadId": thread_id,
+                }
+            if not is_image and state and state.get("empty") and state.get("messageId"):
+                return {"status": "sent", "message_id": state["messageId"], "threadId": thread_id}
+            continue
         if state and state.get("messageId"):
             return {
                 "status": "sent",
                 "message_id": state["messageId"],
+                "threadId": thread_id,
+            }
+        if (
+            state
+            and state.get("empty")
+            and await _visible_outbound_text_count(page, message) > existing_outbound_count
+        ):
+            return {
+                "status": "sent",
+                "message_id": f"meta-ui:{thread_id}:{time.time_ns()}",
                 "threadId": thread_id,
             }
     raise MetaDeliveryUnknown("Meta chưa xác nhận tin đã gửi; hãy kiểm tra hội thoại trước khi thử lại.")
@@ -1142,7 +1419,7 @@ class _MetaControlHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > 65536:
+            if length <= 0 or length > 36 * 1024 * 1024:
                 raise ValueError("Payload Meta không hợp lệ.")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
@@ -1150,12 +1427,26 @@ class _MetaControlHandler(BaseHTTPRequestHandler):
             if CONTROL_LOOP is None:
                 self._reply(503, {"detail": "Meta Business Suite connector chưa sẵn sàng."})
                 return
-            with CONTROL_SEND_LOCK:
-                future = asyncio.run_coroutine_threadsafe(
-                    _send_meta_message(payload.get("threadId"), payload.get("message"), payload.get("recipientId")),
-                    CONTROL_LOOP,
-                )
-                result = await_bridge_result(future)
+            attachment_path = None
+            media_type = str(payload.get("mediaType") or "").strip().lower()
+            try:
+                if media_type in {"image", "audio", "video", "file", "sticker"}:
+                    attachment_path = _decode_meta_attachment(payload, media_type)
+                with CONTROL_SEND_LOCK:
+                    future = asyncio.run_coroutine_threadsafe(
+                        _send_meta_message(
+                            payload.get("threadId"),
+                            payload.get("message"),
+                            payload.get("recipientId"),
+                            attachment_path,
+                            media_type,
+                        ),
+                        CONTROL_LOOP,
+                    )
+                    result = await_bridge_result(future)
+            finally:
+                if attachment_path is not None:
+                    attachment_path.unlink(missing_ok=True)
             self._reply(200, result)
         except MetaDeliveryUnknown as exc:
             self._reply(409, {"code": "delivery_unknown", "detail": str(exc)})
@@ -1346,12 +1637,14 @@ async def _import_history(
     checkpoint: dict,
     *,
     scroll_oldest: bool,
+    thread_id: str = "",
     display_name: str = "",
     avatar_url: str = "",
     mark_latest_inbound_live: bool = False,
+    live_after: float | None = None,
 ) -> tuple[dict, int]:
     channel_name = _channel_name(channel_type)
-    thread_id = await _active_thread_id(page)
+    thread_id = str(thread_id or await _active_thread_id(page)).strip()
     if not thread_id:
         raise RuntimeError("Meta không cung cấp mã hội thoại đang mở.")
     display_name = _usable_meta_name(display_name) or _usable_meta_name(await _active_display_name(page, ""))
@@ -1365,9 +1658,21 @@ async def _import_history(
     )
     history = normalize_meta_history(channel_type, thread_id, thread_id, display_name, rows)
     if not history:
+        if channel_type == "instagram" and rows and all(
+            _is_instagram_system_notice(row.get("message")) for row in rows
+        ):
+            return checkpoint, 0
         raise RuntimeError(f"{channel_name} chưa đọc được tin nhắn lịch sử; chưa đánh dấu hội thoại hoàn tất.")
     live_message_ids: set[str] = set()
-    if mark_latest_inbound_live:
+    if live_after is not None:
+        live_message_ids.update(
+            str(item["messageId"])
+            for item in history
+            if item.get("direction") == "inbound"
+            and item.get("messageId")
+            and _message_arrived_since(item.get("createdAt"), live_after)
+        )
+    elif mark_latest_inbound_live:
         latest_inbound = next(
             (item for item in reversed(history) if item.get("direction") == "inbound"),
             None,
@@ -1375,16 +1680,36 @@ async def _import_history(
         if latest_inbound and latest_inbound.get("messageId"):
             live_message_ids.add(str(latest_inbound["messageId"]))
     for start in range(0, len(history), 100):
+        batch = history[start:start + 100]
         status, detail = await asyncio.to_thread(
             _send_history,
             channel_type,
             backend_url,
             connector_token,
-            history[start:start + 100],
+            batch,
             live_message_ids=live_message_ids,
         )
         if not 200 <= status < 300:
             raise RuntimeError(f"CRM từ chối lô lịch sử {channel_name} (HTTP {status}): {detail[:160]}")
+        try:
+            receipt = json.loads(detail)
+            if not isinstance(receipt, dict):
+                raise TypeError("CRM receipt must be an object")
+            imported = int(receipt["imported"])
+            duplicates = int(receipt["duplicates"])
+            skipped = int(receipt["skipped"])
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"CRM trả biên nhận lô lịch sử {channel_name} không hợp lệ.") from exc
+        if receipt.get("status") != "received" or min(imported, duplicates, skipped) < 0:
+            raise RuntimeError(f"CRM không xác nhận đã nhận lô lịch sử {channel_name}.")
+        if skipped or imported + duplicates + skipped != len(batch):
+            raise RuntimeError(
+                f"CRM chưa lưu đủ lịch sử {channel_name}: mới {imported}, trùng {duplicates}, bỏ qua {skipped}."
+            )
+        print(
+            f"📨 CRM nhận lịch sử {channel_name}: mới {imported}, đã có {duplicates}.",
+            flush=True,
+        )
     if scroll_oldest:
         checkpoint = mark_history_thread_complete(checkpoint_path, checkpoint, thread_id)
     return checkpoint, len(history)
@@ -1393,6 +1718,7 @@ async def _import_history(
 async def _scan_loaded_conversations(
     page, channel_type: str, backend_url: str, token: str, checkpoint_path: Path,
     profile_cache: dict[str, dict] | None = None,
+    live_after: float | None = None,
 ) -> bool:
     checkpoint = load_history_checkpoint(checkpoint_path)
     completed = set(str(value) for value in checkpoint.get("completed_threads", []))
@@ -1437,13 +1763,15 @@ async def _scan_loaded_conversations(
                 checkpoint, count = await _import_history(
                     page, channel_type, backend_url, token, checkpoint_path, checkpoint,
                     scroll_oldest=thread_id not in completed,
+                    thread_id=thread_id,
                     display_name=display_name,
                     avatar_url=avatar_url,
+                    live_after=live_after,
                 )
                 if thread_id not in completed:
                     completed.add(thread_id)
                     imported_threads += 1
-                    print(f"✅ Đã nhập lịch sử {channel_name} ({count} tin hiện có).", flush=True)
+                    print(f"✅ Đã đồng bộ lịch sử {channel_name} ({count} tin; CRM đã xác nhận các lô).", flush=True)
             except Exception as exc:
                 scan_ok = False
                 print(f"⚠️ Chưa nhập được một hội thoại Meta; sẽ thử lại ở lần quét sau: {type(exc).__name__}: {str(exc)[:180]}.", flush=True)
@@ -1468,10 +1796,41 @@ async def _scan_loaded_conversations(
     return scan_ok and stable_bottom >= 2
 
 
+async def _run_background_history_scan(
+    context, live_page, channel_type: str, backend_url: str, token: str,
+    checkpoint_path: Path, profile_cache: dict[str, dict], live_after: float | None = None,
+) -> bool:
+    """Import old messages on a background tab while the original inbox stays live."""
+    history_page = await context.new_page()
+    try:
+        await history_page.goto(
+            _meta_inbox_url(channel_type, live_page.url),
+            wait_until="domcontentloaded",
+            timeout=120000,
+        )
+        await history_page.wait_for_timeout(700)
+        await live_page.bring_to_front()
+        if _inbox_state(history_page) != "inbox" or not _is_channel_inbox_url(channel_type, history_page.url):
+            raise RuntimeError("Tab nền chưa mở được đúng hộp thư Meta.")
+        complete = await _scan_loaded_conversations(
+            history_page, channel_type, backend_url, token, checkpoint_path, profile_cache,
+            live_after=live_after,
+        )
+        if complete:
+            mark_history_complete(checkpoint_path)
+        return complete
+    finally:
+        try:
+            await history_page.close()
+        except Exception:
+            pass
+
+
 async def _sync_changed_conversations(
     page, channel_type: str, backend_url: str, connector_token: str,
     checkpoint_path: Path, observed_rows: dict[str, str], rows: list[dict],
     profile_cache: dict[str, dict],
+    live_after: float | None = None,
 ) -> None:
     row_signatures = {
         str(row.get("index")): hashlib.sha256(
@@ -1505,8 +1864,9 @@ async def _sync_changed_conversations(
             history_checkpoint, count = await _import_history(
                 page, channel_type, backend_url, connector_token,
                 checkpoint_path, history_checkpoint, scroll_oldest=False,
+                thread_id=thread_id,
                 display_name=profile["displayName"], avatar_url=profile["avatarUrl"],
-                mark_latest_inbound_live=True,
+                live_after=live_after,
             )
             # A transient Meta navigation/ID error must not consume this row
             # change; the next poll can retry it instead of losing the event.
@@ -1569,9 +1929,9 @@ async def run() -> None:
     if history_scan_started:
         print("✅ Lịch sử Meta đã đồng bộ trước đó; bỏ qua quét tin cũ và chỉ theo dõi tin mới.", flush=True)
     else:
-        print("📚 Sẽ nhập lịch sử Meta còn thiếu một lần; luồng tin mới vẫn chạy song song. Meta có thể đánh dấu tin chưa đọc thành đã đọc.", flush=True)
+        print("📚 Sẽ nhập lịch sử Meta còn thiếu trên tab nền; luồng tin mới vẫn chạy song song. Meta có thể đánh dấu tin chưa đọc thành đã đọc.", flush=True)
     history_scan_task: asyncio.Task | None = None
-    history_scan_page = None
+    history_retry_at = 0.0
     avatar_scan_task: asyncio.Task | None = None
     avatar_scan_page = None
     avatar_scan_started = bool(avatar_checkpoint.get("complete"))
@@ -1625,10 +1985,24 @@ async def run() -> None:
                     if not announced_inbox:
                         print(f"✅ Đang ở inbox {channel_label} của Meta Business Suite.", flush=True)
                         announced_inbox = True
+                    if history_scan_task is not None and history_scan_task.done():
+                        finished_history_task = history_scan_task
+                        history_scan_task = None
+                        try:
+                            if finished_history_task.result():
+                                history_scan_started = True
+                                print(f"✅ Đã nhập xong lịch sử {channel_label}; luồng realtime vẫn tiếp tục.", flush=True)
+                            else:
+                                history_scan_started = False
+                                history_retry_at = asyncio.get_running_loop().time() + 30
+                                print(f"⚠️ Lịch sử {channel_label} còn thiếu hội thoại; sẽ tự thử tiếp trong nền.", flush=True)
+                        except Exception as exc:
+                            history_scan_started = False
+                            history_retry_at = asyncio.get_running_loop().time() + 30
+                            print(f"⚠️ Lượt nhập lịch sử Meta bị gián đoạn: {type(exc).__name__}: {str(exc)[:160]}; sẽ tự thử tiếp trong nền.", flush=True)
                     if (
                         channel_type == "instagram"
                         and not avatar_scan_started
-                        and history_scan_task is None
                         and load_history_checkpoint(checkpoint_path).get("complete")
                     ):
                         avatar_scan_started = True
@@ -1661,54 +2035,27 @@ async def run() -> None:
                             print(f"⚠️ Chưa khởi động được lượt cập nhật avatar Instagram: {type(exc).__name__}.", flush=True)
                     rows = await _conversation_rows(page)
                     if monitor_conversation_changes:
-                        await _sync_changed_conversations(
-                            page, channel_type, backend_url, connector_token,
-                            checkpoint_path, observed_rows, rows, profile_cache,
-                        )
-                    if rows and not history_scan_started:
+                        if not observed_rows:
+                            observed_rows.update({
+                                str(row.get("index")): hashlib.sha256(
+                                    str(row.get("label") or "").encode("utf-8")
+                                ).hexdigest()
+                                for row in rows
+                            })
+                    if (
+                        rows
+                        and not history_scan_started
+                        and history_scan_task is None
+                        and asyncio.get_running_loop().time() >= history_retry_at
+                    ):
                         history_scan_started = True
-                        try:
-                            history_scan_page = await context.new_page()
-                            await history_scan_page.goto(
-                                _meta_inbox_url(channel_type, page.url),
-                                wait_until="domcontentloaded",
-                                timeout=120000,
+                        print(f"📚 Đang nhập lịch sử {channel_label} ở tab nền; tab theo dõi tin mới không bị gián đoạn.", flush=True)
+                        history_scan_task = asyncio.create_task(
+                            _run_background_history_scan(
+                                context, page, channel_type, backend_url, connector_token,
+                                checkpoint_path, profile_cache, CONNECTOR_STARTED_AT,
                             )
-                            await history_scan_page.wait_for_timeout(700)
-                            history_scan_task = asyncio.create_task(
-                                _scan_loaded_conversations(
-                                    history_scan_page, channel_type, backend_url, connector_token,
-                                    checkpoint_path, profile_cache,
-                                )
-                            )
-                            await page.bring_to_front()
-                            print("📚 Đang nhập lịch sử trên tab nền; tab theo dõi tin mới không bị gián đoạn.", flush=True)
-                        except Exception as exc:
-                            if history_scan_page is not None:
-                                try:
-                                    await history_scan_page.close()
-                                except Exception:
-                                    pass
-                            history_scan_page = None
-                            print(f"⚠️ Chưa khởi động được lượt nhập lịch sử Meta: {type(exc).__name__}: {str(exc)[:160]}. Tin mới vẫn được theo dõi; lịch sử còn thiếu sẽ tiếp tục khi khởi chạy lại.", flush=True)
-                    if history_scan_task is not None and history_scan_task.done():
-                        scan_task = history_scan_task
-                        history_scan_task = None
-                        try:
-                            if scan_task.result():
-                                mark_history_complete(checkpoint_path)
-                                print(f"✅ Đã nhập xong lịch sử {channel_label}; từ giờ chỉ đồng bộ tin mới.", flush=True)
-                            else:
-                                print(f"⚠️ Lượt nhập lịch sử {channel_label} còn hội thoại chưa đọc được. Đã lưu checkpoint; bridge vẫn theo dõi tin mới và chỉ tiếp tục phần còn thiếu khi khởi chạy lại.", flush=True)
-                        except Exception as exc:
-                            print(f"⚠️ Lượt nhập lịch sử {channel_label} bị gián đoạn: {type(exc).__name__}: {str(exc)[:160]}. Bridge vẫn theo dõi tin mới; phần còn thiếu sẽ tiếp tục khi khởi chạy lại.", flush=True)
-                        finally:
-                            if history_scan_page is not None:
-                                try:
-                                    await history_scan_page.close()
-                                except Exception:
-                                    pass
-                            history_scan_page = None
+                        )
                     if avatar_scan_task is not None and avatar_scan_task.done():
                         scan_task = avatar_scan_task
                         avatar_scan_task = None
@@ -1735,6 +2082,11 @@ async def run() -> None:
                         name = _usable_meta_name(profile.get("displayName")) or _usable_meta_name(await _active_display_name(page, ""))
                         avatar_url = str(profile.get("avatarUrl") or await _active_avatar_url(page, name) or "")
                         messages = await _visible_message_rows(page, channel_type, current_id, name, avatar_url)
+                        if channel_type == "instagram":
+                            messages = [
+                                item for item in messages
+                                if not _is_instagram_system_notice(item.get("message"))
+                            ]
                         signature = hashlib.sha256(json.dumps(messages, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
                         if observed_threads.get(current_id) != signature:
                             current_message_ids = {
@@ -1770,20 +2122,36 @@ async def run() -> None:
                                 for item in messages
                                 if item.get("messageId")
                             }
-                    await asyncio.sleep(3)
-                report_connector_status(channel_type, backend_url, connector_token, state="error", error_code="edge_disconnected")
-                if history_scan_task is not None and not history_scan_task.done():
-                    history_scan_task.cancel()
+                    if monitor_conversation_changes:
+                        row_signatures = {
+                            str(row.get("index")): hashlib.sha256(
+                                str(row.get("label") or "").encode("utf-8")
+                            ).hexdigest()
+                            for row in rows
+                        }
+                        if any(
+                            observed_rows.get(row_key) != signature
+                            for row_key, signature in row_signatures.items()
+                        ):
+                            await _sync_changed_conversations(
+                                page,
+                                channel_type,
+                                backend_url,
+                                connector_token,
+                                checkpoint_path,
+                                observed_rows,
+                                rows,
+                                profile_cache,
+                                live_after=CONNECTOR_STARTED_AT,
+                            )
+                    await asyncio.sleep(INBOX_POLL_INTERVAL_SECONDS)
+                if history_scan_task is not None:
+                    if not history_scan_task.done():
+                        history_scan_task.cancel()
                     await asyncio.gather(history_scan_task, return_exceptions=True)
                     history_scan_task = None
-                    if history_scan_page is not None:
-                        try:
-                            await history_scan_page.close()
-                        except Exception:
-                            pass
-                    history_scan_page = None
-                    if not load_history_checkpoint(checkpoint_path).get("complete"):
-                        history_scan_started = False
+                    history_scan_started = bool(load_history_checkpoint(checkpoint_path).get("complete"))
+                report_connector_status(channel_type, backend_url, connector_token, state="error", error_code="edge_disconnected")
                 if avatar_scan_task is not None and not avatar_scan_task.done():
                     avatar_scan_task.cancel()
                     await asyncio.gather(avatar_scan_task, return_exceptions=True)
@@ -1799,6 +2167,12 @@ async def run() -> None:
             except KeyboardInterrupt:
                 raise
             except Exception as exc:
+                if history_scan_task is not None:
+                    if not history_scan_task.done():
+                        history_scan_task.cancel()
+                    await asyncio.gather(history_scan_task, return_exceptions=True)
+                    history_scan_task = None
+                    history_scan_started = bool(load_history_checkpoint(checkpoint_path).get("complete"))
                 print(f"⚠️ Meta Business Suite connector tạm dừng: {type(exc).__name__}: {str(exc)[:180]}", flush=True)
                 report_connector_status(channel_type, backend_url, connector_token, state="error", error_code=type(exc).__name__.lower())
                 await asyncio.sleep(10)

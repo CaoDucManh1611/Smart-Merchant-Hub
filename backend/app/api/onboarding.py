@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -53,7 +53,11 @@ from app.schemas.onboarding import (
 from app.schemas.platform import ProvisioningOut, ProvisioningRequest
 from app.services.audit_service import record_audit
 from app.services.channel_credentials import encrypt_token
-from app.services.channel_service import normalized_connection_state, upsert_channel_connection
+from app.services.channel_service import (
+    QUOTA_HOLDING_CHANNEL_STATUSES,
+    normalized_connection_state,
+    upsert_channel_connection,
+)
 from app.services.channel_health import check_channel_health
 from app.services.quota_service import QuotaExceededError, release_quota
 from app.services.provider_connection import ProviderConnectionError, verify_and_configure_bot
@@ -1160,12 +1164,16 @@ def connect_channel(
 @router.get("/shops/{business_id}/channels", response_model=list[OnboardingChannelStatusOut])
 def list_connected_channels(
     business_id: int,
+    response: Response,
     db: Session = Depends(get_db),
     platform_db: Session = Depends(get_platform_db),
     actor: User | None = Depends(require_admin_access),
 ):
     """Return safe connection metadata without exposing provider secrets."""
 
+    # Connection state changes immediately after OAuth, pairing, or disconnect.
+    # Prevent browser/proxy caches from restoring an older channel snapshot on reload.
+    response.headers["Cache-Control"] = "no-store"
     _require_shop_admin(db, business_id, actor)
     with tenant_session(schema_name_for(business_id)) as tenant_db:
         channels = (
@@ -1390,7 +1398,7 @@ def create_local_connector_pairing_code(
                     "code": "connector_already_paired",
                     "message": "Connector đã ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.",
                 })
-            was_active = channel.status == "active"
+            was_active = channel.status in QUOTA_HOLDING_CHANNEL_STATUSES
             pairing_code = f"PAIR.{channel_type}.{business_id}.{channel.id}.{secrets.token_urlsafe(12)}"
             connector_token = f"CONN.{channel_type}.{business_id}.{channel.id}.{secrets.token_urlsafe(32)}"
             channel.name = connector_name
@@ -1525,8 +1533,8 @@ def disconnect_bot_channel(
         config = channel.config if isinstance(channel.config, dict) else {}
         if channel.channel_type in {"facebook", "instagram"} and config.get("provider") != f"{channel.channel_type}_local_connector":
             raise HTTPException(status_code=404, detail="Chỉ có thể ngắt connector Business Suite tại đây.")
-        if channel.status in {"active", "pending_pairing"}:
-            was_active = channel.status == "active"
+        if channel.status in QUOTA_HOLDING_CHANNEL_STATUSES or channel.status == "pending_pairing":
+            was_active = channel.status in QUOTA_HOLDING_CHANNEL_STATUSES
             channel.status = "disconnected"
             channel.disconnected_at = datetime.now(timezone.utc).replace(tzinfo=None)
             if was_active:

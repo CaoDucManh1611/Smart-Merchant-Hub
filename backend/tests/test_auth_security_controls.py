@@ -188,6 +188,22 @@ class AuthSecurityControlTests(unittest.TestCase):
         )
         self.assertEqual(200, new_password.status_code, new_password.text)
 
+    def test_password_reset_does_not_send_when_email_is_not_registered(self):
+        with patch("app.api.auth.deliver_otp") as delivery:
+            response = self.client.post(
+                "/api/auth/password-reset/request",
+                json={"email": "not-registered@example.test", "shop_slug": "security-shop"},
+            )
+
+        self.assertEqual(404, response.status_code, response.text)
+        self.assertIn("không khớp với tài khoản", response.json()["detail"])
+        delivery.assert_not_called()
+        with Session(self.engine) as db:
+            challenge = db.query(SignupEmailChallenge).filter_by(
+                email="not-registered@example.test", purpose="password_reset",
+            ).first()
+            self.assertIsNone(challenge)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,7 @@ from app.services.channel_credentials import encrypt_token
 
 
 TOKEN_EXPIRY_WARNING = timedelta(days=7)
+QUOTA_HOLDING_CHANNEL_STATUSES = frozenset({"active", "reconnect_required"})
 
 
 def normalized_connection_state(channel: Channel | None) -> str:
@@ -140,7 +141,7 @@ def upsert_channel_connection(
     )
     if channel is not None and channel.business_id != business_id:
         raise PermissionError("External channel account already belongs to another business")
-    needs_slot = channel is None or channel.status != "active"
+    needs_slot = channel is None or channel.status not in QUOTA_HOLDING_CHANNEL_STATUSES
     if needs_slot:
         if reserve_channel_slot is None:
             raise RuntimeError("A platform channel quota reservation is required")

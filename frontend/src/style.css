@@ -1,11 +1,11 @@
-@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400..800;1,400..800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap");
 
 /* =========================================================
    ROOT
 ========================================================= */
 
 :root {
-  --font-ui: "Be Vietnam Pro", "Segoe UI", sans-serif;
+  --font-ui: "Source Sans 3", "Segoe UI", "Noto Sans", Arial, sans-serif;
   font-family: var(--font-ui);
   color: #172033;
   background: #eef2f7;
@@ -1319,6 +1319,7 @@ button {
   min-height: 0;
 
   overflow-y: auto;
+  overflow-anchor: none;
 
   padding: 18px 24px;
 
@@ -12477,6 +12478,7 @@ body.crm-dark .crm-app .login-feature-icon { color: #8bd8d7 !important; }
 .service-account-grid strong { margin-top: 5px; color: #183149; font-size: 13px; overflow-wrap: anywhere; }
 .service-account-grid small { margin-top: 3px; color: #718898; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
 .channel-quota-note { margin-top: 12px; padding: 9px 11px; border: 1px solid #b7deda; border-radius: 10px; color: #246e70; background: #f0fbfa; font-size: 12px; }
+.channel-quota-note > small { display: block; margin-top: 4px; font-size: 11px; line-height: 1.4; }
 
 .service-page-grid {
   display: grid;
@@ -13906,6 +13908,22 @@ body.crm-dark .crm-app.platform-admin-workspace .platform-admin-hero {
 .crm-app.platform-admin-workspace .platform-approval-shop small,
 .crm-app.platform-admin-workspace .platform-approval-detail small { overflow-wrap: anywhere; color: var(--admin-muted); font-size: .75rem; line-height: 1.35; }
 .crm-app.platform-admin-workspace .platform-approval-detail > span { color: var(--admin-muted); font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.crm-app.platform-admin-workspace .platform-approval-payment-form {
+  grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end; gap: 10px; padding: 12px; border: 1px solid var(--admin-border);
+  border-radius: 9px; background: var(--admin-surface);
+}
+.crm-app.platform-admin-workspace .platform-approval-payment-form label { display: grid; min-width: 0; gap: 6px; color: var(--admin-ink); font-size: .78rem; font-weight: 650; }
+.crm-app.platform-admin-workspace .platform-approval-payment-form label span,
+.crm-app.platform-admin-workspace .platform-approval-payment-form > small { color: var(--admin-muted); }
+.crm-app.platform-admin-workspace .platform-approval-payment-form input {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px; padding: 9px 11px;
+  border: 1px solid var(--admin-border); border-radius: 8px; background: var(--admin-surface);
+  color: var(--admin-ink); font: inherit; font-size: .82rem;
+}
+.crm-app.platform-admin-workspace .platform-approval-payment-form input::placeholder { color: var(--admin-muted); opacity: 1; }
+.crm-app.platform-admin-workspace .platform-approval-payment-form > button { min-height: 40px; margin: 0; white-space: nowrap; }
+.crm-app.platform-admin-workspace .platform-approval-payment-form > small { grid-column: 1 / -1; font-size: .74rem; line-height: 1.45; }
 .crm-app.platform-admin-workspace .platform-approval-request-details {
   grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 24px;
   padding-top: 10px; border-top: 1px solid var(--admin-border);
@@ -13947,6 +13965,8 @@ body.crm-dark .crm-app.platform-admin-workspace .platform-admin-hero {
   .crm-app.platform-admin-workspace .platform-plan-form-actions { grid-column: auto; }
   .crm-app.platform-admin-workspace .platform-admin-hero { align-items: flex-start; }
   .crm-app.platform-admin-workspace .platform-approval-item { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .crm-app.platform-admin-workspace .platform-approval-payment-form { grid-template-columns: minmax(0, 1fr); }
+  .crm-app.platform-admin-workspace .platform-approval-payment-form > button { width: 100%; }
   .crm-app.platform-admin-workspace .platform-approval-actions { grid-column: auto; width: 100%; }
   .crm-app.platform-admin-workspace .platform-approval-actions button { flex: 1 1 0; }
 }

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime
 import hmac
@@ -53,6 +55,7 @@ CONNECTOR_TOKEN = ""
 SEEN_MESSAGE_IDS: dict[str, float] = {}
 IN_FLIGHT_MESSAGE_IDS: set[str] = set()
 SYNCED_AVATAR_IDS: set[str] = set()
+SYNCED_AVATAR_URLS: dict[str, str] = {}
 SHOPEE_CONVERSATION_SCAN_COMPLETE = False
 CONTROL_SERVER: ThreadingHTTPServer | None = None
 CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
@@ -345,7 +348,11 @@ async def sync_visible_avatars(page) -> None:
                 }
                 return conversation ? {
                   externalUserId: String(conversation.to_id || ''),
-                  avatar: conversation.to_avatar || root.querySelector('img')?.currentSrc || ''
+                  avatar: [conversation.to_avatar,
+                    ...[...root.querySelectorAll('img')].flatMap(image => [
+                      image.currentSrc, image.getAttribute('src'), image.getAttribute('data-src'),
+                      image.getAttribute('data-lazy-src'), image.getAttribute('srcset')
+                    ])]
                 } : null;
               }).filter(Boolean)"""
         )
@@ -355,7 +362,7 @@ async def sync_visible_avatars(page) -> None:
     for row in rows:
         external_user_id = str(row.get("externalUserId") or "").strip()
         avatar_url = extract_avatar_url(row.get("avatar"))
-        if external_user_id and external_user_id not in SYNCED_AVATAR_IDS and avatar_url:
+        if external_user_id and SYNCED_AVATAR_URLS.get(external_user_id) != avatar_url and avatar_url:
             profiles.append({"externalUserId": external_user_id, "avatarUrl": avatar_url})
     if not profiles:
         return
@@ -371,7 +378,12 @@ async def sync_visible_avatars(page) -> None:
             matched_ids = json.loads(detail).get("matchedExternalUserIds", [])
         except (AttributeError, TypeError, ValueError):
             matched_ids = []
-        SYNCED_AVATAR_IDS.update(str(value) for value in matched_ids if value)
+        matched_ids = {str(value) for value in matched_ids if value}
+        for profile in batch:
+            external_user_id = str(profile.get("externalUserId") or "")
+            if external_user_id in matched_ids:
+                SYNCED_AVATAR_IDS.add(external_user_id)
+                SYNCED_AVATAR_URLS[external_user_id] = str(profile.get("avatarUrl") or "")
         try:
             updated += int(json.loads(detail).get("updated", 0))
         except (TypeError, ValueError):
@@ -1109,6 +1121,112 @@ async def send_shopee_message(thread_id: str, text: str, recipient_id: str = "")
     return {"status": "sent", "message_id": f"shopee-ui:{thread_id}:{time.time_ns()}", "threadId": thread_id}
 
 
+def _decode_outbound_image(payload: dict) -> dict:
+    encoded = payload.get("mediaData")
+    if not isinstance(encoded, str) or len(encoded) > 36 * 1024 * 1024:
+        raise ValueError("Ảnh Shopee không hợp lệ hoặc vượt quá 25MB.")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Dữ liệu ảnh Shopee không hợp lệ.") from exc
+    if not content or len(content) > 25 * 1024 * 1024:
+        raise ValueError("Ảnh Shopee không hợp lệ hoặc vượt quá 25MB.")
+    content_type = str(payload.get("contentType") or "").strip().lower()
+    signatures = {"image/png": content.startswith(b"\x89PNG\r\n\x1a\n"), "image/jpeg": content.startswith(b"\xff\xd8\xff")}
+    if content_type not in signatures or not signatures[content_type]:
+        raise ValueError("Shopee chỉ nhận ảnh PNG/JPEG hợp lệ.")
+    filename = Path(str(payload.get("fileName") or "sticker.png")).name
+    if not filename or len(filename) > 120:
+        filename = "sticker.png" if payload.get("mediaType") == "sticker" else "image.png"
+    return {"name": filename, "mimeType": content_type, "buffer": content}
+
+
+async def _attach_shopee_image(page, media_file: dict) -> None:
+    marker = await page.evaluate(
+        r"""() => {
+          for (const node of document.querySelectorAll('[data-smh-media-target]')) node.removeAttribute('data-smh-media-target');
+          const inputs=[...document.querySelectorAll('input[type="file"]')].filter(node=>!node.disabled&&(!node.accept||/image|\.png|\.jpe?g/i.test(node.accept)));
+          if(inputs.length){inputs[0].setAttribute('data-smh-media-target','input');return 'input';}
+          const root=document.querySelector('[data-cy="webchat-conversation-detail-input"]');
+          const icons=[...(root?.querySelectorAll('i')||[])];
+          const upload=icons.filter(icon=>{const key=Object.getOwnPropertyNames(icon).find(name=>name.startsWith('__reactProps$'));const fn=key&&icon[key]?.onClick;return typeof fn==='function'&&/MSG_TYPE_IMAGE|upload|image/i.test(String(fn));});
+          if(upload.length===1){upload[0].setAttribute('data-smh-media-target','button');return 'button';}
+          const visible=node=>{const r=node.getBoundingClientRect(),s=getComputedStyle(node);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';};
+          const buttons=[...document.querySelectorAll('button,[role="button"]')].filter(visible).map(node=>{const r=node.getBoundingClientRect();const name=[node.getAttribute('aria-label'),node.getAttribute('title'),node.getAttribute('data-testid'),node.innerText].join(' ').trim();return {node,r,name};})
+            .filter(item=>item.r.y>innerHeight*.48&&item.r.y<innerHeight*.99&&item.r.x>innerWidth*.1&&/(image|photo|picture|upload|attach|album|ảnh|đính kèm|图片|相册)/i.test(item.name));
+          if(!buttons.length)return '';buttons[0].node.setAttribute('data-smh-media-target','button');return 'button';
+        }"""
+    )
+    if marker == "input":
+        await page.locator('[data-smh-media-target="input"]').set_input_files(media_file)
+    elif marker == "button":
+        async with page.expect_file_chooser(timeout=5000) as chooser_info:
+            await page.locator('[data-smh-media-target="button"]').click(timeout=5000)
+        await (await chooser_info.value).set_files(media_file)
+    else:
+        raise RuntimeError("Shopee Seller Chat không hiển thị nút gửi ảnh trong khung chat.")
+    await page.wait_for_timeout(500)
+
+
+async def send_shopee_image(thread_id: str, text: str, recipient_id: str, media: dict) -> dict:
+    """Attach sticker artwork as an image in the exact selected Shopee chat."""
+    global CONTROL_PAGE
+    if CONTROL_PAGE is None or CONTROL_PAGE.is_closed():
+        CONTROL_PAGE = next(
+            (page for page in (CONTROL_CONTEXT.pages if CONTROL_CONTEXT is not None else [])
+             if not page.is_closed() and page.url.startswith("https://banhang.shopee.vn/new-webchat/")),
+            None,
+        )
+    if CONTROL_PAGE is None or CONTROL_PAGE.is_closed():
+        raise RuntimeError("Shopee Edge page chưa sẵn sàng.")
+    thread_id = str(thread_id or "").strip()
+    if not thread_id:
+        raise ValueError("Thiếu threadId Shopee.")
+    if await _shopee_challenge_visible(CONTROL_PAGE):
+        raise RuntimeError("Shopee đang yêu cầu CAPTCHA/xác minh. Hãy hoàn tất thủ công trong Edge rồi thử gửi lại.")
+    if not await select_all_conversations_tab(CONTROL_PAGE):
+        raise RuntimeError("Không mở được tab Tất cả cuộc trò chuyện Shopee; ảnh chưa được gửi.")
+    row = {"threadId": thread_id, "customerId": str(recipient_id or "").strip()}
+    if not await _select_shopee_conversation(CONTROL_PAGE, row):
+        raise RuntimeError("Không tìm thấy đúng hội thoại Shopee; đã hủy gửi để tránh nhầm khách.")
+    await CONTROL_PAGE.wait_for_selector(
+        "#message-virtualized-list, [data-cy='webchat-conversation-detail-message-container']",
+        state="visible", timeout=10000,
+    )
+    before = await CONTROL_PAGE.evaluate(
+        """() => {const list=document.querySelector('#message-virtualized-list')||document.querySelector('[data-cy="webchat-conversation-detail-message-container"]');return list?[...list.querySelectorAll('[data-cy="webchat-message-send"]')].length:null;}"""
+    )
+    if before is None:
+        raise RuntimeError("Shopee chưa tải xong hội thoại; ảnh chưa được gửi.")
+    await _attach_shopee_image(CONTROL_PAGE, media)
+    composers = CONTROL_PAGE.locator(
+        '[data-cy="webchat-conversation-detail-input"] textarea:visible, '
+        '[data-cy="webchat-conversation-detail-input"] [contenteditable="true"]:visible'
+    )
+    composer_count = await composers.count()
+    if text and composer_count:
+        await composers.nth(composer_count - 1).fill(str(text)[:2000])
+    send_icons = CONTROL_PAGE.locator('[data-cy="webchat-conversation-detail-input"] i')
+    send_index = await send_icons.evaluate_all(
+        """icons => {const matches=icons.filter(icon=>{const key=Object.getOwnPropertyNames(icon).find(name=>name.startsWith('__reactProps$'));const fn=key&&icon[key]?.onClick;return typeof fn==='function'&&/MSG_TYPE_IMAGE|MSG_TYPE_TEXT/.test(String(fn));});const image=matches.filter(icon=>{const key=Object.getOwnPropertyNames(icon).find(name=>name.startsWith('__reactProps$'));return /MSG_TYPE_IMAGE/.test(String(icon[key]?.onClick));});const target=image[0]||matches[0];return target?icons.indexOf(target):-1;}"""
+    )
+    if send_index < 0:
+        raise RuntimeError("Shopee chưa hiển thị nút gửi ảnh; file chưa được gửi.")
+    await send_icons.nth(send_index).click()
+    warning = CONTROL_PAGE.get_by_text("Đã phát hiện phản hồi không phù hợp hoặc dư thừa", exact=False)
+    for index in range(await warning.count()):
+        if await warning.nth(index).is_visible():
+            raise RuntimeError("Shopee cảnh báo phản hồi có thể không phù hợp hoặc bị lặp.")
+    try:
+        await CONTROL_PAGE.wait_for_function(
+            """({before}) => {const list=document.querySelector('#message-virtualized-list')||document.querySelector('[data-cy="webchat-conversation-detail-message-container"]');if(!list)return false;const sent=[...list.querySelectorAll('[data-cy="webchat-message-send"]')];const root=document.querySelector('[data-cy="webchat-conversation-detail-input"]');const editor=root?.querySelector('textarea,[contenteditable="true"]');return sent.length>before&&(!editor||!String(editor.value??editor.innerText??'').trim());}""",
+            arg={"before": before}, timeout=15000,
+        )
+    except Exception as exc:
+        raise ShopeeDeliveryUnknown("Shopee chưa xác nhận ảnh đã gửi; hãy kiểm tra hội thoại trước khi thử lại.") from exc
+    return {"status": "sent", "message_id": f"shopee-ui:image:{thread_id}:{time.time_ns()}", "threadId": thread_id}
+
+
 class _ShopeeControlHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args) -> None:
         return
@@ -1131,7 +1249,7 @@ class _ShopeeControlHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > 65536:
+            if length <= 0 or length > 36 * 1024 * 1024:
                 raise ValueError("Payload Shopee không hợp lệ.")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
@@ -1140,10 +1258,17 @@ class _ShopeeControlHandler(BaseHTTPRequestHandler):
                 self._reply(503, {"detail": "Shopee connector chưa sẵn sàng."})
                 return
             with CONTROL_SEND_LOCK:
-                future = asyncio.run_coroutine_threadsafe(
-                    send_shopee_message(payload.get("threadId"), payload.get("message"), payload.get("recipientId")),
-                    CONTROL_LOOP,
-                )
+                if str(payload.get("mediaType") or "").strip().lower() in {"image", "sticker"}:
+                    media = _decode_outbound_image(payload)
+                    future = asyncio.run_coroutine_threadsafe(
+                        send_shopee_image(payload.get("threadId"), payload.get("message"), payload.get("recipientId"), media),
+                        CONTROL_LOOP,
+                    )
+                else:
+                    future = asyncio.run_coroutine_threadsafe(
+                        send_shopee_message(payload.get("threadId"), payload.get("message"), payload.get("recipientId")),
+                        CONTROL_LOOP,
+                    )
                 result = await_bridge_result(future)
             self._reply(200, result)
         except ShopeeDeliveryUnknown as exc:

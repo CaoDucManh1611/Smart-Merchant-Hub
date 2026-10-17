@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
 from sqlalchemy import String, cast, case, func, inspect, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.auth.platform import require_platform_admin
@@ -21,10 +22,16 @@ from app.models.business import Business, Payment, ServicePlan, Subscription, Us
 from app.models.channel import Channel, ChannelEvent
 from app.models.saas import SaaSUsage
 from app.models.platform_control import PlatformAudit, PlatformProviderIncident
+from app.database.tenant_session import tenant_session
+from app.tenancy.schema import schema_name_for
+from app.services.channel_service import normalized_connection_state
 from app.schemas.platform import (
     PlatformAuditOut,
     PlatformShopListOut,
     PlatformShopOut,
+    PlatformShopConnectionsListOut,
+    PlatformShopConnectionsOut,
+    PlatformChannelStatusOut,
     PlatformStatusOut,
     PlatformStatusUpdate,
     PlatformUsageOut,
@@ -491,6 +498,43 @@ def list_shops(
         items=[_shop_out(db, shop, period_start) for shop in shops],
         total=int(total_count),
     )
+
+
+@router.get("/channel-connections", response_model=PlatformShopConnectionsListOut)
+def list_platform_channel_connections(
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_platform_admin),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Read only non-secret channel states from each shop's isolated schema."""
+    shops = db.scalars(select(Business).order_by(Business.id.asc()).offset(offset).limit(limit)).all()
+    total = int(db.scalar(select(func.count(Business.id))) or 0)
+    items = []
+    for shop in shops:
+        try:
+            with tenant_session(schema_name_for(shop.id)) as tenant_db:
+                channels = tenant_db.scalars(
+                    select(Channel)
+                    .where(Channel.business_id == shop.id)
+                    .order_by(Channel.channel_type.asc(), Channel.id.asc())
+                ).all()
+                statuses = [
+                    PlatformChannelStatusOut(
+                        id=channel.id,
+                        channel_type=channel.channel_type,
+                        status=("verifying" if channel.status == "pending_pairing" else normalized_connection_state(channel)),
+                        connected_at=channel.connected_at,
+                    )
+                    for channel in channels
+                ]
+            items.append(PlatformShopConnectionsOut(business_id=shop.id, shop_name=shop.name, channels=statuses))
+        except SQLAlchemyError:
+            # An unprovisioned or temporarily unavailable tenant must not
+            # cause the admin view to claim that the shop has no connections.
+            logger.warning("Cannot read channel connection states for shop %s", shop.id)
+            items.append(PlatformShopConnectionsOut(business_id=shop.id, shop_name=shop.name, unavailable=True))
+    return PlatformShopConnectionsListOut(items=items, total=total)
 
 
 @router.get("/subscription-requests", response_model=PlatformSubscriptionRequestListOut)

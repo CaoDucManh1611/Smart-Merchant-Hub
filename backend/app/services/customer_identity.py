@@ -175,7 +175,7 @@ def resolve_customer(
             avatar_url=avatar_url,
         )
         identity.username = _clean(username) or identity.username
-        identity.display_name = _clean(display_name) or identity.display_name
+        identity.display_name = normalize_name(display_name) or identity.display_name
         if changes:
             record_audit(
                 db,
@@ -289,7 +289,7 @@ def resolve_customer(
             external_account_id=external_account_id,
             external_user_id=external_user_id,
             username=_clean(username),
-            display_name=_clean(display_name),
+            display_name=normalize_name(display_name),
         )
     )
     db.commit()

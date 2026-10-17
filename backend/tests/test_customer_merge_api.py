@@ -198,6 +198,71 @@ class CustomerMergeApiTests(unittest.TestCase):
         )
         self.assertEqual(409, response.status_code)
 
+    def test_undo_keeps_live_records_and_profile_edits_created_after_merge(self):
+        with Session(self.engine) as db:
+            survivor = Customer(
+                business_id=self.business_id,
+                channel="telegram",
+                external_user_id="live-undo-survivor",
+                name="Khách hiện tại",
+                custom_fields={"segment": "VIP"},
+            )
+            source = Customer(
+                business_id=self.business_id,
+                channel="facebook",
+                external_user_id="live-undo-source",
+                name="Khách nguồn",
+                custom_fields={"source_note": "giữ lại ở hồ sơ nguồn"},
+            )
+            db.add_all([survivor, source])
+            db.flush()
+            source_note = CustomerNote(
+                business_id=self.business_id,
+                customer_id=source.id,
+                content="Ghi chú vốn thuộc hồ sơ nguồn",
+            )
+            db.add(source_note)
+            db.commit()
+            survivor_id, source_id, source_note_id = survivor.id, source.id, source_note.id
+
+        merged = self.client.post(
+            f"/api/customers/{survivor_id}/merge",
+            headers=self.headers(),
+            json={"source_customer_id": source_id, "reason": "Hồ sơ trùng"},
+        )
+        self.assertEqual(200, merged.status_code, merged.text)
+        merge_id = merged.json()["merge_id"]
+
+        with Session(self.engine) as db:
+            survivor = db.get(Customer, survivor_id)
+            survivor.custom_fields = {**survivor.custom_fields, "live_update": "không bị mất"}
+            live_note = CustomerNote(
+                business_id=self.business_id,
+                customer_id=survivor_id,
+                content="Ghi chú mới sau khi merge",
+            )
+            db.add(live_note)
+            db.commit()
+            live_note_id = live_note.id
+
+        undone = self.client.post(
+            f"/api/customers/{survivor_id}/merge-history/{merge_id}/undo",
+            headers=self.headers(),
+            json={"reason": "Khôi phục hồ sơ nguồn"},
+        )
+        self.assertEqual(200, undone.status_code, undone.text)
+        with Session(self.engine) as db:
+            self.assertEqual(source_id, db.get(CustomerNote, source_note_id).customer_id)
+            self.assertEqual(survivor_id, db.get(CustomerNote, live_note_id).customer_id)
+            self.assertEqual(
+                {"segment": "VIP", "live_update": "không bị mất"},
+                db.get(Customer, survivor_id).custom_fields,
+            )
+            self.assertEqual(
+                {"source_note": "giữ lại ở hồ sơ nguồn"},
+                db.get(Customer, source_id).custom_fields,
+            )
+
     def test_cross_tenant_merge_is_not_visible(self):
         response = self.client.post(
             f"/api/customers/{self.survivor_id}/merge-preview",

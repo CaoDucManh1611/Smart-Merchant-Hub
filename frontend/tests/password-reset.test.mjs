@@ -20,6 +20,8 @@ test("password recovery opens its own screen and returns to sign in after reset"
   assert.match(appSource, /passwordResetNotice\.value = t\("Mật khẩu đã được đổi\. Bạn có thể đăng nhập bằng mật khẩu mới\."\);\s*authView\.value = "login"/);
   assert.match(appSource, /Quên mật khẩu\?/);
   assert.match(appSource, /\/auth\/password-reset\/request/);
+  assert.match(appSource, /Email này không khớp với tài khoản trong hệ thống/);
+  assert.match(appSource, /Mã xác minh đã được gửi đến email đăng ký/);
   assert.match(appSource, /\/auth\/password-reset\/complete/);
   assert.match(styleSource, /\.crm-app\.auth-locked \.login-form \.login-options-row input\[type="checkbox"\][^{]*\{[^}]*width: 17px !important;[^}]*height: 17px !important;/);
   assert.match(styleSource, /\.login-form \.login-options-row label\.login-remember \{[^}]*white-space: nowrap;/);

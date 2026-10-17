@@ -6,6 +6,17 @@ const appSource = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "u
 const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 const templateSource = appSource.slice(appSource.indexOf("<template>"), appSource.lastIndexOf("</template>"));
 
+test("platform admin connection health lists each shop's linked social channels", () => {
+  assert.match(appSource, /async function fetchPlatformChannelConnections\(\)/);
+  assert.match(appSource, /platform\/channel-connections/);
+  assert.match(appSource, /activePlatformSection\.value === "health"/);
+  assert.match(templateSource, /v-for="shop in platformChannelConnections"/);
+  assert.match(templateSource, /v-for="channel in shop\.channels"/);
+  assert.match(templateSource, /platformConnectionStatusLabel\(channel\.status\)/);
+  assert.match(templateSource, /shop\.unavailable/);
+  assert.match(templateSource, /Chưa ghi nhận lỗi kết nối gần đây/);
+});
+
 test("platform admin loads shop subscription, payment and quota details through existing APIs", () => {
   assert.match(appSource, /const platformShopDetails = ref\(\{\}\)/);
   assert.match(appSource, /platform\/shops\/\$\{shop\.id\}\/subscription/);
@@ -27,6 +38,23 @@ test("platform admin loads shop subscription, payment and quota details through 
   assert.match(templateSource, /Trạng thái thanh toán/);
   assert.match(templateSource, /Dung lượng tra cứu/);
   assert.match(templateSource, /aria-expanded/);
+});
+
+test("payment receipt is recorded from its pending approval and shop details keep history only", () => {
+  const approvalsStart = templateSource.indexOf('id="admin-approvals"');
+  const shopsStart = templateSource.indexOf('id="admin-shops"', approvalsStart);
+  const plansStart = templateSource.indexOf("v-show=\"activePlatformSection === 'plans'\"", shopsStart);
+  const approvals = templateSource.slice(approvalsStart, shopsStart);
+  const shops = templateSource.slice(shopsStart, plansStart);
+  assert.ok(approvalsStart >= 0 && shopsStart > approvalsStart && plansStart > shopsStart);
+  assert.match(approvals, /platform-approval-payment-form[\s\S]*recordPlatformPayment\(request\)/);
+  assert.match(approvals, /platformPaymentDrafts\[request\.subscription_id\]/);
+  assert.match(approvals, /Mã giao dịch đã nhận tiền/);
+  assert.match(approvals, /Xác nhận đã thu tiền/);
+  assert.match(appSource, /platform\/shops\/\$\{request\.business_id\}\/payments/);
+  assert.doesNotMatch(shops, /platform-payment-form|Mã giao dịch đã nhận tiền|Xác nhận đã thu tiền/);
+  assert.match(shops, /Lịch sử thanh toán/);
+  assert.match(shops, /provider_transaction_id/);
 });
 
 test("connector downloads make one ZIP save through the browser", () => {
@@ -82,8 +110,10 @@ test("social channel cards distinguish reserved plan slots from live connectors"
   assert.match(appSource, /detail\.filter\(\(item\) => \["facebook", "instagram", "telegram", "zalo", "tiktok", "shopee"\]/);
   assert.match(appSource, /const socialChannelOnlineCount = computed/);
   assert.match(appSource, /function isSocialChannelOnline\(channelType\)/);
-  assert.match(templateSource, /Kênh đã dùng/);
+  assert.match(templateSource, /Lượt kết nối đang giữ/);
   assert.match(templateSource, /socialChannelOnlineCount \}\} \/ 6/);
+  assert.match(appSource, /function botChannelStatus\(channelType\)/);
+  assert.match(templateSource, /botChannelStatus\('telegram'\)/);
   assert.match(templateSource, /metaChannelStatus\('facebook'\)/);
   assert.match(templateSource, /metaChannelStatus\('instagram'\)/);
   assert.match(templateSource, /offline: metaChannelIsOffline\('facebook'\)/);
@@ -97,6 +127,8 @@ test("paired local connectors must be disconnected before a replacement pairing 
   assert.match(templateSource, /localConnectorPairingDisabled\('instagram'\)/);
   assert.match(templateSource, /localConnectorPairingDisabled\('tiktok'\)/);
   assert.match(templateSource, /localConnectorPairingDisabled\('shopee'\)/);
+  assert.match(templateSource, /@click="createLocalConnectorPairingCode\('tiktok'\)"/);
+  assert.match(templateSource, /@click="createLocalConnectorPairingCode\('shopee'\)"/);
 });
 
 test("sales guidance uses plain language and marks changes that need approval", () => {

@@ -51,6 +51,19 @@ def dm_payload(
     }
 
 
+def test_instagram_app_update_notice_is_recognized_for_chat_filtering():
+    from app.api.conversations import _is_instagram_app_update_notice
+
+    assert _is_instagram_app_update_notice(
+        "Hãy dùng ứng dụng mới nhất. Hãy dùng phiên bản mới nhất của ứng dụng Instagram để xem loại tin nhắn này."
+    )
+    assert _is_instagram_app_update_notice(
+        "Please use the latest version of Instagram to view this message."
+    )
+    assert not _is_instagram_app_update_notice("Số điện thoại: 0901234567")
+    assert not _is_instagram_app_update_notice("buyer@example.com")
+
+
 # ─────────────────────────────────────────────
 # GET — Verify webhook
 # ─────────────────────────────────────────────

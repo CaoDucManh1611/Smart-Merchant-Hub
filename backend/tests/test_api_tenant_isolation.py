@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime
 
 from fastapi import Request
 from fastapi.testclient import TestClient
@@ -110,6 +111,19 @@ class ApiTenantIsolationTests(unittest.TestCase):
             self.assertEqual(200, response.status_code, response.text)
             self.assertIn(f"Shop {business_id} message", response.text)
             self.assertNotIn(f"Shop {3 - business_id} message", response.text)
+
+    def test_conversation_messages_follow_message_time_not_import_id(self):
+        with Session(self.engines[1]) as db:
+            db.get(Message, 1).received_at = datetime(2026, 10, 17, 12, 0)
+            db.add_all([
+                Message(id=2, conversation_id=1, channel="facebook", content="newest", received_at=datetime(2026, 10, 17, 15, 0)),
+                Message(id=3, conversation_id=1, channel="facebook", content="older imported later", received_at=datetime(2026, 10, 16, 20, 0)),
+            ])
+            db.commit()
+
+        response = self.client.get("/api/conversations/1/messages", headers={"X-Business-Id": "1"})
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual([3, 1, 2], [item["message_id"] for item in response.json()["items"]])
 
     def test_unassigned_conversation_filter_is_tenant_scoped_and_paginates_total(self):
         with Session(self.engines[1]) as db:

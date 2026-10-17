@@ -24,6 +24,7 @@ from app.models.platform_control import (
     PlatformUser,
     PlatformUsage,
 )
+from app.services.channel_service import QUOTA_HOLDING_CHANNEL_STATUSES
 
 
 QuotaResource = Literal[
@@ -315,7 +316,7 @@ def _baseline_usage(db: Session, business_id: int, resource: str) -> Decimal:
         value = db.scalar(
             select(func.count(Channel.id)).where(
                 Channel.business_id == business_id,
-                Channel.status == "active",
+                Channel.status.in_(QUOTA_HOLDING_CHANNEL_STATUSES),
             )
         )
     elif resource == "documents":
