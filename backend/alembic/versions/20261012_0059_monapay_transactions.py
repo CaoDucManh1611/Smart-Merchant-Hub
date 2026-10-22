@@ -11,6 +11,9 @@ depends_on = None
 
 
 def upgrade():
+    if sa.inspect(op.get_bind()).has_table("monapay_incoming_transactions"):
+        return
+
     op.create_table(
         "monapay_incoming_transactions",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -27,4 +30,5 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_table("monapay_incoming_transactions")
+    if sa.inspect(op.get_bind()).has_table("monapay_incoming_transactions"):
+        op.drop_table("monapay_incoming_transactions")

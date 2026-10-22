@@ -1885,7 +1885,8 @@ async def _sync_changed_conversations(
 
 
 def _select_channel_type() -> str:
-    executable_name = Path(sys.executable if getattr(sys, "frozen", False) else sys.argv[0]).stem.casefold()
+    executable_path = sys.executable if getattr(sys, "frozen", False) else sys.argv[0]
+    executable_name = Path(executable_path.replace("\\", "/")).stem.casefold()
     if executable_name == "smartmerchantmessenger":
         return "facebook"
     if executable_name == "smartmerchantinstagram":

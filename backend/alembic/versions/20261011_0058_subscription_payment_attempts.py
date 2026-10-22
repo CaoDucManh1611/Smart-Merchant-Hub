@@ -9,6 +9,9 @@ depends_on = None
 
 
 def upgrade():
+    if sa.inspect(op.get_bind()).has_table("subscription_payment_attempts"):
+        return
+
     op.create_table(
         "subscription_payment_attempts",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -37,4 +40,5 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_table("subscription_payment_attempts")
+    if sa.inspect(op.get_bind()).has_table("subscription_payment_attempts"):
+        op.drop_table("subscription_payment_attempts")

@@ -262,6 +262,7 @@ def test_rag_reply_applies_only_bounded_arm_and_saves_decision_trace():
         patch("app.services.auto_reply_service._deterministic_customer_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
         patch("app.services.auto_reply_service.retrieve", return_value=chunks), \
+        patch("app.services.auto_reply_service.rag_personalization_weights", return_value={}), \
         patch("app.services.auto_reply_service.select_chatbot_reply_choice", return_value=choice), \
         patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
         patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "q"}]) as build_prompt, \

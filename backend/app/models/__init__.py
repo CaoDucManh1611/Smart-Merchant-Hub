@@ -37,6 +37,7 @@ from app.models.business import Business, Payment, ServicePlan, Subscription, Us
 from app.models.subscription_payment_attempt import SubscriptionPaymentAttempt
 from app.models.monapay_transaction import MonaIncomingTransaction
 from app.models.platform_support_request import PlatformSupportRequest, PlatformSupportRequestHistory
+from app.models.platform_staff_audit import PlatformStaffAudit
 from app.models.channel import Channel, ChannelEvent
 from app.models.channel_outbound_attempt import ChannelOutboundAttempt
 from app.models.crm_extended import ConversationAssignment, ConversationTag, CustomerTag, Tag
@@ -150,6 +151,7 @@ __all__ = [
     "SaaSUsage",
     "QuotaReservation",
     "PlatformMembership",
+    "PlatformStaffAudit",
     "DataLifecycleRequest",
     "TenantSchemaRegistry",
     "TenantRegistry",
