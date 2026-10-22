@@ -11,6 +11,7 @@ from app.database.platform_session import PlatformSessionLocal
 from app.database.tenant_session import tenant_session
 from app.services.crm_job_worker import dispatch_all_crm_jobs
 from app.services.channel_health import run_scheduled_channel_health
+from app.services.backup_maintenance import MaintenanceBusy, application_access
 
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,14 @@ _last_health_check = 0.0
 
 
 def run_once() -> int:
+    try:
+        with application_access():
+            return _run_once()
+    except MaintenanceBusy:
+        return 0
+
+
+def _run_once() -> int:
     global _last_health_check
     with PlatformSessionLocal() as platform_db:
         processed = dispatch_all_crm_jobs(

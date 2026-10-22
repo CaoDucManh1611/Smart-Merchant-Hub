@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.models.business import Business
+from app.models.conversation import Conversation
+from app.models.customer import Customer
 from app.models.message import Message
 from app.models.sales import Product
 from app.services.customer_collection_flow import _start_product_quote
@@ -26,6 +28,20 @@ class ProductResolverTests(unittest.TestCase):
             business = Business(name="Resolver Shop", slug="resolver-shop")
             db.add(business)
             db.flush()
+            customer = Customer(
+                business_id=business.id,
+                channel="instagram",
+                external_user_id="resolver-user",
+            )
+            db.add(customer)
+            db.flush()
+            conversation = Conversation(
+                business_id=business.id,
+                customer_id=customer.id,
+                channel="instagram",
+            )
+            db.add(conversation)
+            db.flush()
             db.add(Product(
                 business_id=business.id,
                 sku="COMBO-01",
@@ -37,6 +53,7 @@ class ProductResolverTests(unittest.TestCase):
             ))
             db.commit()
             cls.business_id = business.id
+            cls.conversation_id = conversation.id
 
     def test_resolves_alias_without_exact_canonical_name(self):
         with Session(self.engine) as db:
@@ -63,7 +80,7 @@ class ProductResolverTests(unittest.TestCase):
     def test_resolves_short_follow_up_from_previous_customer_message(self):
         with Session(self.engine) as db:
             db.add(Message(
-                conversation_id=71,
+                conversation_id=self.conversation_id,
                 channel="instagram",
                 direction="inbound",
                 content="Bạn có bao nhiêu combo chăm sóc da cơ bản?",
@@ -73,7 +90,7 @@ class ProductResolverTests(unittest.TestCase):
             product = resolve_product(
                 db,
                 business_id=self.business_id,
-                conversation_id=71,
+                conversation_id=self.conversation_id,
                 text="giá của 6 bộ đó hết bao nhiêu",
             )
 

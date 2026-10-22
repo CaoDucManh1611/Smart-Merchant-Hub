@@ -1,0 +1,399 @@
+{
+  "generated_at": "2026-10-13T05:44:31+00:00",
+  "status": "completed",
+  "mode": "live_app_lexical_fallback_with_configured_answer_provider",
+  "vector_search": "disabled intentionally; evaluates the application's lexical fallback",
+  "query_embedding_mode": "not used; no embedding API calls",
+  "data_scope": "synthetic demo documents and synthetic evaluation prompts only",
+  "provider": {
+    "embedding": "not_used_lexical_only",
+    "embedding_model": null,
+    "answer": "groq",
+    "answer_model": "openai/gpt-oss-20b"
+  },
+  "temporary_schema_rolled_back": true,
+  "source_files": [
+    "demo-store-profile.vi-en.md",
+    "demo-products.vi-en.csv",
+    "demo-support-policies.vi-en.md",
+    "demo-industry-playbook.vi-en.md"
+  ],
+  "source_chunks": 168,
+  "retrieval": {
+    "evaluated_cases": 7,
+    "expected_source_recall_at_5": 1.0,
+    "all_expected_sources_in_top_5_rate": 1.0,
+    "mean_latency_ms": 45.16,
+    "fallback_cases": 10,
+    "fully_hybrid_cases": 0,
+    "fallback_events_by_stage": {
+      "embedding": 10
+    },
+    "usable_for_promotion": false,
+    "fully_hybrid_only": {
+      "evaluated_cases": 0,
+      "expected_source_recall_at_5": 0.0,
+      "all_expected_sources_in_top_5_rate": 0.0,
+      "note": "Excludes every case that silently fell back to lexical retrieval; subset score alone is not a full-suite promotion gate."
+    }
+  },
+  "answers": {
+    "attempted": 10,
+    "generated": 10,
+    "citation_gate_pass_rate": 0.4,
+    "must_include_term_rate": 0.4706,
+    "no_forbidden_term_rate": 1.0,
+    "mean_latency_ms": 8561.22,
+    "provider_errors_by_type": {},
+    "citation_gate_note": "Checks citation IDs and monetary values against cited source text; does not prove every semantic claim."
+  },
+  "cases": [
+    {
+      "id": "pink-products-vi",
+      "query": "Khách thích đồ màu hồng, đang có sản phẩm nào còn hàng?",
+      "expected_sources": [],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        166,
+        3,
+        6,
+        137,
+        124
+      ],
+      "answer": "Có áo thun Mây Basic màu hồng, 24 sản phẩm còn hàng, giá 199.000₫. Đây là dữ liệu demo; nếu bạn muốn xác nhận thực tế, vui lòng liên hệ nhân viên. [Nguồn 1]",
+      "valid_citation_gate": true,
+      "must_include": [
+        "hồng",
+        "DM-APP-001"
+      ],
+      "must_include_missing": [
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 51.02,
+      "answer_latency_ms": 1984.13
+    },
+    {
+      "id": "pink-bag-vi",
+      "query": "Có túi màu hồng nào không?",
+      "expected_sources": [],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_chunk_ids": [
+        22,
+        27,
+        64,
+        23,
+        62
+      ],
+      "answer": "Có, chúng tôi có 3 loại túi màu hồng:\n\n- **Túi vải Hồng Nắng (Sunny Pink Tote)** – 129 000 đ, còn 12 chiếc trong kho. [Nguồn 1]  \n- **Túi mỹ phẩm Hồng Phấn (Blush Pink Cosmetic Pouch)** – 99 000 đ, còn 16 chiếc trong kho. [Nguồn 2]  \n- **Túi cọ trang điểm Hồng (Pink Brush Pouch)** – 79 000 đ, còn 15 chiếc trong kho. [Nguồn 3]",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-APP-003"
+      ],
+      "must_include_missing": [
+        "DM-APP-003"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 38.67,
+      "answer_latency_ms": 1260.02
+    },
+    {
+      "id": "zero-stock-vi",
+      "query": "Gối hồng còn hàng không?",
+      "expected_sources": [],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_chunk_ids": [
+        39,
+        159,
+        40,
+        41,
+        49
+      ],
+      "answer": "Hiện tại gối tựa Hồng Phấn (DM‑HOM‑005) không còn hàng. [Nguồn 1]",
+      "valid_citation_gate": true,
+      "must_include": [
+        "DM-HOM-005",
+        "hết hàng"
+      ],
+      "must_include_missing": [
+        "hết hàng"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 42.93,
+      "answer_latency_ms": 621.73
+    },
+    {
+      "id": "wholesale-12",
+      "query": "Tôi muốn nhập sỉ 12 cáp USB-C, giá thế nào?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        120,
+        129,
+        30,
+        67,
+        161
+      ],
+      "answer": "Chào bạn!  \nTheo chính sách demo, với 12 chiếc cáp USB‑C (DM‑ELE‑001) bạn sẽ được giảm **8 %** (đối với đơn hàng 10–29 chiếc).  \n- Giá gốc: 89 000 VND/chiếc (Nguồn 3).  \n- Tổng tiền gốc: 12 × 89 000 = 1 068 000 VND.  \n- Sau giảm 8 %: 1 068 000 × 0.92 ≈ 982 560 VND.  \n\nTuy nhiên, cần xác nhận tồn kho và phê duyệt nhân viên trước khi cung cấp báo giá cuối cùng.  \n[Nguồn 1] [Nguồn 3]",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-ELE-001",
+        "8%"
+      ],
+      "must_include_missing": [],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 37.04,
+      "answer_latency_ms": 8487.74
+    },
+    {
+      "id": "delivery-policy",
+      "query": "Đơn giao mất bao lâu và phí ship bao nhiêu?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        123,
+        128
+      ],
+      "answer": "Đơn hàng thường được giao trong khoảng **2–5 ngày làm việc** sau khi xác nhận đặt hàng.  \nPhí vận chuyển:  \n- **30 000 đồng** cho đơn hàng dưới 500 000 đồng (đây là quy định mẫu, cần kiểm tra lại tùy địa điểm).  \n- **Miễn phí ship** khi đơn hàng ≥ 500 000 đồng.  \n\n[Nguồn 1]",
+      "valid_citation_gate": true,
+      "must_include": [
+        "2–5 ngày làm việc",
+        "30.000"
+      ],
+      "must_include_missing": [],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 48.52,
+      "answer_latency_ms": 16433.18
+    },
+    {
+      "id": "return-refund",
+      "query": "Can I return this and get an automatic refund?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-industry-playbook.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        113,
+        128,
+        154,
+        165
+      ],
+      "answer": "I’m sorry, but I can’t guarantee an automatic refund.  \nAccording to the shop’s return policy, you must contact the store within 7 days of delivery, provide proof of purchase, and the item must be unused with its original tags and packaging. Eligibility is reviewed by staff, and no refund is promised automatically. If you’d like to proceed, please share your order number and a photo of the issue, and a staff member will confirm the next steps.  \n\n[Source 1] [Source 2]",
+      "valid_citation_gate": false,
+      "must_include": [
+        "within 7 days",
+        "staff confirms"
+      ],
+      "must_include_missing": [
+        "staff confirms"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 42.41,
+      "answer_latency_ms": 18139.19
+    },
+    {
+      "id": "allergen-handoff",
+      "query": "Are these sesame cookies safe for someone with a severe allergy?",
+      "expected_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_chunk_ids": [
+        162,
+        41
+      ],
+      "answer": "I’m sorry, but the product listing notes that the sesame‑cookie batch requires allergen‑label confirmation before it can be declared safe for people with severe allergies. We don’t have that confirmation at this time, so I can’t guarantee it’s safe for you. Please contact a staff member for more detailed allergen information. [Nguồn 2]",
+      "valid_citation_gate": false,
+      "must_include": [
+        "confirm the label",
+        "staff"
+      ],
+      "must_include_missing": [
+        "confirm the label"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 33.74,
+      "answer_latency_ms": 11182.87
+    },
+    {
+      "id": "preference-optout",
+      "query": "Please don't remember that I like pink.",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-industry-playbook.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        137,
+        11
+      ],
+      "answer": "Sure, I won’t store that preference. If you’d like to share any other details or preferences in the future, just let me know!",
+      "valid_citation_gate": false,
+      "must_include": [
+        "stop future extraction"
+      ],
+      "must_include_missing": [
+        "stop future extraction"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 59.73,
+      "answer_latency_ms": 10197.33
+    },
+    {
+      "id": "missing-refund-fee",
+      "query": "Nếu trả hàng thì phí vận chuyển ai trả?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        127,
+        11,
+        166
+      ],
+      "answer": "Chính sách hiện tại chưa ghi rõ ai chịu phí gửi hàng trả lại. Tôi sẽ chuyển câu hỏi cho nhân viên xác nhận. [Nguồn 1]",
+      "valid_citation_gate": true,
+      "must_include": [
+        "chưa được quy định",
+        "hỏi nhân viên"
+      ],
+      "must_include_missing": [
+        "chưa được quy định",
+        "hỏi nhân viên"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 67.35,
+      "answer_latency_ms": 9063.61
+    },
+    {
+      "id": "beauty-product-boundary-en",
+      "query": "Will this cleanser treat my acne?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        26,
+        160
+      ],
+      "answer": "I’m sorry, but the Soft Cloud Cleanser (DM‑BEA‑001) does **not** have any treatment claim for acne or any other skin condition. It’s marketed simply as a gentle cleanser without any stated therapeutic benefits.  \n[Source 1]",
+      "valid_citation_gate": false,
+      "must_include": [
+        "no treatment claim"
+      ],
+      "must_include_missing": [
+        "no treatment claim"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_fallbacks": [
+        "embedding:RuntimeError"
+      ],
+      "retrieval_mode": "lexical",
+      "retrieval_latency_ms": 30.18,
+      "answer_latency_ms": 8242.4
+    }
+  ],
+  "limitations": [
+    "No live shop, customer, order, or social account was read or contacted.",
+    "Synthetic policy and product facts must not be used for customer-facing replies.",
+    "Literal must-include checks and citation validation are useful gates, not full human semantic review."
+  ]
+}

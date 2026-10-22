@@ -81,7 +81,9 @@ from app.tenancy.dependencies import get_tenant_context
 from app.services.customer_fact_extractor import (
     FACT_EXTRACTION_SETTING_KEY,
     get_customer_fact_extraction_enabled,
+    schedule_weekly_customer_fact_scan,
 )
+from app.services.rfm_segments import RFM_GROUPS, RFM_RULES_VERSION, customer_rfm_profiles
 from app.services.customer_merge_service import (
     duplicate_evidence,
     find_duplicate_suggestions,
@@ -97,13 +99,19 @@ from app.models.business import User
 from app.services.audit_service import record_audit
 from app.services.crm_workspace_config import get_crm_workspace_config, validate_customer_custom_fields
 from app.services.customer_profile import normalize_email, normalize_name, normalize_phone
-from app.services.chatbot_followup import REVENUE_ORDER_STATUSES, schedule_segment_followups
+from app.services.chatbot_followup import schedule_segment_followups
 from app.services.job_service import enqueue_job
+from app.services.order_metrics import completed_order_conditions, net_order_amount_expression
+from app.services.customer_next_actions import suggest_customer_next_actions
 
 
 router = APIRouter()
 MAX_CUSTOMER_IMPORT_BYTES = 2 * 1024 * 1024
 MAX_CUSTOMER_IMPORT_ROWS = 5000
+
+
+class CustomerNextActionsRequest(BaseModel):
+    language: Literal["vi", "en"] = "vi"
 
 
 def _parse_customer_import(payload: bytes) -> tuple[list[dict], list[dict]]:
@@ -272,46 +280,6 @@ class BulkCustomerTagUpdate(BaseModel):
 
 
 RFM_TAG_PREFIX = "RFM · "
-RFM_GROUPS = (
-    "RFM · Chưa mua",
-    "RFM · Giá trị cao",
-    "RFM · Trung thành",
-    "RFM · Tiềm năng",
-    "RFM · Cần chăm sóc",
-    "RFM · Nguy cơ rời bỏ",
-    "RFM · Duy trì",
-)
-
-
-def _rfm_score(value: float, population: list[float], *, lower_is_better: bool = False) -> int:
-    if not population:
-        return 1
-    if len(population) == 1:
-        return 3
-    rank = sum(candidate < value for candidate in population)
-    tied = sum(candidate == value for candidate in population)
-    rank += (tied - 1) / 2
-    if lower_is_better:
-        rank = len(population) - 1 - rank
-    return max(1, min(5, 1 + round(4 * rank / (len(population) - 1))))
-
-
-def _rfm_group(recency: int, frequency: int, monetary: float) -> str:
-    if frequency == 0:
-        return "RFM · Chưa mua"
-    if recency >= 4 and frequency >= 4 and monetary >= 4:
-        return "RFM · Giá trị cao"
-    if recency >= 3 and frequency >= 4:
-        return "RFM · Trung thành"
-    if recency >= 4 and frequency <= 2:
-        return "RFM · Tiềm năng"
-    if recency <= 2 and frequency >= 3:
-        return "RFM · Cần chăm sóc"
-    if recency <= 2 and frequency <= 2:
-        return "RFM · Nguy cơ rời bỏ"
-    return "RFM · Duy trì"
-
-
 # The CRM is operated in Vietnam. Keeping the date comparison here (instead of
 # using the database/server timezone) makes a day selected in the UI mean the
 # same day that staff see in Customer 360.
@@ -778,13 +746,14 @@ def list_customers(
         Customer.status != "merged",
     )
     if tag:
-        base = base.join(CustomerTag, CustomerTag.customer_id == Customer.id).join(
+        tagged_customer_ids = db.query(CustomerTag.customer_id).join(
             Tag, Tag.id == CustomerTag.tag_id
         ).filter(
             CustomerTag.business_id == tenant.business_id,
             Tag.business_id == tenant.business_id,
             Tag.name == tag.strip(),
-        ).distinct()
+        )
+        base = base.filter(Customer.id.in_(tagged_customer_ids))
     if tag_ids:
         try:
             requested_tag_ids = [int(value.strip()) for value in tag_ids.split(",") if value.strip()]
@@ -1001,6 +970,13 @@ def set_fact_extraction_status(
         metadata={"enabled": payload.enabled},
     )
     db.commit()
+    if payload.enabled:
+        schedule_weekly_customer_fact_scan(
+            db,
+            business_id=tenant.business_id,
+            idempotency_key=f"customer-facts-weekly:bootstrap:{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+        )
+        db.commit()
     return CustomerFactExtractionStatusOut(enabled=payload.enabled)
 
 
@@ -1017,14 +993,14 @@ def set_customer_fact_collection(
     customer.fact_extraction_opt_out = payload.opt_out
     deleted = 0
     if payload.opt_out and payload.delete_existing_extracted:
-        facts = db.query(CustomerFact).filter(
+        deleted = db.query(CustomerFact).filter(
             CustomerFact.business_id == tenant.business_id,
             CustomerFact.customer_id == customer_id,
             CustomerFact.source_type == "extracted",
-        ).all()
-        deleted = len(facts)
-        for fact in facts:
-            db.delete(fact)
+        ).count()
+        from app.services.privacy_service import stop_customer_personalization
+
+        stop_customer_personalization(db, tenant.business_id, customer_id)
     record_audit(
         db,
         business_id=tenant.business_id,
@@ -1082,56 +1058,10 @@ def classify_customers_rfm(
     actor: User | None = Depends(require_write_access),
 ):
     """Recompute tenant-local RFM groups and replace only app-managed RFM tags."""
-    customers = db.query(Customer.id).filter(
-        Customer.business_id == tenant.business_id,
-        Customer.status != "merged",
-    ).order_by(Customer.id.asc()).all()
-    customer_ids = [int(customer_id) for (customer_id,) in customers]
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-    order_rows = []
-    if customer_ids:
-        order_rows = db.query(
-            Order.customer_id,
-            func.count(Order.id),
-            func.sum(Order.total_amount),
-            func.max(Order.created_at),
-        ).filter(
-            Order.business_id == tenant.business_id,
-            Order.customer_id.in_(customer_ids),
-            Order.status.in_(tuple(REVENUE_ORDER_STATUSES)),
-        ).group_by(Order.customer_id).all()
-
-    rfm = {
-        int(customer_id): {
-            "frequency": int(frequency or 0),
-            "monetary": float(monetary or 0),
-            "last_order_at": last_order_at,
-        }
-        for customer_id, frequency, monetary, last_order_at in order_rows
-    }
-    recencies = [
-        max(0, (now - item["last_order_at"].replace(tzinfo=None)).days)
-        for item in rfm.values()
-        if item["last_order_at"] is not None
-    ]
-    frequencies = [float(item["frequency"]) for item in rfm.values()]
-    monetary_values = [float(item["monetary"]) for item in rfm.values()]
-
-    assignments: dict[int, str] = {}
-    for customer_id in customer_ids:
-        stats = rfm.get(customer_id)
-        if stats is None:
-            assignments[customer_id] = "RFM · Chưa mua"
-            continue
-        last_order_at = stats["last_order_at"]
-        recency_days = max(0, (now - last_order_at.replace(tzinfo=None)).days) if last_order_at else 3650
-        scores = (
-            _rfm_score(float(recency_days), recencies, lower_is_better=True),
-            _rfm_score(float(stats["frequency"]), frequencies),
-            _rfm_score(float(stats["monetary"]), monetary_values),
-        )
-        assignments[customer_id] = _rfm_group(*scores)
+    profiles = customer_rfm_profiles(db, tenant.business_id, as_of=now)
+    customer_ids = list(profiles)
+    assignments = {customer_id: profile["segment_name"] for customer_id, profile in profiles.items()}
 
     tag_rows = db.query(Tag).filter(
         Tag.business_id == tenant.business_id,
@@ -1204,8 +1134,10 @@ def classify_customers_rfm(
     db.commit()
     return {
         "customer_count": len(customer_ids),
-        "buyer_count": len(rfm),
+        "buyer_count": sum(profile["frequency"] > 0 for profile in profiles.values()),
         "groups": ordered_groups,
+        "as_of": now.isoformat(),
+        "rules_version": RFM_RULES_VERSION,
         "model_training": {"training_run_id": training_run.id, "job_id": training_job.id, "status": training_run.status},
     }
 
@@ -1339,6 +1271,23 @@ def get_customer(
         contacts=[CustomerContactOut.model_validate(contact) for contact in contacts],
         addresses=[CustomerAddressOut.model_validate(address) for address in addresses],
         conversation_count=len(conversations),
+    )
+
+
+@router.post("/{customer_id}/next-actions", dependencies=[Depends(require_write_access)])
+def customer_next_actions(
+    customer_id: int,
+    payload: CustomerNextActionsRequest,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    """Create staff-reviewed recommendations without sending customer messages."""
+    customer = _get_customer(db, customer_id, tenant)
+    return suggest_customer_next_actions(
+        db,
+        business_id=tenant.business_id,
+        customer=customer,
+        language=payload.language,
     )
 
 

@@ -1,6 +1,8 @@
+import base64
 import json
 import logging
 import mimetypes
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -54,6 +56,7 @@ from app.services.instagram_service import send_instagram_media
 from app.services.telegram_service import send_telegram_media
 from app.services.zalo_service import send_zalo_media, send_zalo_message
 from app.services.channel_retry import run_with_provider_retry
+from app.services.provider_circuit_breaker import ProviderCircuitOpen
 from app.services.channel_delivery import (
     claim_outbound_attempt,
     mark_outbound_attempt_failed,
@@ -61,9 +64,12 @@ from app.services.channel_delivery import (
     validate_client_id,
 )
 from app.services.zalo_media import normalize_zalo_audio_upload
+from app.services.telegram_media import TELEGRAM_VOICE_CONTENT_TYPES, normalize_telegram_voice_upload
+from app.services.media_capabilities import supported_outbound_media_types, unsupported_media_detail
 from app.services.media_resolver import build_media_url
 from app.services.audit_service import record_audit
 from app.services.customer_avatar import refresh_customer_avatar_url
+from app.rag.run_logger import safe_error_message
 from app.contracts.channel_event import NormalizedAttachment, MediaType
 from app.integrations.telegram import TelegramAdapter
 from app.models.channel import Channel
@@ -78,6 +84,25 @@ from app.auth.dependencies import require_write_access
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _is_instagram_app_update_notice(message: object) -> bool:
+    text = " ".join(str(message or "").split()).casefold()
+    plain = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(character)
+    ).replace("đ", "d")
+    vietnamese = "phien ban moi nhat cua ung dung instagram" in plain and (
+        "xem lai tin nhan nay" in plain or "xem loai tin nhan nay" in plain
+    )
+    english = "latest version of instagram" in plain and (
+        "to view this message" in plain
+        or "to see this message" in plain
+        or "to view this type of message" in plain
+        or "to see this type of message" in plain
+    )
+    return vietnamese or english
 
 
 def _log_meta_error(exc: MetaAPIError) -> None:
@@ -207,6 +232,7 @@ class SendMediaRequest(
     media_type: str = "image"
     caption: str | None = None
     client_id: str | None = None
+    is_voice_note: bool = False
 
 
 class ConversationAssignmentRequest(BaseModel):
@@ -429,12 +455,43 @@ def get_upload_file_media_type(
     return media_type
 
 
+def _public_image_url_error_detail(response: httpx.Response, content_type: str) -> dict:
+    ngrok_error = response.headers.get("ngrok-error-code")
+    message = "Public image URL không trả về ảnh hợp lệ"
+    if ngrok_error == "ERR_NGROK_3200":
+        message = (
+            "Đường hầm PUBLIC_BASE_URL đang ngoại tuyến (ngrok ERR_NGROK_3200). "
+            "Hãy bật lại ngrok trỏ tới cổng 8000, dùng đúng domain đó trong "
+            "PUBLIC_BASE_URL rồi gửi lại ảnh."
+        )
+    detail = {
+        "stage": "public_url_check",
+        "message": message,
+        "status": response.status_code,
+        "content_type": content_type,
+        "content_length": response.headers.get("content-length"),
+        "final_url": str(response.url),
+    }
+    if ngrok_error:
+        detail["upstream_error_code"] = ngrok_error
+    return detail
+
+
+def _public_image_check_headers() -> dict[str, str]:
+    return {
+        "Accept": "image/png,image/jpeg,*/*;q=0.8",
+        "User-Agent": "SmartMerchantMedia/1.0",
+        "ngrok-skip-browser-warning": "true",
+    }
+
+
 def check_public_image_url(
     image_url: str,
 ) -> dict:
     try:
         response = httpx.get(
             image_url,
+            headers=_public_image_check_headers(),
             follow_redirects=True,
             timeout=15,
         )
@@ -476,20 +533,7 @@ def check_public_image_url(
     ):
         raise HTTPException(
             status_code=400,
-            detail={
-                "stage":
-                    "public_url_check",
-                "message":
-                    "Public image URL không trả về ảnh hợp lệ",
-                "status":
-                    response.status_code,
-                "content_type":
-                    content_type,
-                "content_length":
-                    content_length,
-                "final_url":
-                    str(response.url),
-            },
+            detail=_public_image_url_error_detail(response, content_type),
         )
 
     if content_type not in ALLOWED_IMAGE_TYPES:
@@ -526,7 +570,8 @@ async def check_public_image_url_async(
             timeout=15,
         ) as client:
             response = await client.get(
-                image_url
+                image_url,
+                headers=_public_image_check_headers(),
             )
     except httpx.RequestError as exc:
         logger.warning("Public media URL check failed: error_type=%s", type(exc).__name__)
@@ -566,20 +611,7 @@ async def check_public_image_url_async(
     ):
         raise HTTPException(
             status_code=400,
-            detail={
-                "stage":
-                    "public_url_check",
-                "message":
-                    "Public image URL không trả về ảnh hợp lệ",
-                "status":
-                    response.status_code,
-                "content_type":
-                    content_type,
-                "content_length":
-                    content_length,
-                "final_url":
-                    str(response.url),
-            },
+            detail=_public_image_url_error_detail(response, content_type),
         )
 
     if content_type not in ALLOWED_IMAGE_TYPES:
@@ -833,6 +865,7 @@ def get_conversation_target(
         text("""
             SELECT
                 cv.id,
+                cv.business_id,
                 cv.channel,
                 cv.channel_id,
                 cv.customer_id,
@@ -868,20 +901,21 @@ def get_conversation_target(
         )
 
 
-    if not conversation[
-        "external_user_id"
-    ]:
+    from app.services.customer_identity import resolve_conversation_recipient
 
+    try:
+        _channel, recipient_id = resolve_conversation_recipient(
+            db,
+            conversation_id=conversation_id,
+            business_id=int(conversation["business_id"] or business_id or 0),
+        )
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Customer không có "
-                "external_user_id"
-            ),
-        )
+            detail="Không tìm thấy định danh khách hàng trên kênh hội thoại.",
+        ) from exc
 
-
-    return conversation
+    return {**dict(conversation), "external_user_id": recipient_id}
 
 
 def require_responsible_staff(
@@ -968,10 +1002,31 @@ def send_telegram_text(
                 access_token=access_token,
             ),
         )
-    except Exception as exc:
+    except ProviderCircuitOpen as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram đang tạm dừng sau nhiều lần lỗi. Vui lòng thử lại sau ít phút.",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        try:
+            payload = exc.response.json()
+        except ValueError:
+            payload = {}
+        detail = payload.get("description") if isinstance(payload, dict) else None
         raise HTTPException(
             status_code=502,
-            detail="Telegram provider could not be reached",
+            detail=safe_error_message(detail, limit=300) if detail else "Telegram từ chối gửi tin nhắn.",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Không thể kết nối tới Telegram. Vui lòng thử lại sau.",
+        ) from exc
+    except Exception as exc:
+        logger.error("Telegram text send failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="Telegram không thể xử lý yêu cầu gửi tin.",
         ) from exc
     if result.get("ok") is False:
         description = result.get("description") or "Telegram rejected the message"
@@ -1011,6 +1066,7 @@ def send_tiktok_text(
     recipient_id: str,
     text_content: str,
     business_id: int,
+    media_payload: dict | None = None,
 ) -> tuple[dict, Channel]:
     """Ask the local ReLttk bridge to send a message on this conversation."""
     channel_id = conversation.get("channel_id")
@@ -1041,6 +1097,8 @@ def send_tiktok_text(
         raise HTTPException(status_code=503, detail="TikTok bridge credentials could not be decrypted") from exc
     if not bridge_secret:
         raise HTTPException(status_code=503, detail="TikTok bridge credentials are not configured")
+    if not str(text_content or "").strip() and not media_payload:
+        raise HTTPException(status_code=422, detail="Thiếu nội dung tin nhắn TikTok.")
 
     thread_id = _local_connector_thread_id(db, int(conversation["id"]), "tiktok")
     if not thread_id:
@@ -1050,23 +1108,37 @@ def send_tiktok_text(
     # channel was connected.  The launcher uses 127.0.0.1 for a host-run
     # FastAPI process, while Docker uses host.docker.internal; a stale value
     # in channel.config must not make an otherwise healthy bridge unreachable.
+    server_managed = config.get("connector_execution_mode") == "server"
     control_url = str(
-        settings.TIKTOK_BRIDGE_CONTROL_URL or config.get("bridge_control_url") or ""
+        settings.SERVER_CONNECTOR_AGENT_URL
+        if server_managed
+        else (settings.TIKTOK_BRIDGE_CONTROL_URL or config.get("bridge_control_url") or "")
     ).strip().rstrip("/")
     if not control_url:
         raise HTTPException(status_code=503, detail="TikTok outbound bridge chưa được cấu hình")
+    endpoint = (
+        f"{control_url}/internal/channels/{business_id}/tiktok/{channel.id}/send"
+        if server_managed else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-TikTok-Bridge-Secret": bridge_secret}
+    )
+    if server_managed and not settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
 
     try:
         response = httpx.post(
-            f"{control_url}/send",
+            endpoint,
             json={
                 "threadId": thread_id,
                 "message": text_content or "",
                 "conversationId": int(conversation["id"]),
                 "recipientId": str(recipient_id or ""),
+                **(media_payload or {}),
             },
-            headers={"X-TikTok-Bridge-Secret": bridge_secret},
-            timeout=30,
+            headers=headers,
+            timeout=75 if media_payload else 30,
         )
     except httpx.RequestError as exc:
         raise HTTPException(
@@ -1096,6 +1168,7 @@ def send_shopee_text(
     recipient_id: str,
     text_content: str,
     business_id: int,
+    media_payload: dict | None = None,
 ) -> tuple[dict, Channel]:
     """Send via the Shopee connector attached to the shop's local Edge session."""
     channel_id = conversation.get("channel_id")
@@ -1109,6 +1182,8 @@ def send_shopee_text(
     )
     if channel is None or not channel.access_token_encrypted:
         raise HTTPException(status_code=503, detail="Shopee connector chưa được ghép nối.")
+    if not str(text_content or "").strip() and not media_payload:
+        raise HTTPException(status_code=422, detail="Thiếu nội dung tin nhắn Shopee.")
 
     thread_id = _local_connector_thread_id(db, int(conversation["id"]), "shopee")
     if not thread_id:
@@ -1121,12 +1196,30 @@ def send_shopee_text(
     control_url = str(settings.SHOPEE_BRIDGE_CONTROL_URL or "").strip().rstrip("/")
     if not control_url:
         raise HTTPException(status_code=503, detail="Shopee outbound connector chưa được cấu hình")
+    channel_config = getattr(channel, "config", {})
+    server_managed = isinstance(channel_config, dict) and channel_config.get("connector_execution_mode") == "server"
+    endpoint = (
+        f"{settings.SERVER_CONNECTOR_AGENT_URL.rstrip('/')}/internal/channels/{business_id}/shopee/{channel.id}/send"
+        if server_managed and settings.SERVER_CONNECTOR_AGENT_URL
+        else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-Shopee-Bridge-Secret": connector_token}
+    )
+    if server_managed and (not settings.SERVER_CONNECTOR_AGENT_URL or not settings.SERVER_CONNECTOR_AGENT_TOKEN):
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
     try:
         response = httpx.post(
-            f"{control_url}/send",
-            json={"threadId": thread_id, "message": text_content or "", "recipientId": str(recipient_id or "")},
-            headers={"X-Shopee-Bridge-Secret": connector_token},
-            timeout=30,
+            endpoint,
+            json={
+                "threadId": thread_id,
+                "message": text_content or "",
+                "recipientId": str(recipient_id or ""),
+                **(media_payload or {}),
+            },
+            headers=headers,
+            timeout=75 if media_payload else 30,
         )
     except httpx.RequestError as exc:
         raise HTTPException(
@@ -1143,6 +1236,334 @@ def send_shopee_text(
             raise HTTPException(status_code=409, detail=payload)
         raise HTTPException(status_code=response.status_code, detail=detail or "Shopee connector từ chối gửi tin")
     return payload if isinstance(payload, dict) else {"status": "sent"}, channel
+
+
+def send_meta_text(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    text_content: str,
+    business_id: int,
+) -> tuple[dict, Channel]:
+    """Send a Meta reply through the shop's authenticated local Edge bridge."""
+    channel_type = str(conversation.get("channel") or "").strip().lower()
+    if channel_type not in {"facebook", "instagram"}:
+        raise HTTPException(status_code=400, detail="Meta bridge chỉ hỗ trợ Messenger và Instagram.")
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(conversation.get("channel_id") or 0),
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        )
+    )
+    config = channel.config if channel and isinstance(channel.config, dict) else {}
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f"Active {channel_type.title()} channel not found for this tenant")
+    if config.get("provider") != f"{channel_type}_local_connector":
+        sender = send_instagram_message if channel_type == "instagram" else send_facebook_message
+        return sender(
+            recipient_id=recipient_id,
+            text=text_content,
+            db=db,
+            business_id=business_id,
+        ), channel
+    if not channel.access_token_encrypted:
+        raise HTTPException(status_code=503, detail="Meta connector chưa có thông tin xác thực.")
+    try:
+        connector_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Meta connector credentials could not be decrypted") from exc
+
+    thread_id = _local_connector_thread_id(db, int(conversation["id"]), channel_type)
+    if not thread_id:
+        raise HTTPException(status_code=409, detail="Meta conversation chưa có thread_id để gửi tin")
+    server_managed = config.get("connector_execution_mode") == "server"
+    control_url = str(
+        settings.SERVER_CONNECTOR_AGENT_URL
+        if server_managed
+        else (settings.META_INSTAGRAM_BRIDGE_CONTROL_URL
+            if channel_type == "instagram"
+            else settings.META_MESSENGER_BRIDGE_CONTROL_URL)
+    ).strip().rstrip("/")
+    if not control_url:
+        raise HTTPException(status_code=503, detail=f"{channel_type.title()} outbound bridge chưa được cấu hình")
+    endpoint = (
+        f"{control_url}/internal/channels/{business_id}/{channel_type}/{channel.id}/send"
+        if server_managed else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-Meta-Bridge-Secret": connector_token}
+    )
+    if server_managed and not settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
+    try:
+        response = httpx.post(
+            endpoint,
+            json={"threadId": thread_id, "message": text_content or "", "recipientId": str(recipient_id or "")},
+            headers=headers,
+            timeout=30,
+        )
+    except httpx.RequestError as exc:
+        inbox_name = "Instagram" if channel_type == "instagram" else "Messenger"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Không thể kết nối {inbox_name} bridge. Hãy mở connector trên máy đang đăng nhập Meta Business Suite.",
+        ) from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code >= 400:
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        if response.status_code == 409 and isinstance(payload, dict) and payload.get("code") == "delivery_unknown":
+            raise HTTPException(status_code=409, detail=payload)
+        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi tin")
+    return payload if isinstance(payload, dict) else {"status": "sent"}, channel
+
+
+def send_meta_image(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    image_url: str,
+    caption: str,
+    business_id: int,
+) -> tuple[dict, Channel]:
+    """Send an image reply through either Meta's API or its paired UI bridge."""
+    channel_type = str(conversation.get("channel") or "").strip().lower()
+    if channel_type not in {"facebook", "instagram"}:
+        raise HTTPException(status_code=400, detail="Meta bridge chỉ hỗ trợ Messenger và Instagram.")
+    parsed = urlsplit(str(image_url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=422, detail="Địa chỉ ảnh không hợp lệ.")
+
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(conversation.get("channel_id") or 0),
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        )
+    )
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f"Active {channel_type.title()} channel not found for this tenant")
+    config = channel.config if isinstance(channel.config, dict) else {}
+    if config.get("provider") != f"{channel_type}_local_connector":
+        sender = send_instagram_media if channel_type == "instagram" else send_facebook_media
+        return sender(
+            recipient_id=recipient_id,
+            media_type="image",
+            media_url=image_url,
+            caption=caption,
+            db=db,
+            business_id=business_id,
+        ), channel
+
+    if not channel.access_token_encrypted:
+        raise HTTPException(status_code=503, detail="Meta connector chưa có thông tin xác thực.")
+    try:
+        connector_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Meta connector credentials could not be decrypted") from exc
+    thread_id = _local_connector_thread_id(db, int(conversation["id"]), channel_type)
+    if not thread_id:
+        raise HTTPException(status_code=409, detail="Meta conversation chưa có thread_id để gửi tin")
+    server_managed = config.get("connector_execution_mode") == "server"
+    control_url = str(
+        settings.SERVER_CONNECTOR_AGENT_URL
+        if server_managed
+        else (settings.META_INSTAGRAM_BRIDGE_CONTROL_URL
+            if channel_type == "instagram"
+            else settings.META_MESSENGER_BRIDGE_CONTROL_URL)
+    ).strip().rstrip("/")
+    if not control_url:
+        raise HTTPException(status_code=503, detail=f"{channel_type.title()} outbound bridge chưa được cấu hình")
+    endpoint = (
+        f"{control_url}/internal/channels/{business_id}/{channel_type}/{channel.id}/send"
+        if server_managed else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-Meta-Bridge-Secret": connector_token}
+    )
+    if server_managed and not settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
+    image_payload = {"imageUrl": image_url}
+    is_vietqr = (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").lower().rstrip(".") == "img.vietqr.io"
+        and parsed.path.startswith("/image/")
+        and parsed.path.lower().endswith(".png")
+    )
+    if not is_vietqr:
+        # Push validated bytes to Edge. A paired connector token is not a Graph
+        # token, and Edge must not fetch arbitrary URLs on the shop's network.
+        public_base = urlsplit(get_public_base_url())
+        filename = Path(parsed.path).name
+        local_upload = (
+            (parsed.scheme, parsed.netloc) == (public_base.scheme, public_base.netloc)
+            and parsed.path in {
+                f"/api/conversations/uploads/{filename}",
+                f"/api/conversations/media-uploads/{filename}",
+            }
+            and len(Path(filename).stem) == 32
+            and all(character in "0123456789abcdef" for character in Path(filename).stem)
+        )
+        if local_upload:
+            image_bytes = (UPLOAD_DIR / filename).read_bytes()
+            if len(image_bytes) > MAX_IMAGE_SIZE:
+                raise HTTPException(status_code=422, detail="Ảnh quá lớn. Tối đa 8MB.")
+            image_bytes, _ = normalize_image_to_jpeg(image_bytes)
+        else:
+            from app.services.inbound_image_service import download_inbound_image_url
+
+            image_bytes, _ = download_inbound_image_url(image_url, channel_type="outbound")
+        if len(image_bytes) > MAX_IMAGE_SIZE:
+            raise HTTPException(status_code=422, detail="Ảnh quá lớn. Tối đa 8MB.")
+        image_payload = {"imageData": base64.b64encode(image_bytes).decode("ascii")}
+    try:
+        response = httpx.post(
+            endpoint,
+            json={
+                "threadId": thread_id,
+                "recipientId": str(recipient_id or ""),
+                "mediaType": "image",
+                **image_payload,
+                "message": caption,
+            },
+            headers=headers,
+            timeout=45,
+        )
+    except httpx.RequestError as exc:
+        inbox_name = "Instagram" if channel_type == "instagram" else "Messenger"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Không thể kết nối {inbox_name} bridge. Hãy mở connector trên máy đang đăng nhập Meta Business Suite.",
+        ) from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code >= 400:
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        if response.status_code == 409 and isinstance(payload, dict) and payload.get("code") == "delivery_unknown":
+            raise HTTPException(status_code=409, detail=payload)
+        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi ảnh")
+    return payload if isinstance(payload, dict) else {"status": "sent"}, channel
+
+
+def send_meta_media(
+    *,
+    db: Session,
+    conversation: dict,
+    recipient_id: str,
+    media_type: str,
+    media_url: str,
+    caption: str,
+    business_id: int,
+    uploaded_media: dict | None = None,
+) -> tuple[dict, Channel]:
+    """Send Meta audio/video/files through its paired UI bridge or Graph API."""
+    channel_type = str(conversation.get("channel") or "").strip().lower()
+    if channel_type not in {"facebook", "instagram"}:
+        raise HTTPException(status_code=400, detail="Meta bridge chỉ hỗ trợ Messenger và Instagram.")
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(conversation.get("channel_id") or 0),
+            Channel.business_id == business_id,
+            Channel.channel_type == channel_type,
+            Channel.status == "active",
+        )
+    )
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f"Active {channel_type.title()} channel not found for this tenant")
+    config = channel.config if isinstance(channel.config, dict) else {}
+    if config.get("provider") != f"{channel_type}_local_connector":
+        graph_type = "image" if media_type == "sticker" else media_type
+        if media_type == "sticker":
+            check_public_image_url(media_url)
+        sender = send_instagram_media if channel_type == "instagram" else send_facebook_media
+        return sender(
+            recipient_id=recipient_id,
+            media_type=graph_type,
+            media_url=media_url,
+            caption=caption,
+            db=db,
+            business_id=business_id,
+        ), channel
+
+    if not uploaded_media or not isinstance(uploaded_media.get("upload_bytes"), bytes):
+        raise HTTPException(status_code=422, detail="Tải file lên từ CRM để gửi qua Meta connector.")
+    if len(uploaded_media["upload_bytes"]) > MAX_MEDIA_UPLOAD_SIZE:
+        raise HTTPException(status_code=422, detail="File media quá lớn. Tối đa 25MB.")
+    if not channel.access_token_encrypted:
+        raise HTTPException(status_code=503, detail="Meta connector chưa có thông tin xác thực.")
+    try:
+        connector_token = decrypt_token(channel.access_token_encrypted, settings.CHANNEL_ENCRYPTION_KEY)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Meta connector credentials could not be decrypted") from exc
+    thread_id = _local_connector_thread_id(db, int(conversation["id"]), channel_type)
+    if not thread_id:
+        raise HTTPException(status_code=409, detail="Meta conversation chưa có thread_id để gửi tin")
+    server_managed = config.get("connector_execution_mode") == "server"
+    control_url = str(
+        settings.SERVER_CONNECTOR_AGENT_URL
+        if server_managed
+        else (settings.META_INSTAGRAM_BRIDGE_CONTROL_URL if channel_type == "instagram" else settings.META_MESSENGER_BRIDGE_CONTROL_URL)
+    ).strip().rstrip("/")
+    if not control_url:
+        raise HTTPException(status_code=503, detail=f"{channel_type.title()} outbound bridge chưa được cấu hình")
+    endpoint = (
+        f"{control_url}/internal/channels/{business_id}/{channel_type}/{channel.id}/send"
+        if server_managed else f"{control_url}/send"
+    )
+    headers = (
+        {"X-Server-Connector-Agent-Token": settings.SERVER_CONNECTOR_AGENT_TOKEN}
+        if server_managed else {"X-Meta-Bridge-Secret": connector_token}
+    )
+    if server_managed and not settings.SERVER_CONNECTOR_AGENT_TOKEN:
+        raise HTTPException(status_code=503, detail="Server connector agent chưa được cấu hình")
+    payload = {
+        "threadId": thread_id,
+        "recipientId": str(recipient_id or ""),
+        "mediaType": media_type,
+        "mediaData": base64.b64encode(uploaded_media["upload_bytes"]).decode("ascii"),
+        "fileName": str(uploaded_media.get("upload_filename") or "attachment"),
+        "contentType": str(uploaded_media.get("upload_content_type") or "application/octet-stream"),
+        "message": caption or "",
+    }
+    try:
+        response = httpx.post(endpoint, json=payload, headers=headers, timeout=75)
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Không thể kết nối {channel_type.title()} bridge.") from exc
+    try:
+        result = response.json()
+    except ValueError:
+        result = {}
+    if response.status_code >= 400:
+        detail = result.get("detail") if isinstance(result, dict) else None
+        if response.status_code == 409 and isinstance(result, dict) and result.get("code") == "delivery_unknown":
+            raise HTTPException(status_code=409, detail=result)
+        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi media")
+    return result if isinstance(result, dict) else {"status": "sent"}, channel
+
+
+def _local_connector_media_payload(uploaded_media: dict | None, media_type: str) -> dict:
+    if not uploaded_media or not isinstance(uploaded_media.get("upload_bytes"), bytes):
+        raise HTTPException(status_code=422, detail="Tải ảnh lên từ CRM để gửi qua connector.")
+    content = uploaded_media["upload_bytes"]
+    if len(content) > MAX_MEDIA_UPLOAD_SIZE:
+        raise HTTPException(status_code=422, detail="File media quá lớn. Tối đa 25MB.")
+    return {
+        "mediaType": media_type,
+        "mediaData": base64.b64encode(content).decode("ascii"),
+        "fileName": str(uploaded_media.get("upload_filename") or "image"),
+        "contentType": str(uploaded_media.get("upload_content_type") or "image/png"),
+    }
 
 
 def telegram_external_message_id(result: dict, channel: Channel) -> str | None:
@@ -1477,19 +1898,14 @@ async def send_and_save_outbound(
     if image_url:
         logger.info("Outbound channel send started: channel=%s operation=image", channel)
 
-        if channel == "facebook":
-            result = await run_in_threadpool(
-                send_facebook_image,
+        if channel in {"facebook", "instagram"}:
+            conversation = get_conversation_target(db, conversation_id, business_id)
+            result, _ = await run_in_threadpool(
+                send_meta_image,
+                conversation=conversation,
                 recipient_id=recipient_id,
                 image_url=image_url,
-                db=db,
-                business_id=business_id,
-            )
-        elif channel == "instagram":
-            result = await run_in_threadpool(
-                send_instagram_image,
-                recipient_id=recipient_id,
-                image_url=image_url,
+                caption="",
                 db=db,
                 business_id=business_id,
             )
@@ -1546,20 +1962,20 @@ async def send_and_save_outbound(
     else:
         logger.info("Outbound channel send started: channel=%s operation=text", channel)
 
-        if channel == "facebook":
-            result = await run_in_threadpool(
-                send_facebook_message,
-                recipient_id=recipient_id,
-                text=text_content or "",
+        if channel in {"facebook", "instagram"}:
+            if business_id is None:
+                raise HTTPException(status_code=400, detail="Tenant context is required")
+            meta_conversation = get_conversation_target(
                 db=db,
+                conversation_id=conversation_id,
                 business_id=business_id,
             )
-        elif channel == "instagram":
-            result = await run_in_threadpool(
-                send_instagram_message,
-                recipient_id=recipient_id,
-                text=text_content or "",
+            result, _ = await run_in_threadpool(
+                send_meta_text,
                 db=db,
+                conversation=meta_conversation,
+                recipient_id=recipient_id,
+                text_content=text_content or "",
                 business_id=business_id,
             )
         elif channel == "telegram":
@@ -1696,6 +2112,7 @@ def get_conversations(
             c.avatar_url,
 
             cv.channel,
+            cv.channel_id,
             cv.status,
             cv.bot_mode,
             cv.resolution_outcome,
@@ -1715,6 +2132,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1731,6 +2149,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1747,6 +2166,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1763,6 +2183,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1779,6 +2200,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
+                    m.received_at DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -1836,6 +2258,16 @@ def get_conversations(
     total = int(db.execute(text(total_sql), total_params).scalar_one())
 
     customer_ids = {int(row["customer_id"]) for row in result if row.get("customer_id") is not None}
+    channel_ids = {int(row["channel_id"]) for row in result if row.get("channel_id") is not None}
+    channel_provider_map: dict[int, str] = {}
+    if channel_ids:
+        for channel_id, config in db.query(Channel.id, Channel.config).filter(
+            Channel.business_id == tenant.business_id,
+            Channel.id.in_(channel_ids),
+        ).all():
+            provider = config.get("provider") if isinstance(config, dict) else None
+            if provider:
+                channel_provider_map[int(channel_id)] = str(provider).strip().lower()
     tag_map: dict[int, list[str]] = {customer_id: [] for customer_id in customer_ids}
     if customer_ids:
         tag_rows = db.query(CustomerTag.customer_id, Tag.name).join(
@@ -1871,6 +2303,7 @@ def get_conversations(
                 ),
                 "customer_tags": tag_map.get(int(row["customer_id"]), []),
                 "conversation_tags": conversation_tag_map.get(int(row["conversation_id"]), []),
+                "channel_provider": channel_provider_map.get(int(row["channel_id"])) if row.get("channel_id") is not None else None,
             }
             for row in result
         ]
@@ -2262,7 +2695,7 @@ def get_conversation_messages(
 
     conversation = db.execute(
         text("""
-            SELECT id
+            SELECT id, channel
 
             FROM conversations
 
@@ -2317,6 +2750,7 @@ def get_conversation_messages(
             )
 
         ORDER BY
+            m.received_at ASC NULLS FIRST,
             m.id ASC
     """)
 
@@ -2328,6 +2762,11 @@ def get_conversation_messages(
             "business_id": tenant.business_id,
         },
     ).mappings().all()
+    result = [
+        row for row in result
+        if str(conversation.channel or "").casefold() != "instagram"
+        or not _is_instagram_app_update_notice(row.get("content"))
+    ]
 
     # Return the complete canonical attachment list.  The legacy media_type
     # and media_url columns remain in each row for older clients.
@@ -3012,15 +3451,29 @@ async def unified_send(
 # SEND IMAGE BY URL
 # =========================================================
 
-@router.post("/{conversation_id}/send-media", dependencies=[Depends(require_write_access)])
-async def send_media_message(
+def _conversation_media_provider(db: Session, conversation: dict, business_id: int) -> str | None:
+    if str(conversation.get("channel") or "").strip().lower() != "zalo":
+        return None
+    channel_id = conversation.get("channel_id")
+    if channel_id is None:
+        return "bot"
+    channel_row = db.query(Channel).filter(
+        Channel.id == int(channel_id),
+        Channel.business_id == business_id,
+    ).first()
+    config = channel_row.config if channel_row and isinstance(channel_row.config, dict) else {}
+    return str(config.get("provider") or "bot").strip().lower()
+
+
+async def _send_media_message(
     conversation_id: int,
     body: SendMediaRequest,
-    db: Session = Depends(get_tenant_db),
-    tenant: TenantContext = Depends(get_tenant_context),
-    actor: User | None = Depends(require_write_access),
+    db: Session,
+    tenant: TenantContext,
+    actor: User | None,
+    uploaded_media: dict | None = None,
 ):
-    """Send one canonical media attachment through the linked channel."""
+    """Send one canonical attachment, optionally using bytes from a safe upload."""
     media_type = str(body.media_type or "").strip().lower()
     try:
         MediaType(media_type)
@@ -3031,8 +3484,6 @@ async def send_media_message(
     media_url = str(body.media_url or "").strip()
     if not media_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=422, detail="media_url phải là URL http/https")
-    if media_type == "image":
-        check_public_image_url(media_url)
     conversation = get_conversation_target(
         db=db,
         conversation_id=conversation_id,
@@ -3041,6 +3492,14 @@ async def send_media_message(
     require_responsible_staff(conversation, actor)
     client_id = validate_client_id(body.client_id)
     channel = str(conversation["channel"] or "").strip().lower()
+    channel_provider = _conversation_media_provider(db, conversation, tenant.business_id)
+    unsupported_detail = unsupported_media_detail(channel, media_type, channel_provider)
+    if unsupported_detail:
+        raise HTTPException(status_code=422, detail=unsupported_detail)
+    if channel in {"tiktok", "shopee"} and media_type in {"image", "sticker"} and uploaded_media is None:
+        raise HTTPException(status_code=422, detail="Kênh này cần tải ảnh lên trực tiếp từ CRM để gửi.")
+    if media_type == "image" and channel not in {"facebook", "instagram", "tiktok", "shopee"}:
+        check_public_image_url(media_url)
     recipient_id = str(conversation["external_user_id"])
     attempt_id, replay = _claim_outbound_delivery(
         db,
@@ -3062,36 +3521,65 @@ async def send_media_message(
         }
 
     try:
-        if channel == "facebook":
-            result = await run_in_threadpool(
-                send_facebook_media,
-                recipient_id=recipient_id,
-                media_type=media_type,
-                media_url=media_url,
-                caption=body.caption,
+        if channel in {"facebook", "instagram"} and media_type == "image":
+            result, _ = await run_in_threadpool(
+                send_meta_image,
                 db=db,
+                conversation=conversation,
+                recipient_id=recipient_id,
+                image_url=media_url,
+                caption=body.caption or "",
                 business_id=tenant.business_id,
             )
-        elif channel == "instagram":
-            result = await run_in_threadpool(
-                send_instagram_media,
+        elif channel in {"facebook", "instagram"}:
+            result, _ = await run_in_threadpool(
+                send_meta_media,
+                db=db,
+                conversation=conversation,
                 recipient_id=recipient_id,
                 media_type=media_type,
                 media_url=media_url,
-                caption=body.caption,
-                db=db,
+                caption=body.caption or "",
                 business_id=tenant.business_id,
+                uploaded_media=uploaded_media,
+            )
+        elif channel == "tiktok":
+            result, _ = await run_in_threadpool(
+                send_tiktok_text,
+                db=db,
+                conversation=conversation,
+                recipient_id=recipient_id,
+                text_content=body.caption or "",
+                business_id=tenant.business_id,
+                media_payload=_local_connector_media_payload(uploaded_media, media_type),
+            )
+        elif channel == "shopee":
+            result, _ = await run_in_threadpool(
+                send_shopee_text,
+                db=db,
+                conversation=conversation,
+                recipient_id=recipient_id,
+                text_content=body.caption or "",
+                business_id=tenant.business_id,
+                media_payload=_local_connector_media_payload(uploaded_media, media_type),
             )
         elif channel == "telegram":
+            telegram_kwargs = {
+                "db": db,
+                "business_id": tenant.business_id,
+                "conversation_id": conversation_id,
+                "recipient_id": recipient_id,
+                "media_type": media_type,
+                "media_url": media_url,
+                "caption": body.caption,
+            }
+            if uploaded_media is not None:
+                telegram_kwargs.update(uploaded_media)
+            if body.is_voice_note:
+                telegram_kwargs["voice_note"] = True
             result = await run_in_threadpool(
                 send_telegram_media,
-                db=db,
-                business_id=tenant.business_id,
-                conversation_id=conversation_id,
-                recipient_id=recipient_id,
-                media_type=media_type,
-                media_url=media_url,
-                caption=body.caption,
+                **telegram_kwargs,
             )
         elif channel == "zalo":
             result = await run_in_threadpool(
@@ -3170,6 +3658,18 @@ async def send_media_message(
         "message": saved,
         "provider_response": result,
     }
+
+
+@router.post("/{conversation_id}/send-media", dependencies=[Depends(require_write_access)])
+async def send_media_message(
+    conversation_id: int,
+    body: SendMediaRequest,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    """Send media from a provider-hosted URL."""
+    return await _send_media_message(conversation_id, body, db, tenant, actor)
 
 @router.post(
     "/{conversation_id}/media",
@@ -4169,6 +4669,7 @@ async def upload_and_send_generic_media(
     client_id: str = Form(...),
     media_type: str = Form("file"),
     caption: str | None = Form(None),
+    is_voice_note: bool = Form(False),
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
@@ -4195,6 +4696,14 @@ async def upload_and_send_generic_media(
     if normalized_type in {"text", "unknown"}:
         raise HTTPException(status_code=422, detail="upload-generic chỉ nhận image/audio/sticker/video/file")
 
+    channel = str(conversation.get("channel") or "").strip().lower()
+    channel_provider = _conversation_media_provider(db, conversation, tenant.business_id)
+    unsupported_detail = unsupported_media_detail(channel, normalized_type, channel_provider)
+    if unsupported_detail:
+        raise HTTPException(status_code=422, detail=unsupported_detail)
+    if is_voice_note and normalized_type != "audio":
+        raise HTTPException(status_code=422, detail="Bản ghi giọng nói phải có media_type=audio")
+
     content_type = str(file.content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
     allowed_types = ALLOWED_MEDIA_UPLOAD_TYPES[normalized_type]
     if content_type not in allowed_types:
@@ -4213,29 +4722,81 @@ async def upload_and_send_generic_media(
     if len(file_bytes) > MAX_MEDIA_UPLOAD_SIZE:
         raise HTTPException(status_code=400, detail="File media quá lớn. Tối đa 25MB")
 
+    # TikTok Shop accepts JPEG/PNG chat images. Normalize sticker artwork to
+    # PNG so transparent backgrounds survive when Seller Center treats it as
+    # a regular image attachment. Keep PNG alpha and convert WebP/GIF safely.
+    if normalized_type == "sticker" or (
+        channel in {"tiktok", "shopee"} and normalized_type == "image"
+        and content_type not in {"image/jpeg", "image/png"}
+    ):
+        try:
+            with Image.open(BytesIO(file_bytes)) as image:
+                image.load()
+                has_alpha = "A" in image.getbands() or "transparency" in image.info
+                target_format = "PNG" if has_alpha or normalized_type == "sticker" else "JPEG"
+                if image.format != target_format:
+                    normalized = BytesIO()
+                    image.convert("RGBA" if target_format == "PNG" else "RGB").save(normalized, format=target_format)
+                    file_bytes = normalized.getvalue()
+                    content_type = "image/png" if target_format == "PNG" else "image/jpeg"
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="File ảnh/sticker không hợp lệ.") from exc
+
     suffix = Path(file.filename or "").suffix.lower()
+    if normalized_type == "sticker" or channel in {"tiktok", "shopee"} and normalized_type == "image":
+        suffix = mimetypes.guess_extension(content_type) or suffix
     if not suffix or len(suffix) > 10 or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789." for char in suffix):
         suffix = mimetypes.guess_extension(content_type) or ".bin"
     filename = f"{uuid.uuid4().hex}{suffix}"
     file_path = UPLOAD_DIR / filename
+    upload_path = file_path
     try:
         file_path.write_bytes(file_bytes)
-        upload_path = file_path
         upload_content_type = content_type
+        telegram_voice_note = bool(is_voice_note)
         if normalized_type == "audio":
-            channel = str(conversation["channel"] or "").strip().lower()
-            if channel == "zalo":
+            if channel == "telegram":
+                telegram_audio_file = content_type in {"audio/mpeg", "audio/mp4", "audio/m4a"}
+                telegram_voice_note = telegram_voice_note or content_type in TELEGRAM_VOICE_CONTENT_TYPES or not telegram_audio_file
+                if telegram_voice_note:
+                    upload_path, upload_content_type = normalize_telegram_voice_upload(
+                        file_path,
+                        content_type=content_type,
+                    )
+            elif channel == "zalo":
                 upload_path, upload_content_type = normalize_zalo_audio_upload(
                     file_path,
                     content_type=content_type,
                 )
         media_url = f"{get_public_base_url()}/api/conversations/media-uploads/{upload_path.name}"
-        result = await send_media_message(
+        uploaded_media = None
+        if channel == "telegram":
+            uploaded_media = {
+                "upload_bytes": upload_path.read_bytes(),
+                "upload_filename": upload_path.name,
+                "upload_content_type": upload_content_type,
+                "voice_note": telegram_voice_note,
+            }
+        elif channel in {"facebook", "instagram", "tiktok", "shopee"}:
+            uploaded_media = {
+                "upload_bytes": upload_path.read_bytes(),
+                "upload_filename": upload_path.name,
+                "upload_content_type": upload_content_type,
+            }
+        request_body = SendMediaRequest(
+            media_type=normalized_type,
+            media_url=media_url,
+            caption=caption,
+            client_id=client_id,
+            is_voice_note=telegram_voice_note,
+        )
+        result = await _send_media_message(
             conversation_id,
-            SendMediaRequest(media_type=normalized_type, media_url=media_url, caption=caption, client_id=client_id),
+            request_body,
             db,
             tenant,
             actor,
+            uploaded_media=uploaded_media,
         )
         if result.get("idempotent_replay"):
             file_path.unlink(missing_ok=True)
@@ -4248,18 +4809,26 @@ async def upload_and_send_generic_media(
             "size": upload_path.stat().st_size,
             "media_url": media_url,
         }
+        if upload_path != file_path:
+            file_path.unlink(missing_ok=True)
         return result
     except RuntimeError as exc:
         db.rollback()
         file_path.unlink(missing_ok=True)
+        if upload_path != file_path:
+            upload_path.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
         db.rollback()
         file_path.unlink(missing_ok=True)
+        if upload_path != file_path:
+            upload_path.unlink(missing_ok=True)
         raise
     except Exception as exc:
         db.rollback()
         file_path.unlink(missing_ok=True)
+        if upload_path != file_path:
+            upload_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="Không thể upload và gửi media") from exc
 
 

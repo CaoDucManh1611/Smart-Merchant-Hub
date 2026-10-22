@@ -24,13 +24,16 @@ def _settings(db: Session) -> dict[str, str]:
 def _migration_tenant_session(source_db: Session, business_id: int) -> Iterator[Session]:
     """Use an isolated SQLite source fixture only outside production.
 
-    The importer normally writes to the dedicated tenant engine.  Legacy unit
-    tests intentionally provide one in-memory SQLite session for both sides;
-    reusing it there keeps the migration observable without weakening the
-    production database boundary.
+    The importer normally writes to the dedicated tenant engine. Legacy unit
+    tests provide one isolated session for both sides; reusing it keeps the
+    migration observable without weakening the production database boundary.
     """
     bind = source_db.bind
-    if settings.ENVIRONMENT.strip().lower() != "production" and bind is not None and bind.dialect.name == "sqlite":
+    if (
+        settings.ENVIRONMENT.strip().lower() == "test"
+        and bind is not None
+        and bind.dialect.name in {"sqlite", "postgresql"}
+    ):
         yield source_db
         return
     with tenant_session(schema_name_for(int(business_id))) as tenant_db:

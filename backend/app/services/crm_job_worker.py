@@ -12,9 +12,11 @@ from app.models.ticket import Ticket
 from app.models.workflow import Workflow
 from app.models.notification import Notification
 from app.models.customer import Customer
+from app.models.crm_job import CrmJob
 from app.models.industry_modules import Appointment, AppointmentService
 from app.models.platform_control import TenantRegistry
-from app.services.job_service import dispatch_due_jobs
+from app.models.recommendation import RecommendationTrainingRun
+from app.services.job_service import dispatch_due_jobs, enqueue_job
 from app.services.notification_service import create_notification, create_sla_notification, create_sla_warning_notification, deliver_notification_email
 from app.services.customer_collection import customer_email_for_delivery
 from app.services.workflow_engine import execute_workflow
@@ -23,7 +25,11 @@ from app.services.order_service import release_expired_draft_reservations
 from app.services.rag_job_service import dispatch_rag_job
 from app.services.recommendation_service import train_customer_segments
 from app.services.conversation_turn_service import dispatch_chatbot_turn
-from app.services.customer_fact_extractor import dispatch_customer_fact_extraction, dispatch_customer_profile_refresh
+from app.services.customer_fact_extractor import (
+    dispatch_customer_fact_extraction,
+    dispatch_customer_profile_refresh,
+    dispatch_weekly_customer_fact_scan,
+)
 from app.tenancy.context import TenantContext
 from app.tenancy.schema import schema_name_for, validate_schema_name
 from app.tenancy.workspace_modules import get_workspace_config
@@ -216,6 +222,38 @@ def _dispatch_recommendation_segment_training_job(db: Session, business_id: int,
     train_customer_segments(db, business_id=business_id, training_run_id=training_run_id)
 
 
+def _dispatch_weekly_customer_learning(db: Session, business_id: int) -> dict:
+    result = dispatch_weekly_customer_fact_scan(db, business_id=business_id)
+    if result.get("has_more"):
+        return result
+
+    week_key = datetime.now(timezone.utc).strftime("%G-W%V")
+    idempotency_key = f"recommendations:weekly-segments:{week_key}"
+    queued = db.query(CrmJob.id).filter(
+        CrmJob.business_id == business_id,
+        CrmJob.idempotency_key == idempotency_key,
+    ).first()
+    if queued is None:
+        run = RecommendationTrainingRun(
+            business_id=business_id,
+            algorithm="deterministic_rfm_kmeans",
+            status="queued",
+            metrics={},
+            artifact={"model_version": "rfm_kmeans_v2", "trigger": "weekly_customer_learning"},
+        )
+        db.add(run)
+        db.flush()
+        enqueue_job(
+            db,
+            business_id=business_id,
+            kind="recommendations.train_segments",
+            payload={"training_run_id": run.id},
+            idempotency_key=idempotency_key,
+        )
+        db.commit()
+    return result
+
+
 def _dispatch_appointment_reminder_job(db: Session, business_id: int, payload: dict) -> None:
     if "appointments" not in get_workspace_config(db, business_id)["enabled_modules"]:
         return
@@ -295,6 +333,7 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         "chatbot.followup": lambda payload: _dispatch_chatbot_followup_job(db, business_id, payload),
         "chatbot.reply_turn": lambda payload: dispatch_chatbot_turn(db, business_id=business_id, payload=payload, platform_db=platform_db),
         "customer.facts.extract": lambda payload: dispatch_customer_fact_extraction(db, business_id=business_id, payload=payload),
+        "customer.facts.weekly_scan": lambda payload: _dispatch_weekly_customer_learning(db, business_id),
         "customer.profile.refresh": lambda payload: dispatch_customer_profile_refresh(db, business_id=business_id),
         "notification.email": lambda payload: _dispatch_notification_email_job(db, business_id, payload),
         "recommendations.train_segments": lambda payload: _dispatch_recommendation_segment_training_job(db, business_id, payload),

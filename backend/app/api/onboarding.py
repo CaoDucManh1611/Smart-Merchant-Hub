@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -53,7 +53,11 @@ from app.schemas.onboarding import (
 from app.schemas.platform import ProvisioningOut, ProvisioningRequest
 from app.services.audit_service import record_audit
 from app.services.channel_credentials import encrypt_token
-from app.services.channel_service import normalized_connection_state, upsert_channel_connection
+from app.services.channel_service import (
+    QUOTA_HOLDING_CHANNEL_STATUSES,
+    normalized_connection_state,
+    upsert_channel_connection,
+)
 from app.services.channel_health import check_channel_health
 from app.services.quota_service import QuotaExceededError, release_quota
 from app.services.provider_connection import ProviderConnectionError, verify_and_configure_bot
@@ -257,6 +261,8 @@ def _create_shop_records(
         service_type=service_type,
         status="active" if service_type == "package" and plan.price == 0 else "pending",
         starts_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        change_kind="new",
+        quoted_amount=_chatbot_rental_price(plan) if service_type == "chatbot" else plan.price,
     )
     db.add(subscription)
     db.flush()
@@ -268,7 +274,7 @@ def _create_shop_records(
         device_label="onboarding",
         user_agent_hash=None,
         ip_hash=None,
-        mfa_verified=True,
+        mfa_verified=False,
     ))
     record_audit(
         db,
@@ -436,6 +442,31 @@ def list_onboarding_plans(db: Session = Depends(get_db)):
     return [plan for plan in plans if plan.status == "active"]
 
 
+def _plan_change_kind(current: Subscription | None, plan: ServicePlan, service_type: str) -> str:
+    if current is None:
+        return "new"
+    if current.plan_id == plan.id:
+        return "switch"
+    ranks = {"demo": 0, "starter": 1, "growth": 2, "scale": 3, "pro": 4, "enterprise": 4}
+    old = current.plan
+    if old.code in ranks and plan.code in ranks:
+        return "downgrade" if ranks[plan.code] < ranks[old.code] else "upgrade"
+    old_price = _chatbot_rental_price(old) if service_type == "chatbot" else old.price
+    new_price = _chatbot_rental_price(plan) if service_type == "chatbot" else plan.price
+    return "downgrade" if new_price < old_price else "upgrade"
+
+
+def _checkout_subscription_out(row: Subscription | None) -> OnboardingSubscriptionOut | None:
+    if row is None:
+        return None
+    return OnboardingSubscriptionOut(
+        id=row.id, plan_code=row.plan.code, plan_name=row.plan.name,
+        service_type=row.service_type, status=row.status,
+        change_kind=row.change_kind, quoted_amount=row.quoted_amount,
+        quoted_currency=row.quoted_currency,
+    )
+
+
 @router.post("/shops/{business_id}/subscription/purchase", response_model=OnboardingSubscriptionOut)
 def purchase_shop_plan(
     business_id: int,
@@ -449,35 +480,60 @@ def purchase_shop_plan(
     _require_shop_member_for_purchase(db, business_id, actor)
     business = db.get(Business, business_id)
     assert business is not None
+    # Serialize same-shop request replacement and payment creation on PostgreSQL.
+    db.scalar(select(Business).where(Business.id == business_id).with_for_update())
     ensure_default_plans(db)
     plan = _active_plan(db, payload.plan_code)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     service_type = payload.service_type
+    current_active = _active_subscription_for(db, business_id, service_type=service_type)
+    change_kind = _plan_change_kind(current_active, plan, service_type)
+    role = (actor.role or "").strip().lower()
+    if plan.code == "demo" and role not in {"owner", "admin", "business_admin", "shop_admin"}:
+        raise HTTPException(status_code=403, detail="Chỉ chủ shop hoặc quản trị viên shop mới được kích hoạt gói Demo.")
+    if change_kind == "downgrade":
+        service_label = "trợ lý" if service_type == "chatbot" else "gói"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Hiện không hỗ trợ hạ {service_label}. Vui lòng chọn {service_label} hiện tại hoặc cao hơn.",
+        )
     if service_type == "package":
         _validate_requested_channels(plan, payload.channels)
     # Older clients sent their selected CRM channels with chatbot requests.
     # Accept that payload for compatibility, but never validate or consume it
     # as chatbot quota; the assistant is an independent service.
 
-    role = (actor.role or "").strip().lower()
-    if plan.code == "demo" and role not in {"owner", "admin", "business_admin", "shop_admin"}:
-        raise HTTPException(status_code=403, detail="Chỉ chủ shop hoặc quản trị viên shop mới được kích hoạt gói Demo.")
-
-    # Only the free Demo package is immediate. Every rental or paid plan
-    # becomes a visible request in the control plane for an administrator.
+    # Paid plans first wait for the shop to pay. Only after the customer
+    # reports payment (or a verified receipt arrives) do they enter the
+    # administrator approval queue.
     if plan.code != "demo":
         current_pending = db.scalar(
             select(Subscription)
             .where(
                 Subscription.business_id == business_id,
-                Subscription.status == "pending",
+                Subscription.service_type == service_type,
+                Subscription.status.in_(["pending", "awaiting_payment"]),
             )
             .order_by(Subscription.id.desc())
+            .with_for_update().execution_options(populate_existing=True)
         )
+        current_price = _chatbot_rental_price(plan) if service_type == "chatbot" else plan.price
         if current_pending is not None and (
             current_pending.plan_id != plan.id
             or current_pending.service_type != service_type
+            or current_pending.quoted_amount != current_price
         ):
+            from app.models.subscription_payment_attempt import SubscriptionPaymentAttempt
+            receipt = db.scalar(select(Payment.id).where(
+                Payment.subscription_id == current_pending.id,
+                Payment.status.in_(["paid", "refunded"]),
+            ))
+            paid_attempt = db.scalar(select(SubscriptionPaymentAttempt.id).where(
+                SubscriptionPaymentAttempt.subscription_id == current_pending.id,
+                SubscriptionPaymentAttempt.status.in_(["paid", "refunded", "reconciliation_required"]),
+            ))
+            if receipt is not None or paid_attempt is not None:
+                raise HTTPException(409, "Yêu cầu cũ đã có giao dịch nhận tiền hoặc cần đối soát. Liên hệ admin trước khi tạo yêu cầu mới.")
             current_pending.status = "cancelled"
             current_pending = None
         if current_pending is None:
@@ -485,10 +541,14 @@ def purchase_shop_plan(
                 business_id=business_id,
                 plan_id=plan.id,
                 service_type=service_type,
-                status="pending",
+                status="awaiting_payment" if current_price > 0 else "pending",
                 starts_at=None,
                 ends_at=None,
                 auto_renew=False,
+                change_kind=change_kind,
+                previous_subscription_id=current_active.id if current_active else None,
+                quoted_amount=current_price,
+                quoted_currency="VND",
             )
             db.add(current_pending)
             db.flush()
@@ -516,6 +576,9 @@ def purchase_shop_plan(
             plan_name=plan.name,
             service_type=service_type,
             status=current_pending.status,
+            change_kind=current_pending.change_kind,
+            quoted_amount=current_pending.quoted_amount,
+            quoted_currency=current_pending.quoted_currency,
         )
 
     current_active = _active_subscription_for(db, business_id, service_type=service_type)
@@ -615,7 +678,7 @@ def get_shop_subscription_summary(
         )
         .order_by(Subscription.id.desc())
     )
-    chatbot_subscription = db.scalar(
+    chatbot_subscription = _active_subscription_for(db, business_id, service_type="chatbot") or db.scalar(
         select(Subscription)
         .where(
             Subscription.business_id == business_id,
@@ -659,6 +722,8 @@ def get_shop_subscription_summary(
             plan_name=plan.name if plan else "Chưa chọn gói",
             service_type=subscription.service_type,
             status=subscription.status,
+            change_kind=subscription.change_kind,
+            quoted_amount=subscription.quoted_amount,
         ) if subscription is not None else None),
         chatbot_subscription=(OnboardingSubscriptionOut(
             id=chatbot_subscription.id,
@@ -666,7 +731,15 @@ def get_shop_subscription_summary(
             plan_name=(chatbot_subscription.plan.name if chatbot_subscription.plan else "Trợ lý AI"),
             service_type="chatbot",
             status=chatbot_subscription.status,
+            change_kind=chatbot_subscription.change_kind,
+            quoted_amount=chatbot_subscription.quoted_amount,
         ) if chatbot_subscription is not None else None),
+        package_request=_checkout_subscription_out(db.scalar(select(Subscription).where(
+            Subscription.business_id == business_id, Subscription.service_type == "package",
+        ).order_by(Subscription.id.desc()))),
+        chatbot_request=_checkout_subscription_out(db.scalar(select(Subscription).where(
+            Subscription.business_id == business_id, Subscription.service_type == "chatbot",
+        ).order_by(Subscription.id.desc()))),
         amount=payment.amount if payment is not None else (plan.price if plan is not None else None),
         currency=payment.currency if payment is not None else "VND",
         payment_status=payment.status if payment is not None else None,
@@ -699,9 +772,9 @@ def request_signup_otp(payload: SignupOtpRequest, db: Session = Depends(get_db))
     code = generate_verification_code()
     challenge = SignupEmailChallenge(
         email=email,
-        owner_name=payload.owner_name.strip(),
-        shop_name=payload.shop_name.strip(),
-        password_hash=hash_password(payload.password),
+        owner_name=payload.owner_name.strip() if payload.owner_name else None,
+        shop_name=payload.shop_name.strip() if payload.shop_name else None,
+        password_hash=hash_password(payload.password) if payload.password else None,
         code_hash=hash_verification_code(code),
         status="pending",
         expires_at=now + timedelta(minutes=10),
@@ -709,8 +782,10 @@ def request_signup_otp(payload: SignupOtpRequest, db: Session = Depends(get_db))
     db.add(challenge)
     db.flush()
     try:
-        delivery = deliver_otp(channel="email", destination=email, code=code)
-        if not delivery.delivered:
+        from app.services.platform_otp_email import get_platform_otp_smtp_config
+        delivery = deliver_otp(channel="email", destination=email, code=code,
+                               smtp_config=get_platform_otp_smtp_config(db))
+        if not delivery.delivered or delivery.provider != "smtp":
             db.rollback()
             raise HTTPException(status_code=503, detail="Chưa thể gửi mã xác minh email. Vui lòng thử lại sau.")
     except HTTPException:
@@ -746,6 +821,15 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=422, detail="Mã OTP đã bị khóa. Hãy yêu cầu mã mới.")
 
+    owner_name = (payload.owner_name or challenge.owner_name or "").strip()
+    shop_name = (payload.shop_name or challenge.shop_name or "").strip()
+    password_hash = challenge.password_hash or (hash_password(payload.password) if payload.password else None)
+    if len(owner_name) < 2 or len(shop_name) < 2 or password_hash is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Hãy nhập người đại diện, tên shop và mật khẩu trước khi xác minh email.",
+        )
+
     challenge.attempts += 1
     if not hmac.compare_digest(hash_verification_code(payload.otp), challenge.code_hash):
         if challenge.attempts >= challenge.max_attempts:
@@ -762,11 +846,11 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
     try:
         business, owner, subscription, plan, token, expires_at = _create_shop_records(
             db,
-            shop_name=challenge.shop_name,
+            shop_name=shop_name,
             requested_slug=None,
-            owner_name=challenge.owner_name,
+            owner_name=owner_name,
             owner_email=email,
-            password_hash=challenge.password_hash,
+            password_hash=password_hash,
             plan_code=payload.plan_code,
             service_type=payload.service_type,
         )
@@ -1080,12 +1164,16 @@ def connect_channel(
 @router.get("/shops/{business_id}/channels", response_model=list[OnboardingChannelStatusOut])
 def list_connected_channels(
     business_id: int,
+    response: Response,
     db: Session = Depends(get_db),
     platform_db: Session = Depends(get_platform_db),
     actor: User | None = Depends(require_admin_access),
 ):
     """Return safe connection metadata without exposing provider secrets."""
 
+    # Connection state changes immediately after OAuth, pairing, or disconnect.
+    # Prevent browser/proxy caches from restoring an older channel snapshot on reload.
+    response.headers["Cache-Control"] = "no-store"
     _require_shop_admin(db, business_id, actor)
     with tenant_session(schema_name_for(business_id)) as tenant_db:
         channels = (
@@ -1102,10 +1190,12 @@ def list_connected_channels(
             config = channel.config if isinstance(channel.config, dict) else {}
             provider_account = config.get("provider_account")
             is_local_connector = str(config.get("provider") or "") == f"{channel.channel_type}_local_connector"
+            is_server_managed = config.get("connector_execution_mode") == "server"
             connector_paired = channel.status == "active" and bool(
                 config.get("connector_paired_at")
                 or config.get("webhook_secret")
                 or config.get("webhook_secret_encrypted")
+                or (is_local_connector and channel.access_token_encrypted)
             )
             last_seen = config.get("connector_last_seen_at")
             connector_state = "unknown"
@@ -1149,8 +1239,8 @@ def list_connected_channels(
                     connector_status=connector_state,
                     connector_last_seen_at=last_seen,
                     connector_last_error_code=(str(config.get("connector_last_error_code") or "")[:80] or None),
-                    requires_local_device=is_local_connector,
-                    automatic_supported=False if is_local_connector else None,
+                    requires_local_device=is_local_connector and not is_server_managed,
+                    automatic_supported=True if is_server_managed else False if is_local_connector else None,
                     retry_endpoint=(
                         f"/api/onboarding/shops/{business_id}/channels/{channel.channel_type}/retry"
                         if is_local_connector else None
@@ -1170,7 +1260,7 @@ def retry_local_connector(
     """Queue one restart for a live local connector; the server cannot start an offline device."""
     _require_shop_admin(db, business_id, actor)
     channel_type = str(channel_type or "").strip().lower()
-    if channel_type not in {"tiktok", "shopee"}:
+    if channel_type not in {"tiktok", "shopee", "facebook", "instagram"}:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
 
     now = datetime.now(timezone.utc)
@@ -1199,10 +1289,15 @@ def retry_local_connector(
             online = (now - heartbeat_at.astimezone(timezone.utc)).total_seconds() <= 150
         except (TypeError, ValueError):
             online = False
+        server_managed = config.get("connector_execution_mode") == "server"
         if not online:
             raise HTTPException(status_code=409, detail={
                 "code": "connector_offline",
-                "message": "Máy connector đang ngoại tuyến. Hãy mở ứng dụng trên máy đã đăng nhập rồi thử lại.",
+                "message": (
+                    "Server connector agent đang ngoại tuyến. Hãy kiểm tra Windows agent trên VPS."
+                    if server_managed else
+                    "Máy connector đang ngoại tuyến. Hãy mở ứng dụng trên máy đã đăng nhập rồi thử lại."
+                ),
             })
 
         retry_id = str(config.get("connector_retry_id") or "")
@@ -1232,8 +1327,12 @@ def retry_local_connector(
     return {
         "status": "retry_queued",
         "connector_status": "online",
-        "requires_local_device": True,
-        "message": "Ứng dụng connector trên máy đang chạy sẽ nhận lệnh và khởi động lại.",
+        "requires_local_device": not server_managed,
+        "message": (
+            "Windows server agent sẽ khởi động lại connector worker."
+            if server_managed else
+            "Ứng dụng connector trên máy đang chạy sẽ nhận lệnh và khởi động lại."
+        ),
     }
 
 
@@ -1245,19 +1344,19 @@ def create_local_connector_pairing_code(
     platform_db: Session = Depends(get_platform_db),
     actor: User | None = Depends(require_admin_access),
 ):
-    """Create a short-lived, single-use code for a local TikTok/Shopee connector."""
+    """Create a short-lived, single-use code for a local channel connector."""
 
     _require_shop_admin(db, business_id, actor)
     channel_type = str(channel_type or "").strip().lower()
-    if channel_type not in {"tiktok", "shopee"}:
+    if channel_type not in {"tiktok", "shopee", "facebook", "instagram"}:
         raise HTTPException(status_code=404, detail="Kênh connector không được hỗ trợ.")
 
-    external_account_id = (
-        f"tiktok-bridge-{business_id}"
-        if channel_type == "tiktok"
-        else f"shopee-connector-{business_id}"
-    )
-    connector_name = "TikTok Connector" if channel_type == "tiktok" else "Shopee Connector"
+    external_account_id, connector_name = {
+        "tiktok": (f"tiktok-bridge-{business_id}", "TikTok Connector"),
+        "shopee": (f"shopee-connector-{business_id}", "Shopee Connector"),
+        "facebook": (f"facebook-business-suite-{business_id}", "Meta Business Suite · Messenger"),
+        "instagram": (f"instagram-business-suite-{business_id}", "Meta Business Suite · Instagram"),
+    }[channel_type]
     endpoint = f"/api/channels/{channel_type}/incoming"
     expires_at = int(time.time()) + 600
 
@@ -1283,7 +1382,23 @@ def create_local_connector_pairing_code(
                 )
                 tenant_db.add(channel)
                 tenant_db.flush()
-            was_active = channel.status == "active"
+            config = dict(channel.config) if isinstance(channel.config, dict) else {}
+            already_paired = bool(
+                channel.status == "active"
+                and config.get("provider") == f"{channel_type}_local_connector"
+                and (
+                    config.get("connector_paired_at")
+                    or config.get("webhook_secret")
+                    or config.get("webhook_secret_encrypted")
+                    or channel.access_token_encrypted
+                )
+            )
+            if already_paired:
+                raise HTTPException(status_code=409, detail={
+                    "code": "connector_already_paired",
+                    "message": "Connector đã ghép nối. Hãy ngắt kết nối hiện tại trước khi tạo mã ghép nối mới.",
+                })
+            was_active = channel.status in QUOTA_HOLDING_CHANNEL_STATUSES
             pairing_code = f"PAIR.{channel_type}.{business_id}.{channel.id}.{secrets.token_urlsafe(12)}"
             connector_token = f"CONN.{channel_type}.{business_id}.{channel.id}.{secrets.token_urlsafe(32)}"
             channel.name = connector_name
@@ -1291,7 +1406,6 @@ def create_local_connector_pairing_code(
             if not was_active:
                 channel.access_token_encrypted = None
                 channel.access_token = None
-            config = dict(channel.config) if isinstance(channel.config, dict) else {}
             config.update(
                 {
                     "provider": f"{channel_type}_local_connector",
@@ -1414,11 +1528,13 @@ def disconnect_bot_channel(
     _require_shop_admin(db, business_id, actor)
     with tenant_session(schema_name_for(business_id)) as tenant_db:
         channel = tenant_db.get(Channel, channel_id)
-        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo", "tiktok", "shopee"}:
+        if channel is None or channel.business_id != business_id or channel.channel_type not in {"telegram", "zalo", "tiktok", "shopee", "facebook", "instagram"}:
             raise HTTPException(status_code=404, detail="Kênh bot không tồn tại.")
         config = channel.config if isinstance(channel.config, dict) else {}
-        if channel.status in {"active", "pending_pairing"}:
-            was_active = channel.status == "active"
+        if channel.channel_type in {"facebook", "instagram"} and config.get("provider") != f"{channel.channel_type}_local_connector":
+            raise HTTPException(status_code=404, detail="Chỉ có thể ngắt connector Business Suite tại đây.")
+        if channel.status in QUOTA_HOLDING_CHANNEL_STATUSES or channel.status == "pending_pairing":
+            was_active = channel.status in QUOTA_HOLDING_CHANNEL_STATUSES
             channel.status = "disconnected"
             channel.disconnected_at = datetime.now(timezone.utc).replace(tzinfo=None)
             if was_active:

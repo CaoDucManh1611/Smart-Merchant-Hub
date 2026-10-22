@@ -10,7 +10,7 @@ Retrieval-Augmented Generation cho CRM Chatbot.
 | `semantic_chunker.py` | Chia theo cấu trúc, câu hoàn chỉnh và ranh giới Gemini; thêm ngữ cảnh cho embedding |
 | `chunker.py` | Chunker cũ, giữ cho tương thích và kiểm thử |
 | `embedder.py` | Chuyển text → vector embedding (local Sentence-Transformers / Gemini / OpenAI) |
-| `retriever.py` | Hybrid retrieval: pgvector + tìm kiếm từ khóa |
+| `retriever.py` | Gemini vector + BM25 → RRF → Personalized PageRank |
 | `prompt_builder.py` | Xây dựng prompt cho LLM từ context + query |
 | `llm_caller.py` | Gọi LLM API, hỗ trợ streaming (Groq / Gemini / OpenAI) |
 | `run_logger.py` | Ghi một bản ghi JSON cho mỗi lần RAG xử lý |
@@ -30,8 +30,26 @@ webhook Facebook/Instagram sẽ được truy xuất từ tài liệu đó.
 
 ### Query (user hỏi)
 ```
-User query → embedder.py → retriever.py → prompt_builder.py → llm_caller.py → Response
+User query → Gemini embedding + BM25 → RRF → PPR → prompt_builder.py → LLM → Response
 ```
+
+Khi `LLM_PROVIDER=groq`, lỗi quota, xác thực, mất kết nối, timeout hoặc circuit
+breaker mở sẽ chuyển sang `GEMINI_FALLBACK_MODEL` (mặc định
+`gemini-3.5-flash-lite`). Để trống biến này để tắt dự phòng. Ưu tiên
+`GEMINI_API_KEYS`; nếu không có, dùng các key embedding được khai báo riêng khi
+`EMBEDDING_PROVIDER=gemini`. Không dùng key Groq để gọi Gemini.
+Áp dụng cho trả lời thường, streaming và ảnh; streaming chỉ chuyển khi chưa phát
+nội dung. Lỗi payload không chuyển provider; lỗi Gemini được trả về, không lặp
+về Groq. Model embedding giữ nguyên để tương thích với chỉ mục hiện có.
+
+`GEMINI_FALLBACK_MODELS` thêm model sau model dự phòng đầu tiên, mặc định
+`gemini-3.1-flash-lite,gemini-3.6-flash`. Mỗi yêu cầu thử tối đa một model Groq
+và ba model Gemini, theo thứ tự, không gọi song song. Model vừa lỗi được bỏ qua
+60 giây trong mỗi tiến trình; khi hết thời gian này, Groq được thử lại trước.
+Cooldown key và circuit Gemini tách theo model; giới hạn gọi đồng thời vẫn theo
+provider. Streaming dừng chuyển model sau khi bất kỳ model nào đã phát nội dung.
+Quota Gemini được tính theo project/model, không phải mỗi API key; nhiều key
+trong cùng project không làm tăng quota. Không tự đổi model embedding.
 
 ### Ranh giới và ngữ cảnh
 
@@ -43,10 +61,17 @@ User query → embedder.py → retriever.py → prompt_builder.py → llm_caller
 - Retrieval mở rộng cả đoạn cha khi tối đa 16 chunk và 6.000 ký tự; nếu lớn hơn, lấy hàng xóm gần nhất. Tổng nội dung bổ sung tối đa 12.000 ký tự/lượt truy xuất; giữ các kết quả độc lập và thứ tự nguồn trong đoạn cha.
 - Tài liệu cũ tiếp tục được đọc theo metadata cũ. Reindex từ bản gốc để áp dụng đầy đủ `structure-semantic-context-v2`; không trộn vector từ model khác trong một chỉ mục.
 
-Retriever luôn thử kết hợp tìm kiếm ngữ nghĩa với từ khóa. Vì vậy các mã SKU,
-tên sản phẩm và tài liệu chưa có embedding vẫn có thể được tìm thấy bằng lexical
-fallback. Khi xử lý lại một tài liệu, các chunks cũ được thay thế trong cùng
-transaction để không tạo dữ liệu trùng.
+Retriever giữ nguyên Gemini embedding và chỉ mục vector hiện có. Mỗi truy vấn lấy
+ứng viên vector theo độ gần cosine, đồng thời lấy ứng viên từ khóa có phạm vi
+`business_id`, chuẩn hóa dấu tiếng Việt và ưu tiên SKU chính xác. BM25 chấm thứ
+hạng từ khóa trên tối đa `max(200, top_k × 40)` ứng viên khớp; RRF hợp nhất thứ
+hạng BM25 và vector mà không cộng trực tiếp hai thang điểm khác nhau; Personalized
+PageRank dùng liên kết sản phẩm, chunk cha và chunk liền kề để xếp hạng lại tập
+đã hợp nhất. Không đổi model embedding hoặc schema nên không cần re-embed kho tài
+liệu. Nếu Gemini embedding hoặc truy vấn vector lỗi, BM25 vẫn chạy và tiếp tục
+qua PPR. Candidate BM25 hiện được chấm trong Python trên tập giới hạn; theo dõi
+Recall@K để quyết định khi nào cần chuyển thống kê/chấm điểm sang chỉ mục tìm kiếm
+PostgreSQL khi kho tri thức lớn lên.
 
 ## API Endpoints
 
@@ -146,3 +171,37 @@ chiều, hệ thống bỏ qua HNSW để backend vẫn khởi động và dùng
 
 Groq được dùng để sinh câu trả lời qua API tương thích OpenAI. Gemini vẫn được
 dùng cho embedding vì Groq không cung cấp embedding trong pipeline hiện tại.
+
+## RFM và gợi ý theo khách hàng
+
+- Hồ sơ 360 và bộ gợi ý dùng chung `customer_rfm_profiles`: chỉ tính đơn
+  `completed` hoặc `delivered` đã trả tiền, loại đơn hoàn toàn bộ/thất bại và
+  đơn tương lai; tổng chi tiêu trừ phần hoàn tiền. Một đơn nhiều dòng vẫn chỉ
+  tính một lần mua. Percentile lấy toàn bộ khách đã mua còn hiệu lực trong shop,
+  không thay đổi theo tập khách đồng ý cá nhân hóa.
+- Hồ sơ và tín hiệu sản phẩm được lưu trong `recommendation_customer_profiles.features`.
+  Job phân nhóm sẵn có nạp trước cache; lượt gợi ý đầu tiên cũng tự tạo hồ sơ.
+  Mỗi lượt chỉ kiểm tra các aggregate SQL để phát hiện đơn/tín hiệu thay đổi.
+  Cache đổi khi trạng thái, tiền hoàn, tương tác hoặc catalog thay đổi; bucket
+  một giờ cập nhật tuổi lần mua và độ suy giảm sở thích. Cache không thay thế
+  kiểm tra đồng ý cá nhân hóa, giá hoặc tồn kho trực tiếp từ CRM.
+- RFM điều chỉnh trọng số sở thích/mức phổ biến/RAG, không phải xác suất mua.
+  Mức quan tâm nhập tay lấy bản ghi mới nhất, kể cả 0%; SKU được hỏi cụ thể,
+  ngân sách, màu và tồn khả dụng là điều kiện bắt buộc trước xếp hạng.
+- `RecommendationRequest.context` lưu `profile_cache_hit`, `profile_as_of`,
+  trọng số và `ranking_elapsed_ms`; phần tính RFM/sở thích không gọi LLM.
+
+Đo chất lượng với bộ câu hỏi/khách được gán nhãn độc lập. Trong JSONL cases,
+thêm `expected_product_ids`, `forbidden_product_ids`, `expected_rfm_segment`;
+predictions tương ứng có `recommended_product_ids`, `rfm_segment` cùng các
+trường câu trả lời/nguồn hiện có. `evaluate_rag.py` xuất thêm Precision@K,
+Recall@K, NDCG@K, MRR, tỷ lệ gợi ý sản phẩm cấm và độ đúng nhóm RFM.
+Các ID được đối chiếu trong cùng shop; không gom ID giữa các tenant vào một case.
+
+```powershell
+python backend/scripts/evaluate_rag.py predictions.jsonl --cases cases.jsonl --min-product-ndcg 0.8 --max-forbidden-product-rate 0
+```
+
+Với bộ case chỉ đo gợi ý, thêm `--min-action-accuracy 0 --min-recall 0`.
+Điểm xếp hạng và kiểm tra nội dung tự động không thay thế đánh giá ngữ nghĩa
+câu trả lời của người thật. Kiểm thử hồi quy không chứng minh tăng chuyển đổi.

@@ -3,8 +3,11 @@ import unittest
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.pool import StaticPool
 
-from app.database.session import Base
 from app.models import MessageAttachment
+from app.models.channel import Channel
+from app.models.conversation import Conversation
+from app.models.customer import Customer
+from app.models.message import Message
 
 
 class MessageAttachmentModelTests(unittest.TestCase):
@@ -14,7 +17,8 @@ class MessageAttachmentModelTests(unittest.TestCase):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        MessageAttachment.__table__.create(engine)
+        for model in (Customer, Channel, Conversation, Message, MessageAttachment):
+            model.__table__.create(engine)
         columns = {column["name"] for column in inspect(engine).get_columns("message_attachments")}
         self.assertTrue(
             {

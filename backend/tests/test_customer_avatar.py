@@ -15,6 +15,9 @@ from app.services.channel_credentials import encrypt_token
 from app.services import customer_avatar
 from app.services.customer_avatar import (
     build_customer_avatar_url,
+    is_trusted_meta_avatar_url,
+    is_trusted_marketplace_avatar_url,
+    marketplace_avatar_channel,
     verify_customer_avatar_url,
 )
 
@@ -92,6 +95,97 @@ class CustomerAvatarUrlTests(unittest.TestCase):
             base_url="https://crm.example.test",
         )
         self.assertTrue(refreshed.startswith("https://crm.example.test/api/customers/7/avatar?"))
+        self.assertEqual("zalo", parse_qs(urlsplit(refreshed).query)["channel"][0])
+
+    def test_refresh_preserves_avatar_source_channel_after_customer_merge(self):
+        stale = build_customer_avatar_url(
+            customer_id=7,
+            business_id=3,
+            channel="telegram",
+            base_url="https://crm.example.test",
+        )
+        refreshed = customer_avatar.refresh_customer_avatar_url(
+            stale,
+            customer_id=7,
+            business_id=3,
+            channel="facebook",
+            base_url="https://crm.example.test",
+        )
+        query = parse_qs(urlsplit(refreshed).query)
+        self.assertEqual("telegram", query["channel"][0])
+        self.assertTrue(
+            verify_customer_avatar_url(
+                customer_id=7,
+                business_id=3,
+                expires=int(query["expires"][0]),
+                signature=query["signature"][0],
+                channel="telegram",
+            )
+        )
+        self.assertFalse(
+            verify_customer_avatar_url(
+                customer_id=7,
+                business_id=3,
+                expires=int(query["expires"][0]),
+                signature=query["signature"][0],
+                channel="facebook",
+            )
+        )
+
+    def test_meta_cdn_avatar_url_is_trusted_only_over_https(self):
+        self.assertTrue(
+            is_trusted_meta_avatar_url(
+                "https://scontent-iad3-1.cdninstagram.com/v/t51/avatar.jpg"
+            )
+        )
+        self.assertTrue(is_trusted_meta_avatar_url("https://lookaside.fbsbx.com/avatar.jpg"))
+        self.assertFalse(is_trusted_meta_avatar_url("http://cdninstagram.com/avatar.jpg"))
+        self.assertFalse(is_trusted_meta_avatar_url("https://cdninstagram.com.attacker.test/avatar.jpg"))
+
+    def test_marketplace_avatar_cdn_urls_are_channel_bound_and_trusted(self):
+        self.assertEqual(
+            "tiktok",
+            marketplace_avatar_channel("https://p16-sign.tiktokcdn-us.com/avatar.jpg"),
+        )
+        self.assertEqual(
+            "shopee",
+            marketplace_avatar_channel("https://down-vn.img.susercontent.com/file/avatar"),
+        )
+        self.assertTrue(
+            is_trusted_marketplace_avatar_url(
+                "https://down-vn.img.susercontent.com/file/avatar", "shopee"
+            )
+        )
+        self.assertFalse(
+            is_trusted_marketplace_avatar_url(
+                "https://susercontent.com.attacker.test/avatar", "shopee"
+            )
+        )
+        self.assertFalse(
+            is_trusted_marketplace_avatar_url("http://susercontent.com/avatar", "shopee")
+        )
+
+    def test_marketplace_avatar_refresh_infers_source_after_customer_merge(self):
+        refreshed = customer_avatar.refresh_customer_avatar_url(
+            "https://down-vn.img.susercontent.com/file/avatar",
+            customer_id=7,
+            business_id=3,
+            channel="facebook",
+            base_url="https://crm.example.test",
+        )
+        self.assertEqual(
+            "shopee", parse_qs(urlsplit(refreshed).query)["channel"][0]
+        )
+
+    def test_marketplace_avatar_refresh_uses_source_host_after_customer_merge(self):
+        refreshed = customer_avatar.refresh_customer_avatar_url(
+            "https://p16-sign.tiktokcdn-us.com/avatar.jpg",
+            customer_id=7,
+            business_id=3,
+            channel="facebook",
+            base_url="https://crm.example.test",
+        )
+        self.assertEqual("tiktok", parse_qs(urlsplit(refreshed).query)["channel"][0])
 
 
 class CustomerAvatarApiTests(unittest.TestCase):
@@ -123,9 +217,9 @@ class CustomerAvatarApiTests(unittest.TestCase):
             db.flush()
             customer = Customer(
                 business_id=business.id,
-                channel="telegram",
+                channel="facebook",
                 external_user_id="12345",
-                name="Telegram Buyer",
+                name="Merged Buyer",
             )
             db.add(customer)
             db.flush()
@@ -154,11 +248,12 @@ class CustomerAvatarApiTests(unittest.TestCase):
         app.dependency_overrides.clear()
         settings.CHANNEL_ENCRYPTION_KEY = cls.previous_key
 
-    def test_signed_avatar_route_streams_telegram_image_without_token(self):
+    def test_signed_avatar_route_uses_telegram_source_for_merged_customer(self):
         signed = build_customer_avatar_url(
             customer_id=self.customer_id,
             business_id=self.business_id,
             base_url="http://testserver",
+            channel="telegram",
         )
         parts = urlsplit(signed)
         query = parse_qs(parts.query)
@@ -180,6 +275,35 @@ class CustomerAvatarApiTests(unittest.TestCase):
         self.assertEqual(b"fake-jpeg", response.content)
         self.assertEqual("image/jpeg", response.headers["content-type"])
         self.assertNotIn("bot-token-secret", get.call_args.args[0])
+
+    def test_legacy_telegram_avatar_url_uses_provider_identity_after_merge(self):
+        customer_id = self._create_provider_customer("telegram", "merged")
+        with Session(self.engine) as db:
+            customer = db.get(Customer, customer_id)
+            customer.channel = "facebook"
+            db.commit()
+
+        signed = build_customer_avatar_url(
+            customer_id=customer_id,
+            business_id=self.business_id,
+            base_url="http://testserver",
+        )
+        parts = urlsplit(signed)
+        provider_response = Mock()
+        provider_response.content = b"fake-jpeg"
+        provider_response.headers = {"content-type": "image/jpeg"}
+        provider_response.raise_for_status.return_value = None
+        with patch(
+            "app.api.customer_avatar.TelegramAdapter.fetch_profile_avatar_file_path",
+            return_value="photos/avatar.jpg",
+        ), patch(
+            "app.api.customer_avatar.TelegramAdapter.build_file_url",
+            return_value="https://api.telegram.org/file/botinternal/photos/avatar.jpg",
+        ), patch("app.api.customer_avatar.httpx.get", return_value=provider_response):
+            response = self.client.get(f"{parts.path}?{parts.query}")
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(b"fake-jpeg", response.content)
 
     def _create_provider_customer(self, channel_type: str, suffix: str) -> int:
         with Session(self.engine) as db:
@@ -264,6 +388,91 @@ class CustomerAvatarApiTests(unittest.TestCase):
         self.assertEqual(b"instagram-jpeg", response.content)
         self.assertEqual("instagram-token-secret", profile.call_args.kwargs["access_token"])
         self.assertEqual("https://cdn.instagram.test/avatar.jpg", download.call_args.args[0])
+
+    def test_signed_avatar_route_uses_bridge_captured_instagram_cdn_without_meta_oauth(self):
+        customer_id = self._create_provider_customer("instagram", "bridge-cdn")
+        avatar_url = "https://scontent.cdninstagram.com/avatar/bridge-captured.jpg"
+        with Session(self.engine) as db:
+            customer = db.get(Customer, customer_id)
+            customer.avatar_url = avatar_url
+            db.commit()
+
+        signed = build_customer_avatar_url(
+            customer_id=customer_id,
+            business_id=self.business_id,
+            base_url="http://testserver",
+        )
+        provider_response = Mock()
+        provider_response.content = b"bridge-instagram-jpeg"
+        provider_response.headers = {"content-type": "image/jpeg"}
+        provider_response.raise_for_status.return_value = None
+
+        with patch("app.api.customer_avatar.httpx.get", return_value=provider_response) as download, patch(
+            "app.api.customer_avatar.fetch_instagram_customer_profile",
+            side_effect=AssertionError("bridge CDN URL should not require Meta OAuth"),
+        ):
+            response = self.client.get(signed.removeprefix("http://testserver"))
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(b"bridge-instagram-jpeg", response.content)
+        self.assertEqual(avatar_url, download.call_args.args[0])
+
+    def test_signed_avatar_route_uses_bridge_captured_facebook_cdn_without_meta_oauth(self):
+        customer_id = self._create_provider_customer("facebook", "bridge-cdn")
+        avatar_url = "https://scontent-iad3-1.xx.fbcdn.net/v/t39/avatar/bridge-captured.jpg"
+        with Session(self.engine) as db:
+            customer = db.get(Customer, customer_id)
+            customer.avatar_url = avatar_url
+            db.commit()
+
+        signed = build_customer_avatar_url(
+            customer_id=customer_id,
+            business_id=self.business_id,
+            base_url="http://testserver",
+            channel="facebook",
+        )
+        provider_response = Mock()
+        provider_response.content = b"bridge-facebook-jpeg"
+        provider_response.headers = {"content-type": "image/jpeg"}
+        provider_response.raise_for_status.return_value = None
+
+        with patch("app.api.customer_avatar.httpx.get", return_value=provider_response) as download:
+            response = self.client.get(signed.removeprefix("http://testserver"))
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(b"bridge-facebook-jpeg", response.content)
+        self.assertEqual(avatar_url, download.call_args.args[0])
+
+    def test_signed_avatar_route_streams_tiktok_and_shopee_cdn_images(self):
+        examples = (
+            ("tiktok", "https://p16-sign.tiktokcdn-us.com/avatar.jpg"),
+            ("shopee", "https://down-vn.img.susercontent.com/file/avatar"),
+        )
+        for channel_type, avatar_url in examples:
+            with self.subTest(channel=channel_type):
+                customer_id = self._create_provider_customer(channel_type, f"cdn-{channel_type}")
+                with Session(self.engine) as db:
+                    db.get(Customer, customer_id).avatar_url = avatar_url
+                    db.commit()
+
+                signed = build_customer_avatar_url(
+                    customer_id=customer_id,
+                    business_id=self.business_id,
+                    base_url="http://testserver",
+                    channel=channel_type,
+                )
+                provider_response = Mock()
+                provider_response.content = f"{channel_type}-jpeg".encode()
+                provider_response.headers = {"content-type": "image/jpeg"}
+                provider_response.raise_for_status.return_value = None
+                with patch(
+                    "app.api.customer_avatar.httpx.get", return_value=provider_response
+                ) as download:
+                    response = self.client.get(signed.removeprefix("http://testserver"))
+
+                self.assertEqual(200, response.status_code, response.text)
+                self.assertEqual(provider_response.content, response.content)
+                self.assertEqual(avatar_url, download.call_args.args[0])
 
 
 if __name__ == "__main__":

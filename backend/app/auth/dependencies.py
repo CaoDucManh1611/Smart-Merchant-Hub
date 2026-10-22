@@ -117,7 +117,10 @@ def _authenticate_request(request: Request, authorization: str | None, db: Sessi
     ).first() is not None
     if user.business_id is None and not is_platform_admin:
         raise HTTPException(status_code=401, detail="Tài khoản không còn hoạt động.")
-    if str(user.role or "").strip().lower() in {"support", "platform_support"}:
+    if (
+        user.business_id is None
+        and str(user.role or "").strip().lower() in {"support", "platform_support"}
+    ):
         # Support identities are intentionally unusable against normal tenant
         # APIs.  They must present a grant-bound token to /api/support only.
         if not request.url.path.startswith("/api/support") and not request.url.path.startswith("/api/platform/support-sessions"):
@@ -187,6 +190,32 @@ def require_permission(permission: str):
         if permission_allowed(db, user, resource=resource, action=action):
             return user
         raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này.")
+    return dependency
+
+
+def require_resource_access(permission: str):
+    """Enforce effective resource permissions while preserving dev-header compatibility."""
+    resource, action = (permission.split(":", 1) + ["read"])[:2] if ":" in permission else (permission, "read")
+
+    def dependency(
+        request: Request,
+        db: Session = Depends(get_db),
+        user: User | None = Depends(get_optional_user),
+        x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
+    ) -> User | None:
+        if not isinstance(user, User):
+            user = None
+        if user is None:
+            if settings.ENVIRONMENT.strip().lower() == "production":
+                raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
+            _ensure_business_active(db, _active_business_id(request, user, x_business_id))
+            return None
+
+        _ensure_business_active(db, user.business_id)
+        if permission_allowed(db, user, resource=resource, action=action):
+            return user
+        raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này.")
+
     return dependency
 
 

@@ -18,14 +18,17 @@ class SignupEmailChallenge(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    owner_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    shop_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Signup OTP can be sent as soon as an email is entered. Older pending
+    # challenges may still contain these details; new flows attach them only
+    # when the verified address is used to finish signup.
+    owner_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    shop_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # The same short-lived challenge store is also used for verified staff
     # invitations.  Existing signup rows keep the default ``signup`` purpose.
     purpose: Mapped[str] = mapped_column(String(30), nullable=False, default="signup", server_default="signup", index=True)
     business_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     role: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

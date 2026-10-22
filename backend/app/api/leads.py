@@ -16,7 +16,7 @@ from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.lead import Lead
 from app.models.revenue import LeadActivity, LeadConversion
-from app.models.sales import Order
+from app.models.sales import Order, Product
 from app.schemas.lead import (
     LeadCreate,
     LeadListOut,
@@ -36,6 +36,7 @@ from app.services.workflow_engine import emit_workflow_event
 from app.auth.dependencies import require_write_access
 from app.services.crm_workspace_config import get_crm_workspace_config
 from app.services.audit_service import record_audit
+from app.services.recommendation_interaction_service import record_interaction
 
 
 router = APIRouter()
@@ -94,10 +95,14 @@ def _get_lead(db: Session, lead_id: int, tenant: TenantContext) -> Lead:
 
 
 def _out(lead: Lead) -> LeadOut:
+    metadata = lead.metadata_ if isinstance(lead.metadata_, dict) else {}
+    product_interest = metadata.get("product_interest")
+    product_id = product_interest.get("product_id") if isinstance(product_interest, dict) else None
     return LeadOut(
         id=lead.id,
         business_id=lead.business_id,
         customer_id=lead.customer_id,
+        product_id=int(product_id) if str(product_id or "").isdigit() else None,
         conversation_id=lead.conversation_id,
         title=lead.title,
         stage=lead.stage,
@@ -146,10 +151,27 @@ def create_lead(
 ):
     _validate_stage(db, tenant, payload.stage)
     customer = _get_customer(db, payload.customer_id, tenant)
+    product = None
+    if payload.product_id is not None:
+        product = db.query(Product).filter(
+            Product.id == payload.product_id,
+            Product.business_id == tenant.business_id,
+            Product.status == "active",
+            Product.stock_quantity > Product.reserved_quantity,
+        ).first()
+        if product is None:
+            raise HTTPException(status_code=404, detail="Sản phẩm không tồn tại, đã ngừng bán hoặc hết hàng.")
     conversation = None
     if payload.conversation_id is not None:
         conversation = _get_conversation(db, payload.conversation_id, customer.id, tenant)
     _validate_assignee(user_db, payload.assigned_user_id, tenant)
+    lead_metadata = dict(payload.metadata or {})
+    lead_metadata.pop("product_interest", None)
+    if product is not None:
+        lead_metadata["product_interest"] = {
+            "product_id": product.id,
+            "interest_percent": payload.probability,
+        }
     lead = Lead(
         business_id=tenant.business_id,
         customer_id=customer.id,
@@ -163,11 +185,25 @@ def create_lead(
         assigned_user_id=payload.assigned_user_id,
         expected_close_at=payload.expected_close_at,
         notes=payload.notes.strip() if payload.notes else None,
-        metadata_=payload.metadata,
+        metadata_=lead_metadata or None,
     )
     db.add(lead)
     db.flush()
-    record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action="lead_created", resource_type="lead", resource_id=lead.id, metadata={"customer_id": lead.customer_id, "conversation_id": lead.conversation_id, "stage": lead.stage})
+    record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action="lead_created", resource_type="lead", resource_id=lead.id, metadata={"customer_id": lead.customer_id, "conversation_id": lead.conversation_id, "stage": lead.stage, "product_id": product.id if product else None, "interest_percent": payload.probability if product else None})
+    if product is not None and payload.probability > 0:
+        record_interaction(
+            db,
+            business_id=tenant.business_id,
+            customer_id=customer.id,
+            product_id=product.id,
+            request_id=None,
+            event_type="staff_interest",
+            source="api",
+            query=None,
+            idempotency_key=f"lead:{lead.id}:staff-interest",
+            metadata={"interest_percent": payload.probability, "lead_id": lead.id},
+            occurred_at=lead.created_at,
+        )
     db.commit()
     db.refresh(lead)
     emit_workflow_event(

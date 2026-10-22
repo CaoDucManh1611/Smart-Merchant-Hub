@@ -10,6 +10,8 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models.audit_log import AuditLog
 from app.models.business import Business
+from app.models.business_setting import BusinessSetting
+from app.models.crm_job import CrmJob
 from app.models.customer import Customer
 from app.models.conversation import Conversation
 from app.models.customer_collection import CustomerVerificationChallenge
@@ -178,6 +180,44 @@ class CustomerDataCollectionApiTests(unittest.TestCase):
         )
         self.assertEqual(201, accepted.status_code)
         self.assertEqual(incoming_id, accepted.json()["evidence_message_id"])
+
+    def test_personalization_consent_requires_customer_message_evidence(self):
+        url = f"/api/customers/{self.customer_id}/consents"
+        without_evidence = self.client.post(
+            url, headers=self.headers(), json={"purpose": "personalization", "status": "granted"},
+        )
+        self.assertEqual(422, without_evidence.status_code)
+
+        with Session(self.engine) as db:
+            conversation = Conversation(business_id=self.business_id, customer_id=self.customer_id, channel="facebook")
+            db.add(conversation)
+            db.flush()
+            incoming = Message(
+                conversation_id=conversation.id, channel="facebook", direction="inbound",
+                sender_type="customer", content="Đồng ý lưu sở thích để shop tư vấn phù hợp hơn.",
+            )
+            db.add(incoming)
+            db.add(BusinessSetting(
+                business_id=self.business_id,
+                key="customer_fact_extraction_enabled",
+                value="true",
+            ))
+            db.commit()
+            incoming_id = incoming.id
+
+        accepted = self.client.post(
+            url, headers=self.headers(), json={
+                "purpose": "personalization", "status": "granted", "evidence_message_id": incoming_id,
+            },
+        )
+        self.assertEqual(201, accepted.status_code, accepted.text)
+        self.assertEqual("personalization", accepted.json()["purpose"])
+        self.assertEqual(incoming_id, accepted.json()["evidence_message_id"])
+        with Session(self.engine) as db:
+            self.assertEqual(1, db.query(CrmJob).filter(
+                CrmJob.business_id == self.business_id,
+                CrmJob.kind == "customer.facts.weekly_scan",
+            ).count())
 
     def test_verification_challenge_stores_only_hash_and_can_verify(self):
         contact = self.client.post(

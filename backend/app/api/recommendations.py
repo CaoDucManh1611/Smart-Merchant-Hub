@@ -1,11 +1,16 @@
 """Tenant-scoped product recommendation serving and feedback endpoints."""
 
+from types import SimpleNamespace
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin_access, require_write_access
 from app.tenancy.crm_session import get_tenant_db
-from app.models.recommendation import RecommendationCustomerProfile, RecommendationTrainingRun
+from app.models.recommendation import RecommendationCustomerProfile, RecommendationRequest, RecommendationTrainingRun
+from app.models.sales import Product
+from app.database.tenant_session import tenant_session
+from app.tenancy.schema import schema_name_for
 from app.schemas.recommendation import (
     RecommendationFeedbackCreate,
     RecommendationFeedbackOut,
@@ -15,14 +20,18 @@ from app.schemas.recommendation import (
     RecommendationRequestCreate,
     RecommendationResponse,
     RecommendationTrainingScheduleOut,
+    RecommendationDemoPreviewRequest,
 )
 from app.services.job_service import enqueue_job
 from app.services.recommendation_service import (
     RecommendationServiceError,
     record_feedback,
+    safe_http_url,
     serve_recommendations,
+    verify_recommendation_click_signature,
+    _filter_query_candidates,
 )
-from app.services.recommendation_artifacts import recommendation_artifact_status
+from app.services.recommendation_artifacts import RecommendationArtifactError, recommendation_artifact_status, registry as artifact_registry
 from app.services.recommendation_interaction_service import (
     RecommendationInteractionError,
     record_interaction,
@@ -43,10 +52,98 @@ def _raise_interaction_error(exc: RecommendationInteractionError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
+@router.get("/click/{business_id}/{request_id}/{product_id}", include_in_schema=False)
+def track_recommendation_click(
+    business_id: int,
+    request_id: str,
+    product_id: int,
+    expires: int = Query(...),
+    signature: str = Query(...),
+):
+    """Record a signed product-link click, then redirect to the shop catalog URL."""
+    if not verify_recommendation_click_signature(
+        business_id=business_id,
+        request_id=request_id,
+        product_id=product_id,
+        expires=expires,
+        signature=signature,
+    ):
+        raise HTTPException(status_code=404, detail="Liên kết sản phẩm không hợp lệ hoặc đã hết hạn.")
+
+    with tenant_session(schema_name_for(business_id)) as db:
+        request = db.query(RecommendationRequest).filter(
+            RecommendationRequest.business_id == business_id,
+            RecommendationRequest.request_id == request_id,
+        ).first()
+        served_ids = {
+            int(item["product_id"])
+            for item in (request.served_items or [])
+            if isinstance(item, dict) and str(item.get("product_id", "")).isdigit()
+        } if request is not None else set()
+        product = db.query(Product).filter(
+            Product.business_id == business_id,
+            Product.id == product_id,
+        ).first() if product_id in served_ids else None
+        target_url = safe_http_url(product.product_url if product else None)
+        if target_url is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy liên kết sản phẩm.")
+        try:
+            record_feedback(
+                db,
+                business_id=business_id,
+                request_id=request_id,
+                product_id=product_id,
+                event_type="click",
+                idempotency_key=f"tracked-click:{request_id}:{product_id}",
+                metadata={"source": "signed_product_link"},
+            )
+        except Exception:
+            # A telemetry failure should not turn a valid customer-facing link
+            # into a broken product page.
+            db.rollback()
+    return RedirectResponse(target_url, status_code=307)
+
+
 @router.get("/artifacts", dependencies=[Depends(require_admin_access)])
 def artifacts_status():
     """Expose artifact discovery without loading untrusted checkpoints."""
     return recommendation_artifact_status()
+
+
+@router.post("/demo/preview", dependencies=[Depends(require_admin_access)])
+def preview_data_rag(payload: RecommendationDemoPreviewRequest):
+    """Read-only preview of the supplied synthetic catalog and trusted checkpoints."""
+    try:
+        catalog = artifact_registry.data_rag_asset("catalog.json")
+        report = artifact_registry.data_rag_asset("training_report.json")
+        products = [SimpleNamespace(
+            id=int(row["product_id"]), sku=row["sku"], name=row["name"],
+            price=float(row["price"]), stock_quantity=int(row["stock"]), reserved_quantity=0,
+            description="", metadata_={"color": row["color"], "category": row["category"]},
+        ) for row in catalog if int(row["stock"]) > 0]
+        eligible = _filter_query_candidates(products, payload.query)
+        shortlist = eligible[:3]
+        scores = artifact_registry.data_rag_scores(0, shortlist, payload.query, preview=True)
+        items = [{
+            "product_id": p.id, "sku": p.sku, "name": p.name, "price": p.price,
+            "available": p.stock_quantity, "baseline_position": i,
+            "model_score": round(scores[p.id], 6),
+        } for i, p in enumerate(shortlist, 1)]
+        features = {"recency_days": float(payload.recency_days), "frequency": float(payload.frequency),
+                    "monetary": payload.monetary if payload.frequency else 0.0}
+        segment = artifact_registry.data_rag_segment(0, features, preview=True)
+        return {
+            "model_version": "data_rag_demo_v1", "data_scope": "synthetic",
+            "eligible_candidates": len(eligible), "shortlist_size": len(items),
+            "baseline": items, "ranked": sorted(items, key=lambda item: (-item["model_score"], item["baseline_position"])),
+            "rfm": {"features": features, "cluster_id": segment,
+                    "segment": "new_customer" if segment is None else f"data_rag_cluster_{segment}",
+                    "training_cluster_summary": report["rfm"]["clusters"].get(str(segment)) if segment is not None else None},
+            "held_out_metrics": report["product_ranker"]["metrics"]["test"],
+        }
+    except (OSError, ValueError, KeyError, TypeError, RecommendationArtifactError):
+        raise HTTPException(503, "Chưa có bộ mô hình thử nghiệm hợp lệ. Hãy cài bộ kết quả huấn luyện.")
+
 
 
 @router.post(
@@ -125,6 +222,7 @@ def recommend(
             RecommendationCustomerProfile.business_id == tenant.business_id,
             RecommendationCustomerProfile.customer_id == row.customer_id,
         ).first()
+    context = row.context if isinstance(row.context, dict) else {}
     return RecommendationResponse(
         request_id=row.request_id,
         customer_id=row.customer_id,
@@ -132,6 +230,9 @@ def recommend(
         strategy=row.strategy,
         model_version=row.model_version,
         candidate_count=int((row.context or {}).get("eligible_candidate_count", len(row.served_items or []))),
+        personalization_applied=bool(context.get("personalization_applied")),
+        personalization_signals=context.get("personalization_signals") or [],
+        available_personalization_signals=context.get("available_personalization_signals") or [],
         items=row.served_items or [],
         created_at=row.created_at,
     )

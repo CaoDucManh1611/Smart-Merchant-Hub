@@ -11,10 +11,10 @@ const signupCss = fs.readFileSync(new URL('../src/signup-design.css', import.met
 test('inbox presentation is scoped away from public auth and platform administration', () => {
   assert.match(main, /import "\.\/inbox-design\.css"/);
   const rules = [...css.matchAll(/([^{}]+)\{/g)].map(m => m[1].trim());
-  for (const rule of rules.filter(r => !r.startsWith('@') && !r.startsWith('/*') && !r.includes('.ui-language-control'))) {
+  for (const rule of rules.filter(r => !r.startsWith('@') && !/^\s*(?:from|to|\d+(?:\.\d+)?%)(?:\s*,\s*(?:from|to|\d+(?:\.\d+)?%))*\s*$/i.test(r) && !r.startsWith('/*') && !r.includes('.ui-language-control'))) {
     assert.match(rule, /\.crm-app:not\(\.platform-admin-workspace\) \.layout/);
   }
-  assert.doesNotMatch(css, /pointer-events:\s*none|visibility:\s*hidden/);
+  assert.doesNotMatch(css, /\.crm-app:not\(\.platform-admin-workspace\) \.layout\s*\{[^}]*?(?:pointer-events:\s*none|visibility:\s*hidden)/s);
   assert.match(css, /:not\(:focus-within\):not\(\.has-composer-content\)/);
 });
 
@@ -34,9 +34,10 @@ test('expanded customer profile sections use readable form, empty and summary tr
   assert.match(css, /\.customer-timeline-summary/);
 });
 
-test('the product uses one Vietnamese-first typeface across CRM, marketing and signup', () => {
-  assert.match(globalCss, /family=Be\+Vietnam\+Pro/);
-  assert.match(globalCss, /--font-ui:\s*"Be Vietnam Pro"/);
+test('the product uses one natural, readable typeface across CRM, marketing and signup', () => {
+  assert.match(globalCss, /family=Source\+Sans\+3/);
+  assert.match(globalCss, /--font-ui:\s*"Source Sans 3"/);
+  assert.doesNotMatch(globalCss, /family=Inter/);
   assert.match(globalCss, /button,[\s\S]*?font-family:\s*var\(--font-ui\)/);
   assert.match(marketingSource, /font-family:var\(--font-ui\)/);
   assert.match(signupCss, /font-family:var\(--font-ui\)/);

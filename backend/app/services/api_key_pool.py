@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable
 
@@ -16,6 +17,10 @@ class ApiKeyPoolUnavailable(RuntimeError):
 
 
 _provider_breaker = ProviderCircuitBreaker()
+_provider_semaphores: dict[str, threading.BoundedSemaphore] = {}
+_provider_semaphores_lock = threading.Lock()
+_MAX_PROVIDER_CONCURRENCY = 4
+_MAX_PROVIDER_ATTEMPTS = 3
 
 
 _TRANSIENT_MARKERS = (
@@ -28,11 +33,21 @@ _TRANSIENT_MARKERS = (
     "504",
     "authentication",
     "invalid api key",
+    "invalid_api_key",
+    "unauthorized",
+    "forbidden",
+    "permission denied",
     "quota",
     "rate limit",
     "rate_limit",
     "resource_exhausted",
     "too many requests",
+    "timeout",
+    "timed out",
+    "connection reset",
+    "connection error",
+    "connection refused",
+    "server disconnected",
     "temporarily unavailable",
 )
 
@@ -119,43 +134,86 @@ def redact_provider_error(error: Exception) -> str:
     return message[:240]
 
 
+def _provider_semaphore(provider: str) -> threading.BoundedSemaphore:
+    name = str(provider).strip().lower() or "ai"
+    with _provider_semaphores_lock:
+        return _provider_semaphores.setdefault(name, threading.BoundedSemaphore(_MAX_PROVIDER_CONCURRENCY))
+
+
+@contextmanager
+def provider_request_slot(provider: str, *, timeout_seconds: float = 10):
+    """Limit simultaneous calls per provider in this worker process."""
+    semaphore = _provider_semaphore(provider)
+    if not semaphore.acquire(timeout=max(0.0, timeout_seconds)):
+        raise ApiKeyPoolUnavailable("Nhà cung cấp AI đang quá tải; yêu cầu được chuyển nhân viên hỗ trợ.")
+    try:
+        yield
+    finally:
+        semaphore.release()
+
+
+async def acquire_provider_request_slot(provider: str, *, timeout_seconds: float = 10):
+    """Acquire the same provider limit without blocking the async event loop."""
+    import asyncio
+
+    semaphore = _provider_semaphore(provider)
+    acquired = await asyncio.to_thread(semaphore.acquire, True, max(0.0, timeout_seconds))
+    if not acquired:
+        raise ApiKeyPoolUnavailable("Nhà cung cấp AI đang quá tải; yêu cầu được chuyển nhân viên hỗ trợ.")
+    return semaphore
+
+
+def provider_call_started(provider: str) -> None:
+    _provider_breaker.before_call(provider)
+
+
+def provider_call_succeeded(provider: str) -> None:
+    _provider_breaker.record_success(provider)
+
+
+def provider_call_failed(provider: str, error: Exception) -> None:
+    if is_retryable_provider_error(error):
+        _provider_breaker.record_failure(provider)
+
+
 def call_with_key_rotation(
     pool: ApiKeyPool,
     operation,
     *,
     provider: str = "ai",
     circuit_breaker: ProviderCircuitBreaker | None = None,
+    failure_scope: str | None = None,
 ):
-    """Run an operation and retry once with a different key on transient errors."""
+    """Run a provider call with bounded key rotation and a per-provider limit."""
 
     attempted: set[str] = set()
     last_error: Exception | None = None
     breaker = circuit_breaker or _provider_breaker
-    # Walk the configured pool so a temporary quota/auth failure on one key
-    # can fall through all remaining keys (the release profile uses five).
-    max_attempts = pool.snapshot()["key_count"]
+    scope = failure_scope or provider
+    max_attempts = min(pool.snapshot()["key_count"], _MAX_PROVIDER_ATTEMPTS)
     if max_attempts <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
-    for _ in range(max_attempts):
-        try:
-            key = pool.next_key(exclude=attempted)
-        except ApiKeyPoolUnavailable:
-            if last_error is not None:
-                raise last_error
-            raise
-        attempted.add(key)
-        try:
-            breaker.before_call(provider)
-            result = operation(key)
-            breaker.record_success(provider)
-            return result
-        except ProviderCircuitOpen:
-            raise
-        except Exception as error:
-            last_error = error
-            pool.report_failure(key, error)
-            if is_retryable_provider_error(error):
-                breaker.record_failure(provider)
-            if not is_retryable_provider_error(error) or len(attempted) >= max_attempts:
+    with provider_request_slot(provider):
+        for _ in range(max_attempts):
+            try:
+                key = pool.next_key(exclude=attempted)
+            except ApiKeyPoolUnavailable:
+                if last_error is not None:
+                    raise last_error
                 raise
+            attempted.add(key)
+            try:
+                breaker.before_call(scope)
+                result = operation(key)
+                breaker.record_success(scope)
+                return result
+            except ProviderCircuitOpen:
+                raise
+            except Exception as error:
+                last_error = error
+                pool.report_failure(key, error)
+                if is_retryable_provider_error(error):
+                    breaker.record_failure(scope)
+                if not is_retryable_provider_error(error) or len(attempted) >= max_attempts:
+                    raise
     raise last_error or ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")

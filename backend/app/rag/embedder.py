@@ -1,6 +1,6 @@
 import logging
+import math
 import re
-import time
 from functools import lru_cache
 from collections.abc import Callable
 
@@ -80,6 +80,8 @@ def _validate_vectors(
                 f"{index}: expected {expected_dimension}, got {len(vector)}. "
                 "Check EMBEDDING_MODEL/EMBEDDING_DIMENSION and the DB vector column."
             )
+        if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in vector):
+            raise ValueError("Embedding provider returned a non-finite or non-numeric vector.")
     return vectors
 
 
@@ -87,6 +89,7 @@ def _embed_with_gemini(
     texts: list[str],
     model: str,
     progress_callback: Callable[[float], None] | None = None,
+    *, task_type: str = "RETRIEVAL_DOCUMENT",
 ) -> list[list[float]]:
     """Embed texts bằng Google Gemini API."""
     from google import genai
@@ -98,29 +101,12 @@ def _embed_with_gemini(
     total_batches = max(1, (len(texts) + batch_size - 1) // batch_size)
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        # A quota response must not keep an API request alive for hours. The
-        # worker makes this operation durable; after two short attempts the
-        # ingestion service can store a lexical-only index and expose a clear
-        # retry time instead of blocking the API process.
-        for attempt in range(2):
-            try:
-                result = call_with_key_rotation(
-                    _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
-                    lambda key: _gemini_embed_batch_once(genai, types, key, batch, model),
-                )
-                break
-            except Exception as error:
-                if "429" not in str(error) or attempt == 1:
-                    raise
-                delay = min(_gemini_retry_delay(error), 10)
-                logger.warning(
-                    "Gemini embedding quota reached; retrying batch %d/%d in %ds (attempt %d/2)",
-                    i // batch_size + 1,
-                    total_batches,
-                    delay,
-                    attempt + 1,
-                )
-                time.sleep(delay)
+        # One bounded key-rotation pass; durable ingestion owns later retries.
+        result = call_with_key_rotation(
+            _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
+            lambda key: _gemini_embed_batch_once(genai, types, key, batch, model, task_type=task_type),
+            provider="embedding",
+        )
         embeddings.extend(result)
         if progress_callback is not None:
             progress_callback(min(1.0, (i + len(batch)) / len(texts)))
@@ -128,13 +114,13 @@ def _embed_with_gemini(
     return embeddings
 
 
-def _gemini_embed_batch_once(genai, types, api_key: str, batch: list[str], model: str) -> list[list[float]]:
+def _gemini_embed_batch_once(genai, types, api_key: str, batch: list[str], model: str, *, task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
     with genai.Client(api_key=api_key) as client:
         response = client.models.embed_content(
             model=model.removeprefix("models/"),
             contents=batch,
             config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_DOCUMENT",
+                task_type=task_type,
                 output_dimensionality=settings.EMBEDDING_DIMENSION,
             ),
         )
@@ -152,6 +138,7 @@ def _embed_query_with_gemini(
     result = call_with_key_rotation(
         _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
         lambda key: _gemini_embed_query_once(genai, types, key, text, model),
+        provider="embedding",
     )
     return result
 
@@ -230,6 +217,7 @@ def _embed_with_openai(
                 model=model,
                 input=batch,
             ),
+            provider="embedding",
         )
         for item in response.data:
             embeddings.append(item.embedding)
@@ -292,8 +280,16 @@ def embed_query(text: str) -> list[float]:
     Returns:
         Embedding vector.
     """
-    provider = settings.EMBEDDING_PROVIDER
-    model = settings.EMBEDDING_MODEL
+    # Cache successful vectors only, never answers or tenant document results.
+    # The key includes the embedding space; callers get a fresh mutable list.
+    return list(_cached_query_embedding(
+        settings.EMBEDDING_PROVIDER, settings.EMBEDDING_MODEL,
+        settings.EMBEDDING_DIMENSION, text.strip(),
+    ))
+
+
+@lru_cache(maxsize=512)
+def _cached_query_embedding(provider: str, model: str, dimension: int, text: str) -> tuple[float, ...]:
 
     logger.info(
         "Embedding query with %s/%s",
@@ -314,4 +310,26 @@ def embed_query(text: str) -> list[float]:
             f"Supported: local, gemini, openai"
         )
 
-    return _validate_vectors([vector], expected_count=1)[0]
+    return tuple(_validate_vectors([vector], expected_count=1)[0])
+
+
+def embed_queries(texts: list[str]) -> list[list[float]]:
+    """Embed evaluation/queued queries in batches using the same query task.
+
+    Duplicate questions share one provider input. Failures abort the batch,
+    so an evaluation cannot silently mix vector and lexical-only results.
+    """
+    if not texts:
+        return []
+    unique = list(dict.fromkeys(text.strip() for text in texts))
+    provider, model = settings.EMBEDDING_PROVIDER, settings.EMBEDDING_MODEL
+    if provider == "gemini":
+        vectors = _embed_with_gemini(unique, model, task_type="RETRIEVAL_QUERY")
+    elif provider == "local":
+        vectors = _embed_with_local(unique, model)
+    elif provider == "openai":
+        vectors = _embed_with_openai(unique, model)
+    else:
+        raise ValueError(f"Unknown embedding provider: {provider}")
+    by_text = dict(zip(unique, _validate_vectors(vectors, expected_count=len(unique))))
+    return [list(by_text[text.strip()]) for text in texts]

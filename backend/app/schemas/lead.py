@@ -12,6 +12,7 @@ PIPELINE_STAGES = ("new", "qualified", "proposal", "won", "lost")
 class LeadCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     customer_id: int
+    product_id: int | None = Field(default=None, ge=1)
     conversation_id: int | None = None
     stage: str = Field(default="new", min_length=1, max_length=30)
     status: str = Field(default="open", min_length=1, max_length=30)
@@ -43,6 +44,7 @@ class LeadOut(BaseModel):
     id: int
     business_id: int
     customer_id: int
+    product_id: int | None = None
     conversation_id: int | None = None
     title: str
     stage: str

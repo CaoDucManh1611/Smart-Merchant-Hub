@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = ""
     PLATFORM_DATABASE_URL: str = ""
     TENANT_DATABASE_URL: str = ""
+    BACKUP_DIR: str = "backups"
+    BACKUP_MAX_BYTES: int = 2 * 1024 * 1024 * 1024
     # Compatibility is opt-in for local fixtures only. Production tenant
     # identity always comes from the authenticated session or webhook route.
     ALLOW_LEGACY_TENANT_HEADER: bool = False
@@ -37,6 +39,15 @@ class Settings(BaseSettings):
     INSTAGRAM_ACCESS_TOKEN: str = ""
     PUBLIC_BASE_URL: str = ""
     FRONTEND_BASE_URL: str = "http://localhost:5173"
+    PAYOS_CLIENT_ID: str = ""
+    PAYOS_API_KEY: str = ""
+    PAYOS_CHECKSUM_KEY: str = ""
+    PAYOS_RETURN_URL: str = ""
+    PAYOS_CANCEL_URL: str = ""
+    PAYOS_EXPECTED_ACCOUNT_NUMBER: str = ""
+    PAYOS_EXPECTED_BANK_BIN: str = ""
+    PAYOS_PAYMENT_TTL_SECONDS: int = 900
+    MONAPAY_WEBHOOK_SECRET: str = ""
     # Optional shared secret used by the local Zalo personal-account bridge.
     # Keep empty for development only; production must configure it before
     # accepting bridge events.
@@ -99,6 +110,16 @@ class Settings(BaseSettings):
     # http://host.docker.internal:8091.
     TIKTOK_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8091"
     SHOPEE_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8092"
+    # Separate local Edge bridge ports let Messenger and Instagram run together.
+    META_MESSENGER_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8093"
+    META_INSTAGRAM_BRIDGE_CONTROL_URL: str = "http://127.0.0.1:8094"
+
+    # Optional Windows-hosted agent for server-managed Seller Center sessions.
+    # Keep the shared key empty unless the agent is deployed on a private,
+    # firewall-restricted network with the same secret configured on both sides.
+    SERVER_CONNECTOR_AGENT_URL: str = ""
+    SERVER_CONNECTOR_AGENT_TOKEN: str = ""
+    SERVER_CONNECTOR_VIEWER_TICKET_TTL_SECONDS: int = 14400
 
     # =========================================================
     # RAG SETTINGS
@@ -111,11 +132,16 @@ class Settings(BaseSettings):
     LLM_API_KEYS: str = ""
     GROQ_API_KEY: str = ""
     GROQ_API_KEYS: str = ""
+    GROQ_VISION_MODEL: str = "qwen/qwen3.8-27b"
     GEMINI_API_KEY: str = ""
     GEMINI_API_KEYS: str = ""
 
+    SERVICE_ADVISOR_DAILY_LIMIT: int = 200
+
     LLM_MODEL: str = "openai/gpt-oss-20b"
-    CONVERSATION_TURN_WAIT_SECONDS: int = 10
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_FALLBACK_MODELS: str = "gemini-3.1-flash-lite,gemini-3.6-flash"
+    CONVERSATION_TURN_WAIT_SECONDS: int = 5
     CONVERSATION_GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     # openai/gpt-oss-20b | gemini-3.6-flash | gpt-4o-mini
 
@@ -145,9 +171,11 @@ class Settings(BaseSettings):
     # not belong to a production tenant.
     RECOMMENDATION_ARTIFACT_DIR: str = "artifacts"
     RECOMMENDATION_ARTIFACT_MODE: str = "fallback"
-    # Extract durable customer facts in a background worker. Keep this
-    # opt-in so a deployment never starts making LLM calls unexpectedly.
-    CUSTOMER_FACT_EXTRACTION_ENABLED: bool = False
+    # Comma-separated demo tenant IDs; Data_RAG checkpoints are opt-in.
+    RECOMMENDATION_DATA_RAG_BUSINESS_IDS: str = ""
+    # Extract customer facts by default for customers who granted consent.
+    # A tenant setting or this environment variable can still turn it off.
+    CUSTOMER_FACT_EXTRACTION_ENABLED: bool = True
     # False keeps embeddings for every seeded document so semantic retrieval
     # is available. Set to true only when intentionally using lexical fallback.
     RAG_AUTO_SEED_FAST_MODE: bool = False

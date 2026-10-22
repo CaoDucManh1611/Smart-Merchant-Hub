@@ -52,6 +52,14 @@ class CustomerProfilePolicyTests(unittest.TestCase):
     def test_phone_normalization_keeps_country_prefix_and_digits(self):
         self.assertEqual("+84901234567", normalize_phone("+84 (90) 123-4567"))
 
+    def test_meta_ui_labels_and_icons_do_not_overwrite_real_customer_profile(self):
+        for label in ("Chia sẻ dữ liệu", "Trang cá nhân trên Facebook", "Share data", "Facebook profile"):
+            customer = SimpleNamespace(name="Phú Lê", email=None, phone=None, avatar_url="https://scontent.fbcdn.net/photo.jpg")
+            changes = merge_profile(customer, display_name=label, avatar_url="https://static.xx.fbcdn.net/rsrc.php/icon.webp")
+            self.assertEqual({}, changes)
+            self.assertEqual("Phú Lê", customer.name)
+            self.assertEqual("https://scontent.fbcdn.net/photo.jpg", customer.avatar_url)
+
 
 if __name__ == "__main__":
     unittest.main()

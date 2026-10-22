@@ -1,10 +1,12 @@
-"""Tenant-owned SMTP identity for team-invitation OTP email."""
+"""Tenant-owned SMTP identity for staff-invitation and checkout OTP email."""
 
 from __future__ import annotations
 
 import re
+import time
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -16,6 +18,7 @@ from app.services.otp_delivery import OtpDeliveryNotConfigured, OtpSmtpConfig
 _PREFIX = "otp.smtp."
 _FIELDS = ("enabled", "host", "port", "security", "username", "password_encrypted", "from_email", "from_name")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_TEST_SLOT_KEY = _PREFIX + "last_test_at"
 
 
 def _values(db: Session, business_id: int) -> dict[str, str]:
@@ -62,6 +65,31 @@ def get_shop_otp_smtp_config(db: Session, business_id: int) -> OtpSmtpConfig | N
     if not config.host or not config.username or not config.password or not config.from_email:
         raise OtpDeliveryNotConfigured("Cấu hình SMTP OTP của shop chưa đầy đủ.")
     return config
+
+
+def claim_shop_test_email_slot(db: Session, business_id: int, *, now: int | None = None) -> bool:
+    """Persist a tenant-wide 60-second SMTP-test cooldown before attempting delivery."""
+    current = int(time.time()) if now is None else int(now)
+    row = db.scalar(select(BusinessSetting).where(
+        BusinessSetting.business_id == int(business_id),
+        BusinessSetting.key == _TEST_SLOT_KEY,
+    ).with_for_update())
+    if row is not None:
+        try:
+            previous = int(float(row.value))
+        except (TypeError, ValueError):
+            previous = 0
+        if current - previous < 60:
+            return False
+        row.value = str(current)
+    else:
+        db.add(BusinessSetting(business_id=int(business_id), key=_TEST_SLOT_KEY, value=str(current)))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return False
+    return True
 
 
 def save_shop_otp_email(db: Session, business_id: int, payload: dict[str, object]) -> dict[str, object]:

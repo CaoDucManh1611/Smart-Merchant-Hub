@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from app.database.bases import TenantBase
 from app.models.channel import Channel
 from app.models.channel_outbound_attempt import ChannelOutboundAttempt
+from app.models.conversation import Conversation
+from app.models.customer import Customer
 from app.services.channel_delivery import (
     claim_outbound_attempt,
     mark_outbound_attempt_failed,
@@ -14,10 +16,11 @@ from app.services.meta_errors import MetaAPIError
 
 def _session() -> Session:
     engine = create_engine("sqlite://")
-    Channel.__table__.create(engine)
-    ChannelOutboundAttempt.__table__.create(engine)
+    for table in (Customer.__table__, Channel.__table__, Conversation.__table__, ChannelOutboundAttempt.__table__):
+        table.create(engine)
     session = Session(engine)
-    session.add(
+    session.add_all([
+        Customer(id=30, business_id=12, channel="telegram", external_user_id="test-user"),
         Channel(
             id=5,
             business_id=12,
@@ -25,8 +28,9 @@ def _session() -> Session:
             name="test",
             external_account_id="test-account",
             status="active",
-        )
-    )
+        ),
+        Conversation(id=21, business_id=12, customer_id=30, channel="telegram", channel_id=5),
+    ])
     session.commit()
     return session
 

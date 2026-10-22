@@ -8,6 +8,7 @@ from app.core.config import Settings, settings
 from app.models.business_setting import BusinessSetting
 from app.services.otp_delivery import OtpSmtpConfig, deliver_otp
 from app.services.shop_otp_email import (
+    claim_shop_test_email_slot,
     get_shop_otp_smtp_config,
     read_shop_otp_email,
     save_shop_otp_email,
@@ -82,7 +83,7 @@ def test_disabling_shop_smtp_removes_the_saved_secret(db, monkeypatch):
     assert get_shop_otp_smtp_config(db, 21) is None
 
 
-def test_shop_smtp_overrides_global_otp_sender_and_uses_shop_display_name():
+def test_shop_smtp_sends_order_confirmation_with_shop_display_name():
     config = Settings(
         DATABASE_URL="sqlite:///./test.db",
         OTP_DELIVERY_MODE="disabled",
@@ -99,16 +100,19 @@ def test_shop_smtp_overrides_global_otp_sender_and_uses_shop_display_name():
     with patch("app.services.otp_delivery.settings", config), patch("app.services.otp_delivery.smtplib.SMTP") as smtp:
         result = deliver_otp(
             channel="email",
-            destination="staff@example.com",
+            destination="customer@example.com",
             code="123456",
             smtp_config=smtp_config,
+            purpose="order_confirmation",
         )
 
     assert result.provider == "smtp"
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     assert message["From"].addresses[0].display_name == "Shop Hồng"
     assert message["From"].addresses[0].addr_spec == "info@gmail.com"
-    assert message["To"] == "staff@example.com"
+    assert message["To"] == "customer@example.com"
+    assert message["Subject"] == "Mã OTP xác nhận đơn hàng Smart Merchant Hub"
+    assert "Mã OTP xác nhận đơn hàng Smart Merchant Hub của bạn là 123456" in message.get_content()
     smtp.return_value.__enter__.return_value.login.assert_called_once_with("info@gmail.com", "google-app-password")
 
 
@@ -135,3 +139,10 @@ def test_shop_smtp_accepts_custom_domain_and_ssl_port(db, monkeypatch):
     assert result["host"] == "smtp.mail.example.com"
     assert result["security"] == "ssl"
     assert get_shop_otp_smtp_config(db, 21).from_email == "info@example.com"
+
+
+def test_shop_test_email_cooldown_is_scoped_to_each_tenant(db):
+    assert claim_shop_test_email_slot(db, 21, now=100)
+    assert not claim_shop_test_email_slot(db, 21, now=120)
+    assert claim_shop_test_email_slot(db, 22, now=120)
+    assert claim_shop_test_email_slot(db, 21, now=160)

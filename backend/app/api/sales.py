@@ -75,6 +75,11 @@ _PRODUCT_IMPORT_FIELDS = {
     "link_sản_phẩm": "product_url",
     "url_san_pham": "product_url",
     "url_sản_phẩm": "product_url",
+    "image_url": "image_url",
+    "product_image_url": "image_url",
+    "photo_url": "image_url",
+    "anh_san_pham": "image_url",
+    "ảnh_sản_phẩm": "image_url",
     "description": "description",
     "mo_ta": "description",
     "mô_tả": "description",
@@ -463,6 +468,7 @@ async def import_products(
         name = values.get("name", "").strip()
         name_en = values.get("name_en", "").strip()
         product_url = values.get("product_url", "").strip() or None
+        image_url = values.get("image_url", "").strip() or None
         if not sku and not name and not any(str(value or "").strip() for value in row.values()):
             continue
         if not sku or not name:
@@ -474,10 +480,12 @@ async def import_products(
             errors.append(f"Dòng {row_number}: mã tối đa 80 ký tự, tên tối đa 255 ký tự.")
             continue
         try:
-            product_url = ProductCreate(sku=sku, name=name, product_url=product_url).product_url
+            validated = ProductCreate(sku=sku, name=name, product_url=product_url, image_url=image_url)
+            product_url = validated.product_url
+            image_url = validated.image_url
         except ValidationError:
             skipped += 1
-            errors.append(f"Dòng {row_number}: link sản phẩm không hợp lệ; chỉ dùng URL HTTP/HTTPS, không chứa thông tin đăng nhập.")
+            errors.append(f"Dòng {row_number}: link sản phẩm không hợp lệ; ảnh cần là URL HTTPS công khai, không chứa thông tin đăng nhập.")
             continue
         if sku in seen_skus:
             skipped += 1
@@ -517,6 +525,7 @@ async def import_products(
                 metadata_={
                     **({"attributes": imported_attributes} if imported_attributes else {}),
                     **({"display_names": {"en": name_en}} if name_en else {}),
+                    **({"image_url": image_url} if image_url else {}),
                 },
             )
             db.add(product)
@@ -560,6 +569,10 @@ async def import_products(
                     metadata["display_names"] = display_names
                 else:
                     metadata.pop("display_names", None)
+                product.metadata_ = metadata
+            if image_url:
+                metadata = dict(product.metadata_ or {})
+                metadata["image_url"] = image_url
                 product.metadata_ = metadata
             if stock > 0:
                 db.add(StockMovement(
@@ -637,7 +650,10 @@ def create_product(
         price=payload.price,
         stock_quantity=payload.stock_quantity,
         status=payload.status,
-        metadata_=payload.metadata,
+        metadata_={
+            **(payload.metadata or {}),
+            **({"image_url": payload.image_url} if payload.image_url else {}),
+        } or None,
     )
     db.add(product)
     db.flush()
@@ -686,6 +702,8 @@ def update_product(
 ):
     product = _product(db, product_id, tenant)
     values = payload.model_dump(exclude_unset=True)
+    image_url_supplied = "image_url" in values
+    image_url = values.pop("image_url", None)
     if "stock_quantity" in values:
         requested_stock = int(values.pop("stock_quantity"))
         if requested_stock != int(product.stock_quantity or 0):
@@ -695,6 +713,13 @@ def update_product(
             )
     for field, value in values.items():
         setattr(product, "metadata_" if field == "metadata" else field, value.strip() if isinstance(value, str) and field != "product_url" else value)
+    if image_url_supplied:
+        metadata = dict(product.metadata_ or {})
+        if image_url:
+            metadata["image_url"] = image_url
+        else:
+            metadata.pop("image_url", None)
+        product.metadata_ = metadata or None
     try:
         db.commit()
     except IntegrityError as exc:
@@ -1110,6 +1135,10 @@ def transition_order(
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="transition", resource_type="sales_order", resource_id=str(order.id), metadata={"to_status": order.status})
         db.commit()
+    if order.status == "confirmed":
+        from app.services.order_confirmation import notify_order_confirmation
+
+        notify_order_confirmation(db, order=order, business_id=tenant.business_id)
     if order.status == "delivered" and order.conversation_id is not None:
         try:
             from app.services.chatbot_followup import schedule_post_delivery_followup

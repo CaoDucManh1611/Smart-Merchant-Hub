@@ -4,14 +4,12 @@ export const CHANNEL_LABELS = {
   facebook: "Facebook",
   instagram: "Instagram",
   telegram: "Telegram",
-  // Keep the provider's official uppercase name for internal matching and tests.
-  // User-facing views can apply sentence-case styling where needed.
-  zalo: "ZALO",
+  zalo: "Zalo",
   tiktok: "TikTok",
   shopee: "Shopee",
 };
 
 export function channelLabel(channel) {
   const normalized = String(channel || "").toLowerCase();
-  return CHANNEL_LABELS[normalized] || (normalized ? normalized.toUpperCase() : t("Kênh khác"));
+  return CHANNEL_LABELS[normalized] || (normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : t("Kênh khác"));
 }

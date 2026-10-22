@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,10 +15,49 @@ from app.models.customer_identity import CustomerIdentity
 from app.models.customer_note import CustomerNote
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.crm_extended import CustomerTag, Tag
 from app.models.recommendation import CustomerProductInteraction, RecommendationCustomerProfile, RecommendationRequest
 from app.models.sales import Order
 from app.models.saas import DataLifecycleRequest
 from app.models.experimentation import BanditDecision
+
+
+def customer_memory_opt_out_reply(db: Session, business_id: int, customer_id: int | None, query: str) -> str | None:
+    """Honor an explicit current-customer request before personalization or AI."""
+    from fastapi import HTTPException
+    from app.rag.prompt_builder import detect_reply_language
+    from app.rag.topics import fold_topic_text
+    from app.services.audit_service import record_audit
+
+    folded = fold_topic_text(query)
+    if not re.match(
+        r"^(?:please )?(?:(?:don t|dont|do not) remember|stop remembering)\b"
+        r"|^(?:please )?(?:don t|dont|do not|stop) (?:save|saving|store|storing) (?:my )?(?:preferences?|personal data)\b"
+        r"|^(?:vui long )?(?:(?:ban|shop) )?(?:dung|ngung|khong) (?:ghi nho|luu so thich)\b"
+        r"|^toi khong muon (?:ban )?(?:ghi nho|luu so thich)\b", folded,
+    ):
+        return None
+    english = detect_reply_language(query) == "en"
+    if customer_id is None:
+        return (
+            "Select the customer or their conversation to stop saving preferences. I haven't changed any records."
+            if english else "Bạn chọn khách hàng hoặc hội thoại để ngừng lưu sở thích cho đúng khách nhé. Chưa có hồ sơ nào được thay đổi."
+        )
+    customer = db.query(Customer).filter(
+        Customer.business_id == business_id, Customer.id == customer_id, Customer.status != "merged",
+    ).first()
+    if customer is None:
+        raise HTTPException(404, "Không tìm thấy khách hàng trong shop này.")
+    if not customer.fact_extraction_opt_out:
+        customer.fact_extraction_opt_out = True
+        record_audit(db, business_id=business_id, actor_type="customer",
+                     action="customer_fact_collection_update", resource_type="customer", resource_id=customer_id,
+                     metadata={"opt_out": True, "source": "customer_chat"})
+        db.commit()
+    return (
+        "I've stopped saving preferences and using saved preferences to personalize suggestions for your profile. Existing records have not been deleted; shop staff can help with a deletion request."
+        if english else "Mình đã ngừng lưu sở thích và dùng sở thích đã lưu để cá nhân hóa gợi ý cho bạn. Thông tin cũ chưa bị xóa; nhân viên có thể hỗ trợ nếu bạn muốn xóa."
+    )
 
 
 def get_or_create_request(
@@ -68,12 +108,11 @@ def _scrub_personalized_bandit_decisions(db: Session, business_id: int, customer
 
 
 def stop_customer_personalization(db: Session, business_id: int, customer_id: int) -> None:
-    """Erase derived profiles and retained query text after personalization opt-out."""
+    """Erase derived profile, RFM labels, and retained query text after opt-out."""
     for fact in db.scalars(select(CustomerFact).where(
         CustomerFact.business_id == business_id,
         CustomerFact.customer_id == customer_id,
         CustomerFact.source_type.in_(("extracted", "order_summary")),
-        CustomerFact.is_verified.is_(False),
     )).all():
         db.delete(fact)
     for interaction in db.scalars(select(CustomerProductInteraction).where(
@@ -86,6 +125,17 @@ def stop_customer_personalization(db: Session, business_id: int, customer_id: in
         RecommendationCustomerProfile.customer_id == customer_id,
     )).all():
         db.delete(profile)
+    rfm_tag_ids = db.scalars(select(Tag.id).where(
+        Tag.business_id == business_id,
+        Tag.name.like("RFM · AI %"),
+    )).all()
+    if rfm_tag_ids:
+        for link in db.scalars(select(CustomerTag).where(
+            CustomerTag.business_id == business_id,
+            CustomerTag.customer_id == customer_id,
+            CustomerTag.tag_id.in_(rfm_tag_ids),
+        )).all():
+            db.delete(link)
     for request in db.scalars(select(RecommendationRequest).where(
         RecommendationRequest.business_id == business_id,
         RecommendationRequest.customer_id == customer_id,

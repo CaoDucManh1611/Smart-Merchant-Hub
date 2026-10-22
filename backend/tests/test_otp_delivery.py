@@ -7,6 +7,7 @@ from app.core.config import Settings
 from app.services.otp_delivery import (
     OtpDeliveryNotConfigured,
     deliver_otp,
+    send_smtp_test_email,
 )
 
 
@@ -36,6 +37,22 @@ def test_smtp_delivery_sends_message_without_logging_or_returning_code():
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     assert message["To"] == "customer@example.test"
     assert "123456" in message.get_content()
+
+
+def test_smtp_probe_contains_no_otp_and_means_provider_acceptance():
+    from app.services.otp_delivery import OtpSmtpConfig
+
+    smtp_config = OtpSmtpConfig(
+        host="smtp.example.test", port=587, security="starttls", username="mailer@example.test",
+        password="secret", from_email="no-reply@example.test",
+    )
+    with patch("app.services.otp_delivery.smtplib.SMTP") as smtp:
+        result = send_smtp_test_email(destination="test@example.test", smtp_config=smtp_config)
+
+    message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    assert result.provider == "smtp" and result.delivered is True
+    assert message["To"] == "test@example.test"
+    assert "OTP" not in message.get_content() and "Mã" not in message.get_content()
 
 
 def test_smtp_accepts_google_app_password_with_display_spaces():

@@ -30,6 +30,37 @@ def list_notifications(
     return query.order_by(Notification.created_at.desc(), Notification.id.desc()).limit(100).all()
 
 
+@router.post("/notifications/read-all", dependencies=[Depends(require_write_access)])
+def mark_all_notifications_read(
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    user: User | None = Depends(get_optional_user),
+):
+    query = db.query(Notification).filter(
+        Notification.business_id == tenant.business_id,
+        Notification.is_read.is_(False),
+    )
+    if user is not None:
+        query = query.filter((Notification.user_id == user.id) | Notification.user_id.is_(None))
+    updated_count = query.update({Notification.is_read: True}, synchronize_session=False)
+    db.commit()
+    return {"updated_count": updated_count}
+
+
+@router.delete("/notifications", dependencies=[Depends(require_write_access)])
+def delete_all_notifications(
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    user: User | None = Depends(get_optional_user),
+):
+    query = db.query(Notification).filter(Notification.business_id == tenant.business_id)
+    if user is not None:
+        query = query.filter((Notification.user_id == user.id) | Notification.user_id.is_(None))
+    deleted_count = query.delete(synchronize_session=False)
+    db.commit()
+    return {"deleted_count": deleted_count}
+
+
 @router.post("/notifications/{notification_id}/read", response_model=NotificationOut, dependencies=[Depends(require_write_access)])
 def mark_notification_read(
     notification_id: int,

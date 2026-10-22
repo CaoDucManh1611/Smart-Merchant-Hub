@@ -26,6 +26,8 @@ def test_secret_routes_resolve_without_scanning_tenant_channels(monkeypatch):
     PlatformBase.metadata.create_all(engine)
     monkeypatch.setattr("app.tenancy.registry.settings.CHANNEL_ROUTE_SECRET", "route-test-secret")
     with Session(engine) as db:
+        db.add(PlatformBusiness(id=42, name="Shop 42", slug="shop-42"))
+        db.commit()
         route = register_webhook_route(
             db,
             provider="telegram",
@@ -48,6 +50,8 @@ def test_same_provider_account_cannot_be_registered_for_two_shops(monkeypatch):
     PlatformBase.metadata.create_all(engine)
     monkeypatch.setattr("app.tenancy.registry.settings.CHANNEL_ROUTE_SECRET", "route-test-secret")
     with Session(engine) as db:
+        db.add(PlatformBusiness(id=42, name="Shop 42", slug="shop-42"))
+        db.commit()
         register_webhook_route(
             db,
             provider="zalo",

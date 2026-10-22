@@ -10,6 +10,35 @@ class LoginRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=1, max_length=256)
     shop_slug: str | None = Field(default=None, min_length=2, max_length=120)
+    remember_me: bool = False
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    shop_slug: str | None = Field(default=None, min_length=2, max_length=120)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
+            raise ValueError("Email không hợp lệ.")
+        return normalized
+
+
+class PasswordResetComplete(PasswordResetRequest):
+    otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(..., min_length=12, max_length=256)
+
+
+class PasswordResetRequestOut(BaseModel):
+    status: str
+    expires_in: int
+    retry_after: int
+
+
+class PasswordResetCompleteOut(BaseModel):
+    status: str
 
 
 class EmailChangeRequest(BaseModel):

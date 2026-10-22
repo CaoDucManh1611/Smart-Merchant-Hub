@@ -25,17 +25,26 @@ def _validated_product_url(value: str | None) -> str | None:
     return value
 
 
+def _validated_product_image_url(value: str | None) -> str | None:
+    value = _validated_product_url(value)
+    if value and urlsplit(value).scheme.lower() != "https":
+        raise ValueError("Product image must use a public HTTPS URL")
+    return value
+
+
 class ProductCreate(BaseModel):
     sku: str = Field(..., min_length=1, max_length=80)
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     product_url: str | None = Field(default=None, max_length=2048)
+    image_url: str | None = Field(default=None, max_length=2048)
     price: Decimal = Field(default=Decimal("0"), ge=0)
     stock_quantity: int = Field(default=0, ge=0)
     status: str = Field(default="active", min_length=1, max_length=30)
     metadata: dict | None = None
 
     _validate_product_url = field_validator("product_url")(_validated_product_url)
+    _validate_image_url = field_validator("image_url")(_validated_product_image_url)
 
 
 class ProductUpdate(BaseModel):
@@ -43,12 +52,14 @@ class ProductUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     product_url: str | None = Field(default=None, max_length=2048)
+    image_url: str | None = Field(default=None, max_length=2048)
     price: Decimal | None = Field(default=None, ge=0)
     stock_quantity: int | None = Field(default=None, ge=0)
     status: str | None = Field(default=None, min_length=1, max_length=30)
     metadata: dict | None = None
 
     _validate_product_url = field_validator("product_url")(_validated_product_url)
+    _validate_image_url = field_validator("image_url")(_validated_product_image_url)
 
 
 class ProductOut(BaseModel):
@@ -58,6 +69,7 @@ class ProductOut(BaseModel):
     name: str
     description: str | None = None
     product_url: str | None = None
+    image_url: str | None = None
     price: Decimal
     stock_quantity: int
     reserved_quantity: int = 0

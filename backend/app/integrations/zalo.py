@@ -21,6 +21,7 @@ from app.contracts.channel_event import (
 ZALO_BOT_API_BASE = "https://bot-api.zaloplatforms.com/bot"
 ZALO_OA_MESSAGE_API = "https://openapi.zalo.me/v3.0/oa/message/cs"
 ZALO_OA_PROFILE_API = "https://openapi.zalo.me/v3.0/oa/user/detail"
+ZALO_OA_CONVERSATION_API = "https://openapi.zalo.me/v2.0/oa/conversation"
 
 
 def _created_at(value: Any) -> datetime | None:
@@ -92,6 +93,36 @@ def _avatar_url(sender: dict[str, Any]) -> str | None:
 
 class ZaloAdapter:
     """Translate Zalo Bot webhook payloads into the shared CRM contract."""
+
+    def fetch_conversation_history(
+        self,
+        *,
+        user_id: str,
+        access_token: str,
+        offset: int = 0,
+        count: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Fetch one supported page of OA history for a known user ID."""
+        user_id = str(user_id or "").strip()
+        access_token = str(access_token or "").strip()
+        if not user_id or not access_token:
+            raise ValueError("Zalo OA user_id and access_token are required")
+        if offset < 0 or count < 1 or count > 10:
+            raise ValueError("Zalo OA history pages allow 1–10 records")
+        response = httpx.get(
+            ZALO_OA_CONVERSATION_API,
+            params={"data": json.dumps({"user_id": user_id, "offset": offset, "count": count}, separators=(",", ":"))},
+            headers={"access_token": access_token},
+            timeout=20,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict) or body.get("error") not in (None, 0):
+            raise ValueError("Zalo OA conversation history lookup failed")
+        records = body.get("data") or []
+        if not isinstance(records, list):
+            raise ValueError("Zalo OA returned an invalid conversation history page")
+        return [record for record in records if isinstance(record, dict)]
 
     def verify_webhook(self, payload: bytes, headers: dict[str, str]) -> bool:
         return bool(headers.get("x-bot-api-secret-token"))

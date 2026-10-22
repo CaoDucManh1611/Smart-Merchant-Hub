@@ -8,19 +8,27 @@ Hỗ trợ:
 - Streaming response
 """
 
+import base64
 import logging
+from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 from functools import lru_cache
 
 from app.core.config import settings
+from app.services.provider_circuit_breaker import ProviderCircuitBreaker, ProviderCircuitOpen
 from app.services.api_key_pool import (
     ApiKeyPool,
     ApiKeyPoolUnavailable,
     call_with_key_rotation,
+    acquire_provider_request_slot,
     is_retryable_provider_error,
+    provider_call_started,
+    provider_call_failed,
+    provider_call_succeeded,
 )
 
 logger = logging.getLogger(__name__)
+_model_breaker = ProviderCircuitBreaker(failure_threshold=1, recovery_timeout=60)
 
 
 @lru_cache(maxsize=12)
@@ -28,9 +36,41 @@ def _pool_for(scope: str, keys: tuple[str, ...], cooldown_seconds: int) -> ApiKe
     return ApiKeyPool(list(keys), cooldown_seconds=cooldown_seconds)
 
 
-def _provider_pool(provider: str) -> ApiKeyPool:
-    keys = settings.groq_api_keys if provider == "groq" else settings.gemini_api_keys if provider == "gemini" else settings.llm_api_keys
-    return _pool_for(provider, tuple(keys), settings.API_KEY_COOLDOWN_SECONDS)
+def _provider_pool(provider: str, model: str | None = None) -> ApiKeyPool:
+    if provider == "gemini":
+        keys = settings.dedicated_gemini_api_keys
+        if not keys and settings.LLM_PROVIDER.strip().lower() == "gemini":
+            keys = settings.llm_api_keys
+        if (
+            not keys
+            and settings.EMBEDDING_PROVIDER.strip().lower() == "gemini"
+            and (settings.EMBEDDING_API_KEYS.strip() or settings.EMBEDDING_API_KEY.strip())
+        ):
+            keys = settings.embedding_api_keys
+    else:
+        keys = settings.groq_api_keys if provider == "groq" else settings.llm_api_keys
+    scope = f"{provider}:{model}" if model else provider
+    return _pool_for(scope, tuple(keys), settings.API_KEY_COOLDOWN_SECONDS)
+
+
+def _is_model_failure(error: Exception) -> bool:
+    return bool(
+        isinstance(error, (ApiKeyPoolUnavailable, ProviderCircuitOpen, TimeoutError, ConnectionError))
+        or is_retryable_provider_error(error)
+        or getattr(error, "status_code", None) == 404
+    )
+
+
+def _groq_model_routes(*, vision: bool = False) -> list[tuple[str, str]]:
+    routes = [("groq", settings.GROQ_VISION_MODEL if vision else settings.LLM_MODEL)]
+    if settings.GEMINI_FALLBACK_MODEL.strip() and _provider_pool("gemini").snapshot()["key_count"]:
+        models = dict.fromkeys(
+            value.strip().removeprefix("models/")
+            for value in [settings.GEMINI_FALLBACK_MODEL, *settings.GEMINI_FALLBACK_MODELS.split(",")]
+            if value.strip()
+        )
+        routes.extend(("gemini", model) for model in list(models)[:3])
+    return routes
 
 
 def _embedding_pool() -> ApiKeyPool:
@@ -41,8 +81,17 @@ def _embedding_pool() -> ApiKeyPool:
     )
 
 
-def _call_with_key_rotation(pool: ApiKeyPool, operation):
-    return call_with_key_rotation(pool, operation)
+def _call_with_key_rotation(pool: ApiKeyPool, operation, *, provider: str = "ai", failure_scope: str | None = None):
+    return call_with_key_rotation(pool, operation, provider=provider, failure_scope=failure_scope)
+
+
+@asynccontextmanager
+async def _provider_stream_slot(provider: str):
+    semaphore = await acquire_provider_request_slot(provider)
+    try:
+        yield
+    finally:
+        semaphore.release()
 
 
 # =========================================================
@@ -72,7 +121,44 @@ def call_groq(messages: list[dict]) -> str:
             messages=messages,
             temperature=0.3,
         ).choices[0].message.content or "",
+        provider="groq",
     )
+
+
+def call_groq_vision(messages: list[dict]) -> str:
+    """Call the dedicated multimodal model without changing text-chat routing."""
+    return _call_with_key_rotation(
+        _provider_pool("groq"),
+        lambda key: _groq_client(key).chat.completions.create(
+            model=settings.GROQ_VISION_MODEL,
+            messages=messages,
+            temperature=0.1,
+            max_completion_tokens=512,
+        ).choices[0].message.content or "",
+        provider="groq",
+    )
+
+
+def _call_groq_with_gemini_fallback(messages: list[dict], *, vision: bool = False) -> str:
+    last_error = None
+    for provider, model in _groq_model_routes(vision=vision):
+        scope = f"{provider}:{model}"
+        try:
+            _model_breaker.before_call(scope)
+            if provider == "groq":
+                result = call_groq_vision(messages) if vision else call_groq(messages)
+            else:
+                result = call_gemini(messages, model=model)
+            _model_breaker.record_success(scope)
+            return result
+        except Exception as error:
+            if not _is_model_failure(error):
+                raise
+            if not isinstance(error, ProviderCircuitOpen):
+                _model_breaker.record_failure(scope)
+                logger.warning("Model %s unavailable (%s); trying next route", scope, type(error).__name__)
+            last_error = error
+    raise last_error
 
 
 async def stream_groq(
@@ -81,30 +167,34 @@ async def stream_groq(
     """Gọi Groq Chat Completions API với streaming."""
     pool = _provider_pool("groq")
     attempted: set[str] = set()
-    max_attempts = pool.snapshot()["key_count"]
+    max_attempts = min(pool.snapshot()["key_count"], 3)
     if max_attempts <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
-    for attempt in range(max_attempts):
-        key = pool.next_key(exclude=attempted)
-        attempted.add(key)
-        emitted = False
-        try:
-            response = _groq_client(key).chat.completions.create(
-                model=settings.LLM_MODEL,
-                messages=messages,
-                temperature=0.3,
-                stream=True,
-            )
-            for chunk in response:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    emitted = True
-                    yield delta.content
-            return
-        except Exception as error:
-            pool.report_failure(key, error)
-            if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
-                raise
+    async with _provider_stream_slot("groq"):
+        for attempt in range(max_attempts):
+            key = pool.next_key(exclude=attempted)
+            attempted.add(key)
+            emitted = False
+            try:
+                provider_call_started("groq")
+                response = _groq_client(key).chat.completions.create(
+                    model=settings.LLM_MODEL,
+                    messages=messages,
+                    temperature=0.3,
+                    stream=True,
+                )
+                for chunk in response:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        emitted = True
+                        yield delta.content
+                provider_call_succeeded("groq")
+                return
+            except Exception as error:
+                pool.report_failure(key, error)
+                provider_call_failed("groq", error)
+                if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
+                    raise
 
 
 # =========================================================
@@ -131,11 +221,28 @@ def _messages_to_gemini_format(
         if role == "system":
             system_instruction = content
         elif role == "user":
-            history.append({"role": "user", "parts": [content]})
+            history.append({"role": "user", "parts": content if isinstance(content, list) else [content]})
         elif role == "assistant":
-            history.append({"role": "model", "parts": [content]})
+            history.append({"role": "model", "parts": content if isinstance(content, list) else [content]})
 
     return system_instruction, history
+
+
+def _gemini_parts(parts: list, types) -> list:
+    result = []
+    for part in parts:
+        if isinstance(part, dict) and part.get("type") == "text":
+            result.append(types.Part.from_text(text=str(part.get("text") or "")))
+        elif isinstance(part, dict) and part.get("type") == "image_url":
+            image_url = str((part.get("image_url") or {}).get("url") or "")
+            header, separator, encoded = image_url.partition(",")
+            if not separator or not header.startswith("data:image/") or ";base64" not in header:
+                raise ValueError("Gemini vision expects an inline base64 image")
+            mime_type = header[5:].split(";", 1)[0]
+            result.append(types.Part.from_bytes(data=base64.b64decode(encoded), mime_type=mime_type))
+        else:
+            result.append(types.Part.from_text(text=str(part)))
+    return result
 
 
 def _call_gemini_once(messages: list[dict], api_key: str, model: str | None = None) -> str:
@@ -152,7 +259,7 @@ def _call_gemini_once(messages: list[dict], api_key: str, model: str | None = No
     contents = [
         types.Content(
             role=item["role"],
-            parts=[types.Part.from_text(text=str(part)) for part in item["parts"]],
+            parts=_gemini_parts(item["parts"], types),
         )
         for item in history
     ]
@@ -165,12 +272,58 @@ def _call_gemini_once(messages: list[dict], api_key: str, model: str | None = No
     return response.text or ""
 
 
-def call_gemini(messages: list[dict]) -> str:
+def call_gemini(messages: list[dict], *, model: str | None = None) -> str:
     """Gọi Gemini API (non-streaming) với pool key."""
+    model = (model or settings.LLM_MODEL).removeprefix("models/")
     return _call_with_key_rotation(
-        _provider_pool("gemini"),
-        lambda key: _call_gemini_once(messages, key),
+        _provider_pool("gemini", model),
+        lambda key: _call_gemini_once(messages, key, model),
+        provider="gemini",
+        failure_scope=f"gemini:{model}",
     )
+
+
+def call_llm_with_image(
+    messages: list[dict],
+    image_bytes: bytes,
+    mime_type: str,
+    *,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+) -> str:
+    """Route a customer image and optional labeled catalog photos to a vision model."""
+    def image_part(data: bytes, content_type: str) -> dict:
+        encoded = base64.b64encode(data).decode("ascii")
+        return {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{encoded}"}}
+
+    multimodal = [dict(message) for message in messages]
+    for message in reversed(multimodal):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        parts = list(content) if isinstance(content, list) else [{"type": "text", "text": str(content or "")}]
+        parts.append(image_part(image_bytes, mime_type))
+        for label, reference_bytes, reference_mime in reference_images or []:
+            parts.append({"type": "text", "text": str(label)[:200]})
+            parts.append(image_part(reference_bytes, reference_mime))
+        message["content"] = parts
+        break
+    else:
+        parts = [image_part(image_bytes, mime_type)]
+        for label, reference_bytes, reference_mime in reference_images or []:
+            parts.extend([
+                {"type": "text", "text": str(label)[:200]},
+                image_part(reference_bytes, reference_mime),
+            ])
+        multimodal.append({"role": "user", "content": parts})
+
+    provider = settings.LLM_PROVIDER.strip().lower()
+    if provider == "groq":
+        return _call_groq_with_gemini_fallback(multimodal, vision=True)
+    if provider == "gemini":
+        return call_gemini(multimodal)
+    if provider == "openai":
+        return call_openai(multimodal)
+    raise ValueError(f"Provider {provider!r} does not support image input")
 
 
 def call_gemini_for_turn(fragments: list[str]) -> str:
@@ -186,6 +339,7 @@ def call_gemini_for_turn(fragments: list[str]) -> str:
     return _call_with_key_rotation(
         _provider_pool("gemini"),
         lambda key: _call_gemini_once(messages, key, settings.CONVERSATION_GEMINI_MODEL),
+        provider="gemini",
     )
 
 
@@ -210,51 +364,59 @@ def call_gemini_for_chunking(messages: list[dict]) -> str:
     return _call_with_key_rotation(
         _pool_for("gemini-chunking", tuple(keys), settings.API_KEY_COOLDOWN_SECONDS),
         lambda key: _call_gemini_once(messages, key, settings.CONVERSATION_GEMINI_MODEL),
+        provider="gemini-chunking",
     )
 
 
 async def stream_gemini(
     messages: list[dict],
+    *, model: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Gọi Gemini API với streaming."""
     from google import genai
     from google.genai import types
 
-    pool = _provider_pool("gemini")
+    model = (model or settings.LLM_MODEL).removeprefix("models/")
+    scope = f"gemini:{model}"
+    pool = _provider_pool("gemini", model)
     attempted: set[str] = set()
-    max_attempts = pool.snapshot()["key_count"]
+    max_attempts = min(pool.snapshot()["key_count"], 3)
     if max_attempts <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
-    for attempt in range(max_attempts):
-        key = pool.next_key(exclude=attempted)
-        attempted.add(key)
-        emitted = False
-        try:
-            system_instruction, history = _messages_to_gemini_format(messages)
-            if not history:
+    async with _provider_stream_slot("gemini"):
+        for attempt in range(max_attempts):
+            key = pool.next_key(exclude=attempted)
+            attempted.add(key)
+            emitted = False
+            try:
+                provider_call_started(scope)
+                system_instruction, history = _messages_to_gemini_format(messages)
+                if not history:
+                    return
+                contents = [
+                    types.Content(
+                        role=item["role"],
+                        parts=[types.Part.from_text(text=str(part)) for part in item["parts"]],
+                    )
+                    for item in history
+                ]
+                with genai.Client(api_key=key) as client:
+                    response = client.models.generate_content_stream(
+                        model=model,
+                        contents=contents,
+                        config=types.GenerateContentConfig(system_instruction=system_instruction or None),
+                    )
+                    for chunk in response:
+                        if chunk.text:
+                            emitted = True
+                            yield chunk.text
+                provider_call_succeeded(scope)
                 return
-            contents = [
-                types.Content(
-                    role=item["role"],
-                    parts=[types.Part.from_text(text=str(part)) for part in item["parts"]],
-                )
-                for item in history
-            ]
-            with genai.Client(api_key=key) as client:
-                response = client.models.generate_content_stream(
-                    model=settings.LLM_MODEL.removeprefix("models/"),
-                    contents=contents,
-                    config=types.GenerateContentConfig(system_instruction=system_instruction or None),
-                )
-                for chunk in response:
-                    if chunk.text:
-                        emitted = True
-                        yield chunk.text
-            return
-        except Exception as error:
-            pool.report_failure(key, error)
-            if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
-                raise
+            except Exception as error:
+                pool.report_failure(key, error)
+                provider_call_failed(scope, error)
+                if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
+                    raise
 
 
 # =========================================================
@@ -273,6 +435,7 @@ def call_openai(messages: list[dict]) -> str:
             messages=messages,
             temperature=0.3,
         ).choices[0].message.content or "",
+        provider="openai",
     )
 
 
@@ -284,30 +447,34 @@ async def stream_openai(
 
     pool = _provider_pool("openai")
     attempted: set[str] = set()
-    max_attempts = pool.snapshot()["key_count"]
+    max_attempts = min(pool.snapshot()["key_count"], 3)
     if max_attempts <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
-    for attempt in range(max_attempts):
-        key = pool.next_key(exclude=attempted)
-        attempted.add(key)
-        emitted = False
-        try:
-            response = OpenAI(api_key=key).chat.completions.create(
-                model=settings.LLM_MODEL,
-                messages=messages,
-                temperature=0.3,
-                stream=True,
-            )
-            for chunk in response:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    emitted = True
-                    yield delta.content
-            return
-        except Exception as error:
-            pool.report_failure(key, error)
-            if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
-                raise
+    async with _provider_stream_slot("openai"):
+        for attempt in range(max_attempts):
+            key = pool.next_key(exclude=attempted)
+            attempted.add(key)
+            emitted = False
+            try:
+                provider_call_started("openai")
+                response = OpenAI(api_key=key).chat.completions.create(
+                    model=settings.LLM_MODEL,
+                    messages=messages,
+                    temperature=0.3,
+                    stream=True,
+                )
+                for chunk in response:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        emitted = True
+                        yield delta.content
+                provider_call_succeeded("openai")
+                return
+            except Exception as error:
+                pool.report_failure(key, error)
+                provider_call_failed("openai", error)
+                if emitted or not is_retryable_provider_error(error) or attempt + 1 >= max_attempts:
+                    raise
 
 
 # =========================================================
@@ -325,7 +492,7 @@ def call_llm(messages: list[dict]) -> str:
     Returns:
         Response text
     """
-    provider = settings.LLM_PROVIDER
+    provider = settings.LLM_PROVIDER.strip().lower()
 
     logger.info(
         "Calling LLM: %s/%s",
@@ -334,7 +501,7 @@ def call_llm(messages: list[dict]) -> str:
     )
 
     if provider == "groq":
-        return call_groq(messages)
+        return _call_groq_with_gemini_fallback(messages)
     elif provider == "gemini":
         return call_gemini(messages)
     elif provider == "openai":
@@ -355,7 +522,7 @@ async def stream_llm(
     Yields:
         Từng phần text response
     """
-    provider = settings.LLM_PROVIDER
+    provider = settings.LLM_PROVIDER.strip().lower()
 
     logger.info(
         "Streaming LLM: %s/%s",
@@ -364,8 +531,29 @@ async def stream_llm(
     )
 
     if provider == "groq":
-        async for chunk in stream_groq(messages):
-            yield chunk
+        last_error = None
+        for route_provider, model in _groq_model_routes():
+            scope = f"{route_provider}:{model}"
+            emitted = False
+            try:
+                _model_breaker.before_call(scope)
+                stream = stream_groq(messages) if route_provider == "groq" else stream_gemini(messages, model=model)
+                async for chunk in stream:
+                    if chunk:
+                        emitted = True
+                    yield chunk
+                _model_breaker.record_success(scope)
+                return
+            except Exception as error:
+                if not _is_model_failure(error):
+                    raise
+                if not isinstance(error, ProviderCircuitOpen):
+                    _model_breaker.record_failure(scope)
+                    logger.warning("Model stream %s unavailable (%s)", scope, type(error).__name__)
+                if emitted:
+                    raise
+                last_error = error
+        raise last_error
     elif provider == "gemini":
         async for chunk in stream_gemini(messages):
             yield chunk

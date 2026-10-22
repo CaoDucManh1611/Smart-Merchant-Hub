@@ -6,6 +6,8 @@ services:
     build:
       context: ./docker/postgres
     shm_size: 512mb
+    # Tenant schemas need more relation locks for atomic backup verification/restore.
+    command: ["postgres", "-c", "max_locks_per_transaction=1024"]
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-crm_chatbot}
@@ -47,6 +49,7 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - production_uploads:/app/uploads
+      - production_backups:/app/backups
     depends_on:
       db:
         condition: service_healthy
@@ -75,6 +78,7 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - production_uploads:/app/uploads
+      - production_backups:/app/backups
     depends_on:
       backend:
         condition: service_healthy
@@ -106,3 +110,4 @@ volumes:
   production_postgres_data:
   production_redis_data:
   production_uploads:
+  production_backups:

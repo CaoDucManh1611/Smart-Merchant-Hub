@@ -1,12 +1,14 @@
 import unittest
+from contextlib import nullcontext
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.api import onboarding
 from app.api.router import api_router
 from app.auth.dependencies import issue_token, token_hash
 from app.auth.passwords import hash_password
@@ -15,7 +17,8 @@ from app.database.bases import PlatformBase, TenantBase
 from app.db.dependencies import get_db
 from app.main import app
 from app.models.auth_session import AuthSession
-from app.models.business import Business, ServicePlan, Subscription, User
+from app.models.platform_control import PlatformBusiness
+from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.signup import SignupEmailChallenge
 from app.models.channel import Channel
 from app.models.sales import Product
@@ -49,6 +52,16 @@ class OnboardingApiTests(unittest.TestCase):
         app.dependency_overrides.clear()
         settings.ENVIRONMENT = cls._environment
 
+    @classmethod
+    def _ensure_platform_business(cls, shop):
+        with Session(cls.engine) as db:
+            db.merge(PlatformBusiness(
+                id=shop["business_id"],
+                name=shop["shop_name"],
+                slug=f"test-shop-{shop['business_id']}",
+            ))
+            db.commit()
+
     def test_public_onboarding_creates_shop_owner_and_subscription(self):
         plans = self.client.get("/api/onboarding/plans")
         self.assertEqual(200, plans.status_code, plans.text)
@@ -70,6 +83,50 @@ class OnboardingApiTests(unittest.TestCase):
         me = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"})
         self.assertEqual(200, me.status_code, me.text)
         self.assertEqual(body["business_id"], me.json()["business_id"])
+        sessions = self.client.get(
+            "/api/auth/sessions",
+            headers={"Authorization": f"Bearer {body['access_token']}"},
+        )
+        self.assertEqual(200, sessions.status_code, sessions.text)
+        self.assertFalse(sessions.json()[0]["mfa_verified"])
+
+    def test_disconnect_reconnect_required_channel_releases_its_quota_slot(self):
+        with Session(self.engine) as db:
+            business = Business(name="Reconnect Shop", slug="reconnect-shop")
+            db.add(business)
+            db.flush()
+            channel = Channel(
+                business_id=business.id,
+                channel_type="telegram",
+                name="Telegram",
+                external_account_id="reconnect-bot",
+                status="reconnect_required",
+            )
+            db.add(channel)
+            db.commit()
+            business_id, channel_id = business.id, channel.id
+
+        actor = Mock(id=1)
+        platform_db = Mock()
+        with (
+            Session(self.engine) as tenant_db,
+            patch.object(onboarding, "_require_shop_admin"),
+            patch.object(onboarding, "tenant_session", return_value=nullcontext(tenant_db)),
+            patch.object(onboarding, "release_quota") as release_quota,
+            patch.object(onboarding, "deactivate_route_for_channel"),
+            patch.object(onboarding, "record_audit"),
+        ):
+            result = onboarding.disconnect_bot_channel(
+                business_id,
+                channel_id,
+                db=Mock(),
+                platform_db=platform_db,
+                actor=actor,
+            )
+            self.assertEqual("disconnected", tenant_db.get(Channel, channel_id).status)
+
+        self.assertFalse(result["connected"])
+        release_quota.assert_called_once_with(platform_db, business_id, "connected_channels")
 
     def test_regular_shop_member_can_read_provisioning_status(self):
         with Session(self.engine) as db:
@@ -187,6 +244,40 @@ class OnboardingApiTests(unittest.TestCase):
             self.assertEqual(1, db.query(Business).filter(Business.name == request_payload["shop_name"]).count())
             self.assertEqual("verified", db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == request_payload["email"]).one().status)
 
+    def test_email_can_be_verified_before_collecting_signup_details(self):
+        email = "email-first@onboarding.test"
+        with patch("app.api.onboarding.generate_verification_code", return_value="654321"), patch(
+            "app.api.onboarding.deliver_otp",
+            return_value=OtpDeliveryResult(provider="smtp", delivered=True),
+        ):
+            requested = self.client.post("/api/onboarding/signup/request", json={"email": email})
+        self.assertEqual(202, requested.status_code, requested.text)
+        with Session(self.engine) as db:
+            challenge = db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == email).one()
+            self.assertIsNone(challenge.password_hash)
+            self.assertIsNone(challenge.owner_name)
+            self.assertIsNone(challenge.shop_name)
+
+        incomplete = self.client.post("/api/onboarding/signup/verify", json={"email": email, "otp": "654321"})
+        self.assertEqual(422, incomplete.status_code, incomplete.text)
+        with Session(self.engine) as db:
+            challenge = db.query(SignupEmailChallenge).filter(SignupEmailChallenge.email == email).one()
+            self.assertEqual(0, challenge.attempts)
+
+        with patch("app.api.onboarding._start_platform_provisioning", return_value="ready"):
+            verified = self.client.post(
+                "/api/onboarding/signup/verify",
+                json={
+                    "email": email,
+                    "otp": "654321",
+                    "owner_name": "Email First Owner",
+                    "shop_name": "Email First Shop",
+                    "password": "Strong-pass-2026",
+                },
+            )
+        self.assertEqual(201, verified.status_code, verified.text)
+        self.assertEqual("Email First Shop", verified.json()["shop_name"])
+
     def test_otp_signup_preserves_selected_paid_plan_and_waits_for_approval(self):
         for service_type in ("package", "chatbot"):
             email = f"selected-{service_type}@onboarding.test"
@@ -248,7 +339,7 @@ class OnboardingApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(200, request.status_code, request.text)
-        self.assertEqual("pending", request.json()["status"])
+        self.assertEqual("awaiting_payment", request.json()["status"])
         repeated = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/subscription/purchase",
             headers={"Authorization": f"Bearer {created['access_token']}"},
@@ -270,7 +361,7 @@ class OnboardingApiTests(unittest.TestCase):
                 Subscription.business_id == created["business_id"],
             ).order_by(Subscription.id.desc()).first()
             self.assertIsNotNone(subscription)
-            self.assertEqual("pending", subscription.status)
+            self.assertEqual("awaiting_payment", subscription.status)
             self.assertEqual("chatbot", subscription.service_type)
             audit_events = db.query(AuditLog).filter(
                 AuditLog.business_id == created["business_id"],
@@ -289,6 +380,52 @@ class OnboardingApiTests(unittest.TestCase):
                 },
                 audit_events[-1].metadata_["request_details"],
             )
+
+        reported = self.client.post(
+            f"/api/onboarding/shops/{created['business_id']}/subscription/{request.json()['id']}/payment/confirm",
+            headers={"Authorization": f"Bearer {created['access_token']}"},
+        )
+        self.assertEqual(200, reported.status_code, reported.text)
+        self.assertEqual("pending", reported.json()["status"])
+        self.assertTrue(reported.json()["customer_reported_payment"])
+        with Session(self.engine) as db:
+            self.assertEqual("pending", db.get(Subscription, request.json()["id"]).status)
+            self.assertEqual(0, db.query(Payment).filter_by(subscription_id=request.json()["id"]).count())
+
+    def test_shop_can_cancel_unpaid_request_and_choose_another_plan(self):
+        created = self.client.post(
+            "/api/onboarding/shops",
+            json={
+                "shop_name": "Cancel Checkout Shop",
+                "owner_name": "Cancel Owner",
+                "owner_email": "cancel-checkout@onboarding.test",
+                "password": "strong-pass-1",
+            },
+        ).json()
+        headers = {"Authorization": f"Bearer {created['access_token']}"}
+        base = f"/api/onboarding/shops/{created['business_id']}/subscription"
+        first = self.client.post(f"{base}/purchase", headers=headers, json={"plan_code": "growth", "service_type": "chatbot"})
+        self.assertEqual("awaiting_payment", first.json()["status"])
+        cancelled = self.client.post(f"{base}/{first.json()['id']}/cancel", headers=headers)
+        self.assertEqual(200, cancelled.status_code, cancelled.text)
+        self.assertEqual("cancelled", cancelled.json()["status"])
+        second = self.client.post(f"{base}/purchase", headers=headers, json={"plan_code": "scale", "service_type": "chatbot"})
+        self.assertEqual(200, second.status_code, second.text)
+        self.assertNotEqual(first.json()["id"], second.json()["id"])
+        self.assertEqual("awaiting_payment", second.json()["status"])
+        with Session(self.engine) as db:
+            db.add(Payment(
+                business_id=created["business_id"],
+                subscription_id=second.json()["id"],
+                amount=Decimal(str(second.json()["quoted_amount"])),
+                currency="VND",
+                provider="manual",
+                provider_transaction_id="cancel-guard-receipt",
+                status="paid",
+            ))
+            db.commit()
+        blocked_cancel = self.client.post(f"{base}/{second.json()['id']}/cancel", headers=headers)
+        self.assertEqual(409, blocked_cancel.status_code, blocked_cancel.text)
 
     def test_shop_agent_can_request_paid_plan_but_cannot_activate_demo(self):
         created = self.client.post(
@@ -330,7 +467,7 @@ class OnboardingApiTests(unittest.TestCase):
             json={"plan_code": "growth", "service_type": "chatbot"},
         )
         self.assertEqual(200, request.status_code, request.text)
-        self.assertEqual("pending", request.json()["status"])
+        self.assertEqual("awaiting_payment", request.json()["status"])
 
         demo = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/subscription/purchase",
@@ -345,6 +482,7 @@ class OnboardingApiTests(unittest.TestCase):
             "/api/onboarding/shops",
             json={"shop_name": "Connect Shop", "owner_name": "Connect Owner", "owner_email": "connect@onboarding.test", "password": "strong-pass-1"},
         ).json()
+        self._ensure_platform_business(created)
         headers = {"Authorization": f"Bearer {created['access_token']}"}
         channel = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/channels",
@@ -424,6 +562,7 @@ class OnboardingApiTests(unittest.TestCase):
             "/api/onboarding/shops",
             json={"shop_name": "Telegram Verify", "owner_name": "Verify Owner", "owner_email": "verify-telegram@onboarding.test", "password": "strong-pass-1"},
         ).json()
+        self._ensure_platform_business(created)
         headers = {"Authorization": f"Bearer {created['access_token']}"}
         calls = []
 
@@ -459,6 +598,14 @@ class OnboardingApiTests(unittest.TestCase):
         self.assertEqual("12345", body["external_account_id"])
         self.assertEqual("Verify Bot", body["name"])
         self.assertEqual("connected", body["webhook_status"])
+        listed = self.client.get(
+            f"/api/onboarding/shops/{created['business_id']}/channels",
+            headers=headers,
+        )
+        self.assertEqual(200, listed.status_code, listed.text)
+        self.assertIn("no-store", listed.headers.get("cache-control", ""))
+        self.assertEqual("connected", listed.json()[0]["status"])
+        self.assertEqual("connected", listed.json()[0]["webhook_status"])
         self.assertEqual(3, len(calls))
         self.assertTrue(calls[1][0].endswith("/setWebhook"))
         self.assertEqual("https://crm.example.test/api/webhooks/telegram-verify", calls[1][1]["json"]["url"])
@@ -476,6 +623,7 @@ class OnboardingApiTests(unittest.TestCase):
             "/api/onboarding/shops",
             json={"shop_name": "Zalo Verify", "owner_name": "Verify Owner", "owner_email": "verify-zalo@onboarding.test", "password": "strong-pass-1"},
         ).json()
+        self._ensure_platform_business(created)
         headers = {"Authorization": f"Bearer {created['access_token']}"}
 
         class FakeResponse:
@@ -516,6 +664,7 @@ class OnboardingApiTests(unittest.TestCase):
             "/api/onboarding/shops",
             json={"shop_name": "Bot Lifecycle", "owner_name": "Lifecycle Owner", "owner_email": "bot-lifecycle@onboarding.test", "password": "strong-pass-1"},
         ).json()
+        self._ensure_platform_business(created)
         headers = {"Authorization": f"Bearer {created['access_token']}"}
         connected = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/channels",

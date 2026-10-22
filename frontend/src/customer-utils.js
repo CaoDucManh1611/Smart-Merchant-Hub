@@ -5,6 +5,26 @@ export function customerTagNames(profile) {
     .map((tag) => tag.trim());
 }
 
+const friendlyCustomerTagNames = {
+  "RFM · Khách mới": "Khách mới",
+  "RFM · Chưa mua": "Chưa mua hàng",
+  "RFM · Giá trị cao": "VIP",
+  "RFM · Trung thành": "Khách quen",
+  "RFM · Tiềm năng": "Có tiềm năng",
+  "RFM · Cần chăm sóc": "Cần quan tâm",
+  "RFM · Nguy cơ rời bỏ": "Lâu chưa quay lại",
+  "RFM · Duy trì": "Khách thường",
+  "RFM · AI nhóm 1": "Nhóm 1",
+  "RFM · AI nhóm 2": "Nhóm 2",
+  "RFM · AI nhóm 3": "Nhóm 3",
+  "RFM · AI nhóm 4": "Nhóm 4",
+};
+
+export function customerTagDisplayName(tag) {
+  const name = String(tag || "").trim();
+  return friendlyCustomerTagNames[name] || name;
+}
+
 export function conversationCustomerTags(conversation) {
   if (!conversation || !Array.isArray(conversation.customer_tags)) return [];
   return conversation.customer_tags

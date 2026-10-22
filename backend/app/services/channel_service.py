@@ -13,6 +13,7 @@ from app.services.channel_credentials import encrypt_token
 
 
 TOKEN_EXPIRY_WARNING = timedelta(days=7)
+QUOTA_HOLDING_CHANNEL_STATUSES = frozenset({"active", "reconnect_required"})
 
 
 def normalized_connection_state(channel: Channel | None) -> str:
@@ -87,9 +88,17 @@ def get_single_active_channel(db: Session, business_id: int, channel_type: str) 
         Channel.channel_type == channel_type,
         Channel.status == "active",
     )).all()
-    if len(channels) != 1:
+    # Browser-session connectors share the canonical Facebook/Instagram type
+    # for CRM history, but they do not carry Meta API credentials. Keep them
+    # out of provider API send paths when both connection modes coexist.
+    provider_channels = []
+    for channel in channels:
+        config = channel.config if isinstance(channel.config, dict) else {}
+        if config.get("provider") != f"{channel_type}_local_connector":
+            provider_channels.append(channel)
+    if len(provider_channels) != 1:
         raise LookupError("Expected exactly one active tenant channel")
-    return channels[0]
+    return provider_channels[0]
 
 
 def get_active_channel_token(
@@ -132,7 +141,7 @@ def upsert_channel_connection(
     )
     if channel is not None and channel.business_id != business_id:
         raise PermissionError("External channel account already belongs to another business")
-    needs_slot = channel is None or channel.status != "active"
+    needs_slot = channel is None or channel.status not in QUOTA_HOLDING_CHANNEL_STATUSES
     if needs_slot:
         if reserve_channel_slot is None:
             raise RuntimeError("A platform channel quota reservation is required")

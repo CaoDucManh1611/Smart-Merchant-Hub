@@ -13,7 +13,7 @@ from app.models import platform_control
 from app.models.platform_control import PlatformBusiness, TenantRegistry
 from app.services.tenant_data_migration import TableMigrationResult
 from pathlib import Path
-from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, create_engine, select
+from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, create_engine, select, text
 from sqlalchemy.orm import Session
 
 
@@ -301,7 +301,16 @@ def test_foreign_key_validation_rejects_orphaned_destination_rows():
         Column("parent_id", Integer, ForeignKey("parents.id"), nullable=False),
     )
     metadata.create_all(engine)
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE children DROP CONSTRAINT children_parent_id_fkey"))
     with Session(engine) as db:
         db.execute(children.insert().values(id=1, parent_id=999))
         db.commit()
+        if db.get_bind().dialect.name == "postgresql":
+            db.execute(text(
+                "ALTER TABLE children ADD CONSTRAINT children_parent_id_fkey "
+                "FOREIGN KEY (parent_id) REFERENCES parents (id) NOT VALID"
+            ))
+            db.commit()
         assert cutover.validate_destination_foreign_keys(db) is False

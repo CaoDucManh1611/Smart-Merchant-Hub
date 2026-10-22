@@ -39,7 +39,7 @@ test("CRM orders page is processing-only and receives orders from Inbox or AI", 
   const ordersEnd = appSource.indexOf('<section v-if="currentTab === \'purchase-orders\'"', ordersStart);
   const ordersView = appSource.slice(ordersStart, ordersEnd);
   assert.match(ordersView, /data-testid="orders-processing-only"/);
-  assert.match(ordersView, /Đơn được tạo từ hộp thư hoặc luồng trợ lý/);
+  assert.match(ordersView, /Đơn từ Seller Center được nhập ở trạng thái nháp/);
   assert.doesNotMatch(ordersView, /<form class="product-form order-form"/);
 });
 

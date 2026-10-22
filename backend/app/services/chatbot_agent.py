@@ -9,19 +9,21 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import re
+import unicodedata
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.business import User
+from app.models.customer import Customer
 from app.models.platform_control import PlatformUser
 from app.models.chatbot import ChatbotConfig
 from app.models.canned_response import CannedResponse
 from app.models.conversation import Conversation
 from app.models.audit_log import AuditLog
 from app.models.customer_fact import CustomerFact
-from app.models.customer_collection import CustomerConsent
 from app.models.crm_extended import ConversationAssignment, CustomerTag, Tag
 from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
@@ -37,6 +39,12 @@ from app.services.customer_order_service import (
 from app.services.order_service import SalesOrderOperationError, reserve_draft_order_inventory
 from app.services.job_service import enqueue_job
 from app.services.ticket_sla import enqueue_ticket_sla_jobs, ticket_deadlines
+from app.services.customer_fact_extractor import (
+    ALLOWED_FACT_KEYS,
+    ORDER_SUMMARY_FACT_KEYS,
+    get_customer_fact_extraction_enabled,
+    has_customer_personalization_consent,
+)
 
 
 AGENT_TOOLS = {
@@ -56,11 +64,75 @@ AGENT_TOOLS = {
 
 
 ESCALATION_TERMS = (
-    "gặp nhân viên", "nhân viên", "khiếu nại", "hoàn tiền", "đổi trả",
-    "hàng lỗi", "hàng bị lỗi", "bị hỏng", "không nhận được", "hỗ trợ gấp",
+    "gặp nhân viên", "nói chuyện với nhân viên", "chuyển cho nhân viên",
+    "nhờ nhân viên", "gặp quản lý", "nói chuyện với quản lý", "nối máy",
+    "người thật", "tư vấn viên", "bot không hiểu", "bot trả lời sai",
+    "khiếu nại", "muốn hoàn tiền", "yêu cầu hoàn tiền", "hoàn tiền đơn hàng",
+    "muốn đổi trả", "yêu cầu đổi trả", "nhận sai mẫu", "nhận sai size",
+    "hàng lỗi", "hàng bị lỗi",
+    "bị hỏng", "không nhận được", "hỗ trợ gấp",
     "speak to a person", "talk to a person", "speak to someone", "talk to someone",
-    "human agent", "live agent", "customer support", "customer service", "representative",
+    "speak to a human", "talk to a human", "human agent", "live agent",
+    "customer support", "customer service", "representative",
+    "i want a refund", "i need a refund", "request a refund", "refund my order",
+    "i want to return this", "return this order",
+    "charged twice", "double charged", "charged two times", "bị trừ tiền hai lần", "trừ tiền hai lần",
+    "mùi khét", "bốc khói", "phát khói", "tia lửa", "rò điện", "giật điện",
+    "chập điện", "nóng bất thường", "quá nóng", "burning smell", "smells burnt",
+    "smoke", "sparks", "electric shock", "overheating",
 )
+SAFETY_ESCALATION_TERMS = (
+    "mui khet", "boc khoi", "phat khoi", "tia lua", "ro dien", "giat dien",
+    "chap dien", "nong bat thuong", "qua nong", "burning smell", "smells burnt",
+    "smoke", "sparks", "electric shock", "overheating",
+)
+PAYMENT_ESCALATION_TERMS = (
+    "bi tru tien hai lan", "tru tien hai lan", "charged twice", "double charged",
+    "charged two times",
+)
+STAFF_REQUEST_TERMS = (
+    "gap nhan vien", "noi chuyen voi nhan vien", "chuyen cho nhan vien",
+    "nho nhan vien", "gap quan ly", "noi chuyen voi quan ly", "noi may",
+    "nguoi that", "tu van vien", "speak to a person", "talk to a person",
+    "speak to someone", "talk to someone", "speak to a human", "talk to a human",
+    "human agent", "live agent", "representative",
+)
+
+
+def _fold_escalation_text(text: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", str(text or "").casefold()).replace("đ", "d")
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", normalized).split())
+
+
+def escalation_reply(text: str, *, handoff_completed: bool = True) -> str:
+    """Acknowledge takeover and give immediate, non-diagnostic safety guidance."""
+    from app.rag.prompt_builder import detect_reply_language
+
+    folded = _fold_escalation_text(text)
+    english = detect_reply_language(text) == "en"
+    staff_note = (
+        ("I’ve routed this to shop staff." if english else "Mình đã chuyển hội thoại cho nhân viên hỗ trợ kiểm tra.")
+        if handoff_completed else
+        ("A shop staff member needs to review this request." if english else "Yêu cầu này cần nhân viên của shop kiểm tra.")
+    )
+    if any(term in folded for term in SAFETY_ESCALATION_TERMS):
+        return (
+            f"Stop using the device now. If it is safe, disconnect its power; do not touch a hot, sparking, or possibly live device or cable. {staff_note} If there is smoke, fire, or immediate danger, move away and contact local emergency services."
+            if english else
+            f"Bạn ngừng sử dụng thiết bị ngay. Nếu an toàn, hãy ngắt nguồn điện; đừng chạm vào thiết bị hoặc dây điện đang nóng, tóe lửa hay nghi rò điện. {staff_note} Nếu có khói, lửa hoặc nguy hiểm trước mắt, hãy rời khỏi khu vực và liên hệ dịch vụ khẩn cấp tại địa phương."
+        )
+    if any(term in folded for term in PAYMENT_ESCALATION_TERMS):
+        return (
+            f"{staff_note} Please don’t pay again or share an OTP, password, or card number; keep the receipt or transaction reference for the staff to verify."
+            if english else
+            f"{staff_note} Bạn đừng thanh toán lại và không chia sẻ OTP, mật khẩu hoặc số thẻ; hãy giữ biên lai hoặc mã giao dịch để nhân viên kiểm tra."
+        )
+    return (
+        "I’ve passed your request to a staff member for help."
+        if english else
+        "Mình đã chuyển yêu cầu cho nhân viên hỗ trợ nhé."
+    ) if handoff_completed else staff_note
 
 
 def _record_handoff(db: Session, business_id: int, conversation_id: int, *, reason_code: str, reason: str | None, ticket_id: int | None = None, source: str) -> None:
@@ -95,6 +167,16 @@ def _is_neutral_policy_question(text: str | None) -> bool:
     ))
 
 
+def deterministic_escalation_reply(text: str, *, handoff_completed: bool = True) -> str | None:
+    """Return an immediate handoff reply for explicit support or risk signals."""
+    if _is_neutral_policy_question(text):
+        return None
+    folded_text = _fold_escalation_text(text)
+    if any(_fold_escalation_text(term) in folded_text for term in ESCALATION_TERMS):
+        return escalation_reply(text, handoff_completed=handoff_completed)
+    return None
+
+
 def _conversation(db: Session, business_id: int, conversation_id: int) -> Conversation:
     row = db.query(Conversation).filter(
         Conversation.id == conversation_id,
@@ -107,40 +189,110 @@ def _conversation(db: Session, business_id: int, conversation_id: int) -> Conver
 
 def build_agent_memory(db: Session, business_id: int, conversation_id: int) -> dict:
     conversation = _conversation(db, business_id, conversation_id)
-    messages = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.received_at.asc(), Message.id.asc()).limit(30).all()
+    messages = list(reversed(db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.received_at.desc(), Message.id.desc()).limit(30).all()))
     history = []
     for message in messages:
         role = "user" if message.direction == "inbound" or message.sender_type == "customer" else "assistant"
         if message.content:
             history.append({"role": role, "content": message.content, "sender_type": message.sender_type})
 
-    personalization_consent = db.query(CustomerConsent.status).filter(
-        CustomerConsent.business_id == business_id,
-        CustomerConsent.customer_id == conversation.customer_id,
-        CustomerConsent.purpose == "personalization",
-    ).order_by(CustomerConsent.id.desc()).first()
-    facts = [] if personalization_consent and personalization_consent[0] == "revoked" else db.query(CustomerFact).filter(
-        CustomerFact.business_id == business_id,
-        CustomerFact.customer_id == conversation.customer_id,
-    ).order_by(CustomerFact.observed_at.desc(), CustomerFact.id.desc()).limit(20).all()
+    customer_opted_out = bool(db.query(Customer.fact_extraction_opt_out).filter(
+        Customer.id == conversation.customer_id,
+        Customer.business_id == business_id,
+    ).scalar())
+    personalization_enabled = bool(
+        conversation.customer_id
+        and not customer_opted_out
+        and get_customer_fact_extraction_enabled(db, business_id)
+        and has_customer_personalization_consent(
+            db, business_id=business_id, customer_id=conversation.customer_id,
+        )
+    )
+    fact_rows = []
+    if personalization_enabled:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        fact_rows = db.query(CustomerFact).filter(
+            CustomerFact.business_id == business_id,
+            CustomerFact.customer_id == conversation.customer_id,
+            or_(CustomerFact.valid_from.is_(None), CustomerFact.valid_from <= now),
+            or_(CustomerFact.valid_until.is_(None), CustomerFact.valid_until > now),
+            CustomerFact.confidence >= 0.65,
+            CustomerFact.fact_key.in_(ALLOWED_FACT_KEYS | ORDER_SUMMARY_FACT_KEYS),
+        ).order_by(
+            CustomerFact.is_verified.desc(),
+            CustomerFact.observed_at.desc(),
+            CustomerFact.id.desc(),
+        ).limit(20).all()
+
+    def safe_fact_value(key: str, value):
+        if key in {"budget_max", "budget_min", "purchase_frequency_90d"}:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            return int(value) if 0 <= value <= 1_000_000_000_000 else None
+        if key == "purchased_product_groups_90d":
+            if not isinstance(value, dict):
+                return None
+            groups = {}
+            for name, quantity in list(value.items())[:5]:
+                label = " ".join(str(name).split())[:60]
+                if (
+                    label
+                    and not re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", label)
+                    and isinstance(quantity, (int, float))
+                    and not isinstance(quantity, bool)
+                    and 0 < quantity <= 1_000_000
+                ):
+                    groups[label] = int(quantity)
+            return groups or None
+        if not isinstance(value, str):
+            return None
+        label = " ".join(value.split())[:80]
+        if (
+            not label
+            or re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", label)
+            or re.search(r"(?<!\w)\+?\d[\d(). -]{7,}\d(?!\w)", label)
+        ):
+            return None
+        return label
+
+    facts = []
+    for fact in fact_rows:
+        if fact.fact_key not in ALLOWED_FACT_KEYS | ORDER_SUMMARY_FACT_KEYS:
+            continue
+        value = safe_fact_value(fact.fact_key, fact.fact_value_json)
+        if value is None:
+            continue
+        facts.append({
+            "key": fact.fact_key,
+            "value": value,
+            "verified": bool(fact.is_verified),
+            "confidence": round(float(fact.confidence), 2),
+            "source_type": fact.source_type,
+        })
+        if len(facts) >= 12:
+            break
     tags = db.query(Tag).join(CustomerTag, CustomerTag.tag_id == Tag.id).filter(
         CustomerTag.business_id == business_id,
         CustomerTag.customer_id == conversation.customer_id,
+        Tag.business_id == business_id,
     ).order_by(Tag.name.asc()).all()
     products = db.query(Product).filter(
         Product.business_id == business_id,
         Product.status == "active",
     ).order_by(Product.updated_at.desc(), Product.id.desc()).limit(10).all()
-    orders = db.query(Order).filter(
-        Order.business_id == business_id,
-        Order.customer_id == conversation.customer_id,
-    ).order_by(Order.created_at.desc(), Order.id.desc()).limit(5).all()
+    orders = []
+    if personalization_enabled:
+        orders = db.query(Order).filter(
+            Order.business_id == business_id,
+            Order.customer_id == conversation.customer_id,
+            Order.status.in_(("paid", "delivered", "completed")),
+        ).order_by(Order.created_at.desc(), Order.id.desc()).limit(5).all()
     return {
         "conversation_id": conversation.id,
         "customer_id": conversation.customer_id,
         "bot_mode": conversation.bot_mode,
         "history": history,
-        "facts": [{"key": fact.fact_key, "type": fact.fact_type, "value": fact.fact_value_json, "confidence": fact.confidence} for fact in facts],
+        "facts": facts,
         "tags": [tag.name for tag in tags],
         "recent_orders": [
             {
@@ -243,9 +395,8 @@ def route_escalation(
     *,
     platform_db: Session | None = None,
 ) -> Ticket | None:
-    if _is_neutral_policy_question(text):
-        return None
-    if not any(term in (text or "").casefold() for term in ESCALATION_TERMS):
+    folded_text = _fold_escalation_text(text)
+    if deterministic_escalation_reply(text) is None:
         return None
     conversation = _conversation(db, business_id, conversation_id)
     existing = db.query(Ticket).filter(
@@ -325,12 +476,9 @@ def route_escalation(
         pass
     _record_handoff(
         db, business_id, conversation_id,
-        reason_code="customer_requested_staff" if any(
-            term in text.casefold() for term in (
-                "nhân viên", "speak to a person", "talk to a person", "speak to someone",
-                "talk to someone", "human agent", "live agent", "representative",
-            )
-        ) else "support_needed",
+        reason_code="customer_requested_staff"
+        if any(term in folded_text for term in STAFF_REQUEST_TERMS)
+        else "support_needed",
         reason=text, ticket_id=ticket.id, source="automatic_escalation",
     )
     record_audit(db, business_id=business_id, action="chatbot_escalated", resource_type="ticket", resource_id=ticket.id, metadata={"conversation_id": conversation_id, "reason": text[:500]})

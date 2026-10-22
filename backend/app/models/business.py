@@ -116,6 +116,10 @@ class Subscription(Base):
     starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     auto_renew: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    change_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="new", server_default="new")
+    previous_subscription_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quoted_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    quoted_currency: Mapped[str] = mapped_column(String(8), nullable=False, default="VND", server_default="VND")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     business = relationship("Business", back_populates="subscriptions")

@@ -33,11 +33,12 @@ def tenant_session(schema_name: str) -> Iterator[Session]:
     schema = validate_schema_name(schema_name)
     override_resource = None
     db = None
-    # Webhook tests keep their isolated per-class SQLite engine behind a
+    # Tests keep their isolated per-class engine behind a
     # ``get_db`` dependency override, while ingress code opens this context
     # manager directly. Reuse that override when present so webhook and API
     # paths exercise the same tenant fixture; production has no overrides and
-    # always uses the dedicated tenant engine below.
+    # always uses the dedicated tenant engine below. PostgreSQL test engines
+    # are isolated by schema in conftest, just like the former SQLite fixtures.
     try:
         from app.db.dependencies import get_db
         from app.main import app
@@ -49,7 +50,8 @@ def tenant_session(schema_name: str) -> Iterator[Session]:
         candidate = override()
         try:
             db = next(candidate)
-            if db.bind is None or db.bind.dialect.name != "sqlite":
+            dialect = db.bind.dialect.name if db.bind is not None else None
+            if dialect != "sqlite" and not (dialect == "postgresql" and settings.ENVIRONMENT == "test"):
                 db = None
                 candidate.close()
             else:
@@ -74,6 +76,9 @@ def tenant_session(schema_name: str) -> Iterator[Session]:
         # PostgreSQL's search_path/set_config primitives; explicit
         # business_id predicates remain the compatibility boundary there.
         if connection.dialect.name != "postgresql":
+            return
+        if settings.ENVIRONMENT == "test" and override_resource is not None:
+            # Test overrides already use a private PostgreSQL schema.
             return
         connection.execute(
             text("SELECT set_config('search_path', :search_path, true)"),

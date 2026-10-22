@@ -8,8 +8,13 @@ shop's tenant schema and lets the normal CRM auto-reply worker continue.
 
 from __future__ import annotations
 
+import hashlib
+import json
+from typing import Any
+from urllib.parse import urlsplit
+
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.config import settings
 from app.database.tenant_session import tenant_session
@@ -26,11 +31,40 @@ class ZaloPersonalIncoming(BaseModel):
 
     author_id: str = Field(..., alias="authorId", min_length=1, max_length=255)
     thread_id: str = Field(..., alias="threadId", min_length=1, max_length=255)
-    message: str = Field(..., min_length=1, max_length=10000)
+    message: str = Field(default="", max_length=10000)
+    media_type: str | None = Field(default=None, alias="mediaType", max_length=30)
+    media_url: str | None = Field(default=None, alias="mediaUrl", max_length=2000)
+    media_id: str | None = Field(default=None, alias="mediaId", max_length=500)
+    attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     display_name: str | None = Field(default=None, alias="displayName", max_length=255)
     business_id: int | None = Field(default=None, alias="businessId", gt=0)
     message_id: str | None = Field(default=None, alias="messageId", max_length=255)
     channel_id: int | None = Field(default=None, alias="channelId", gt=0)
+
+    @model_validator(mode="after")
+    def require_message_or_image(self):
+        media_type = (self.media_type or "").strip().lower()
+        image_attachment = next((
+            item for item in self.attachments
+            if str(item.get("media_type") or item.get("type") or "").lower() == "image"
+        ), None)
+        image_url = self.media_url or (
+            image_attachment.get("url") or image_attachment.get("source_url") or image_attachment.get("media_url")
+            if image_attachment else None
+        )
+        if media_type == "image" and not image_url:
+            raise ValueError("Ảnh cần có đường dẫn công khai để hệ thống phân tích.")
+        if not self.message.strip() and not image_url:
+            raise ValueError("Tin nhắn cần có nội dung hoặc ảnh đính kèm.")
+        if image_url:
+            try:
+                parsed = urlsplit(str(image_url).strip())
+                if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+                    raise ValueError
+                parsed.port
+            except ValueError as exc:
+                raise ValueError("Link ảnh phải là URL HTTP(S) hợp lệ.") from exc
+        return self
 
 
 @router.post("/incoming")
@@ -74,14 +108,50 @@ def receive_personal_zalo_message(
         if channel is None:
             raise HTTPException(status_code=404, detail="Shop chưa kết nối Zalo cá nhân.")
 
+        attachments = list(payload.attachments)
+        has_image_attachment = any(
+            str(item.get("media_type") or item.get("type") or "").lower() == "image"
+            for item in attachments
+        )
+        media_type = (
+            payload.media_type or ("image" if payload.media_url or has_image_attachment else "text")
+        ).strip().lower()
+        if payload.media_url and media_type == "text":
+            media_type = "image"
+        if media_type == "image" and not attachments:
+            attachments = [{
+                "media_type": "image",
+                "url": payload.media_url,
+                "external_attachment_id": payload.media_id,
+            }]
+        content = payload.message.strip() or f"[{media_type}]"
+        fallback_id = hashlib.sha256(
+            json.dumps(
+                [
+                    payload.thread_id,
+                    payload.author_id,
+                    payload.message,
+                    payload.media_type,
+                    payload.media_id,
+                    payload.media_url,
+                    attachments,
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
         saved = process_and_save_message(
             db=db,
             message={
                 "channel": "zalo",
                 "external_account_id": channel.external_account_id,
                 "external_user_id": payload.author_id,
-                "external_message_id": payload.message_id or f"personal:{payload.thread_id}:{payload.author_id}:{payload.message[:80]}",
-                "content": payload.message,
+                "external_message_id": payload.message_id or f"personal:{fallback_id}",
+                "content": content,
+                "media_type": media_type if media_type != "text" else None,
+                "media_url": payload.media_url,
+                "attachments": attachments,
                 "name": payload.display_name,
                 "display_name": payload.display_name,
                 "raw_payload": payload.model_dump(by_alias=True),

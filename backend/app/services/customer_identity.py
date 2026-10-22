@@ -3,9 +3,12 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.channel import Channel
+from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_collection import CustomerContact
 from app.models.customer_identity import CustomerIdentity
+from app.models.message import Message
 from app.services.audit_service import record_audit
 from app.services.customer_profile import (
     merge_profile,
@@ -43,6 +46,86 @@ def get_existing_name_priority(db: Session, customer: Customer) -> int:
     if any(normalize_name(identity.username) == current for identity in identities):
         return 1
     return 2
+
+
+def resolve_conversation_recipient(
+    db: Session,
+    *,
+    conversation_id: int,
+    business_id: int,
+) -> tuple[str, str]:
+    """Resolve the recipient for the conversation's own provider identity."""
+    conversation = db.scalar(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.business_id == business_id,
+        )
+    )
+    if conversation is None:
+        raise ValueError("Conversation not found")
+
+    customer = db.scalar(
+        select(Customer).where(
+            Customer.id == conversation.customer_id,
+            Customer.business_id == business_id,
+        )
+    )
+    if customer is None:
+        raise ValueError("Conversation customer not found")
+
+    latest_inbound = db.scalar(
+        select(Message).where(
+            Message.conversation_id == conversation_id,
+            Message.channel == conversation.channel,
+            Message.direction == "inbound",
+        ).order_by(Message.id.desc()).limit(1)
+    )
+
+    # Telegram's sender id and destination chat id differ in group chats.
+    # Route replies to the chat that produced the latest inbound update.
+    if conversation.channel == "telegram" and latest_inbound is not None:
+        payload = latest_inbound.raw_payload if isinstance(latest_inbound.raw_payload, dict) else {}
+        update_message = payload.get("message") or payload.get("edited_message") or payload
+        chat = update_message.get("chat") if isinstance(update_message, dict) else None
+        chat_id = chat.get("id") if isinstance(chat, dict) else None
+        if chat_id is not None and str(chat_id).strip():
+            return conversation.channel, str(chat_id).strip()
+
+    account_id = None
+    if conversation.channel_id is not None:
+        account_id = db.scalar(
+            select(Channel.external_account_id).where(
+                Channel.id == conversation.channel_id,
+                Channel.business_id == business_id,
+                Channel.channel_type == conversation.channel,
+            )
+        )
+
+    identity_query = select(CustomerIdentity.external_user_id).where(
+        CustomerIdentity.business_id == business_id,
+        CustomerIdentity.customer_id == customer.id,
+        CustomerIdentity.channel == conversation.channel,
+    )
+    if account_id is not None:
+        identity_query = identity_query.where(
+            CustomerIdentity.external_account_id == str(account_id)
+        )
+    identity_id = db.scalar(
+        identity_query.order_by(
+            CustomerIdentity.last_seen_at.desc(),
+            CustomerIdentity.id.desc(),
+        ).limit(1)
+    )
+    if identity_id:
+        return conversation.channel, str(identity_id)
+
+    if latest_inbound is not None and latest_inbound.external_user_id:
+        return conversation.channel, str(latest_inbound.external_user_id)
+
+    if customer.channel == conversation.channel and customer.external_user_id:
+        return conversation.channel, str(customer.external_user_id)
+
+    raise ValueError("No recipient identity exists for the conversation channel")
 
 
 def resolve_customer(
@@ -92,7 +175,7 @@ def resolve_customer(
             avatar_url=avatar_url,
         )
         identity.username = _clean(username) or identity.username
-        identity.display_name = _clean(display_name) or identity.display_name
+        identity.display_name = normalize_name(display_name) or identity.display_name
         if changes:
             record_audit(
                 db,
@@ -206,7 +289,7 @@ def resolve_customer(
             external_account_id=external_account_id,
             external_user_id=external_user_id,
             username=_clean(username),
-            display_name=_clean(display_name),
+            display_name=normalize_name(display_name),
         )
     )
     db.commit()

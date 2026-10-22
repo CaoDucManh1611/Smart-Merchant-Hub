@@ -69,3 +69,46 @@ def test_gemini_query_embedding_requests_same_output_dimension(monkeypatch):
     assert len(vector) == 768
     assert calls[0]["config"].output_dimensionality == 768
     assert calls[0]["config"].task_type == "RETRIEVAL_QUERY"
+
+
+def test_query_batch_uses_query_task_and_deduplicates(monkeypatch):
+    from app.rag.embedder import embed_queries
+    monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", "gemini")
+    monkeypatch.setattr(settings, "EMBEDDING_DIMENSION", 3)
+    monkeypatch.setattr(settings, "EMBEDDING_API_KEY", "batch-test-key")
+    calls = _install_fake_gemini(monkeypatch, 3)
+    vectors = embed_queries(["hello", " hello ", "product price"])
+    assert len(vectors) == 3 and len(calls) == 1
+    assert calls[0]["contents"] == ["hello", "product price"]
+    assert calls[0]["config"].task_type == "RETRIEVAL_QUERY"
+    assert vectors[0] is not vectors[1]
+
+
+def test_query_cache_is_success_only_copy_safe_and_model_scoped(monkeypatch):
+    import pytest
+    from app.rag import embedder
+    embedder._cached_query_embedding.cache_clear()
+    monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", "local")
+    monkeypatch.setattr(settings, "EMBEDDING_MODEL", "test-space-a")
+    monkeypatch.setattr(settings, "EMBEDDING_DIMENSION", 2)
+    calls = []
+    def encode(text, model):
+        calls.append((text, model))
+        if len(calls) == 1:
+            raise RuntimeError("temporary failure")
+        return [0.1, 0.2]
+    monkeypatch.setattr(embedder, "_embed_query_with_local", encode)
+    try:
+        with pytest.raises(RuntimeError):
+            embedder.embed_query("same query")
+        first = embedder.embed_query("same query")
+        first[0] = 999
+        assert embedder.embed_query("same query") == [0.1, 0.2]
+        assert len(calls) == 2
+        monkeypatch.setattr(settings, "EMBEDDING_MODEL", "test-space-b")
+        embedder.embed_query("same query")
+        assert len(calls) == 3
+        with pytest.raises(ValueError):
+            embedder._validate_vectors([[float("nan"), 1.0]])
+    finally:
+        embedder._cached_query_embedding.cache_clear()

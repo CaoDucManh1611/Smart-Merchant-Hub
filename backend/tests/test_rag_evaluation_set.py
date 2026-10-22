@@ -6,8 +6,9 @@ def test_evaluation_set_has_all_core_customer_journeys():
     path = Path(__file__).resolve().parents[2] / "docs" / "chatbot-evaluation-set.jsonl"
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
-    assert len(rows) == 80
+    assert len(rows) == 100
     assert len({row["id"] for row in rows}) == len(rows)
+    assert len({row["user"].casefold().strip() for row in rows}) == len(rows)
     assert {row["expected_action"] for row in rows} >= {
         "lookup_product",
         "lookup_order",

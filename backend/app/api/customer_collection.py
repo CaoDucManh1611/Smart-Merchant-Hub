@@ -365,9 +365,11 @@ def create_consent(
     actor: User | None = Depends(require_write_access),
 ):
     _customer(db, customer_id, tenant)
-    needs_evidence = payload.status == "granted" and payload.purpose in {"marketing", "proactive_messages"}
+    needs_evidence = payload.status == "granted" and payload.purpose in {
+        "marketing", "proactive_messages", "personalization",
+    }
     if needs_evidence and payload.evidence_message_id is None:
-        raise HTTPException(status_code=422, detail="Cần tin nhắn khách đồng ý trước khi bật nhận tin.")
+        raise HTTPException(status_code=422, detail="Cần tin nhắn thể hiện khách đồng ý rõ ràng trước khi bật chức năng này.")
     if payload.evidence_message_id is not None:
         message = db.query(Message).join(Message.conversation).filter(
             Message.id == payload.evidence_message_id,
@@ -390,10 +392,23 @@ def create_consent(
         revoked_at=now if payload.status == "revoked" else None,
     )
     db.add(row)
+    db.flush()
     if payload.purpose == "personalization" and payload.status == "revoked":
         from app.services.privacy_service import stop_customer_personalization
 
         stop_customer_personalization(db, tenant.business_id, customer_id)
+    elif payload.purpose == "personalization" and payload.status == "granted":
+        from app.services.customer_fact_extractor import (
+            get_customer_fact_extraction_enabled,
+            schedule_weekly_customer_fact_scan,
+        )
+
+        if get_customer_fact_extraction_enabled(db, tenant.business_id):
+            schedule_weekly_customer_fact_scan(
+                db,
+                business_id=tenant.business_id,
+                idempotency_key=f"customer-facts-consent:{customer_id}:{row.id}",
+            )
     record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action=payload.status, resource_type="customer_consent", metadata={"customer_id": customer_id, "purpose": payload.purpose})
     db.commit()
     db.refresh(row)

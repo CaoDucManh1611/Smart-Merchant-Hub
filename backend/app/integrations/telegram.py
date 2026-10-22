@@ -187,6 +187,10 @@ class TelegramAdapter:
         media_url: str,
         access_token: str,
         caption: str | None = None,
+        upload_bytes: bytes | None = None,
+        upload_filename: str | None = None,
+        upload_content_type: str | None = None,
+        voice_note: bool = False,
     ) -> dict[str, Any]:
         methods = {
             "image": ("sendPhoto", "photo"),
@@ -199,17 +203,27 @@ class TelegramAdapter:
             method, field = methods[str(media_type).strip().lower()]
         except KeyError as exc:
             raise ValueError(f"Telegram không hỗ trợ media_type: {media_type}") from exc
+        if str(media_type).strip().lower() == "audio" and voice_note:
+            method, field = "sendVoice", "voice"
         media_url = str(media_url or "").strip()
-        if not media_url:
+        if upload_bytes is None and not media_url:
             raise ValueError("Telegram media_url là bắt buộc")
         payload: dict[str, Any] = {"chat_id": recipient_external_id, field: media_url}
         if caption and field != "sticker":
             payload["caption"] = str(caption)[:1024]
-        response = httpx.post(
-            f"https://api.telegram.org/bot{access_token}/{method}",
-            json=payload,
-            timeout=30,
-        )
+        endpoint = f"https://api.telegram.org/bot{access_token}/{method}"
+        if upload_bytes is not None:
+            payload.pop(field, None)
+            filename = str(upload_filename or "attachment.bin")
+            content_type = str(upload_content_type or "application/octet-stream")
+            response = httpx.post(
+                endpoint,
+                data=payload,
+                files={field: (filename, upload_bytes, content_type)},
+                timeout=60,
+            )
+        else:
+            response = httpx.post(endpoint, json=payload, timeout=30)
         response.raise_for_status()
         return response.json()
 

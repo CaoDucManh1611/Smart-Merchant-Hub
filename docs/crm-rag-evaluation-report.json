@@ -1,0 +1,471 @@
+{
+  "evaluated_at": "2026-10-14T08:09:29.972824+00:00",
+  "dataset": "crm-rag-evaluation-set.jsonl",
+  "mode": "synthetic SQLite; no customer data, LLM, embeddings, or external API",
+  "metrics": {
+    "case_count": 13,
+    "missing_prediction_count": 0,
+    "action_accuracy": 1.0,
+    "retrieval_cases": 8,
+    "retrieval_recall_at_k": 1.0,
+    "mrr": 1.0,
+    "answer_cases": 13,
+    "answer_contract_cases": 13,
+    "must_include_term_rate": 1.0,
+    "answer_contract_pass_rate": 1.0,
+    "answer_accuracy_proxy": 1.0,
+    "grounded_rate": 1.0,
+    "source_cases": 8,
+    "expected_source_count": 8,
+    "expected_source_recall": 1.0,
+    "citation_cases": 8,
+    "citation_pass_rate": 1.0,
+    "handoff_precision": 1.0,
+    "handoff_recall": 1.0,
+    "service_error_rate": 0.0,
+    "latency_cases": 13,
+    "latency_mean_ms": 5.35,
+    "latency_p50_ms": 3.69,
+    "latency_p95_ms": 18.35,
+    "estimated_cost_cases": 13,
+    "estimated_ai_cost_total": 0.0,
+    "estimated_ai_cost_mean": 0.0,
+    "estimated_ai_cost_unit": "configured quota cost units; not provider billing",
+    "cases": [
+      {
+        "id": "open_deal_count",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": 1,
+        "retrieval_required": true,
+        "missing_sources": [],
+        "citation_required": true,
+        "citation_valid": true,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 18.35,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "deal_stage_month_filter",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": 1,
+        "retrieval_required": true,
+        "missing_sources": [],
+        "citation_required": true,
+        "citation_valid": true,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 10.72,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "my_deals_filter",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": 1,
+        "retrieval_required": true,
+        "missing_sources": [],
+        "citation_required": true,
+        "citation_valid": true,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 7.62,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "customer_lookup_id",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": 1,
+        "retrieval_required": true,
+        "missing_sources": [],
+        "citation_required": true,
+        "citation_valid": true,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 7.03,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "customer_lookup_name",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": 1,
+        "retrieval_required": true,
+        "missing_sources": [],
+        "citation_required": true,
+        "citation_valid": true,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 5.8,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "customer_name_ambiguous",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": 1,
+        "retrieval_required": true,
+        "missing_sources": [],
+        "citation_required": true,
+        "citation_valid": true,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 3.65,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "conversation_history",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": 1,
+        "retrieval_required": true,
+        "missing_sources": [],
+        "citation_required": true,
+        "citation_valid": true,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 6.47,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "customer_notes",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": 1,
+        "retrieval_required": true,
+        "missing_sources": [],
+        "citation_required": true,
+        "citation_valid": true,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 3.69,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "customer_not_found",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": null,
+        "retrieval_required": false,
+        "missing_sources": [],
+        "citation_required": false,
+        "citation_valid": false,
+        "expected_handoff": true,
+        "actual_handoff": true,
+        "latency_ms": 1.7,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "customer_other_tenant",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": null,
+        "retrieval_required": false,
+        "missing_sources": [],
+        "citation_required": false,
+        "citation_valid": false,
+        "expected_handoff": true,
+        "actual_handoff": true,
+        "latency_ms": 1.75,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "history_missing_customer",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": null,
+        "retrieval_required": false,
+        "missing_sources": [],
+        "citation_required": false,
+        "citation_valid": false,
+        "expected_handoff": false,
+        "actual_handoff": false,
+        "latency_ms": 1.28,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "pipeline_permission_denied",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": null,
+        "retrieval_required": false,
+        "missing_sources": [],
+        "citation_required": false,
+        "citation_valid": false,
+        "expected_handoff": true,
+        "actual_handoff": true,
+        "latency_ms": 1.01,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      },
+      {
+        "id": "customer_permission_denied",
+        "action_ok": true,
+        "missing_required_terms": [],
+        "forbidden_terms_found": [],
+        "retrieval_rank": null,
+        "retrieval_required": false,
+        "missing_sources": [],
+        "citation_required": false,
+        "citation_valid": false,
+        "expected_handoff": true,
+        "actual_handoff": true,
+        "latency_ms": 0.52,
+        "estimated_ai_cost": 0.0,
+        "provider_error": false
+      }
+    ],
+    "notes": [
+      "Each prediction is scored by case ID; no prior conversation turns are included by this evaluator.",
+      "Text contract checks and citation IDs are automatic proxies and do not prove semantic correctness."
+    ]
+  },
+  "predictions": [
+    {
+      "id": "open_deal_count",
+      "action": "lookup_crm_pipeline",
+      "answer": "CRM có 2 deal khớp với các bộ lọc đã nêu. [Nguồn 1]",
+      "retrieved_contents": [
+        "Verified CRM lead query returned 2 records. Filters: {'status': 'open'}."
+      ],
+      "retrieved_sources": [
+        "crm_lead_query"
+      ],
+      "citation_valid": true,
+      "handoff_required": false,
+      "latency_ms": 18.35,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "answered",
+      "source_record_ids": [
+        null
+      ]
+    },
+    {
+      "id": "deal_stage_month_filter",
+      "action": "lookup_crm_pipeline",
+      "answer": "CRM có 1 deal khớp với các bộ lọc đã nêu. [Nguồn 1]",
+      "retrieved_contents": [
+        "Verified CRM lead query returned 1 records. Filters: {'stage': 'proposal', 'stage_label': 'Đã gửi đề xuất', 'created_period': 'this_month', 'created_from': '2026-10-01T00:00:00', 'created_until': '2026-11-01T00:00:00'}."
+      ],
+      "retrieved_sources": [
+        "crm_lead_query"
+      ],
+      "citation_valid": true,
+      "handoff_required": false,
+      "latency_ms": 10.72,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "answered",
+      "source_record_ids": [
+        null
+      ]
+    },
+    {
+      "id": "my_deals_filter",
+      "action": "lookup_crm_pipeline",
+      "answer": "Các deal CRM phù hợp:\n- Deal #201: Gia hạn hợp đồng; customer #101 (Nguyễn Văn An); status open; stage Đã gửi đề xuất; assignee Người phụ trách [Nguồn 1]",
+      "retrieved_contents": [
+        "Deal #201: Gia hạn hợp đồng; customer #101 Nguyễn Văn An; status=open; stage=Đã gửi đề xuất; assignee=Người phụ trách; updated_at=2026-10-14T08:09:29.724369."
+      ],
+      "retrieved_sources": [
+        "crm_lead"
+      ],
+      "citation_valid": true,
+      "handoff_required": false,
+      "latency_ms": 7.62,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "answered",
+      "source_record_ids": [
+        201
+      ]
+    },
+    {
+      "id": "customer_lookup_id",
+      "action": "lookup_crm_customer",
+      "answer": "Khách hàng CRM: Nguyễn Văn An (mã #101), kênh web, trạng thái active. [Nguồn 1]",
+      "retrieved_contents": [
+        "Customer #101; name=Nguyễn Văn An; channel=web; status=active; updated_at=2026-10-14T08:09:29."
+      ],
+      "retrieved_sources": [
+        "crm_customer"
+      ],
+      "citation_valid": true,
+      "handoff_required": false,
+      "latency_ms": 7.03,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "answered",
+      "source_record_ids": [
+        101
+      ]
+    },
+    {
+      "id": "customer_lookup_name",
+      "action": "lookup_crm_customer",
+      "answer": "Khách hàng CRM: Nguyễn Văn An (mã #101), kênh web, trạng thái active. [Nguồn 1]",
+      "retrieved_contents": [
+        "Customer #101; name=Nguyễn Văn An; channel=web; status=active; updated_at=2026-10-14T08:09:29."
+      ],
+      "retrieved_sources": [
+        "crm_customer"
+      ],
+      "citation_valid": true,
+      "handoff_required": false,
+      "latency_ms": 5.8,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "answered",
+      "source_record_ids": [
+        101
+      ]
+    },
+    {
+      "id": "customer_name_ambiguous",
+      "action": "lookup_crm_customer",
+      "answer": "Có nhiều khách hàng khớp. Bạn chọn hồ sơ nào: Nguyễn Văn An (#101) [Nguồn 1], Nguyễn Văn Anh (#103) [Nguồn 2]?",
+      "retrieved_contents": [
+        "Customer #101; name=Nguyễn Văn An; channel=web; status=active.",
+        "Customer #103; name=Nguyễn Văn Anh; channel=web; status=active."
+      ],
+      "retrieved_sources": [
+        "crm_customer",
+        "crm_customer"
+      ],
+      "citation_valid": true,
+      "handoff_required": false,
+      "latency_ms": 3.65,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "no_context",
+      "source_record_ids": [
+        101,
+        103
+      ]
+    },
+    {
+      "id": "conversation_history",
+      "action": "lookup_crm_history",
+      "answer": "Lịch sử trao đổi gần đây với Nguyễn Văn An:\n- 2026-10-14T08:09:29.724369 · customer: Khách muốn khảo sát website và nhận báo giá trong tuần này. [Nguồn 1]",
+      "retrieved_contents": [
+        "Message #501; customer #101; conversation #401; sender=customer; at=2026-10-14T08:09:29.724369; content=Khách muốn khảo sát website và nhận báo giá trong tuần này."
+      ],
+      "retrieved_sources": [
+        "crm_message"
+      ],
+      "citation_valid": true,
+      "handoff_required": false,
+      "latency_ms": 6.47,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "answered",
+      "source_record_ids": [
+        501
+      ]
+    },
+    {
+      "id": "customer_notes",
+      "action": "lookup_crm_notes",
+      "answer": "Ghi chú CRM của Nguyễn Văn An:\n- Cần báo giá trước thứ Sáu. [Nguồn 1]",
+      "retrieved_contents": [
+        "Customer #101 note #601: Cần báo giá trước thứ Sáu."
+      ],
+      "retrieved_sources": [
+        "crm_customer_note"
+      ],
+      "citation_valid": true,
+      "handoff_required": false,
+      "latency_ms": 3.69,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "answered",
+      "source_record_ids": [
+        601
+      ]
+    },
+    {
+      "id": "customer_not_found",
+      "action": "lookup_crm_customer",
+      "answer": "Không tìm thấy hồ sơ khách hàng CRM khớp với tên hoặc mã đã cung cấp.",
+      "retrieved_contents": [],
+      "retrieved_sources": [],
+      "citation_valid": false,
+      "handoff_required": true,
+      "latency_ms": 1.7,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "no_context",
+      "source_record_ids": []
+    },
+    {
+      "id": "customer_other_tenant",
+      "action": "lookup_crm_customer",
+      "answer": "Không tìm thấy hồ sơ khách hàng CRM khớp với tên hoặc mã đã cung cấp.",
+      "retrieved_contents": [],
+      "retrieved_sources": [],
+      "citation_valid": false,
+      "handoff_required": true,
+      "latency_ms": 1.75,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "no_context",
+      "source_record_ids": []
+    },
+    {
+      "id": "history_missing_customer",
+      "action": "lookup_crm_history",
+      "answer": "Bạn muốn tra cứu khách hàng nào? Hãy gửi tên chính xác hoặc mã khách hàng.",
+      "retrieved_contents": [],
+      "retrieved_sources": [],
+      "citation_valid": false,
+      "handoff_required": false,
+      "latency_ms": 1.28,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "no_context",
+      "source_record_ids": []
+    },
+    {
+      "id": "pipeline_permission_denied",
+      "action": "lookup_crm_pipeline",
+      "answer": "Tài khoản này không có quyền xem dữ liệu cơ hội CRM.",
+      "retrieved_contents": [],
+      "retrieved_sources": [],
+      "citation_valid": false,
+      "handoff_required": true,
+      "latency_ms": 1.01,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "no_context",
+      "source_record_ids": []
+    },
+    {
+      "id": "customer_permission_denied",
+      "action": "lookup_crm_customer",
+      "answer": "Tài khoản này không có quyền xem hồ sơ khách hàng CRM.",
+      "retrieved_contents": [],
+      "retrieved_sources": [],
+      "citation_valid": false,
+      "handoff_required": true,
+      "latency_ms": 0.52,
+      "estimated_ai_cost": 0.0,
+      "answer_status": "no_context",
+      "source_record_ids": []
+    }
+  ]
+}

@@ -18,6 +18,7 @@ from app.database.platform_session import PlatformSessionLocal
 from app.database.session import SessionLocal
 from app.database.release_readiness import assert_release_database_ready
 from app.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
+from app.services.backup_maintenance import BackupMaintenanceMiddleware
 from app.services.realtime import manager
 from app.services.observability import (
     collect_operational_snapshot,
@@ -47,7 +48,11 @@ def initialize_database() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    initialize_database()
+    from app.services.platform_backup import recover_interrupted_jobs
+    from app.services.backup_maintenance import backup_root
+    recover_interrupted_jobs()
+    if not (backup_root() / "maintenance.json").exists():
+        initialize_database()
     yield
 
 
@@ -93,6 +98,7 @@ app.add_middleware(
 # =========================================================
 
 app.include_router(api_router)
+app.add_middleware(BackupMaintenanceMiddleware)
 
 
 @app.websocket("/ws/conversations")

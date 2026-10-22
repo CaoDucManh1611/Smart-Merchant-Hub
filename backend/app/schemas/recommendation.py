@@ -25,8 +25,15 @@ class RecommendationItemOut(BaseModel):
     sku: str
     name: str
     price: float
+    available: int | None = None
+    product_url: str | None = None
+    click_url: str | None = None
     score: float
+    model_score: float | None = None
     reason: str
+    staff_interest_percent: int | None = None
+    personalization_signals: list[str] = Field(default_factory=list)
+    purchase_facets: list[str] = Field(default_factory=list)
 
 
 class RecommendationResponse(BaseModel):
@@ -36,6 +43,9 @@ class RecommendationResponse(BaseModel):
     strategy: str
     model_version: str
     candidate_count: int
+    personalization_applied: bool = False
+    personalization_signals: list[str] = Field(default_factory=list)
+    available_personalization_signals: list[str] = Field(default_factory=list)
     items: list[RecommendationItemOut]
     created_at: datetime | None = None
 
@@ -98,3 +108,10 @@ class RecommendationTrainingScheduleOut(BaseModel):
     training_run_id: int
     job_id: int
     status: str
+
+
+class RecommendationDemoPreviewRequest(BaseModel):
+    query: str = Field(default="", max_length=1000)
+    recency_days: int = Field(default=14, ge=0, le=36500)
+    frequency: int = Field(default=5, ge=0, le=100000)
+    monetary: float = Field(default=1470000, ge=0, le=1e12, allow_inf_nan=False)

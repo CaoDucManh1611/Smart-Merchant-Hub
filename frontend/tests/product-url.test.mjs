@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { safeProductUrl } from "../src/product-url.js";
+import { safeProductImageUrl, safeProductUrl } from "../src/product-url.js";
 
 test("accepts only usable product HTTP(S) links", () => {
   assert.equal(safeProductUrl(" https://shop.example/pink-shirt "), "https://shop.example/pink-shirt");
@@ -8,4 +8,9 @@ test("accepts only usable product HTTP(S) links", () => {
   for (const value of ["javascript:alert(1)", "/relative", "https://user:secret@shop.example", "https://", "", "https://shop.example/a b"]) {
     assert.equal(safeProductUrl(value), null);
   }
+});
+
+test("catalog image references require publicly usable HTTPS links", () => {
+  assert.equal(safeProductImageUrl("https://cdn.example/shirt.jpg"), "https://cdn.example/shirt.jpg");
+  assert.equal(safeProductImageUrl("http://cdn.example/shirt.jpg"), null);
 });

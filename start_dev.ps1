@@ -186,7 +186,7 @@ Write-Host "   OK: Du lieu seed RAG da san sang" -ForegroundColor Green
 # ----------------------------------------------
 Write-Host ""
 Write-Host ">> Mo terminal FastAPI server..." -ForegroundColor Cyan
-$backendCommand = "Set-Location '$BackendPath'; `$env:TIKTOK_BRIDGE_CONTROL_URL='http://127.0.0.1:8091'; Write-Host 'FastAPI dang chay...' -ForegroundColor Cyan; python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
+$backendCommand = "Set-Location '$BackendPath'; `$env:TIKTOK_BRIDGE_CONTROL_URL='http://127.0.0.1:8091'; `$env:SHOPEE_BRIDGE_CONTROL_URL='http://127.0.0.1:8092'; `$env:META_MESSENGER_BRIDGE_CONTROL_URL='http://127.0.0.1:8093'; `$env:META_INSTAGRAM_BRIDGE_CONTROL_URL='http://127.0.0.1:8094'; Write-Host 'FastAPI dang chay...' -ForegroundColor Cyan; python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
 Start-Process $PowerShellExe -ArgumentList "-NoExit", "-Command", $backendCommand
 
 Start-Sleep -Seconds 4

@@ -1,0 +1,216 @@
+{
+  "generated_at": "2026-10-12T08:40:35+00:00",
+  "status": "completed",
+  "mode": "live_app_hybrid_pgvector_with_configured_providers",
+  "data_scope": "synthetic demo documents and synthetic evaluation prompts only",
+  "provider": {
+    "embedding": "gemini",
+    "embedding_model": "gemini-embedding-001",
+    "answer": "groq",
+    "answer_model": "openai/gpt-oss-20b"
+  },
+  "temporary_schema_rolled_back": true,
+  "source_files": [
+    "demo-store-profile.vi-en.md",
+    "demo-products.vi-en.csv",
+    "demo-support-policies.vi-en.md",
+    "demo-industry-playbook.vi-en.md"
+  ],
+  "source_chunks": 168,
+  "retrieval": {
+    "evaluated_cases": 6,
+    "expected_source_recall_at_5": 0.8571,
+    "all_expected_sources_in_top_5_rate": 0.8333,
+    "mean_latency_ms": 652.85
+  },
+  "answers": {
+    "attempted": 5,
+    "generated": 4,
+    "citation_gate_pass_rate": 0.25,
+    "must_include_term_rate": 0.6667,
+    "no_forbidden_term_rate": 1.0,
+    "mean_latency_ms": 1424.48,
+    "provider_errors_by_type": {
+      "RateLimitError": 1
+    },
+    "citation_gate_note": "Checks citation IDs and monetary values against cited source text; does not prove every semantic claim."
+  },
+  "cases": [
+    {
+      "id": "pink-products-vi",
+      "query": "Khách thích đồ màu hồng, đang có sản phẩm nào còn hàng?",
+      "expected_sources": [
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-industry-playbook.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        11,
+        120,
+        101,
+        32,
+        166
+      ],
+      "answer": "Chúng tôi có hai mặt hàng màu hồng đang còn hàng:\n\n- **Sổ kế hoạch Hồng Mây (DM-STA-006)** – 14 chiếc, giá 89 000₫. [Nguồn 3]  \n- **Ốp điện thoại Hồng Mây (DM-ELE-003)** – 11 chiếc, giá 159 000₫. [Nguồn 4]",
+      "valid_citation_gate": false,
+      "must_include": [
+        "hồng",
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 629.69,
+      "answer_latency_ms": 1903.98
+    },
+    {
+      "id": "pink-products-en",
+      "query": "I prefer pink items. What do you have in stock?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-store-profile.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        11,
+        27,
+        36,
+        120,
+        3
+      ],
+      "answer": "Here are the pink items currently in stock:\n\n| SKU | Product (English) | Price | Stock |\n|-----|-------------------|-------|-------|\n| DM‑BEA‑002 | Blush Pink Cosmetic Pouch | 99,000 VND | 16 |\n| DM‑HOM‑002 | Early Pink Water Bottle | 219,000 VND | 19 |\n\nBoth items are available in the demo store. If you’d like more details or want to place an order, just let me know! [Source 2][Source 3]",
+      "valid_citation_gate": false,
+      "must_include": [
+        "pink",
+        "DM-APP-001"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 648.89,
+      "answer_latency_ms": 1315.88
+    },
+    {
+      "id": "pink-bag-vi",
+      "query": "Có túi màu hồng nào không?",
+      "expected_sources": [
+        "demo-products.vi-en.csv"
+      ],
+      "retrieved_sources": [
+        "demo-products.vi-en.csv",
+        "demo-support-policies.vi-en.md",
+        "demo-products.vi-en.csv",
+        "demo-store-profile.vi-en.md",
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        27,
+        120,
+        22,
+        11,
+        3
+      ],
+      "answer": "Chúng tôi có hai mẫu túi màu hồng đang còn hàng:\n\n| Mã sản phẩm | Tên sản phẩm (Việt) | Tên sản phẩm (Anh) | Giá | Số lượng còn | Link |\n|-------------|---------------------|--------------------|-----|--------------|------|\n| DM‑BEA‑002 | Túi mỹ phẩm Hồng Phấn | Blush Pink Cosmetic Pouch | 99 000 VND | 16 | https://example.com/demo/DM-BEA-002 |\n| DM‑APP‑003 | Túi vải Hồng Nắng | Sunny Pink Tote | 129 000 VND | 12 | https://example.com/demo/DM-APP-003 |\n\nCả hai sản phẩm đều có sẵn trong kho. Nếu bạn quan tâm, vui lòng cho biết số lượng hoặc yêu cầu đặt mua.  \n[Nguồn 1] [Nguồn 3]",
+      "valid_citation_gate": false,
+      "must_include": [
+        "DM-APP-003"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 723.27,
+      "answer_latency_ms": 1540.81
+    },
+    {
+      "id": "real-link-boundary",
+      "query": "Can I order through this demo link?",
+      "expected_sources": [
+        "demo-store-profile.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        120,
+        19,
+        124,
+        1,
+        114
+      ],
+      "answer": "I’m sorry, but the link you’re seeing is only a demo placeholder. It’s not a live ordering URL, and the shop’s inventory and pricing are just sample data. If you’d like to place a real order, please contact a staff member or use the official ordering system.  \n\n[Source 1]",
+      "valid_citation_gate": true,
+      "must_include": [
+        "placeholder"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 653.51,
+      "answer_latency_ms": 937.26
+    },
+    {
+      "id": "wholesale-mixed-sku-en",
+      "query": "Can I combine five different SKUs to qualify for the 10-unit tier?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [],
+      "retrieved_chunk_ids": [],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "same eligible SKU",
+        "staff approval"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": null,
+      "retrieval_latency_ms": 629.13,
+      "answer_latency_ms": null
+    },
+    {
+      "id": "shipping-threshold-en",
+      "query": "Is shipping free when my order is exactly 500000 VND?",
+      "expected_sources": [
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_sources": [
+        "demo-support-policies.vi-en.md",
+        "demo-support-policies.vi-en.md",
+        "demo-store-profile.vi-en.md",
+        "demo-support-policies.vi-en.md"
+      ],
+      "retrieved_chunk_ids": [
+        124,
+        111,
+        5,
+        129
+      ],
+      "answer": "",
+      "valid_citation_gate": false,
+      "must_include": [
+        "500,000 VND or above",
+        "confirm the destination"
+      ],
+      "must_not_include_found": [],
+      "answer_error_type": "RateLimitError",
+      "retrieval_latency_ms": 632.6,
+      "answer_latency_ms": null
+    }
+  ],
+  "limitations": [
+    "No live shop, customer, order, or social account was read or contacted.",
+    "Synthetic policy and product facts must not be used for customer-facing replies.",
+    "Literal must-include checks and citation validation are useful gates, not full human semantic review."
+  ]
+}

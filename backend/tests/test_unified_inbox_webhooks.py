@@ -7,15 +7,16 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 from app.db.dependencies import get_db
+from app.database.tenant_session import tenant_session
 from app.main import app
 from app.models import Business, Channel, ChannelEvent, Conversation, Customer, Message
-from app.models.platform_control import TenantRegistry
+from app.models.platform_control import PlatformBusiness, TenantRegistry
 from app.tenancy.registry import register_webhook_route
 
 
@@ -32,6 +33,11 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             business = Business(name="Unified inbox", slug="unified-inbox")
             db.add(business)
             db.flush()
+            db.add(PlatformBusiness(
+                id=business.id,
+                name=business.name,
+                slug=business.slug,
+            ))
             db.add(TenantRegistry(
                 business_id=business.id,
                 schema_name=f"shop_{business.id}",
@@ -71,6 +77,38 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
                 )
             db.commit()
             cls.business_id = business.id
+            tenant_channels = [
+                {
+                    "id": channel.id,
+                    "business_id": channel.business_id,
+                    "channel_type": channel.channel_type,
+                    "name": channel.name,
+                    "external_account_id": channel.external_account_id,
+                    "access_token": channel.access_token,
+                    "access_token_encrypted": channel.access_token_encrypted,
+                    "status": channel.status,
+                    "config": channel.config,
+                    "connected_at": channel.connected_at,
+                    "disconnected_at": channel.disconnected_at,
+                    "created_at": channel.created_at,
+                }
+                for channel in db.query(Channel).all()
+            ]
+
+        if cls.engine.dialect.name == "postgresql":
+            from app.database.bases import TenantBase
+            from app.database.tenant_session import tenant_engine
+
+            cls.tenant_engine = tenant_engine
+            cls.tenant_schema = f"shop_{cls.business_id}"
+            with tenant_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA IF EXISTS "{cls.tenant_schema}" CASCADE'))
+                connection.execute(text(f'CREATE SCHEMA "{cls.tenant_schema}"'))
+                connection.execute(text(f'SET LOCAL search_path TO "{cls.tenant_schema}", public'))
+                TenantBase.metadata.create_all(connection)
+                with Session(bind=connection) as tenant_db:
+                    tenant_db.add_all(Channel(**values) for values in tenant_channels)
+                    tenant_db.flush()
 
         def override_get_db():
             with Session(cls.engine) as db:
@@ -82,6 +120,22 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         app.dependency_overrides.clear()
+        if getattr(cls, "tenant_schema", None):
+            with cls.tenant_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA IF EXISTS "{cls.tenant_schema}" CASCADE'))
+
+    def _open_tenant_session(self):
+        if getattr(self, "tenant_schema", None):
+            from contextlib import contextmanager
+
+            @contextmanager
+            def isolated_tenant_session():
+                with patch.object(settings, "ENVIRONMENT", "production"):
+                    with tenant_session(self.tenant_schema) as db:
+                        yield db
+
+            return isolated_tenant_session()
+        return Session(self.engine)
 
     @staticmethod
     def _meta_request(path: str, payload: dict, app_secret: str):
@@ -142,7 +196,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
         ), patch(
             "app.services.conversation_turn_service.schedule_chatbot_turn"
-        ):
+        ) as schedule_turn:
             responses = [
                 self.client.post(fb_path, content=fb_body, headers=fb_headers),
                 self.client.post(ig_path, content=ig_body, headers=ig_headers),
@@ -159,7 +213,8 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             ]
 
         self.assertTrue(all(response.status_code == 200 for response in responses), [response.text for response in responses])
-        with Session(self.engine) as db:
+        self.assertEqual(4, schedule_turn.call_count)
+        with self._open_tenant_session() as db:
             messages = db.scalars(
                 select(Message)
                 .where(Message.direction == "inbound")
@@ -173,6 +228,43 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             self.assertTrue(all(conversation.business_id == self.business_id for conversation in conversations))
             customers = db.scalars(select(Customer).order_by(Customer.id)).all()
             self.assertTrue(all(customer.business_id == self.business_id for customer in customers))
+
+    def test_image_only_instagram_webhook_schedules_a_chatbot_turn(self):
+        app_secret = "unified-inbox-image-secret"
+        instagram = {
+            "object": "instagram",
+            "entry": [{
+                "id": "ig-account",
+                "messaging": [{
+                    "sender": {"id": "ig-image-user"},
+                    "recipient": {"id": "ig-account"},
+                    "timestamp": 1700000001000,
+                    "message": {
+                        "mid": "ig-image-only-1",
+                        "attachments": [{
+                            "type": "image",
+                            "payload": {"url": "https://scontent.cdninstagram.com/test.jpg"},
+                        }],
+                    },
+                }],
+            }],
+        }
+        path, body, headers = self._meta_request("/api/webhooks/instagram", instagram, app_secret)
+
+        with patch.object(settings, "ENVIRONMENT", "production"), \
+             patch.object(settings, "META_APP_SECRET", app_secret), \
+             patch("app.services.customer_fact_extractor.schedule_customer_fact_extraction"), \
+             patch("app.services.conversation_turn_service.schedule_chatbot_turn") as schedule_turn:
+            response = self.client.post(path, content=body, headers=headers)
+
+        self.assertEqual(200, response.status_code, response.text)
+        with self._open_tenant_session() as db:
+            saved = db.scalar(select(Message).where(Message.external_message_id == "ig-image-only-1"))
+            self.assertIsNotNone(saved)
+            self.assertEqual("image", saved.media_type)
+        schedule_turn.assert_called_once()
+        self.assertGreater(schedule_turn.call_args.kwargs["message_id"], 0)
+        self.assertEqual(self.business_id, schedule_turn.call_args.kwargs["business_id"])
 
     def test_invalid_signatures_for_all_core_channels_are_rejected_before_persistence(self):
         facebook = {
@@ -223,7 +315,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             "Content-Type": "application/json",
             "X-Hub-Signature-256": "sha256=" + ("0" * 64),
         }
-        with Session(self.engine) as db:
+        with self._open_tenant_session() as db:
             before_messages = db.query(Message).count()
             before_events = db.query(ChannelEvent).count()
 
@@ -254,7 +346,7 @@ class UnifiedInboxWebhookTests(unittest.TestCase):
             ]
 
         self.assertEqual([401, 401, 401, 401], [response.status_code for response in responses])
-        with Session(self.engine) as db:
+        with self._open_tenant_session() as db:
             self.assertEqual(before_messages, db.query(Message).count())
             self.assertEqual(before_events, db.query(ChannelEvent).count())
 

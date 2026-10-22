@@ -93,10 +93,11 @@ class ChatRequest(BaseModel):
     # Customer-facing channels pass it to turn a question into a safe
     # tenant-scoped recommendation signal.
     customer_id: int | None = Field(default=None, ge=1)
+    conversation_id: int | None = Field(default=None, ge=1)
 
 
 class SourceChunk(BaseModel):
-    document_id: int
+    document_id: int | None = None
     content: str
     similarity: float
     metadata: dict | None = None
@@ -104,11 +105,21 @@ class SourceChunk(BaseModel):
     chunk_id: int | None = None
     filename: str | None = None
     chunk_index: int | None = None
+    source_type: str | None = None
+    record_id: int | None = None
+    customer_id: int | None = None
+    deal_id: int | None = None
+    owner_user_id: int | None = None
+    status: str | None = None
+    stage: str | None = None
+    updated_at: datetime | None = None
 
 
 class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceChunk]
     chunks_found: int
-    answer_status: Literal["answered", "no_context", "service_error"] = "answered"
+    action: str | None = None
+    data_sources: list[dict] = Field(default_factory=list)
+    answer_status: Literal["answered", "no_context", "service_error", "handoff_required"] = "answered"
     handoff_required: bool = False

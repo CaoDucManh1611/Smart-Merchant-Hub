@@ -12,6 +12,9 @@ from time import perf_counter
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from app.auth.dependencies import get_current_user
+from app.db.dependencies import get_db
+from app.models.business import User
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -31,10 +34,14 @@ from app.rag.llm_caller import call_llm, stream_llm
 from app.rag.run_logger import RagRunLog
 from app.schemas.rag import ChatRequest, ChatResponse, SourceChunk
 from app.services.quota_service import QuotaExceededError, reserve_ai_budget
+from app.services.chatbot_agent import deterministic_escalation_reply
+from app.services.crm_knowledge import answer_from_crm
+from app.services.auto_reply_service import _contextual_retrieval_query, _live_product_context_chunk
 from app.services.recommendation_interaction_service import (
     RecommendationInteractionError,
     record_interaction,
 )
+from app.services.recommendation_service import rag_personalization_weights
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +92,8 @@ def _record_customer_question(
 async def chat(
     request: ChatRequest,
     db: Session = Depends(get_tenant_db),
+    permission_db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
     tenant: TenantContext = Depends(get_tenant_context),
     idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key", max_length=120),
 ):
@@ -107,14 +116,44 @@ async def chat(
             request=request,
             idempotency_key=idempotency_key,
         )
+        handoff_reply = deterministic_escalation_reply(request.query, handoff_completed=False)
+        if handoff_reply:
+            run.finish("handoff_required", phase="complete", answer_chars=len(handoff_reply), handoff_required=True)
+            return ChatResponse(
+                answer=handoff_reply,
+                sources=[],
+                chunks_found=0,
+                answer_status="handoff_required",
+                handoff_required=True,
+            )
+        crm_answer = answer_from_crm(db, tenant.business_id, request, user=user, permission_db=db, user_db=permission_db)
+        if crm_answer is not None:
+            run.finish(
+                "crm_answer",
+                action=crm_answer.action,
+                answer_chars=len(crm_answer.answer),
+                data_source_types=[item.get("type") for item in crm_answer.data_sources],
+                handoff_required=crm_answer.handoff_required,
+                estimated_ai_cost=0.0,
+                retrieval_mode="structured_sql",
+                source_count=len(crm_answer.sources),
+            )
+            return crm_answer
         # Bước 1: Retrieve relevant chunks
         run.update(phase="retrieve")
         retrieval_started = perf_counter()
+        retrieval_diagnostics = {}
+        retrieval_query = _contextual_retrieval_query(db, tenant.business_id, request.query,
+                                                     request.conversation_id or 0, request.conversation_history)
         chunks = retrieve(
-            query=request.query,
+            query=retrieval_query,
             db=db,
             business_id=tenant.business_id,
             top_k=request.top_k,
+            diagnostics=retrieval_diagnostics,
+            customer_product_weights=rag_personalization_weights(
+                db, business_id=tenant.business_id, customer_id=request.customer_id,
+            ),
         )
 
         run.update(
@@ -124,6 +163,7 @@ async def chat(
             top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
             retrieval_topic=infer_query_topic(request.query),
             retrieval_ms=round((perf_counter() - retrieval_started) * 1000, 2),
+            **retrieval_diagnostics,
         )
 
         if not chunks:
@@ -142,6 +182,10 @@ async def chat(
             )
 
         # Bước 2: Build prompt
+        current_product = _live_product_context_chunk(db, tenant.business_id, retrieval_query,
+                                                     request.conversation_id or 0)
+        if current_product is not None:
+            chunks = [current_product, *chunks]
         messages = build_prompt(
             query=request.query,
             chunks=chunks,
@@ -184,7 +228,9 @@ async def chat(
                 answer_status="service_error",
                 handoff_required=True,
             )
-        if not has_valid_citations(answer, [chunk.content for chunk in chunks]):
+        if not has_valid_citations(answer, [chunk.content for chunk in chunks],
+                authoritative_sources=[current_product.content] if current_product is not None else None,
+                query=request.query):
             run.finish("no_context", phase="complete", reason="missing_or_invalid_citation", handoff_required=True)
             return ChatResponse(
                 answer=localize_rag_fallback(
@@ -220,6 +266,7 @@ async def chat(
             answer=answer,
             sources=sources,
             chunks_found=len(chunks),
+            data_sources=[current_product.metadata] if current_product is not None else [],
             answer_status="answered",
             handoff_required=False,
         )
@@ -243,6 +290,8 @@ async def chat(
 async def chat_stream(
     request: ChatRequest,
     db: Session = Depends(get_tenant_db),
+    permission_db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
     tenant: TenantContext = Depends(get_tenant_context),
     idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key", max_length=120),
 ):
@@ -269,23 +318,59 @@ async def chat_stream(
                 request=request,
                 idempotency_key=idempotency_key,
             )
+            handoff_reply = deterministic_escalation_reply(request.query, handoff_completed=False)
+            if handoff_reply:
+                run.finish("handoff_required", phase="complete", answer_chars=len(handoff_reply), handoff_required=True)
+                yield f"data: {json.dumps({'type': 'sources', 'sources': [], 'chunks_found': 0}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'chunk', 'content': handoff_reply}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'answer_status': 'handoff_required', 'handoff_required': True})}\n\n"
+                return
+            crm_answer = answer_from_crm(db, tenant.business_id, request, user=user, permission_db=db, user_db=permission_db)
+            if crm_answer is not None:
+                run.finish(
+                    "crm_answer",
+                    action=crm_answer.action,
+                    answer_chars=len(crm_answer.answer),
+                    data_source_types=[item.get("type") for item in crm_answer.data_sources],
+                    handoff_required=crm_answer.handoff_required,
+                    estimated_ai_cost=0.0,
+                    retrieval_mode="structured_sql",
+                    source_count=len(crm_answer.sources),
+                )
+                crm_sources = [source.model_dump(mode="json") for source in crm_answer.sources]
+                yield f"data: {json.dumps({'type': 'sources', 'sources': crm_sources, 'chunks_found': len(crm_sources)}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'chunk', 'content': crm_answer.answer}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'answer_status': crm_answer.answer_status, 'handoff_required': crm_answer.handoff_required, 'data_sources': crm_answer.data_sources, 'action': crm_answer.action}, ensure_ascii=False)}\n\n"
+                return
             # Retrieve
             run.update(phase="retrieve")
             retrieval_started = perf_counter()
+            retrieval_diagnostics = {}
+            retrieval_query = _contextual_retrieval_query(db, tenant.business_id, request.query,
+                                                         request.conversation_id or 0, request.conversation_history)
             chunks = retrieve(
-                query=request.query,
+                query=retrieval_query,
                 db=db,
                 business_id=tenant.business_id,
                 top_k=request.top_k,
+                diagnostics=retrieval_diagnostics,
+                customer_product_weights=rag_personalization_weights(
+                    db, business_id=tenant.business_id, customer_id=request.customer_id,
+                ),
             )
+            current_product = _live_product_context_chunk(db, tenant.business_id, retrieval_query,
+                                                         request.conversation_id or 0) if chunks else None
+            if current_product is not None:
+                chunks = [current_product, *chunks]
 
             run.update(
                 phase="build_prompt",
                 chunks_found=len(chunks),
-                source_document_ids=sorted({c.document_id for c in chunks}),
+                source_document_ids=sorted({c.document_id for c in chunks if c.document_id > 0}),
                 top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
                 retrieval_topic=infer_query_topic(request.query),
                 retrieval_ms=round((perf_counter() - retrieval_started) * 1000, 2),
+                **retrieval_diagnostics,
             )
 
             sources = [
@@ -347,7 +432,9 @@ async def chat_stream(
                 answer_parts.append(text_chunk)
 
             answer = "".join(answer_parts)
-            if not has_valid_citations(answer, [chunk.content for chunk in chunks]):
+            if not has_valid_citations(answer, [chunk.content for chunk in chunks],
+                    authoritative_sources=[current_product.content] if current_product is not None else None,
+                    query=request.query):
                 run.finish("no_context", phase="complete", reason="missing_or_invalid_citation", handoff_required=True)
                 fallback = localize_rag_fallback(
                     NO_CONTEXT_CHAT_FALLBACK,
@@ -367,7 +454,7 @@ async def chat_stream(
             )
 
             # Done
-            yield f"data: {json.dumps({'type': 'done', 'answer_status': 'answered', 'handoff_required': False})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'answer_status': 'answered', 'handoff_required': False, 'data_sources': [current_product.metadata] if current_product is not None else []})}\n\n"
 
           except Exception as e:
               logger.warning("RAG stream failed: error_type=%s", type(e).__name__)

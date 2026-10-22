@@ -19,15 +19,16 @@ def get_tenant_db(
 ) -> Iterator[Session]:
     """Yield a database session whose transaction is routed to this shop only."""
 
-    # The legacy test suite creates an isolated SQLite engine per test class
+    # The legacy test suite creates an isolated engine per test class
     # and overrides ``get_db`` to point at it. Reusing that session in test
     # mode keeps converted tenant routes on the same fixture without changing
-    # the production two-database contract. Explicit ``get_tenant_db``
-    # overrides (used by isolation tests) still take precedence.
+    # the production two-database contract. PostgreSQL test engines use a
+    # private schema per fixture; explicit ``get_tenant_db`` overrides still
+    # take precedence.
     if (
         settings.ENVIRONMENT.strip().lower() == "test"
         and legacy_db.bind is not None
-        and legacy_db.bind.dialect.name == "sqlite"
+        and legacy_db.bind.dialect.name in {"sqlite", "postgresql"}
     ):
         legacy_db.info["business_id"] = tenant.business_id
         yield legacy_db

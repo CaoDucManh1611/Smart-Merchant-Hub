@@ -51,12 +51,20 @@ class OtpSmtpConfig:
     security: str = "starttls"
 
 
-def _message(code: str) -> str:
+def _message(code: str, *, purpose: str = "verification") -> str:
     # Keep the content deliberately generic; never include customer data.
+    if purpose == "order_confirmation":
+        return f"Mã OTP xác nhận đơn hàng Smart Merchant Hub của bạn là {code}. Mã có hiệu lực trong 10 phút."
     return f"Mã xác thực Smart Merchant Hub của bạn là {code}. Mã có hiệu lực trong 10 phút."
 
 
-def _send_smtp(*, destination: str, code: str, smtp_config: OtpSmtpConfig | None = None) -> None:
+def _send_smtp(
+    *,
+    destination: str,
+    code: str,
+    smtp_config: OtpSmtpConfig | None = None,
+    purpose: str = "verification",
+) -> None:
     host = (smtp_config.host if smtp_config else settings.OTP_SMTP_HOST).strip()
     sender = (smtp_config.from_email if smtp_config else settings.OTP_FROM_EMAIL).strip()
     if not host or not sender:
@@ -73,8 +81,16 @@ def _send_smtp(*, destination: str, code: str, smtp_config: OtpSmtpConfig | None
     message = EmailMessage()
     message["From"] = formataddr((smtp_config.from_name, sender)) if smtp_config and smtp_config.from_name else sender
     message["To"] = destination
-    message["Subject"] = "Mã xác thực Smart Merchant Hub"
-    message.set_content(_message(code))
+    is_order_confirmation = purpose == "order_confirmation"
+    if purpose == "test":
+        message["Subject"] = "Kiểm tra cấu hình email Smart Merchant Hub"
+        message.set_content("Đây là email thử để kiểm tra máy chủ SMTP. Không cần trả lời thư này.")
+    else:
+        message["Subject"] = (
+            "Mã OTP xác nhận đơn hàng Smart Merchant Hub"
+            if is_order_confirmation else "Mã xác thực Smart Merchant Hub"
+        )
+        message.set_content(_message(code, purpose=purpose))
     port = int(smtp_config.port if smtp_config else settings.OTP_SMTP_PORT)
     security = smtp_config.security if smtp_config else ("starttls" if settings.OTP_SMTP_USE_TLS else "none")
     if security == "ssl":
@@ -86,6 +102,17 @@ def _send_smtp(*, destination: str, code: str, smtp_config: OtpSmtpConfig | None
             client.starttls(context=ssl.create_default_context())
         client.login(username, password)
         client.send_message(message)
+
+
+def send_smtp_test_email(*, destination: str, smtp_config: OtpSmtpConfig) -> OtpDeliveryResult:
+    """Send a non-OTP probe; success means SMTP accepted it, not Inbox delivery."""
+    try:
+        _send_smtp(destination=destination, code="", smtp_config=smtp_config, purpose="test")
+    except (OtpDeliveryNotConfigured, OtpDeliveryError):
+        raise
+    except (OSError, smtplib.SMTPException) as error:
+        raise OtpDeliveryError("Không thể gửi email thử qua SMTP.") from error
+    return OtpDeliveryResult(provider="smtp", delivered=True)
 
 
 def _send_twilio(*, destination: str, code: str) -> None:
@@ -117,6 +144,7 @@ def deliver_otp(
     destination: str,
     code: str,
     smtp_config: OtpSmtpConfig | None = None,
+    purpose: str = "verification",
 ) -> OtpDeliveryResult:
     """Deliver an OTP using the configured provider.
 
@@ -139,7 +167,7 @@ def deliver_otp(
         if channel != "email":
             raise OtpDeliveryNotConfigured("SMTP chỉ dùng cho OTP email.")
         try:
-            _send_smtp(destination=destination, code=code, smtp_config=smtp_config)
+            _send_smtp(destination=destination, code=code, smtp_config=smtp_config, purpose=purpose)
         except (OtpDeliveryNotConfigured, OtpDeliveryError) as error:
             if settings.OTP_DELIVERY_FALLBACK.strip().lower() == "in_chat":
                 logger.warning("OTP email delivery fell back to in-chat demo: error_type=%s", type(error).__name__)

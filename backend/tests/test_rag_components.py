@@ -14,7 +14,12 @@ from app.rag.prompt_builder import (
     detect_reply_language,
     localize_rag_fallback,
 )
-from app.rag.retriever import RetrievedChunk, _merge_hybrid_results
+from app.rag.retriever import (
+    RetrievedChunk,
+    _bm25_scores,
+    _merge_hybrid_results,
+    _personalized_pagerank_rerank,
+)
 from app.rag.topics import infer_document_topic, infer_query_topic
 
 
@@ -122,6 +127,92 @@ def test_hybrid_retriever_merges_duplicate_chunks():
     assert results[0].similarity == 0.88
 
 
+def test_bm25_rewards_repeated_terms_in_shorter_candidate():
+    scores = _bm25_scores(
+        ["rare rare product", "rare " + "filler " * 100],
+        [("rare",)],
+    )
+    assert scores[0] > scores[1]
+    assert _bm25_scores(["Áo thun xanh"], [("shirt", "shirts", "ao thun")])[0] > 0
+
+
+def test_reciprocal_rank_fusion_prefers_a_hit_shared_by_both_retrievers():
+    dense_only = RetrievedChunk(
+        chunk_id=1, document_id=10, content="dense hit", similarity=0.99, metadata={},
+    )
+    shared_dense = RetrievedChunk(
+        chunk_id=2, document_id=20, content="shared hit", similarity=0.8, metadata={},
+    )
+    shared_bm25 = RetrievedChunk(
+        chunk_id=2, document_id=20, content="shared hit", similarity=0.5, metadata={},
+        ranking_score=3.0,
+    )
+    lexical_only = RetrievedChunk(
+        chunk_id=3, document_id=30, content="lexical hit", similarity=0.4, metadata={},
+        ranking_score=2.0,
+    )
+
+    results = _merge_hybrid_results(
+        [dense_only, shared_dense], [shared_bm25, lexical_only], top_k=3,
+    )
+
+    assert results[0].chunk_id == 2
+    assert results[0].similarity == 0.8
+
+
+def test_hybrid_retriever_personalized_pagerank_promotes_related_chunks():
+    query_match = RetrievedChunk(
+        chunk_id=1, document_id=10, content="Áo thun xanh",
+        similarity=0.9, metadata={"parent_id": 5}, chunk_index=2,
+    )
+    related = RetrievedChunk(
+        chunk_id=2, document_id=10, content="Chi tiết chất liệu áo thun",
+        similarity=0.2, metadata={"parent_id": 5}, chunk_index=3,
+    )
+    unrelated = RetrievedChunk(
+        chunk_id=3, document_id=20, content="Chính sách giao hàng",
+        similarity=0.4, metadata={}, chunk_index=0,
+    )
+
+    results = _merge_hybrid_results([query_match, related, unrelated], [], top_k=3)
+
+    assert [item.chunk_id for item in results] == [1, 2, 3]
+    assert [item.similarity for item in results] == [0.9, 0.2, 0.4]
+
+
+def test_ppr_blends_consented_customer_product_prior_with_query_rank():
+    query_match = RetrievedChunk(
+        chunk_id=1, document_id=10, content="Bình đỏ", similarity=0.52,
+        metadata={"sku": "SKU-RED"},
+    )
+    customer_match = RetrievedChunk(
+        chunk_id=2, document_id=20, content="Bình xanh", similarity=0.48,
+        metadata={"sku": "SKU-BLUE"},
+    )
+
+    ranked = _personalized_pagerank_rerank(
+        [query_match, customer_match], [0.52, 0.48], {"sku:sku-blue": 1.0},
+    )
+
+    assert [item.chunk_id for item in ranked] == [2, 1]
+    assert [item.chunk_id for item in _personalized_pagerank_rerank(
+        [query_match, customer_match], [0.52, 0.48],
+    )] == [1, 2]
+
+
+def test_hybrid_retrieval_limits_one_document_from_filling_the_entire_context():
+    ranked = [
+        RetrievedChunk(chunk_id=index, document_id=10, content=f"chunk {index}",
+                       similarity=1 - index / 100, metadata=None)
+        for index in range(1, 5)
+    ] + [
+        RetrievedChunk(chunk_id=5, document_id=20, content="other policy", similarity=.9, metadata=None),
+        RetrievedChunk(chunk_id=6, document_id=30, content="another policy", similarity=.8, metadata=None),
+    ]
+    results = _merge_hybrid_results(ranked, [], top_k=4)
+    assert [result.document_id for result in results] == [10, 10, 20, 30]
+
+
 def test_prompt_ignores_unsupported_history_roles():
     messages = build_prompt(
         query="Giá áo thun là bao nhiêu?",
@@ -147,6 +238,7 @@ def test_rag_detects_vietnamese_and_english_and_follows_recent_user_language():
     assert detect_reply_language("Can you tell me the delivery policy?") == "en"
     assert detect_reply_language("How much would it cost to buy 10 units of the Điện gia dụng mẫu 01?") == "en"
     assert detect_reply_language("ok", [{"role": "user", "content": "How much does delivery cost?"}]) == "en"
+    assert detect_reply_language("ship HN bn tien???") == "vi"
 
 
 def test_prompt_and_no_context_fallback_follow_customer_language():
@@ -158,6 +250,19 @@ def test_prompt_and_no_context_fallback_follow_customer_language():
     assert localize_rag_fallback(NO_CONTEXT_CHAT_FALLBACK, query="What is the return policy?").startswith("I couldn't find")
 
 
+def test_prompt_answers_latest_question_and_uses_history_only_for_context():
+    messages = build_prompt(
+        query="Cái đó còn hàng không?",
+        chunks=[],
+        conversation_history=[
+            {"role": "user", "content": "Giá của Điện gia dụng mẫu 01 bao nhiêu?"},
+            {"role": "assistant", "content": "349.000 đồng."},
+        ],
+    )
+    assert "Trả lời câu hỏi mới nhất" in messages[0]["content"]
+    assert "không trả lời lại hay tóm tắt câu hỏi cũ" in messages[0]["content"]
+
+
 def test_shop_prompt_cannot_replace_rag_grounding_rules():
     messages = build_prompt(
         query="Giá sản phẩm?",
@@ -167,6 +272,21 @@ def test_shop_prompt_cannot_replace_rag_grounding_rules():
     assert "Trả lời thân thiện." in messages[0]["content"]
     assert "Chỉ dùng các sự kiện" in messages[0]["content"]
     assert "[Nguồn N]" in messages[0]["content"]
+
+
+def test_prompt_requires_inline_source_support_and_no_unconfirmed_actions():
+    system = build_prompt("Chính sách đổi trả thế nào?", [])[0]["content"]
+
+    assert "đúng trích dẫn [Nguồn N]" in system
+    assert "Không khẳng định đã lưu, xóa, cập nhật" in system
+    messages = build_prompt("What is the return policy?", [RetrievedChunk(1, 1, "Returns within 7 days.", .9, {"section": "Returns"})])
+    assert "[Source 1]" in messages[1]["content"]
+    assert "Section: Returns" in messages[1]["content"]
+    messages = build_prompt("Does this cleanser treat acne?", [
+        RetrievedChunk(1, 1, "No verified clinical outcomes.", .9, {}),
+        RetrievedChunk(2, 2, "DM-BEA-001 | Soft Cloud Cleanser | no treatment claims", .9, {}),
+    ])
+    assert "[Source 2] | SKU: DM-BEA-001" in messages[1]["content"]
 
 
 def test_topic_router_prefers_policy_topic_for_delivery_questions():
@@ -191,6 +311,137 @@ def test_rag_answer_requires_only_real_source_ids():
     assert not has_valid_citations(
         "Giá 100.000 đồng [Nguồn 1].",
         [sources[0], "Sản phẩm khác có giá 100000 VND."],
+    )
+
+
+def test_rag_answer_rejects_unverified_product_codes_and_links_and_labels_demo_urls():
+    source = "SKU DM-APP-001 giá 89000 VND. Link ví dụ: https://example.com/demo/DM-APP-001"
+    assert has_valid_citations(
+        "Mã DM-APP-001 giá 89\u202f000 VND. Link này là placeholder trong bản demo: "
+        "https://example.com/demo/DM-APP-001 [Nguồn 1]",
+        [source],
+    )
+    assert not has_valid_citations("Mã DM-APP-099 [Nguồn 1]", [source])
+    assert not has_valid_citations("https://shop.example.com/buy [Nguồn 1]", [source])
+    assert not has_valid_citations("Link https://example.com/demo/DM-APP-001 [Nguồn 1]", [source])
+
+
+def test_rag_citation_guard_understands_price_columns_and_unicode_sku_dashes():
+    source = "sku | product | price_vnd | demo_stock\nDM-APP-001 | Áo hồng | 89000 | 14"
+    assert has_valid_citations("Áo DM‑APP‑001 giá 89\u202f000₫ [Nguồn 1]", [source])
+    assert not has_valid_citations("Áo DM‑APP‑099 giá 89\u202f000₫ [Nguồn 1]", [source])
+
+
+def test_rag_guard_reads_all_table_rows_and_current_prices_override_old_documents():
+    table = "sku | price_vnd\nDM-APP-001 | 89000\nDM-APP-002 | 129000"
+    assert has_valid_citations("DM-APP-002 giá 129.000 đồng [Nguồn 1]", [table])
+    current = "SKU DM-APP-002. Giá hiện hành: 149000 VND."
+    assert not has_valid_citations("DM-APP-002 giá 129.000 đồng [Nguồn 1]", [table, current],
+                                   authoritative_sources=[current])
+    assert has_valid_citations("DM-APP-002 giá 149.000 đồng [Nguồn 2]", [table, current],
+                              authoritative_sources=[current])
+    assert has_valid_citations("149.000 đồng [Nguồn 1]", ["Tồn: 2\nGiá: 149000 VND"])
+
+
+def test_rag_citation_keeps_product_code_and_numeric_facts_on_the_same_row():
+    table = "sku | price_vnd | stock\nDM-APP-001 | 10000 | 4\nDM-APP-002 | 20000 | 9"
+    assert has_valid_citations("DM-APP-001 giá 10.000 đồng, còn 4 chiếc [Nguồn 1]", [table])
+    assert not has_valid_citations("DM-APP-001 giá 20.000 đồng, còn 9 chiếc [Nguồn 1]", [table])
+
+
+def test_numbered_product_list_uses_each_lines_own_citation():
+    sources = [
+        "sku | product | price_vnd | demo_stock\nDM-BEA-002 | Túi mỹ phẩm | 99000 | 16",
+        "sku | product | price_vnd | demo_stock\nDM-APP-003 | Túi vải | 129000 | 12",
+    ]
+    assert has_valid_citations(
+        "Có hai mẫu túi:\n1. Túi mỹ phẩm — 99\u202f000đ, còn 16 chiếc [Nguồn 1]\n"
+        "2. Túi vải — 129\u202f000đ, còn 12 chiếc [Nguồn 2]", sources,
+    )
+    assert not has_valid_citations(
+        "1. DM-BEA-002: 99.000đ, còn 16 [Nguồn 2]\n"
+        "2. DM-APP-003: 129.000đ, còn 12 [Nguồn 1]", sources,
+    )
+
+
+def test_wholesale_calculated_total_needs_verified_source():
+    assert has_valid_citations(
+        "12 chiếc thuộc mức 10–29 chiếc, giảm 8% nhưng cần nhân viên duyệt [Nguồn 1]",
+        ["The demo policy's 10–29-unit tier is 8%, subject to staff approval."],
+        query="Tôi muốn nhập sỉ 12 chiếc",
+    )
+    assert not has_valid_citations(
+        "12 chiếc giảm 8%, tổng sơ bộ 982.560 đồng [Nguồn 1] [Nguồn 2]",
+        ["10–29 units receive an 8% discount subject to staff approval.", "Giá 89000 VND."],
+        query="Tôi muốn nhập sỉ 12 cáp USB-C, giá thế nào?",
+    )
+
+
+def test_current_crm_stock_overrides_a_stale_product_row_in_citation():
+    stale = "sku | price_vnd | stock\nDM-APP-001 | 10000 | 4"
+    current = "SKU DM-APP-001; Giá hiện hành: 10000 VND; Tồn khả dụng: 2"
+    assert not has_valid_citations(
+        "DM-APP-001 giá 10.000 đồng, còn 4 chiếc [Nguồn 1]",
+        [stale, current],
+        authoritative_sources=[current],
+    )
+
+
+def test_rag_citation_must_support_the_answer_topic_not_only_contain_a_number():
+    assert has_valid_citations("The available information lists ingredients: water [Source 1]", ["Ingredients: water"])
+    assert not has_valid_citations("This product is available [Source 1]", ["Ingredients: water"])
+    assert has_valid_citations(
+        "Phí vận chuyển theo tổng giá trị đơn: dưới 500.000 VND phí 30.000 VND [Nguồn 1]",
+        ["Shipping fee: 30000 VND below 500000 VND."],
+    )
+    assert not has_valid_citations(
+        "Giá sản phẩm là 30.000 VND [Nguồn 1]",
+        ["Shipping fee: 30000 VND below 500000 VND."],
+    )
+    assert not has_valid_citations(
+        "Shipping usually takes 2–5 days [Nguồn 1]",
+        ["Returns may be requested within 7 days."],
+    )
+    assert not has_valid_citations(
+        "The cleanser has no verified treatment claim for acne [Source 1]",
+        ["DM-BEA-001 | Soft Cloud Cleanser | 189000 VND | Ingredients: water"],
+    )
+    assert not has_valid_citations(
+        "Delivery takes 3–7 days [Nguồn 1]",
+        ["Delivery usually takes 2–5 business days."],
+    )
+    assert has_valid_citations(
+        "The cleanser has no verified treatment claim for acne [Source 1] [Source 2]",
+        [
+            "DM-BEA-001 | Soft Cloud Cleanser | 189000 VND | Ingredients: water",
+            "Do not make treatment claims without approved evidence.",
+        ],
+    )
+
+
+def test_product_and_safety_answer_must_cite_both_product_row_and_safety_guide():
+    sources = [
+        "Cosmetics: no verified clinical outcomes or suitability guarantee; do not promise a treatment.",
+        "sku | product_name_en | attributes\nDM-BEA-001 | Soft Cloud Cleanser | no treatment claim",
+    ]
+    answer = "Soft Cloud Cleanser (DM‑BEA‑001) has no verified treatment claim for acne"
+    assert not has_valid_citations(answer + " [Source 1]", sources)
+    assert has_valid_citations(answer + " [Source 1] [Source 2]", sources)
+
+
+def test_prompt_requests_direct_catalog_and_separate_citations_for_mixed_claims():
+    prompt = build_prompt("Có sản phẩm nào màu hồng còn hàng không?", [])
+    rules = prompt[0]["content"]
+    assert "kiểm tra từng dòng về màu và tồn kho" in rules
+    assert "nguồn chứa đúng tên/mã sản phẩm" in rules
+
+
+def test_citation_guard_allows_customer_numbers_but_checks_new_policy_facts():
+    policy = "Wholesale: 10–29 units receive an 8% discount."
+    assert has_valid_citations(
+        "For 12 units, the 8% discount applies [Source 1]",
+        [policy],
+        query="I want 12 units",
     )
 
 

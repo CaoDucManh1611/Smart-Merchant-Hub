@@ -16,7 +16,13 @@ from app.models.channel import Channel
 from app.models.customer import Customer
 from app.models.customer_identity import CustomerIdentity
 from app.services.channel_credentials import decrypt_token
-from app.services.customer_avatar import verify_customer_avatar_url
+from app.services.customer_avatar import (
+    MARKETPLACE_AVATAR_HOSTS,
+    PROVIDER_PROXY_CHANNELS,
+    is_trusted_meta_avatar_url,
+    is_trusted_marketplace_avatar_url,
+    verify_customer_avatar_url,
+)
 from app.services.message_service import fetch_instagram_customer_profile
 from app.tenancy.context import TenantContext, resolve_tenant_context
 from app.tenancy.schema import schema_name_for
@@ -32,6 +38,7 @@ def get_customer_avatar(
     business_id: int | None = Query(default=None),
     expires: int | None = Query(default=None),
     signature: str | None = Query(default=None),
+    channel: str | None = Query(default=None),
     x_business_id: str | None = Header(default=None, alias="X-Business-Id"),
 ):
     """Stream a provider profile photo without exposing channel credentials."""
@@ -52,6 +59,7 @@ def get_customer_avatar(
                 business_id=business_id,
                 expires=expires,
                 signature=signature,
+                channel=channel,
             )
         ):
             raise HTTPException(status_code=401, detail="Tenant context is required") from None
@@ -62,10 +70,17 @@ def get_customer_avatar(
     # multi-tenant runtime that session points at the control database, while
     # customers and channels live in ``shop_<business_id>``.
     with tenant_session(schema_name_for(tenant.business_id)) as db:
-        return _stream_customer_avatar(customer_id=customer_id, tenant=tenant, db=db)
+        return _stream_customer_avatar(
+            customer_id=customer_id,
+            tenant=tenant,
+            db=db,
+            channel=channel,
+        )
 
 
-def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Session):
+def _stream_customer_avatar(
+    *, customer_id: int, tenant: TenantContext, db: Session, channel: str | None = None
+):
     customer = db.scalar(
         select(Customer).where(
             Customer.id == customer_id,
@@ -75,72 +90,117 @@ def _stream_customer_avatar(*, customer_id: int, tenant: TenantContext, db: Sess
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer avatar not found")
 
+    avatar_channel = str(channel or customer.channel or "").strip().lower()
+    if avatar_channel not in PROVIDER_PROXY_CHANNELS:
+        latest_provider_identity = db.scalar(
+            select(CustomerIdentity)
+            .where(
+                CustomerIdentity.business_id == tenant.business_id,
+                CustomerIdentity.customer_id == customer.id,
+                CustomerIdentity.channel.in_(PROVIDER_PROXY_CHANNELS),
+            )
+            .order_by(CustomerIdentity.last_seen_at.desc())
+        )
+        if latest_provider_identity is not None:
+            avatar_channel = latest_provider_identity.channel
+
     identity = db.scalar(
         select(CustomerIdentity)
         .where(
             CustomerIdentity.business_id == tenant.business_id,
             CustomerIdentity.customer_id == customer.id,
-            CustomerIdentity.channel == customer.channel,
+            CustomerIdentity.channel == avatar_channel,
         )
         .order_by(CustomerIdentity.last_seen_at.desc())
     )
     if identity is None:
-        raise HTTPException(status_code=404, detail="Customer avatar not available")
-
-    channel = db.scalar(
-        select(Channel).where(
-            Channel.business_id == tenant.business_id,
-            Channel.channel_type == customer.channel,
-            Channel.external_account_id == identity.external_account_id,
-            Channel.status == "active",
-        )
-    )
-    if channel is None:
-        # Imported conversations can retain an older account identifier even
-        # after the shop reconnects the same provider.  A tenant's current
-        # active connection is still the correct credential source.
-        active_channels = db.scalars(
-            select(Channel).where(
-                Channel.business_id == tenant.business_id,
-                Channel.channel_type == customer.channel,
-                Channel.status == "active",
+        # A merged customer can keep its primary channel after its Facebook
+        # identity was removed. Fall back to the most recently linked provider
+        # identity so another channel's valid avatar does not become a 404.
+        identity = db.scalar(
+            select(CustomerIdentity)
+            .where(
+                CustomerIdentity.business_id == tenant.business_id,
+                CustomerIdentity.customer_id == customer.id,
+                CustomerIdentity.channel.in_(PROVIDER_PROXY_CHANNELS),
             )
-        ).all()
-        channel = active_channels[0] if len(active_channels) == 1 else None
-    if channel is None or not channel.access_token_encrypted:
+            .order_by(CustomerIdentity.last_seen_at.desc())
+        )
+        if identity is not None:
+            avatar_channel = identity.channel
+    if identity is None:
         raise HTTPException(status_code=404, detail="Customer avatar not available")
 
     try:
-        access_token = decrypt_token(
-            channel.access_token_encrypted,
-            settings.CHANNEL_ENCRYPTION_KEY,
+        # The local Meta Business Suite bridge already captured this URL from
+        # the logged-in inbox. Prefer that CDN image: desktop bridge
+        # connections intentionally don't provision a Meta OAuth token, so
+        # trying Graph API here would turn a valid avatar into a broken image.
+        provider_url = (
+            str(customer.avatar_url or "").strip()
+            if avatar_channel in {"facebook", "instagram"}
+            and is_trusted_meta_avatar_url(customer.avatar_url)
+            else ""
         )
-        if customer.channel == "telegram":
-            adapter = TelegramAdapter()
-            file_path = adapter.fetch_profile_avatar_file_path(
-                user_id=identity.external_user_id,
-                access_token=access_token,
+        if avatar_channel in MARKETPLACE_AVATAR_HOSTS and is_trusted_marketplace_avatar_url(
+            customer.avatar_url, avatar_channel
+        ):
+            provider_url = str(customer.avatar_url).strip()
+
+        if not provider_url:
+            channel = db.scalar(
+                select(Channel).where(
+                    Channel.business_id == tenant.business_id,
+                    Channel.channel_type == avatar_channel,
+                    Channel.external_account_id == identity.external_account_id,
+                    Channel.status == "active",
+                )
             )
-            if not file_path:
+            if channel is None:
+                # Imported conversations can retain an older account identifier even
+                # after the shop reconnects the same provider.  A tenant's current
+                # active connection is still the correct credential source.
+                active_channels = db.scalars(
+                    select(Channel).where(
+                        Channel.business_id == tenant.business_id,
+                        Channel.channel_type == avatar_channel,
+                        Channel.status == "active",
+                    )
+                ).all()
+                channel = active_channels[0] if len(active_channels) == 1 else None
+            if channel is None or not channel.access_token_encrypted:
                 raise HTTPException(status_code=404, detail="Customer avatar not available")
-            provider_url = adapter.build_file_url(
-                file_path=file_path,
-                access_token=access_token,
+
+            access_token = decrypt_token(
+                channel.access_token_encrypted,
+                settings.CHANNEL_ENCRYPTION_KEY,
             )
-        elif customer.channel == "zalo":
-            profile = ZaloAdapter().fetch_user_profile(
-                user_id=identity.external_user_id,
-                access_token=access_token,
-            )
-            provider_url = str(profile.get("avatar_url") or "").strip()
-        elif customer.channel == "instagram":
-            profile = fetch_instagram_customer_profile(
-                identity.external_user_id,
-                access_token=access_token,
-            )
-            provider_url = str(profile.get("avatar_url") or "").strip()
-        else:
-            raise HTTPException(status_code=404, detail="Customer avatar not available")
+            if avatar_channel == "telegram":
+                adapter = TelegramAdapter()
+                file_path = adapter.fetch_profile_avatar_file_path(
+                    user_id=identity.external_user_id,
+                    access_token=access_token,
+                )
+                if not file_path:
+                    raise HTTPException(status_code=404, detail="Customer avatar not available")
+                provider_url = adapter.build_file_url(
+                    file_path=file_path,
+                    access_token=access_token,
+                )
+            elif avatar_channel == "zalo":
+                profile = ZaloAdapter().fetch_user_profile(
+                    user_id=identity.external_user_id,
+                    access_token=access_token,
+                )
+                provider_url = str(profile.get("avatar_url") or "").strip()
+            elif avatar_channel == "instagram":
+                profile = fetch_instagram_customer_profile(
+                    identity.external_user_id,
+                    access_token=access_token,
+                )
+                provider_url = str(profile.get("avatar_url") or "").strip()
+            else:
+                raise HTTPException(status_code=404, detail="Customer avatar not available")
         if not provider_url:
             raise HTTPException(status_code=404, detail="Customer avatar not available")
         response = httpx.get(

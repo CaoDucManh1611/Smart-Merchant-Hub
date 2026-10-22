@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from urllib.parse import urlsplit
 
 
 _PLACEHOLDER_NAMES = {
@@ -14,6 +15,9 @@ _PLACEHOLDER_NAMES = {
     "unknown",
     "user",
     "khách hàng",
+    # Meta's sidebar/action labels can be mistaken for names by older connectors.
+    "chia sẻ dữ liệu", "chia sẽ dữ liệu", "share data", "data sharing",
+    "trang cá nhân trên facebook", "facebook profile", "ảnh đại diện", "profile picture", "profile photo",
 }
 
 
@@ -47,6 +51,14 @@ def normalize_phone(value: object) -> str | None:
 
 def normalize_avatar_url(value: object) -> str | None:
     text = str(value or "").strip()
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return None
+    if parsed.hostname == "business.facebook.com" or (
+        (parsed.hostname or "").endswith(".fbcdn.net") and parsed.path.startswith("/rsrc.php")
+    ):
+        return None
     if text.startswith(("https://", "http://")):
         return text[:2048]
     return None

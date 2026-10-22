@@ -128,7 +128,9 @@ class ZaloWebhookApiTests(unittest.TestCase):
         with Session(self.engine) as db:
             channel_event = db.scalar(select(ChannelEvent))
             self.assertIsNotNone(channel_event)
-            customer = db.scalar(select(Customer).where(Customer.channel == "zalo"))
+            customer = db.scalar(
+                select(Customer).where(Customer.external_user_id == "z-user-1")
+            )
             self.assertIsNotNone(customer)
             self.assertEqual(self.business_id, customer.business_id)
             self.assertEqual("Zalo Buyer", customer.name)
@@ -188,7 +190,9 @@ class ZaloWebhookApiTests(unittest.TestCase):
             },
         ), patch(
             "app.services.customer_fact_extractor.schedule_customer_fact_extraction"
-        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"):
+        ), patch("app.services.conversation_turn_service.schedule_chatbot_turn"), patch(
+            "app.api.zalo._sync_zalo_oa_user_history"
+        ):
             response = self.client.post(
                 "/api/webhooks/zalo",
                 headers={

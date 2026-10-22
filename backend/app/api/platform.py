@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
 from sqlalchemy import String, cast, case, func, inspect, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.auth.platform import require_platform_admin
@@ -21,10 +22,16 @@ from app.models.business import Business, Payment, ServicePlan, Subscription, Us
 from app.models.channel import Channel, ChannelEvent
 from app.models.saas import SaaSUsage
 from app.models.platform_control import PlatformAudit, PlatformProviderIncident
+from app.database.tenant_session import tenant_session
+from app.tenancy.schema import schema_name_for
+from app.services.channel_service import normalized_connection_state
 from app.schemas.platform import (
     PlatformAuditOut,
     PlatformShopListOut,
     PlatformShopOut,
+    PlatformShopConnectionsListOut,
+    PlatformShopConnectionsOut,
+    PlatformChannelStatusOut,
     PlatformStatusOut,
     PlatformStatusUpdate,
     PlatformUsageOut,
@@ -47,6 +54,7 @@ from app.schemas.platform import (
     ProvisioningRequest,
 )
 from app.services.audit_service import record_audit
+from app.services.subscription_payment_service import paid_receipt
 from app.services.quota_service import PLAN_LIMIT_FIELDS, quota_period_start
 from app.services.privacy_service import get_or_create_request
 from app.services.tenant_schema_service import ensure_registry, update_registry
@@ -231,6 +239,10 @@ def _platform_quota_snapshot(db: Session, business_id: int, period_start, plan: 
 
 def _shop_out(db: Session, business: Business, period_start) -> PlatformShopOut:
     plan = _plan_for(db, business.id)
+    registered_at = db.scalar(select(Subscription.created_at).where(
+        Subscription.business_id == business.id,
+        Subscription.service_type == "package",
+    ).order_by(Subscription.id.desc()).limit(1))
     quota = _platform_quota_snapshot(db, business.id, period_start, plan)
     return PlatformShopOut(
         id=business.id,
@@ -239,6 +251,7 @@ def _shop_out(db: Session, business: Business, period_start) -> PlatformShopOut:
         status=business.status,
         plan_code=plan.code if plan else None,
         plan_name=plan.name if plan else None,
+        subscription_registered_at=registered_at,
         usage=_usage_for(db, business.id, period_start),
         quota=quota,
         period_start=period_start,
@@ -254,6 +267,8 @@ def _subscription_out(row: Subscription) -> PlatformSubscriptionOut:
         plan_name=row.plan.name,
         service_type=row.service_type or "package",
         status=row.status,
+        change_kind=row.change_kind,
+        quoted_amount=row.quoted_amount,
         starts_at=row.starts_at,
         ends_at=row.ends_at,
         auto_renew=row.auto_renew,
@@ -305,8 +320,31 @@ def _subscription_request_out(db: Session, row: Subscription) -> PlatformSubscri
     if requested_at is not None and requested_at.tzinfo is None:
         # All legacy subscription/audit timestamps are stored as naive UTC.
         requested_at = requested_at.replace(tzinfo=timezone.utc)
+    payment_report = db.scalar(
+        select(AuditLog.id)
+        .where(
+            AuditLog.business_id == business.id,
+            AuditLog.action == "subscription_customer_reported_payment",
+            AuditLog.resource_type == "subscription",
+            AuditLog.resource_id == str(row.id),
+        )
+        .limit(1)
+    )
+    receipt = paid_receipt(db, row)
+    from app.api.onboarding import _chatbot_rental_price
+    expected_amount = row.quoted_amount if row.quoted_amount is not None else (
+        _chatbot_rental_price(row.plan) if row.service_type == "chatbot" else row.plan.price
+    )
+    payment_received = bool(
+        receipt is not None
+        and receipt.business_id == business.id
+        and receipt.amount == expected_amount
+        and not _payment_needs_reconciliation(receipt)
+    )
     return PlatformSubscriptionRequestOut(
         subscription_id=row.id,
+        change_kind=row.change_kind,
+        quoted_amount=expected_amount,
         business_id=business.id,
         shop_name=business.name,
         shop_slug=business.slug,
@@ -326,12 +364,15 @@ def _subscription_request_out(db: Session, row: Subscription) -> PlatformSubscri
         plan_name=row.plan.name,
         service_type=row.service_type or "package",
         status="pending",
+        customer_reported_payment=payment_report is not None,
+        payment_received=payment_received,
         created_at=row.created_at,
     )
 
 
 def _payment_out(row: Payment) -> PlatformPaymentOut:
     return PlatformPaymentOut(
+        reconciliation_required=bool((row.raw_response or {}).get("reconciliation_required") or (row.raw_response or {}).get("payos_verified_payments_pending_review")),
         id=row.id,
         business_id=row.business_id,
         subscription_id=row.subscription_id,
@@ -343,6 +384,11 @@ def _payment_out(row: Payment) -> PlatformPaymentOut:
         paid_at=row.paid_at,
         created_at=row.created_at,
     )
+
+
+def _payment_needs_reconciliation(row: Payment | None) -> bool:
+    evidence = row.raw_response if row is not None and isinstance(row.raw_response, dict) else {}
+    return bool(evidence.get("reconciliation_required") or evidence.get("payos_verified_payments_pending_review"))
 
 
 @router.get("/plans", response_model=list[PlatformPlanOut])
@@ -454,6 +500,43 @@ def list_shops(
     )
 
 
+@router.get("/channel-connections", response_model=PlatformShopConnectionsListOut)
+def list_platform_channel_connections(
+    db: Session = Depends(get_db),
+    _actor: User = Depends(require_platform_admin),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Read only non-secret channel states from each shop's isolated schema."""
+    shops = db.scalars(select(Business).order_by(Business.id.asc()).offset(offset).limit(limit)).all()
+    total = int(db.scalar(select(func.count(Business.id))) or 0)
+    items = []
+    for shop in shops:
+        try:
+            with tenant_session(schema_name_for(shop.id)) as tenant_db:
+                channels = tenant_db.scalars(
+                    select(Channel)
+                    .where(Channel.business_id == shop.id)
+                    .order_by(Channel.channel_type.asc(), Channel.id.asc())
+                ).all()
+                statuses = [
+                    PlatformChannelStatusOut(
+                        id=channel.id,
+                        channel_type=channel.channel_type,
+                        status=("verifying" if channel.status == "pending_pairing" else normalized_connection_state(channel)),
+                        connected_at=channel.connected_at,
+                    )
+                    for channel in channels
+                ]
+            items.append(PlatformShopConnectionsOut(business_id=shop.id, shop_name=shop.name, channels=statuses))
+        except SQLAlchemyError:
+            # An unprovisioned or temporarily unavailable tenant must not
+            # cause the admin view to claim that the shop has no connections.
+            logger.warning("Cannot read channel connection states for shop %s", shop.id)
+            items.append(PlatformShopConnectionsOut(business_id=shop.id, shop_name=shop.name, unavailable=True))
+    return PlatformShopConnectionsListOut(items=items, total=total)
+
+
 @router.get("/subscription-requests", response_model=PlatformSubscriptionRequestListOut)
 def list_subscription_requests(
     db: Session = Depends(get_db),
@@ -500,17 +583,39 @@ def approve_subscription_request(
 ):
     """Activate one approved request, then start the idempotent tenant saga."""
 
-    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update())
+    business_id = db.scalar(select(Subscription.business_id).where(Subscription.id == subscription_id))
+    if business_id is not None:
+        db.scalar(select(Business).where(Business.id == business_id).with_for_update())
+    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update().execution_options(populate_existing=True))
     if row is None:
         raise HTTPException(status_code=404, detail="Yêu cầu gói dịch vụ không tồn tại.")
     if row.status != "pending":
         raise HTTPException(status_code=409, detail="Yêu cầu này không còn ở trạng thái chờ duyệt.")
+    if row.change_kind == "downgrade":
+        service_label = "trợ lý" if row.service_type == "chatbot" else "gói"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Không thể duyệt yêu cầu hạ {service_label} cũ. Shop cần đăng ký {service_label} hiện tại hoặc cao hơn.",
+        )
     plan = db.get(ServicePlan, row.plan_id)
     if plan is None or plan.status != "active":
         raise HTTPException(status_code=409, detail="Gói dịch vụ đã ngừng bán và không thể duyệt.")
     business = db.get(Business, row.business_id)
     if business is None:
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+
+    from app.api.onboarding import _chatbot_rental_price
+    expected_amount = row.quoted_amount if row.quoted_amount is not None else (
+        _chatbot_rental_price(plan) if row.service_type == "chatbot" else plan.price
+    )
+    if expected_amount > 0:
+        receipt = paid_receipt(db, row)
+        if (receipt is None or receipt.business_id != business.id or receipt.amount != expected_amount
+                or _payment_needs_reconciliation(receipt)):
+            raise HTTPException(
+                status_code=409,
+                detail="Chưa ghi nhận khoản thanh toán đúng số tiền. Hãy xác nhận tiền đã vào tài khoản trước khi duyệt gói.",
+            )
 
     # Keep at most one active package. Existing active access remains usable
     # until this point, so requesting an upgrade never locks a shop early.
@@ -599,7 +704,10 @@ def reject_subscription_request(
 ):
     """Close an unapproved request without altering an existing active plan."""
 
-    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update())
+    business_id = db.scalar(select(Subscription.business_id).where(Subscription.id == subscription_id))
+    if business_id is not None:
+        db.scalar(select(Business).where(Business.id == business_id).with_for_update())
+    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id).with_for_update().execution_options(populate_existing=True))
     if row is None:
         raise HTTPException(status_code=404, detail="Yêu cầu gói dịch vụ không tồn tại.")
     if row.status != "pending":
@@ -705,11 +813,11 @@ def list_shop_payments(
 ):
     if db.get(Business, business_id) is None:
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
-    return db.scalars(
+    return [_payment_out(row) for row in db.scalars(
         select(Payment)
         .where(Payment.business_id == business_id)
         .order_by(Payment.created_at.desc(), Payment.id.desc())
-    ).all()
+    ).all()]
 
 
 @router.post("/shops/{business_id}/payments", response_model=PlatformPaymentOut, status_code=201)
@@ -727,11 +835,16 @@ def record_shop_payment(
             Subscription.id == payload.subscription_id,
             Subscription.business_id == business_id,
         )
+        .with_for_update().execution_options(populate_existing=True)
     )
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription không thuộc shop.")
     from app.api.onboarding import _chatbot_rental_price
-    expected_amount = _chatbot_rental_price(subscription.plan) if subscription.service_type == "chatbot" else subscription.plan.price
+    if subscription.change_kind == "downgrade":
+        raise HTTPException(status_code=409, detail="Yêu cầu hạ gói không tạo thanh toán hoặc hoàn tiền.")
+    expected_amount = subscription.quoted_amount if subscription.quoted_amount is not None else (
+        _chatbot_rental_price(subscription.plan) if subscription.service_type == "chatbot" else subscription.plan.price
+    )
     if payload.currency.upper() != "VND":
         raise HTTPException(status_code=422, detail="Chỉ hỗ trợ ghi nhận thanh toán VND.")
     if not payload.provider_transaction_id.strip():
@@ -740,6 +853,13 @@ def record_shop_payment(
     existing = db.scalar(
         select(Payment).where(Payment.provider_transaction_id == transaction_id)
     )
+    if payload.status == "paid" and (existing is None or existing.status == "pending"):
+        another_paid = db.scalar(select(Payment.id).where(
+            Payment.subscription_id == subscription.id, Payment.status == "paid",
+            Payment.currency == "VND", Payment.amount > 0,
+        ))
+        if another_paid is not None:
+            raise HTTPException(status_code=409, detail="Yêu cầu đã có khoản thu. Hãy đối soát giao dịch hiện có trước khi ghi nhận thêm.")
     if existing is not None:
         if existing.business_id != business_id:
             raise HTTPException(status_code=409, detail="Mã giao dịch đã thuộc shop khác.")
@@ -748,7 +868,10 @@ def record_shop_payment(
         if existing.status == "pending" and payload.status == "paid" and payload.amount != expected_amount:
             raise HTTPException(status_code=409, detail="Số tiền thanh toán không khớp giá gói dịch vụ.")
         changed = _apply_payment_status(existing, payload)
-        if changed:
+        request_advanced = payload.status == "paid" and subscription.status == "awaiting_payment"
+        if request_advanced:
+            subscription.status = "pending"
+        if changed or request_advanced:
             record_audit(
                 db,
                 business_id=business_id,
@@ -779,6 +902,8 @@ def record_shop_payment(
     if payment.status == "paid" and payment.paid_at is None:
         payment.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.add(payment)
+    if payment.status == "paid" and subscription.status == "awaiting_payment":
+        subscription.status = "pending"
     try:
         db.flush()
     except IntegrityError as exc:

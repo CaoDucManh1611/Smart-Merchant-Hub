@@ -33,7 +33,7 @@ test("Vietnamese CRM terminology is simplified consistently across pages", () =>
   setLocale("vi");
   assert.equal(t("Mô hình kinh doanh & module"), "Loại hình kinh doanh & tính năng");
   assert.equal(t("Trường khách hàng & pipeline"), "Thông tin khách hàng & quy trình bán hàng");
-  assert.equal(t("RAG · SLA · CSAT · workflow · tenant · webhook · token · API · OTP · FAQ"), "tra cứu trong kho kiến thức · thời hạn hỗ trợ · điểm hài lòng · quy trình tự động · shop · điểm nhận sự kiện · mã truy cập · kết nối hệ thống · xác minh · câu hỏi thường gặp");
+  assert.equal(t("RAG · SLA · CSAT · workflow · tenant · webhook · token · API · OTP · FAQ"), "tra cứu trong kho kiến thức · thời hạn hỗ trợ · điểm hài lòng · quy trình tự động · shop · điểm nhận tin tự động · mã truy cập · kết nối hệ thống · xác minh · câu hỏi thường gặp");
   assert.equal(t("Mã OTP 6 số"), "Mã xác minh 6 số");
   assert.equal(t("Đoạn kiến thức"), "Mục kiến thức");
   assert.equal(t("Hội thoại mới"), "Cuộc trò chuyện mới");
@@ -88,6 +88,12 @@ test("Vue static copy and accessible labels are routed through the active locale
 
 test("English covers all Vietnamese static Vue copy and localizes dates and currency", () => {
   const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
+  const appSource = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
+  const crmCopyBlock = appSource.match(/const crmEnglishCopy = \{([\s\S]*?)^\};/m)?.[1] || "";
+  const crmEnglishKeys = new Set(
+    [...crmCopyBlock.matchAll(/^\s*("(?:\\.|[^"\\])*")\s*:/gm)]
+      .map(([, key]) => JSON.parse(key)),
+  );
   const findVueFiles = (directory) => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
     return entry.isDirectory() ? findVueFiles(path) : entry.name.endsWith(".vue") ? [path] : [];
@@ -116,11 +122,15 @@ test("English covers all Vietnamese static Vue copy and localizes dates and curr
       }
       const checkExpression = (expression) => {
         if (!expression) return;
+        // Some forms keep both complete copies in one explicit locale switch.
+        if (/\buiLocale\s*===\s*['"]en['"]/.test(expression)) return;
         const strings = [...expression.matchAll(/'((?:\\.|[^'\\])*)'|"((?:\\.|[^"\\])*)"|`([^`]*)`/g)];
         for (const match of strings) {
           const value = match[1] ?? match[2] ?? match[3];
           const phrases = match[3] === undefined ? [value] : value.replace(/\$\{[^}]*\}/g, "\0").split("\0");
-          for (const phrase of phrases.map((item) => item.trim()).filter((item) => vietnamese(item) && t(item) === item)) {
+          for (const phrase of phrases.map((item) => item.trim()).filter((item) => (
+            vietnamese(item) && t(item) === item && !crmEnglishKeys.has(item)
+          ))) {
             untranslatedExpressionCopy.add(phrase);
           }
         }
@@ -143,7 +153,7 @@ test("English covers all Vietnamese static Vue copy and localizes dates and curr
   assert.match(formatMoney(1200000), /₫/);
   assert.match(formatDate("2026-09-26"), /Sep|September/);
   assert.match(formatDateTime("2026-09-26T08:30:00Z"), /AM|PM/);
-  const appVue = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
+  const appVue = appSource;
   assert.doesNotMatch(appVue, /\.toLocaleString\([^)]*\)\s*\}\}đ/, "VND displays must use the shared currency formatter");
   setLocale("vi");
   assert.match(formatMoney(1200000), /1\.200\.000/);
@@ -205,22 +215,22 @@ test("English localizes dynamic CRM and chatbot plan names and descriptions", ()
   setLocale("vi");
 });
 
-test("English localizes RFM labels and the compact service request introduction", () => {
+test("English localizes plain-language customer groups and the compact service request introduction", () => {
   const copy = [
-    ["Phân loại RFM", "RFM customer groups"],
-    ["Lần mua gần nhất · số đơn · chi tiêu", "Recent purchase · order count · spend"],
-    ["Phân loại & gắn nhãn", "Classify & tag"],
-    ["Phân loại RFM + học nhóm AI", "Classify RFM + learn AI segments"],
-    ["RFM · AI nhóm 1", "RFM · AI group 1"],
+    ["Chia nhóm khách hàng", "Customer groups"],
+    ["Dựa trên lần mua gần đây, số đơn và tổng tiền mua", "Based on recent purchases, order count, and total spend"],
+    ["Tự động chia nhóm", "Group customers"],
+    ["Khách quen", "Regular customer"],
+    ["Nhóm 1", "Group 1"],
     ["Tối đa", "Up to"],
     ["kênh. Kết nối sau khi gói được duyệt.", "channels. Connect after plan approval."],
-    ["RFM · Chưa mua", "RFM · No purchases"],
-    ["RFM · Giá trị cao", "RFM · High value"],
-    ["RFM · Trung thành", "RFM · Loyal"],
-    ["RFM · Tiềm năng", "RFM · Potential"],
-    ["RFM · Cần chăm sóc", "RFM · Needs attention"],
-    ["RFM · Nguy cơ rời bỏ", "RFM · At risk"],
-    ["RFM · Duy trì", "RFM · Regular"],
+    ["RFM · Chưa mua", "purchase-based groups · No purchases"],
+    ["RFM · Giá trị cao", "purchase-based groups · High value"],
+    ["RFM · Trung thành", "purchase-based groups · Loyal"],
+    ["RFM · Tiềm năng", "purchase-based groups · Potential"],
+    ["RFM · Cần chăm sóc", "purchase-based groups · Needs attention"],
+    ["RFM · Nguy cơ rời bỏ", "purchase-based groups · At risk"],
+    ["RFM · Duy trì", "purchase-based groups · Regular"],
   ];
   setLocale("en");
   for (const [source, expected] of copy) assert.equal(t(source), expected);

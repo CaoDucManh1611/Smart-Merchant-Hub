@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -82,6 +83,15 @@ def extract_normalized_attachments(
             if message.external_message_id == str(message_id):
                 return [item.model_dump(mode="json") for item in message.attachments]
     return []
+
+
+def _attachment_media_type(attachment: object) -> str:
+    value = (
+        attachment.get("media_type")
+        if isinstance(attachment, dict)
+        else getattr(attachment, "media_type", None)
+    )
+    return str(getattr(value, "value", value) or "").lower()
 
 
 # =========================================================
@@ -1160,6 +1170,8 @@ def normalize_instagram_message(
 def process_and_save_message(
     db: Session,
     message: dict[str, Any],
+    *,
+    history_import: bool = False,
 ) -> bool:
 
     channel = message.get(
@@ -1358,6 +1370,7 @@ def process_and_save_message(
                 avatar_url = build_customer_avatar_url(
                     customer_id=customer.id,
                     business_id=int(business_id),
+                    channel=channel,
                 )
         except Exception:
             # Avatar enrichment is optional; never reject an otherwise valid
@@ -1557,9 +1570,19 @@ def process_and_save_message(
     ] = conversation_id
 
 
-    message[
-        "direction"
-    ] = "inbound"
+    message["direction"] = (
+        "outbound" if history_import and message.get("direction") == "outbound" else "inbound"
+    )
+    if history_import:
+        message["sender_type"] = "staff" if message["direction"] == "outbound" else "customer"
+        if message.get("received_at") is None:
+            # Preserve an unknown historical timestamp as NULL instead of
+            # making it look like the message arrived at import time.
+            message["preserve_unknown_received_at"] = True
+            raw_payload = dict(message.get("raw_payload") or {})
+            raw_payload.setdefault("created_at", None)
+            raw_payload["timestamp_accuracy"] = "unavailable_from_source"
+            message["raw_payload"] = raw_payload
 
 
     # =====================================================
@@ -1577,6 +1600,46 @@ def process_and_save_message(
     # emits a second workflow, profile extraction or bot reply.
     if saved_message is not None and not saved_message.get("_created", True):
         logger.info("Inbound provider delivery already persisted")
+        return saved_message
+
+    # Backfilled messages are historical context, not new customer turns.
+    # Persist their original timestamp/direction and attachments, but do not
+    # notify staff, emit workflows, extract facts, or enqueue an AI response.
+    if history_import:
+        if saved_message and message.get("attachments") and message.get("channel_id"):
+            try:
+                from app.services.media_service import save_message_attachments
+
+                save_message_attachments(
+                    db,
+                    message_id=int(saved_message["message_id"]),
+                    business_id=int(business_id),
+                    channel_id=int(message["channel_id"]),
+                    attachments=message.get("attachments") or [],
+                )
+            except Exception:
+                logger.warning("History import attachment persistence failed")
+        occurred_at = message.get("received_at")
+        if occurred_at is not None:
+            db.execute(
+                text("""
+                    UPDATE conversations
+                    SET updated_at = CASE
+                            WHEN updated_at IS NULL OR updated_at < :occurred_at THEN :occurred_at
+                            ELSE updated_at
+                        END,
+                        last_message_at = CASE
+                            WHEN last_message_at IS NULL OR last_message_at < :occurred_at THEN :occurred_at
+                            ELSE last_message_at
+                        END
+                    WHERE id = :conversation_id
+                """),
+                {
+                    "conversation_id": conversation_id,
+                    "occurred_at": occurred_at,
+                },
+            )
+            db.commit()
         return saved_message
 
     # Every outbound workflow spawned by this inbound event receives a
@@ -1800,7 +1863,7 @@ def process_and_save_message(
     # human takeover and creates one auditable support ticket.
     if message.get("content") and business_id is not None:
         try:
-            from app.services.chatbot_agent import route_escalation
+            from app.services.chatbot_agent import escalation_reply, route_escalation
             from app.services.auto_reply_service import send_text_reply_background
 
             ticket = route_escalation(
@@ -1815,7 +1878,7 @@ def process_and_save_message(
                 send_text_reply_background(
                     conversation_id=int(conversation_id),
                     channel=str(channel),
-                    text="Mình đã chuyển yêu cầu cho nhân viên hỗ trợ. Nhân viên sẽ liên hệ bạn sớm nhất nhé.",
+                    text=escalation_reply(str(message.get("content") or "")),
                     business_id=int(business_id),
                     auto_reply_key=(
                         f"{auto_reply_base_key}:escalation"
@@ -1858,13 +1921,17 @@ def process_and_save_message(
             db.rollback()
             logger.warning("Transactional order trigger failed", exc_info=True)
 
-    # Progressive customer-profile collection runs before RAG. Once a buyer
-    # starts checkout, each inbound answer advances the session and the next
-    # prompt is sent back through the same channel. This prevents the generic
-    # knowledge-base reply from competing with the order data-collection flow.
-    collection_result = None
-    if escalation_triggered or csat_recorded or transactional_reply:
-        collection_result = True
+    # Order collection is handled once per durable, coalesced chatbot turn,
+    # alongside RAG. Running it here on every provider webhook would send a
+    # repeated checkout form when a customer enters their details in several
+    # quick messages.
+    has_image = (
+        str(message.get("media_type") or "").lower() == "image"
+        or any(
+            _attachment_media_type(attachment) == "image"
+            for attachment in message.get("attachments") or []
+        )
+    )
     if message.get("content") and business_id is not None and not escalation_triggered and not csat_recorded and not transactional_reply:
         if saved_message and saved_message.get("message_id"):
             try:
@@ -1878,54 +1945,27 @@ def process_and_save_message(
                 )
             except Exception:
                 logger.warning("Customer fact extraction trigger failed")
-        # Shopee/TikTok buyers often send one thought in several messages.
-        # Their collection flow runs once on the coalesced turn in the job
-        # worker; handling it here would send a quote for every fragment.
-        if channel not in {"shopee", "tiktok"}:
-            try:
-                from app.services.customer_collection_flow import (
-                    advance_customer_collection,
-                    send_collection_prompt_background,
-                )
+    should_schedule_turn = bool(
+        saved_message
+        and saved_message.get("message_id")
+        and business_id is not None
+        and not escalation_triggered
+        and not csat_recorded
+        and not transactional_reply
+        and (has_image or bool(str(message.get("content") or "").strip()))
+    )
+    if should_schedule_turn:
+        try:
+            from app.services.conversation_turn_service import schedule_chatbot_turn
 
-                collection_result = advance_customer_collection(
-                    db,
-                    business_id=int(business_id),
-                    customer_id=int(customer_id),
-                    conversation_id=int(conversation_id),
-                    source_channel=str(channel),
-                    text=str(message.get("content")),
-                )
-                if collection_result is not None:
-                    send_collection_prompt_background(
-                        result=collection_result,
-                        conversation_id=int(conversation_id),
-                        channel=str(channel),
-                        business_id=int(business_id),
-                        auto_reply_key=(
-                            f"{auto_reply_base_key}:collection"
-                            if auto_reply_base_key
-                            else None
-                        ),
-                    )
-            except Exception:
-                # Collection is an enhancement on top of the accepted inbound
-                # message; a malformed session must not make the webhook fail.
-                logger.warning("Customer collection trigger failed", exc_info=True)
-
-        if collection_result is None:
-            try:
-                from app.services.conversation_turn_service import schedule_chatbot_turn
-
-                if saved_message and saved_message.get("message_id") and message.get("content"):
-                    schedule_chatbot_turn(
-                        db,
-                        conversation_id=int(conversation_id),
-                        message_id=int(saved_message["message_id"]),
-                        business_id=int(business_id),
-                    )
-            except Exception:
-                logger.warning("Auto-reply trigger failed")
+            schedule_chatbot_turn(
+                db,
+                conversation_id=int(conversation_id),
+                message_id=int(saved_message["message_id"]),
+                business_id=int(business_id),
+            )
+        except Exception:
+            logger.warning("Auto-reply trigger failed")
 
 
 

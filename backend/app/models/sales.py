@@ -41,6 +41,20 @@ class Product(TenantBase):
 
     order_items = relationship("OrderItem", back_populates="product")
 
+    @property
+    def image_url(self) -> str | None:
+        metadata = self.metadata_ if isinstance(self.metadata_, dict) else {}
+        value = metadata.get("image_url") or metadata.get("photo_url") or metadata.get("thumbnail_url")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        images = metadata.get("images")
+        if isinstance(images, list) and images:
+            first = images[0]
+            value = first.get("url") if isinstance(first, dict) else first
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
 
 class Order(TenantBase):
     __tablename__ = "orders"

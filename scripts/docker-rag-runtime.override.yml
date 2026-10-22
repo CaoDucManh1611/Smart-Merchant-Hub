@@ -1,0 +1,5 @@
+# Local code-only refresh when an unrelated migration backlog is pending.
+# docker compose -f docker-compose.yml -f scripts/docker-rag-runtime.override.yml up -d --no-deps --no-build backend worker
+services:
+  backend:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
