@@ -222,7 +222,7 @@ def test_ingestion_embeds_context_and_stores_only_source(monkeypatch):
     captured = []
     def embed(texts, **kwargs):
         captured.extend(texts)
-        return [[0.0] * 768 for _ in texts]
+        return [[0.0] * ingestion_service.settings.EMBEDDING_DIMENSION for _ in texts]
     monkeypatch.setattr(ingestion_service, "embed_texts", embed)
     monkeypatch.setattr(ingestion_service.settings, "EMBEDDING_PROVIDER", "local")
     monkeypatch.setattr(ingestion_service.settings, "GEMINI_API_KEY", "")
