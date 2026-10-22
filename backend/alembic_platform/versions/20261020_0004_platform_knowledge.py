@@ -9,17 +9,18 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        "platform_knowledge_documents",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("filename", sa.String(255), nullable=False),
-        sa.Column("content_hash", sa.String(64), nullable=False, unique=True),
-        sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("chunks", sa.JSON(), nullable=False),
-        sa.Column("published", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("created_by", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
-    )
+    if "platform_knowledge_documents" not in sa.inspect(op.get_bind()).get_table_names():
+        op.create_table(
+            "platform_knowledge_documents",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("filename", sa.String(255), nullable=False),
+            sa.Column("content_hash", sa.String(64), nullable=False, unique=True),
+            sa.Column("content", sa.Text(), nullable=False),
+            sa.Column("chunks", sa.JSON(), nullable=False),
+            sa.Column("published", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("created_by", sa.Integer(), nullable=False),
+            sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
+        )
 
 
 def downgrade():

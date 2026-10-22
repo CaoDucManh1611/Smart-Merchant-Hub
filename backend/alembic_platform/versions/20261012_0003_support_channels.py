@@ -9,8 +9,18 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column('platform_support_requests', sa.Column('providers', sa.JSON(), nullable=True))
+    columns = {
+        column['name']
+        for column in sa.inspect(op.get_bind()).get_columns('platform_support_requests')
+    }
+    if 'providers' not in columns:
+        op.add_column('platform_support_requests', sa.Column('providers', sa.JSON(), nullable=True))
 
 
 def downgrade():
-    op.drop_column('platform_support_requests', 'providers')
+    columns = {
+        column['name']
+        for column in sa.inspect(op.get_bind()).get_columns('platform_support_requests')
+    }
+    if 'providers' in columns:
+        op.drop_column('platform_support_requests', 'providers')

@@ -152,7 +152,12 @@ jobs:
             config --quiet
 
       - name: Start Compose stack
-        run: docker compose up -d --build
+        run: |
+          if ! docker compose up -d --build; then
+            docker compose ps --all
+            docker compose logs --no-color db db-init redis backend frontend worker || true
+            exit 1
+          fi
 
       - name: Wait for service health
         run: |
