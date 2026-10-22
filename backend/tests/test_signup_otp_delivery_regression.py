@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api import onboarding
 from app.db.dependencies import get_db
-from app.models.business import User
+from app.models.business import Business, User
 from app.models.signup import SignupEmailChallenge
 from app.models.setting import AppSetting
 from app.services.otp_delivery import OtpDeliveryResult
@@ -21,6 +21,7 @@ from app.services.otp_delivery import OtpDeliveryResult
 ])
 def test_signup_requires_successful_smtp_delivery(monkeypatch, provider, delivered, expected):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Business.__table__.create(engine)
     User.__table__.create(engine)
     AppSetting.__table__.create(engine)
     SignupEmailChallenge.__table__.create(engine)

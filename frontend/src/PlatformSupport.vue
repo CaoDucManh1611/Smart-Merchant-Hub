@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue';
 import { formatDateTime, t } from './i18n.js';
-const props = defineProps({ request: Function, baseUrl: String, active: Boolean, adminId: Number });
+const props = defineProps({ request: Function, baseUrl: String, active: Boolean, adminId: Number, canWrite: { type: Boolean, default: true } });
 const emit = defineEmits(['count']);
 const items = ref([]), total = ref(0), offset = ref(0), loading = ref(false), saving = ref(null), error = ref(''), notice = ref(''), drafts = ref({});
 const labels = { open: 'Mới gửi', in_progress: 'Đang xử lý', resolved: 'Đã xử lý', closed: 'Đã đóng' };
@@ -54,10 +54,10 @@ onMounted(load);
       <p class="support-admin-description">{{ item.description }}</p>
       <p v-if="item.assigned_admin_id">{{ t('Admin phụ trách') }} #{{ item.assigned_admin_id }}</p>
       <p v-if="item.response"><strong>{{ t('Phản hồi') }}:</strong> {{ item.response }}</p>
-      <label v-if="item.status !== 'closed'">{{ t('Phản hồi cho shop') }}<textarea v-model="drafts[item.id]" rows="3" maxlength="2000" :disabled="saving !== null"></textarea></label>
+      <label v-if="item.status !== 'closed'">{{ t('Phản hồi cho shop') }}<textarea v-model="drafts[item.id]" rows="3" maxlength="2000" :disabled="saving !== null || !canWrite"></textarea></label>
       <div class="support-admin-actions">
-        <button v-if="item.status !== 'closed'" class="settings-refresh" :disabled="saving !== null || !drafts[item.id]?.trim()" @click="update(item)">{{ t('Gửi phản hồi') }}</button>
-        <button v-for="status in transitions[item.status]" :key="status" class="primary-btn" :disabled="saving !== null" @click="update(item, status)">{{ t(status === 'in_progress' ? 'Nhận xử lý' : labels[status]) }}</button>
+        <button v-if="canWrite && item.status !== 'closed'" class="settings-refresh" :disabled="saving !== null || !drafts[item.id]?.trim()" @click="update(item)">{{ t('Gửi phản hồi') }}</button>
+        <button v-for="status in transitions[item.status]" :key="status" class="primary-btn" :disabled="saving !== null" v-if="canWrite" @click="update(item, status)">{{ t(status === 'in_progress' ? 'Nhận xử lý' : labels[status]) }}</button>
       </div>
       <details v-if="item.history?.length"><summary>{{ t('Lịch sử xử lý') }}</summary><p v-for="event in item.history" :key="event.id">{{ formatDateTime(event.created_at) }} · {{ t(labels[event.to_status]) }} · Admin #{{ event.actor_user_id }}<span v-if="event.response"> · {{ event.response }}</span></p></details>
       </div>

@@ -11,6 +11,7 @@ from app.api.platform_otp_email import router
 from app.auth.dependencies import get_current_user
 from app.auth.platform import require_platform_admin
 from app.db.dependencies import get_db
+from app.models.business import Business
 from app.models.setting import AppSetting
 from app.services import platform_otp_email as service
 from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryResult
@@ -19,6 +20,7 @@ from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryResult
 @pytest.fixture
 def setup(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Business.__table__.create(engine)
     AppSetting.__table__.create(engine)
     with Session(engine) as db:
         app = FastAPI()
@@ -68,7 +70,9 @@ def test_routes_require_authentication_and_platform_admin(setup):
     client.app.dependency_overrides[get_current_user] = lambda: Mock(id=123)
     # No platform membership exists; use the same isolated DB for auth's legacy dependency.
     from app.db.dependencies import get_db
+    from app.models.business import User
     from app.models.saas import PlatformMembership
+    User.__table__.create(db.bind)
     PlatformMembership.__table__.create(db.bind)
     client.app.dependency_overrides[get_db] = lambda: db
     assert client.get("/api/platform/otp-email").status_code == 403
@@ -158,7 +162,7 @@ def test_password_reset_uses_global_sender(setup, monkeypatch, failure):
     from app.models.business import Business, User
     from app.models.signup import SignupEmailChallenge
     from app.services import otp_delivery
-    Business.__table__.create(db.bind)
+    Business.__table__.create(db.bind, checkfirst=True)
     User.__table__.create(db.bind)
     SignupEmailChallenge.__table__.create(db.bind)
     business = Business(name="Isolated reset", slug="isolated-reset")

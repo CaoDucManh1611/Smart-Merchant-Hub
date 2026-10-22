@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from app.auth.platform import require_platform_admin
 from app.db.dependencies import get_db
 from app.models.setting import AppSetting
-from app.models.business import Business
+from app.models.business import Business, ServicePlan, Subscription
 from app.models.subscription_payment_attempt import SubscriptionPaymentAttempt
 from app.services import platform_payment_settings as service
 
@@ -54,6 +54,15 @@ def payload(**changes):
     return dict(enabled=True, client_id='test-client', api_key='private-api', checksum_key='private-checksum',
                 return_url='https://example.test/return', cancel_url='https://example.test/cancel',
                 account_number='123456', bank_bin='970422', account_name='TEST ACCOUNT', **changes)
+
+
+def add_subscription_parent(db):
+    business = Business(name='Payment History Shop', slug='payment-history-shop')
+    plan = ServicePlan(code='payment-history-plan', name='Payment History Plan', price=0)
+    db.add_all([business, plan])
+    db.flush()
+    db.add(Subscription(id=999, business_id=business.id, plan_id=plan.id, status='pending'))
+    db.flush()
 
 
 def test_save_encrypted_redacted_and_blank_retains(setup):
@@ -111,6 +120,7 @@ def test_admin_permission_required(setup):
 def test_existing_orders_preserve_provider_identity(setup, status):
     client, db, _ = setup
     assert client.put('/api/platform/payment-settings', json=payload()).status_code == 200
+    add_subscription_parent(db)
     db.add(SubscriptionPaymentAttempt(subscription_id=999, order_code=999, amount=400000,
                                       expires_at=datetime.now(), status=status))
     db.commit()
@@ -123,6 +133,7 @@ def test_existing_orders_preserve_provider_identity(setup, status):
 def test_first_save_cannot_replace_environment_keys_for_existing_orders(setup, monkeypatch):
     client, db, _ = setup
     monkeypatch.setattr(service.settings, 'PAYOS_CHECKSUM_KEY', 'legacy-key')
+    add_subscription_parent(db)
     db.add(SubscriptionPaymentAttempt(subscription_id=999, order_code=999, amount=400000,
                                       expires_at=datetime.now(), status='expired'))
     db.commit()

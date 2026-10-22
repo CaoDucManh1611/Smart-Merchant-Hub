@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { CHANNEL_LABELS } from './channel-utils.js';
+import { formatDateTime } from './i18n.js';
 
 const props = defineProps({
   request: { type: Function, required: true },
@@ -133,8 +134,8 @@ onUnmounted(() => document.removeEventListener('pointerdown', closeChannelMenu))
       <span class="support-trigger-action"><span class="support-open-label">Mở hỗ trợ</span><span class="support-close-label">Thu gọn</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" /></svg></span>
     </summary>
     <div class="support-content">
-    <section class="support-form-panel" aria-label="Gửi yêu cầu hỗ trợ">
-    <h3>Bạn đang gặp vấn đề gì?</h3>
+    <section class="support-form-panel" aria-labelledby="support-form-title">
+    <h3 id="support-form-title">Bạn đang gặp vấn đề gì?</h3>
     <p v-if="error" role="status">Kết nối chưa thành công. Bạn có thể gửi yêu cầu để đội hỗ trợ kiểm tra.</p>
     <p>Yêu cầu được gửi đến đội hỗ trợ nền tảng và gắn với cửa hàng đang đăng nhập.</p>
     <form @submit.prevent="submit" :aria-busy="saving">
@@ -169,30 +170,38 @@ onUnmounted(() => document.removeEventListener('pointerdown', closeChannelMenu))
       <button type="submit" :disabled="saving || loading || !providers.length || providers.length > channelLimit">{{ saving ? 'Đang gửi…' : 'Gửi yêu cầu hỗ trợ' }}</button>
     </form>
     </section>
-    <section class="support-history-panel" aria-label="Theo dõi yêu cầu">
+    <section class="support-history-panel" aria-labelledby="support-history-title">
     <div class="support-list-heading">
-      <h3>Yêu cầu của cửa hàng</h3>
-      <button type="button" @click="refresh()" :disabled="saving || loading">{{ loading ? 'Đang tải…' : 'Làm mới' }}</button>
+      <div class="support-history-title"><h3 id="support-history-title">Yêu cầu của cửa hàng</h3><span>{{ total }} yêu cầu</span></div>
+      <button type="button" class="support-refresh" @click="refresh()" :disabled="saving || loading">{{ loading ? 'Đang tải…' : 'Làm mới' }}</button>
     </div>
     <p v-if="listError" role="alert" class="support-error">{{ listError }}</p>
     <div v-else-if="!loading && !items.length" class="support-empty"><strong>Chưa có yêu cầu hỗ trợ</strong><p>Khi bạn gửi yêu cầu, trạng thái và phản hồi sẽ xuất hiện tại đây.</p></div>
-    <ul :aria-busy="loading">
-      <li v-for="ticket in items" :key="ticket.id">
-        <div><strong>#{{ ticket.id }} · {{ (ticket.providers || [ticket.provider]).map(key => CHANNEL_LABELS[key]).join(' · ') }}</strong> <span>{{ statusLabels[ticket.status] }}</span></div>
-        <p>{{ ticket.description }}</p>
-        <p v-if="ticket.response"><strong>Phản hồi:</strong> {{ ticket.response }}</p>
-        <details>
-          <summary>Lịch sử xử lý</summary>
+    <ul class="support-ticket-list" :aria-busy="loading">
+      <li v-for="ticket in items" :key="ticket.id" class="support-ticket-item">
+        <article>
+          <header class="support-ticket-heading">
+            <div class="support-ticket-meta"><strong>#{{ ticket.id }}</strong><time :datetime="ticket.created_at">{{ formatDateTime(ticket.created_at) }}</time></div>
+            <span class="support-status" :class="`is-${ticket.status}`">{{ statusLabels[ticket.status] }}</span>
+          </header>
+          <div class="support-ticket-platforms" aria-label="Kênh được hỗ trợ">
+            <span v-for="provider in (ticket.providers || [ticket.provider])" :key="provider">{{ CHANNEL_LABELS[provider] || provider }}</span>
+          </div>
+          <p class="support-ticket-description">{{ ticket.description }}</p>
+          <div v-if="ticket.response" class="support-ticket-response"><strong>Phản hồi từ đội hỗ trợ</strong><p>{{ ticket.response }}</p></div>
+        <details v-if="ticket.history?.length" class="support-ticket-history">
+          <summary>Lịch sử xử lý <span>({{ ticket.history.length }})</span></summary>
           <ol>
             <li v-for="entry in ticket.history" :key="entry.id">
-              {{ statusLabels[entry.to_status] }} · {{ new Date(entry.created_at + (entry.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString('vi-VN') }}
+              <time :datetime="entry.created_at">{{ formatDateTime(entry.created_at) }}</time><strong>{{ statusLabels[entry.to_status] }}</strong>
               <p v-if="entry.response">{{ entry.response }}</p>
             </li>
           </ol>
         </details>
+        </article>
       </li>
     </ul>
-    <nav v-if="total > limit" aria-label="Trang yêu cầu hỗ trợ">
+    <nav v-if="total > limit" class="support-pagination" aria-label="Trang yêu cầu hỗ trợ">
       <button type="button" :disabled="saving || loading || offset === 0" @click="refresh(Math.max(0, offset - limit))">Trước</button>
       <span>{{ offset + 1 }}–{{ Math.min(offset + limit, total) }} / {{ total }}</span>
       <button type="button" :disabled="saving || loading || offset + limit >= total" @click="refresh(offset + limit)">Sau</button>
@@ -203,70 +212,139 @@ onUnmounted(() => document.removeEventListener('pointerdown', closeChannelMenu))
 </template>
 
 <style scoped>
-.connection-support { --support-bg: var(--owly-surface, #fff); --support-text: var(--owly-text, #172033); --support-border: var(--owly-border, #d4e3e7); --support-error: #a51d24; --support-success: #17633d; border: 1px solid var(--support-border); border-radius: 14px; background: var(--support-bg); color: var(--support-text); width: 100%; grid-column: 1 / -1; box-sizing: border-box; min-width: 0; overflow-wrap: anywhere; }
-.support-trigger { display: flex; align-items: center; gap: 12px; padding: 14px 18px; list-style: none; }
-.connection-support { border-color: var(--owly-border, #d4e3e7); }
-.support-trigger::-webkit-details-marker { display: none; }
-.support-trigger-icon { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px; background: #e8f7f5; color: #087f80; }
-.support-trigger-icon svg { width: 22px; height: 22px; }
-.support-trigger-copy { display: grid; gap: 3px; min-width: 0; }
-.support-trigger-copy strong { font-size: 15px; }
-.support-trigger-copy small { font-size: 12px; opacity: .8; }
-.support-trigger-action { margin-left: auto; display: flex; align-items: center; gap: 8px; color: #087f80; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.support-trigger-action svg { width: 18px; height: 18px; transition: transform 180ms ease; }
-.support-count { border: 1px solid var(--support-border); border-radius: 20px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
-.support-close-label { display: none; }
-.connection-support[open] .support-close-label { display: inline; }
-.connection-support[open] .support-open-label { display: none; }
-.connection-support[open] .support-trigger-action svg { transform: rotate(180deg); }
-.support-content { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; padding: 22px; border-top: 1px solid var(--support-border); }
-.support-content > section { min-width: 0; }
-.support-content h3 { font-size: 15px; margin: 0 0 12px; }
-.support-history-panel { border-left: 1px solid var(--support-border); padding-left: 24px; }
-.support-history-panel .support-list-heading { margin-top: 0; }
-.support-content p { font-size: 13px; }
-.support-empty { border: 1px dashed var(--support-border); border-radius: 12px; padding: 28px 20px; text-align: center; margin-top: 18px; }
-.support-empty strong { font-size: 14px; }
-.support-content button[type='submit'] { background: #087f80; color: #fff; border-color: #087f80; font-weight: 600; }
-.support-content label { font-size: 13px; font-weight: 600; }
-.support-channels { border: 0; padding: 0; margin: 0; min-width: 0; }
-.support-channels legend { font-size: 13px; font-weight: 600; }
-.support-channel-select { position: relative; }
-.support-channel-trigger { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 12px; box-sizing: border-box; text-align: left; font-size: 13px; cursor: pointer; }
-.support-channel-trigger span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.support-channel-trigger svg { width: 18px; height: 18px; flex-shrink: 0; transition: transform 160ms ease; }
-.support-channel-select.open .support-channel-trigger { border-color: #087f80; }
-.support-channel-select.open .support-channel-trigger svg { transform: rotate(180deg); }
-.support-channel-options { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; display: grid; gap: 2px; max-height: 260px; overflow-y: auto; padding: 6px; background: var(--support-bg); border: 1px solid var(--support-border); border-radius: 10px; box-shadow: 0 10px 24px #17203320; }
-.support-channel-option { display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer; }
-.support-channel-option.selected,.support-channel-option:hover:not(:disabled) { background:color-mix(in srgb,#087f80 10%,var(--support-bg)); }
-.support-channel-check { display:grid;place-items:center;flex:0 0 16px;width:16px;height:16px;box-sizing:border-box;border:1px solid #8290a2;border-radius:3px;background:var(--support-bg);color:#fff; }
-.support-channel-check svg { width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round; }
-.support-channel-option[aria-checked='true'] .support-channel-check { border-color:#087f80;background:#087f80; }
-.support-content .support-channel-option:disabled { opacity:.6;cursor:not-allowed; }
-.support-channel-option:focus-visible { outline:3px solid #3980e8;outline-offset:2px; }
-.support-content select { width: 100%; box-sizing: border-box; }
-.support-history-panel > ul { max-height: 440px; overflow: auto; }
-.connection-support[open] .support-content { animation: support-reveal 160ms ease-out; }
-@keyframes support-reveal { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .connection-support[open] .support-content { animation: none; } .support-trigger-action svg { transition: none; } }
-@media (max-width: 800px) { .support-content { grid-template-columns: 1fr; padding: 16px; } .support-history-panel { border-left: 0; border-top: 1px solid var(--support-border); padding: 20px 0 0; } .support-trigger-copy small { display: none; } }
-form, label { display: grid; gap: 8px; }
-form { gap: 16px; }
-select, textarea, button { font: inherit; color: inherit; min-height: 44px; border: 1px solid var(--support-border); border-radius: 8px; padding: 10px 12px; background: var(--support-bg); }
-textarea { width: 100%; box-sizing: border-box; resize: vertical; }
-button { cursor: pointer; }
-button:disabled { cursor: wait; opacity: .65; }
-:is(button, select, textarea, summary):focus-visible { outline: 3px solid #3980e8; outline-offset: 3px; }
-.support-error { color: var(--support-error); }
-.support-success { color: var(--support-success); }
-.support-list-heading, nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
-ul { list-style: none; padding: 0; }
-ul > li { border-top: 1px solid var(--support-border); padding: 16px 0; }
-li > div { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-summary { cursor: pointer; }
-p { line-height: 1.6; white-space: pre-wrap; }
-:global([data-theme='dark'] .connection-support), :global(.dark .connection-support), :global(.crm-dark .connection-support) { --support-bg: #182235; --support-text: #edf2fa; --support-border: #8594ac; --support-error: #ffb5b8; --support-success: #92e1b4; }
-@media (prefers-color-scheme: dark) { .connection-support { --support-bg: #182235; --support-text: #edf2fa; --support-border: #8594ac; --support-error: #ffb5b8; --support-success: #92e1b4; } :global([data-theme='light'] .connection-support), :global(.crm-app:not(.crm-dark) .connection-support) { --support-bg: #fff; --support-text: #172033; --support-border: #718096; --support-error: #a51d24; --support-success: #17633d; } }
-@media (max-width: 480px) { .support-trigger { padding: 12px; gap: 8px; } .support-count { display: none; } .support-trigger-action > span { display: none !important; } }
+.connection-support {
+  --support-bg: var(--owly-surface, #fff);
+  --support-panel: #eaf4f3;
+  --support-card: #fff;
+  --support-text: var(--owly-ink, #20364a);
+  --support-muted: var(--owly-muted, #6a8093);
+  --support-border: var(--owly-border, #d8e6ef);
+  --support-accent: #248f8d;
+  --support-accent-soft: #e2f2ef;
+  --support-error: #a53b46;
+  --support-error-soft: #fff0f0;
+  --support-success: #24734b;
+  --support-success-soft: #eaf6ee;
+  --support-warning: #825b19;
+  --support-warning-soft: #fbf3df;
+  --support-focus: #248f8d;
+  width: 100%;
+  min-width: 0;
+  grid-column: 1 / -1;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--support-border);
+  border-radius: 16px;
+  background: var(--support-bg);
+  color: var(--support-text);
+}
+.support-trigger { display:flex; align-items:center; gap:12px; min-height:68px; padding:14px 18px; border-radius:inherit; background:var(--support-panel); color:var(--support-text); list-style:none; cursor:pointer; }
+.connection-support { border-color:var(--owly-border, #d4e3e7); }
+.support-trigger::-webkit-details-marker { display:none; }
+.support-trigger-icon { display:grid; place-items:center; width:40px; height:40px; flex-shrink:0; border-radius:12px; background:var(--support-accent-soft); color:var(--support-accent); }
+.support-trigger-icon svg { width:22px; height:22px; }
+.support-trigger-copy { display:grid; gap:3px; min-width:0; }
+.support-trigger-copy strong { font-size:15px; }
+.support-trigger-copy small { color:var(--support-muted); font-size:12px; }
+.support-trigger-action { display:flex; align-items:center; gap:8px; margin-left:auto; color:var(--support-accent); font-size:13px; font-weight:650; white-space:nowrap; }
+.support-trigger-action svg { width:18px; height:18px; transition:transform 180ms ease; }
+.support-count { padding:5px 10px; border:1px solid var(--support-border); border-radius:999px; background:var(--support-card); font-size:12px; font-weight:600; white-space:nowrap; }
+.support-close-label { display:none; }
+.connection-support[open] > .support-trigger { border-bottom:1px solid var(--support-border); border-radius:15px 15px 0 0; }
+.connection-support[open] .support-close-label { display:inline; }
+.connection-support[open] .support-open-label { display:none; }
+.connection-support[open] .support-trigger-action svg { transform:rotate(180deg); }
+.support-content { display:grid; grid-template-columns:minmax(0, .92fr) minmax(0, 1.08fr); align-items:stretch; gap:28px; padding:22px; }
+.support-content > section { min-width:0; }
+.support-content h3 { margin:0; font-size:16px; line-height:1.4; }
+.support-form-panel { padding:20px; border:1px solid var(--support-border); border-radius:14px; background:var(--support-panel); }
+.support-form-panel > p { margin:10px 0 16px; color:var(--support-muted); font-size:13px; }
+.support-content p { line-height:1.55; white-space:pre-wrap; }
+.support-content form { display:grid; gap:14px; margin-top:18px; }
+.support-content label { display:grid; gap:8px; font-size:13px; font-weight:650; }
+.support-channels { min-width:0; margin:0; padding:0; border:0; }
+.support-channels legend { margin-bottom:8px; font-size:13px; font-weight:650; }
+.support-channel-limit { margin:0 0 10px; color:var(--support-muted); font-size:12px; }
+.support-channel-select { position:relative; }
+.support-channel-trigger { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:46px; padding:9px 12px; border:1px solid var(--support-border); border-radius:9px; background:var(--support-card); color:inherit; text-align:left; font:inherit; cursor:pointer; }
+.support-channel-trigger span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.support-channel-trigger svg { width:18px; height:18px; flex-shrink:0; transition:transform 160ms ease; }
+.support-channel-select.open .support-channel-trigger { border-color:var(--support-accent); }
+.support-channel-select.open .support-channel-trigger svg { transform:rotate(180deg); }
+.support-channel-options { position:absolute; z-index:20; top:calc(100% + 6px); right:0; left:0; display:grid; gap:2px; max-height:260px; overflow-y:auto; padding:6px; border:1px solid var(--support-border); border-radius:10px; background:var(--support-card); box-shadow:0 12px 28px #10182830; }
+.support-channel-option { display:flex; align-items:center; gap:10px; width:100%; min-height:42px; padding:0 10px; border:0; border-radius:7px; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
+.support-channel-option.selected, .support-channel-option:hover:not(:disabled) { background:var(--support-accent-soft); }
+.support-channel-check { display:grid; place-items:center; flex:0 0 17px; width:17px; height:17px; box-sizing:border-box; border:1px solid #8290a2; border-radius:4px; background:var(--support-card); color:#fff; }
+.support-channel-check svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+.support-channel-option[aria-checked='true'] .support-channel-check { border-color:var(--support-accent); background:var(--support-accent); }
+.support-content .support-channel-option:disabled { cursor:not-allowed; opacity:.6; }
+.support-channel-option:focus-visible { outline:3px solid var(--support-focus); outline-offset:2px; }
+.support-content textarea { width:100%; min-height:112px; box-sizing:border-box; padding:11px 12px; border:1px solid var(--support-border); border-radius:9px; background:var(--support-card); color:inherit; font:inherit; resize:vertical; }
+.support-content textarea:focus { border-color:var(--support-accent); }
+.support-content button[type='submit'] { width:100%; min-height:46px; border:1px solid var(--support-accent); border-radius:9px; background:var(--support-accent); color:#fff; font:inherit; font-weight:700; cursor:pointer; transition:filter 150ms ease, transform 150ms ease; }
+.support-content button[type='submit']:hover:not(:disabled) { filter:brightness(1.08); transform:translateY(-1px); }
+.support-content button:disabled { cursor:not-allowed; opacity:.65; }
+.support-content :is(button, textarea, summary):focus-visible, .support-trigger:focus-visible { outline:3px solid var(--support-focus); outline-offset:3px; }
+.support-error, .support-success { padding:10px 12px; border-radius:9px; font-size:13px; }
+.support-error { background:var(--support-error-soft); color:var(--support-error); }
+.support-success { background:var(--support-success-soft); color:var(--support-success); }
+.support-history-panel { min-width:0; padding:4px 0 0 26px; border-left:1px solid var(--support-border); }
+.support-list-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.support-history-title { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.support-history-title > span { padding:4px 9px; border-radius:999px; background:var(--support-accent-soft); color:var(--support-accent); font-size:11px; font-weight:650; }
+.support-refresh, .support-pagination button { min-height:40px; padding:8px 12px; border:1px solid var(--support-border); border-radius:9px; background:var(--support-card); color:inherit; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+.support-refresh:hover:not(:disabled), .support-pagination button:hover:not(:disabled) { border-color:var(--support-accent); color:var(--support-accent); }
+.support-empty { display:grid; place-content:center; min-height:160px; padding:24px; border:1px dashed var(--support-border); border-radius:12px; background:var(--support-panel); text-align:center; }
+.support-empty strong { font-size:14px; }
+.support-empty p { max-width:38ch; margin:8px auto 0; color:var(--support-muted); font-size:13px; }
+.support-ticket-list { display:grid; gap:12px; max-height:480px; overflow:auto; margin:0; padding:0 4px 0 0; list-style:none; }
+.support-ticket-item { margin:0; padding:0; border:1px solid var(--support-border); border-radius:12px; background:var(--support-card); }
+.support-ticket-item article { padding:15px 16px; }
+.support-ticket-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.support-ticket-meta { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
+.support-ticket-meta > strong { font-size:13px; }
+.support-ticket-meta time, .support-ticket-history time { color:var(--support-muted); font-size:12px; }
+.support-status { flex-shrink:0; padding:5px 9px; border-radius:999px; background:var(--support-accent-soft); color:var(--support-accent); font-size:11px; font-weight:700; }
+.support-status.is-in_progress { background:var(--support-warning-soft); color:var(--support-warning); }
+.support-status.is-resolved { background:var(--support-success-soft); color:var(--support-success); }
+.support-status.is-closed { background:var(--support-panel); color:var(--support-muted); }
+.support-ticket-platforms { display:flex; flex-wrap:wrap; gap:6px; margin-top:11px; }
+.support-ticket-platforms > span { padding:4px 8px; border:1px solid var(--support-border); border-radius:6px; color:var(--support-muted); font-size:11px; font-weight:600; }
+.support-ticket-description { margin:12px 0 0; font-size:13px; }
+.support-ticket-response { margin-top:12px; padding:10px 12px; border-left:3px solid var(--support-accent); border-radius:0 8px 8px 0; background:var(--support-panel); }
+.support-ticket-response > strong { font-size:12px; }
+.support-ticket-response p { margin:5px 0 0; font-size:13px; }
+.support-ticket-history { margin-top:12px; padding-top:10px; border-top:1px solid var(--support-border); }
+.support-ticket-history summary { width:fit-content; color:var(--support-accent); font-size:12px; font-weight:650; cursor:pointer; }
+.support-ticket-history summary span { color:var(--support-muted); font-weight:500; }
+.support-ticket-history ol { display:grid; gap:8px; margin:10px 0 0; padding-left:20px; }
+.support-ticket-history ol li { padding-left:3px; font-size:12px; }
+.support-ticket-history ol li strong { margin-left:8px; }
+.support-ticket-history ol p { margin:5px 0 0; color:var(--support-muted); }
+.support-pagination { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:14px; }
+.support-pagination span { color:var(--support-muted); font-size:12px; }
+.connection-support[open] .support-content { animation:support-reveal 160ms ease-out; }
+@keyframes support-reveal { from { opacity:0; } to { opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .connection-support[open] .support-content { animation:none; } .support-trigger-action svg, .support-channel-trigger svg, .support-content button[type='submit'] { transition:none; } }
+@media (max-width:900px) { .support-content { grid-template-columns:1fr; padding:16px; } .support-history-panel { padding:20px 0 0; border-top:1px solid var(--support-border); border-left:0; } }
+@media (max-width:480px) { .support-trigger { gap:8px; padding:12px; } .support-trigger-copy small, .support-count, .support-open-label, .support-close-label { display:none!important; } .support-content { padding:12px; } .support-form-panel { padding:14px; } .support-ticket-item article { padding:12px; } }
+:global(body.crm-dark .connection-support), :global([data-theme='dark'] .connection-support), :global(.dark .connection-support), :global(.crm-dark .connection-support) {
+  --support-bg: var(--owly-surface, #202427);
+  --support-panel: #233537;
+  --support-card: #1b2023;
+  --support-text: var(--owly-ink, #f3f5f6);
+  --support-muted: var(--owly-muted, #b6c0c5);
+  --support-border: #424c50;
+  --support-accent: #62c5bc;
+  --support-accent-soft: #1d4140;
+  --support-error: #f0a3aa;
+  --support-error-soft: #3b292c;
+  --support-success: #9bd4ad;
+  --support-success-soft: #24382d;
+  --support-warning: #e2c17d;
+  --support-warning-soft: #3b3426;
+  --support-focus: #62c5bc;
+}
 </style>

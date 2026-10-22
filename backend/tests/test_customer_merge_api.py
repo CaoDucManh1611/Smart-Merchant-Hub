@@ -263,6 +263,23 @@ class CustomerMergeApiTests(unittest.TestCase):
                 db.get(Customer, source_id).custom_fields,
             )
 
+    def test_undo_requires_reversing_later_merge_first_even_without_moved_records(self):
+        with Session(self.engine) as db:
+            customers = [Customer(business_id=self.business_id, channel="telegram", external_user_id=f"nested-undo-{i}") for i in range(3)]
+            db.add_all(customers)
+            db.commit()
+            source_id, middle_id, final_id = [customer.id for customer in customers]
+        first = self.client.post(f"/api/customers/{middle_id}/merge", headers=self.headers(), json={"source_customer_id": source_id, "confirm": True})
+        self.assertEqual(200, first.status_code, first.text)
+        second = self.client.post(f"/api/customers/{final_id}/merge", headers=self.headers(), json={"source_customer_id": middle_id, "confirm": True})
+        self.assertEqual(200, second.status_code, second.text)
+        blocked = self.client.post(f"/api/customers/{middle_id}/merge-history/{first.json()['merge_id']}/undo", headers=self.headers(), json={"reason": "Kiểm tra gộp tiếp"})
+        self.assertEqual(409, blocked.status_code, blocked.text)
+        later = self.client.post(f"/api/customers/{final_id}/merge-history/{second.json()['merge_id']}/undo", headers=self.headers(), json={"reason": "Hoàn tác lần sau trước"})
+        self.assertEqual(200, later.status_code, later.text)
+        earlier = self.client.post(f"/api/customers/{middle_id}/merge-history/{first.json()['merge_id']}/undo", headers=self.headers(), json={"reason": "Hoàn tác lần đầu"})
+        self.assertEqual(200, earlier.status_code, earlier.text)
+
     def test_cross_tenant_merge_is_not_visible(self):
         response = self.client.post(
             f"/api/customers/{self.survivor_id}/merge-preview",

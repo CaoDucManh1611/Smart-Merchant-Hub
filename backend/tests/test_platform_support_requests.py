@@ -5,9 +5,8 @@ from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from app.auth.dependencies import get_current_user
 from app.auth.platform import require_platform_admin
@@ -20,8 +19,7 @@ from app.api.platform_support_requests import router
 
 class SupportRequestTests(unittest.TestCase):
     def setUp(self):
-        self.engine = create_engine('sqlite://', poolclass=StaticPool, connect_args={'check_same_thread': False})
-        event.listen(self.engine, 'connect', lambda conn, _: conn.execute('PRAGMA foreign_keys=ON'))
+        self.engine = create_engine('sqlite://')
         for table in (PlatformBusiness.__table__, PlatformSupportRequest.__table__, PlatformSupportRequestHistory.__table__):
             table.create(self.engine)
         self.db = Session(self.engine)

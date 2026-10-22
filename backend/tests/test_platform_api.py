@@ -18,7 +18,7 @@ from app.main import app
 from app.models.audit_log import AuditLog
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.channel import Channel
-from app.models.platform_control import PlatformAudit, PlatformProviderIncident
+from app.models.platform_control import PlatformAudit, PlatformBusiness, PlatformProviderIncident
 from app.models.saas import PlatformMembership
 
 
@@ -40,6 +40,10 @@ class PlatformApiTests(unittest.TestCase):
             other = Business(name="Other Shop", slug="other-platform-shop")
             db.add_all([shop, other])
             db.flush()
+            db.add_all([
+                PlatformBusiness(id=shop.id, name=shop.name, slug=shop.slug),
+                PlatformBusiness(id=other.id, name=other.name, slug=other.slug),
+            ])
             platform = User(
                 business_id=shop.id,
                 full_name="Platform Admin",

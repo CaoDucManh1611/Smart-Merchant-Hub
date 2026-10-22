@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -57,6 +57,29 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 name=None,
             )
             db.add(customer)
+            db.flush()
+            if cls.engine.dialect.name == "postgresql":
+                conversation_ids = (
+                    11, 14, 15, 21, 22, 23, 24, 31, 32, 33, 34, 35, 41,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59, 61, 62, 89, 96,
+                    97, 98, 121, 122, 529, 541, 542, 590, 5901, 58111,
+                    91000, 910001,
+                )
+                db.execute(
+                    Conversation.__table__.insert(),
+                    [
+                        {
+                            "id": conversation_id,
+                            "business_id": business.id,
+                            "customer_id": customer.id,
+                            "channel": "facebook",
+                        }
+                        for conversation_id in conversation_ids
+                    ],
+                )
+                db.execute(text(
+                    "SELECT setval(pg_get_serial_sequence('conversations', 'id'), :next_id, false)"
+                ), {"next_id": max(conversation_ids) + 1})
             db.add(Product(
                 business_id=business.id,
                 sku="SERUM-001",
@@ -1144,6 +1167,20 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             if case["type"] == "dialogue"
         ]
         with Session(self.engine) as db:
+            if self.engine.dialect.name == "postgresql":
+                conversation_ids = [91000 + index for index in range(1, len(dialogues) + 1)]
+                db.execute(
+                    Conversation.__table__.insert(),
+                    [
+                        {
+                            "id": conversation_id,
+                            "business_id": self.business_id,
+                            "customer_id": self.customer_id,
+                            "channel": "telegram",
+                        }
+                        for conversation_id in conversation_ids
+                    ],
+                )
             db.add_all([
                 Product(
                     business_id=self.business_id,

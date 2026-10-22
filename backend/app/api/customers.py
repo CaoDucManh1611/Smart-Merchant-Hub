@@ -83,7 +83,7 @@ from app.services.customer_fact_extractor import (
     get_customer_fact_extraction_enabled,
     schedule_weekly_customer_fact_scan,
 )
-from app.services.rfm_segments import RFM_GROUPS, RFM_RULES_VERSION, rfm_group, rfm_score
+from app.services.rfm_segments import RFM_GROUPS, RFM_RULES_VERSION, customer_rfm_profiles
 from app.services.customer_merge_service import (
     duplicate_evidence,
     find_duplicate_suggestions,
@@ -746,13 +746,14 @@ def list_customers(
         Customer.status != "merged",
     )
     if tag:
-        base = base.join(CustomerTag, CustomerTag.customer_id == Customer.id).join(
+        tagged_customer_ids = db.query(CustomerTag.customer_id).join(
             Tag, Tag.id == CustomerTag.tag_id
         ).filter(
             CustomerTag.business_id == tenant.business_id,
             Tag.business_id == tenant.business_id,
             Tag.name == tag.strip(),
-        ).distinct()
+        )
+        base = base.filter(Customer.id.in_(tagged_customer_ids))
     if tag_ids:
         try:
             requested_tag_ids = [int(value.strip()) for value in tag_ids.split(",") if value.strip()]
@@ -1057,61 +1058,10 @@ def classify_customers_rfm(
     actor: User | None = Depends(require_write_access),
 ):
     """Recompute tenant-local RFM groups and replace only app-managed RFM tags."""
-    customers = db.query(Customer.id).filter(
-        Customer.business_id == tenant.business_id,
-        Customer.status != "merged",
-    ).order_by(Customer.id.asc()).all()
-    customer_ids = [int(customer_id) for (customer_id,) in customers]
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-    order_rows = []
-    if customer_ids:
-        order_rows = db.query(
-            Order.customer_id,
-            func.count(Order.id),
-            func.sum(net_order_amount_expression()),
-            func.max(Order.created_at),
-        ).filter(
-            Order.business_id == tenant.business_id,
-            Order.customer_id.in_(customer_ids),
-            *completed_order_conditions(now),
-        ).group_by(Order.customer_id).all()
-
-    rfm = {
-        int(customer_id): {
-            "frequency": int(frequency or 0),
-            "monetary": float(monetary or 0),
-            "last_order_at": last_order_at,
-        }
-        for customer_id, frequency, monetary, last_order_at in order_rows
-    }
-    recencies = [
-        max(0, (now - item["last_order_at"].replace(tzinfo=None)).days)
-        for item in rfm.values()
-        if item["last_order_at"] is not None
-    ]
-    frequencies = [float(item["frequency"]) for item in rfm.values()]
-    monetary_values = [float(item["monetary"]) for item in rfm.values()]
-
-    assignments: dict[int, str] = {}
-    for customer_id in customer_ids:
-        stats = rfm.get(customer_id)
-        if stats is None:
-            assignments[customer_id] = "RFM · Chưa mua"
-            continue
-        last_order_at = stats["last_order_at"]
-        recency_days = max(0, (now - last_order_at.replace(tzinfo=None)).days) if last_order_at else 3650
-        scores = (
-            rfm_score(float(recency_days), recencies, lower_is_better=True),
-            rfm_score(float(stats["frequency"]), frequencies),
-            rfm_score(float(stats["monetary"]), monetary_values),
-        )
-        first_purchase_recent = bool(
-            stats["frequency"] == 1
-            and last_order_at is not None
-            and recency_days <= 30
-        )
-        assignments[customer_id] = rfm_group(*scores, first_purchase_recent=first_purchase_recent)
+    profiles = customer_rfm_profiles(db, tenant.business_id, as_of=now)
+    customer_ids = list(profiles)
+    assignments = {customer_id: profile["segment_name"] for customer_id, profile in profiles.items()}
 
     tag_rows = db.query(Tag).filter(
         Tag.business_id == tenant.business_id,
@@ -1184,7 +1134,7 @@ def classify_customers_rfm(
     db.commit()
     return {
         "customer_count": len(customer_ids),
-        "buyer_count": len(rfm),
+        "buyer_count": sum(profile["frequency"] > 0 for profile in profiles.values()),
         "groups": ordered_groups,
         "as_of": now.isoformat(),
         "rules_version": RFM_RULES_VERSION,

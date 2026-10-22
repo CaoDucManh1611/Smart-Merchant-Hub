@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from math import ceil
+from math import ceil, log2
 from typing import Any, Iterable
 
 from app.rag.answer_guard import has_valid_citations
@@ -39,6 +39,58 @@ def _percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     index = max(0, min(len(ordered) - 1, ceil(len(ordered) * fraction) - 1))
     return round(ordered[index], 2)
+
+
+def evaluate_product_rankings(cases: Iterable[dict], predictions: Iterable[dict], *, top_k: int = 5) -> dict:
+    """Evaluate labeled product IDs, independently of wording and the LLM.
+
+    Empty expected lists represent cases where no product should be suggested.
+    Repeated IDs occupy ranking slots but cannot earn relevance twice.
+    """
+    by_id = {str(row.get("id")): row for row in predictions}
+    results = []
+    segment_cases = segment_hits = 0
+    for case in cases:
+        if "expected_product_ids" not in case:
+            continue
+        present = str(case.get("id")) in by_id
+        prediction = by_id.get(str(case.get("id")), {})
+        expected = {str(value) for value in case["expected_product_ids"]}
+        actual = [str(value) for value in prediction.get("recommended_product_ids", [])][:max(1, top_k)]
+        forbidden = {str(value) for value in case.get("forbidden_product_ids", [])}
+        seen = set()
+        gains = []
+        for value in actual:
+            gains.append(int(value in expected and value not in seen))
+            seen.add(value)
+        hits = sum(gains)
+        ideal = sum(1 / log2(rank + 2) for rank in range(min(len(expected), max(1, top_k))))
+        dcg = sum(gain / log2(rank + 2) for rank, gain in enumerate(gains))
+        abstained = not actual
+        results.append({
+            "id": case.get("id"),
+            "precision": hits / max(1, top_k) if expected else float(abstained and present),
+            "recall": hits / len(expected) if expected else float(abstained and present),
+            "ndcg": dcg / ideal if ideal else float(abstained and present),
+            "reciprocal_rank": next((1 / (rank + 1) for rank, gain in enumerate(gains) if gain), 0.0),
+            "forbidden_products": sorted(set(actual) & forbidden),
+        })
+        if "expected_rfm_segment" in case:
+            segment_cases += 1
+            segment_hits += prediction.get("rfm_segment") == case["expected_rfm_segment"]
+    count = len(results)
+    return {
+        "case_count": count,
+        "top_k": max(1, top_k),
+        "precision_at_k": round(sum(row["precision"] for row in results) / max(1, count), 6),
+        "recall_at_k": round(sum(row["recall"] for row in results) / max(1, count), 6),
+        "ndcg_at_k": round(sum(row["ndcg"] for row in results) / max(1, count), 6),
+        "mrr": round(sum(row["reciprocal_rank"] for row in results) / max(1, count), 6),
+        "forbidden_product_rate": round(sum(bool(row["forbidden_products"]) for row in results) / max(1, count), 6),
+        "rfm_segment_cases": segment_cases,
+        "rfm_segment_accuracy": round(segment_hits / max(1, segment_cases), 6),
+        "cases": results,
+    }
 
 
 def evaluate_predictions(
@@ -194,6 +246,7 @@ def evaluate_predictions(
         "estimated_ai_cost_total": round(sum(estimated_costs), 8),
         "estimated_ai_cost_mean": round(sum(estimated_costs) / max(1, len(estimated_costs)), 8),
         "estimated_ai_cost_unit": "configured quota cost units; not provider billing",
+        "recommendation_metrics": evaluate_product_rankings(case_list, by_id.values(), top_k=top_k),
         "cases": case_results,
         "notes": [
             "Each prediction is scored by case ID; no prior conversation turns are included by this evaluator.",

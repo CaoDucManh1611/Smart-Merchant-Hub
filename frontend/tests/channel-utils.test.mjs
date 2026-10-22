@@ -11,5 +11,9 @@ test("labels local Shopee connector conversations as Shopee", () => {
 });
 
 test("does not fall back to Facebook for unknown channels", () => {
-  assert.equal(channelLabel("zalo"), "ZALO");
+  assert.equal(channelLabel("unknown-provider"), "Unknown-provider");
+});
+
+test("uses the registered Zalo label instead of an unknown-channel fallback", () => {
+  assert.equal(channelLabel("zalo"), "Zalo");
 });

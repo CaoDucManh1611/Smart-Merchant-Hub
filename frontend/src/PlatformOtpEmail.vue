@@ -2,7 +2,7 @@
 import { onMounted, ref } from "vue";
 import { apiFetch } from "./api-client.js";
 
-const props = defineProps({ apiBase: { type: String, default: "/api" } });
+const props = defineProps({ apiBase: { type: String, default: "/api" }, canWrite: { type: Boolean, default: true } });
 const config = ref({ enabled: false, username: "", from_email: "", from_name: "Smart Merchant Hub", password_configured: false });
 const password = ref("");
 const busy = ref(false);
@@ -53,7 +53,7 @@ onMounted(load);
     <p v-if="notice" role="status" class="settings-notice">{{ notice }}</p>
     <template v-if="loaded">
       <form @submit.prevent="save">
-        <fieldset :disabled="busy">
+        <fieldset :disabled="busy || !props.canWrite">
           <label class="otp-email-toggle"><input v-model="config.enabled" type="checkbox" /> Bật Gmail gửi OTP chung cho hệ thống</label>
           <div class="otp-email-fields">
             <label>Gmail gửi<input v-model.trim="config.username" type="email" autocomplete="off" :required="config.enabled" placeholder="email-he-thong@gmail.com" /></label>

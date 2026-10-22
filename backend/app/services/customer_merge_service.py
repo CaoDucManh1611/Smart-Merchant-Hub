@@ -243,13 +243,15 @@ def _customer_pair(
     business_id: int,
     *,
     allow_merged_source: bool = False,
+    lock: bool = False,
 ) -> tuple[Customer, Customer]:
     if survivor_customer_id == source_customer_id:
         raise HTTPException(status_code=422, detail="Không thể gộp customer vào chính nó.")
-    customers = db.query(Customer).filter(
+    query = db.query(Customer).filter(
         Customer.business_id == business_id,
         Customer.id.in_([survivor_customer_id, source_customer_id]),
-    ).all()
+    ).order_by(Customer.id)
+    customers = (query.with_for_update() if lock else query).all()
     by_id = {customer.id: customer for customer in customers}
     survivor = by_id.get(survivor_customer_id)
     source = by_id.get(source_customer_id)
@@ -423,7 +425,7 @@ def merge_customer(
     evidence: dict | None = None,
 ) -> CustomerMerge:
     survivor, source = _customer_pair(
-        db, survivor_customer_id, source_customer_id, business_id
+        db, survivor_customer_id, source_customer_id, business_id, lock=True
     )
     existing_merges = db.query(CustomerMerge.id).filter(
         CustomerMerge.business_id == business_id,
@@ -570,6 +572,7 @@ def _undo_is_safe(
         merge.source_customer_id,
         merge.business_id,
         allow_merged_source=True,
+        lock=True,
     )
     if operation is None:
         raise HTTPException(status_code=409, detail="Merge cũ chưa có dữ liệu để hoàn tác an toàn.")
@@ -577,6 +580,8 @@ def _undo_is_safe(
         raise HTTPException(status_code=409, detail="Merge này đã được hoàn tác hoặc không còn hiệu lực.")
     if source.status != "merged" or source.merged_into_customer_id != survivor.id:
         raise HTTPException(status_code=409, detail="Trạng thái customer không còn phù hợp để hoàn tác.")
+    if survivor.status == "merged" or survivor.merged_into_customer_id is not None:
+        raise HTTPException(status_code=409, detail="Hồ sơ chính đã được gộp tiếp; cần hoàn tác lần gộp sau trước.")
 
     manifest = operation["moved_records"] or {}
     moved = manifest.get("moved", {})
@@ -639,7 +644,7 @@ def undo_customer_merge(
     merge = db.query(CustomerMerge).filter(
         CustomerMerge.id == merge_id,
         CustomerMerge.business_id == business_id,
-    ).first()
+    ).with_for_update().first()
     if merge is None:
         raise HTTPException(status_code=404, detail="Lịch sử merge không tồn tại trong business này.")
     operation = _operation_for_merge(db, merge_id, business_id)

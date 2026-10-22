@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue';
 import { apiFetch } from './api-client.js';
-const props = defineProps({ apiBase: { type: String, default: '/api' } });
+const props = defineProps({ apiBase: { type: String, default: '/api' }, canWrite: { type: Boolean, default: true } });
 const config = ref({ enabled: false, account_number: '', bank_bin: '', account_name: '', bank_options: [] });
 const busy = ref(false);
 const loaded = ref(false);
@@ -56,7 +56,7 @@ onMounted(load);
     <p v-if="notice" role="status" class="settings-notice">{{ notice }}</p>
     <template v-if="loaded">
       <form @submit.prevent="save" :aria-busy="busy">
-        <fieldset :disabled="busy">
+        <fieldset :disabled="busy || !canWrite">
           <label class="payment-settings-toggle"><input v-model="config.enabled" type="checkbox" /> Bật thanh toán chung cho nền tảng</label>
           <div class="payment-settings-fields">
             <label>Ngân hàng nhận phí<select v-model="config.bank_bin" :required="config.enabled">
@@ -72,7 +72,7 @@ onMounted(load);
         </fieldset>
       </form>
       <div class="payment-settings-check">
-        <button type="button" class="settings-refresh" :disabled="busy" @click="checkConfiguration">Kiểm tra cấu hình</button>
+        <button type="button" class="settings-refresh" :disabled="busy || !canWrite" @click="checkConfiguration">Kiểm tra cấu hình</button>
         <p>VietQR chỉ tạo mã chuyển khoản. Kiểm tra cấu hình chỉ kiểm tra dữ liệu đã lưu tại hệ thống, không xác minh tài khoản ngân hàng hoặc giao dịch. Admin xác nhận thực nhận tiền trước khi ghi nhận thanh toán.</p>
       </div>
     </template>

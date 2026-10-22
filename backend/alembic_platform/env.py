@@ -1,3 +1,4 @@
+import app.models.platform_knowledge  # register platform service documents
 from logging.config import fileConfig
 
 from alembic import context

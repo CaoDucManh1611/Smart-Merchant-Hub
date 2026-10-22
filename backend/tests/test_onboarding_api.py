@@ -17,6 +17,7 @@ from app.database.bases import PlatformBase, TenantBase
 from app.db.dependencies import get_db
 from app.main import app
 from app.models.auth_session import AuthSession
+from app.models.platform_control import PlatformBusiness
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.signup import SignupEmailChallenge
 from app.models.channel import Channel
@@ -50,6 +51,16 @@ class OnboardingApiTests(unittest.TestCase):
     def tearDownClass(cls):
         app.dependency_overrides.clear()
         settings.ENVIRONMENT = cls._environment
+
+    @classmethod
+    def _ensure_platform_business(cls, shop):
+        with Session(cls.engine) as db:
+            db.merge(PlatformBusiness(
+                id=shop["business_id"],
+                name=shop["shop_name"],
+                slug=f"test-shop-{shop['business_id']}",
+            ))
+            db.commit()
 
     def test_public_onboarding_creates_shop_owner_and_subscription(self):
         plans = self.client.get("/api/onboarding/plans")
@@ -471,6 +482,7 @@ class OnboardingApiTests(unittest.TestCase):
             "/api/onboarding/shops",
             json={"shop_name": "Connect Shop", "owner_name": "Connect Owner", "owner_email": "connect@onboarding.test", "password": "strong-pass-1"},
         ).json()
+        self._ensure_platform_business(created)
         headers = {"Authorization": f"Bearer {created['access_token']}"}
         channel = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/channels",
@@ -550,6 +562,7 @@ class OnboardingApiTests(unittest.TestCase):
             "/api/onboarding/shops",
             json={"shop_name": "Telegram Verify", "owner_name": "Verify Owner", "owner_email": "verify-telegram@onboarding.test", "password": "strong-pass-1"},
         ).json()
+        self._ensure_platform_business(created)
         headers = {"Authorization": f"Bearer {created['access_token']}"}
         calls = []
 
@@ -610,6 +623,7 @@ class OnboardingApiTests(unittest.TestCase):
             "/api/onboarding/shops",
             json={"shop_name": "Zalo Verify", "owner_name": "Verify Owner", "owner_email": "verify-zalo@onboarding.test", "password": "strong-pass-1"},
         ).json()
+        self._ensure_platform_business(created)
         headers = {"Authorization": f"Bearer {created['access_token']}"}
 
         class FakeResponse:
@@ -650,6 +664,7 @@ class OnboardingApiTests(unittest.TestCase):
             "/api/onboarding/shops",
             json={"shop_name": "Bot Lifecycle", "owner_name": "Lifecycle Owner", "owner_email": "bot-lifecycle@onboarding.test", "password": "strong-pass-1"},
         ).json()
+        self._ensure_platform_business(created)
         headers = {"Authorization": f"Bearer {created['access_token']}"}
         connected = self.client.post(
             f"/api/onboarding/shops/{created['business_id']}/channels",

@@ -1,3 +1,4 @@
+import app.models.platform_knowledge  # register platform service documents
 import logging
 import time
 

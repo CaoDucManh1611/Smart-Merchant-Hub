@@ -42,11 +42,12 @@ from app.services.recommendation_interaction_service import (
     record_recommendation_impressions,
 )
 from app.services.order_metrics import completed_order_conditions, net_order_value
-from app.services.rfm_segments import RFM_RULES_VERSION, RFM_SEGMENT_KEYS, rfm_group, rfm_score
+from app.services.rfm_segments import RFM_RULES_VERSION, customer_rfm_profiles
 
 
 REVENUE_ORDER_STATUSES = ("delivered", "completed")
-MODEL_VERSION = "item_affinity_rfm_v4"
+MODEL_VERSION = "item_affinity_rfm_v5"
+PERSONALIZATION_CACHE_VERSION = "rfm_product_signals_v1"
 SEGMENT_MODEL_VERSION = "rfm_kmeans_v2"
 STRATEGIES = {"balanced", "personalized", "popular", "rag"}
 MIN_BANDIT_TRAINING_EVENTS = 20
@@ -472,6 +473,7 @@ def _interaction_scores(
         CustomerProductInteraction.business_id == business_id,
         CustomerProductInteraction.product_id.is_not(None),
         CustomerProductInteraction.event_type.in_(tuple(INTERACTION_WEIGHTS)),
+        CustomerProductInteraction.occurred_at <= _now(),
     )
     if customer_id is not None:
         query = query.filter(CustomerProductInteraction.customer_id == customer_id)
@@ -507,17 +509,22 @@ def _manual_product_interest_scores(
         CustomerProductInteraction.customer_id == customer_id,
         CustomerProductInteraction.product_id.is_not(None),
         CustomerProductInteraction.event_type == "staff_interest",
-    ).all()
+        CustomerProductInteraction.occurred_at <= _now(),
+    ).order_by(CustomerProductInteraction.occurred_at.desc(), CustomerProductInteraction.id.desc()).all()
     scores: Counter = Counter()
+    seen: set[int] = set()
     now = _now()
     for product_id, occurred_at, metadata in rows:
+        if int(product_id) in seen:
+            continue
+        seen.add(int(product_id))
         try:
             interest = min(100.0, max(0.0, float((metadata or {}).get("interest_percent", 0)))) / 100
         except (TypeError, ValueError):
             continue
         days_old = max(0, (now - occurred_at).days) if occurred_at else INTERACTION_HALF_LIFE_DAYS
         decayed_interest = interest * (0.5 ** (days_old / INTERACTION_HALF_LIFE_DAYS))
-        scores[int(product_id)] = max(scores[int(product_id)], decayed_interest)
+        scores[int(product_id)] = decayed_interest
     return scores
 
 
@@ -529,6 +536,7 @@ def _historic_query_tokens(db: Session, business_id: int, customer_id: int | Non
         CustomerProductInteraction.customer_id == customer_id,
         CustomerProductInteraction.event_type.in_(("ask", "search")),
         CustomerProductInteraction.query_text.is_not(None),
+        CustomerProductInteraction.occurred_at <= _now(),
     ).order_by(CustomerProductInteraction.occurred_at.desc()).limit(100).all()
     return Counter(token for (query,) in rows for token in _tokens(query or ""))
 
@@ -686,6 +694,79 @@ def _personalization_allowed(db: Session, business_id: int, customer_id: int | N
     return consent is not None and consent.status == "granted"
 
 
+def rag_personalization_weights(
+    db: Session, *, business_id: int, customer_id: int | None,
+) -> dict[str, float] | None:
+    """Return saved, consented customer/product weights for RAG's PPR seed."""
+    if not _personalization_allowed(db, business_id, customer_id):
+        return None
+    profile = db.query(RecommendationCustomerProfile).filter(
+        RecommendationCustomerProfile.business_id == business_id,
+        RecommendationCustomerProfile.customer_id == customer_id,
+    ).first()
+    if profile is None:
+        return None
+
+    features = profile.features or {}
+    signals = (features.get("product_signal_cache") or {}).get("signals") or {}
+    rfm = features.get("rfm_scores") or {}
+
+    def rfm_score(key: str) -> float:
+        try:
+            return min(5.0, max(1.0, float(rfm[key]))) / 5.0
+        except (KeyError, TypeError, ValueError):
+            return 0.6
+
+    recent_factor = 0.5 + 0.5 * rfm_score("recency")
+    repeat_factor = 0.5 + 0.25 * rfm_score("frequency") + 0.25 * rfm_score("monetary")
+    engagement_factor = sum(rfm_score(key) for key in ("recency", "frequency", "monetary")) / 3
+    product_scores: dict[int, float] = {}
+    for product_id in signals.get("recent", ()):
+        try:
+            product_scores[int(product_id)] = product_scores.get(int(product_id), 0.0) + recent_factor
+        except (TypeError, ValueError):
+            continue
+    for product_id in signals.get("historical", ()):
+        try:
+            product_scores[int(product_id)] = product_scores.get(int(product_id), 0.0) + repeat_factor
+        except (TypeError, ValueError):
+            continue
+
+    for signal_name in ("interactions", "staff_interest"):
+        raw = signals.get(signal_name) or {}
+        values = {}
+        for product_id, value in raw.items():
+            try:
+                score = float(value)
+                if score:
+                    values[int(product_id)] = score
+            except (TypeError, ValueError):
+                continue
+        maximum = max((abs(value) for value in values.values()), default=0.0)
+        if maximum:
+            for product_id, score in values.items():
+                product_scores[product_id] = product_scores.get(product_id, 0.0) + (
+                    score / maximum * engagement_factor
+                )
+
+    product_scores = {product_id: max(0.0, score) for product_id, score in product_scores.items()}
+    product_scores = {product_id: score for product_id, score in product_scores.items() if score > 0}
+    if not product_scores:
+        return None
+    products = db.query(Product.id, Product.sku).filter(
+        Product.business_id == business_id,
+        Product.id.in_(product_scores),
+    ).all()
+    maximum = max(product_scores.values())
+    weights: dict[str, float] = {}
+    for product_id, sku in products:
+        weight = product_scores[int(product_id)] / maximum
+        weights[f"id:{product_id}"] = weight
+        if sku:
+            weights[f"sku:{str(sku).strip().casefold()}"] = weight
+    return weights or None
+
+
 def _filter_query_candidates(products: list[Product], query: str | None) -> list[Product]:
     text = fold_topic_text(query)
     budget = stated_budget(query or "")
@@ -697,6 +778,14 @@ def _filter_query_candidates(products: list[Product], query: str | None) -> list
             if (budget is None or float(p.price or 0) <= budget)
             and (color is None or _product_matches_color(p, color))
             and (not mentioned or fold_topic_text(str((p.metadata_ or {}).get("category") or "")) in mentioned)]
+
+
+def _explicit_sku_matches(products: list[Product], query: str | None) -> set[int]:
+    text = fold_topic_text(query)
+    return {
+        product.id for product in products
+        if product.sku and re.search(rf"(?<!\w){re.escape(fold_topic_text(product.sku))}(?!\w)", text)
+    }
 
 
 def _recommendation_weights(strategy: str, rfm_segment: str | None = None) -> dict[str, float]:
@@ -741,7 +830,90 @@ def _score(
     )
 
 
+def _personalization_source_signature(db: Session, business_id: int, customer_id: int) -> str:
+    """Cheap aggregates detect changed orders/signals without loading order lines.
+
+    Status/payment groups and sums detect same-second status/refund updates, for
+    which timestamp-only invalidation would miss a change. The hourly bucket
+    also advances recency, time decay and future-dated event eligibility.
+    """
+    now = _now()
+    orders = db.query(
+        Order.customer_id, Order.status, Order.payment_status, func.count(Order.id),
+        func.sum(Order.total_amount), func.sum(Order.refunded_amount),
+        func.max(Order.updated_at), func.max(Order.created_at),
+    ).filter(Order.business_id == business_id, Order.created_at <= now).group_by(
+        Order.customer_id, Order.status, Order.payment_status,
+    ).order_by(Order.customer_id, Order.status, Order.payment_status).all()
+    interactions = db.query(
+        func.count(CustomerProductInteraction.id), func.max(CustomerProductInteraction.id),
+        func.max(CustomerProductInteraction.occurred_at),
+    ).filter(
+        CustomerProductInteraction.business_id == business_id,
+        CustomerProductInteraction.customer_id == customer_id,
+        CustomerProductInteraction.event_type != "impression",
+        CustomerProductInteraction.occurred_at <= now,
+    ).one()
+    catalog = db.query(func.count(Product.id), func.max(Product.updated_at)).filter(
+        Product.business_id == business_id,
+    ).one()
+    customers = db.query(Customer.id).filter(
+        Customer.business_id == business_id, Customer.status != "merged",
+    ).order_by(Customer.id).all()
+    source = [PERSONALIZATION_CACHE_VERSION, RFM_RULES_VERSION, now.strftime("%Y-%m-%dT%H"),
+              [list(row) for row in orders], list(interactions), list(catalog), [row[0] for row in customers]]
+    return hashlib.sha256(json.dumps(source, default=str, ensure_ascii=False).encode()).hexdigest()
+
+
+def _cached_personalization_profile(
+    db: Session, business_id: int, customer_id: int, *, rfm_profiles: dict | None = None,
+) -> tuple[RecommendationCustomerProfile, bool]:
+    """Persist deterministic RFM/product preferences; never call an AI provider.
+
+    Caller must enforce current personalization consent before entering here.
+    Price, available inventory and explicit customer preferences stay live.
+    """
+    db.query(Customer.id).filter(
+        Customer.business_id == business_id, Customer.id == customer_id,
+    ).with_for_update().one()
+    profile = db.query(RecommendationCustomerProfile).filter(
+        RecommendationCustomerProfile.business_id == business_id,
+        RecommendationCustomerProfile.customer_id == customer_id,
+    ).first()
+    signature = _personalization_source_signature(db, business_id, customer_id)
+    features = dict(profile.features or {}) if profile else {}
+    cache = features.get("product_signal_cache") or {}
+    if rfm_profiles is None and cache.get("signature") == signature:
+        return profile, True
+    statistics = (rfm_profiles if rfm_profiles is not None else customer_rfm_profiles(db, business_id, as_of=_now()))[customer_id]
+    recent, historical = _recent_and_historical_products(db, business_id, customer_id)
+    signals = {
+        "recent": sorted(recent), "historical": sorted(historical),
+        "purchase_facets": {key: dict(values) for key, values in _customer_purchase_facets(db, business_id, customer_id).items()},
+        "interactions": dict(_interaction_scores(db, business_id=business_id, customer_id=customer_id)),
+        "staff_interest": dict(_manual_product_interest_scores(db, business_id=business_id, customer_id=customer_id)),
+        "historic_tokens": dict(_historic_query_tokens(db, business_id, customer_id)),
+    }
+    now = _now()
+    features.update({
+        **statistics, "has_completed_order": statistics["frequency"] > 0,
+        "as_of": now.isoformat(), "basis": "all_completed_or_paid_delivered_net_of_refunds",
+        "rfm_rules_version": RFM_RULES_VERSION,
+        "product_signal_cache": {"signature": signature, "version": PERSONALIZATION_CACHE_VERSION, "signals": signals},
+    })
+    if profile is None:
+        profile = RecommendationCustomerProfile(business_id=business_id, customer_id=customer_id)
+        db.add(profile)
+    profile.features = features
+    profile.segment_label = statistics["segment_label"]
+    profile.model_version = RFM_RULES_VERSION
+    profile.trained_at = now
+    db.flush()
+    return profile, False
+
+
 def serve_recommendations(db: Session, *, business_id: int, payload: RecommendationRequestCreate) -> RecommendationRequest:
+    started = time.perf_counter()
     customer = _customer_or_raise(db, business_id, payload.customer_id)
     personalized_id = customer.id if customer and _personalization_allowed(db, business_id, customer.id) else None
     selection_payload = payload
@@ -749,11 +921,11 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         selection_payload = payload.model_copy(update={"context": {}, "experiment_id": None})
     subject_key = f"customer:{personalized_id}" if personalized_id else "anonymous"
     profile = None
+    profile_cache_hit = False
     if personalized_id is not None:
-        profile = db.query(RecommendationCustomerProfile).filter(
-            RecommendationCustomerProfile.business_id == business_id,
-            RecommendationCustomerProfile.customer_id == personalized_id,
-        ).first()
+        profile, profile_cache_hit = _cached_personalization_profile(db, business_id, personalized_id)
+    cached_features = profile.features if profile else {}
+    cached_signals = (cached_features.get("product_signal_cache") or {}).get("signals") or {}
     rfm_segment = profile.segment_label if profile else "unclassified"
     learning_context = {
         **selection_payload.context,
@@ -772,27 +944,33 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         strategy,
         rfm_segment if personalized_id is not None else None,
     )
-    request_context = {**learning_context, "ranking_weights": ranking_weights}
-    recent, historical = _recent_and_historical_products(db, business_id, personalized_id)
+    request_context = {**learning_context, "ranking_weights": ranking_weights, "profile_cache_hit": profile_cache_hit}
+    recent, historical = set(cached_signals.get("recent", [])), set(cached_signals.get("historical", []))
     candidates = db.query(Product).filter(
         Product.business_id == business_id,
         Product.status == "active",
-        Product.stock_quantity > Product.reserved_quantity,
     ).order_by(Product.id.asc()).all()
-    candidates = [product for product in candidates if product.id not in recent]
+    explicit_skus = _explicit_sku_matches(candidates, payload.query)
+    candidates = [
+        product for product in candidates
+        if int(product.stock_quantity or 0) > int(product.reserved_quantity or 0)
+        and (not explicit_skus or product.id in explicit_skus)
+        and (product.id not in recent or product.id in explicit_skus)
+    ]
     candidates = _filter_query_candidates(candidates, payload.query)
     data_rag_scores, data_rag_status = {}, "disabled"
-    customer_features = _customer_recommendation_features(db, business_id, personalized_id)
+    customer_features = (
+        {key: float(cached_features[key]) for key in ("recency_days", "frequency", "monetary", "total_items", "distinct_products", "avg_order_value")}
+        if profile else _customer_recommendation_features(db, business_id, None)
+    )
     artifact_segment, linucb_scores, ncf_scores = _demo_artifact_scores(customer if personalized_id else None, candidates, customer_features)
     popularity = _popular_counts(db, business_id)
     affinity = _co_purchase_counts(db, business_id, historical)
-    interaction_affinity = _interaction_scores(db, business_id=business_id, customer_id=personalized_id) if personalized_id else Counter()
-    manual_interest_scores = _manual_product_interest_scores(
-        db, business_id=business_id, customer_id=personalized_id
-    )
-    purchase_facets = _customer_purchase_facets(db, business_id, personalized_id)
+    interaction_affinity = Counter({int(key): value for key, value in cached_signals.get("interactions", {}).items()})
+    manual_interest_scores = Counter({int(key): value for key, value in cached_signals.get("staff_interest", {}).items()})
+    purchase_facets = {key: Counter(values) for key, values in cached_signals.get("purchase_facets", {}).items()}
     interaction_popularity = _interaction_scores(db, business_id=business_id)
-    historic_tokens = _historic_query_tokens(db, business_id, personalized_id)
+    historic_tokens = Counter(cached_signals.get("historic_tokens", {}))
     preferred_color, color_signal = _preferred_color(db, business_id, personalized_id)
     stated_preferences = _stated_preference_values(db, business_id, personalized_id)
     available_personalization_signals = set()
@@ -807,7 +985,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             available_personalization_signals.add("stated_preferences")
         if historic_tokens:
             available_personalization_signals.add("past_questions")
-        if profile and profile.segment_label and profile.segment_label != "unclassified":
+        if profile and cached_features.get("frequency", 0) > 0:
             available_personalization_signals.add("rfm_segment")
     rag_scores = {candidate.product_id: candidate.relevance for candidate in payload.rag_candidates}
     popularity_signal = Counter(popularity)
@@ -890,7 +1068,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             item_signals.add("stated_preferences")
         if historic_query_score > 0:
             item_signals.add("past_questions")
-        if personalized_id is not None and rfm_segment and rfm_segment != "unclassified":
+        if personalized_id is not None and cached_features.get("frequency", 0) > 0:
             item_signals.add("rfm_segment")
         scored_items.append({
             "product_id": product.id,
@@ -979,6 +1157,8 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             "personalization_applied": bool(used_personalization_signals),
             "personalization_signals": used_personalization_signals,
             "available_personalization_signals": sorted(available_personalization_signals),
+            "ranking_elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+            "profile_as_of": cached_features.get("as_of"),
         },
         served_items=served_items,
     )
@@ -1089,39 +1269,9 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
         ).all():
             if profile.customer_id not in eligible_customer_ids:
                 db.delete(profile)
-        orders = db.query(Order).filter(
-            Order.business_id == business_id,
-            *_completed_order_conditions(),
-        ).all()
-        by_customer: defaultdict[int, list[Order]] = defaultdict(list)
-        for order in orders:
-            by_customer[int(order.customer_id)].append(order)
         now = _now()
-        item_rows = db.query(Order.customer_id, OrderItem.product_id, OrderItem.quantity).join(
-            Order, Order.id == OrderItem.order_id
-        ).filter(
-            Order.business_id == business_id,
-            *_completed_order_conditions(),
-        ).all()
-        items_by_customer: defaultdict[int, list[tuple[int, int]]] = defaultdict(list)
-        for customer_id, product_id, quantity in item_rows:
-            if customer_id is not None:
-                items_by_customer[int(customer_id)].append((int(product_id), int(quantity or 0)))
-        profiles = []
-        for customer in customers:
-            customer_orders = by_customer.get(customer.id, [])
-            latest = max((order.created_at for order in customer_orders if order.created_at), default=None)
-            customer_items = items_by_customer.get(customer.id, [])
-            monetary = float(sum((_net_order_value(order) for order in customer_orders), Decimal("0")))
-            profiles.append({
-                "customer_id": customer.id,
-                "recency_days": (now - latest).days if latest else 365,
-                "frequency": len(customer_orders),
-                "monetary": monetary,
-                "total_items": sum(quantity for _, quantity in customer_items),
-                "distinct_products": len({product_id for product_id, _ in customer_items}),
-                "avg_order_value": monetary / max(1, len(customer_orders)),
-            })
+        all_profiles = customer_rfm_profiles(db, business_id, as_of=now)
+        profiles = [all_profiles[customer.id] for customer in customers if customer.id in all_profiles]
         if not profiles:
             run.status, run.metrics, run.artifact, run.completed_at = "succeeded", {"customers": 0, "clusters": 0}, {
                 "model_version": SEGMENT_MODEL_VERSION, "segmenter_version": RFM_RULES_VERSION,
@@ -1151,42 +1301,20 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
             labels = _kmeans(normalized, min(4, len(buyers)))
         by_customer = {p["customer_id"]: label for p, label in zip(buyers, labels)}
         labels = [by_customer.get(p["customer_id"], -1) for p in profiles]
-        buyers = [profile for profile in profiles if profile["frequency"] > 0]
-        recencies = [float(profile["recency_days"]) for profile in buyers]
-        frequencies = [float(profile["frequency"]) for profile in buyers]
-        monetary_values = [float(profile["monetary"]) for profile in buyers]
-        segment_by_customer: dict[int, tuple[str, str, dict[str, int] | None]] = {}
-        for profile in profiles:
-            customer_id = int(profile["customer_id"])
-            if not profile["frequency"]:
-                segment_by_customer[customer_id] = ("no_purchase", "RFM · Chưa mua", None)
-                continue
-            recency_score = rfm_score(float(profile["recency_days"]), recencies, lower_is_better=True)
-            frequency_score = rfm_score(float(profile["frequency"]), frequencies)
-            monetary_score = rfm_score(float(profile["monetary"]), monetary_values)
-            first_purchase_recent = profile["frequency"] == 1 and profile["recency_days"] <= 30
-            name = rfm_group(
-                recency_score,
-                frequency_score,
-                monetary_score,
-                first_purchase_recent=first_purchase_recent,
-            )
-            segment_by_customer[customer_id] = (
-                RFM_SEGMENT_KEYS[name],
-                name,
-                {"recency": recency_score, "frequency": frequency_score, "monetary": monetary_score},
-            )
+        segment_by_customer = {
+            int(profile["customer_id"]): (profile["segment_label"], profile["segment_name"], profile["rfm_scores"])
+            for profile in profiles
+        }
         group_counts: Counter[str] = Counter(name for _, name, _ in segment_by_customer.values())
 
         for profile, label in zip(profiles, labels):
             segment_key, segment_name, rfm_scores = segment_by_customer[int(profile["customer_id"])]
-            row = db.query(RecommendationCustomerProfile).filter(
-                RecommendationCustomerProfile.business_id == business_id,
-                RecommendationCustomerProfile.customer_id == profile["customer_id"],
-            ).first()
+            row, _ = _cached_personalization_profile(
+                db, business_id, int(profile["customer_id"]), rfm_profiles=all_profiles,
+            )
             values = {
                 "segment_label": segment_key,
-                "features": {**{key: profile[key] for key in ("recency_days", "frequency", "monetary", "total_items", "distinct_products", "avg_order_value")},
+                "features": {**row.features, **{key: profile[key] for key in ("recency_days", "frequency", "monetary", "total_items", "distinct_products", "avg_order_value")},
                              "has_completed_order": profile["frequency"] > 0, "cluster_id": label if label >= 0 else None,
                              "segment_name": segment_name,
                              "rfm_scores": rfm_scores, "rfm_rules_version": RFM_RULES_VERSION,
@@ -1204,7 +1332,7 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
         run.metrics = {
             "customers": len(profiles),
             "clusters": len(set(labels) - {-1}),
-            "orders": len(orders),
+            "orders": sum(profile["frequency"] for profile in all_profiles.values()),
             "groups": dict(group_counts),
         }
         run.artifact = {

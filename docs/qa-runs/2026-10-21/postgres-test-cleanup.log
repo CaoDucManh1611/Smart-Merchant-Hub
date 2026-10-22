@@ -1,0 +1,7 @@
+PostgreSQL test schema cleanup — 2026-10-21 (UTC+7)
+
+After the full backend suite passed (1,439 tests + 30 subtests), the three dedicated test databases were checked for pytest_* schemas.
+An abandoned prior run (run ID 1e2d6d7974) had left 119 test-only schemas: 117 in crm_chatbot_test, 1 in crm_tenant_test, and 1 in crm_platform_test.
+Only schemas with that exact run ID were removed, using DROP SCHEMA ... CASCADE, and only from the *_test databases.
+Final verification: crm_chatbot_test=0, crm_tenant_test=0, crm_platform_test=0 pytest_* schemas.
+A separate one-test harness cleanup check passed (1 passed in 5.00s) and left these final counts unchanged.

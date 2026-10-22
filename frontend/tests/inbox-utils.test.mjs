@@ -15,7 +15,7 @@ test("inbox channel list includes all supported platforms and counts conversatio
     { value: "facebook", label: "Facebook", count: 0 },
     { value: "instagram", label: "Instagram", count: 0 },
     { value: "telegram", label: "Telegram", count: 1 },
-    { value: "zalo", label: "ZALO", count: 2 },
+    { value: "zalo", label: "Zalo", count: 2 },
     { value: "tiktok", label: "TikTok", count: 0 },
     { value: "shopee", label: "Shopee", count: 1 },
   ]);
@@ -25,6 +25,6 @@ test("inbox channel list appends an active provider not in the default catalog",
   const channels = getInboxChannels([{ channel: "whatsapp" }]);
 
   assert.equal(channels.at(-1).value, "whatsapp");
-  assert.equal(channels.at(-1).label, "WHATSAPP");
+  assert.equal(channels.at(-1).label, "Whatsapp");
   assert.equal(channels.at(-1).count, 1);
 });

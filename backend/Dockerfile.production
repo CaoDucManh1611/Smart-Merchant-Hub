@@ -21,5 +21,6 @@ RUN python scripts/generate_seed_dataset.py
 COPY backend/app ./app
 COPY scripts ./root-scripts
 RUN mkdir -p /app/uploads
+RUN sh scripts/install_pg_client.sh
 
 CMD ["sh", "-c", "python -m alembic -c alembic.ini upgrade head && python -m alembic -c alembic-platform.ini upgrade head && python -m app.scripts.upgrade_active_tenants --apply && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

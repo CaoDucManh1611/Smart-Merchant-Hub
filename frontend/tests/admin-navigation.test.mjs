@@ -44,7 +44,7 @@ test('shared section heading precedes both columns and sidebar scrolling is view
 
 test('admin navigation includes support and preserves legacy hashes', async () => {
   const { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash } = await import('../src/admin-navigation.js');
-  assert.deepEqual(ADMIN_SECTIONS.map(section => section.id), ['support', 'overview', 'approvals', 'shops', 'plans', 'isolation', 'health', 'otp-email', 'audit', 'payments']);
+  assert.deepEqual(ADMIN_SECTIONS.map(section => section.id), ['team', 'knowledge', 'support', 'overview', 'approvals', 'shops', 'plans', 'isolation', 'health', 'otp-email', 'audit', 'payments', 'backups']);
   for (const section of ADMIN_SECTIONS) {
     assert.equal(adminSectionFromHash(`#admin-${section.id}`), section.id);
     assert.equal(adminSectionHash(section.id), `#admin-${section.id}`);
@@ -78,7 +78,7 @@ test('hash changes restore selection, close mobile menu and focus heading', asyn
   let workspaceWatcher;
   let focusCount = 0;
   const context = vm.createContext({ ...helpers, ref: Vue.ref, computed: Vue.computed, nextTick: Vue.nextTick,
-    watch: (_, callback) => { workspaceWatcher = callback; }, inPlatformAdminWorkspace: { value: true },
+    watch: (_, callback) => { workspaceWatcher = callback; }, inPlatformAdminWorkspace: { value: true }, visibleAdminSections: { value: helpers.ADMIN_SECTIONS },
     window: { location: { hash: '#admin-otp-email' } },
   });
   vm.runInContext(source.slice(start, end) + '\nglobalThis.navigation = {activePlatformSection,adminMenuOpen,adminSectionHeading,selectPlatformSection,syncPlatformSectionFromHash};', context);

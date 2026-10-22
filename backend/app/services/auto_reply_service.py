@@ -74,6 +74,7 @@ from app.services.chatbot_bandit_service import (
 )
 from app.services.recommendation_service import (
     active_recommendation_experiment_id,
+    rag_personalization_weights,
     serve_recommendations,
 )
 from app.services.recommendation_interaction_service import record_explicit_chat_recommendation_decline
@@ -2259,6 +2260,9 @@ def process_rag_auto_reply(
             similarity_threshold=similarity_threshold,
             business_id=business_id,
             diagnostics=retrieval_diagnostics,
+            customer_product_weights=rag_personalization_weights(
+                db, business_id=business_id, customer_id=customer_id,
+            ),
         )
         run.update(
             retrieval_topic=infer_query_topic(query_text),

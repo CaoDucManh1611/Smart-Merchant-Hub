@@ -18,7 +18,7 @@ from app.models.channel import Channel, ChannelEvent
 from app.database.bases import TenantBase
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from app.services.channel_event_service import ingest_normalized_events
 
 
@@ -55,7 +55,7 @@ class ChannelContractTests(unittest.TestCase):
                     provider="facebook", external_event_id="evt", event_type="message",
                     external_account_id="page-1", raw_payload={},
                 )
-                with self.assertRaises(OperationalError):
+                with self.assertRaises((OperationalError, ProgrammingError)):
                     ingest_normalized_events(db, [event])
         finally:
             engine.dispose()

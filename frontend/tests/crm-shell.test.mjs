@@ -313,7 +313,7 @@ test("platform admins land in the shop control plane instead of the CRM inbox", 
   const mountedSource = appSource.slice(appSource.indexOf("onMounted(async () =>"), appSource.indexOf("/* =========================================================\n   STOP POLLING"));
 
   assert.match(loginSource, /await fetchPlatformAdmin\(\);\s+if \(platformAdmin\.value && !mfaVerifyPending\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/);
-  assert.match(mountedSource, /loadThemePreference\(\);\s+if \(platformAdmin\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/);
+  assert.match(mountedSource, /await loadAuthSession\(\);[\s\S]*?await fetchPlatformAdmin\(\);[\s\S]*?if \(platformAdmin\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/);
 });
 
 test("platform admins use a dedicated shop-administration shell, not CRM chrome", () => {
@@ -544,10 +544,10 @@ test("platform administration exposes shop status, usage, and schema pilot contr
   assert.match(appSource, /platformAdmin/);
   assert.match(appSource, /platform\/shops/);
   assert.match(appSource, /platform\/tenant-schemas/);
-  assert.match(appSource, /platform\/audit-logs/);
+  assert.match(appSource, /read\('audit-logs\?limit=30', 'audit'\)/);
   assert.match(appSource, /Khóa shop|Mở shop/);
   assert.match(appSource, /Hạn mức|Giới hạn/);
-  assert.match(appSource, /tách kho dữ liệu theo shop/);
+  assert.match(appSource, /tách kho dữ liệu theo shop/i);
 });
 
 test("platform administration surfaces pending package approvals before tenant operations", () => {
@@ -859,7 +859,7 @@ test("Customer Ops restores keyboard focus when responsive panels close", () => 
 });
 
 test("Zalo has its own channel label and branded icon fallback", () => {
-  assert.match(channelUtilsSource, /zalo:\s*["']ZALO["']/);
+  assert.match(channelUtilsSource, /zalo:\s*["']Zalo["']/);
   assert.match(styleSource, /\.social-icon\.zalo/);
 });
 

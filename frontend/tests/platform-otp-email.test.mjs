@@ -11,8 +11,8 @@ const saved = { enabled: true, username: 'sender@example.test', from_email: 'sen
 const reply = (body, ok = true) => ({ ok, json: async () => body });
 function fixture(fetch) {
   let mounted;
-  const context = vm.createContext({ ref: Vue.ref, onMounted: fn => { mounted = fn; }, defineProps: () => ({ apiBase: '/api' }), apiFetch: fetch });
-  vm.runInContext(descriptor.scriptSetup.content.replace(/^import .*;\s*$/gm, '') + '\nglobalThis.state = {config,password,busy,loaded,error,notice,load,save};', context);
+  const context = vm.createContext({ ref: Vue.ref, onMounted: fn => { mounted = fn; }, defineProps: () => ({ apiBase: '/api', canWrite: true }), apiFetch: fetch });
+  vm.runInContext(descriptor.scriptSetup.content.replace(/^import .*;\s*$/gm, '') + '\nglobalThis.state = {props,config,password,busy,loaded,error,notice,load,save};', context);
   return { state: context.state, mount: () => mounted() };
 }
 async function render(state) {

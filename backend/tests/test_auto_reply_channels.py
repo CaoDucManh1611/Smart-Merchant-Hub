@@ -555,6 +555,7 @@ def test_rag_without_context_sends_safe_handoff_without_calling_llm():
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
+        patch("app.services.auto_reply_service.rag_personalization_weights", return_value=None), \
         patch("app.services.auto_reply_service.retrieve", return_value=[]), \
         patch("app.services.auto_reply_service.call_llm") as call_llm, \
         patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "out-1"}) as send, \
@@ -590,6 +591,7 @@ def test_instagram_image_is_passed_to_vision_model_and_gets_a_reply():
         patch("app.services.auto_reply_service.record_explicit_chat_recommendation_decline"), \
         patch("app.services.auto_reply_service._deterministic_customer_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
+        patch("app.services.auto_reply_service.rag_personalization_weights", return_value=None), \
         patch("app.services.auto_reply_service.retrieve", return_value=[]), \
         patch("app.services.auto_reply_service.select_chatbot_reply_choice", return_value=None), \
         patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \

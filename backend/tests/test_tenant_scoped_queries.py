@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.exc import IntegrityError
 
@@ -59,26 +59,15 @@ class TenantScopedQueryTests(unittest.TestCase):
 
     def test_schema_routing_is_reapplied_after_service_commits(self):
         engine = create_engine("sqlite://")
-        routed_paths = []
-
-        @event.listens_for(engine, "connect")
-        def add_set_config(connection, _record):
-            connection.create_function(
-                "set_config",
-                3,
-                lambda _name, value, _local: routed_paths.append(value) or value,
-            )
-
         try:
             with patch("app.database.tenant_session.TenantSessionLocal", sessionmaker(bind=engine)):
                 with tenant_session("shop_1") as db:
+                    self.assertTrue(db.execute(text("SHOW search_path")).scalar_one().startswith('"shop_1"'))
                     db.execute(text("SELECT 1"))
                     db.commit()
+                    self.assertTrue(db.execute(text("SHOW search_path")).scalar_one().startswith('"shop_1"'))
                     db.execute(text("SELECT 2"))
                     db.commit()
-            # SQLite does not implement PostgreSQL search_path routing; the
-            # explicit business predicates remain the isolation boundary.
-            self.assertEqual([], routed_paths)
         finally:
             engine.dispose()
 

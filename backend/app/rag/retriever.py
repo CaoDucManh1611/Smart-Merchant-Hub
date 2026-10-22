@@ -1,9 +1,4 @@
-"""Hybrid retriever backed by PostgreSQL + pgvector.
-
-The retriever combines semantic search (pgvector) with a lightweight lexical
-fallback.  This is useful for product names, SKUs and Vietnamese terms that
-may not always be represented well by an embedding model.
-"""
+"""Gemini dense + BM25 retrieval, Reciprocal Rank Fusion, then personalized PageRank."""
 
 import logging
 import json
@@ -11,6 +6,7 @@ import math
 import re
 import time
 import unicodedata
+from collections import defaultdict
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 
@@ -27,6 +23,11 @@ from app.rag.lexical import contains, identifiers, query_terms
 logger = logging.getLogger(__name__)
 
 _LEXICAL_MINIMUM_SIMILARITY = 0.2
+_RRF_K = 60
+_PPR_DAMPING = 0.85
+_PPR_MAX_ITERATIONS = 20
+_PPR_TOLERANCE = 1e-10
+_PPR_CUSTOMER_BLEND = 0.15
 
 _STOP_WORDS = {
     "bao", "bên", "bạn", "có", "cho", "của", "giá", "gì", "hỏi",
@@ -46,6 +47,7 @@ class RetrievedChunk:
     metadata: dict | None
     filename: str | None = None
     chunk_index: int | None = None
+    ranking_score: float | None = None
 
 
 def _metadata_dict(value: object) -> dict | None:
@@ -66,6 +68,7 @@ def retrieve(
     similarity_threshold: float | None = None,
     query_embedding: list[float] | None = None,
     diagnostics: dict | None = None,
+    customer_product_weights: dict[str, float] | None = None,
 ) -> list[RetrievedChunk]:
     """
     Tìm các chunks liên quan nhất với query.
@@ -81,7 +84,14 @@ def retrieve(
     """
     query = (query or "").strip()
     if diagnostics is not None:
-        diagnostics.update(retrieval_mode="hybrid", retrieval_fallback_stage=None, retrieval_error_type=None)
+        diagnostics.update(
+            retrieval_mode="hybrid",
+            retrieval_fallback_stage=None,
+            retrieval_error_type=None,
+            retrieval_fusion="rrf",
+            retrieval_lexical_method="bm25",
+            retrieval_reranker="personalized_pagerank",
+        )
     if not query:
         return []
 
@@ -108,6 +118,11 @@ def retrieve(
             if similarity_threshold is not None else None
         ),
     )
+    if diagnostics is not None:
+        diagnostics.update(
+            retrieval_lexical_hits=len(lexical_results),
+            retrieval_bm25_hits=len(lexical_results),
+        )
     vector_results: list[RetrievedChunk] = []
 
     # Bước 1: Embed câu hỏi thành vector; nếu hết quota vẫn dùng từ khóa.
@@ -137,9 +152,17 @@ def retrieve(
             min(len(lexical_results), top_k),
             (time.perf_counter() - started) * 1000,
         )
+        lexical_scores = [
+            item.ranking_score if item.ranking_score is not None else item.similarity
+            for item in lexical_results
+        ]
         return _expand_parent_neighbors(
-            _diverse_candidates(lexical_results, top_k,
-                                max_per_document=4 if query_topic == "products" else 2),
+            _diverse_candidates(
+                _personalized_pagerank_rerank(
+                    lexical_results, lexical_scores, customer_product_weights,
+                ), top_k,
+                max_per_document=4 if query_topic == "products" else 2,
+            ),
             db, business_id, top_k,
         )
 
@@ -192,9 +215,17 @@ def retrieve(
             min(len(lexical_results), top_k),
             (time.perf_counter() - started) * 1000,
         )
+        lexical_scores = [
+            item.ranking_score if item.ranking_score is not None else item.similarity
+            for item in lexical_results
+        ]
         return _expand_parent_neighbors(
-            _diverse_candidates(lexical_results, top_k,
-                                max_per_document=4 if query_topic == "products" else 2),
+            _diverse_candidates(
+                _personalized_pagerank_rerank(
+                    lexical_results, lexical_scores, customer_product_weights,
+                ), top_k,
+                max_per_document=4 if query_topic == "products" else 2,
+            ),
             db, business_id, top_k,
         )
 
@@ -218,12 +249,19 @@ def retrieve(
             )
         )
 
-    results = _merge_hybrid_results(vector_results, lexical_results, top_k, topic=query_topic)
+    results = _merge_hybrid_results(
+        vector_results, lexical_results, top_k, topic=query_topic,
+        customer_product_weights=customer_product_weights,
+    )
     if diagnostics is not None:
-        diagnostics.update(retrieval_vector_hits=len(vector_results), retrieval_lexical_hits=len(lexical_results))
+        diagnostics.update(
+            retrieval_vector_hits=len(vector_results),
+            retrieval_lexical_hits=len(lexical_results),
+            retrieval_bm25_hits=len(lexical_results),
+        )
 
     logger.info(
-        "Retrieved %d chunks (top_k=%d, threshold=%.2f, topic=%s, lexical=%d, vector=%d, duration_ms=%.2f)",
+        "Retrieved %d chunks (top_k=%d, threshold=%.2f, topic=%s, bm25=%d, vector=%d, duration_ms=%.2f)",
         len(results),
         top_k,
         similarity_threshold,
@@ -255,6 +293,121 @@ def _diverse_candidates(
         else:
             deferred.append(result)
     return (selected + deferred)[:top_k]
+
+
+def _personalized_pagerank_rerank(
+    items: list[RetrievedChunk],
+    base_scores: list[float] | None = None,
+    customer_product_weights: dict[str, float] | None = None,
+) -> list[RetrievedChunk]:
+    """Rerank bounded candidates with query relevance and consented product affinity."""
+    if len(items) < 2:
+        return items
+    customer_product_weights = customer_product_weights or {}
+
+    raw_scores = base_scores if base_scores is not None else [item.similarity for item in items]
+    scores = []
+    for score in raw_scores:
+        try:
+            value = float(score)
+        except (TypeError, ValueError):
+            value = 0.0
+        scores.append(max(0.0, value) if math.isfinite(value) else 0.0)
+    total = sum(scores)
+    query_prior = (
+        [score / total for score in scores]
+        if total > 0 else [1 / len(items)] * len(items)
+    )
+    personalized_matches: list[tuple[str | None, float]] = []
+    product_chunk_counts: dict[str, int] = defaultdict(int)
+    for item in items:
+        metadata = item.metadata or {}
+        keys = []
+        if metadata.get("product_id") is not None:
+            keys.append(f"id:{metadata['product_id']}")
+        if metadata.get("sku"):
+            keys.append(f"sku:{str(metadata['sku']).strip().casefold()}")
+        key = max(keys, key=lambda candidate: customer_product_weights.get(candidate, 0.0), default=None)
+        score = float(customer_product_weights.get(key, 0.0)) if key is not None else 0.0
+        personalized_matches.append((key, score))
+        if key is not None and score > 0:
+            product_chunk_counts[key] += 1
+    personalized_scores = [
+        score / product_chunk_counts[key] if key is not None and product_chunk_counts.get(key) else 0.0
+        for key, score in personalized_matches
+    ]
+    customer_total = sum(personalized_scores)
+    if customer_total > 0:
+        customer_prior = [score / customer_total for score in personalized_scores]
+        personalization = [
+            (1 - _PPR_CUSTOMER_BLEND) * query_score + _PPR_CUSTOMER_BLEND * customer_score
+            for query_score, customer_score in zip(query_prior, customer_prior)
+        ]
+    else:
+        personalization = query_prior
+
+    edges: list[dict[int, float]] = [defaultdict(float) for _ in items]
+
+    def connect_bucket(groups: dict[object, list[int]], weight: float) -> None:
+        # ponytail: pairwise links stay bounded to top-k candidates (max 120);
+        # switch to sparse edges if that cap grows.
+        for nodes in groups.values():
+            for position, left in enumerate(nodes):
+                for right in nodes[position + 1:]:
+                    edges[left][right] += weight
+                    edges[right][left] += weight
+
+    by_product: dict[object, list[int]] = defaultdict(list)
+    by_parent: dict[object, list[int]] = defaultdict(list)
+    by_document_index: dict[object, dict[int, list[int]]] = defaultdict(lambda: defaultdict(list))
+    for index, item in enumerate(items):
+        metadata = item.metadata or {}
+        for key in ("product_id", "sku"):
+            value = metadata.get(key)
+            if value is not None and str(value).strip():
+                by_product[(key, str(value).strip().casefold())].append(index)
+        parent_id = metadata.get("parent_id")
+        if parent_id is not None:
+            by_parent[(item.document_id, str(parent_id))].append(index)
+        if item.chunk_index is not None:
+            by_document_index[item.document_id][int(item.chunk_index)].append(index)
+
+    connect_bucket(by_product, 3.0)
+    connect_bucket(by_parent, 2.0)
+    for document_chunks in by_document_index.values():
+        for chunk_index, left_nodes in document_chunks.items():
+            for left in left_nodes:
+                for right in document_chunks.get(chunk_index + 1, ()):
+                    edges[left][right] += 0.35
+                    edges[right][left] += 0.35
+
+    if not any(edges) and customer_total <= 0:
+        return items
+
+    ranks = personalization[:]
+    for _ in range(_PPR_MAX_ITERATIONS):
+        updated = [(1 - _PPR_DAMPING) * score for score in personalization]
+        dangling_mass = 0.0
+        for source, neighbors in enumerate(edges):
+            total_weight = sum(neighbors.values())
+            if total_weight <= 0:
+                dangling_mass += ranks[source]
+                continue
+            contribution = _PPR_DAMPING * ranks[source] / total_weight
+            for target, weight in neighbors.items():
+                updated[target] += contribution * weight
+        for index, score in enumerate(personalization):
+            updated[index] += _PPR_DAMPING * dangling_mass * score
+        if sum(abs(new - old) for new, old in zip(updated, ranks)) < _PPR_TOLERANCE:
+            ranks = updated
+            break
+        ranks = updated
+
+    return [
+        item for index, item in sorted(
+            enumerate(items), key=lambda pair: (-ranks[pair[0]], pair[0])
+        )
+    ]
 
 
 def _expand_parent_neighbors(
@@ -368,34 +521,48 @@ def _merge_hybrid_results(
     lexical_results: list[RetrievedChunk],
     top_k: int,
     topic: str | None = None,
+    customer_product_weights: dict[str, float] | None = None,
 ) -> list[RetrievedChunk]:
-    """Merge semantic and lexical candidates without duplicate chunks."""
+    """Fuse independently ranked dense/BM25 lists, then rerank their union with PPR."""
     merged: dict[int, tuple[RetrievedChunk, float]] = {}
+    topic_step = 1 / (_RRF_K + 1) - 1 / (_RRF_K + 2)
 
-    for item in vector_results:
-        # Semantic search is the primary signal.
-        topic_bonus = 0.15 if topic_matches(item.metadata, topic) else 0
-        product_bonus = 0.3 if topic == "products" and _is_catalog_product_chunk(item) else 0
-        merged[item.chunk_id] = (item, 0.65 * item.similarity + topic_bonus + product_bonus)
-
-    for item in lexical_results:
-        existing = merged.get(item.chunk_id)
-        if existing is None:
-            topic_bonus = 0.15 if topic_matches(item.metadata, topic) else 0
-            product_bonus = 0.3 if topic == "products" and _is_catalog_product_chunk(item) else 0
-            merged[item.chunk_id] = (item, 0.35 * item.similarity + topic_bonus + product_bonus)
-            continue
-
-        current_item, current_score = existing
-        current_item.similarity = max(current_item.similarity, item.similarity)
-        merged[item.chunk_id] = (
-            current_item,
-            current_score + 0.35 * item.similarity + (0.15 if topic_matches(item.metadata, topic) else 0),
+    for candidates, lexical in ((vector_results, False), (lexical_results, True)):
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda item: (
+                -(item.ranking_score if lexical and item.ranking_score is not None else item.similarity),
+                -item.similarity,
+                item.chunk_id,
+            ),
         )
+        for rank, item in enumerate(ranked_candidates, start=1):
+            score = 1 / (_RRF_K + rank)
+            existing = merged.get(item.chunk_id)
+            if existing is None:
+                merged[item.chunk_id] = (item, score)
+                continue
+            current_item, current_score = existing
+            current_item.similarity = max(current_item.similarity, item.similarity)
+            if item.ranking_score is not None:
+                current_item.ranking_score = item.ranking_score
+            merged[item.chunk_id] = (current_item, current_score + score)
 
-    ranked = sorted(merged.values(), key=lambda pair: pair[1], reverse=True)
+    for chunk_id, (item, score) in list(merged.items()):
+        if topic_matches(item.metadata, topic):
+            score += topic_step
+        if topic == "products" and _is_catalog_product_chunk(item):
+            score += 2 * topic_step
+        merged[chunk_id] = (item, score)
+
+    ranked = sorted(merged.values(), key=lambda pair: (-pair[1], pair[0].chunk_id))
+    reranked = _personalized_pagerank_rerank(
+        [item for item, _score in ranked],
+        [score for _item, score in ranked],
+        customer_product_weights,
+    )
     return _diverse_candidates(
-        [item for item, _score in ranked], top_k,
+        reranked, top_k,
         max_per_document=4 if topic == "products" else 2,
     )
 
@@ -408,7 +575,7 @@ def _retrieve_lexical(
     query_topic: str | None = None,
     similarity_threshold: float | None = None,
 ) -> list[RetrievedChunk]:
-    """Rank bounded, tenant-scoped candidates by normalized concept coverage."""
+    """Generate tenant-scoped lexical candidates and rank them with BM25."""
     sku_codes = identifiers(query)
     terms = query_terms(query)
     # A preference is useful for selecting matching products, but generic
@@ -418,6 +585,9 @@ def _retrieve_lexical(
     if not terms and not sku_codes:
         return []
 
+    # ponytail: BM25 is computed in Python over the tenant-scoped candidate pool
+    # (max(200, top_k * 40)); move corpus statistics to indexed PostgreSQL search
+    # if retrieval evaluation shows recall loss as a shop's knowledge base grows.
     params = {"business_id": business_id, "candidate_limit": max(200, top_k * 40)}
     dialect = getattr(getattr(db, "bind", None), "dialect", None)
     if getattr(dialect, "name", "") == "sqlite":
@@ -503,8 +673,16 @@ def _retrieve_lexical(
         if len(aliases) == 1 and aliases[0].isdigit():
             weight *= 0.25
         weights.append(weight)
+    searchable_documents = []
+    for data, _matches, _exact_sku in candidates:
+        metadata = _metadata_dict(data["chunk_metadata"]) or {}
+        searchable_documents.append(" ".join((
+            data["content"], str(metadata.get("section") or ""),
+            str(metadata.get("context") or ""),
+        )))
+    bm25_scores = _bm25_scores(searchable_documents, terms)
     scored = []
-    for data, matches, exact_sku in candidates:
+    for (data, matches, exact_sku), bm25_score in zip(candidates, bm25_scores):
         coverage = sum(weight for weight, match in zip(weights, matches) if match) / max(sum(weights), 1)
         score = min(0.99, 0.75 * coverage + (0.65 if exact_sku else 0))
         if similarity_threshold is not None and score < similarity_threshold:
@@ -514,9 +692,51 @@ def _retrieve_lexical(
             chunk_id=data["id"], document_id=data["document_id"],
             content=data["content"], similarity=score, metadata=metadata,
             filename=data["source_filename"], chunk_index=data["chunk_index"],
+            ranking_score=bm25_score,
         )
         rank = (score + (0.08 if topic_matches(metadata, query_topic) else 0)
                 + (0.3 if query_topic == "products" and _is_catalog_product_chunk(chunk) else 0))
-        scored.append((rank, chunk))
-    scored.sort(key=lambda item: (-item[0], item[1].chunk_id))
-    return [item for _, item in scored[:top_k]]
+        scored.append((bm25_score, rank, chunk))
+    scored.sort(key=lambda item: (-item[0], -item[1], item[2].chunk_id))
+    return [item for _bm25, _tie_break, item in scored[:top_k]]
+
+
+def _bm25_scores(
+    documents: list[str], query_groups: list[tuple[str, ...]], *, k1: float = 1.5, b: float = 0.75,
+) -> list[float]:
+    """Score folded Vietnamese/English text with BM25 over a bounded candidate set."""
+    if not documents or not query_groups:
+        return [0.0] * len(documents)
+
+    folded_documents = [fold_topic_text(document) for document in documents]
+    tokenized = [document.split() for document in folded_documents]
+    lengths = [len(tokens) for tokens in tokenized]
+    average_length = sum(lengths) / max(len(lengths), 1) or 1.0
+
+    frequencies: list[list[int]] = []
+    for folded_document in folded_documents:
+        padded_document = f" {folded_document} "
+        frequencies.append([
+            max((padded_document.count(f" {fold_topic_text(alias)} ") for alias in aliases), default=0)
+            for aliases in query_groups
+        ])
+
+    document_count = len(documents)
+    document_frequencies = [
+        sum(row[index] > 0 for row in frequencies)
+        for index in range(len(query_groups))
+    ]
+    idf = [
+        math.log(1 + (document_count - frequency + 0.5) / (frequency + 0.5))
+        for frequency in document_frequencies
+    ]
+    scores = []
+    for length, row in zip(lengths, frequencies):
+        score = 0.0
+        for term_frequency, inverse_frequency in zip(row, idf):
+            if not term_frequency:
+                continue
+            denominator = term_frequency + k1 * (1 - b + b * length / average_length)
+            score += inverse_frequency * term_frequency * (k1 + 1) / denominator
+        scores.append(score)
+    return scores

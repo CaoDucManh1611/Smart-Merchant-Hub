@@ -39,6 +39,10 @@ import ConnectionSupport from "./ConnectionSupport.vue";
 import PlatformSupport from "./PlatformSupport.vue";
 import PlatformOtpEmail from "./PlatformOtpEmail.vue";
 import PlatformPaymentSettings from "./PlatformPaymentSettings.vue";
+import PlatformBackups from "./PlatformBackups.vue";
+import PlatformKnowledge from "./PlatformKnowledge.vue";
+import PlatformTeam from "./PlatformTeam.vue";
+import ServiceAdvisor from "./ServiceAdvisor.vue";
 import { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash, newestShopsFirst, subscriptionRegistrationDate } from "./admin-navigation.js";
 import { planChangeKind } from "./checkout-utils.js";
 import {
@@ -1154,6 +1158,9 @@ const serviceAccountError = ref("");
 const auditLogs = ref([]);
 const auditLoading = ref(false);
 const platformAdmin = ref(false);
+const platformAccess = ref({ role: '', permissions: [] });
+const platformCan = (resource, action = 'read') => platformAccess.value.permissions.includes('*') || platformAccess.value.permissions.includes(`${resource}.${action}`);
+const visibleAdminSections = computed(() => ADMIN_SECTIONS.filter(section => platformCan(section.id, section.id === 'team' ? 'manage' : 'read')));
 const platformSupportCount = ref(0);
 const inPlatformAdminWorkspace = computed(() => (
   Boolean(authUser.value && platformAdmin.value && currentTab.value === "platform_admin")
@@ -1166,7 +1173,8 @@ const activePlatformSectionMeta = computed(() => ADMIN_SECTIONS.find(section => 
 
 async function syncPlatformSectionFromHash() {
   if (!inPlatformAdminWorkspace.value) return;
-  activePlatformSection.value = adminSectionFromHash(window.location.hash);
+  const requested = adminSectionFromHash(window.location.hash);
+  activePlatformSection.value = visibleAdminSections.value.some(section => section.id === requested) ? requested : visibleAdminSections.value[0]?.id || 'overview';
   adminMenuOpen.value = false;
   if (activePlatformSection.value === "health") void fetchPlatformChannelConnections();
   await nextTick();
@@ -4433,7 +4441,7 @@ function handleRealtimeEvent(event) {
     // The event is a low-latency hint. Reconcile with the canonical API list
     // so a delayed history batch or an optimistic message cannot leave this
     // open chat stale.
-    void loadMessages(eventConversationId, false, false);
+    void loadMessages(eventConversationId, false, true);
   }
 
   void loadConversations(false);
@@ -6430,9 +6438,12 @@ async function loadAuthSession() {
       await fetchSecuritySettings();
       await fetchQuotaUsage();
     }
-    else {
+    else if (response.status === 401) {
       clearAuthToken();
       authToken.value = "";
+    } else if (response.status === 503) {
+      // Maintenance is temporary; keep the session and retry after the barrier opens.
+      setTimeout(() => { if (authToken.value) loadAuthSession(); }, 10000);
     }
   } catch {
     // Keep the legacy development header path available when auth is offline.
@@ -7016,7 +7027,7 @@ async function fetchAuditLogs() {
 }
 
 async function fetchPlatformChannelConnections() {
-  if (!authUser.value || !platformAdmin.value || platformConnectionsLoading.value) return;
+  if (!authUser.value || !platformAdmin.value || !platformCan('health') || platformConnectionsLoading.value) return;
   platformConnectionsLoading.value = true;
   platformConnectionsError.value = "";
   try {
@@ -7038,78 +7049,39 @@ async function fetchPlatformAdmin() {
   platformError.value = "";
   platformShopNotice.value = "";
   try {
-    if (!authUser.value) {
-      platformAdmin.value = false;
-      platformShops.value = [];
-      platformShopDetails.value = {};
-      platformPlans.value = [];
-      platformSchemas.value = [];
-      platformAuditLogs.value = [];
-      platformProviderErrors.value = [];
-      platformChannelConnections.value = [];
-      platformConnectionsLoaded.value = false;
-      platformPendingRequests.value = [];
+    if (!authUser.value) { platformAdmin.value = false; platformAccess.value = { role: '', permissions: [] }; return; }
+    const accessResponse = await apiFetch(`${API_BASE}/platform/access`);
+    if (!accessResponse.ok) {
+      platformAdmin.value = false; platformAccess.value = { role: '', permissions: [] };
+      platformShops.value = []; platformPlans.value = []; platformPendingRequests.value = [];
       return;
     }
-    const shopsResponse = await apiFetch(`${API_BASE}/platform/shops`);
-    if (!shopsResponse.ok) {
-      platformAdmin.value = false;
-      platformShops.value = [];
-      platformShopDetails.value = {};
-      platformPlans.value = [];
-      platformSchemas.value = [];
-      platformAuditLogs.value = [];
-      platformProviderErrors.value = [];
-      platformChannelConnections.value = [];
-      platformConnectionsLoaded.value = false;
-      platformPendingRequests.value = [];
-      return;
-    }
-    const shopsPayload = await shopsResponse.json();
+    platformAccess.value = await accessResponse.json();
     platformAdmin.value = true;
+    const read = (path, resource) => platformCan(resource) ? apiFetch(`${API_BASE}/platform/${path}`) : Promise.resolve({ ok: false });
+    const shopsResponse = await read('shops', 'shops');
+    const shopsPayload = shopsResponse.ok ? await shopsResponse.json() : {};
     platformShops.value = newestShopsFirst(shopsPayload.items || []);
-    const availableShopIds = new Set(platformShops.value.map((shop) => String(shop.id)));
-    platformShopDetails.value = Object.fromEntries(
-      Object.entries(platformShopDetails.value).filter(([shopId]) => availableShopIds.has(shopId)),
-    );
-    const plansResponse = await apiFetch(`${API_BASE}/platform/plans`);
+    const availableShopIds = new Set(platformShops.value.map(shop => String(shop.id)));
+    platformShopDetails.value = Object.fromEntries(Object.entries(platformShopDetails.value).filter(([id]) => availableShopIds.has(id)));
+    const plansResponse = await read('plans', 'plans');
     platformPlans.value = plansResponse.ok ? await plansResponse.json() : [];
-    const schemasResponse = await apiFetch(`${API_BASE}/platform/tenant-schemas`);
-    if (schemasResponse.ok) {
-      platformSchemas.value = (await schemasResponse.json()).items || [];
-    }
-    const auditResponse = await apiFetch(`${API_BASE}/platform/audit-logs?limit=30`);
-    if (auditResponse.ok) {
-      platformAuditLogs.value = await auditResponse.json();
-    } else {
-      platformAuditLogs.value = [];
-    }
-    const providerResponse = await apiFetch(`${API_BASE}/platform/provider-errors?limit=30`);
+    const schemasResponse = await read('tenant-schemas', 'isolation');
+    platformSchemas.value = schemasResponse.ok ? (await schemasResponse.json()).items || [] : [];
+    const auditResponse = await read('audit-logs?limit=30', 'audit');
+    platformAuditLogs.value = auditResponse.ok ? await auditResponse.json() : [];
+    const providerResponse = await read('provider-errors?limit=30', 'health');
     platformProviderErrors.value = providerResponse.ok ? await providerResponse.json() : [];
-    if (activePlatformSection.value === "health" && inPlatformAdminWorkspace.value) {
-      await fetchPlatformChannelConnections();
-    }
-    const pendingRequestsResponse = await apiFetch(`${API_BASE}/platform/subscription-requests`);
-    const billingResponse = await apiFetch(`${API_BASE}/platform/billing-summary`);
+    if (activePlatformSection.value === "health" && inPlatformAdminWorkspace.value && platformCan('health')) await fetchPlatformChannelConnections();
+    const pendingResponse = await read('subscription-requests', 'approvals');
+    platformPendingRequests.value = pendingResponse.ok ? (await pendingResponse.json()).items || [] : [];
+    const billingResponse = await read('billing-summary', 'overview');
     platformBilling.value = billingResponse.ok ? await billingResponse.json() : null;
-    if (pendingRequestsResponse.ok) {
-      const pendingPayload = await pendingRequestsResponse.json();
-      platformPendingRequests.value = pendingPayload.items || [];
-    } else {
-      platformPendingRequests.value = [];
-    }
   } catch (err) {
     platformAdmin.value = false;
-    platformPlans.value = [];
-    platformPendingRequests.value = [];
-    platformAuditLogs.value = [];
-    platformProviderErrors.value = [];
-    platformChannelConnections.value = [];
-    platformConnectionsLoaded.value = false;
+    platformAccess.value = { role: '', permissions: [] };
     platformError.value = friendlyErrorMessage(err, "Chưa tải được thông tin quản trị. Vui lòng thử lại sau.");
-  } finally {
-    platformLoading.value = false;
-  }
+  } finally { platformLoading.value = false; }
 }
 
 async function recordPlatformPayment(request) {
@@ -7229,7 +7201,7 @@ function togglePlatformShopDetails(shop) {
 }
 
 async function refreshPlatformSubscriptionRequests() {
-  if (!authUser.value || !platformAdmin.value || platformLoading.value || platformRequestRefreshInFlight) return;
+  if (!authUser.value || !platformAdmin.value || !platformCan('approvals') || platformLoading.value || platformRequestRefreshInFlight) return;
   platformRequestRefreshInFlight = true;
   try {
     const response = await apiFetch(`${API_BASE}/platform/subscription-requests`);
@@ -13410,7 +13382,7 @@ function followupRecommendationLabel(item) {
           <div class="admin-sidebar-heading"><span>{{ t('KHÔNG GIAN QUẢN TRỊ') }}</span><strong>{{ t('Quản trị nền tảng') }}</strong></div>
           <button type="button" class="admin-menu-toggle" :aria-expanded="adminMenuOpen" aria-controls="admin-menu-navigation" @click="adminMenuOpen = !adminMenuOpen">{{ t(adminMenuOpen ? 'Đóng menu quản trị' : 'Mở menu quản trị') }}</button>
           <nav id="admin-menu-navigation" class="admin-section-nav" :class="{ 'is-open': adminMenuOpen }" :aria-label="t('Đi nhanh đến mục quản trị')">
-            <a v-for="section in ADMIN_SECTIONS" :key="section.id" :href="adminSectionHash(section.id)" :aria-current="activePlatformSection === section.id ? 'page' : undefined" @click.prevent="selectPlatformSection(section.id)">
+            <a v-for="section in visibleAdminSections" :key="section.id" :href="adminSectionHash(section.id)" :aria-current="activePlatformSection === section.id ? 'page' : undefined" @click.prevent="selectPlatformSection(section.id)">
               <svg class="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="section.icon" /></svg>
               <b>{{ t(section.title) }}</b><span v-if="section.id === 'approvals'">{{ platformPendingRequests.length }}</span><span v-else-if="section.id === 'support' && platformSupportCount">{{ platformSupportCount }}</span>
             </a>
@@ -13420,9 +13392,12 @@ function followupRecommendationLabel(item) {
 
         <div v-if="platformError" class="settings-notice team-error" role="alert">{{ platformError }}</div>
         <div v-if="platformApprovalNotice" class="settings-notice platform-approval-notice" role="status">{{ platformApprovalNotice }}</div>
-        <PlatformOtpEmail id="admin-otp-email" v-show="activePlatformSection === 'otp-email'" :api-base="API_BASE" />
-        <PlatformPaymentSettings v-show="activePlatformSection === 'payments'" :api-base="API_BASE" />
-        <PlatformSupport id="admin-support" v-show="activePlatformSection === 'support'" :active="activePlatformSection === 'support'" :request="apiFetch" :base-url="API_BASE" :admin-id="authUser?.id" @count="platformSupportCount = $event" />
+        <PlatformOtpEmail v-if="platformCan('otp-email')" :can-write="platformCan('otp-email', 'write')" id="admin-otp-email" v-show="activePlatformSection === 'otp-email'" :api-base="API_BASE" />
+        <PlatformPaymentSettings v-if="platformCan('payments')" :can-write="platformCan('payments', 'write')" v-show="activePlatformSection === 'payments'" :api-base="API_BASE" />
+        <PlatformTeam v-if="platformCan('team', 'manage')" v-show="activePlatformSection === 'team'" :active="activePlatformSection === 'team'" :api-base="API_BASE" :admin-id="authUser?.id" />
+        <PlatformBackups v-if="platformCan('backups')" :permissions="platformAccess.permissions" v-show="activePlatformSection === 'backups'" :active="activePlatformSection === 'backups'" :api-base="API_BASE" />
+        <PlatformKnowledge v-if="platformCan('knowledge')" :can-write="platformCan('knowledge', 'write')" v-show="activePlatformSection === 'knowledge'" :active="activePlatformSection === 'knowledge'" :api-base="API_BASE" />
+        <PlatformSupport v-if="platformCan('support')" :can-write="platformCan('support', 'write')" id="admin-support" v-show="activePlatformSection === 'support'" :active="activePlatformSection === 'support'" :request="apiFetch" :base-url="API_BASE" :admin-id="authUser?.id" @count="platformSupportCount = $event" />
 
         <div id="admin-overview" v-show="activePlatformSection === 'overview'" class="platform-admin-metrics">
           <article class="platform-admin-metric"><span>Tenant</span><strong>{{ platformShops.length }}</strong><small>Đang được quản lý</small></article>
@@ -13453,12 +13428,12 @@ function followupRecommendationLabel(item) {
               <div class="platform-approval-detail"><span>Liên hệ đăng ký</span><strong>{{ request.contact_name || request.requester_name || request.owner_name || 'Chưa cập nhật' }}</strong><small>{{ request.contact_email || request.requester_email || request.owner_email || 'Chưa có email' }}</small><small v-if="request.contact_phone">{{ request.contact_phone }}</small><small v-if="request.contact_name && request.requester_name && request.contact_name !== request.requester_name">Tài khoản gửi: {{ request.requester_name }}</small></div>
               <div class="platform-approval-detail"><span>Dịch vụ yêu cầu</span><strong>{{ request.plan_name }}</strong><small>{{ platformServiceLabel(request.service_type) }}</small></div>
               <div class="platform-approval-detail"><span>Thời điểm gửi</span><strong>{{ formatPlatformRequestDate(request.requested_at || request.created_at) }}</strong><small v-if="Number(request.quoted_amount) > 0">{{ request.payment_received ? t('Đã ghi nhận tiền vào tài khoản') : request.customer_reported_payment ? t('Khách báo đã thanh toán · cần đối soát giao dịch') : t('Chưa ghi nhận khoản thanh toán') }}</small><small v-else>{{ t('Gói không thu phí') }}</small></div>
-              <form v-if="Number(request.quoted_amount) > 0 && !request.payment_received" class="platform-approval-payment-form" @submit.prevent="recordPlatformPayment(request)">
+              <form v-if="Number(request.quoted_amount) > 0 && !request.payment_received" v-show="platformCan('approvals', 'write')" class="platform-approval-payment-form" @submit.prevent="recordPlatformPayment(request)">
                 <label><span>Mã giao dịch đã nhận tiền · {{ formatMoney(request.quoted_amount) }}</span><input :value="platformPaymentDrafts[request.subscription_id]?.reference || ''" required maxlength="255" placeholder="Mã chuyển khoản / mã biên nhận" @input="platformPaymentDrafts[request.subscription_id] = { ...platformPaymentDrafts[request.subscription_id], reference: $event.target.value }" /></label>
                 <button type="submit" class="primary-btn" :disabled="platformPaymentSaving">{{ platformPaymentSaving ? 'Đang ghi nhận…' : 'Xác nhận đã thu tiền' }}</button>
                 <small>Kiểm tra tiền đã vào tài khoản trước khi xác nhận. Mã giao dịch trùng không được cộng hai lần.</small>
               </form>
-              <div class="platform-approval-actions">
+              <div v-if="platformCan('approvals', 'write')" class="platform-approval-actions">
                 <button type="button" class="primary-btn" :disabled="Boolean(platformApprovalLoadingId) || (Number(request.quoted_amount) > 0 && !request.payment_received)" @click="approvePlatformSubscriptionRequest(request)">{{ platformApprovalLoadingId === request.subscription_id ? 'Đang duyệt...' : 'Duyệt & mở CRM' }}</button>
                 <button type="button" class="history-btn platform-approval-reject" :disabled="Boolean(platformApprovalLoadingId)" @click="rejectPlatformSubscriptionRequest(request)">Từ chối</button>
               </div>
@@ -13490,8 +13465,8 @@ function followupRecommendationLabel(item) {
                   <div><dt>Kênh kết nối</dt><dd>{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.used ?? 0 }}{{ platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.limit === null ? '' : ` / ${platformQuotaCards(platformShopQuota(shop)).find((item) => item.key === 'connected_channels')?.limit ?? 0}` }}</dd></div>
                 </dl>
                 <div class="platform-tenant-actions">
-                  <button type="button" class="settings-refresh" :aria-expanded="platformShopDetail(shop.id).open" :aria-controls="`platform-shop-detail-${shop.id}`" @click="togglePlatformShopDetails(shop)">{{ platformShopDetail(shop.id).open ? 'Ẩn chi tiết' : 'Xem chi tiết' }}</button>
-                  <button type="button" class="team-toggle" :class="{ danger: shop.status !== 'suspended' }" :disabled="platformShopMutatingIds.has(String(shop.id))" @click="togglePlatformShop(shop)">{{ platformShopMutatingIds.has(String(shop.id)) ? 'Đang cập nhật...' : shop.status === 'suspended' ? 'Mở shop' : 'Khóa shop' }}</button>
+                  <button type="button" class="settings-refresh" :disabled="!platformCan('approvals')" :aria-expanded="platformShopDetail(shop.id).open" :aria-controls="`platform-shop-detail-${shop.id}`" @click="togglePlatformShopDetails(shop)">{{ platformShopDetail(shop.id).open ? 'Ẩn chi tiết' : 'Xem chi tiết' }}</button>
+                  <button type="button" v-if="platformCan('shops', 'write')" class="team-toggle" :class="{ danger: shop.status !== 'suspended' }" :disabled="platformShopMutatingIds.has(String(shop.id))" @click="togglePlatformShop(shop)">{{ platformShopMutatingIds.has(String(shop.id)) ? 'Đang cập nhật...' : shop.status === 'suspended' ? 'Mở shop' : 'Khóa shop' }}</button>
                 </div>
                 <section v-if="platformShopDetail(shop.id).open" :id="`platform-shop-detail-${shop.id}`" class="platform-tenant-detail">
                   <p v-if="platformShopDetail(shop.id).loading" class="settings-empty" role="status">Đang tải gói, thanh toán và hạn mức của shop...</p>
@@ -13522,7 +13497,7 @@ function followupRecommendationLabel(item) {
           <section v-show="activePlatformSection === 'plans'" class="platform-admin-panel">
             <div class="platform-admin-panel-heading"><div><span class="card-eyebrow">SERVICE PLANS</span><h3>Gói dịch vụ</h3><p>Gói quyết định hạn mức và các module được cấp cho từng tenant.</p></div><div class="platform-plan-heading-actions"><span class="platform-admin-count">{{ platformPlans.length }} gói</span><button type="button" class="settings-refresh" @click="resetPlatformPlanForm">Thêm gói</button></div></div>
             <p v-if="platformPlanNotice" class="settings-notice platform-plan-notice" role="status">{{ platformPlanNotice }}</p>
-            <form id="admin-plans" class="platform-plan-form" @submit.prevent="savePlatformPlan">
+            <form v-if="platformCan('plans', 'write')" id="admin-plans" class="platform-plan-form" @submit.prevent="savePlatformPlan">
               <label>Mã gói<input v-model.trim="platformPlanForm.code" required maxlength="50" :disabled="Boolean(platformPlanEditingId)" placeholder="chatbot-pro" /></label>
               <label>Tên gói<input v-model.trim="platformPlanForm.name" required maxlength="120" placeholder="Gói Trợ lý Pro" /></label>
               <label>Giá gói CRM<input v-model.number="platformPlanForm.price" required min="0" step="1000" type="number" /></label>
@@ -13537,7 +13512,7 @@ function followupRecommendationLabel(item) {
               <article v-for="plan in platformPlans" :key="plan.id" class="platform-plan-item">
                 <div><strong>{{ plan.name }}</strong><span>Gói CRM: {{ formatPlanPrice(plan.price, plan.billing_cycle) }}</span><small>Trợ lý chatbot: {{ formatPlanPrice(chatbotRentalPrice(plan), plan.billing_cycle) }}</small></div>
                 <span class="team-status" :class="{ inactive: plan.status !== 'active' }">{{ plan.status === 'active' ? 'Đang bán' : 'Lưu trữ' }}</span>
-                <div class="platform-plan-actions"><button type="button" class="settings-refresh platform-plan-edit" :disabled="Boolean(platformPlanDeletingId)" @click="editPlatformPlan(plan)">Sửa giá</button><button type="button" class="platform-plan-delete" :disabled="Boolean(platformPlanDeletingId)" @click="deletePlatformPlan(plan)">{{ platformPlanDeletingId === plan.id ? 'Đang xóa...' : 'Xóa' }}</button></div>
+                <div v-if="platformCan('plans', 'write')" class="platform-plan-actions"><button type="button" class="settings-refresh platform-plan-edit" :disabled="Boolean(platformPlanDeletingId)" @click="editPlatformPlan(plan)">Sửa giá</button><button type="button" class="platform-plan-delete" :disabled="Boolean(platformPlanDeletingId)" @click="deletePlatformPlan(plan)">{{ platformPlanDeletingId === plan.id ? 'Đang xóa...' : 'Xóa' }}</button></div>
                 <small v-if="plan.features && Object.keys(plan.features).length">{{ Object.keys(plan.features).slice(0, 3).join(' · ') }}</small>
               </article>
             </div>
@@ -13552,11 +13527,11 @@ function followupRecommendationLabel(item) {
             <ul v-else class="permission-list platform-schema-list">
               <li v-for="schema in platformSchemas" :key="schema.id">
                 <div><strong>Tenant #{{ schema.business_id }} · {{ schema.schema_name }}</strong><span>{{ schema.feature_enabled ? 'Đang bật thử nghiệm' : `Trạng thái: ${schemaStateLabel(schema.state)}` }}</span></div>
-                <button type="button" class="history-btn" @click="stagePlatformSchema(schema)">{{ schema.state === 'ready' ? 'Tắt thử nghiệm' : 'Bật thử nghiệm' }}</button>
+                <button type="button" class="history-btn" :disabled="!platformCan('isolation', 'write')" @click="stagePlatformSchema(schema)">{{ schema.state === 'ready' ? 'Tắt thử nghiệm' : 'Bật thử nghiệm' }}</button>
               </li>
             </ul>
             <div v-if="platformShops.some((shop) => !platformSchemas.some((schema) => schema.business_id === shop.id))" class="platform-schema-actions">
-              <button v-for="shop in platformShops.filter((item) => !platformSchemas.some((schema) => schema.business_id === item.id))" :key="shop.id" type="button" class="settings-refresh" @click="registerPlatformSchema(shop.id)">Đăng ký tách dữ liệu cho {{ shop.name }}</button>
+              <button v-for="shop in platformShops.filter((item) => !platformSchemas.some((schema) => schema.business_id === item.id))" :key="shop.id" type="button" class="settings-refresh" :disabled="!platformCan('isolation', 'write')" @click="registerPlatformSchema(shop.id)">Đăng ký tách dữ liệu cho {{ shop.name }}</button>
             </div>
           </section>
 
@@ -15829,6 +15804,8 @@ function followupRecommendationLabel(item) {
         </div>
       </div>
     </section>
+
+    <ServiceAdvisor v-if="!sessionBootstrapLoading && !inPlatformAdminWorkspace && (!authUser || serviceLandingOpen)" :api-base="API_BASE" :dark-mode="darkMode" @plans="openPublicServicePage" />
 
     <div
       v-if="appDialog"

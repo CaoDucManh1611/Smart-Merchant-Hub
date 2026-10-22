@@ -41,6 +41,7 @@ from app.services.recommendation_interaction_service import (
     RecommendationInteractionError,
     record_interaction,
 )
+from app.services.recommendation_service import rag_personalization_weights
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,9 @@ async def chat(
             business_id=tenant.business_id,
             top_k=request.top_k,
             diagnostics=retrieval_diagnostics,
+            customer_product_weights=rag_personalization_weights(
+                db, business_id=tenant.business_id, customer_id=request.customer_id,
+            ),
         )
 
         run.update(
@@ -350,6 +354,9 @@ async def chat_stream(
                 business_id=tenant.business_id,
                 top_k=request.top_k,
                 diagnostics=retrieval_diagnostics,
+                customer_product_weights=rag_personalization_weights(
+                    db, business_id=tenant.business_id, customer_id=request.customer_id,
+                ),
             )
             current_product = _live_product_context_chunk(db, tenant.business_id, retrieval_query,
                                                          request.conversation_id or 0) if chunks else None

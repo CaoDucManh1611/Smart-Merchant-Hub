@@ -91,11 +91,11 @@
 .crm-app.platform-admin-workspace .main.platform-admin-main { padding:20px clamp(16px,3vw,40px) 32px; }
 .crm-app.platform-admin-workspace .platform-admin-layout { padding:0; }
 .crm-app.platform-admin-workspace .platform-workspace-header { margin:0; padding:0 0 18px; }
-.admin-workspace-body { display:grid; grid-template-columns:244px minmax(0,1fr); gap:24px; align-items:start; }
-.admin-sidebar { position:sticky; top:20px; max-height:calc(100dvh - 40px); box-sizing:border-box; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--admin-accent) transparent; padding:12px; border:1px solid var(--admin-line); border-radius:14px; background:var(--admin-surface); }
-.admin-sidebar-art { position:relative; margin:-6px 0 14px; border-radius:12px; overflow:hidden; color:var(--admin-accent); background:linear-gradient(135deg,var(--admin-soft),var(--admin-surface)); border:1px solid var(--admin-line); }
-.admin-sidebar-art > svg { display:block; width:100%; height:96px; }
-.admin-art-brand { position:absolute; width:22px; height:20px; object-fit:contain; left:calc(50% - 11px); top:22px; }
+.admin-workspace-body { display:grid; grid-template-columns:minmax(244px,264px) minmax(0,1fr); gap:20px; align-items:start; }
+.admin-sidebar { position:sticky; top:20px; max-height:calc(100dvh - 40px); box-sizing:border-box; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--admin-accent) transparent; padding:10px; border:1px solid var(--admin-line); border-radius:14px; background:var(--admin-surface); }
+.admin-sidebar-art { position:relative; margin:-4px 0 10px; border-radius:12px; overflow:hidden; color:var(--admin-accent); background:linear-gradient(135deg,var(--admin-soft),var(--admin-surface)); border:1px solid var(--admin-line); }
+.admin-sidebar-art > svg { display:block; width:100%; height:78px; }
+.admin-art-brand { position:absolute; width:22px; height:20px; object-fit:contain; left:calc(50% - 11px); top:17px; }
 .admin-sidebar-heading strong { text-wrap:balance; }
 .crm-app.platform-admin-workspace .admin-section-nav a { transition:background-color .18s ease-out,color .18s ease-out,box-shadow .18s ease-out; }
 .crm-app.platform-admin-workspace .admin-section-nav a:hover { box-shadow:inset 3px 0 var(--admin-accent); }
@@ -107,7 +107,7 @@
   .crm-app.platform-admin-workspace .admin-section-nav a:hover .admin-nav-icon { transform:translateY(-2px); }
 }
 @media(prefers-reduced-motion:reduce) { .crm-app.platform-admin-workspace .admin-section-nav a { transition:none; } }
-.admin-sidebar-heading { display:grid; gap:6px; padding:0 12px 14px; margin-bottom:8px; border-bottom:1px solid var(--admin-line); }
+.admin-sidebar-heading { display:grid; gap:5px; padding:0 10px 11px; margin-bottom:6px; border-bottom:1px solid var(--admin-line); }
 .admin-sidebar-heading span { font-size:10px; font-weight:700; letter-spacing:1.5px; color:var(--admin-muted); }
 .admin-sidebar-heading strong { font-size:16px; letter-spacing:-.3px; color:var(--admin-ink); }
 .crm-app.platform-admin-workspace .admin-section-nav a[aria-current="page"] { background:var(--admin-soft); color:var(--admin-accent); box-shadow:inset 3px 0 var(--admin-accent); }
@@ -122,7 +122,7 @@
 .platform-admin-layout > .platform-admin-hero p { max-width:68ch; margin:0; line-height:1.65; }
 .platform-admin-layout > .platform-admin-hero h2:focus { outline:none; }
 .platform-admin-layout > .platform-admin-hero h2:focus-visible { outline:2px solid var(--admin-accent); outline-offset:5px; border-radius:4px; }
-.crm-app.platform-admin-workspace .admin-section-nav a { padding:10px 12px; min-height:44px; }
+.crm-app.platform-admin-workspace .admin-section-nav a { padding:9px 10px; min-height:42px; font-size:12.5px; line-height:1.4; gap:10px; }
 .admin-section-content .platform-admin-panel { min-width:0; }
 .admin-section-content .platform-admin-panel-heading { gap:16px; flex-wrap:wrap; }
 .admin-section-content .platform-admin-panel-heading p { margin-bottom:0; }

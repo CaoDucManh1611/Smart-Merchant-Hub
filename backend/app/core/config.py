@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = ""
     PLATFORM_DATABASE_URL: str = ""
     TENANT_DATABASE_URL: str = ""
+    BACKUP_DIR: str = "backups"
+    BACKUP_MAX_BYTES: int = 2 * 1024 * 1024 * 1024
     # Compatibility is opt-in for local fixtures only. Production tenant
     # identity always comes from the authenticated session or webhook route.
     ALLOW_LEGACY_TENANT_HEADER: bool = False
@@ -134,7 +136,11 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_API_KEYS: str = ""
 
+    SERVICE_ADVISOR_DAILY_LIMIT: int = 200
+
     LLM_MODEL: str = "openai/gpt-oss-20b"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_FALLBACK_MODELS: str = "gemini-3.1-flash-lite,gemini-3.6-flash"
     CONVERSATION_TURN_WAIT_SECONDS: int = 5
     CONVERSATION_GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     # openai/gpt-oss-20b | gemini-3.6-flash | gpt-4o-mini

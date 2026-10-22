@@ -10,8 +10,8 @@ from app.database.platform_session import platform_engine
 from app.database.tenant_session import tenant_engine
 
 
-PLATFORM_HEAD = "20261012_0003_support_channels"
-TENANT_HEAD = "20260930_0009"
+PLATFORM_HEAD = "20261020_0004_knowledge"
+TENANT_HEAD = "20261006_0013"
 
 
 @dataclass(frozen=True)

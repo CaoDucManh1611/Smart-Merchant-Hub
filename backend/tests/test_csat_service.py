@@ -11,6 +11,7 @@ from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.crm_job import CrmJob
 from app.models.customer_feedback import CustomerFeedback
+from app.models.ticket import Ticket
 from app.services.csat_service import (
     record_csat_response,
     schedule_csat_survey,
@@ -45,6 +46,17 @@ class CsatServiceTests(unittest.TestCase):
                 channel="telegram",
             )
             db.add(conversation)
+            db.flush()
+            db.add_all([
+                Ticket(
+                    id=ticket_id,
+                    business_id=business.id,
+                    customer_id=customer.id,
+                    conversation_id=conversation.id,
+                    title=f"CSAT ticket {ticket_id}",
+                )
+                for ticket_id in (91, 92)
+            ])
             db.commit()
             cls.business_id = business.id
             cls.customer_id = customer.id

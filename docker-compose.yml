@@ -3,6 +3,8 @@ services:
     image: pgvector/pgvector:pg16
     container_name: crm_chatbot_db
     shm_size: 512mb
+    # Tenant schemas need more relation locks for atomic backup verification/restore.
+    command: ["postgres", "-c", "max_locks_per_transaction=1024"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-crm_chatbot}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
@@ -79,6 +81,7 @@ services:
       # Uploaded media must be visible to both the Docker backend and any
       # host FastAPI process used by the public tunnel.
       - ./backend/uploads:/app/uploads
+      - ./backups:/app/backups
       # Expose the local TikTok bridge script for the authenticated download
       # button in the CRM settings screen.
       - ./scripts:/app/root-scripts:ro
@@ -141,6 +144,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/artifacts/data_rag:/app/artifacts/data_rag:ro
+      - ./backups:/app/backups
     healthcheck:
       test: ["CMD", "python", "-c", "from sqlalchemy import text; from app.database.platform_session import PlatformSessionLocal; from app.database.tenant_session import TenantSessionLocal; p=PlatformSessionLocal(); t=TenantSessionLocal(); p.execute(text('SELECT 1')); t.execute(text('SELECT 1')); p.close(); t.close()"]
       interval: 10s

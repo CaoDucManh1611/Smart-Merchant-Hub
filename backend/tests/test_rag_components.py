@@ -14,7 +14,12 @@ from app.rag.prompt_builder import (
     detect_reply_language,
     localize_rag_fallback,
 )
-from app.rag.retriever import RetrievedChunk, _merge_hybrid_results
+from app.rag.retriever import (
+    RetrievedChunk,
+    _bm25_scores,
+    _merge_hybrid_results,
+    _personalized_pagerank_rerank,
+)
 from app.rag.topics import infer_document_topic, infer_query_topic
 
 
@@ -120,6 +125,79 @@ def test_hybrid_retriever_merges_duplicate_chunks():
     assert len(results) == 1
     assert results[0].chunk_id == 1
     assert results[0].similarity == 0.88
+
+
+def test_bm25_rewards_repeated_terms_in_shorter_candidate():
+    scores = _bm25_scores(
+        ["rare rare product", "rare " + "filler " * 100],
+        [("rare",)],
+    )
+    assert scores[0] > scores[1]
+    assert _bm25_scores(["Áo thun xanh"], [("shirt", "shirts", "ao thun")])[0] > 0
+
+
+def test_reciprocal_rank_fusion_prefers_a_hit_shared_by_both_retrievers():
+    dense_only = RetrievedChunk(
+        chunk_id=1, document_id=10, content="dense hit", similarity=0.99, metadata={},
+    )
+    shared_dense = RetrievedChunk(
+        chunk_id=2, document_id=20, content="shared hit", similarity=0.8, metadata={},
+    )
+    shared_bm25 = RetrievedChunk(
+        chunk_id=2, document_id=20, content="shared hit", similarity=0.5, metadata={},
+        ranking_score=3.0,
+    )
+    lexical_only = RetrievedChunk(
+        chunk_id=3, document_id=30, content="lexical hit", similarity=0.4, metadata={},
+        ranking_score=2.0,
+    )
+
+    results = _merge_hybrid_results(
+        [dense_only, shared_dense], [shared_bm25, lexical_only], top_k=3,
+    )
+
+    assert results[0].chunk_id == 2
+    assert results[0].similarity == 0.8
+
+
+def test_hybrid_retriever_personalized_pagerank_promotes_related_chunks():
+    query_match = RetrievedChunk(
+        chunk_id=1, document_id=10, content="Áo thun xanh",
+        similarity=0.9, metadata={"parent_id": 5}, chunk_index=2,
+    )
+    related = RetrievedChunk(
+        chunk_id=2, document_id=10, content="Chi tiết chất liệu áo thun",
+        similarity=0.2, metadata={"parent_id": 5}, chunk_index=3,
+    )
+    unrelated = RetrievedChunk(
+        chunk_id=3, document_id=20, content="Chính sách giao hàng",
+        similarity=0.4, metadata={}, chunk_index=0,
+    )
+
+    results = _merge_hybrid_results([query_match, related, unrelated], [], top_k=3)
+
+    assert [item.chunk_id for item in results] == [1, 2, 3]
+    assert [item.similarity for item in results] == [0.9, 0.2, 0.4]
+
+
+def test_ppr_blends_consented_customer_product_prior_with_query_rank():
+    query_match = RetrievedChunk(
+        chunk_id=1, document_id=10, content="Bình đỏ", similarity=0.52,
+        metadata={"sku": "SKU-RED"},
+    )
+    customer_match = RetrievedChunk(
+        chunk_id=2, document_id=20, content="Bình xanh", similarity=0.48,
+        metadata={"sku": "SKU-BLUE"},
+    )
+
+    ranked = _personalized_pagerank_rerank(
+        [query_match, customer_match], [0.52, 0.48], {"sku:sku-blue": 1.0},
+    )
+
+    assert [item.chunk_id for item in ranked] == [2, 1]
+    assert [item.chunk_id for item in _personalized_pagerank_rerank(
+        [query_match, customer_match], [0.52, 0.48],
+    )] == [1, 2]
 
 
 def test_hybrid_retrieval_limits_one_document_from_filling_the_entire_context():

@@ -45,6 +45,8 @@ _TRANSIENT_MARKERS = (
     "timeout",
     "timed out",
     "connection reset",
+    "connection error",
+    "connection refused",
     "server disconnected",
     "temporarily unavailable",
 )
@@ -180,12 +182,14 @@ def call_with_key_rotation(
     *,
     provider: str = "ai",
     circuit_breaker: ProviderCircuitBreaker | None = None,
+    failure_scope: str | None = None,
 ):
     """Run a provider call with bounded key rotation and a per-provider limit."""
 
     attempted: set[str] = set()
     last_error: Exception | None = None
     breaker = circuit_breaker or _provider_breaker
+    scope = failure_scope or provider
     max_attempts = min(pool.snapshot()["key_count"], _MAX_PROVIDER_ATTEMPTS)
     if max_attempts <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
@@ -199,9 +203,9 @@ def call_with_key_rotation(
                 raise
             attempted.add(key)
             try:
-                breaker.before_call(provider)
+                breaker.before_call(scope)
                 result = operation(key)
-                breaker.record_success(provider)
+                breaker.record_success(scope)
                 return result
             except ProviderCircuitOpen:
                 raise
@@ -209,7 +213,7 @@ def call_with_key_rotation(
                 last_error = error
                 pool.report_failure(key, error)
                 if is_retryable_provider_error(error):
-                    breaker.record_failure(provider)
+                    breaker.record_failure(scope)
                 if not is_retryable_provider_error(error) or len(attempted) >= max_attempts:
                     raise
     raise last_error or ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")

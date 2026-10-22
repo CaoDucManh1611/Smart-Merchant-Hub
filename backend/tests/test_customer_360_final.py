@@ -277,7 +277,7 @@ class Customer360FinalApiTests(unittest.TestCase):
         self.assertEqual("completed", history_after_remerge.json()["items"][0]["status"])
         self.assertEqual("undone", history_after_remerge.json()["items"][1]["status"])
 
-    def test_undo_is_rejected_when_survivor_changed_after_merge(self):
+    def test_undo_preserves_new_survivor_conversation_after_merge(self):
         merged = self.client.post(
             f"/api/customers/{self.survivor_id}/merge",
             headers=self.headers(),
@@ -287,19 +287,24 @@ class Customer360FinalApiTests(unittest.TestCase):
         merge_id = merged.json()["merge_id"]
 
         with Session(self.engine) as db:
-            db.add(Conversation(
+            live_conversation = Conversation(
                 business_id=self.business_id,
                 customer_id=self.survivor_id,
                 channel="telegram",
-            ))
+            )
+            db.add(live_conversation)
             db.commit()
+            live_conversation_id = live_conversation.id
 
         undone = self.client.post(
             f"/api/customers/{self.survivor_id}/merge-history/{merge_id}/undo",
             headers=self.headers(),
-            json={"reason": "Không được tách khi đã có dữ liệu mới"},
+            json={"reason": "Tách dữ liệu nguồn, giữ nguyên hội thoại mới"},
         )
-        self.assertEqual(409, undone.status_code)
+        self.assertEqual(200, undone.status_code, undone.text)
+        with Session(self.engine) as db:
+            self.assertEqual(self.survivor_id, db.get(Conversation, live_conversation_id).customer_id)
+            self.assertEqual("active", db.get(Customer, self.duplicate_id).status)
 
     def test_undo_merge_is_visible_in_customer_timeline(self):
         merged = self.client.post(

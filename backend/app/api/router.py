@@ -4,14 +4,18 @@ from app.api import customer_avatar, facebook, instagram, local_connectors, shop
 from app.api import subscription_payments, monapay_webhooks, platform_support_requests
 from app.api import platform_otp_email
 from app.api import platform_payment_settings
+from app.api import platform_backups, platform_knowledge, platform_team
 
 
 api_router = APIRouter(prefix="/api")
+api_router.include_router(platform_knowledge.router)
+api_router.include_router(platform_team.router)
 
 api_router.include_router(auth.router, tags=["Auth"])
 api_router.include_router(platform.router, tags=["Platform administration"])
 api_router.include_router(platform_otp_email.router, tags=["Platform administration"])
 api_router.include_router(platform_payment_settings.router, tags=["Platform administration"])
+api_router.include_router(platform_backups.router, tags=["Platform administration"])
 api_router.include_router(usage.router, tags=["Tenant usage"])
 api_router.include_router(workspace.router, tags=["Shop workspace"])
 api_router.include_router(appointments.router, tags=["Appointments"])
