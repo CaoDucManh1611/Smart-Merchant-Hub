@@ -43,3 +43,4 @@ backend/.pytest_tmp/
 # TikTok local client and credentials are runtime-only; never commit them.
 /scripts/lttk/
 /scripts/data-runtime/
+/test.db
