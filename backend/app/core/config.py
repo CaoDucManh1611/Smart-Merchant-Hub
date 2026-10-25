@@ -141,6 +141,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "openai/gpt-oss-20b"
     GEMINI_FALLBACK_MODEL: str = "gemini-3.5-flash-lite"
     GEMINI_FALLBACK_MODELS: str = "gemini-3.1-flash-lite,gemini-3.6-flash"
+    CHATBOT_GRAPH_ENABLED: bool = True
     CONVERSATION_TURN_WAIT_SECONDS: int = 5
     CONVERSATION_GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     # openai/gpt-oss-20b | gemini-3.6-flash | gpt-4o-mini

@@ -19,6 +19,29 @@ from urllib.parse import urlparse
 
 
 _HEARTBEAT_THREADS: set[str] = set()
+_CONNECTOR_HEALTH: dict[str, tuple[str, str | None]] = {}
+
+
+def message_media_url(*sources: object) -> str:
+    """Find an HTTPS attachment URL in common connector media envelopes."""
+    def find(value: object, depth: int = 0) -> str:
+        if depth > 3:
+            return ""
+        if isinstance(value, str):
+            parsed = urlparse(value.strip())
+            return value.strip()[:2000] if parsed.scheme == "https" and parsed.hostname else ""
+        if isinstance(value, list):
+            return next((url for item in value[:5] if (url := find(item, depth + 1))), "")
+        if isinstance(value, dict):
+            for key in ("media_url", "mediaUrl", "image_url", "imageUrl", "origin_url", "originUrl", "url"):
+                if url := find(value.get(key), depth + 1):
+                    return url
+            for key in ("image", "images", "media", "attachment", "attachments", "content"):
+                if url := find(value.get(key), depth + 1):
+                    return url
+        return ""
+
+    return next((url for source in sources if (url := find(source))), "")
 
 
 def _is_pairing_code_for_channel(value: str, channel_type: str) -> bool:
@@ -395,6 +418,7 @@ def report_connector_status(
 ) -> dict:
     if state not in {"online", "error"}:
         return {}
+    _CONNECTOR_HEALTH[channel_type] = (state, error_code)
     payload = {"state": state}
     if error_code:
         payload["error_code"] = str(error_code)[:80]
@@ -442,7 +466,8 @@ def start_connector_heartbeat(channel_type: str, backend_url: str, connector_tok
     def beat() -> None:
         stopped = Event()
         while not stopped.is_set():
-            status = report_connector_status(channel_type, backend_url, connector_token)
+            state, error = _CONNECTOR_HEALTH.get(channel_type, ("online", None))
+            status = report_connector_status(channel_type, backend_url, connector_token, state=state, error_code=error)
             retry_id = str(status.get("retry_id") or "")
             if retry_id and _acknowledge_retry_and_restart(channel_type, backend_url, connector_token, retry_id):
                 return

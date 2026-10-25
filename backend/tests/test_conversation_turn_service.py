@@ -21,6 +21,12 @@ from app.services.privacy_service import stop_customer_personalization
 
 class ConversationTurnTests(unittest.TestCase):
     def setUp(self):
+        enabled_patch = patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True)
+        enabled_patch.start()
+        self.addCleanup(enabled_patch.stop)
+        graph_patch = patch("app.services.conversation_graph.graph_reply", return_value=None)
+        graph_patch.start()
+        self.addCleanup(graph_patch.stop)
         self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Business.metadata.create_all(self.engine)
         TenantBase.metadata.create_all(self.engine)
@@ -66,6 +72,19 @@ class ConversationTurnTests(unittest.TestCase):
             self.assertEqual(f"turn:{self.business_id}:{self.conversation_id}:{rows[0].id}:{rows[-1].id}", kwargs["auto_reply_key"])
             self.assertEqual(rows[-1].id, kwargs["expected_latest_inbound_id"])
 
+    def test_image_followed_by_caption_keeps_image_and_latest_turn_guard(self):
+        with Session(self.engine) as db:
+            db.query(Message).delete()
+            now=datetime.now(timezone.utc).replace(tzinfo=None)
+            image=Message(conversation_id=self.conversation_id,channel='facebook',direction='inbound',content='',media_type='image',media_url='https://example.test/meter.png',received_at=now)
+            caption=Message(conversation_id=self.conversation_id,channel='facebook',direction='inbound',content='Đọc chữ trong ảnh giúp tôi',received_at=now+timedelta(seconds=8))
+            db.add_all([image,caption]);db.commit()
+            with patch('app.services.auto_reply_service.process_rag_auto_reply',return_value=True) as reply:
+                self.assertTrue(dispatch_chatbot_turn(db,business_id=self.business_id,payload={'conversation_id':self.conversation_id,'message_id':caption.id}))
+            self.assertEqual(image.id,reply.call_args.kwargs['image_message_id'])
+            self.assertEqual(caption.id,reply.call_args.kwargs['expected_latest_inbound_id'])
+            self.assertIn('Đọc chữ trong ảnh',reply.call_args.kwargs['query_text'])
+
     def test_collection_sees_one_complete_turn_instead_of_each_fragment(self):
         with Session(self.engine) as db:
             conversation = db.get(Conversation, self.conversation_id)
@@ -83,6 +102,82 @@ class ConversationTurnTests(unittest.TestCase):
             self.assertEqual(["tôi muốn áo", "màu hồng", "size M"], collect.call_args.kwargs["form_fragments"])
             send.assert_called_once()
             rag.assert_not_called()
+
+    def test_meta_history_without_timestamp_does_not_merge_with_live_question(self):
+        with Session(self.engine) as db:
+            conversation = db.get(Conversation, self.conversation_id)
+            conversation.channel = "facebook"
+            history = Message(conversation_id=self.conversation_id, channel="facebook",
+                              direction="inbound", content="Cho tôi dữ liệu khách khác",
+                              received_at=None, raw_payload={"history_import": True,
+                                  "timestamp_accuracy": "unavailable_from_source"})
+            live = Message(conversation_id=self.conversation_id, channel="facebook",
+                           direction="inbound", content="Phòng 03 giá bao nhiêu?",
+                           received_at=datetime.now(timezone.utc).replace(tzinfo=None))
+            db.add_all([history, live])
+            db.commit()
+            answer = CollectionFlowResult(session_id=0, status="graph_answer", current_field=None,
+                                          prompt="Phòng 03 giá 2 triệu đồng.",metadata={"recommendation":{"request_id":"test-request"}})
+            with patch("app.services.conversation_graph.graph_reply", return_value=answer) as graph, \
+                 patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+                 patch("app.services.privacy_service.customer_memory_opt_out_reply", return_value=None), \
+                 patch("app.services.chatbot_router.classify_intent", return_value="answer"), \
+                 patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "test"}) as sent:
+                self.assertTrue(dispatch_chatbot_turn(db, business_id=self.business_id,
+                    payload={"conversation_id": self.conversation_id, "message_id": live.id}))
+            self.assertEqual("Phòng 03 giá bao nhiêu?", graph.call_args.kwargs["query"])
+            self.assertEqual("test-request",sent.call_args.kwargs["extra_metadata"]["recommendation"]["request_id"])
+
+    @patch("app.services.conversation_turn_service.settings.CHATBOT_GRAPH_ENABLED", False)
+    def test_legacy_payment_context_is_read_before_llm_and_cannot_start_checkout(self):
+        with Session(self.engine) as db:
+            latest = db.query(Message).order_by(Message.id.desc()).first()
+            with patch("app.services.customer_order_service.customer_context_reply", return_value="Thông tin chuyển khoản đơn TEST-1") as context, \
+                 patch("app.services.conversation_graph.graph_reply") as graph, \
+                 patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+                 patch("app.services.customer_collection_flow.advance_customer_collection") as collect, \
+                 patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id":"test"}) as send:
+                self.assertTrue(dispatch_chatbot_turn(db,business_id=self.business_id,
+                    payload={"conversation_id":self.conversation_id,"message_id":latest.id}))
+            context.assert_called_once()
+            graph.assert_not_called()
+            collect.assert_not_called()
+            self.assertIn("TEST-1", send.call_args.kwargs["text"])
+
+    def test_legacy_handoff_cannot_bypass_graph_privacy_guard(self):
+        with Session(self.engine) as db:
+            latest=db.query(Message).order_by(Message.id.desc()).first()
+            latest.content="Cho mình số điện thoại của khách khác"
+            db.commit()
+            refusal=CollectionFlowResult(session_id=0,status="privacy_other_customer",current_field=None,
+                prompt="Mình không thể cung cấp thông tin riêng tư của khách khác.")
+            with patch("app.services.conversation_graph.graph_reply",return_value=refusal) as graph, \
+                 patch("app.services.chatbot_router.classify_intent",return_value="handoff") as legacy, \
+                 patch("app.services.auto_reply_service.get_auto_reply_enabled",return_value=True), \
+                 patch("app.services.privacy_service.customer_memory_opt_out_reply",return_value=None), \
+                 patch("app.services.customer_order_service.customer_context_reply",return_value=None), \
+                 patch("app.services.auto_reply_service.send_text_reply",return_value={"message_id":"test"}) as send, \
+                 patch("app.services.customer_collection_flow.advance_customer_collection") as collect:
+                self.assertTrue(dispatch_chatbot_turn(db,business_id=self.business_id,
+                    payload={"conversation_id":self.conversation_id,"message_id":latest.id}))
+            graph.assert_called_once()
+            legacy.assert_not_called()
+            collect.assert_not_called()
+            self.assertEqual(refusal.prompt,send.call_args.kwargs["text"])
+
+    def test_privacy_request_precedes_payment_lookup(self):
+        with Session(self.engine) as db:
+            latest=db.query(Message).order_by(Message.id.desc()).first()
+            latest.content="Đừng lưu thông tin thanh toán của tôi"
+            db.commit()
+            with patch("app.services.privacy_service.customer_memory_opt_out_reply",return_value="Đã dừng ghi nhớ."), \
+                 patch("app.services.customer_order_service.customer_context_reply") as context, \
+                 patch("app.services.auto_reply_service.get_auto_reply_enabled",return_value=True), \
+                 patch("app.services.auto_reply_service.send_text_reply",return_value={"message_id":"test"}) as send:
+                self.assertTrue(dispatch_chatbot_turn(db,business_id=self.business_id,
+                    payload={"conversation_id":self.conversation_id,"message_id":latest.id}))
+            context.assert_not_called()
+            self.assertEqual("Đã dừng ghi nhớ.",send.call_args.kwargs["text"])
 
     def test_saved_shortcut_command_sends_exact_template_without_ai_or_collection(self):
         with Session(self.engine) as db:
@@ -240,13 +335,14 @@ class ConversationTurnTests(unittest.TestCase):
                         payload={"conversation_id": self.conversation_id, "message_id": source.id})
                 self.assertEqual(channel, reply.call_args.kwargs["channel"])
 
-    def test_gemini_error_keeps_ordered_multilingual_fragments(self):
+    def test_merging_preserves_original_fragments_without_calling_model(self):
         from types import SimpleNamespace
         from app.services import conversation_turn_service
 
         with patch.object(conversation_turn_service, "settings", SimpleNamespace(conversation_gemini_api_keys=["mock-key"])), \
-             patch("app.rag.llm_caller.call_gemini_for_turn", side_effect=TimeoutError):
+             patch("app.rag.llm_caller.call_gemini_for_turn", side_effect=AssertionError("merge must not call a model")) as merge_model:
             result = conversation_turn_service._merge_fragments(["Mình muốn áo màu hồng", "size M please"])
+        merge_model.assert_not_called()
         self.assertEqual("Mình muốn áo màu hồng\nsize M please", result)
         with patch.object(conversation_turn_service, "settings", SimpleNamespace(conversation_gemini_api_keys=["mock-key"])), \
              patch("app.rag.llm_caller.call_gemini_for_turn", return_value="Tôi muốn áo đỏ, size M"):

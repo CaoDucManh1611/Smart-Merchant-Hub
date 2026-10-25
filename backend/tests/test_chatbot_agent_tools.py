@@ -99,7 +99,29 @@ class ChatbotAgentToolTests(unittest.TestCase):
             ticket = route_escalation(db, self.business_id, self.conversation_id, "Tôi muốn khiếu nại hàng lỗi")
             self.assertIsNotNone(ticket)
             db.commit()
-            self.assertEqual("human", db.get(Conversation, self.conversation_id).bot_mode)
+            self.assertEqual("auto", db.get(Conversation, self.conversation_id).bot_mode)
+
+    def test_staff_tools_preserve_both_enabled_and_manually_paused_bot_modes(self):
+        for mode in ("auto", "human"):
+            for tool in ("chuyen_nhan_vien", "tao_ticket"):
+                with self.subTest(mode=mode, tool=tool), Session(self.engine) as db:
+                    conversation = Conversation(
+                        business_id=self.business_id, customer_id=self.customer_id,
+                        channel="telegram", bot_mode=mode,
+                    )
+                    db.add(conversation)
+                    db.flush()
+                    result = execute_chatbot_tool(
+                        db, self.business_id, conversation.id, tool,
+                        {"reason": "Cần hỗ trợ", "title": "Cần hỗ trợ"},
+                    )
+                    db.commit()
+                    db.refresh(conversation)
+                    self.assertEqual(mode, conversation.bot_mode)
+                    if tool == "chuyen_nhan_vien":
+                        self.assertEqual(mode, result["bot_mode"])
+                    else:
+                        self.assertIsNotNone(result["ticket_id"])
 
     def test_special_business_dates_override_the_weekly_schedule(self):
         with Session(self.engine) as db:
@@ -157,7 +179,7 @@ class ChatbotAgentToolTests(unittest.TestCase):
             )
 
             self.assertIsNotNone(ticket)
-            self.assertEqual("human", conversation.bot_mode)
+            self.assertEqual("auto", conversation.bot_mode)
             reply = escalation_reply("Thiết bị có mùi khét, tôi nên làm gì?")
             self.assertIn("ngừng sử dụng", reply)
             self.assertIn("ngắt nguồn điện", reply)

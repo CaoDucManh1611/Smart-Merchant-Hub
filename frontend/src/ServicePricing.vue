@@ -185,5 +185,19 @@ body.crm-dark .smh-price-top > span,body.crm-dark .smh-pricing-login { color:#8b
 @media(max-width:900px) { .smh-pricing.is-chatbot .smh-pricing-content { padding:22px; }.smh-pricing.is-chatbot .smh-price-card { grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);column-gap:26px;padding:8px 4px 22px; }.smh-pricing.is-chatbot .smh-price-card ul { padding-left:20px; }.smh-managed-service ol { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:700px) { .smh-pricing.is-chatbot .smh-pricing-content { padding:18px; }.smh-pricing.is-chatbot .smh-price-card { grid-template-columns:1fr;grid-template-areas:"top" "description" "amount" "action" "benefits" "approval";padding:8px 2px 20px; }.smh-pricing.is-chatbot .smh-price-card ul { grid-template-columns:repeat(2,minmax(0,1fr));margin-top:24px;padding:20px 0 0;border-left:0;border-top:1px solid #dce7e3; }.smh-pricing.is-chatbot .smh-price-card > small { margin-top:18px; }.smh-managed-service { grid-template-columns:1fr;padding:20px; } }
 @media(max-width:600px) { .smh-pricing-grid { grid-template-columns:1fr; }.smh-price-description { min-height:0; }.smh-pricing h2 { font-size:28px; }.smh-price-card { min-height:0;padding:22px; }.smh-pricing.is-chatbot .smh-price-card { padding:22px; }.smh-pricing.is-chatbot .smh-price-card ul,.smh-managed-service ol { grid-template-columns:1fr; }.smh-managed-service { padding:20px; }.smh-managed-service li { min-height:0; } }
+@media(max-width:480px) {
+  .smh-pricing { margin-block:18px 24px; }
+  .smh-pricing > header { margin-bottom:18px; }
+  .smh-price-card { padding:16px; border-radius:14px; }
+  .smh-price-description { margin:8px 0 12px; line-height:1.5; }
+  .smh-price-amount { min-height:0; margin-bottom:14px; font-size:24px; }
+  .smh-price-amount strong,.smh-price-amount > span { display:inline; }
+  .smh-price-amount > span { margin-left:6px; }
+  .smh-price-card ul { margin:16px 0; gap:8px; }
+  .smh-price-quota { padding:9px; margin-bottom:12px; }
+  .smh-pricing.is-chatbot .smh-price-card { padding:12px 0 16px; }
+  .smh-pricing.is-chatbot .smh-price-card li { min-height:0; padding:10px; }
+  .smh-pricing.is-chatbot .smh-price-card ul { margin-top:16px; padding-top:16px; gap:8px; }
+}
 @media(prefers-reduced-motion:reduce) { .smh-price-card,.smh-price-card > button { transition:none; } }
 </style>

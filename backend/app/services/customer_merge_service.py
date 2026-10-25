@@ -22,6 +22,9 @@ from app.models.lead import Lead
 from app.models.sales import Order
 from app.models.ticket import Ticket
 from app.models.purchase_order import PurchaseOrder
+from app.models.customer_collection import CustomerContact,CustomerAddress,CustomerCollectionSession,CustomerVerificationChallenge
+from app.models.industry_modules import Appointment
+from app.services.customer_collection import contact_hash
 
 
 COUNT_KEYS = (
@@ -34,6 +37,7 @@ COUNT_KEYS = (
     "tickets",
     "sales_orders",
     "purchase_orders",
+    "contacts", "addresses", "collection_sessions", "verification_challenges", "appointments",
 )
 
 
@@ -48,10 +52,6 @@ def _normalized(value: str | None) -> str:
     return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
-def _normalized_phone(value: str | None) -> str:
-    return "".join(char for char in str(value or "") if char.isdigit())
-
-
 def duplicate_evidence(
     db: Session,
     first: Customer,
@@ -62,19 +62,24 @@ def duplicate_evidence(
     matched_fields: list[str] = []
     evidence: list[dict] = []
 
-    first_email = _normalized(first.email)
-    second_email = _normalized(second.email)
-    if first_email and second_email and first_email == second_email:
-        score += 0.45
-        matched_fields.append("email")
-        evidence.append({"field": "email", "weight": 0.45, "reason": "Email trùng khớp."})
+    def contact_keys(customer,kind):
+        keys={row.value_hash for row in db.query(CustomerContact).filter(
+            CustomerContact.business_id==customer.business_id,CustomerContact.customer_id==customer.id,CustomerContact.kind==kind).all()}
+        canonical=getattr(customer,kind,None)
+        if canonical:
+            try:keys.add(contact_hash(kind,canonical))
+            except ValueError:pass
+        # Unverified chat claims suggest review only; they never establish ownership.
+        for session in db.query(CustomerCollectionSession).filter(CustomerCollectionSession.business_id==customer.business_id,
+                CustomerCollectionSession.customer_id==customer.id).all():
+            claim=(session.collected_fields or {}).get("contact_hashes",{}).get(kind)
+            if isinstance(claim,str) and len(claim)==64:keys.add(claim)
+        return keys
 
-    first_phone = _normalized_phone(first.phone)
-    second_phone = _normalized_phone(second.phone)
-    if first_phone and second_phone and first_phone == second_phone:
-        score += 0.35
-        matched_fields.append("phone")
-        evidence.append({"field": "phone", "weight": 0.35, "reason": "Số điện thoại trùng khớp."})
+    for kind,weight,label in (("email",0.45,"Email"),("phone",0.35,"Số điện thoại")):
+        if contact_keys(first,kind) & contact_keys(second,kind):
+            score+=weight;matched_fields.append(kind)
+            evidence.append({"field":kind,"weight":weight,"reason":f"{label} trùng khớp; cần kiểm tra đúng người trước khi gộp."})
 
     first_name = _normalized(first.name)
     second_name = _normalized(second.name)
@@ -141,7 +146,7 @@ def find_duplicate_suggestions(
     business_id: int,
     *,
     customer_id: int | None = None,
-    threshold: float = 0.55,
+    threshold: float = 0.35,
     limit: int = 50,
 ) -> list[dict]:
     """Find tenant-scoped duplicate pairs without mutating any data."""
@@ -233,6 +238,9 @@ def _counts(db: Session, customer: Customer) -> dict[str, int]:
             and str(purchase.metadata_.get("customer_id", "")) == str(customer_id)
         ),
     }
+    for key,model in {"contacts":CustomerContact,"addresses":CustomerAddress,"collection_sessions":CustomerCollectionSession,
+            "verification_challenges":CustomerVerificationChallenge,"appointments":Appointment}.items():
+        counts[key]=db.query(model.id).filter(model.business_id==business_id,model.customer_id==customer_id).count()
     return {key: int(counts.get(key, 0)) for key in COUNT_KEYS}
 
 
@@ -449,6 +457,9 @@ def merge_customer(
         "leads": Lead,
         "tickets": Ticket,
         "sales_orders": Order,
+        "contacts": CustomerContact, "addresses": CustomerAddress,
+        "collection_sessions": CustomerCollectionSession, "verification_challenges": CustomerVerificationChallenge,
+        "appointments": Appointment,
     }
     survivor_existing = {
         key: _record_ids_for_customer(db, model, business_id, survivor.id)
@@ -472,11 +483,20 @@ def merge_customer(
         db, business_id, survivor.id
     )
 
+    primary_kinds={row.kind for row in db.query(CustomerContact).filter(CustomerContact.business_id==business_id,
+        CustomerContact.customer_id==survivor.id,CustomerContact.is_primary.is_(True)).all()}
+    demoted_contacts=[]
+    for contact in db.query(CustomerContact).filter(CustomerContact.business_id==business_id,
+            CustomerContact.customer_id==source.id,CustomerContact.is_primary.is_(True)).all():
+        if contact.kind in primary_kinds:
+            contact.is_primary=False;demoted_contacts.append(contact.id)
+
     identity_manifest = _reassign_identities(db, business_id, source.id, survivor.id)
     tag_manifest = _reassign_tags(db, business_id, source.id, survivor.id)
     survivor.custom_fields = merged_custom_fields
     moved_records = {
         "survivor_existing": survivor_existing,
+        "demoted_contact_ids":demoted_contacts,
         "survivor_custom_fields_before": survivor_custom_fields_before,
         "survivor_custom_fields_after": merged_custom_fields,
         "moved": {
@@ -592,10 +612,14 @@ def _undo_is_safe(
         "leads": Lead,
         "tickets": Ticket,
         "sales_orders": Order,
+        "contacts": CustomerContact, "addresses": CustomerAddress,
+        "collection_sessions": CustomerCollectionSession, "verification_challenges": CustomerVerificationChallenge,
+        "appointments": Appointment,
         "identities": CustomerIdentity,
         "tags": CustomerTag,
     }
     for key, model in models.items():
+        if key not in moved:continue
         moved_ids = {int(value) for value in moved.get(key, [])}
         current_survivor_ids = set(_record_ids_for_customer(db, model, merge.business_id, survivor.id))
         if not moved_ids.issubset(current_survivor_ids):
@@ -658,6 +682,9 @@ def undo_customer_merge(
         "leads": Lead,
         "tickets": Ticket,
         "sales_orders": Order,
+        "contacts": CustomerContact, "addresses": CustomerAddress,
+        "collection_sessions": CustomerCollectionSession, "verification_challenges": CustomerVerificationChallenge,
+        "appointments": Appointment,
         "identities": CustomerIdentity,
         "tags": CustomerTag,
     }
@@ -670,6 +697,14 @@ def undo_customer_merge(
             model.business_id == business_id,
             model.customer_id == survivor.id,
         ).update({model.customer_id: source.id}, synchronize_session=False)
+
+    for contact_id in manifest.get("demoted_contact_ids",[]):
+        contact=db.query(CustomerContact).filter(CustomerContact.id==contact_id,CustomerContact.business_id==business_id,
+            CustomerContact.customer_id==source.id).first()
+        if contact and not db.query(CustomerContact.id).filter(CustomerContact.business_id==business_id,
+                CustomerContact.customer_id==source.id,CustomerContact.kind==contact.kind,
+                CustomerContact.is_primary.is_(True),CustomerContact.id!=contact.id).first():
+            contact.is_primary=True
 
     for purchase_info in moved.get("purchase_orders", []):
         purchase = db.query(PurchaseOrder).filter(

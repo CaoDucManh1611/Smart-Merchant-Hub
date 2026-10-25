@@ -28,6 +28,7 @@ from connector_pairing import (
     load_order_checkpoint,
     marketplace_orders_pending,
     mark_history_thread_complete,
+    message_media_url,
     order_checkpoint_path,
     post_marketplace_orders,
     post_history_batch,
@@ -180,7 +181,7 @@ def normalize_seller_message(message: object, inherited: dict | None = None) -> 
         "from_user_id", "fromUserId", "buyer_id", "buyerId", "customer_id", "customerId",
     ) or _first(sender, "id", "user_id", "userId", "uid", "sec_uid"))
     text = _as_text(_first(data, "text", "content_text", "contentText", "body", "message_text", "messageText"))
-    if not text and isinstance(raw_content, str):
+    if not text and isinstance(raw_content, str) and not isinstance(nested, dict):
         text = raw_content.strip()
     message_type = str(_first(data, "message_type", "messageType", "msg_type", "type") or "text").strip().lower()
     allowed_types = {"text", "image", "video", "audio", "file", "sticker"}
@@ -203,7 +204,7 @@ def normalize_seller_message(message: object, inherited: dict | None = None) -> 
         avatar = str(profile.get("avatarUrl") or "")
     display_name = display_name or str(profile.get("displayName") or "")
     username = username or str(profile.get("username") or "")
-    media_url = _as_text(_first(data, "media_url", "mediaUrl", "url", "origin_url", "originUrl"))
+    media_url = message_media_url(data) if message_type == "image" else _as_text(_first(data, "media_url", "mediaUrl", "url", "origin_url", "originUrl"))
     return {
         "authorId": sender_id[:255],
         "displayName": (display_name or username or sender_id)[:255],

@@ -28,6 +28,8 @@ rag_runs.json
 ngrok.exe
 /build/
 /backend/artifacts/data_rag/
+/backend/artifacts/connector-*.log
+/artifacts/
 
 # Database backups are deployment artifacts, never source-controlled.
 backups/

@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_write_access
@@ -16,6 +17,8 @@ from app.models.business import User
 from app.models.customer import Customer
 from app.models.crm_job import CrmJob
 from app.models.industry_modules import Appointment, AppointmentService
+from app.models.sales import Order
+from app.schemas.payment import PaymentRequestUpdate,PaymentCreate
 from app.services.customer_collection import customer_email_for_delivery
 from app.services.job_service import enqueue_job
 from app.services.workflow_engine import emit_workflow_event
@@ -26,8 +29,9 @@ from app.tenancy.workspace_modules import require_module_enabled
 
 
 router = APIRouter(prefix="/appointments", dependencies=[Depends(require_module_enabled("appointments"))])
-AppointmentStatus = Literal["scheduled", "confirmed", "completed", "cancelled", "no_show"]
+AppointmentStatus = Literal["pending", "scheduled", "confirmed", "completed", "cancelled", "no_show"]
 APPOINTMENT_TRANSITIONS = {
+    "pending": {"scheduled", "confirmed", "cancelled"},
     "scheduled": {"confirmed", "completed", "cancelled", "no_show"},
     "confirmed": {"completed", "cancelled", "no_show"},
     "completed": set(), "cancelled": set(), "no_show": set(),
@@ -145,10 +149,17 @@ def _ensure_no_conflict(
         raise HTTPException(status_code=409, detail="Nhân viên đã có lịch hẹn trùng thời gian.")
 
 
+def _linked_payment_order(db,appointment_id,business_id,*,lock=False):
+    query=db.query(Order).filter(Order.business_id==business_id,Order.metadata_["appointment_id"].as_integer()==appointment_id)
+    return (query.with_for_update() if lock else query).first()
+
+
 def _appointment_out(db: Session, row: Appointment) -> dict:
     customer = db.query(Customer).filter(Customer.id == row.customer_id, Customer.business_id == row.business_id).first()
     service = db.query(AppointmentService).filter(AppointmentService.id == row.service_id, AppointmentService.business_id == row.business_id).first()
+    linked=_linked_payment_order(db,row.id,row.business_id)
     return {
+        "payment_order": {"id":linked.id,"status":linked.status,"total_amount":linked.total_amount,"paid_amount":linked.paid_amount,"refunded_amount":linked.refunded_amount,"metadata":linked.metadata_} if linked else None,
         "id": row.id,
         "business_id": row.business_id,
         "customer_id": row.customer_id,
@@ -293,11 +304,15 @@ def update_appointment(
     appointment_id: int, payload: AppointmentUpdate, db: Session = Depends(get_tenant_db),
     user_db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context), platform_db: Session = Depends(get_platform_db),
 ):
+    linked=_linked_payment_order(db,appointment_id,tenant.business_id,lock=True)
     row = db.query(Appointment).filter(Appointment.id == appointment_id, Appointment.business_id == tenant.business_id).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Lịch hẹn không tồn tại.")
     previous_status = row.status
     changes = payload.model_dump(exclude_unset=True)
+    if linked and (linked.metadata_ or {}).get("payment_flow")=="prepay_then_confirm" and any(
+        key in changes and changes[key]!=getattr(row,key) for key in ("customer_id","service_id")):
+        raise HTTPException(409,"Lịch đã có khoản thu; hủy và tạo yêu cầu mới để đổi khách hoặc dịch vụ.")
     if any(key in changes and changes[key] is None for key in ("customer_id", "service_id", "status", "reminder_minutes_before", "starts_at")):
         raise HTTPException(status_code=422, detail="Trạng thái, giờ hẹn và thời gian nhắc không được để trống.")
     if changes.get("status") is not None:
@@ -332,7 +347,18 @@ def update_appointment(
         row.reminder_at = row.starts_at - timedelta(minutes=row.reminder_minutes_before) if row.reminder_minutes_before else None
         row.reminder_sent_at = None
     if row.status in {"scheduled", "confirmed"}:
+        linked=_linked_payment_order(db,row.id,tenant.business_id,lock=True)
+        if linked and previous_status=="pending":
+            from app.services.order_service import transition_sales_order,SalesOrderOperationError
+            try: transition_sales_order(db,order_id=linked.id,to_status="confirmed",actor_id=None,business_id=tenant.business_id)
+            except SalesOrderOperationError as error: raise HTTPException(error.status_code,error.detail) from error
         _ensure_no_conflict(db, tenant, row.starts_at, row.ends_at, row.assigned_user_id, exclude_id=row.id)
+    if row.status=="cancelled" and previous_status!="cancelled":
+        linked=_linked_payment_order(db,row.id,tenant.business_id,lock=True)
+        if linked and linked.status in {"draft","confirmed"}:
+            from app.services.order_service import transition_sales_order,SalesOrderOperationError
+            try:transition_sales_order(db,order_id=linked.id,to_status="cancelled",actor_id=None,business_id=tenant.business_id)
+            except SalesOrderOperationError as error:raise HTTPException(error.status_code,error.detail) from error
     db.flush()
     _enqueue_reminder(db, row)
     db.commit()
@@ -340,3 +366,33 @@ def update_appointment(
     if row.status != previous_status:
         emit_workflow_event(db, tenant, "appointment.status_changed", f"appointment:{row.id}:status:{row.status}:{row.updated_at}", {"appointment_id": row.id, "customer_id": row.customer_id, "service_id": row.service_id, "from_status": previous_status, "status": row.status}, platform_db=platform_db)
     return _appointment_out(db, row)
+
+
+@router.put("/{appointment_id}/payment-request",dependencies=[Depends(require_write_access)])
+def appointment_payment_request(appointment_id:int,payload:PaymentRequestUpdate,db:Session=Depends(get_tenant_db),tenant:TenantContext=Depends(get_tenant_context),actor:User|None=Depends(require_write_access)):
+    order=_linked_payment_order(db,appointment_id,tenant.business_id,lock=True)
+    if order is None:raise HTTPException(404,"Không có khoản thu gắn với lịch này.")
+    from app.services.order_payment_request import publish_payment_request
+    try:publish_payment_request(order,[line.model_dump() for line in payload.lines],payload.label)
+    except ValueError as error:raise HTTPException(409,str(error)) from error
+    from app.services.audit_service import record_audit
+    record_audit(db,business_id=tenant.business_id,user_id=actor.id if actor else None,action="publish_payment_request",resource_type="sales_order",resource_id=order.id)
+    db.commit();return {"saved":True}
+
+
+@router.post("/{appointment_id}/payment",dependencies=[Depends(require_write_access)])
+def appointment_payment(appointment_id:int,payload:PaymentCreate,db:Session=Depends(get_tenant_db),tenant:TenantContext=Depends(get_tenant_context),actor:User|None=Depends(require_write_access)):
+    order=_linked_payment_order(db,appointment_id,tenant.business_id,lock=True)
+    if order is None:raise HTTPException(404,"Không có khoản thu gắn với lịch này.")
+    from app.services.order_service import record_order_payment,PaymentOperationError
+    try:
+        _,_,created=record_order_payment(db,order_id=order.id,amount=payload.amount,method=payload.method,status=payload.status,reference=payload.reference,idempotency_key=payload.idempotency_key,actor_id=actor.id if actor else None,business_id=tenant.business_id)
+    except PaymentOperationError as error:
+        db.rollback()
+        raise HTTPException(error.status_code,error.detail) from error
+    except IntegrityError:
+        db.rollback()
+        from app.api.payments import _replayed_payment
+        _replayed_payment(db,business_id=tenant.business_id,idempotency_key=payload.idempotency_key,order_id=order.id)
+        created=False
+    db.commit();return {"recorded":created}

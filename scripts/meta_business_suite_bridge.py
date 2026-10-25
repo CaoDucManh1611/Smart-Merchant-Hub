@@ -46,6 +46,8 @@ INBOX_ROOT = "https://business.facebook.com/latest/inbox"
 CONNECTOR_STARTED_AT = time.time()
 INBOX_POLL_INTERVAL_SECONDS = 1.0
 CONTROL_PAGE = None
+CONTROL_DELIVERY_PAGE = None
+BACKGROUND_HISTORY_PAGE = None
 CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
 CONTROL_SECRET = ""
 CONTROL_SERVER: ThreadingHTTPServer | None = None
@@ -220,11 +222,13 @@ def normalize_meta_history(
         message_id = str(row.get("messageId") or "").strip()
         content = " ".join(str(row.get("message") or "").split())[:10000]
         direction = str(row.get("direction") or "").lower()
+        media_url = str(row.get("mediaUrl") or "")[:2000]
+        image = row.get("messageType") == "image" and bool(media_url)
         if channel_type == "instagram" and _is_instagram_system_notice(content):
             continue
         if direction == "outbound":
             content = re.sub(r"\s+(?:Đã gửi|Đã xem|Sent|Seen)\s*$", "", content, flags=re.IGNORECASE).strip()
-        if not message_id or not content or direction not in {"inbound", "outbound"}:
+        if not message_id or (not content and not image) or direction not in {"inbound", "outbound"}:
             continue
         normalized.append({
             "threadId": thread_id[:255],
@@ -232,7 +236,8 @@ def normalize_meta_history(
             "messageId": message_id[:255],
             "direction": direction,
             "message": content,
-            "messageType": "text",
+            "messageType": "image" if image else "text",
+            "mediaUrl": media_url if image else None,
             "displayName": display_name[:255] or None,
             "createdAt": row.get("createdAt"),
             "avatarUrl": str(row.get("avatarUrl") or "")[:2000] or None,
@@ -269,6 +274,14 @@ def _message_arrived_since(value: object, cutoff: float | None) -> bool:
         return created_at.timestamp() >= cutoff
     except (TypeError, ValueError, OverflowError):
         return False
+
+
+def _new_inbound_preview(previous_label: str, current_label: str, message: object) -> bool:
+    preview = " ".join(str(message or "").split()).casefold()[:48]
+    previous = " ".join(previous_label.split()).casefold()
+    current = " ".join(current_label.split()).casefold()
+    # shortcut: Meta must expose the new text in the row preview; use webhook IDs when available.
+    return bool(preview and preview in current and preview not in previous)
 
 
 def _meta_inbox_url(channel_type: str, current_url: str = "") -> str:
@@ -372,8 +385,16 @@ async def _conversation_rows(page) -> list[dict]:
             return e.scrollHeight > e.clientHeight + 30 && r.x < vw * 0.38 && r.width > vw * 0.14
               && r.width < vw * 0.4 && r.y > 80 && r.height > vh * 0.3;
           }).sort((a, b) => b.clientHeight - a.clientHeight)[0];
-          if (!scrollable) return [];
-          const box = scrollable.getBoundingClientRect();
+          const fallbackRow = !scrollable && [...document.querySelectorAll('[role="presentation"]')].find(e => {
+            const r = e.getBoundingClientRect();
+            return r.x > 60 && r.x < vw * .38 && r.width > vw * .14 && r.width < vw * .4
+              && r.y > 80 && r.height >= 55 && r.height <= 180
+              && (e.innerText || '').trim().length > 4 && getComputedStyle(e).cursor === 'pointer';
+          });
+          if (!scrollable && !fallbackRow) return [];
+          const rowBox = fallbackRow && fallbackRow.getBoundingClientRect();
+          const box = scrollable ? scrollable.getBoundingClientRect()
+            : {x: rowBox.x, y: rowBox.y, width: rowBox.width, bottom: vh};
           const assetUrl = node => {
             const style = getComputedStyle(node);
             const srcset = (node.getAttribute?.('srcset') || '').split(',')
@@ -456,6 +477,29 @@ async def _conversation_rows(page) -> list[dict]:
     )
 
 
+async def _save_meta_failure(page, stage: str) -> None:
+    """Keep one local failure snapshot per minute for connector diagnosis."""
+    directory = RUNTIME / "diagnostics"
+    image = directory / f"{stage}.png"
+    if image.exists() and time.time() - image.stat().st_mtime < 60:
+        return
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(image))
+        state = await page.evaluate(r"""() => ({
+          url: location.origin + location.pathname,
+          queryKeys: [...new URLSearchParams(location.search).keys()],
+          selected: [...document.querySelectorAll('[aria-selected="true"],[aria-current="true"]')]
+            .slice(0, 12).map(e => ({tag:e.tagName,role:e.getAttribute('role'),
+              text:(e.innerText||'').slice(0,150),href:e.getAttribute('href')})),
+          fileInputs: [...document.querySelectorAll('input[type="file"]')].map(e=>({accept:e.accept,multiple:e.multiple})),
+          editors: [...document.querySelectorAll('[contenteditable="true"],textarea')].map(e=>({label:e.getAttribute('aria-label'),role:e.getAttribute('role')}))
+        })""")
+        image.with_suffix(".json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass  # Diagnostics must not hide the original delivery error.
+
+
 async def _open_meta_conversation(page, row: dict, channel_type: str = "") -> str:
     channel_name = _channel_name(channel_type)
     label = str(row.get("label") or "")
@@ -493,19 +537,49 @@ async def _open_meta_conversation(page, row: dict, channel_type: str = "") -> st
     if not clicked:
         raise RuntimeError("Không còn tìm thấy đúng dòng hội thoại Meta trong danh sách.")
 
-    expected_name = " ".join(label.splitlines()[0].split()).casefold()
-    for _ in range(32):
-        await page.wait_for_timeout(250)
-        thread_id = await _active_thread_id(page)
-        if not thread_id:
-            continue
-        if thread_id != previous_id:
-            return thread_id
-        active_name = " ".join((await _active_display_name(page, "")).split()).casefold()
-        if active_name and active_name == expected_name:
-            return thread_id
-        # Meta may keep the previous URL/header briefly after a row click.
-        # Keep waiting instead of treating that transient state as a failed click.
+    expected_name = " ".join((_usable_meta_name(row.get("displayName")) or label.splitlines()[0]).split()).casefold()
+    for attempt in range(2):
+        for _ in range(32):
+            await page.wait_for_timeout(250)
+            thread_id = await _active_thread_id(page)
+            if not thread_id:
+                continue
+            if thread_id != previous_id:
+                return thread_id
+            active_name = " ".join((await _active_display_name(page, "")).split()).casefold()
+            if active_name and active_name == expected_name:
+                return thread_id
+            if not active_name and expected_name:
+                header_matches = await page.evaluate(
+                    r"""(expected) => [...document.querySelectorAll('span,div')].some(node => {
+                      const r = node.getBoundingClientRect();
+                      return node.children.length === 0 && r.width > 0 && r.height > 0
+                        && r.x > innerWidth * .24 && r.x < innerWidth * .65 && r.y > 80 && r.y < 310
+                        && (node.innerText || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase() === expected;
+                    })""", expected_name,
+                )
+                if header_matches is True:
+                    return thread_id
+            # Meta may keep the previous URL/header briefly after a row click.
+        if attempt == 0:
+            position = await page.evaluate(
+                r"""(label) => {
+                  const expected = (label || '').replace(/\s+/g, ' ').trim();
+                  const row = [...document.querySelectorAll('[role="presentation"]')]
+                    .find(e => (e.innerText || '').replace(/\s+/g, ' ').trim() === expected
+                      && getComputedStyle(e).cursor === 'pointer'
+                      && e.getBoundingClientRect().x < innerWidth * .38
+                      && e.getBoundingClientRect().y > 80
+                      && e.getBoundingClientRect().height >= 55);
+                  if (!row) return null;
+                  const r = row.getBoundingClientRect();
+                  return [r.x + r.width / 2, r.y + r.height / 2];
+                }""",
+                label,
+            )
+            if position:
+                await page.mouse.click(*position)
+    await _save_meta_failure(page, "thread-selection")
     raise RuntimeError(f"{channel_name} chưa cung cấp mã hội thoại sau khi chọn chat.")
 
 
@@ -610,6 +684,26 @@ async def _active_thread_id(page) -> str:
         return str(parse_qs(urlparse(page.url).query).get("selected_item_id", [""])[-1]).strip()
     except Exception:
         return ""
+
+
+async def _visible_monitor_page(context, channel_type: str, current_url: str = ""):
+    selected_fallback=None
+    # A user may select the correct conversation in another existing Meta tab.
+    asset=parse_qs(urlparse(current_url).query).get("asset_id")
+    for candidate in context.pages:
+        if (candidate is CONTROL_DELIVERY_PAGE or candidate is BACKGROUND_HISTORY_PAGE or candidate.is_closed()
+                or not _is_channel_inbox_url(channel_type,candidate.url)):
+            continue
+        if asset and parse_qs(urlparse(candidate.url).query).get("asset_id") != asset:
+            continue
+        if await _active_thread_id(candidate):
+            if selected_fallback is None or candidate.url==current_url:selected_fallback=candidate
+            try:
+                if await candidate.evaluate("document.visibilityState === 'visible'"):
+                    return candidate
+            except Exception:
+                continue
+    return selected_fallback
 
 
 async def _active_display_name(page, fallback: str) -> str:
@@ -748,12 +842,23 @@ async def _scroll_thread_page(page, direction: str = "down") -> dict | None:
           const before = region.scrollTop;
           const delta = Math.max(260, Math.floor(region.clientHeight * .78));
           if (direction === 'top') region.scrollTop = 0;
+          else if (direction === 'bottom') region.scrollTop = region.scrollHeight;
           else region.scrollTop = Math.min(region.scrollHeight, before + delta);
           return {top: region.scrollTop, height: region.scrollHeight, client: region.clientHeight,
             count: region.querySelectorAll('[data-message-id]').length, moved: region.scrollTop !== before};
         }""",
         direction,
     )
+
+
+async def _latest_message_rows(page, channel_type: str, thread_id: str, display_name: str, avatar_url: str = "") -> list[dict]:
+    # Live reads must not inherit a manually scrolled or restored history viewport.
+    for _ in range(4):
+        state = await _scroll_thread_page(page, "bottom")
+        if not state or not state.get("moved"):
+            break
+        await page.wait_for_timeout(200)
+    return await _visible_message_rows(page, channel_type, thread_id, display_name, avatar_url)
 
 
 async def _hover_message_timestamp(page, message_id: str) -> str:
@@ -986,16 +1091,24 @@ async def _visible_message_rows(page, channel_type: str, thread_id: str, display
                 if (node === child) break;
               }
               let text = (messageNode.innerText || '').trim();
-              if (!id || !text) continue;
+              const photo = [...messageNode.querySelectorAll('img')].find(node => {
+                const r = node.getBoundingClientRect();
+                try {
+                  const u = new URL(node.currentSrc || node.src);
+                  return r.width >= 64 && r.height >= 64 && u.protocol === 'https:'
+                    && (u.hostname.endsWith('.fbcdn.net') || u.hostname.endsWith('.cdninstagram.com'));
+                } catch { return false; }
+              });
+              if (!id || (!text && !photo)) continue;
               const textNode = [...messageNode.querySelectorAll('span,div')]
                 .filter(e => e.children.length === 0 && (e.innerText || '').trim())
                 .sort((a, b) => (b.innerText || '').length - (a.innerText || '').length)[0];
-              const bubble = (textNode || marker).getBoundingClientRect();
+              const bubble = (photo || textNode || marker).getBoundingClientRect();
               const incoming = bubble.left + bubble.width / 2 < rr.left + rr.width / 2;
               if (!incoming) text = text.replace(/\s*(?:(?:Đã gửi|Đã xem|Sent|Seen)\s*)?Người gửi\s*:\s*[\s\S]*$/iu, '').trim();
-              if (!text) continue;
+              if (!text && !photo) continue;
               const perMessageTimestamp = timestampFrom(messageNode, marker);
-              result.push({messageId: id, message: text.slice(0, 10000), direction: incoming ? 'inbound' : 'outbound', timestamp: perMessageTimestamp, dateLabel: dateLabelFor(marker) || dateLabel, bubbleX: Math.round(bubble.left), bubbleY: Math.round(bubble.top)});
+              result.push({messageId: id, message: text.slice(0, 10000), messageType: photo ? 'image' : 'text', mediaUrl: photo ? (photo.currentSrc || photo.src) : '', direction: incoming ? 'inbound' : 'outbound', timestamp: perMessageTimestamp, dateLabel: dateLabelFor(marker) || dateLabel, bubbleX: Math.round(bubble.left), bubbleY: Math.round(bubble.top)});
             }
           }
           return result;
@@ -1016,7 +1129,8 @@ async def _visible_message_rows(page, channel_type: str, thread_id: str, display
             "customerId": thread_id,
             "displayName": display_name,
             "avatarUrl": avatar_url,
-            "messageType": "text",
+            "messageType": "image" if item.get("messageType") == "image" else "text",
+            "mediaUrl": str(item.get("mediaUrl") or "")[:2000] or None,
         }
         for item in raw
     ]
@@ -1165,7 +1279,7 @@ async def _visible_outbound_images(page) -> list[str]:
           const vw = innerWidth, vh = innerHeight;
           return [...document.querySelectorAll('img')].filter(node => {
             const r = node.getBoundingClientRect();
-            if (r.width < 48 || r.height < 48 || r.top < vh * .1 || r.bottom >= bottom
+            if (r.width < 48 || r.height < 48 || r.bottom <= vh * .1 || r.top >= bottom
               || r.left + r.width / 2 <= vw * .48 || r.right > vw * .98) return false;
             if (node.closest('[role="dialog"], [contenteditable="true"]')) return false;
             // A pending attachment preview has a remove button, unlike a sent bubble.
@@ -1229,12 +1343,13 @@ async def _send_meta_message(
     recipient_id: object = "",
     image_path: str | Path | None = None,
     media_type: str = "image",
+    *, page=None,
 ) -> dict:
     thread_id = str(thread_id or "").strip()
     message = str(message or "").strip()
     if not thread_id or (not message and image_path is None):
         raise ValueError("Thiếu mã hội thoại hoặc nội dung trả lời Meta.")
-    page = CONTROL_PAGE
+    page = page if page is not None else CONTROL_PAGE
     if page is None or page.is_closed():
         raise RuntimeError("Meta Business Suite connector chưa sẵn sàng; hãy mở Edge đã ghép nối.")
     if not _is_channel_inbox_url(os.getenv("SMART_MERCHANT_CHANNEL_TYPE", ""), page.url):
@@ -1394,7 +1509,52 @@ async def _send_meta_message(
                 "message_id": f"meta-ui:{thread_id}:{time.time_ns()}",
                 "threadId": thread_id,
             }
+    await _save_meta_failure(page, "delivery")
     raise MetaDeliveryUnknown("Meta chưa xác nhận tin đã gửi; hãy kiểm tra hội thoại trước khi thử lại.")
+
+
+async def _send_meta_message_isolated(thread_id, message, recipient_id="", image_path=None, media_type="image"):
+    global CONTROL_DELIVERY_PAGE
+    monitor = CONTROL_PAGE
+    if monitor is None or monitor.is_closed():
+        raise RuntimeError("Meta connector chưa sẵn sàng; chưa gửi tin.")
+    channel_type=os.getenv("SMART_MERCHANT_CHANNEL_TYPE", "")
+    target_url=_meta_conversation_url(channel_type,monitor.url,str(thread_id))
+    # CONTROL_SEND_LOCK serializes sends; monitoring never owns this composer.
+    delivery_page = CONTROL_DELIVERY_PAGE
+    if (delivery_page is None or delivery_page is monitor or delivery_page.is_closed()
+            or delivery_page.context is not monitor.context):
+        delivery_page = await monitor.context.new_page()
+        CONTROL_DELIVERY_PAGE = delivery_page
+        must_navigate = True
+    else:
+        must_navigate = False
+    try:
+        if not must_navigate:
+            must_navigate = (_meta_conversation_url(channel_type,delivery_page.url,str(thread_id)) != target_url
+                or await _active_thread_id(delivery_page) != str(thread_id))
+        if must_navigate:
+            await delivery_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            await delivery_page.wait_for_timeout(1000)
+        previous_count = await _visible_outbound_text_count(delivery_page, str(message)) if image_path is None else 0
+        result = await _send_meta_message(thread_id, message, recipient_id, image_path, media_type, page=delivery_page)
+        if image_path is None:
+            # An optimistic bubble can disappear when its tab closes before Meta saves it.
+            await delivery_page.wait_for_timeout(1000)
+            await delivery_page.reload(wait_until="domcontentloaded", timeout=15000)
+            for _ in range(24):
+                await delivery_page.wait_for_timeout(250)
+                if (await _active_thread_id(delivery_page) == str(thread_id)
+                        and await _visible_outbound_text_count(delivery_page, str(message)) > previous_count):
+                    return result
+            raise MetaDeliveryUnknown("Tin chưa xuất hiện sau khi tải lại Meta; kiểm tra hội thoại trước khi gửi lại.")
+        return result
+    except Exception:
+        await _save_meta_failure(delivery_page, "delivery")
+        CONTROL_DELIVERY_PAGE = None
+        if not delivery_page.is_closed():
+            await delivery_page.close()
+        raise
 
 
 class _MetaControlHandler(BaseHTTPRequestHandler):
@@ -1434,7 +1594,7 @@ class _MetaControlHandler(BaseHTTPRequestHandler):
                     attachment_path = _decode_meta_attachment(payload, media_type)
                 with CONTROL_SEND_LOCK:
                     future = asyncio.run_coroutine_threadsafe(
-                        _send_meta_message(
+                        _send_meta_message_isolated(
                             payload.get("threadId"),
                             payload.get("message"),
                             payload.get("recipientId"),
@@ -1642,6 +1802,7 @@ async def _import_history(
     avatar_url: str = "",
     mark_latest_inbound_live: bool = False,
     live_after: float | None = None,
+    changed_row_labels: tuple[str, str] | None = None,
 ) -> tuple[dict, int]:
     channel_name = _channel_name(channel_type)
     thread_id = str(thread_id or await _active_thread_id(page)).strip()
@@ -1654,7 +1815,7 @@ async def _import_history(
             page, channel_type, thread_id, display_name, avatar_url, scroll_oldest=True
         )
         if scroll_oldest
-        else await _visible_message_rows(page, channel_type, thread_id, display_name, avatar_url)
+        else await _latest_message_rows(page, channel_type, thread_id, display_name, avatar_url)
     )
     history = normalize_meta_history(channel_type, thread_id, thread_id, display_name, rows)
     if not history:
@@ -1672,12 +1833,17 @@ async def _import_history(
             and item.get("messageId")
             and _message_arrived_since(item.get("createdAt"), live_after)
         )
-    elif mark_latest_inbound_live:
+    if mark_latest_inbound_live or changed_row_labels:
         latest_inbound = next(
             (item for item in reversed(history) if item.get("direction") == "inbound"),
             None,
         )
-        if latest_inbound and latest_inbound.get("messageId"):
+        if latest_inbound and latest_inbound.get("messageId") and (
+            mark_latest_inbound_live
+            or (changed_row_labels and _new_inbound_preview(
+                changed_row_labels[0], changed_row_labels[1], latest_inbound.get("message")
+            ))
+        ):
             live_message_ids.add(str(latest_inbound["messageId"]))
     for start in range(0, len(history), 100):
         batch = history[start:start + 100]
@@ -1801,7 +1967,9 @@ async def _run_background_history_scan(
     checkpoint_path: Path, profile_cache: dict[str, dict], live_after: float | None = None,
 ) -> bool:
     """Import old messages on a background tab while the original inbox stays live."""
+    global BACKGROUND_HISTORY_PAGE
     history_page = await context.new_page()
+    BACKGROUND_HISTORY_PAGE = history_page
     try:
         await history_page.goto(
             _meta_inbox_url(channel_type, live_page.url),
@@ -1820,6 +1988,7 @@ async def _run_background_history_scan(
             mark_history_complete(checkpoint_path)
         return complete
     finally:
+        BACKGROUND_HISTORY_PAGE = None
         try:
             await history_page.close()
         except Exception:
@@ -1833,9 +2002,7 @@ async def _sync_changed_conversations(
     live_after: float | None = None,
 ) -> None:
     row_signatures = {
-        str(row.get("index")): hashlib.sha256(
-            str(row.get("label") or "").encode("utf-8")
-        ).hexdigest()
+        str(row.get("index")): str(row.get("label") or "")
         for row in rows
     }
     if not observed_rows:
@@ -1846,6 +2013,7 @@ async def _sync_changed_conversations(
         row for row in rows
         if observed_rows.get(str(row.get("index"))) != row_signatures.get(str(row.get("index")))
     ]
+    previous_labels = "\n".join(observed_rows.values())
     for row in changed[:5]:
         row_key = str(row.get("index"))
         try:
@@ -1867,6 +2035,8 @@ async def _sync_changed_conversations(
                 thread_id=thread_id,
                 display_name=profile["displayName"], avatar_url=profile["avatarUrl"],
                 live_after=live_after,
+                changed_row_labels=(previous_labels, row_signatures[row_key])
+                if row_key in observed_rows else None,
             )
             # A transient Meta navigation/ID error must not consume this row
             # change; the next poll can retry it instead of losing the event.
@@ -1904,8 +2074,30 @@ def _select_channel_type() -> str:
     return "facebook" if choice == "1" else "instagram"
 
 
+def _acquire_instance_lock(channel_type: str):
+    RUNTIME.mkdir(parents=True,exist_ok=True)
+    lock=(RUNTIME/f"{channel_type}.instance.lock").open("a+b")
+    lock.seek(0,2)
+    if lock.tell()==0:lock.write(b"0");lock.flush()
+    lock.seek(0)
+    try:
+        if os.name=="nt":
+            import msvcrt
+            msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
+        else:
+            import fcntl
+            fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except OSError:
+        lock.close();return None
+    return lock
+
+
 async def run() -> None:
     channel_type = _select_channel_type()
+    instance_lock=_acquire_instance_lock(channel_type)
+    if instance_lock is None:
+        print("Connector của kênh này đang chạy; hãy dùng phiên hiện tại.",flush=True)
+        return
     os.environ["SMART_MERCHANT_CHANNEL_TYPE"] = channel_type
     channel_label = "Messenger" if channel_type == "facebook" else "Instagram"
     print(f"SmartMerchantMetaBusinessSuite build: Meta Business Suite · {channel_label}", flush=True)
@@ -1938,7 +2130,6 @@ async def run() -> None:
     avatar_scan_started = bool(avatar_checkpoint.get("complete"))
     port_variable = "META_MESSENGER_CDP_PORT" if channel_type == "facebook" else "META_INSTAGRAM_CDP_PORT"
     port = int(os.getenv(port_variable, "9224" if channel_type == "facebook" else "9225"))
-    report_connector_status(channel_type, backend_url, connector_token)
     async with async_playwright() as playwright:
         while True:
             try:
@@ -1959,6 +2150,7 @@ async def run() -> None:
                 if not _is_channel_inbox_url(channel_type, page.url):
                     await page.goto(desired, wait_until="domcontentloaded", timeout=120000)
                 _start_control_server(page, channel_type, connector_token)
+                reported_inbox_state = None
                 if _inbox_state(page) == "login":
                     print("🔐 Hãy đăng nhập hoặc xử lý xác minh thủ công trong Edge; connector đang chờ.", flush=True)
                 print(f"Meta Business Suite · {channel_label} connector đang theo dõi inbox; Ctrl+C để dừng.", flush=True)
@@ -1969,6 +2161,13 @@ async def run() -> None:
                 profile_cache: dict[str, dict] = {}
                 while _cdp_ready(port) and not page.is_closed():
                     state = _inbox_state(page)
+                    if state != reported_inbox_state:
+                        report_connector_status(
+                            channel_type, backend_url, connector_token,
+                            state="online" if state == "inbox" else "error",
+                            error_code=None if state == "inbox" else ("login_required" if state == "login" else "inbox_not_open"),
+                        )
+                        reported_inbox_state = state
                     if state == "login":
                         await asyncio.sleep(5)
                         continue
@@ -2034,13 +2233,15 @@ async def run() -> None:
                                     pass
                             avatar_scan_page = None
                             print(f"⚠️ Chưa khởi động được lượt cập nhật avatar Instagram: {type(exc).__name__}.", flush=True)
+                    selected_page=await _visible_monitor_page(context,channel_type,page.url)
+                    if selected_page is not None and selected_page is not page:
+                        page=selected_page
+                        _start_control_server(page,channel_type,connector_token)
                     rows = await _conversation_rows(page)
                     if monitor_conversation_changes:
                         if not observed_rows:
                             observed_rows.update({
-                                str(row.get("index")): hashlib.sha256(
-                                    str(row.get("label") or "").encode("utf-8")
-                                ).hexdigest()
+                                str(row.get("index")): str(row.get("label") or "")
                                 for row in rows
                             })
                     if (
@@ -2082,7 +2283,7 @@ async def run() -> None:
                         profile = profile_cache.get(current_id, {})
                         name = _usable_meta_name(profile.get("displayName")) or _usable_meta_name(await _active_display_name(page, ""))
                         avatar_url = str(profile.get("avatarUrl") or await _active_avatar_url(page, name) or "")
-                        messages = await _visible_message_rows(page, channel_type, current_id, name, avatar_url)
+                        messages = await _latest_message_rows(page, channel_type, current_id, name, avatar_url)
                         if channel_type == "instagram":
                             messages = [
                                 item for item in messages
@@ -2116,7 +2317,7 @@ async def run() -> None:
                                 observed_threads[current_id] = signature
                                 observed_message_ids[current_id] = current_message_ids
                             elif detail:
-                                print(f"⚠️ CRM chưa nhận được tin {channel_label} (HTTP {status}).", flush=True)
+                                print(f"⚠️ CRM chưa nhận được tin {channel_label} (HTTP {status}; {str(detail).split(chr(58),1)[0][:60]}).", flush=True)
                         elif current_id not in observed_message_ids:
                             observed_message_ids[current_id] = {
                                 str(item.get("messageId") or "")
@@ -2125,9 +2326,7 @@ async def run() -> None:
                             }
                     if monitor_conversation_changes:
                         row_signatures = {
-                            str(row.get("index")): hashlib.sha256(
-                                str(row.get("label") or "").encode("utf-8")
-                            ).hexdigest()
+                            str(row.get("index")): str(row.get("label") or "")
                             for row in rows
                         }
                         if any(

@@ -290,6 +290,10 @@ def record_order_payment(
     ).with_for_update().first()
     if order is None:
         raise PaymentOperationError("Đơn hàng không tồn tại.", 404)
+    if (order.metadata_ or {}).get("payment_flow")=="prepay_then_confirm":
+        from app.services.order_payment_request import payment_request
+        if payment_request(order) is None or order.status in {"cancelled","refunded"}:
+            raise PaymentOperationError("Cần bảng kê hợp lệ của đơn đang hoạt động trước khi ghi khoản thu.",409)
     normalized_status = status.strip().lower()
     if normalized_status not in PAYMENT_STATUSES:
         raise PaymentOperationError("Trạng thái thanh toán không hợp lệ.", 422)
@@ -542,6 +546,22 @@ def transition_sales_order(
     allowed = SALES_TRANSITIONS.get(order.status, set())
     if target not in allowed:
         raise SalesOrderOperationError(f"Không thể chuyển {order.status} sang {target}.", 409)
+    if target=="confirmed":
+        from app.services.order_payment_request import confirmation_payment_error
+        error=confirmation_payment_error(order)
+        if error: raise SalesOrderOperationError(error,409)
+    appointment=None
+    appointment_id=(order.metadata_ or {}).get("appointment_id")
+    if appointment_id and (order.metadata_ or {}).get("payment_flow")=="prepay_then_confirm":
+        from app.models.industry_modules import Appointment
+        appointment=db.query(Appointment).filter(Appointment.id==appointment_id,Appointment.business_id==business_id).with_for_update().first()
+        if target=="confirmed" and (appointment is None or appointment.status in {"cancelled","no_show","completed"}):
+            raise SalesOrderOperationError("Lịch hẹn không còn chờ xác nhận.",409)
+        if target=="confirmed" and appointment.assigned_user_id:
+            conflict=db.query(Appointment).filter(Appointment.business_id==business_id,Appointment.id!=appointment.id,
+                Appointment.assigned_user_id==appointment.assigned_user_id,Appointment.status.in_(["scheduled","confirmed"]),
+                Appointment.starts_at<appointment.ends_at,Appointment.ends_at>appointment.starts_at).first()
+            if conflict:raise SalesOrderOperationError("Nhân viên đã có lịch trùng thời gian.",409)
     previous = order.status
 
     if target == "completed":
@@ -644,6 +664,8 @@ def transition_sales_order(
         order.metadata_ = metadata
 
     order.status = target
+    if appointment is not None and target in {"confirmed","cancelled"}:
+        appointment.status=target
     db.add(OrderEvent(
         business_id=business_id,
         order_type="sales_order",

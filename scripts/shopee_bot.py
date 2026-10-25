@@ -27,6 +27,7 @@ from connector_pairing import (
     marketplace_orders_pending,
     mark_history_complete,
     mark_history_thread_complete,
+    message_media_url,
     post_history_batch,
     post_marketplace_orders,
     order_checkpoint_path,
@@ -192,7 +193,7 @@ def normalize_message(message: object) -> dict | None:
         content = raw_content
     text = str(
         (content.get("text") if isinstance(content, dict) else "")
-        or (raw_content if isinstance(raw_content, str) else "")
+        or (content if isinstance(content, str) else "")
         or message.get("text")
         or ""
     ).strip()
@@ -221,7 +222,7 @@ def normalize_message(message: object) -> dict | None:
         "messageType": message_type,
         "createdAt": str(message.get("created_at") or ""),
         "source": str(message.get("source") or "shopee_seller_chat"),
-        "mediaUrl": str(message.get("media_url") or ""),
+        "mediaUrl": message_media_url(message.get("media_url"), content) if message_type == "image" else str(message.get("media_url") or ""),
         "channel": "shopee",
     }
 
@@ -246,7 +247,7 @@ def normalize_history_message(message: object, conversation: dict) -> dict | Non
         content = raw_content
     message_type = str(message.get("type") or message.get("message_type") or "text").strip().lower()
     text = str((content.get("text") if isinstance(content, dict) else "") or
-               (raw_content if isinstance(raw_content, str) else "") or message.get("text") or "").strip()
+               (content if isinstance(content, str) else "") or message.get("text") or "").strip()
     if message_type not in {"text", "image", "video", "audio", "file", "sticker"}:
         return None
     if not text and message_type == "text":
@@ -261,7 +262,7 @@ def normalize_history_message(message: object, conversation: dict) -> dict | Non
         "displayName": str(conversation.get("displayName") or customer_id)[:255],
         "avatarUrl": str(conversation.get("avatarUrl") or "")[:2000],
         "createdAt": str(message.get("created_at") or message.get("create_time") or "")[:100],
-        "mediaUrl": str(message.get("media_url") or "")[:2000],
+        "mediaUrl": message_media_url(message.get("media_url"), content) if message_type == "image" else str(message.get("media_url") or "")[:2000],
     }
 
 

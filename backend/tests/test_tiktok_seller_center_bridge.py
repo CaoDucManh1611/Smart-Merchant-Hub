@@ -96,6 +96,16 @@ def test_normalizes_message_scraped_from_seller_chat_rendered_state():
     assert message["messageType"] == "text"
 
 
+def test_tiktok_image_url_is_read_from_nested_media_payload():
+    message = normalize_seller_message({
+        "message_id": "photo-1", "conversation_id": "thread-1", "sender_id": "buyer-1",
+        "message_type": "image", "content": {"image": {"url": "https://cdn.example/photo.jpg"}},
+    })
+    assert message["messageType"] == "image"
+    assert message["mediaUrl"] == "https://cdn.example/photo.jpg"
+    assert message["message"] == "[image]"
+
+
 def test_seller_center_avatar_fills_missing_message_profile(monkeypatch):
     monkeypatch.setattr("tiktok_bot.SELLER_PROFILE_CACHE", {})
     monkeypatch.setattr("tiktok_bot.SELLER_PROFILE_SYNCED", set())

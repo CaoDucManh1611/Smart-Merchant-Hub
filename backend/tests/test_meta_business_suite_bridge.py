@@ -23,6 +23,17 @@ from meta_business_suite_bridge import (
 )
 
 
+def test_history_keeps_image_only_messages_and_media_url():
+    rows=normalize_meta_history('facebook','thread','customer','Customer',[
+        {'messageId':'photo-1','message':'','direction':'inbound','messageType':'image',
+         'mediaUrl':'https://scontent.fbcdn.net/meter.png'},
+        {'messageId':'empty-text','message':'','direction':'inbound'},
+    ])
+    assert len(rows)==1
+    assert rows[0]['messageType']=='image'
+    assert rows[0]['mediaUrl']=='https://scontent.fbcdn.net/meter.png'
+
+
 def test_connector_accepts_uploaded_image_bytes_without_fetching_a_url(monkeypatch):
     image = b"\x89PNG\r\n\x1a\n" + b"test-image"
     monkeypatch.setattr(bridge, "_download_vietqr_image", lambda *_: pytest.fail("Uploaded images must not fetch a URL"))
@@ -61,9 +72,9 @@ def test_image_only_send_uses_real_dom_upload_and_excludes_pending_preview(monke
 
     async def run():
         async with playwright.async_playwright() as runtime:
-            if not Path(runtime.chromium.executable_path).exists():
+            if not Path(runtime.chromium.executable_path).exists() and bridge._find_edge() is None:
                 pytest.skip("Chromium is not installed for the optional DOM check")
-            browser = await runtime.chromium.launch(headless=True)
+            browser = await runtime.chromium.launch(headless=True, executable_path=str(bridge._find_edge()) if not Path(runtime.chromium.executable_path).exists() else None)
             try:
                 page = await browser.new_page(viewport={"width": 1200, "height": 900})
                 await page.set_content('''
@@ -80,7 +91,7 @@ def test_image_only_send_uses_real_dom_upload_and_excludes_pending_preview(monke
                     document.querySelector('textarea').value = '';
                     const bubble = document.createElement('div');
                     bubble.setAttribute('data-message-id', 'sent-image');
-                    bubble.innerHTML = '<img src=&quot;sent.png&quot; style=&quot;position:absolute;left:700px;top:500px;width:100px;height:100px&quot;>';
+                    bubble.innerHTML = '<img src=&quot;sent.png&quot; style=&quot;position:absolute;left:700px;top:-20px;width:300px;height:600px&quot;>';
                     document.body.append(bubble);
                   ">Gửi</button>
                 ''')
@@ -508,14 +519,15 @@ def test_meta_static_inbox_heading_is_not_used_as_customer_name():
     assert bridge._usable_meta_name("Nguyễn An") == "Nguyễn An"
 
 
-def test_meta_dom_prefers_row_name_over_avatar_alt_and_ignores_dialog_headings():
+@pytest.mark.parametrize("with_overflow", [True, False])
+def test_meta_dom_prefers_row_name_over_avatar_alt_and_ignores_dialog_headings(with_overflow):
     playwright = pytest.importorskip("playwright.async_api")
 
     async def run():
         async with playwright.async_playwright() as runtime:
-            if not Path(runtime.chromium.executable_path).exists():
+            if not Path(runtime.chromium.executable_path).exists() and bridge._find_edge() is None:
                 pytest.skip("Chromium is not installed for the optional DOM check")
-            browser = await runtime.chromium.launch(headless=True)
+            browser = await runtime.chromium.launch(headless=True, executable_path=str(bridge._find_edge()) if not Path(runtime.chromium.executable_path).exists() else None)
             try:
                 page = await browser.new_page(viewport={"width": 1200, "height": 900})
                 await page.route("**/*", lambda route: route.abort())
@@ -530,6 +542,8 @@ def test_meta_dom_prefers_row_name_over_avatar_alt_and_ignores_dialog_headings()
                   <div role="dialog"><h2 style="position:absolute;left:500px;top:90px">Một hộp thoại</h2></div>
                   <h2 style="position:absolute;left:500px;top:180px">Phú Lê</h2>
                 ''')
+                if not with_overflow:
+                    await page.locator('[role="presentation"]').evaluate("e => { e.parentElement.style.left = '100px'; e.nextElementSibling.remove(); }")
                 rows = await bridge._conversation_rows(page)
                 assert len(rows) == 1
                 assert rows[0]["displayName"] == "Phú Lê"
@@ -636,10 +650,35 @@ def test_meta_conversation_waits_through_stale_selected_id_after_click(monkeypat
     assert thread_id == "selected-thread"
 
 
+def test_same_thread_uses_display_name_instead_of_flattened_preview(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    page=SimpleNamespace(evaluate=AsyncMock(return_value=True),wait_for_timeout=AsyncMock())
+    monkeypatch.setattr(bridge,'_active_thread_id',AsyncMock(return_value='same-thread'))
+    monkeypatch.setattr(bridge,'_active_display_name',AsyncMock(return_value='Buyer'))
+    assert asyncio.run(bridge._open_meta_conversation(page,
+        {'label':'Buyer New photo 01:00','displayName':'Buyer'},'facebook'))=='same-thread'
+    assert page.wait_for_timeout.await_count==1
+
+
+def test_monitor_follows_visible_same_page_tab_but_not_sender_or_other_page(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    def tab(asset,visible):
+        return SimpleNamespace(url=f'https://business.facebook.com/latest/inbox/messenger?asset_id={asset}&selected_item_id=thread',
+            is_closed=lambda:False,evaluate=AsyncMock(return_value=visible))
+    hidden,other,sender,selected=tab('123',False),tab('456',True),tab('123',True),tab('123',True)
+    monkeypatch.setattr(bridge,'CONTROL_DELIVERY_PAGE',sender)
+    assert asyncio.run(bridge._visible_monitor_page(SimpleNamespace(pages=[hidden,other,sender,selected]),
+        'facebook',hidden.url)) is selected
+    sender.evaluate.assert_not_awaited()
+    other.evaluate.assert_not_awaited()
+
+
 def test_meta_conversation_fails_clearly_when_meta_never_selects_a_thread(monkeypatch):
     class Page:
         async def evaluate(self, _script, _label):
-            return True
+            return None if "return [r.x" in _script else True
 
         async def wait_for_timeout(self, _milliseconds):
             return None
@@ -648,6 +687,32 @@ def test_meta_conversation_fails_clearly_when_meta_never_selects_a_thread(monkey
 
     with pytest.raises(RuntimeError, match="chưa cung cấp mã hội thoại"):
         asyncio.run(bridge._open_meta_conversation(Page(), {"label": "Buyer\nLatest message"}, "facebook"))
+
+
+def test_meta_conversation_retries_with_real_mouse_when_dom_click_does_not_select(monkeypatch):
+    class Page:
+        def __init__(self):
+            self.selected = False
+            self.clicked_at = None
+            self.mouse = self
+
+        async def evaluate(self, script, _label):
+            return [100, 200] if "return [r.x" in script else True
+
+        async def click(self, x, y):
+            self.clicked_at = (x, y)
+            self.selected = True
+
+        async def wait_for_timeout(self, _milliseconds):
+            return None
+
+    async def selected_id(page):
+        return "thread-1" if page.selected else ""
+
+    monkeypatch.setattr(bridge, "_active_thread_id", selected_id)
+    page = Page()
+    assert asyncio.run(bridge._open_meta_conversation(page, {"label": "Buyer\nLatest message"}, "facebook")) == "thread-1"
+    assert page.clicked_at == (100, 200)
 
 
 def test_meta_history_uses_stable_message_ids_and_separates_direction():
@@ -836,6 +901,7 @@ def test_instagram_avatar_backfill_updates_profiles_without_reading_message_hist
 
 
 def test_incremental_meta_import_does_not_mark_partial_thread_history_complete(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "_scroll_thread_page", lambda *_args: asyncio.sleep(0, result=None))
     async def active_thread(_page):
         return ""
 
@@ -889,6 +955,7 @@ def test_incremental_meta_import_does_not_mark_partial_thread_history_complete(m
 
 
 def test_meta_import_rejects_crm_receipt_that_skips_messages(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "_scroll_thread_page", lambda *_args: asyncio.sleep(0, result=None))
     async def visible_rows(*_args):
         return [{
             "messageId": "message-1", "message": "hello", "direction": "inbound",
@@ -916,6 +983,7 @@ def test_meta_import_rejects_crm_receipt_that_skips_messages(monkeypatch, tmp_pa
 
 
 def test_meta_history_only_marks_messages_after_connector_start_as_live(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "_scroll_thread_page", lambda *_args: asyncio.sleep(0, result=None))
     cutoff = 1_700_000_000
     captured = {}
 
@@ -950,7 +1018,37 @@ def test_meta_history_only_marks_messages_after_connector_start_as_live(monkeypa
     assert captured["live_message_ids"] == {"new"}
 
 
-def test_changed_meta_conversation_retries_after_transient_thread_id_error(monkeypatch, tmp_path):
+def test_meta_changed_row_marks_timestamp_less_new_preview_live(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "_scroll_thread_page", lambda *_args: asyncio.sleep(0, result=None))
+    captured = {}
+
+    monkeypatch.setattr(bridge, "_active_thread_id", lambda *_args: asyncio.sleep(0, result="thread-1"))
+    monkeypatch.setattr(bridge, "_active_display_name", lambda *_args: asyncio.sleep(0, result="Buyer"))
+    monkeypatch.setattr(bridge, "_active_avatar_url", lambda *_args: asyncio.sleep(0, result=""))
+    monkeypatch.setattr(bridge, "_visible_message_rows", lambda *_args: asyncio.sleep(0, result=[
+        {"messageId": "old", "message": "old text", "direction": "inbound", "createdAt": None},
+        {"messageId": "new", "message": "new text", "direction": "inbound", "createdAt": None},
+    ]))
+
+    def send_history(*_args, **kwargs):
+        captured.update(kwargs)
+        return 200, json.dumps({"status": "received", "imported": 2, "duplicates": 0, "skipped": 0})
+
+    monkeypatch.setattr(bridge, "_send_history", send_history)
+    asyncio.run(bridge._import_history(
+        object(), "facebook", "http://localhost:8000", "connector-token",
+        tmp_path / "checkpoint.json", {"completed_threads": []}, scroll_oldest=False,
+        live_after=1_700_000_000,
+        changed_row_labels=("Buyer\nold text", "Buyer\nnew text"),
+    ))
+
+    assert captured["live_message_ids"] == {"new"}
+    assert not bridge._new_inbound_preview("Buyer\nnew text", "Buyer\nnew text\nĐã đọc", "new text")
+    assert not bridge._new_inbound_preview("Buyer A\nold text\nBuyer B\nnew text", "Buyer B\nnew text", "new text")
+
+
+@pytest.mark.parametrize("failure_stage", ["open", "backend"])
+def test_changed_meta_conversation_retries_after_transient_thread_id_error(monkeypatch, tmp_path, failure_stage):
     row = {
         "index": 3,
         "label": "Buyer\nnew message",
@@ -966,11 +1064,13 @@ def test_changed_meta_conversation_retries_after_transient_thread_id_error(monke
     async def open_thread(_page, _row, _channel):
         nonlocal open_attempts
         open_attempts += 1
-        if open_attempts == 1:
+        if open_attempts == 1 and failure_stage == "open":
             raise RuntimeError("Meta chưa cung cấp mã hội thoại đang mở")
         return "thread-3"
 
     async def import_history(*_args, **_kwargs):
+        if open_attempts == 1 and failure_stage == "backend":
+            raise RuntimeError("CRM từ chối lô lịch sử (HTTP 0): RemoteDisconnected")
         imports.append(True)
         return {"completed_threads": []}, 1
 
@@ -993,7 +1093,7 @@ def test_changed_meta_conversation_retries_after_transient_thread_id_error(monke
         object(), "facebook", "http://localhost:8000", "connector-token",
         checkpoint_path, observed, [row], profile_cache,
     ))
-    assert observed["3"] == bridge.hashlib.sha256(row["label"].encode("utf-8")).hexdigest()
+    assert observed["3"] == row["label"]
     assert imports == [True]
 
     asyncio.run(bridge._sync_changed_conversations(
@@ -1005,6 +1105,7 @@ def test_changed_meta_conversation_retries_after_transient_thread_id_error(monke
 
 
 def test_meta_import_does_not_mark_unreadable_empty_history_complete(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "_scroll_thread_page", lambda *_args: asyncio.sleep(0, result=None))
     async def active_thread(_page):
         return "thread-1"
 
@@ -1073,3 +1174,126 @@ def test_history_batch_marks_only_explicit_live_inbound_messages(monkeypatch):
     assert status == 200
     assert detail == "{}"
     assert [item.get("isLive", False) for item in captured["payload"]["messages"]] == [True, False, False]
+
+def test_outbound_reuses_only_its_separate_page_and_revalidates_delivery(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    delivery = SimpleNamespace(goto=AsyncMock(), reload=AsyncMock(), wait_for_timeout=AsyncMock(), close=AsyncMock(),is_closed=lambda:False)
+    context = SimpleNamespace(new_page=AsyncMock(return_value=delivery))
+    delivery.context=context
+    delivery.url='https://business.facebook.com/latest/inbox/messenger?asset_id=123&selected_item_id=target'
+    monitor = SimpleNamespace(context=context, url='https://business.facebook.com/latest/inbox/messenger?asset_id=123',is_closed=lambda:False)
+    monkeypatch.setattr(bridge,'CONTROL_PAGE',monitor)
+    monkeypatch.setattr(bridge,'CONTROL_DELIVERY_PAGE',None)
+    monkeypatch.setenv('SMART_MERCHANT_CHANNEL_TYPE','facebook')
+    send=AsyncMock(return_value={'sent':True})
+    monkeypatch.setattr(bridge,'_send_meta_message',send)
+    monkeypatch.setattr(bridge,'_visible_outbound_text_count',AsyncMock(side_effect=[0,1,1,2,0,1,0,1]))
+    monkeypatch.setattr(bridge,'_active_thread_id',AsyncMock(return_value='target'))
+    assert asyncio.run(bridge._send_meta_message_isolated('target','hello'))=={'sent':True}
+    assert send.call_args.kwargs['page'] is delivery
+    assert 'selected_item_id=target' in delivery.goto.call_args.args[0]
+    delivery.close.assert_not_awaited()
+    delivery.reload.assert_awaited_once()
+    assert asyncio.run(bridge._send_meta_message_isolated('target','hello'))=={'sent':True}
+    context.new_page.assert_awaited_once()
+    delivery.goto.assert_awaited_once()
+    assert delivery.reload.await_count==2
+    monitor.url='https://business.facebook.com/latest/inbox/messenger?asset_id=456'
+    assert asyncio.run(bridge._send_meta_message_isolated('target','hello'))=={'sent':True}
+    assert 'asset_id=456' in delivery.goto.call_args.args[0]
+    delivery.url='https://business.facebook.com/latest/inbox/messenger?asset_id=456&selected_item_id=target'
+    monkeypatch.setattr(bridge,'_active_thread_id',AsyncMock(side_effect=['target','different']))
+    assert asyncio.run(bridge._send_meta_message_isolated('different','hello'))=={'sent':True}
+    assert delivery.goto.await_count==3
+
+
+def test_outbound_does_not_confirm_an_optimistic_bubble(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    delivery = SimpleNamespace(goto=AsyncMock(), reload=AsyncMock(), wait_for_timeout=AsyncMock(), close=AsyncMock(),is_closed=lambda:False)
+    monitor = SimpleNamespace(context=SimpleNamespace(new_page=AsyncMock(return_value=delivery)),
+                              url='https://business.facebook.com/latest/inbox/messenger?asset_id=123', is_closed=lambda:False)
+    monkeypatch.setattr(bridge, 'CONTROL_PAGE', monitor)
+    monkeypatch.setattr(bridge, 'CONTROL_DELIVERY_PAGE', None)
+    monkeypatch.setenv('SMART_MERCHANT_CHANNEL_TYPE', 'facebook')
+    send = AsyncMock(return_value={'status':'sent'})
+    monkeypatch.setattr(bridge, '_send_meta_message', send)
+    monkeypatch.setattr(bridge, '_visible_outbound_text_count', AsyncMock(return_value=0))
+    monkeypatch.setattr(bridge, '_active_thread_id', AsyncMock(return_value='target'))
+    with pytest.raises(bridge.MetaDeliveryUnknown):
+        asyncio.run(bridge._send_meta_message_isolated('target', 'hello'))
+    send.assert_awaited_once()
+    delivery.close.assert_awaited_once()
+    assert bridge.CONTROL_DELIVERY_PAGE is None
+
+
+def test_hidden_selected_monitor_is_used_without_crossing_page_or_sender(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    def tab(asset):return SimpleNamespace(url=f'https://business.facebook.com/latest/inbox/messenger?asset_id={asset}&selected_item_id=thread',is_closed=lambda:False,evaluate=AsyncMock(return_value=False))
+    selected,other,sender,history=tab('123'),tab('456'),tab('123'),tab('123')
+    monkeypatch.setattr(bridge,'CONTROL_DELIVERY_PAGE',sender)
+    monkeypatch.setattr(bridge,'BACKGROUND_HISTORY_PAGE',history)
+    assert asyncio.run(bridge._visible_monitor_page(SimpleNamespace(pages=[other,sender,history,selected]),'facebook',selected.url)) is selected
+    other.evaluate.assert_not_awaited();sender.evaluate.assert_not_awaited();history.evaluate.assert_not_awaited()
+
+
+def test_connector_single_instance_lock_is_per_channel_and_released(tmp_path,monkeypatch):
+    monkeypatch.setattr(bridge,'RUNTIME',tmp_path)
+    first=bridge._acquire_instance_lock('facebook')
+    assert first is not None
+    try:
+        assert bridge._acquire_instance_lock('facebook') is None
+        other=bridge._acquire_instance_lock('instagram');assert other is not None;other.close()
+    finally:first.close()
+    restarted=bridge._acquire_instance_lock('facebook');assert restarted is not None;restarted.close()
+
+
+def test_live_reads_scroll_to_latest_before_parsing(monkeypatch):
+    events = []
+    states = iter([{"moved": True}, {"moved": False}])
+    class Page:
+        async def wait_for_timeout(self, delay):
+            events.append(("wait", delay))
+    async def scroll(page, direction):
+        events.append(("scroll", direction))
+        return next(states)
+    async def rows(*args):
+        events.append(("read", args[2]))
+        return [{"message": "newest"}]
+    monkeypatch.setattr(bridge, "_scroll_thread_page", scroll)
+    monkeypatch.setattr(bridge, "_visible_message_rows", rows)
+    assert asyncio.run(bridge._latest_message_rows(Page(), "facebook", "thread", "Buyer")) == [{"message": "newest"}]
+    assert events == [("scroll", "bottom"), ("wait", 200), ("scroll", "bottom"), ("read", "thread")]
+
+
+def test_failure_snapshot_is_local_throttled_and_does_not_mask_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(bridge, "RUNTIME", tmp_path)
+    class Page:
+        shots = 0
+        async def screenshot(self, *, path):
+            self.shots += 1
+            Path(path).write_bytes(b"test")
+        async def evaluate(self, script):
+            return {"queryKeys": ["asset_id"]}
+    page = Page()
+    asyncio.run(bridge._save_meta_failure(page, "selection"))
+    asyncio.run(bridge._save_meta_failure(page, "selection"))
+    assert page.shots == 1
+    assert json.loads((tmp_path / "diagnostics/selection.json").read_text())["queryKeys"] == ["asset_id"]
+    class Broken(Page):
+        async def screenshot(self, **kwargs):
+            raise RuntimeError("closed")
+    asyncio.run(bridge._save_meta_failure(Broken(), "closed"))
+
+
+def test_same_thread_accepts_plain_text_header_without_heading_role(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    page = SimpleNamespace(evaluate=AsyncMock(return_value=True), wait_for_timeout=AsyncMock())
+    monkeypatch.setattr(bridge, "_active_thread_id", AsyncMock(return_value="existing-id"))
+    monkeypatch.setattr(bridge, "_active_display_name", AsyncMock(return_value=""))
+    assert asyncio.run(bridge._open_meta_conversation(page, {"label":"Buyer\nNew message", "displayName":"Buyer"})) == "existing-id"
+    assert page.evaluate.call_args.args[1] == "buyer"
+    assert "node.children.length === 0" in page.evaluate.call_args.args[0]

@@ -98,7 +98,8 @@ def get_config(
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    return _config(db, tenant)
+    from app.services.business_profile import get_business_profile
+    return ChatbotConfigOut.model_validate(_config(db,tenant)).model_copy(update={"business_profile":get_business_profile(db,tenant.business_id)})
 
 
 @router.put("/config", response_model=ChatbotConfigOut, dependencies=[Depends(require_write_access)])
@@ -109,7 +110,12 @@ def update_config(
     actor: User | None = Depends(require_write_access),
 ):
     row = _config(db, tenant)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    values=payload.model_dump(exclude_unset=True)
+    profile=values.pop("business_profile",None)
+    if profile is not None:
+        from app.services.business_profile import save_business_profile
+        save_business_profile(db,tenant.business_id,profile)
+    for key, value in values.items():
         setattr(row, key, value)
     record_audit(
         db,
@@ -121,7 +127,8 @@ def update_config(
     )
     db.commit()
     db.refresh(row)
-    return row
+    from app.services.business_profile import get_business_profile
+    return ChatbotConfigOut.model_validate(row).model_copy(update={"business_profile":get_business_profile(db,tenant.business_id)})
 
 
 @router.get("/canned-responses", response_model=CannedResponseListOut)

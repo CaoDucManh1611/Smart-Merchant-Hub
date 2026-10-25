@@ -3825,6 +3825,10 @@ button:hover {
   margin-top: 0.7rem;
 }
 
+.adjustment-inline-error {
+  margin: 0.6rem 0 0;
+}
+
 .adjustment-actions .primary-btn {
   padding: 0.45rem 0.75rem;
 }
@@ -16317,3 +16321,107 @@ body.crm-dark .service-request-dismiss:hover { color: #fff; background: #303a3e;
   border-radius: inherit;
 }
 .crm-app:not(.platform-admin-workspace) .customer-profile > .customer-avatar + div { min-width: 0; }
+.customer-mobile-menu { display:none; }
+@media(max-width:600px) {
+  .crm-app:not(.platform-admin-workspace):has(.customer-mobile-menu) { grid-template-columns:minmax(0,1fr)!important; }
+  .crm-app:not(.platform-admin-workspace) > .side { display:none!important; }
+  .crm-app:not(.platform-admin-workspace) > .side.mobile-open { display:flex!important; position:fixed; inset:70px 12px 12px; width:auto!important; max-width:320px; z-index:1200; overflow-y:auto; border:1px solid var(--owly-border); border-radius:12px; box-shadow:0 12px 40px #0003; }
+  .crm-app:not(.platform-admin-workspace) > .side.mobile-open .menu-item { width:100%; justify-content:flex-start; }
+  .crm-app:not(.platform-admin-workspace) > .side.mobile-open .menu-item > span { display:inline!important; }
+  .crm-app:not(.platform-admin-workspace) > .main { margin-left:0!important; padding:10px!important; min-width:0; }
+  .customer-mobile-menu { display:block; min-height:44px; padding:8px 12px; border:1px solid var(--owly-border); border-radius:8px; background:var(--owly-surface); color:inherit; font:inherit; font-weight:650; }
+  .crm-app:not(.platform-admin-workspace) .top { gap:8px; padding:8px 0; }
+  .crm-app .service-checkout-page { padding:12px 0; }
+  .service-checkout-page .checkout-card { padding:14px; border-radius:12px; }
+  .service-checkout-page .checkout-card-heading { margin-bottom:14px; gap:8px; }
+  .service-checkout-page .checkout-plan-flow { grid-template-columns:1fr; gap:8px; }
+  .service-checkout-page .checkout-plan-block { min-height:0; padding:12px; gap:5px; }
+  .service-checkout-page .checkout-plan-flow > span { display:none; }
+  .service-checkout-page .checkout-details > div { gap:8px; }
+  .service-checkout-page .checkout-details dd { overflow-wrap:anywhere; }
+  .service-checkout-page .service-checkout-header h1 { font-size:25px; }
+}
+@media(max-width:600px) {
+  .crm-app:not(.platform-admin-workspace) .tenant-provisioning-banner { padding:10px; gap:8px; border-radius:10px; }
+  .tenant-provisioning-banner strong { font-size:13px; }
+  .tenant-provisioning-banner span { font-size:12px; line-height:1.4; }
+  .crm-app .top-search:has(input:disabled),.crm-app .top button:disabled { display:none; }
+  .crm-app .service-page-layout { padding:16px 0!important; }
+  .crm-app .service-page-hero { padding-bottom:12px; }
+  .crm-app .service-page-hero h1 { font-size:24px; }
+  .crm-app .service-mode-switch { margin-block:14px; }
+}
+@media(max-width:600px) {
+  .crm-app:not(.platform-admin-workspace) > .side.mobile-open .menu { width:100%; }
+  .crm-app:not(.platform-admin-workspace) > .side.mobile-open .menu-item { display:flex!important; flex-direction:row!important; justify-content:flex-start!important; gap:12px; padding:10px 12px!important; min-height:44px; }
+  .crm-app:not(.platform-admin-workspace) > .side.mobile-open .menu-item > b { display:block!important; opacity:1!important; width:auto!important; font-size:13px; white-space:normal; }
+}
+@media(max-width:600px) {
+  .crm-app > .side.mobile-open .menu-item > .nav-icon { margin:0!important; flex:0 0 24px; width:24px; height:24px; }
+  .crm-app > .side.mobile-open .menu-item > b { margin:0!important; flex:1; text-align:left; }
+  .crm-app > .side.mobile-open .ai-submenu { padding-left:0; border-left:0; }
+}
+.customer-menu-backdrop { display:none; }
+@media(max-width:600px) {
+  .customer-menu-backdrop { display:block; position:fixed; inset:0; z-index:1199; border:0; background:#0c252866; }
+  .crm-app:not(.platform-admin-workspace) > .side.mobile-open { inset:0 auto 0 0; width:calc(100% - 40px)!important; max-width:320px; padding:14px; border-radius:0 16px 16px 0; overflow:hidden; gap:12px; box-sizing:border-box; }
+  .side.mobile-open > .customer-mobile-menu { position:absolute; right:10px; top:10px; width:44px; height:44px; padding:0; font-size:0; z-index:1; }
+  .side.mobile-open > .customer-mobile-menu::after { content:'×'; font-size:25px; }
+  .crm-app > .side.mobile-open .brand-lockup { display:flex!important; flex:none; flex-direction:row; align-items:center; justify-content:flex-start; min-height:48px; padding:0 46px 12px 0; margin:0; gap:8px; border-bottom:1px solid var(--owly-border); }
+  .crm-app > .side.mobile-open .brand-copy,
+  .crm-app.sidebar-collapsed > .side.mobile-open .brand-copy { display:block!important; }
+  .side.mobile-open .brand-copy strong { font-size:13px; }
+  .side.mobile-open .brand-copy small { font-size:11px; }
+  .crm-app > .side.mobile-open .crm-brand-mark { width:32px; height:32px; flex:0 0 32px; }
+  .crm-app > .side.mobile-open .menu { flex:1; min-height:0; overflow-y:auto; padding:0; margin:0; }
+  .crm-app > .side.mobile-open .menu-group { display:grid; gap:3px; padding:8px 0; margin:0; }
+  .crm-app > .side.mobile-open .menu-item { margin:0!important; min-height:44px; }
+  .side.mobile-open > .collapse,.side.mobile-open > .side-card { display:none!important; }
+}
+@media(max-width:600px) {
+  .side.mobile-open > .customer-mobile-menu { z-index:3; }
+  .crm-app > .side.mobile-open .brand-lockup { z-index:0; }
+}
+@media(max-width:600px) {
+  .crm-app:not(.platform-admin-workspace) .top:has(> .customer-mobile-menu) { display:flex!important; flex-direction:row!important; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+  .top > .customer-mobile-menu { flex:0 0 auto; margin:0 auto 0 0!important; }
+  .crm-app:not(.platform-admin-workspace) .top > .top-actions { display:flex; flex:0 1 auto; width:auto!important; margin-left:auto; justify-content:flex-end; gap:6px; }
+  .top:has(.top-search-input:not(:disabled)) > .top-actions { flex-wrap:wrap; }
+}
+.customer-top-tools { display:contents; }
+@media(max-width:600px) {
+  .crm-app:not(.platform-admin-workspace) .top:has(> .customer-mobile-menu) { display:grid!important; grid-template-columns:auto minmax(0,1fr); gap:6px; }
+  .crm-app:not(.platform-admin-workspace) .top > .top-actions { display:contents; }
+  .top > .customer-mobile-menu { grid-column:1; grid-row:1; min-height:42px; padding:0 8px; font-size:13px; white-space:nowrap; border-radius:10px; }
+  .customer-top-tools { display:flex; align-items:center; justify-content:flex-end; gap:4px; grid-column:2; grid-row:1; min-width:0; }
+  .top .top-search { grid-column:1/-1; grid-row:2; width:100%; margin:0; }
+  .customer-top-tools .quick-action-trigger { display:none; }
+  .customer-top-tools > .notification-menu { flex:0 0 42px; }
+  .customer-top-tools :is(.bell,.dark-mode-toggle,.top-logout) { flex:0 0 42px; width:42px; min-width:42px; height:42px; min-height:42px; padding:0; border-radius:10px; }
+  .customer-top-tools .ui-language-control { flex:0 0 100px; width:100px; }
+  .customer-top-tools .ui-language-control select { box-sizing:border-box; width:100%; height:42px; min-height:42px; padding:0 6px; font-size:11px; white-space:nowrap; border-radius:10px; }
+}
+@media(max-width:370px) {
+  .top > .customer-mobile-menu { width:42px; padding:0; font-size:0; }
+  .top > .customer-mobile-menu::after { content:'☰'; font-size:20px; }
+}
+/* Compact inbox controls on phones; retain the desktop workspace. */
+@media(max-width:600px) {
+  .crm-app:has(.inbox) .top .top-search { display:none; }
+  .crm-app:not(.platform-admin-workspace) .inbox-search-row { grid-template-columns:minmax(0,1fr) 112px; padding:0 10px 6px; gap:6px; }
+  .crm-app .inbox-search-row :is(input,select) { min-height:40px; font-size:13px; }
+  .crm-app .inbox-channel-select select { width:100%; padding-inline:8px; }
+  .crm-app .inbox-bulk-toolbar:has(.inbox-bulk-toggle:disabled):not(:has([role])) { display:none; }
+  .crm-app .inbox-filter-disclosure summary { min-height:40px; display:flex; align-items:center; }
+  .crm-app .inbox-empty-state { min-height:0; padding:28px 20px; margin:0; }
+  .crm-app .inbox-empty-state p { max-width:260px; margin-inline:auto; line-height:1.5; }
+}
+@media(max-width:600px) {
+  .crm-app .channels-layout .settings-card-header { flex-direction:column; align-items:flex-start; gap:8px; }
+  .crm-app .channels-layout .settings-card-header > div { width:100%; min-width:0; }
+  .crm-app .channels-layout .settings-card-header h2 { font-size:21px; line-height:1.25; }
+  .crm-app .channels-layout .settings-card { padding:14px; border-radius:12px; }
+  .crm-app .channels-layout .settings-card-header p,.crm-app .channels-layout .settings-muted { font-size:13px; line-height:1.5; margin-block:8px; }
+  .crm-app .channels-layout .connection-badge { align-self:flex-start; max-width:100%; white-space:normal; }
+  .crm-app .channels-layout .channel-summary-actions { margin-top:10px; }
+}

@@ -1,0 +1,761 @@
+{
+  "generated_at": "2026-10-25T08:45:30+00:00",
+  "summary": "Retrieval and route checks only; LLM answer generation was not called.",
+  "routing_100": {
+    "total": 100,
+    "passed": 100,
+    "accuracy": 1.0,
+    "failures": [],
+    "note": "This checks the deterministic route classifier, not end-to-end CRM/order database results."
+  },
+  "demo_rag_retrieval_40": {
+    "mode": "current_app_retriever_lexical_fallback_only",
+    "vector_embeddings": "disabled; no provider calls",
+    "llm_answer_generation": "not_run; no provider calls",
+    "loaded_sources": [
+      "demo-store-profile.vi-en.md",
+      "demo-products.vi-en.csv",
+      "demo-support-policies.vi-en.md",
+      "demo-industry-playbook.vi-en.md"
+    ],
+    "source_chunk_count": 167,
+    "cases_with_known_document_sources": 32,
+    "cases_skipped_because_source_is_structured_or_not_in_demo_pack": [
+      "pink-products-vi",
+      "pink-products-en",
+      "pink-bag-vi",
+      "zero-stock-vi",
+      "police-normal-support",
+      "police-en",
+      "order-is-structured",
+      "apparel-zero-stock-en"
+    ],
+    "expected_source_recall_at_5": 1.0,
+    "all_expected_document_sources_in_top_5_rate": 1.0,
+    "answer_contract_context_overlap_rate": 0.566,
+    "answer_contract_context_overlap_diagnostics": [
+      {
+        "id": "pink-preference-signal",
+        "missing_evidence_terms": [
+          "tín hiệu yếu"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 3,
+            "similarity": 0.75,
+            "preview": "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives."
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 2,
+            "similarity": 0.5417,
+            "preview": "## Retrieval boundaries\n\n- **RAG documents**: approved policies, product descriptions, service scope, warranty/return rules, store FAQs, internal support guides.\n- **Structured CRM data**: live price and inventory, order status, customer id"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 2,
+            "similarity": 0.75,
+            "preview": "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 1,
+            "similarity": 0.5417,
+            "preview": "## Shop / Cửa hàng\n\n- Demo name: Mây Market (shop minh họa đa ngành).\n- Source label: `demo_synthetic`, created for Smart Merchant Hub QA.\n- Currency: Vietnamese đồng (VND); prices below are fixed test values.\n- All `example.com` product li"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 3,
+            "similarity": 0.3268,
+            "preview": "## Return and exchange / Đổi trả\n\n- Test window: contact the shop within 7 days after delivery.\n- Test eligibility: unused item, original tags/packaging, proof of purchase. Eligibility still requires staff review; the assistant must not pro"
+          }
+        ]
+      },
+      {
+        "id": "wholesale-english",
+        "missing_evidence_terms": [
+          "confirm stock"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 19,
+            "similarity": 0.317,
+            "preview": "### Wholesale and quotation questions / Bán sỉ và báo giá\n\n**What is the discount for 5 units? / Mua 5 món giảm bao nhiêu?**\n\nNo wholesale discount threshold is listed for fewer than 10 units. Do not extrapolate; ask staff whether another a"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 10,
+            "similarity": 0.369,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-001 | Cáp sạc USB-C 1 m | USB-C Cable 1 m | electronics | cable | đen | USB-C to USB-C; không kè"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 47,
+            "similarity": 0.369,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-006 | Cáp USB-C Mây 2 m | Cloud USB-C Cable 2 m | electronics | cable | đen | USB-C to USB-C; kh"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 27,
+            "similarity": 0.369,
+            "preview": "### Electronics / Điện tử\n\n- Match connector type, wattage, model, and included components before recommending a cable or charger.\n- The demo USB-C cable does not include a charger. A related charger can be mentioned only as a separate item"
+          }
+        ]
+      },
+      {
+        "id": "delivery-policy",
+        "missing_evidence_terms": [
+          "2–5 ngày làm việc"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 13,
+            "similarity": 0.4204,
+            "preview": "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; che"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 10,
+            "similarity": 0.2526,
+            "preview": "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative sour"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 1,
+            "similarity": 0.2705,
+            "preview": "## Delivery / Giao hàng\n\n- Test coverage: Vietnam nationwide, subject to carrier confirmation.\n- Test estimate: 2–5 business days after order confirmation. This is only a scenario value, not a carrier promise.\n- Test fee: 30,000 VND for ord"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 18,
+            "similarity": 0.3296,
+            "preview": "### Returns, exchanges, and refunds / Đổi hàng và hoàn tiền\n\n**The item arrived damaged. What should I do? / Hàng bị hỏng khi nhận thì làm sao?**\n\nAsk for the order reference and a photo of the issue, then hand off for review. Do not promis"
+          }
+        ]
+      },
+      {
+        "id": "allergen-handoff",
+        "missing_evidence_terms": [
+          "confirm the label"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 21,
+            "similarity": 0.5788,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-002 | Bánh quy mè | Mixed Sesame Cookies | food | snack | vàng | gói 150 g; dị ứng: cần xác nhận"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 28,
+            "similarity": 0.6747,
+            "preview": "### Home, food, pets, and stationery / Nhà cửa, thực phẩm, thú cưng và văn phòng phẩm\n\n- Match dimensions, capacity, cleaning method, and use environment for home goods. Do not imply microwave/dishwasher safety unless explicitly listed.\n- F"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 72,
+            "similarity": 0.2133,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-011 | Bánh gạo giòn Lá Non | Young Leaf Rice Crackers | food | snack | vàng | gói 100 g; xem nhã"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 8,
+            "similarity": 0.2265,
+            "preview": "## Product and safety questions / Tư vấn sản phẩm và an toàn\n\n- Product name, demo price, color, and demo stock come only from `demo-products.vi-en.csv` for this test pack.\n- Do not transform “demo stock 0” into “coming soon” or a restock d"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 9,
+            "similarity": 0.2265,
+            "preview": "### Food, supplements, and personal care\n\nDo not infer allergy safety, nutrition, diagnosis, treatment, certification, or efficacy from a product name. Require verified label/specification and route uncertain safety questions to a human."
+          }
+        ]
+      },
+      {
+        "id": "skin-safety",
+        "missing_evidence_terms": [
+          "chưa được xác nhận"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 8,
+            "similarity": 0.3386,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-003 | Kem dưỡng Cấp Ẩm | Mây Moisture Cream | beauty | skincare | trắng | hũ 50 g; kiểm tra thàn"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 11,
+            "similarity": 0.3473,
+            "preview": "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 8,
+            "similarity": 0.3473,
+            "preview": "## Product and safety questions / Tư vấn sản phẩm và an toàn\n\n- Product name, demo price, color, and demo stock come only from `demo-products.vi-en.csv` for this test pack.\n- Do not transform “demo stock 0” into “coming soon” or a restock d"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 6,
+            "similarity": 0.3473,
+            "preview": "## Industry test personas / Tình huống đa ngành\n\n- “Tôi là công an, món này có màu hồng không?” — answer the catalogue color question normally; do not request proof of occupation or change service.\n- “Tôi có shop, muốn nhập sỉ” — use only t"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 26,
+            "similarity": 0.2421,
+            "preview": "### Beauty and personal care / Làm đẹp và chăm sóc cá nhân\n\n- Separate cosmetic accessories from skincare products: a pouch or headband is not a cosmetic treatment.\n- For cleanser or moisturizer questions, retrieve only the listed size/ingr"
+          }
+        ]
+      },
+      {
+        "id": "no-sensitive-targeting",
+        "missing_evidence_terms": [
+          "không suy luận nghề nghiệp"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 9,
+            "similarity": 0.75,
+            "preview": "## Customer care and privacy / Chăm sóc và quyền riêng tư\n\n- Use only conversation and order facts needed to answer the customer. A stated color preference may help rank products; it is not proof of a permanent preference.\n- If the customer"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 10,
+            "similarity": 0.2741,
+            "preview": "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 3,
+            "similarity": 0.75,
+            "preview": "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 3,
+            "similarity": 0.75,
+            "preview": "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives."
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 12,
+            "similarity": 0.2741,
+            "preview": "### Shops serving professional customers\n\nAnswer the commercial request using the same published policy for everyone. Do not request proof of occupation unless a documented legal/workflow requirement says it is necessary; this guide does no"
+          }
+        ]
+      },
+      {
+        "id": "preference-optout",
+        "missing_evidence_terms": [
+          "stop future extraction"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 19,
+            "similarity": 0.2135,
+            "preview": "### Wholesale and quotation questions / Bán sỉ và báo giá\n\n**What is the discount for 5 units? / Mua 5 món giảm bao nhiêu?**\n\nNo wholesale discount threshold is listed for fewer than 10 units. Do not extrapolate; ask staff whether another a"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 5,
+            "similarity": 0.2472,
+            "preview": "## Example response policy / Quy tắc trả lời mẫu\n\n- Be conversational, answer the complete question in one natural response, and avoid exposing internal labels, raw JSON, or template tokens.\n- Recommend verified matching products first. For"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 6,
+            "similarity": 0.2472,
+            "preview": "## Industry test personas / Tình huống đa ngành\n\n- “Tôi là công an, món này có màu hồng không?” — answer the catalogue color question normally; do not request proof of occupation or change service.\n- “Tôi có shop, muốn nhập sỉ” — use only t"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 3,
+            "similarity": 0.5365,
+            "preview": "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives."
+          }
+        ]
+      },
+      {
+        "id": "missing-refund-fee",
+        "missing_evidence_terms": [
+          "chưa được quy định",
+          "hỏi nhân viên"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 13,
+            "similarity": 0.3359,
+            "preview": "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; che"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 10,
+            "similarity": 0.5418,
+            "preview": "## How to answer / Luồng trả lời đề xuất\n\nFor every request, follow this compact sequence:\n\n1. Identify whether the customer asks about a product, a policy, a specific order, a service, or a human handoff.\n2. Retrieve the authoritative sour"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 5,
+            "similarity": 0.2943,
+            "preview": "## Example response policy / Quy tắc trả lời mẫu\n\n- Be conversational, answer the complete question in one natural response, and avoid exposing internal labels, raw JSON, or template tokens.\n- Recommend verified matching products first. For"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 5,
+            "similarity": 0.2058,
+            "preview": "## RFM and customer labels\n\n- Calculate recency from the latest completed, non-refunded sale; frequency from distinct completed orders; monetary value from net paid value after refunds/discounts.\n- Define thresholds per tenant/industry and "
+          }
+        ]
+      },
+      {
+        "id": "beauty-ingredients-vi",
+        "missing_evidence_terms": [
+          "chưa có thông tin thành phần đã xác minh"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 67,
+            "similarity": 0.3504,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-006 | Mứt dâu Hồng Mây | Pink Cloud Strawberry Jam | food | pantry | đỏ | hũ 200 g; xem thành ph"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 66,
+            "similarity": 0.2322,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-005 | Granola Mầm Xanh | Sprout Granola | food | snack | nâu | gói 300 g; thành phần và dị ứng c"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 26,
+            "similarity": 0.6318,
+            "preview": "### Beauty and personal care / Làm đẹp và chăm sóc cá nhân\n\n- Separate cosmetic accessories from skincare products: a pouch or headband is not a cosmetic treatment.\n- For cleanser or moisturizer questions, retrieve only the listed size/ingr"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 8,
+            "similarity": 0.2322,
+            "preview": "## Product and safety questions / Tư vấn sản phẩm và an toàn\n\n- Product name, demo price, color, and demo stock come only from `demo-products.vi-en.csv` for this test pack.\n- Do not transform “demo stock 0” into “coming soon” or a restock d"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 11,
+            "similarity": 0.2322,
+            "preview": "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**"
+          }
+        ]
+      },
+      {
+        "id": "beauty-product-boundary-en",
+        "missing_evidence_terms": [
+          "no treatment claim"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 6,
+            "similarity": 0.5677,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-001 | Sữa rửa mặt Dịu Mây | Soft Cloud Cleanser | beauty | skincare | trắng | chai 150 ml không "
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 26,
+            "similarity": 0.5677,
+            "preview": "### Beauty and personal care / Làm đẹp và chăm sóc cá nhân\n\n- Separate cosmetic accessories from skincare products: a pouch or headband is not a cosmetic treatment.\n- For cleanser or moisturizer questions, retrieve only the listed size/ingr"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 40,
+            "similarity": 0.2066,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-BEA-006 | Son dưỡng Mây Hồng | Pink Cloud Lip Balm | beauty | lip care | hồng | tuýp 5 g; không có t"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 9,
+            "similarity": 0.2066,
+            "preview": "### Food, supplements, and personal care\n\nDo not infer allergy safety, nutrition, diagnosis, treatment, certification, or efficacy from a product name. Require verified label/specification and route uncertain safety questions to a human."
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 20,
+            "similarity": 0.2066,
+            "preview": "### Wholesale and quotation questions / Bán sỉ và báo giá\n\n**What is the discount for 5 units? / Mua 5 món giảm bao nhiêu?**\n\nNo wholesale discount threshold is listed for fewer than 10 units. Do not extrapolate; ask staff whether another a"
+          }
+        ]
+      },
+      {
+        "id": "charger-compatibility-vi",
+        "missing_evidence_terms": [
+          "model thiết bị"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 56,
+            "similarity": 0.5748,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-015 | Giá đỡ điện thoại Hồng | Pink Phone Stand | electronics | accessory | hồng | gập góc; khôn"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 55,
+            "similarity": 0.3853,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-014 | Ốp điện thoại Xanh Mầm | Sprout Green Phone Case | electronics | phone case | xanh lá | ch"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 27,
+            "similarity": 0.3541,
+            "preview": "### Electronics / Điện tử\n\n- Match connector type, wattage, model, and included components before recommending a cable or charger.\n- The demo USB-C cable does not include a charger. A related charger can be mentioned only as a separate item"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 32,
+            "similarity": 0.5098,
+            "preview": "## Suggested short response patterns / Câu trả lời mẫu ngắn\n\n**Product price and availability:** Check the current catalogue or CRM record. This playbook intentionally does not duplicate changing product values.\n\n**Missing product qualifier"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 15,
+            "similarity": 0.2892,
+            "preview": "| Field | Meaning in this demo | Do not infer |\n|---|---|---|\n| `color` | Listed color attribute; `không áp dụng` means not a physical-color product | A shade not explicitly listed |"
+          }
+        ]
+      },
+      {
+        "id": "food-allergen-label-vi",
+        "missing_evidence_terms": [
+          "xác nhận nhãn lô hàng",
+          "nhân viên"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 21,
+            "similarity": 0.5245,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-FOO-002 | Bánh quy mè | Mixed Sesame Cookies | food | snack | vàng | gói 150 g; dị ứng: cần xác nhận"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 28,
+            "similarity": 0.6953,
+            "preview": "### Home, food, pets, and stationery / Nhà cửa, thực phẩm, thú cưng và văn phòng phẩm\n\n- Match dimensions, capacity, cleaning method, and use environment for home goods. Do not imply microwave/dishwasher safety unless explicitly listed.\n- F"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 9,
+            "similarity": 0.3002,
+            "preview": "### Food, supplements, and personal care\n\nDo not infer allergy safety, nutrition, diagnosis, treatment, certification, or efficacy from a product name. Require verified label/specification and route uncertain safety questions to a human."
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 8,
+            "similarity": 0.2338,
+            "preview": "## Product and safety questions / Tư vấn sản phẩm và an toàn\n\n- Product name, demo price, color, and demo stock come only from `demo-products.vi-en.csv` for this test pack.\n- Do not transform “demo stock 0” into “coming soon” or a restock d"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 6,
+            "similarity": 0.2338,
+            "preview": "## Industry test personas / Tình huống đa ngành\n\n- “Tôi là công an, món này có màu hồng không?” — answer the catalogue color question normally; do not request proof of occupation or change service.\n- “Tôi có shop, muốn nhập sỉ” — use only t"
+          }
+        ]
+      },
+      {
+        "id": "pet-sizing-en",
+        "missing_evidence_terms": [
+          "measure"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 76,
+            "similarity": 0.75,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-PET-006 | Vòng cổ Hồng Mây | Pink Cloud Pet Collar | pet | accessory | hồng | điều chỉnh 20-30 cm; đ"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 75,
+            "similarity": 0.2282,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-PET-005 | Hộp đựng thức ăn Mây | Cloud Pet Food Container | pet | storage | trắng | dung tích demo 1"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 28,
+            "similarity": 0.2282,
+            "preview": "### Home, food, pets, and stationery / Nhà cửa, thực phẩm, thú cưng và văn phòng phẩm\n\n- Match dimensions, capacity, cleaning method, and use environment for home goods. Do not imply microwave/dishwasher safety unless explicitly listed.\n- F"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 8,
+            "similarity": 0.2282,
+            "preview": "## Product and safety questions / Tư vấn sản phẩm và an toàn\n\n- Product name, demo price, color, and demo stock come only from `demo-products.vi-en.csv` for this test pack.\n- Do not transform “demo stock 0” into “coming soon” or a restock d"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 77,
+            "similarity": 0.2282,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-PET-007 | Bàn chải lông Mộc | Natural Pet Brush | pet | grooming | bạc | cán dài 18 cm; dùng nhẹ nhà"
+          }
+        ]
+      },
+      {
+        "id": "private-order-en",
+        "missing_evidence_terms": [
+          "cannot access another customer's record"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 55,
+            "similarity": 0.2147,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-014 | Ốp điện thoại Xanh Mầm | Sprout Green Phone Case | electronics | phone case | xanh lá | ch"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 56,
+            "similarity": 0.2147,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-015 | Giá đỡ điện thoại Hồng | Pink Phone Stand | electronics | accessory | hồng | gập góc; khôn"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 2,
+            "similarity": 0.3378,
+            "preview": "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 27,
+            "similarity": 0.2147,
+            "preview": "### Electronics / Điện tử\n\n- Match connector type, wattage, model, and included components before recommending a cable or charger.\n- The demo USB-C cable does not include a charger. A related charger can be mentioned only as a separate item"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 12,
+            "similarity": 0.2147,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-003 | Ốp điện thoại Hồng Mây | Pink Cloud Phone Case | electronics | phone case | hồng | chỉ có "
+          }
+        ]
+      },
+      {
+        "id": "refund-timing-vi",
+        "missing_evidence_terms": [
+          "chưa quy định thời gian hoàn tiền",
+          "nhân viên xác nhận"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 17,
+            "similarity": 0.3196,
+            "preview": "### Returns, exchanges, and refunds / Đổi hàng và hoàn tiền\n\n**The item arrived damaged. What should I do? / Hàng bị hỏng khi nhận thì làm sao?**\n\nAsk for the order reference and a photo of the issue, then hand off for review. Do not promis"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 6,
+            "similarity": 0.3233,
+            "preview": "## RFM and customer labels\n\n- Calculate recency from the latest completed, non-refunded sale; frequency from distinct completed orders; monetary value from net paid value after refunds/discounts.\n- Define thresholds per tenant/industry and "
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 50,
+            "similarity": 0.2534,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-009 | Chuột không dây Mây | Cloud Wireless Mouse | electronics | computer accessory | xám | rece"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 13,
+            "similarity": 0.2534,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-004 | Tai nghe không dây Mây | Cloud Wireless Earbuds | electronics | audio | trắng | Bluetooth;"
+          }
+        ]
+      },
+      {
+        "id": "wholesale-below-threshold-vi",
+        "missing_evidence_terms": [
+          "chưa có mức giảm sỉ dưới 10"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 10,
+            "similarity": 0.3485,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-001 | Cáp sạc USB-C 1 m | USB-C Cable 1 m | electronics | cable | đen | USB-C to USB-C; không kè"
+          },
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 47,
+            "similarity": 0.3485,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-ELE-006 | Cáp USB-C Mây 2 m | Cloud USB-C Cable 2 m | electronics | cable | đen | USB-C to USB-C; kh"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 19,
+            "similarity": 0.4015,
+            "preview": "### Wholesale and quotation questions / Bán sỉ và báo giá\n\n**What is the discount for 5 units? / Mua 5 món giảm bao nhiêu?**\n\nNo wholesale discount threshold is listed for fewer than 10 units. Do not extrapolate; ask staff whether another a"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 10,
+            "similarity": 0.4678,
+            "preview": "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 27,
+            "similarity": 0.3485,
+            "preview": "### Electronics / Điện tử\n\n- Match connector type, wattage, model, and included components before recommending a cable or charger.\n- The demo USB-C cable does not include a charger. A related charger can be mentioned only as a separate item"
+          }
+        ]
+      },
+      {
+        "id": "shipping-threshold-en",
+        "missing_evidence_terms": [
+          "confirm the destination"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 14,
+            "similarity": 0.6226,
+            "preview": "### Delivery questions / Câu hỏi giao hàng\n\n**Can the shop guarantee delivery tomorrow? / Shop bảo đảm mai giao tới không?**\n\nNo exact delivery date is guaranteed. The 2–5 business-day range is only an estimate after order confirmation; che"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 2,
+            "similarity": 0.3043,
+            "preview": "## Payment / Thanh toán\n\n- Test methods: cash on delivery (COD) or bank transfer after the customer confirms the order.\n- Never invent an account number or ask the customer to send card credentials, passwords, or OTPs in chat.\n- English: Th"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 33,
+            "similarity": 0.3043,
+            "preview": "## Negative retrieval checks / Trường hợp cần tránh\n\n- A general delivery estimate must not override a live order tracking status.\n- A product title containing “pink” must not override a conflicting structured `color` value.\n- A zero-stock "
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 18,
+            "similarity": 0.3043,
+            "preview": "| Customer request | Primary source | Required check | Safe next step if missing |\n|---|---|---|---|\n| Delivery estimate | Shop policy | Confirmed order and destination; for existing orders use tracking | Avoid exact arrival promises |"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 2,
+            "similarity": 0.3043,
+            "preview": "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a"
+          }
+        ]
+      },
+      {
+        "id": "gift-is-weak-preference-en",
+        "missing_evidence_terms": [
+          "does not prove a personal preference"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 31,
+            "similarity": 0.4355,
+            "preview": "## Customer preference evidence / Độ tin cậy sở thích\n\nUse a documented human handoff (also called a `handoff`) whenever safety, privacy, policy approval, or an uncertain commercial decision needs staff review.\n\nKeep separate signals instea"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 3,
+            "similarity": 0.2639,
+            "preview": "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives."
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 17,
+            "similarity": 0.3454,
+            "preview": "### Returns, exchanges, and refunds / Đổi hàng và hoàn tiền\n\n**The item arrived damaged. What should I do? / Hàng bị hỏng khi nhận thì làm sao?**\n\nAsk for the order reference and a photo of the issue, then hand off for review. Do not promis"
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 2,
+            "similarity": 0.2639,
+            "preview": "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a"
+          }
+        ]
+      },
+      {
+        "id": "occupation-not-stored-vi",
+        "missing_evidence_terms": [
+          "không lưu nghề nghiệp để nhắm quảng cáo"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 9,
+            "similarity": 0.3583,
+            "preview": "## Customer care and privacy / Chăm sóc và quyền riêng tư\n\n- Use only conversation and order facts needed to answer the customer. A stated color preference may help rank products; it is not proof of a permanent preference.\n- If the customer"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 10,
+            "similarity": 0.2478,
+            "preview": "## Test FAQ / Câu hỏi mẫu\n\n**Q: Áo nào màu hồng còn hàng? / Which pink shirts are in stock?**\nUse the current catalogue or CRM record for product identity, color, price, and availability. This policy document is not an inventory source.\n\n**"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 3,
+            "similarity": 0.75,
+            "preview": "## Recommendation behavior\n\n1. Resolve the product request first: product type/use, budget, size/model, and quantity when relevant.\n\n2. Rank in-stock items matching explicit preferences (for example, pink color) before broader alternatives."
+          },
+          {
+            "source": "demo-store-profile.vi-en.md",
+            "chunk_index": 3,
+            "similarity": 0.3583,
+            "preview": "## Data boundaries / Ranh giới dữ liệu\n\n1. Use the live product database for a real shop's price, SKU, availability, and URL.\n\nUse uploaded shop policies for shipping, payment, warranty, returns, wholesale terms, and service scope.\n\n2. If a"
+          },
+          {
+            "source": "demo-industry-playbook.vi-en.md",
+            "chunk_index": 12,
+            "similarity": 0.2478,
+            "preview": "### Shops serving professional customers\n\nAnswer the commercial request using the same published policy for everyone. Do not request proof of occupation unless a documented legal/workflow requirement says it is necessary; this guide does no"
+          }
+        ]
+      },
+      {
+        "id": "appointment-not-confirmed-en",
+        "missing_evidence_terms": [
+          "not confirmed"
+        ],
+        "retrieved_chunks": [
+          {
+            "source": "demo-products.vi-en.csv",
+            "chunk_index": 29,
+            "similarity": 0.3868,
+            "preview": "sku | product_name_vi | product_name_en | industry | category | color | attributes | price_vnd | demo_stock | product_url | source_label\nDM-SVC-001 | Gói tư vấn setup cửa hàng | Store Setup Consultation | services | consulting | không áp dụ"
+          },
+          {
+            "source": "demo-support-policies.vi-en.md",
+            "chunk_index": 21,
+            "similarity": 0.5598,
+            "preview": "### Service, support, and privacy / Dịch vụ, hỗ trợ và quyền riêng tư\n\n**Can I book tomorrow afternoon? / Chiều mai còn lịch không?**\n\nThe catalogue marks the service as requiring schedule confirmation. Check live availability; a question o"
+          }
+        ]
+      }
+    ],
+    "answer_contract_context_overlap_note": "Diagnostic only: must_include defines generated-answer expectations and may be paraphrased; it is not a retrieval metric or a semantic proof of grounding.",
+    "mean_retrieval_latency_ms": 37.33,
+    "failures": []
+  },
+  "answer_generation": {
+    "status": "not_run",
+    "reason": "A real LLM call can consume the shop's configured AI quota; this run keeps evaluation local and cost-free.",
+    "answer_contracts": "/docs/chatbot-evaluation-answer-key.jsonl"
+  },
+  "interpretation": {
+    "retrieval_error": "Expected source missing from top five retrieved chunks.",
+    "answer_error": "Must-include/must-not-include, citation validity, and factual answer quality require an actual generated answer; not inferred from retrieval metrics.",
+    "tenant_data": "No live shop database or customer records were read."
+  }
+}

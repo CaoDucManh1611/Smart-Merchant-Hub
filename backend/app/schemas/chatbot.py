@@ -6,7 +6,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+from app.schemas.business_profile import BusinessProfile
+
+
 class ChatbotConfigUpdate(BaseModel):
+    business_profile: BusinessProfile | None = None
     name: str | None = Field(default=None, min_length=1, max_length=120)
     enabled: bool | None = None
     handoff_enabled: bool | None = None
@@ -59,6 +63,7 @@ class ChatbotConfigUpdate(BaseModel):
 
 
 class ChatbotConfigOut(BaseModel):
+    business_profile: BusinessProfile = Field(default_factory=BusinessProfile)
     id: int
     business_id: int
     name: str

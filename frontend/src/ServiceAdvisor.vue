@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue';
 import { locale, formatMoney } from './i18n.js';
 
 const props = defineProps({ apiBase: { type: String, default: '/api' }, darkMode: Boolean });
@@ -7,6 +7,31 @@ const emit = defineEmits(['plans']);
 const open = ref(false), messages = ref([]), question = ref(''), sending = ref(false), error = ref('');
 const input = ref(null), log = ref(null), launcher = ref(null);
 const plans = ref([]);
+const launcherPosition = ref(null);
+let drag = null, dragged = false;
+function clampPosition(x, y) {
+  const size = launcher.value?.getBoundingClientRect();
+  return { x: Math.max(8, Math.min(x, window.innerWidth - (size?.width || 62) - 8)), y: Math.max(8, Math.min(y, window.innerHeight - (size?.height || 62) - 8)) };
+}
+function startDrag(event) {
+  if (open.value || !event.isPrimary || event.button !== 0) return;
+  const box = launcher.value.getBoundingClientRect();
+  dragged = false;
+  drag = { id:event.pointerId, x:event.clientX, y:event.clientY, left:box.left, top:box.top };
+  event.currentTarget.setPointerCapture(event.pointerId);
+}
+function moveDrag(event) {
+  if (!drag || event.pointerId !== drag.id) return;
+  const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+  if (!dragged && Math.hypot(dx, dy) < 6) return;
+  dragged = true;
+  dismissGreeting();
+  launcherPosition.value = clampPosition(drag.left + dx, drag.top + dy);
+}
+function endDrag() { drag = null; }
+function clickLauncher(event) { if (dragged && event.detail !== 0) { dragged = false; return; } toggle(); }
+function resizeLauncher() { if (launcherPosition.value) launcherPosition.value = clampPosition(launcherPosition.value.x, launcherPosition.value.y); }
+onMounted(() => window.addEventListener('resize', resizeLauncher));
 const greetingDismissed = ref((() => { try { return sessionStorage.getItem('smh-advisor-greeting-dismissed') === '1'; } catch { return false; } })());
 function dismissGreeting() {
   greetingDismissed.value = true;
@@ -44,7 +69,7 @@ async function send(suggestion) {
   } finally { clearTimeout(timeout); sending.value = false; controller = null; scrollToLatest(); }
 }
 function openPlans() { emit('plans'); toggle(); }
-onBeforeUnmount(() => controller?.abort());
+onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('resize', resizeLauncher); });
 </script>
 
 <template>
@@ -69,7 +94,7 @@ onBeforeUnmount(() => controller?.abort());
       <button type="button" class="advisor-greeting-close" :aria-label="copy('Ẩn lời chào', 'Dismiss welcome')" @click="dismissGreeting"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
       <button type="button" class="advisor-greeting-message" @click="toggle"><strong>{{ copy('Chào bạn, mình có thể giúp gì?', 'Hi, how can I help?') }}</strong><span>{{ copy('Bạn đang tìm gói phù hợp cho shop? Cùng mình chọn nhé.', 'Looking for the right plan for your shop? Let’s find it together.') }}</span></button>
     </aside>
-    <button ref="launcher" type="button" class="advisor-launcher" :aria-label="copy(open ? 'Đóng tư vấn' : 'Tư vấn chọn gói', open ? 'Close advisor' : 'Help choosing a plan')" :aria-expanded="open" aria-controls="service-advisor-panel" @click="toggle"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-if="open" d="m6 6 12 12M6 18 18 6"/><path v-else d="M4 4h16v12H9l-5 4zM8 8h8M8 12h5" /></svg></button>
+    <button ref="launcher" type="button" class="advisor-launcher" :style="!open && launcherPosition ? { position:'fixed', left:launcherPosition.x + 'px', top:launcherPosition.y + 'px' } : undefined" :aria-label="copy(open ? 'Đóng tư vấn' : 'Tư vấn chọn gói', open ? 'Close advisor' : 'Help choosing a plan')" :aria-expanded="open" aria-controls="service-advisor-panel" @pointerdown="startDrag" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="endDrag" @lostpointercapture="endDrag" @click="clickLauncher"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-if="open" d="m6 6 12 12M6 18 18 6"/><path v-else d="M4 4h16v12H9l-5 4zM8 8h8M8 12h5" /></svg></button>
   </div>
 </template>
 
@@ -80,6 +105,7 @@ button,textarea { font:inherit; }
 button { cursor:pointer; min-height:44px; }
 button:disabled { opacity:.55; cursor:wait; }
 .advisor-launcher { display:grid; place-items:center; width:62px; height:62px; margin-left:auto; border:1px solid var(--advisor-line); border-radius:50%; padding:0; background:var(--advisor-accent); color:var(--advisor-bg); box-shadow:0 6px 22px #0003; }
+.advisor-launcher { touch-action:none; user-select:none; }
 .advisor-launcher svg { width:27px; height:27px; fill:none; stroke:currentColor; stroke-width:1.6; }
 .advisor-panel { display:flex; flex-direction:column; width:min(420px,calc(100vw - 32px)); height:min(660px,calc(100dvh - 110px)); margin-bottom:12px; overflow:hidden; border:1px solid var(--advisor-line); border-radius:20px; background:var(--advisor-bg); box-shadow:0 12px 50px #0003; font-size:14px; line-height:1.6; }
 header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:16px; background:var(--advisor-soft); border-bottom:1px solid var(--advisor-line); }
@@ -120,4 +146,5 @@ footer small { display:block; color:var(--advisor-muted); font-size:11px; }
 .advisor-greeting-message strong { font-size:14px; font-weight:650; }
 .advisor-greeting-message span { font-size:13px; color:var(--advisor-muted); }
 @media(max-width:600px) { .advisor-launcher { width:58px; height:58px; } }
+@media(max-width:480px) { .advisor-greeting { display:none; } .advisor-launcher { width:48px; height:48px; } .advisor-launcher svg { width:23px; height:23px; } }
 </style>

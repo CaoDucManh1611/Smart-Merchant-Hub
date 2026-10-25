@@ -208,6 +208,7 @@ class CollectionFlowResult:
     started: bool = False
     completed: bool = False
     draft_order_id: int | None = None
+    metadata: dict | None = None
 
 
 def _now() -> datetime:
@@ -718,6 +719,9 @@ _ORDER_FORM_LABELS = {
     "phone": "phone",
     "phone number": "phone",
     "mobile": "phone",
+    "ngay vao": "move_in",
+    "ngay nhan phong": "move_in",
+    "move in": "move_in",
     "email": "email",
     "thu dien tu": "email",
     "dia chi nhan hang": "address",
@@ -881,6 +885,8 @@ def _parse_order_form_details(
         # same full form again after every batch.
         if not fallback_used and required_fields:
             field = fallback_field if fallback_field in required else required_fields[0]
+            if field in values:
+                continue
             value = _extract_value(field, line)
             if value:
                 found_form = True
@@ -2021,6 +2027,10 @@ def advance_customer_collection(
     ).first()
     if customer is None:
         return None
+    from app.services.customer_order_service import customer_context_reply
+    contextual_reply = customer_context_reply(db, business_id, conversation_id, text) if conversation_id else None
+    if contextual_reply:
+        return CollectionFlowResult(session_id=0, status="customer_context", current_field=None, prompt=contextual_reply)
 
     # Stock questions belong to the assistant's factual catalogue route. In
     # particular, do not let "còn hàng không?" decline an open quote or turn
@@ -2043,6 +2053,13 @@ def advance_customer_collection(
         return history_reply
 
     session = _get_session(db, business_id, customer_id, conversation_id)
+    from app.services.rental_collection import advance_rental_request
+    rental_result = advance_rental_request(
+        db, business_id=business_id, customer_id=customer_id,
+        conversation_id=conversation_id, source_channel=source_channel, text=text, session=session,
+    )
+    if rental_result is not None:
+        return rental_result
     if session is None:
         combo_reply = combo_price_comparison_reply(
             db,

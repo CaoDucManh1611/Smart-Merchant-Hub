@@ -741,3 +741,35 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) :is(.business-hours-layout
     min-height: 36px;
   }
 }
+@media(max-width:600px) {
+  .crm-app:not(.platform-admin-workspace) .channels-layout .channel-summary-card { min-height:0; height:auto; gap:8px; }
+  .crm-app:not(.platform-admin-workspace) .channels-layout .channel-summary-actions { margin-top:4px; }
+  .crm-app:not(.platform-admin-workspace) .channels-layout .channel-summary-card .settings-card-header { margin:0; padding-bottom:8px; gap:6px; }
+  .crm-app:not(.platform-admin-workspace) .channels-layout .channel-summary-card .settings-muted { margin:0; }
+}
+@media(max-width:600px) {
+  .crm-app .channel-modal-backdrop { padding:8px; }
+  .crm-app .channel-modal { width:100%; max-height:calc(100dvh - 16px); padding:12px; gap:10px; border-radius:14px; box-sizing:border-box; }
+  .crm-app .channel-modal > .settings-card-header { display:block; padding:12px 48px 12px 12px; border-radius:10px; }
+  .crm-app .channel-modal > .settings-card-header > .quick-action-close { position:absolute; right:6px; top:6px; width:36px; height:36px; margin:0; }
+  .crm-app .channel-modal-heading { display:flex; align-items:flex-start; gap:9px; }
+  .crm-app .channel-modal-mark { width:32px; height:32px; flex:0 0 32px; }
+  .crm-app .channel-modal-title-copy { min-width:0; }
+  .crm-app .channel-modal-title-copy h2 { font-size:20px; line-height:1.3; }
+  .crm-app .channel-modal-title-copy p { font-size:12px; line-height:1.5; margin-top:6px; }
+  .crm-app .channel-modal .meta-business-suite-bridge-card { margin:0; padding:12px; border-radius:10px; }
+  .crm-app .channel-modal :is(.meta-bridge-heading,.bot-provider-heading) { display:grid; grid-template-columns:36px minmax(0,1fr); gap:8px; margin:0 0 12px; }
+  .crm-app .channel-modal :is(.meta-bridge-heading,.bot-provider-heading) > div { grid-column:2; min-width:0; }
+  .crm-app .channel-modal :is(.meta-bridge-heading,.bot-provider-heading) > .connection-badge { grid-column:2; grid-row:auto; justify-self:start; }
+  .crm-app .channel-modal :is(.meta-bridge-heading,.bot-provider-heading) p { font-size:13px; line-height:1.5; }
+  .crm-app .channel-modal .card-eyebrow { letter-spacing:.06em; line-height:1.5; }
+}
+@media(max-width:600px) {
+  .crm-app .channel-modal :is(.meta-bridge-heading,.bot-provider-heading) > .connection-badge { width:max-content; max-width:100%; white-space:nowrap; justify-self:start; }
+}
+@media(max-width:600px) {
+  .crm-app:not(.platform-admin-workspace) .channel-modal .meta-bridge-auto-badge { grid-column:2; grid-row:2; justify-self:start; width:max-content; max-width:100%; margin:0; white-space:nowrap; }
+  .crm-app:not(.platform-admin-workspace) .channel-modal :is(.meta-bridge-icon,.channel-modal-mark,.bot-provider-heading > .channel-card-icon) { width:36px; height:36px; min-width:36px; flex-basis:36px; align-self:start; animation:none; transform:none; border-radius:10px; }
+  .crm-app:not(.platform-admin-workspace) .channel-modal :is(.meta-bridge-icon,.channel-modal-mark) img { width:26px; height:26px; object-fit:contain; }
+  .crm-app .channel-modal-heading { align-items:flex-start; }
+}

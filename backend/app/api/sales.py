@@ -21,6 +21,7 @@ from app.models.sales import Order, OrderItem, Product
 from app.models.order_event import OrderEvent
 from app.models.audit_log import AuditLog
 from app.models.business import User
+from app.schemas.payment import PaymentRequestUpdate
 from app.schemas.sales import (
     OrderCreate,
     OrderLogisticsUpdate,
@@ -310,7 +311,7 @@ def list_products(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
-    query = db.query(Product).filter(Product.business_id == tenant.business_id)
+    query = db.query(Product).filter(Product.business_id == tenant.business_id, Product.status != "deleted")
     if status:
         query = query.filter(Product.status == status)
     total = query.count()
@@ -732,6 +733,29 @@ def update_product(
     return product
 
 
+@router.delete("/products", dependencies=[Depends(require_write_access)])
+def delete_all_products(
+    confirmation: str = Query(...),
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    actor: User | None = Depends(require_write_access),
+):
+    if confirmation != "XÁC NHẬN":
+        raise HTTPException(status_code=422, detail="Nhập đúng XÁC NHẬN để xóa tất cả sản phẩm.")
+    products = db.query(Product).filter(
+        Product.business_id == tenant.business_id, Product.status != "deleted",
+    ).with_for_update().all()
+    for product in products:
+        # Preserve historical order/stock references and free the original SKU for reimport.
+        product.sku = f"deleted-{product.id}"
+        product.status = "deleted"
+    record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None,
+                 action="delete_all", resource_type="product", resource_id="all",
+                 metadata={"count": len(products)})
+    db.commit()
+    return {"deleted": len(products)}
+
+
 @router.delete("/products/{product_id}", status_code=204, dependencies=[Depends(require_write_access)])
 def delete_product(
     product_id: int,
@@ -1102,6 +1126,12 @@ def update_order(
     values = payload.model_dump(exclude_unset=True)
     if "status" in values:
         raise HTTPException(status_code=409, detail="Trạng thái đơn phải đổi qua endpoint transition để cập nhật tồn kho.")
+    if "metadata" in values and (order.metadata_ or {}).get("payment_flow")=="prepay_then_confirm":
+        protected={"payment_flow","payment_request","base_order_amount","payment_method","appointment_id","collection_session_id"}
+        incoming=values["metadata"] or {}
+        if any(key in incoming and incoming[key]!=(order.metadata_ or {}).get(key) for key in protected):
+            raise HTTPException(409,"Khoản thu phải cập nhật qua bảng kê, không sửa trong metadata.")
+        values["metadata"]={**(order.metadata_ or {}),**incoming}
     for field, value in values.items():
         setattr(order, "metadata_" if field == "metadata" else field, value)
     db.commit()
@@ -1109,6 +1139,19 @@ def update_order(
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="update", resource_type="sales_order", resource_id=str(order.id), metadata={"fields": list(payload.model_dump(exclude_unset=True))})
         db.commit()
     return _order_out(_order(db, order_id, tenant))
+
+
+@router.put("/orders/{order_id}/payment-request",response_model=OrderOut,dependencies=[Depends(require_write_access)])
+def update_payment_request(order_id:int,payload: "PaymentRequestUpdate",db:Session=Depends(get_tenant_db),
+    tenant:TenantContext=Depends(get_tenant_context),actor:User|None=Depends(require_write_access)):
+    from app.services.order_payment_request import publish_payment_request
+    order=db.query(Order).filter(Order.id==order_id,Order.business_id==tenant.business_id).with_for_update().first()
+    if order is None: raise HTTPException(404,"Đơn không tồn tại.")
+    try: publish_payment_request(order,[line.model_dump() for line in payload.lines],payload.label)
+    except ValueError as error: raise HTTPException(409,str(error)) from error
+    record_audit(db,business_id=tenant.business_id,user_id=actor.id if actor else None,action="publish_payment_request",resource_type="sales_order",resource_id=order.id)
+    db.commit()
+    return _order_out(_order(db,order.id,tenant))
 
 
 @router.post("/orders/{order_id}/transition", response_model=OrderOut, dependencies=[Depends(require_write_access)])

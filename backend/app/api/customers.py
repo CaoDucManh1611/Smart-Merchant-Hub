@@ -537,7 +537,7 @@ def list_duplicate_suggestions(
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
     customer_id: int | None = Query(default=None, ge=1),
-    threshold: float = Query(default=0.55, ge=0.0, le=1.0),
+    threshold: float = Query(default=0.35, ge=0.0, le=1.0),
     limit: int = Query(default=50, ge=1, le=200),
 ):
     items = find_duplicate_suggestions(

@@ -1640,6 +1640,13 @@ def process_and_save_message(
                 },
             )
             db.commit()
+        else:
+            # Keep unknown source time NULL, but surface a newly imported thread in the inbox.
+            db.execute(
+                text("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = :conversation_id"),
+                {"conversation_id": conversation_id},
+            )
+            db.commit()
         return saved_message
 
     # Every outbound workflow spawned by this inbound event receives a
@@ -1859,8 +1866,8 @@ def process_and_save_message(
             logger.warning("CSAT response trigger failed", exc_info=True)
 
     # Complaint and explicit human requests are routed before the normal
-    # collection/RAG flow. This prevents the bot from continuing after a
-    # human takeover and creates one auditable support ticket.
+    # collection/RAG flow so this turn creates one auditable support ticket
+    # and sends the support acknowledgement instead of a second RAG reply.
     if message.get("content") and business_id is not None:
         try:
             from app.services.chatbot_agent import escalation_reply, route_escalation

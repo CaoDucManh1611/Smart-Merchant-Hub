@@ -13,12 +13,12 @@ _CITATION = re.compile(r"\[(?:Nguồn|Source)\s+(\d+)\]", re.IGNORECASE)
 
 def customer_facing_answer(answer: str) -> str:
     """Hide verified RAG source markers and Markdown from channel messages."""
-    without_citations = _CITATION.sub("", answer or "")
+    without_citations = re.sub(r"\[(?:Nguồn|Source)\s+\d+(?:\s*[,;]\s*\d+)*\]", "", answer or "", flags=re.IGNORECASE)
     without_markdown = without_citations.replace("***", "").replace("**", "")
-    return "\n".join(line.strip() for line in without_markdown.splitlines()).strip()
+    return "\n".join(re.sub(r"[ \t]+([.,;:!?])", r"\1", line.strip()) for line in without_markdown.splitlines()).strip()
 _MONEY = re.compile(
     r"(?<!\w)(?:(?P<prefix>USD|VND|\$|₫)\s*(?P<prefix_amount>\d+(?:[., ]\d+)*)|"
-    r"(?P<suffix_amount>\d+(?:[., ]\d+)*)\s*(?P<suffix>đồng|VND|USD|đ|₫))(?!\w)",
+    r"(?P<suffix_amount>\d+(?:[., ]\d+)*)\s*(?P<suffix>đồng|dong|VND|USD|đ|₫))(?!\w)",
     re.IGNORECASE,
 )
 _URL = re.compile(r"https?://[^\s<>\]\[(){}]+", re.IGNORECASE)
@@ -72,12 +72,56 @@ def _number_values(value: str) -> set[str]:
     value = _IDENTIFIER_WITH_NUMBERS.sub(lambda match: " " if identifiers(match.group()) else match.group(), value)
     money_numbers = {amount for amount, _currency in _money_values(value)}
     value = _MONEY.sub(" ", value)
-    return money_numbers | {"".join(character for character in match if character.isdigit())
+    return money_numbers | {str(int("".join(character for character in match if character.isdigit())))
                             for match in _NUMBER.findall(value)}
+
+
+def verified_money_calculation(calculation: dict | list[dict], sources: list[str], query: str) -> str:
+    """Recompute bounded arithmetic steps using only sourced/input operands."""
+    steps = calculation if isinstance(calculation, list) else [calculation]
+    if not steps or len(steps) > 6:
+        raise ValueError("invalid_calculation_steps")
+    money = set().union(*(_money_values(source) for source in sources))
+    numbers = _number_values(query) | set().union(*(_number_values(source) for source in sources))
+    derived = []
+    for step in steps:
+        if not isinstance(step, dict):
+            raise ValueError("invalid_calculation_step")
+        left, right = step.get("left"), step.get("right")
+        if any(type(value) is not int or not 0 <= value <= 10**12 for value in (left, right)):
+            raise ValueError("invalid_calculation_operands")
+        if not {str(left), str(right)}.issubset(numbers):
+            missing=sorted({str(left),str(right)}-numbers)
+            raise ValueError("unsupported_calculation_operands: " + ", ".join(missing))
+        operation = step.get("operation")
+        monetary = any((str(v), "VND") in money for v in (left, right))
+        if not monetary and not (operation == "subtract" and {str(left), str(right)}.issubset(_number_values(query))):
+            raise ValueError("unsupported_calculation_operands")
+        if operation == "multiply":
+            result = left * right
+        elif operation == "add":
+            result = left + right
+        elif operation == "subtract":
+            result = left - right
+        elif operation == "divide" and right and left % right == 0:
+            result = left // right
+        else:
+            raise ValueError("unsupported_calculation")
+        if not 0 <= result <= 10**12:
+            raise ValueError("invalid_calculation_result")
+        numbers.add(str(result))
+        if monetary:
+            money.add((str(result), "VND"))
+        unit = "đồng" if monetary else "đơn vị"
+        derived.append(f"Verified arithmetic ({operation}): {left}, {right}; result {result:,} {unit}.".replace(",", "."))
+    if not monetary:
+        raise ValueError("missing_monetary_result")
+    return "\n".join(derived)
 
 
 def _answer_concepts(value: str) -> set[str]:
     folded = fold_topic_text(value)
+    folded = re.sub(r"\bcung cap\b", "", folded)
     folded = re.sub(r"\bavailable (?:data|information|details|evidence)\b", "", folded)
     # Order value is not a product-price claim (e.g. a shipping threshold).
     folded = re.sub(r"\b(?:tong )?gia tri(?: don hang| don)?\b", "", folded)
