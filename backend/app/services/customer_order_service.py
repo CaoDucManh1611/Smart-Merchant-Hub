@@ -143,6 +143,100 @@ def _customer_order_reference(
     return listed, listed["items"][0]["order_number"]
 
 
+def customer_context_reply(db: Session, business_id: int, conversation_id: int, text: str) -> str | None:
+    """Answer own-profile and submitted-request questions from scoped CRM state."""
+    folded = _fold_order_text(text)
+    asks_name = bool(re.search(r"\b(?:ten (?:toi|minh|em) (?:la gi|gi)|toi ten (?:la )?gi|what is my name|what s my name)\b", folded))
+    asks_received = bool(re.search(r"\b(?:nhan (?:duoc|dc) thong tin|can hoi (?:gi|j) them|thieu thong tin|da dat.*chua|dat.*xong chua)\b", folded))
+    asks_receipt = bool(re.search(r"\b(?:da (?:chuyen khoan|chuyen tien|thanh toan|ck)|chuyen khoan xong|ck xong|nhan (?:duoc )?tien|payment received|already paid)\b", folded))
+    # A negated side note is not a request to collect payment.
+    payment_text = folded
+    if re.search(r"\b(?:tinh (?:thu|tien|giup)|nho tinh)\b", folded):
+        payment_text = re.sub(r"\b(?:chua|khong) (?:(?:dat(?: hang)?|tao don) (?:hay|hoac) )?(?:yeu cau )?(?:thanh toan|chuyen khoan)(?: gi)?\b", "", folded)
+    asks_payment = (asks_receipt or bool(re.search(r"\b(?:thanh toan|chuyen khoan|ck|ma qr|qr|bank transfer|payment)\b", payment_text))) and not any(word in folded for word in ("chinh sach", "quy dinh", "policy"))
+    if not (asks_name or asks_received or asks_payment):
+        return None
+    from app.models.customer_collection import CustomerCollectionSession
+    conversation = _conversation(db, business_id, conversation_id)
+    session = db.query(CustomerCollectionSession).filter(
+        CustomerCollectionSession.business_id == business_id,
+        CustomerCollectionSession.customer_id == conversation.customer_id,
+        CustomerCollectionSession.conversation_id == conversation_id,
+    ).order_by(CustomerCollectionSession.id.desc()).first()
+    fields = dict(session.collected_fields or {}) if session else {}
+    if asks_name:
+        name = fields.get("name")
+        return (f"Bạn đã cung cấp họ tên là {name}." if name else
+            "Mình chưa có họ tên bạn cung cấp trong yêu cầu này. Bạn cho mình biết tên nhé.")
+    if asks_received:
+        if session is None:
+            return "Mình chưa có yêu cầu đăng ký đang lưu cho bạn trong hội thoại này. Bạn muốn đăng ký sản phẩm hoặc dịch vụ nào?"
+        labels = {"name": "họ tên", "phone": "số điện thoại", "move_in": "ngày dự kiến vào"}
+        missing = [labels.get(key, key) for key in (session.required_fields or [])
+            if not fields.get("phone_collected" if key == "phone" else key)]
+        if session.status in {"pending", "partial"} and missing:
+            return "Mình đã lưu thông tin bạn gửi; còn thiếu hoặc cần sửa: " + ", ".join(missing) + "."
+        if fields.get("draft_order_id"):
+            order = db.query(Order).filter(Order.id == fields["draft_order_id"],
+                Order.business_id == business_id, Order.customer_id == conversation.customer_id).first()
+            if order:
+                return f"Mình đã nhận thông tin và tạo đơn {order.order_number}. Trạng thái hiện tại: {ORDER_STATUS_LABELS.get(order.status, order.status)}."
+        return "Mình đã nhận thông tin đăng ký của bạn; nhân viên cần kiểm tra yêu cầu trước khi xác nhận đặt thành công."
+    orders = db.query(Order).filter(Order.business_id == business_id,
+        Order.customer_id == conversation.customer_id, Order.conversation_id == conversation_id)
+    number = extract_order_number(text)
+    if (not number and session and session.purpose=="business_request"
+            and session.status in {"pending","partial"} and not fields.get("draft_order_id")):
+        return "Yêu cầu hiện tại vẫn đang soạn, chưa có đơn và khoản thu được xác nhận để tạo QR đúng số tiền. Mình chưa ghi nhận bạn đã thanh toán. Bạn muốn hoàn tất và xác nhận gửi yêu cầu này trước chứ?"
+    if (session and session.status in {"pending", "partial"} and session.current_field == "payment_method"
+            and not number and "qr" not in folded and not asks_receipt):
+        return None
+    if number:
+        orders = orders.filter(Order.order_number == number)
+    elif session and session.status == "completed" and fields.get("draft_order_id"):
+        orders = orders.filter(Order.id == fields["draft_order_id"])
+    else:
+        orders = orders.filter(Order.status.notin_(["cancelled", "refunded"]))
+    rows = orders.order_by(Order.id.desc()).limit(2).all()
+    if not rows:
+        return "Mình chưa tìm thấy đơn cần thanh toán của bạn trong hội thoại này. Bạn kiểm tra và gửi lại mã đơn giúp mình nhé."
+    if len(rows) > 1:
+        return "Bạn muốn thanh toán đơn nào? Mã đơn của bạn: " + ", ".join(order.order_number for order in rows) + "."
+    order = rows[0]
+    new_payment_flow=(order.metadata_ or {}).get("payment_flow")=="prepay_then_confirm"
+    if order.status in {"draft", "pending_confirmation"} and not new_payment_flow:
+        return f"Đơn {order.order_number} đang chờ nhân viên xác nhận. Shop chưa yêu cầu bạn thanh toán ở bước này; nhân viên cần xác nhận đơn và khoản phải thu trước khi gửi hướng dẫn thanh toán."
+    if order.status in {"cancelled", "refunded"}:
+        return f"Đơn {order.order_number} {ORDER_STATUS_LABELS.get(order.status, order.status).lower()}; bạn không cần thanh toán cho đơn này."
+    remaining = Decimal(str(order.total_amount or 0)) - Decimal(str(order.paid_amount or 0))
+    if remaining <= 0 and (not new_payment_flow or (order.metadata_ or {}).get("payment_request") is not None):
+        return f"Đơn {order.order_number} đã được ghi nhận thanh toán đủ." + (" Đang chờ nhân viên xác nhận đơn." if order.status=="draft" else "")
+    if asks_receipt:
+        hypothetical = bool(re.search(r"\b(?:neu (?:toi|minh|em|khach|ban)|gia su|vi du|if i)\b", folded))
+        if hypothetical:
+            return f"Đơn {order.order_number} hiện chưa ghi nhận thanh toán. Lời nhắn báo chuyển khoản chưa phải xác nhận thu tiền; nhân viên cần đối soát tiền vào tài khoản trước khi cập nhật."
+        from app.services.notification_service import create_notification
+        order = db.query(Order).filter(Order.id == order.id, Order.business_id == business_id,
+            Order.customer_id == conversation.customer_id).with_for_update().populate_existing().one()
+        metadata = dict(order.metadata_ or {})
+        if not metadata.get("customer_payment_reported_at"):
+            create_notification(db,business_id=business_id,kind="payment_review",
+                title=f"Khách báo đã chuyển khoản: {order.order_number}",
+                body="Cần đối soát tiền vào tài khoản; chưa ghi nhận đã thu tiền.",
+                metadata={"order_id":order.id,"conversation_id":conversation_id,"customer_id":conversation.customer_id})
+            order.metadata_ = {**metadata,"customer_payment_reported_at":datetime.now(timezone.utc).isoformat()}
+            db.commit()
+        return f"Mình đã ghi nhận bạn báo chuyển khoản cho đơn {order.order_number} và gửi nhân viên đối soát. Đơn chưa được đánh dấu đã thanh toán; shop sẽ xác nhận sau khi kiểm tra tiền vào tài khoản."
+    if new_payment_flow:
+        from app.services.order_payment_request import payment_instructions
+        return payment_instructions(db,order)
+    if (order.metadata_ or {}).get("offering_type") == "rental":
+        return f"Đơn thuê {order.order_number} đã được xác nhận. Shop chưa có khoản thu tiền cọc/kỳ thuê được xác nhận trong luồng này; nhân viên sẽ gửi số tiền và hướng dẫn thanh toán, bạn không cần tự suy ra tiền cọc từ giá phòng."
+    from app.services.shop_bank_transfer import order_transfer_instructions
+    return order_transfer_instructions(db, business_id=business_id,
+        order_number=order.order_number, amount=int(remaining))
+
+
 def customer_order_reply(
     db: Session,
     business_id: int,
@@ -503,7 +597,6 @@ def _staff_ticket(
     ).order_by(Ticket.id.desc()).all()
     for ticket in existing:
         if marker in (ticket.description or ""):
-            conversation.bot_mode = "human"
             return ticket
 
     assignee = _assignee(platform_db, business_id)
@@ -523,7 +616,6 @@ def _staff_ticket(
         first_response_due_at=first_response_due_at,
         sla_due_at=resolution_due_at,
     )
-    conversation.bot_mode = "human"
     if assignee:
         conversation.assigned_user_id = assignee.id
         db.add(ConversationAssignment(

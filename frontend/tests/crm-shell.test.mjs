@@ -1164,7 +1164,8 @@ test("embedded conversation keeps its controls while compacting the header and c
   assert.match(styleSource, /\.chat-composer textarea\s*\{[^}]*height:\s*46px/);
   assert.match(styleSource, /\.composer-tabs button\s*\{[^}]*min-height:\s*28px/);
   assert.match(appSource, /class="chat-tool-primary"[\s\S]*?class="linked-customer-toggle"[\s\S]*?class="bot-mode-button"/);
-  assert.match(appSource, /class="chat-tool-fields" :class="\{ 'has-outcome': selectedHasAiActivity \}"[\s\S]*?class="conversation-assignment"[\s\S]*?conversation-outcome-control/);
+  assert.match(appSource, /class="chat-tool-fields" :class="\{ 'has-outcome': selectedHasAiActivity, 'mobile-settings-open': mobileChatSettingsOpen \}"[\s\S]*?class="conversation-assignment"[\s\S]*?conversation-outcome-control/);
+  assert.match(appSource, /class="mobile-chat-settings-trigger"[\s\S]*?:aria-expanded="String\(mobileChatSettingsOpen\)"/);
   assert.match(appSource, /class="chat-tool-actions"[\s\S]*?toggleConversationActions[\s\S]*?toggleConversationPriority/);
   assert.doesNotMatch(appSource, /toggleConversationFavorite/);
   assert.match(appSource, /class="conversation-assignment conversation-outcome-control"/);

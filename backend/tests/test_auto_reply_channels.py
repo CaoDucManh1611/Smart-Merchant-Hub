@@ -9,6 +9,7 @@ from app.services.auto_reply_service import (
     _claim_auto_reply,
     _deterministic_customer_reply,
     _extract_vietqr_photo,
+    _is_product_catalog_listing_request,
     _send_channel_reply,
     format_product_catalog_reply,
     process_rag_auto_reply,
@@ -91,7 +92,7 @@ def test_shopee_bridge_auth_error_does_not_force_human_takeover():
     handoff.assert_not_called()
 
 
-def test_delivery_unknown_pauses_bot_and_notifies_staff_without_retry():
+def test_delivery_unknown_keeps_bot_enabled_and_notifies_staff_without_retry():
     from app.services.auto_reply_service import _notify_rag_handoff_required
 
     conversation = Mock(
@@ -114,7 +115,40 @@ def test_delivery_unknown_pauses_bot_and_notifies_staff_without_retry():
     assert send.call_count == 1
     handoff.assert_called_once()
     assert handoff.call_args.kwargs["reason"] == "delivery_unknown"
-    assert conversation.bot_mode == "human"
+    assert conversation.bot_mode == "auto"
+    assert conversation.resolution_outcome == "needs_human"
+    notify.assert_called_once()
+
+
+def test_provider_echo_proves_delivery_even_if_bridge_response_was_uncertain():
+    from app.services.auto_reply_service import _mark_auto_reply_failed
+    row = Mock(status="sending", raw_payload={"provider_history_message_id": "mid.123"})
+    db = Mock()
+    db.query.return_value.filter.return_value.populate_existing.return_value.first.return_value = row
+    _mark_auto_reply_failed(db, "turn:1", HTTPException(409, detail={"code": "delivery_unknown"}))
+    assert row.status == "sent"
+    db.commit.assert_called_once()
+
+
+def test_staff_decision_retry_does_not_duplicate_notification():
+    from app.services.auto_reply_service import _notify_rag_handoff_required
+    db=Mock()
+    db.query.return_value.filter.return_value.first.return_value=Mock()
+    with patch('app.services.auto_reply_service.create_notification') as notify:
+        _notify_rag_handoff_required(db,conversation=Mock(id=7,customer_id=8),business_id=4,
+            query_text='Question',reason='business_decision_needed',idempotency_key='graph-decision:1')
+    notify.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["auto", "human"])
+@pytest.mark.parametrize("reason", ["no_rag_context", "no_verified_sales_data", "llm_unavailable"])
+def test_staff_alert_preserves_the_users_bot_mode(mode, reason):
+    from app.services.auto_reply_service import _notify_rag_handoff_required
+
+    conversation = Mock(id=7, customer_id=8, assigned_user_id=None, bot_mode=mode)
+    with patch("app.services.auto_reply_service.create_notification") as notify:
+        _notify_rag_handoff_required(Mock(), conversation=conversation, business_id=7, query_text="Sản phẩm gì?", reason=reason)
+    assert conversation.bot_mode == mode
     assert conversation.resolution_outcome == "needs_human"
     notify.assert_called_once()
 from app.services.quota_service import QuotaDecision, QuotaExceededError
@@ -578,6 +612,7 @@ def test_rag_without_context_sends_safe_handoff_without_calling_llm():
     assert "chưa có đủ thông tin" in send.call_args.kwargs["text"].lower()
 
 
+@patch("app.services.auto_reply_service.settings.CHATBOT_GRAPH_ENABLED",False)
 def test_instagram_image_is_passed_to_vision_model_and_gets_a_reply():
     db = Mock()
     conversation = Mock(bot_mode="auto", customer_id=8, resolution_outcome=None)
@@ -616,6 +651,42 @@ def test_instagram_image_is_passed_to_vision_model_and_gets_a_reply():
         [{"role": "user", "content": "xem ảnh"}], b"image-bytes", "image/jpeg"
     )
     text_model.assert_not_called()
+
+
+@pytest.mark.parametrize('vision_output,valid',[
+    ('{"task":"read_information","description":"Ảnh TEST công tơ điện 01220 kWh."}',True),
+    ('```json\n{"task":"read_information","description":"Ảnh TEST công tơ điện 01220 kWh."}\n```',True),
+    ('Ảnh TEST công tơ điện hiển thị 01220 kWh; đây là số chưa được khách xác nhận.',True),
+    ('not json',False),
+    ('{"task":"read_information","description":""}',False),
+    ('[]',False),
+])
+def test_image_reading_reaches_guarded_graph_instead_of_legacy_product_routing(vision_output,valid):
+    from types import SimpleNamespace
+    from app.services.customer_collection_flow import CollectionFlowResult
+    db=Mock()
+    conversation=SimpleNamespace(id=4,bot_mode="auto",customer_id=8,resolution_outcome=None)
+    db.query.return_value.filter.return_value.first.side_effect=[None,conversation]
+    with patch("app.services.auto_reply_service.settings.CHATBOT_GRAPH_ENABLED",True), \
+         patch("app.services.auto_reply_service.get_auto_reply_enabled",return_value=True), \
+         patch("app.services.auto_reply_service.is_business_open",return_value=True), \
+         patch("app.services.auto_reply_service._latest_inbound_image_url",return_value="https://scontent.fbcdn.net/test.png"), \
+         patch("app.services.auto_reply_service._download_meta_image",return_value=(b"image-bytes","image/png")), \
+         patch("app.services.privacy_service.customer_memory_opt_out_reply",return_value=None), \
+         patch("app.services.auto_reply_service.record_quota_usage"), \
+         patch("app.services.auto_reply_service.call_llm_with_image",return_value=vision_output), \
+         patch("app.services.conversation_graph.graph_reply",return_value=CollectionFlowResult(session_id=0,status="graph_answer",current_field=None,prompt="Mình đọc 1220 kWh; bạn xác nhận lại giúp mình nhé.")) as graph, \
+         patch("app.services.auto_reply_service.send_text_reply",return_value={"message_id":"test"}) as send, \
+         patch("app.services.auto_reply_service.retrieve") as legacy:
+        assert process_rag_auto_reply(db=db,conversation_id=4,channel="facebook",query_text="Đọc công tơ giúp mình",business_id=1)
+    if valid:
+        assert "01220 kWh" in graph.call_args.kwargs["query"]
+        assert "unverified customer image" in graph.call_args.kwargs["query"]
+        assert "xác nhận" in send.call_args.kwargs["text"]
+    else:
+        graph.assert_not_called()
+        assert "chưa đọc chắc chắn" in send.call_args.kwargs["text"]
+    legacy.assert_not_called()
 
 
 def test_order_status_reply_bypasses_rag_and_uses_customer_scoped_flow():
@@ -703,6 +774,51 @@ def test_product_catalog_reply_formats_price_and_stock():
     assert "Here are the shop's products:" in english_reply
     assert "₫420,000 (6 available)" in english_reply
     assert "₫289,000 (out of stock)" in english_reply
+
+
+def test_rental_catalog_uses_current_available_stock():
+    room = Mock()
+    room.name = "Phòng trọ 01"
+    room.price = 3000000
+    room.stock_quantity = 0
+    room.reserved_quantity = 0
+    room.metadata_ = {"attributes": {"category": ["Phòng trọ"]}}
+
+    assert _is_product_catalog_listing_request("Bạn có những phòng nào vậy? Tư vấn cho tôi được không")
+    reply = format_product_catalog_reply([room])
+    assert "Mình có các phòng trọ sau:" in reply
+    assert "Phòng trọ 01 — 3.000.000 đồng/tháng (không còn trống)" in reply
+    assert "hết hàng" not in reply
+
+
+def test_business_offering_question_uses_live_catalog_instead_of_no_context():
+    assert _is_product_catalog_listing_request(
+        "Tôi đang muốn biết doanh\nNghiệp của bạn\nKinh doanh gì"
+    )
+    assert _is_product_catalog_listing_request("Shop của bạn kinh doanh gì?")
+    assert not _is_product_catalog_listing_request("Doanh thu kinh doanh tháng này là bao nhiêu?")
+
+
+def test_room_catalog_with_price_bypasses_exact_product_lookup():
+    query = "hiện shop có những phòng trọ nào và giá mỗi phòng bap nhiêu"
+    assert _is_product_catalog_listing_request(query)
+    assert not _is_product_catalog_listing_request("Phòng trọ 05 giá bao nhiêu?")
+
+    db = Mock()
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+        patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
+        patch("app.services.auto_reply_service._deterministic_customer_reply", return_value=("Không tìm thấy sản phẩm", "product_not_found")) as exact_lookup, \
+        patch("app.services.auto_reply_service.build_product_catalog_reply", return_value="Mình có 11 phòng trọ.") as catalog, \
+        patch("app.services.auto_reply_service.send_text_reply") as send:
+        assert process_rag_auto_reply(
+            db=db, conversation_id=6, channel="facebook", query_text=query, business_id=2,
+        ) is True
+
+    exact_lookup.assert_not_called()
+    catalog.assert_called_once_with(db, 2, language="vi")
+    assert send.call_args.kwargs["text"] == "Mình có 11 phòng trọ."
 
 
 def test_rag_auto_reply_checks_ai_quota_before_calling_llm():

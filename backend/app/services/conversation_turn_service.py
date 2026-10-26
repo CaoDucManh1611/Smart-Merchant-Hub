@@ -33,30 +33,8 @@ def schedule_chatbot_turn(db: Session, *, business_id: int, conversation_id: int
 
 
 def _merge_fragments(fragments: list[str]) -> str:
-    plain = "\n".join(fragments)
-    if len(fragments) == 1 or not settings.conversation_gemini_api_keys:
-        return plain
-    try:
-        from app.rag.llm_caller import call_gemini_for_turn
-
-        combined = call_gemini_for_turn(fragments)
-        # A failed or over-creative interpretation must never replace the
-        # customer's original words with an invented product or order fact.
-        original_numbers = set(re.findall(r"\d+(?:[.,]\d+)*", plain))
-        combined_numbers = set(re.findall(r"\d+(?:[.,]\d+)*", combined or ""))
-        color_terms = ("hồng", "hong", "pink", "đỏ", "do", "red", "xanh", "blue", "green", "đen", "den", "black", "trắng", "trang", "white", "vàng", "vang", "yellow", "tím", "tim", "purple", "nâu", "nau", "brown")
-        original_lower, combined_lower = plain.casefold(), (combined or "").casefold()
-        colors_preserved = all(term not in original_lower or term in combined_lower for term in color_terms)
-        sizes_preserved = all(
-            value.casefold() in combined_lower
-            for value in re.findall(r"\b(?:size|sz)\s*[a-z0-9-]+", plain, flags=re.IGNORECASE)
-        )
-        if (combined and original_numbers == combined_numbers and colors_preserved and sizes_preserved
-                and len(combined) <= min(4000, len(plain) * 2 + 80)):
-            return combined
-    except Exception:
-        logger.warning("Gemini turn interpretation unavailable; retaining original fragments")
-    return plain
+    # Preserve field labels and customer wording without another model round trip.
+    return "\n".join(fragments)
 
 
 def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platform_db: Session | None = None) -> bool:
@@ -85,12 +63,11 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
 
     wait = timedelta(seconds=max(1, min(int(settings.CONVERSATION_TURN_WAIT_SECONDS), 30)))
     source_time = source.received_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    queue_wait_ms=max(0,(datetime.now(timezone.utc).replace(tzinfo=None)-source_time).total_seconds()*1000)
     later_fragment = db.query(Message.id).filter(
         Message.conversation_id == conversation_id,
         Message.id > message_id,
         Message.direction == "inbound",
-        Message.received_at <= source_time + wait,
-        Message.received_at >= source_time,
     ).order_by(Message.id.asc()).first()
     if later_fragment is not None and shortcut is None:
         return False
@@ -103,18 +80,28 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         ).order_by(Message.id.desc()).limit(12).all()
         # ponytail: cap each turn at 12 fragments; raise only if measured channel traffic needs it.
         for row in previous:
-            if not row.content or not row.content.strip():
+            if not (row.content or "").strip() and not (row.media_type == "image" or any(item.media_type == "image" for item in row.attachments)):
                 break
-            if SHORTCUT_COMMAND.fullmatch(row.content.strip()):
+            if (row.received_at is None or batch[0].received_at is None
+                    or any((item.raw_payload or {}).get("timestamp_accuracy") == "unavailable_from_source"
+                           for item in (row, batch[0]))):
+                # Meta history without a source timestamp must not appear adjacent to a live question.
+                break
+            if SHORTCUT_COMMAND.fullmatch((row.content or "").strip()):
                 break
             if row.direction != "inbound":
                 break
             gap = (batch[0].received_at or source_time) - (row.received_at or source_time)
-            if not timedelta(0) <= gap <= wait:
+            image_followup = (row.media_type == "image" or any(item.media_type == "image" for item in row.attachments)) and any(
+                word in (source.content or "").casefold() for word in ("ảnh", "hình", "image", "photo", "picture")
+            )
+            if not timedelta(0) <= gap <= (max(wait, timedelta(seconds=15)) if image_followup else wait):
                 break
             batch.insert(0, row)
             if len(batch) >= 12:
                 break
+    image_source = next((row for row in reversed(batch) if row.media_type == "image" or any(item.media_type == "image" for item in row.attachments)), None)
+    source_has_image = image_source is not None
     fragments = [row.content.strip() for row in batch if row.content and row.content.strip()]
     query = _merge_fragments(fragments) if fragments else ""
     if source_has_image:
@@ -122,24 +109,56 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         query = f"{query}\n\n{image_context}".strip()
     if fragments and not source_has_image and shortcut is None:
         from app.models.crm_job import CrmJob
-        from app.services.customer_collection_flow import advance_customer_collection
+        from app.services.customer_collection_flow import CollectionFlowResult, advance_customer_collection
         from app.services.auto_reply_service import send_text_reply
 
         # Keep the collection result on the durable turn job before sending.
         # A temporary bridge failure can then retry delivery without adding
         # the same quantity to the quote a second time.
+        reply_metadata = payload.get("collection_metadata")
         reply_text = payload.get("collection_reply")
         if reply_text is None:
-            result = advance_customer_collection(
-                db=db,
-                business_id=business_id,
-                customer_id=conversation.customer_id,
-                conversation_id=conversation_id,
-                source_channel=conversation.channel,
-                text=query,
-                form_fragments=fragments,
-            )
+            result = None
+            if settings.CHATBOT_GRAPH_ENABLED:
+                from app.services.auto_reply_service import get_auto_reply_enabled
+                if not get_auto_reply_enabled(db, business_id):
+                    return False
+                from app.services.privacy_service import customer_memory_opt_out_reply
+                privacy = customer_memory_opt_out_reply(db, business_id, conversation.customer_id, query)
+                if privacy:
+                    result = CollectionFlowResult(session_id=0,status="privacy",current_field=None,prompt=privacy)
+            if result is None and not settings.CHATBOT_GRAPH_ENABLED:
+                from app.services.customer_order_service import customer_context_reply
+                contextual_reply = customer_context_reply(db, business_id, conversation_id, query)
+                if contextual_reply:
+                    result = CollectionFlowResult(session_id=0,status="customer_context",current_field=None,prompt=contextual_reply)
+            if result is None and settings.CHATBOT_GRAPH_ENABLED:
+                from app.services.recommendation_interaction_service import record_explicit_chat_recommendation_decline
+                record_explicit_chat_recommendation_decline(db,business_id=business_id,conversation_id=conversation_id,text=query,source_message_id=message_id)
+                from app.services.conversation_graph import graph_reply
+                from app.services.quota_service import QuotaExceededError
+                try:
+                    result = graph_reply(db,business_id=business_id,conversation=conversation,
+                        query=query,job_key=f"{conversation_id}:{message_id}")
+                except QuotaExceededError:
+                    raise
+                except Exception as error:
+                    logger.warning("Conversation graph unavailable: %s",type(error).__name__)
+                    from app.services.customer_collection_flow import CollectionFlowResult
+                    result = CollectionFlowResult(session_id=0,status="graph_unavailable",current_field=None,
+                        prompt="Mình đang gặp lỗi khi kiểm tra dữ liệu nên chưa thể trả lời chắc chắn. Bạn thử lại hoặc nhờ nhân viên hỗ trợ nhé.")
+            if result is None:
+                result = advance_customer_collection(
+                    db=db,
+                    business_id=business_id,
+                    customer_id=conversation.customer_id,
+                    conversation_id=conversation_id,
+                    source_channel=conversation.channel,
+                    text=query,
+                    form_fragments=fragments,
+                )
             if result is not None:
+                reply_metadata = getattr(result,"metadata",None)
                 reply_text = str(result.prompt or "")
                 if not reply_text.strip():
                     # Partial checkout fields were saved on the session. Wait
@@ -151,15 +170,20 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
                     CrmJob.idempotency_key == f"chatbot-turn:{conversation_id}:{message_id}",
                 ).first()
                 if job is not None:
-                    job.payload = {**(job.payload or {}), "collection_reply": reply_text}
+                    job.payload = {**(job.payload or {}), "collection_reply": reply_text, "collection_metadata":reply_metadata}
                     db.commit()
         if reply_text is not None:
+            newer = db.query(Message.id).filter(Message.conversation_id == conversation_id,
+                Message.direction == "inbound", Message.id > message_id).first()
+            if newer is not None:
+                return False
             processing_ms = round((perf_counter() - turn_started) * 1000, 1)
             delivery_started = perf_counter()
             try:
                 send_text_reply(
                     db=db, conversation_id=conversation_id, channel=conversation.channel,
                     text=reply_text, business_id=business_id,
+                    **({"extra_metadata":reply_metadata} if reply_metadata else {}),
                     auto_reply_key=f"turn:{business_id}:{conversation_id}:{batch[0].id}:{message_id}",
                 )
             except HTTPException as exc:
@@ -167,9 +191,10 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
                     raise
                 logger.warning("Provider delivery unconfirmed for conversation %s; check channel before resending", conversation_id)
             logger.info(
-                "Chatbot turn channel=%s conversation=%s wait_ms=%s processing_ms=%s delivery_ms=%s",
+                "Chatbot turn channel=%s conversation=%s total_ms=%s queue_wait_ms=%s processing_ms=%s delivery_ms=%s",
                 conversation.channel, conversation_id,
                 round((datetime.now(timezone.utc).replace(tzinfo=None) - source_time).total_seconds() * 1000, 1),
+                round(queue_wait_ms,1),
                 processing_ms, round((perf_counter() - delivery_started) * 1000, 1),
             )
             return True
@@ -184,4 +209,5 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         auto_reply_key=f"turn:{business_id}:{conversation_id}:{batch[0].id}:{message_id}",
         platform_db=platform_db,
         expected_latest_inbound_id=message_id,
+        image_message_id=image_source.id if image_source else None,
     )

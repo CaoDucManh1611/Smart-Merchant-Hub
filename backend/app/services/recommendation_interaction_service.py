@@ -338,7 +338,7 @@ def record_explicit_chat_recommendation_decline(
         CustomerConsent.customer_id == conversation.customer_id,
         CustomerConsent.purpose == "personalization",
     ).order_by(CustomerConsent.id.desc()).first()
-    if consent is not None and consent[0] == "revoked":
+    if consent is None or consent[0] != "granted":
         return False
 
     latest_inbound_id = db.query(Message.id).filter(

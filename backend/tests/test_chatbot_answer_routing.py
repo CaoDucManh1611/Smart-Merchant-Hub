@@ -87,6 +87,29 @@ def test_unknown_sku_never_falls_back_to_full_catalogue():
     assert text == PRODUCT_NOT_FOUND_REPLY
 
 
+def test_numbered_rental_room_matches_without_leading_zero():
+    rooms = _DB([
+        SimpleNamespace(id=12, name="Phòng trọ 05", sku="TRO-P05", metadata_={"attributes": {"category": ["Phòng trọ"]}}, stock_quantity=1, reserved_quantity=0),
+        SimpleNamespace(id=13, name="Phòng trọ 06", sku="TRO-P06", metadata_={"attributes": {"category": ["Phòng trọ"]}}, stock_quantity=1, reserved_quantity=0),
+    ])
+    product, _ = _find_exact_product(rooms, 2, "phòng 5 ấy, bạn còn phòng không?")
+    assert product is rooms.rows[0]
+
+
+def test_general_room_availability_uses_catalog_count_without_guessing_vacancy():
+    rooms = _DB([
+        SimpleNamespace(id=12, name="Phòng trọ 05", sku="TRO-P05", metadata_={"attributes": {"category": ["Phòng trọ"]}}, stock_quantity=1, reserved_quantity=0),
+        SimpleNamespace(id=13, name="Phòng trọ 06", sku="TRO-P06", metadata_={"attributes": {"category": ["Phòng trọ"]}}, stock_quantity=1, reserved_quantity=0),
+    ])
+    reply = _deterministic_customer_reply(
+        rooms, business_id=2, conversation_id=6, query_text="bạn còn phòng không?",
+    )
+    assert reply is not None
+    assert reply[1] == "rental_availability_current"
+    assert "2 phòng trọ" in reply[0]
+    assert "theo tồn khả dụng" in reply[0]
+
+
 def test_longer_unknown_sku_does_not_match_shorter_catalog_sku():
     product, _ = _find_exact_product(_db(), 1, "serum010 còn hàng không?", conversation_id=1)
     assert product is None
@@ -564,3 +587,73 @@ def test_uncertain_platform_delivery_is_not_retried_as_a_second_customer_reply()
     unknown = HTTPException(status_code=409, detail={"code": "delivery_unknown"})
     assert _is_delivery_unknown_error(unknown)
     assert not _is_delivery_unknown_error(HTTPException(status_code=502, detail="bridge unavailable"))
+
+
+def test_shared_router_matches_serving_for_catalog_questions_with_prices():
+    from app.services.chatbot_router import classify_intent
+    for query in (
+        "Hiện shop có những phòng trọ nào và giá mỗi phòng bao nhiêu",
+        "Shop có những sản phẩm nào và giá bao nhiêu?",
+        "What products do you sell?",
+    ):
+        assert classify_intent(query) == "lookup_product_catalog"
+    assert classify_intent("SKU ABC123 giá bao nhiêu?") != "lookup_product_catalog"
+    assert classify_intent("Mã SKU SER-100 là sản phẩm gì?") == "lookup_product"
+    assert classify_intent("Shop có bán Serun01 không?") == "lookup_product"
+
+
+def test_short_business_questions_are_not_silently_classified_as_smalltalk():
+    for query in ("Còn suất không?", "Gói này gồm gì?", "Điện bao nhiêu?", "Đặt lịch thế nào?"):
+        assert not auto_reply_service._is_casual_query(query)
+    assert auto_reply_service._is_casual_query("Cảm ơn bạn")
+
+
+def test_multi_intent_and_handoff_precedence_are_shared_across_industries():
+    from app.services.chatbot_router import classify_intent
+    assert classify_intent("Tôi muốn gặp nhân viên để hỏi giá sản phẩm") == "handoff"
+    assert classify_intent("Shop có sản phẩm gì và phí giao hàng thế nào?") == "search_knowledge"
+    assert classify_intent("Chính sách đổi trả của SKU ABC123 thế nào?") == "search_knowledge"
+    assert classify_intent("Đặt lịch thế nào?") == "search_knowledge"
+    assert classify_intent("Cách thanh toán gói dịch vụ?") == "search_knowledge"
+
+
+def test_specific_detail_inquiry_never_dumps_catalog():
+    for query in ("Tôi muốn tìm hiểu phòng 11", "Tôi muốn tìm hiểu SKU ABC123", "Tell me about model ABC123"):
+        assert not _is_product_catalog_listing_request(query)
+    assert _is_product_catalog_listing_request("Tôi muốn tìm hiểu danh sách sản phẩm")
+
+def test_rental_attribute_question_does_not_short_circuit_to_price_and_stock():
+    room = SimpleNamespace(id=11, name="Phòng trọ 11", sku="P11", price=2000000,
+        stock_quantity=1, reserved_quantity=0, status="active",
+        description="Có wifi miễn phí", metadata_={"offering_type": "rental"})
+    assert _deterministic_customer_reply(_DB([room]), business_id=2, conversation_id=1,
+        query_text="Phòng 11 có wifi không?") is None
+    chunk = auto_reply_service._live_product_context_chunk(_DB([room]), 2,
+        "Phòng 11 có wifi không?", 1)
+    assert chunk is not None
+    assert "Có wifi miễn phí" in chunk.content
+
+
+def test_missing_target_and_generic_details_across_industries():
+    from app.services.chatbot_router import classify_intent
+    for query in ("Còn suất không?", "Gói này gồm gì?"):
+        assert classify_intent(query) == "clarify_product"
+    for query in ("Tôi muốn tìm hiểu SKU ABC123", "Tell me about model ABC123"):
+        assert classify_intent(query) == "lookup_product"
+
+
+def test_rental_booking_followup_keeps_latest_customer_room_and_live_stock():
+    room = SimpleNamespace(id=11, name="Phòng trọ 11", sku="P11", price=2000000,
+        stock_quantity=1, reserved_quantity=0, status="active", description="",
+        metadata_={"offering_type": "rental"})
+    db = _DB([room])
+    query = _contextual_retrieval_query(db, 2, "Ok cho tôi thuê phòng đó đi", 1, [
+        {"role": "assistant", "content": "Phòng 01 giá 3 triệu, cần xác nhận"},
+        {"role": "user", "content": "Tôi muốn xem thông tin về phòng 11"},
+        {"role": "assistant", "content": "Phòng 11 còn trống 1"},
+    ])
+    assert query.startswith("Phòng trọ 11\n")
+    chunk = auto_reply_service._live_product_context_chunk(db, 2, query, 1)
+    assert chunk.metadata["product_id"] == 11
+    assert chunk.metadata["available"] == 1
+    assert chunk.metadata["price"] == 2000000

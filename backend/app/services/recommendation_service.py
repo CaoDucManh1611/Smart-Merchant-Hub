@@ -49,6 +49,7 @@ REVENUE_ORDER_STATUSES = ("delivered", "completed")
 MODEL_VERSION = "item_affinity_rfm_v5"
 PERSONALIZATION_CACHE_VERSION = "rfm_product_signals_v1"
 SEGMENT_MODEL_VERSION = "rfm_kmeans_v2"
+MIN_SEGMENT_CUSTOMERS = 20
 STRATEGIES = {"balanced", "personalized", "popular", "rag"}
 MIN_BANDIT_TRAINING_EVENTS = 20
 INTERACTION_WEIGHTS = {
@@ -948,12 +949,12 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
     recent, historical = set(cached_signals.get("recent", [])), set(cached_signals.get("historical", []))
     candidates = db.query(Product).filter(
         Product.business_id == business_id,
-        Product.status == "active",
-    ).order_by(Product.id.asc()).all()
+    ).populate_existing().order_by(Product.id.asc()).all()
+    # Recognize an inactive SKU before filtering, so it cannot suggest an unrelated substitute.
     explicit_skus = _explicit_sku_matches(candidates, payload.query)
     candidates = [
         product for product in candidates
-        if int(product.stock_quantity or 0) > int(product.reserved_quantity or 0)
+        if product.status == "active" and int(product.stock_quantity or 0) > int(product.reserved_quantity or 0)
         and (not explicit_skus or product.id in explicit_skus)
         and (product.id not in recent or product.id in explicit_skus)
     ]
@@ -1273,7 +1274,7 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
         all_profiles = customer_rfm_profiles(db, business_id, as_of=now)
         profiles = [all_profiles[customer.id] for customer in customers if customer.id in all_profiles]
         if not profiles:
-            run.status, run.metrics, run.artifact, run.completed_at = "succeeded", {"customers": 0, "clusters": 0}, {
+            run.status, run.metrics, run.artifact, run.completed_at = "succeeded", {"customers": 0, "clusters": 0, "learning_ready":False, "minimum_cluster_customers":MIN_SEGMENT_CUSTOMERS}, {
                 "model_version": SEGMENT_MODEL_VERSION, "segmenter_version": RFM_RULES_VERSION,
             }, _now()
             db.commit()
@@ -1293,7 +1294,11 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
                     profile_model_version, algorithm = "uci_kmeans_demo_v1", "imported_uci_kmeans"
         except (RecommendationArtifactError, KeyError, TypeError, ValueError):
             labels = []
-        if buyers and not labels:
+        learning_ready = len(buyers) >= MIN_SEGMENT_CUSTOMERS
+        if not learning_ready:
+            labels = [-1] * len(buyers)
+            profile_model_version, algorithm = RFM_RULES_VERSION, "rfm_rules_insufficient_cluster_samples"
+        if learning_ready and not labels:
             raw = [[math.log1p(max(0.0, float(profile[key]))) for key in ("recency_days", "frequency", "monetary")] for profile in buyers]
             means = [sum(v[i] for v in raw) / len(raw) for i in range(3)]
             deviations = [math.sqrt(sum((v[i] - means[i]) ** 2 for v in raw) / len(raw)) or 1.0 for i in range(3)]
@@ -1331,6 +1336,7 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
         run.status = "succeeded"
         run.metrics = {
             "customers": len(profiles),
+            "learning_ready": learning_ready, "minimum_cluster_customers":MIN_SEGMENT_CUSTOMERS,
             "clusters": len(set(labels) - {-1}),
             "orders": sum(profile["frequency"] for profile in all_profiles.values()),
             "groups": dict(group_counts),

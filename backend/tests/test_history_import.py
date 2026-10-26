@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -416,6 +416,20 @@ def test_history_import_keeps_unavailable_timestamp_unknown_instead_of_using_imp
         assert stored.raw_payload["timestamp_accuracy"] == "unavailable_from_source"
         assert conversation.last_message_at is None
 
+        db.execute(
+            text("UPDATE conversations SET updated_at = '2025-01-01 00:00:00' WHERE id = :id"),
+            {"id": conversation.id},
+        )
+        db.commit()
+        process_and_save_message(
+            db,
+            {**message, "external_message_id": "instagram:unknown-time-2"},
+            history_import=True,
+        )
+        db.refresh(conversation)
+        assert conversation.updated_at.year > 2025
+        assert conversation.last_message_at is None
+
 
 def test_zalo_oa_history_resumes_and_records_checkpoint_without_reprocessing_webhook(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -472,7 +486,9 @@ def test_zalo_oa_history_resumes_and_records_checkpoint_without_reprocessing_web
         assert marker.payload["offset"] == 3
 
 
-def test_meta_history_reuses_recent_ui_sent_reply_instead_of_adding_a_second_message():
+@pytest.mark.parametrize("bridge_message_id", ["meta-ui:ig-thread-1:123", "7519284303969158985"])
+@pytest.mark.parametrize("sender_type", ["bot", "staff"])
+def test_meta_history_reuses_recent_ui_sent_reply_instead_of_adding_a_second_message(bridge_message_id, sender_type):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Business.metadata.create_all(engine)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -510,15 +526,15 @@ def test_meta_history_reuses_recent_ui_sent_reply_instead_of_adding_a_second_mes
             conversation_id=conversation.id,
             channel="instagram",
             external_user_id="ig-thread-1",
-            external_message_id="meta-ui:ig-thread-1:123",
-            sender_type="bot",
+            external_message_id=bridge_message_id,
+            sender_type=sender_type,
             direction="outbound",
             content=content,
             media_type="image",
             media_url="https://img.vietqr.io/image/970403-account.png?amount=1245000",
-            raw_payload={"message_id": "meta-ui"},
-            status="sent",
-            sent_at=now,
+            raw_payload={"meta_response": {"status": "sent"}},
+            status="received" if sender_type == "staff" else "sent",
+            sent_at=None if sender_type == "staff" else now,
             received_at=now,
         )
         imported_echo = Message(

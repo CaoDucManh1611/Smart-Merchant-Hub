@@ -53,7 +53,7 @@ AGENT_TOOLS = {
     "tao_don_nhap": "Tạo đề xuất đơn nháp sau khi khách đã xác nhận sản phẩm và số lượng.",
     "tao_ticket": "Tạo ticket hỗ trợ và đặt mức ưu tiên.",
     "gan_tag": "Gắn tag cho hồ sơ khách hàng.",
-    "chuyen_nhan_vien": "Bật takeover và chuyển hội thoại cho nhân viên.",
+    "chuyen_nhan_vien": "Yêu cầu nhân viên hỗ trợ hội thoại; chỉ người dùng mới có thể tắt bot.",
     "dat_lich_cham_soc": "Tạo yêu cầu chăm sóc lại để scheduler xử lý.",
     "dung_mau_tra_loi": "Lấy nội dung mẫu trả lời đã được shop duyệt.",
     "xem_don_cua_khach": "Liệt kê đơn hàng của khách trong hội thoại hiện tại.",
@@ -405,9 +405,6 @@ def route_escalation(
         Ticket.status.in_(("open", "pending")),
     ).order_by(Ticket.id.desc()).first()
     if existing:
-        if conversation.bot_mode != "human":
-            _record_handoff(db, business_id, conversation_id, reason_code="support_needed", reason=text, ticket_id=existing.id, source="automatic_escalation")
-        conversation.bot_mode = "human"
         return existing
     assignee = _find_assignee(db, business_id, platform_db=platform_db)
     first_response_due_at, resolution_due_at = ticket_deadlines(db, business_id, priority="high")
@@ -423,7 +420,6 @@ def route_escalation(
         first_response_due_at=first_response_due_at,
         sla_due_at=resolution_due_at,
     )
-    conversation.bot_mode = "human"
     if assignee:
         conversation.assigned_user_id = assignee.id
         db.add(ConversationAssignment(conversation_id=conversation.id, user_id=assignee.id, assignment_type="bot_escalation"))
@@ -569,14 +565,13 @@ def execute_chatbot_tool(
         conversation = _conversation(db, business_id, conversation_id)
         was_auto = conversation.bot_mode != "human"
         assignee = _find_assignee(db, business_id, platform_db=platform_db)
-        conversation.bot_mode = "human"
         if assignee:
             conversation.assigned_user_id = assignee.id
             db.add(ConversationAssignment(conversation_id=conversation.id, user_id=assignee.id, assignment_type="bot_tool"))
         if was_auto:
             _record_handoff(db, business_id, conversation_id, reason_code="bot_requested_staff", reason=args.get("reason") or "tool_call", source="chatbot_tool")
-        record_audit(db, business_id=business_id, action="chatbot_human", resource_type="conversation", resource_id=conversation_id, metadata={"reason": args.get("reason") or "tool_call"})
-        return {"bot_mode": "human", "assigned_user_id": assignee.id if assignee else None}
+        record_audit(db, business_id=business_id, action="chatbot_staff_requested", resource_type="conversation", resource_id=conversation_id, metadata={"reason": args.get("reason") or "tool_call"})
+        return {"bot_mode": conversation.bot_mode, "assigned_user_id": assignee.id if assignee else None}
     if tool_name == "tao_ticket":
         ticket = route_escalation(
             db,
@@ -599,7 +594,6 @@ def execute_chatbot_tool(
                 sla_due_at=resolution_due_at,
             )
             was_auto = conversation.bot_mode != "human"
-            conversation.bot_mode = "human"
             if assignee:
                 conversation.assigned_user_id = assignee.id
                 db.add(ConversationAssignment(conversation_id=conversation.id, user_id=assignee.id, assignment_type="bot_tool"))

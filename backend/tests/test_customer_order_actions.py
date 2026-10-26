@@ -12,10 +12,24 @@ from app.models.customer import Customer
 from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
 from app.services.chatbot_agent import execute_chatbot_tool
-from app.services.customer_order_service import customer_order_reply, detect_customer_order_intent
+from app.services.customer_order_service import customer_context_reply, customer_order_reply, detect_customer_order_intent
 
 
 class CustomerOrderActionTests(unittest.TestCase):
+    def test_negated_payment_does_not_capture_calculation_question(self):
+        with Session(self.engine) as db:
+            for text in (
+                "Mình chỉ nhờ tính thử thôi, chưa đặt hay thanh toán gì: phòng 04, điện 1200 đến 1230 thì bao nhiêu?",
+                "Chưa thanh toán, nhờ tính tiền điện giúp mình",
+                "Tính thử tiền điện, không tạo đơn hay yêu cầu thanh toán nhé",
+            ):
+                with self.subTest(text=text):
+                    self.assertIsNone(customer_context_reply(db, self.business_id, self.conversation_id, text))
+            self.assertIsNotNone(customer_context_reply(db, self.business_id, self.conversation_id,
+                "Tôi chưa thanh toán, cho tôi mã QR đơn ORD-DRAFT-1"))
+            self.assertIsNotNone(customer_context_reply(db, self.business_id, self.conversation_id,
+                "Tôi chưa thanh toán đơn ORD-DRAFT-1"))
+
     @classmethod
     def setUpClass(cls):
         cls.engine = create_engine(
@@ -188,7 +202,7 @@ class CustomerOrderActionTests(unittest.TestCase):
         self.assertTrue(result["accepted"])
         self.assertEqual("staff_review", result["mode"])
         self.assertEqual("processing", order.status)
-        self.assertEqual("human", conversation.bot_mode)
+        self.assertEqual("auto", conversation.bot_mode)
         self.assertIsNotNone(result["ticket_id"])
 
     def test_refund_request_creates_staff_ticket_without_refunding_money(self):
@@ -207,7 +221,7 @@ class CustomerOrderActionTests(unittest.TestCase):
         self.assertTrue(result["accepted"])
         self.assertEqual("staff_review", result["mode"])
         self.assertEqual(Decimal("0.00"), Decimal(order.refunded_amount or 0))
-        self.assertEqual("human", conversation.bot_mode)
+        self.assertEqual("auto", conversation.bot_mode)
         self.assertIsNotNone(result["ticket_id"])
 
     def test_customer_status_reply_asks_for_order_number_when_orders_are_ambiguous(self):

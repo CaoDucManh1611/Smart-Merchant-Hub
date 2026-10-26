@@ -322,6 +322,30 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) .layout .social-icon.tikto
 .crm-app:not(.platform-admin-workspace) .layout .chat-head .chat-person :is(h2, h2 span, p) {
   color: var(--inbox-ink) !important;
 }
+.crm-app:not(.platform-admin-workspace) .layout .chat-head .mobile-chat-settings-trigger {
+  display: none;
+}
+@media (max-width: 560px) {
+  .crm-app:not(.platform-admin-workspace) .layout .chat-head .mobile-chat-settings-trigger {
+    display: inline-flex;
+    width: 36px;
+    min-width: 36px;
+    height: 36px !important;
+    min-height: 36px !important;
+    font-size: 18px !important;
+  }
+  .crm-app:not(.platform-admin-workspace) .layout .chat-head .chat-tool-fields:not(.mobile-settings-open) {
+    display: none;
+  }
+  .crm-app:not(.platform-admin-workspace) .layout .chat-head .chat-tools {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "primary actions" "fields fields";
+    row-gap: 0;
+  }
+  .crm-app:not(.platform-admin-workspace) .layout .chat-head .chat-tools:has(.mobile-settings-open) {
+    row-gap: 6px;
+  }
+}
 .crm-app:not(.platform-admin-workspace) .layout .chat-person h2 {
   font-size: 16px;
 }
@@ -333,6 +357,11 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) .layout .social-icon.tikto
 }
 .crm-app:not(.platform-admin-workspace) .layout .chat-timeline {
   background: var(--inbox-canvas) !important;
+}
+@media (min-width: 861px) {
+  .crm-app:not(.platform-admin-workspace) .layout .chat-timeline {
+    padding-right: 12px;
+  }
 }
 .crm-app:not(.platform-admin-workspace) .layout .bubble {
   font-size: 14px;
@@ -819,5 +848,28 @@ body.crm-dark .crm-app:not(.platform-admin-workspace) .layout .social-icon.tikto
   }
   .crm-app:not(.platform-admin-workspace) .layout :is(.chat-head, .chat-composer) {
     padding: 10px 12px;
+  }
+}
+@media (max-width: 600px) {
+  .crm-app:not(.platform-admin-workspace) .layout .inbox-title {
+    min-height: 44px;
+    padding: 5px 10px;
+  }
+  .crm-app:not(.platform-admin-workspace) .layout .inbox-title .inbox-refresh {
+    width: 34px;
+    height: 34px;
+  }
+  .crm-app:not(.platform-admin-workspace) .layout .inbox-search-row {
+    grid-template-columns: minmax(0, 1fr) 108px;
+    gap: 8px;
+    padding: 2px 10px 4px;
+  }
+  .crm-app:not(.platform-admin-workspace) .layout .inbox-search-box {
+    min-height: 40px;
+    padding: 2px 8px;
+  }
+  .crm-app:not(.platform-admin-workspace) .layout .inbox-search-box input,
+  .crm-app:not(.platform-admin-workspace) .layout .inbox-channel-select select {
+    min-height: 34px;
   }
 }

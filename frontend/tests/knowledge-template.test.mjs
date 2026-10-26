@@ -10,7 +10,7 @@ test('knowledge template is downloadable without triggering the upload picker', 
   assert.match(link, /@click.stop @keydown.stop/);
   assert.doesNotMatch(link, /disabled|knowledgeDocumentQuotaReached/);
   const template = readFileSync(new URL('../public/templates/tai-lieu-mau-kho-kien-thuc.txt', import.meta.url), 'utf8');
-  for (const content of ['HƯỚNG DẪN ĐIỀN', 'Mã SKU:', 'Link sản phẩm:', 'Màu sắc / phiên bản:', 'CÂU HỎI THƯỜNG GẶP', 'CHÍNH SÁCH GIAO HÀNG', 'ĐỔI TRẢ VÀ BẢO HÀNH', 'UTF-8']) {
+  for (const content of ['PHẠM VI VÀ HIỆU LỰC', 'Mã SKU đối chiếu CRM:', 'HÀNG HÓA', 'DỊCH VỤ ĐẶT LỊCH', 'TÀI SẢN CHO THUÊ', 'CÂU HỎI THƯỜNG GẶP', 'GIAO HÀNG/BÀN GIAO/THỰC HIỆN', 'ĐỔI TRẢ, HỦY VÀ HOÀN TIỀN', 'UTF-8', 'gửi trước nhân viên xác nhận đơn', 'không tự tạo hóa đơn']) {
     assert.ok(template.includes(content), content);
   }
 });

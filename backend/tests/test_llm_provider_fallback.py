@@ -197,3 +197,24 @@ def test_stream_can_move_to_second_gemini_only_before_any_text(monkeypatch, fall
         asyncio.run(collect())
         assert output == ["answer"]
         assert seen == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+
+
+def test_groq_sdk_does_not_sleep_and_retry_before_provider_fallback(monkeypatch):
+    import openai
+    from unittest.mock import Mock
+    from app.rag import llm_caller
+    constructor = Mock()
+    monkeypatch.setattr(openai, "OpenAI", constructor)
+    llm_caller._groq_client("test-key")
+    assert constructor.call_args.kwargs["max_retries"] == 0
+
+
+def test_gemini_retry_preserves_original_system_constraints():
+    from app.rag.llm_caller import _messages_to_gemini_format
+    system,history=_messages_to_gemini_format([
+        {"role":"system","content":"Use only current evidence. Return JSON with answer and sources."},
+        {"role":"user","content":"Question"},
+        {"role":"system","content":"Correct the previous invalid draft."},
+    ])
+    assert system == "Use only current evidence. Return JSON with answer and sources.\n\nCorrect the previous invalid draft."
+    assert history == [{"role":"user","parts":["Question"]}]

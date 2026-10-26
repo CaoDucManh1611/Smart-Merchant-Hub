@@ -10,6 +10,8 @@ import {
 
 import "./style.css";
 import SignupBrandScene from "./SignupBrandScene.vue";
+import BusinessProfileSettings from "./BusinessProfileSettings.vue";
+import PaymentRequestPanel from "./PaymentRequestPanel.vue";
 import { channelLabel } from "./channel-utils.js";
 import { safeProductImageUrl, safeProductUrl } from "./product-url.js";
 import { customerTagDisplayName, customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";
@@ -476,6 +478,8 @@ const bulkAssignmentNotice = ref("");
 const conversationOutcomeSaving = ref(false);
 const conversationOutcomeError = ref("");
 const conversationActionsOpen = ref(false);
+const mobileChatSettingsOpen = ref(false);
+watch(selectedId, () => { mobileChatSettingsOpen.value = false; });
 const conversationPrioritySaving = ref(false);
 const composerMode = ref("reply");
 
@@ -659,6 +663,7 @@ async function openWorkQueueItem(item) {
 // Keep the full navigation visible on desktop so the workspace feels like a
 // complete customer-support console; users can still collapse it on demand.
 const sidebarCollapsed = ref(false);
+const mobileCustomerMenuOpen = ref(false);
 const customerPanelCollapsed = ref(false);
 const mobileInboxOpen = ref(false);
 const mobileCustomerOpen = ref(false);
@@ -668,6 +673,27 @@ const productsLoading = ref(false);
 const productSaving = ref(false);
 const productManualOpen = ref(false);
 const productError = ref("");
+const deleteProductsOpen = ref(false);
+const deleteProductsConfirmation = ref("");
+const deleteProductsSaving = ref(false);
+
+async function deleteAllProducts() {
+  if (deleteProductsConfirmation.value !== "XÁC NHẬN" || deleteProductsSaving.value) return;
+  deleteProductsSaving.value = true;
+  try {
+    const response = await apiFetch(`${API_BASE}/products?confirmation=${encodeURIComponent(deleteProductsConfirmation.value)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error("Chưa thể xóa sản phẩm. Vui lòng thử lại.");
+    deleteProductsOpen.value = false;
+    deleteProductsConfirmation.value = "";
+    inventoryAdjustmentOpen.value = null;
+    await fetchProducts();
+  } catch (error) {
+    productError.value = error.message;
+  } finally {
+    deleteProductsSaving.value = false;
+  }
+}
+const productAdjustmentError = ref("");
 const productUploading = ref(false);
 const productUploadNotice = ref("");
 const productFileInput = ref(null);
@@ -5086,6 +5112,28 @@ async function deleteSavedSegment(segment) {
   }
 }
 
+const documentReplacementIds = ref({});
+async function replaceKnowledgeDocument(doc) {
+  const replacementId = documentReplacementIds.value[doc.id];
+  if (!replacementId) return;
+  try {
+    const response = await apiFetch(`${API_BASE}/documents/${doc.id}/replace?replacement_id=${replacementId}`, { method: 'POST' });
+    if (!response.ok) throw new Error('Bản mới cần xử lý thành công trước khi thay thế.');
+    doc.status = 'superseded';
+    delete documentReplacementIds.value[doc.id];
+  } catch (error) { alert(error.message); }
+}
+
+async function toggleDocumentAvailability(doc) {
+  try {
+    const response = await apiFetch(`${API_BASE}/documents/${doc.id}/availability?enabled=${doc.status === 'disabled'}`, { method: 'POST' });
+    if (!response.ok) throw new Error('Chưa thể đổi hiệu lực tài liệu.');
+    Object.assign(doc, await response.json());
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function reindexDocument(doc) {
   if (!doc?.id) return;
   try {
@@ -5953,14 +6001,17 @@ async function adjustProductInventory(product) {
   const reason = String(draft.reason || "").trim();
   if (!Number.isFinite(quantity) || quantity === 0) {
     productError.value = "Nhập số lượng điều chỉnh khác 0.";
+    productAdjustmentError.value = productError.value;
     return;
   }
   if (!reason) {
     productError.value = "Cần ghi lý do điều chỉnh tồn kho để lưu vào sổ điều chỉnh.";
+    productAdjustmentError.value = productError.value;
     return;
   }
   productAdjustmentSaving.value = { ...productAdjustmentSaving.value, [product.id]: true };
   productError.value = "";
+  productAdjustmentError.value = "";
   try {
     const response = await apiFetch(`${API_BASE}/inventory/products/${product.id}/adjustments`, {
       method: "POST",
@@ -5979,6 +6030,7 @@ async function adjustProductInventory(product) {
     await fetchProducts();
   } catch (err) {
     productError.value = friendlyErrorMessage(err, "Chưa thể điều chỉnh tồn kho. Vui lòng thử lại sau.");
+    productAdjustmentError.value = productError.value;
   } finally {
     const nextSaving = { ...productAdjustmentSaving.value };
     delete nextSaving[product.id];
@@ -6053,6 +6105,7 @@ async function saveProductDetails(product) {
 
 function openInventoryAdjustment(product, direction = 1) {
   if (!product?.id) return;
+  productAdjustmentError.value = "";
   const existing = productAdjustmentDrafts.value[product.id] || { quantity: 1, reason: "" };
   productAdjustmentDrafts.value = {
     ...productAdjustmentDrafts.value,
@@ -6067,6 +6120,7 @@ function openInventoryAdjustment(product, direction = 1) {
 
 function closeInventoryAdjustment() {
   inventoryAdjustmentOpen.value = null;
+  productAdjustmentError.value = "";
 }
 
 function inventoryAdjustmentSignedQuantity(product) {
@@ -6136,8 +6190,20 @@ function availableProductQuantity(productId) {
   return Number(product.stock_quantity || 0) - Number(product.reserved_quantity || 0);
 }
 
+function orderPaymentReady(order) {
+  if(order.metadata?.payment_flow!=='prepay_then_confirm')return true;
+  if(order.metadata?.payment_method==='cod')return Boolean(order.metadata?.payment_request);
+  return Boolean(order.metadata?.payment_request) && Number(order.paid_amount || 0)-Number(order.refunded_amount || 0)>=Number(order.metadata.payment_request.amount);
+}
 function orderCanConfirm(order) {
-  return Boolean(order?.items?.length) && order.items.every((item) => availableProductQuantity(item.product_id) >= Number(item.quantity || 0));
+  if(!orderPaymentReady(order))return false;
+  if(order.metadata?.offering_type==='service')return true;
+  const expiry = order?.reservation_expires_at;
+  const expiryUtc = expiry && !/(Z|[+-]\d{2}:?\d{2})$/i.test(expiry) ? `${expiry}Z` : expiry;
+  const held = order?.metadata?.reservation_status === "held"
+    && (!expiryUtc || new Date(expiryUtc).getTime() > Date.now());
+  return Boolean(order?.items?.length) && order.items.every((item) =>
+    availableProductQuantity(item.product_id) + (held ? Number(item.quantity || 0) : 0) >= Number(item.quantity || 0));
 }
 
 async function loadSalesOrderEvents(order) {
@@ -10543,6 +10609,7 @@ async function saveChatbotRuntime() {
         top_k: Number(chatbotConfig.value.top_k),
         similarity_threshold: Number(chatbotConfig.value.similarity_threshold),
         business_hours: businessHours,
+        business_profile: chatbotConfig.value.business_profile,
       }),
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
@@ -10827,7 +10894,9 @@ function followupRecommendationLabel(item) {
          SIDEBAR
     ====================================================== -->
 
-    <aside v-if="authUser && !inPlatformAdminWorkspace && !sessionBootstrapLoading" class="side" :class="{ 'tenant-pending': !tenantReady }">
+    <button v-if="mobileCustomerMenuOpen && authUser && !inPlatformAdminWorkspace" class="customer-menu-backdrop" type="button" aria-label="Đóng danh mục" @click="mobileCustomerMenuOpen = false" />
+    <aside v-if="authUser && !inPlatformAdminWorkspace && !sessionBootstrapLoading" class="side" :class="{ 'tenant-pending': !tenantReady, 'mobile-open': mobileCustomerMenuOpen }" @keydown.esc="mobileCustomerMenuOpen = false" @click="event => { if (event.target.closest('.menu-item:not(:disabled)')) mobileCustomerMenuOpen = false; }">
+      <button v-if="mobileCustomerMenuOpen" type="button" class="customer-mobile-menu" @click="mobileCustomerMenuOpen = false">Đóng danh mục ×</button>
 
       <div class="brand-lockup">
         <div class="crm-brand-mark" data-testid="crm-brand-mark" aria-label="Smart Merchant Hub">
@@ -10891,7 +10960,7 @@ function followupRecommendationLabel(item) {
           <span class="menu-group-label">{{ t("Kiến thức & tự động hóa") }}</span>
           <div class="ai-submenu">
             <button class="menu-item" :class="{ active: currentTab === 'documents' }" :disabled="!tenantReady" :title="t('Kho kiến thức')" @click="currentTab = 'documents'; fetchDocuments()">
-              <svg class="nav-icon nav-icon-knowledge" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5c2.8-1 5.4-.6 8 1v12c-2.6-1.6-5.2-2-8-1Zm16 0c-2.8-1-5.4-.6-8 1v12c2.6-1.6 5.2-2-8-1Z" /><path d="M12 6.5v12" /></svg><b>{{ t('Kho kiến thức') }}</b>
+              <svg class="nav-icon nav-icon-knowledge" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5c-2.5-1.5-5.2-1.8-8-1v12c2.8-.8 5.5-.5 8 1 2.5-1.5 5.2-1.8 8-1v-12c-2.8-.8-5.5-.5-8 1Z" /><path d="M12 6.5v12" /></svg><b>{{ t('Kho kiến thức') }}</b>
             </button>
             <!-- Trợ lý chat được dùng trong Inbox, không cần shortcut riêng. -->
             <button class="menu-item" :class="{ active: currentTab === 'workflows' }" :disabled="!tenantReady" :title="t('Quy trình')" @click="currentTab = 'workflows'; fetchWorkflows(); fetchTeam()">
@@ -10983,6 +11052,7 @@ function followupRecommendationLabel(item) {
       <!-- TOP -->
 
       <header v-if="authUser && !inPlatformAdminWorkspace" class="top">
+        <button type="button" class="customer-mobile-menu" :aria-expanded="mobileCustomerMenuOpen" @click="mobileCustomerMenuOpen = !mobileCustomerMenuOpen">{{ mobileCustomerMenuOpen ? 'Đóng danh mục' : '☰ Danh mục' }}</button>
         <div class="top-actions">
 
           <label class="top-search" role="search">
@@ -10997,6 +11067,7 @@ function followupRecommendationLabel(item) {
             />
             <svg class="top-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8" /><path d="m15.2 15.2 4 4" /></svg>
           </label>
+          <div class="customer-top-tools">
 
           <button
             type="button"
@@ -11074,6 +11145,7 @@ function followupRecommendationLabel(item) {
           </label>
 
 
+
           <button
             type="button"
             class="top-logout"
@@ -11085,6 +11157,7 @@ function followupRecommendationLabel(item) {
             <span>{{ t('Đăng xuất') }}</span>
           </button>
 
+        </div>
         </div>
 
       </header>
@@ -11700,7 +11773,7 @@ function followupRecommendationLabel(item) {
 
                 </div>
 
-                <div class="chat-tool-fields" :class="{ 'has-outcome': selectedHasAiActivity }">
+                <div id="mobile-chat-settings" class="chat-tool-fields" :class="{ 'has-outcome': selectedHasAiActivity, 'mobile-settings-open': mobileChatSettingsOpen }">
 
                 <label class="conversation-assignment" title="Gán hội thoại">
                   <span>Phụ trách</span>
@@ -11733,6 +11806,16 @@ function followupRecommendationLabel(item) {
                 </div>
 
                 <div class="chat-tool-actions">
+
+                <button
+                  type="button"
+                  class="mobile-chat-settings-trigger"
+                  aria-controls="mobile-chat-settings"
+                  :aria-expanded="String(mobileChatSettingsOpen)"
+                  :aria-label="`${t('Phụ trách')} · ${t('Kết quả chatbot')}`"
+                  :title="`${t('Phụ trách')} · ${t('Kết quả chatbot')}`"
+                  @click="mobileChatSettingsOpen = !mobileChatSettingsOpen"
+                >⚙</button>
 
                 <button
                   type="button"
@@ -13193,7 +13276,7 @@ function followupRecommendationLabel(item) {
                 <h4>Gộp hồ sơ khách hàng trùng</h4>
                 <span>{{ duplicateSuggestions.length }}</span>
               </summary>
-              <p class="field-hint">Đề xuất trùng và xem điểm tin cậy trước khi chuyển dữ liệu sang khách hiện tại.</p>
+              <p class="field-hint">Số/email trùng chỉ là gợi ý. Kiểm tra đúng người và xem dữ liệu sẽ chuyển trước khi xác nhận; hệ thống không tự gộp.</p>
               <form class="customer-tag-form" @submit.prevent="mergeSelectedCustomer">
                 <select v-model="customerMergeSourceId" aria-label="Hồ sơ nguồn để gộp">
                   <option value="">Chọn hồ sơ trùng</option>
@@ -13380,7 +13463,7 @@ function followupRecommendationLabel(item) {
             <img src="/brand/logo-mark.svg" alt="" class="admin-art-brand" />
           </div>
           <div class="admin-sidebar-heading"><span>{{ t('KHÔNG GIAN QUẢN TRỊ') }}</span><strong>{{ t('Quản trị nền tảng') }}</strong></div>
-          <button type="button" class="admin-menu-toggle" :aria-expanded="adminMenuOpen" aria-controls="admin-menu-navigation" @click="adminMenuOpen = !adminMenuOpen">{{ t(adminMenuOpen ? 'Đóng menu quản trị' : 'Mở menu quản trị') }}</button>
+          <label class="admin-mobile-select"><span>{{ t('Chức năng quản trị') }}</span><select :value="activePlatformSection" @change="selectPlatformSection($event.target.value)"><option v-for="section in visibleAdminSections" :key="section.id" :value="section.id">{{ t(section.title) }}</option></select></label>
           <nav id="admin-menu-navigation" class="admin-section-nav" :class="{ 'is-open': adminMenuOpen }" :aria-label="t('Đi nhanh đến mục quản trị')">
             <a v-for="section in visibleAdminSections" :key="section.id" :href="adminSectionHash(section.id)" :aria-current="activePlatformSection === section.id ? 'page' : undefined" @click.prevent="selectPlatformSection(section.id)">
               <svg class="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="section.icon" /></svg>
@@ -13587,7 +13670,15 @@ function followupRecommendationLabel(item) {
             <p>Theo dõi danh mục sản phẩm và xử lý tồn kho của shop.</p>
           </div>
           <button type="button" class="settings-refresh" @click="downloadCommerceCsv('/products/export.csv', 'products-inventory.csv', 'products')">{{ crmUiText('Xuất sản phẩm & tồn kho') }}</button>
+          <button type="button" class="secondary-btn" :disabled="!products.length" @click="deleteProductsConfirmation = ''; deleteProductsOpen = true">Xóa tất cả sản phẩm</button>
         </div>
+        <section v-if="deleteProductsOpen" class="product-form" role="dialog" aria-modal="false" aria-labelledby="delete-products-title">
+          <h3 id="delete-products-title">Xóa tất cả sản phẩm</h3>
+          <p>Tất cả sản phẩm sẽ được gỡ khỏi danh mục. Lịch sử đơn hàng và tồn kho vẫn được giữ. Nhập đúng XÁC NHẬN để tiếp tục.</p>
+          <label>Nhập XÁC NHẬN<input v-model="deleteProductsConfirmation" autocomplete="off" :disabled="deleteProductsSaving" /></label>
+          <button type="button" class="secondary-btn" :disabled="deleteProductsSaving" @click="deleteProductsOpen = false">Hủy</button>
+          <button type="button" class="primary-btn" :disabled="deleteProductsConfirmation !== 'XÁC NHẬN' || deleteProductsSaving" @click="deleteAllProducts">{{ deleteProductsSaving ? 'Đang xóa...' : 'Xóa tất cả sản phẩm' }}</button>
+        </section>
 
         <div
           class="product-import-dropzone upload-dropzone"
@@ -13728,9 +13819,10 @@ function followupRecommendationLabel(item) {
                       </div>
                       <div class="adjustment-fields">
                         <label>Số lượng<input v-model.number="productAdjustmentDrafts[product.id].quantity" type="number" min="1" step="1" aria-label="Số lượng điều chỉnh" /></label>
-                        <label>Lý do điều chỉnh<input v-model="productAdjustmentDrafts[product.id].reason" maxlength="1000" placeholder="Ví dụ: kiểm kê, hỏng hàng, nhập bổ sung..." aria-label="Lý do điều chỉnh tồn" /></label>
+                        <label>Lý do điều chỉnh<input v-model="productAdjustmentDrafts[product.id].reason" maxlength="1000" required placeholder="Ví dụ: kiểm kê, hỏng hàng, nhập bổ sung..." aria-label="Lý do điều chỉnh tồn" /></label>
                         <div class="adjustment-preview"><span>Tồn sau điều chỉnh</span><strong>{{ inventoryAdjustmentPreview(product) }}</strong></div>
                       </div>
+                      <div v-if="productAdjustmentError" class="product-error adjustment-inline-error" role="alert">{{ productAdjustmentError }}</div>
                       <div class="adjustment-actions"><small>Số lượng gửi: {{ inventoryAdjustmentSignedQuantity(product) > 0 ? '+' : '' }}{{ inventoryAdjustmentSignedQuantity(product) }}</small><button type="button" class="primary-btn" :disabled="productAdjustmentSaving[product.id]" @click="adjustProductInventory(product)">{{ productAdjustmentSaving[product.id] ? 'Đang ghi...' : 'Ghi điều chỉnh' }}</button></div>
                     </div>
                   </td>
@@ -14044,9 +14136,9 @@ function followupRecommendationLabel(item) {
             <tbody>
               <tr v-for="order in orders" :key="order.id">
                 <td><strong>{{ order.order_number }}</strong><small v-if="order.metadata?.external_order_id">Mã sàn: {{ order.metadata.external_order_id }}</small></td>
-                <td>#{{ order.customer_id }}<small>{{ orderCustomerName(order.customer_id) }}</small></td>
-                <td class="order-phone-cell">{{ orderCustomerPhone(order.customer_id) }}</td>
-                <td><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}<small v-if="order.status === 'draft'"> (còn {{ availableProductQuantity(item.product_id) }})</small></span></td>
+                <td>#{{ order.customer_id }}<small>{{ order.metadata?.renter_name || orderCustomerName(order.customer_id) }}</small><small v-if="order.metadata?.offering_type === 'rental' && !order.metadata?.request_fields">Đơn thuê · Ngày vào: {{ order.metadata.move_in || 'Chưa có' }}</small><details v-if="order.metadata?.request_fields"><summary>Thông tin khách xác nhận</summary><small v-for="(value,key) in order.metadata.request_fields" :key="key">{{ order.metadata.request_field_labels?.[key] || key }}: {{ value }}</small></details></td>
+                <td class="order-phone-cell">{{ order.shipping_phone || orderCustomerPhone(order.customer_id) }}</td>
+                <td><span v-if="!order.items?.length">{{ order.metadata?.offering_name }}</span><span v-for="(item, index) in order.items" :key="item.id">{{ index ? ', ' : '' }}{{ item.product_name }} ×{{ item.quantity }}<small v-if="order.status === 'draft'"> (còn {{ availableProductQuantity(item.product_id) }})</small></span></td>
                 <td>{{ order.channel || (order.metadata?.marketplace_source === 'shopee' ? 'Shopee Seller Center' : order.metadata?.marketplace_source === 'tiktok' ? 'TikTok Shop Seller Center' : 'Không gắn kênh') }}</td>
                 <td>
                   <select class="inline-stage" :value="order.status" :disabled="orderTransitionSaving[order.id]" @change="transitionSalesOrder(order, $event.target.value)">
@@ -14054,17 +14146,19 @@ function followupRecommendationLabel(item) {
                   </select>
                   <small v-if="order.metadata?.marketplace_source">Trạng thái sàn: {{ order.metadata.external_status || '—' }}</small>
                   <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order) || orderTransitionSaving[order.id]" @click.stop="transitionSalesOrder(order, 'confirmed')">{{ orderTransitionSaving[order.id] ? 'Đang cập nhật...' : 'Xác nhận đơn' }}</button>
-                  <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">Thiếu tồn khả dụng</small>
+                  <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">{{ orderPaymentReady(order) ? 'Thiếu tồn khả dụng' : 'Cần lập bảng kê và đối soát khoản thu' }}</small>
                 </td>
                 <td><button type="button" class="table-action-btn" data-testid="order-history-button" :title="uiLocale === 'en' ? 'View order history' : 'Xem lịch sử đơn hàng'" :aria-label="uiLocale === 'en' ? 'View order history' : 'Xem lịch sử đơn hàng'" @click.stop="loadSalesOrderEvents(order)">{{ uiLocale === 'en' ? 'History' : 'Lịch sử' }}</button><small>{{ uiLocale === 'en' ? 'Order updates' : 'Các lần cập nhật đơn' }}</small></td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ paymentStatusLabel(order.payment_status) }}</span>
                   <small>{{ formatMoney(order.paid_amount || 0) }} / {{ formatMoney(order.total_amount || 0) }}</small>
-                  <div class="order-payment-actions">
+                  <PaymentRequestPanel v-if="order.metadata?.payment_flow === 'prepay_then_confirm'" :order="order" :endpoint="`${API_BASE}/orders/${order.id}/payment-request`" :payment-endpoint="`${API_BASE}/orders/${order.id}/payments`" @saved="fetchOrders" />
+                  <div v-else class="order-payment-actions">
                     <input v-model.number="orderPaymentDrafts[order.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" />
                     <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận thanh toán" title="Ghi nhận thanh toán" @click="recordSalesPayment(order)">Thu</button>
                     <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận hoàn tiền" title="Ghi nhận hoàn tiền" @click="recordSalesPayment(order, 'refund')">Hoàn</button>
                   </div>
+                  <div v-if="order.metadata?.payment_flow==='prepay_then_confirm' && Number(order.paid_amount)>Number(order.refunded_amount || 0)" class="order-payment-actions"><input v-model.number="orderPaymentDrafts[order.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền hoàn" /><button type="button" :disabled="orderPaymentSaving[order.id]" @click="recordSalesPayment(order,'refund')">Hoàn</button></div>
                 </td>
                 <td><strong>{{ formatMoney(order.total_amount || 0) }}</strong></td>
                 <td>{{ order.created_at ? formatDateTime(order.created_at) : '—' }}</td>
@@ -14529,6 +14623,8 @@ function followupRecommendationLabel(item) {
                 <td>
                   <span class="status-badge" :class="'status-' + doc.status">
                     <span v-if="doc.status === 'ready'">Sẵn sàng</span>
+                    <span v-else-if="doc.status === 'disabled'">Ngừng sử dụng</span>
+                    <span v-else-if="doc.status === 'superseded'">Đã được thay thế</span>
                     <span v-else-if="doc.status === 'processing'">Đang xử lý</span>
                     <span v-else-if="doc.status === 'pending'">⏳ Chờ xử lý</span>
                     <span v-else>❌ Lỗi</span>
@@ -14555,6 +14651,14 @@ function followupRecommendationLabel(item) {
                   <button class="btn-delete" @click="deleteDoc(doc.id)" title="Xóa tài liệu">
                     Xóa
                   </button>
+                  <button v-if="['ready', 'disabled'].includes(doc.status)" class="btn-refresh" @click="toggleDocumentAvailability(doc)">{{ doc.status === 'disabled' ? 'Bật sử dụng' : 'Ngừng sử dụng' }}</button>
+                  <div v-if="['ready', 'disabled'].includes(doc.status)">
+                    <select v-model="documentReplacementIds[doc.id]" :aria-label="`Bản thay thế cho ${doc.filename}`">
+                      <option :value="undefined">Chọn tài liệu thay thế</option>
+                      <option v-for="candidate in documents.filter(item => item.id !== doc.id && item.status === 'ready')" :key="candidate.id" :value="candidate.id">{{ candidate.filename }}</option>
+                    </select>
+                    <button class="btn-refresh" :disabled="!documentReplacementIds[doc.id]" @click="replaceKnowledgeDocument(doc)">Áp dụng bản mới</button>
+                  </div>
                   <button class="btn-refresh" @click="reindexDocument(doc)" title="Lập chỉ mục lại">
                     🔁 Xử lý lại tài liệu
                   </button>
@@ -14582,7 +14686,7 @@ function followupRecommendationLabel(item) {
           <div class="setting-card">
             <h3>Trả lời tự động trên các kênh</h3>
             <p class="setting-desc">Trợ lý tự động trả lời tin nhắn từ khách Facebook, Instagram và Telegram dựa trên kho thông tin của shop.</p>
-            
+
             <div class="toggle-row">
               <span>Trả lời tự động:</span>
               <button
@@ -15363,6 +15467,7 @@ function followupRecommendationLabel(item) {
             <label v-if="false">Ngưỡng liên quan<input v-model.number="chatbotConfig.similarity_threshold" type="number" min="0" max="1" step="0.05" /></label>
             <label class="checkbox-field"><input v-model="chatbotConfig.enabled" type="checkbox" /> Cho phép trợ lý trả lời</label>
             <label class="checkbox-field"><input v-model="chatbotConfig.handoff_enabled" type="checkbox" /> Cho phép chuyển nhân viên</label>
+            <BusinessProfileSettings v-model="chatbotConfig.business_profile" />
             <label v-if="false" class="chatbot-hours-field">Giờ hoạt động (JSON)
               <textarea v-model="businessHoursJson" rows="5" spellcheck="false" placeholder='{"timezone":"Asia/Ho_Chi_Minh","mon":[["08:00","17:30"]]}'></textarea>
             </label>
@@ -18057,7 +18162,6 @@ body.crm-dark .channel-modal .meta-bridge-icon { border-color: rgba(126, 173, 17
 .crm-dark .empty-chat-kicker { color: #8bd8d7 !important; }
 .crm-dark .empty-chat-steps span { color: #d8ffff !important; border-color: #3c777a !important; background: rgba(37, 67, 70, .82) !important; }
 .crm-dark .empty-chat-steps b { background: #299da2 !important; }
-.crm-dark .empty-chat-mark { background: linear-gradient(145deg, #2aa8ad, #176d7a) !important; box-shadow: 0 14px 30px rgba(13, 101, 111, .32) !important; }
 .crm-dark .app-dialog,
 .crm-dark .quick-action-dialog { color: #f3f5f6 !important; background: #202427 !important; border-color: #394145 !important; box-shadow: 0 24px 70px rgba(0, 0, 0, .48) !important; }
 .crm-dark .app-dialog-content h3,

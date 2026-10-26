@@ -198,3 +198,62 @@ body { background: var(--crm-frame-bg) !important; }
   min-height: 100% !important;
   overflow: visible !important;
 }
+.admin-mobile-select { display:none; }
+@media(max-width:600px) {
+  .admin-mobile-select { display:grid; gap:6px; font-size:12px; color:var(--admin-muted); }
+  .admin-mobile-select select { width:100%; min-height:44px; padding:8px 12px; border:1px solid var(--admin-line); border-radius:8px; background:var(--admin-surface); color:var(--admin-ink); font:inherit; font-size:14px; font-weight:650; }
+  .crm-app.platform-admin-workspace .admin-section-nav.is-open { display:none; }
+  .crm-app.platform-admin-workspace .platform-admin-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .crm-app.platform-admin-workspace .platform-admin-metric { min-height:0; padding:12px; gap:6px; border-radius:10px; }
+  .crm-app.platform-admin-workspace .platform-admin-metric strong { font-size:24px!important; line-height:1.2; overflow-wrap:anywhere; }
+  .crm-app.platform-admin-workspace .platform-admin-metric span { font-size:12px; }
+  .crm-app.platform-admin-workspace .platform-admin-metric small { font-size:11px; line-height:1.4; }
+  .crm-app.platform-admin-workspace .platform-admin-layout { padding:10px; gap:12px; }
+  .crm-app.platform-admin-workspace .platform-admin-panel { padding:12px; }
+  .crm-app.platform-admin-workspace .platform-admin-layout > .platform-admin-hero { gap:8px; padding-bottom:12px!important; }
+  .platform-admin-layout > .platform-admin-hero p { font-size:13px; line-height:1.5; }
+}
+@media(max-width:600px) {
+  .platform-admin-layout > .platform-admin-hero p { display:none; }
+  .crm-app.platform-admin-workspace .platform-admin-layout > .platform-admin-hero { flex-direction:row; align-items:center; }
+  .crm-app.platform-admin-workspace .admin-section-sidebar { padding:10px; }
+}
+@media(max-width:600px) {
+  .crm-app.platform-admin-workspace .platform-admin-main { padding:8px!important; }
+  .crm-app.platform-admin-workspace .platform-admin-layout { padding:0; gap:10px; }
+  .crm-app.platform-admin-workspace .platform-workspace-header { gap:8px; padding-bottom:10px; }
+  .crm-app.platform-admin-workspace .platform-workspace-role { display:none; }
+  .crm-app.platform-admin-workspace .admin-workspace-body { gap:10px; }
+  .crm-app.platform-admin-workspace .admin-sidebar { padding:0; border:0; background:transparent; box-shadow:none; }
+  .crm-app.platform-admin-workspace .platform-admin-panel-heading { display:flex; flex-direction:row; align-items:flex-start; gap:8px; padding-bottom:12px; margin-bottom:12px; text-align:left; }
+  .crm-app.platform-admin-workspace .platform-admin-panel-heading > div { flex:1; min-width:0; }
+  .crm-app.platform-admin-workspace .platform-admin-panel-heading p { font-size:13px; line-height:1.5; }
+  .crm-app.platform-admin-workspace .platform-admin-panel-heading h3 { font-size:17px; }
+  .crm-app.platform-admin-workspace .platform-plan-item { grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:12px; }
+  .crm-app.platform-admin-workspace .platform-plan-item > small { font-size:11px; }
+  .crm-app.platform-admin-workspace .staff-form { padding:0; border:0; }
+  .crm-app.platform-admin-workspace .staff-fields { gap:12px; }
+  .crm-app.platform-admin-workspace .staff-permission-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 8px; padding:6px 10px; }
+  .crm-app.platform-admin-workspace .staff-permission-row > strong { min-width:0; grid-column:1/-1; }
+  .crm-app.platform-admin-workspace .staff-permission-row label { min-height:36px; }
+  .crm-app.platform-admin-workspace .knowledge-empty { padding:16px; }
+  .crm-app.platform-admin-workspace .knowledge-upload,.crm-app.platform-admin-workspace .backup-toolbar { padding:12px; gap:8px; }
+  .crm-app.platform-admin-workspace .knowledge-footer-note { margin-top:12px; }
+  .crm-app.platform-admin-workspace .otp-email-fields,.crm-app.platform-admin-workspace .payment-settings-fields { gap:12px; }
+}
+@media(max-width:600px) {
+  .crm-app.platform-admin-workspace .platform-plan-item > div:first-child { grid-column:1/-1; }
+  .crm-app.platform-admin-workspace .platform-plan-actions { justify-content:flex-end; }
+  .crm-app.platform-admin-workspace .staff-permission-row { grid-template-columns:minmax(0,1fr) 52px 78px; gap:4px; }
+  .crm-app.platform-admin-workspace .staff-permission-row > strong { grid-column:auto; }
+  .crm-app.platform-admin-workspace .staff-permission-row label { min-height:44px; gap:4px; }
+}
+@media(max-width:600px) {
+  .crm-app.platform-admin-workspace .platform-workspace-header { display:flex; flex-direction:column; align-items:stretch; gap:10px; padding:4px 0 12px; margin-bottom:0; }
+  .crm-app.platform-admin-workspace .platform-workspace-identity { gap:9px; }
+  .crm-app.platform-admin-workspace .platform-workspace-identity strong { font-size:14px; }
+  .crm-app.platform-admin-workspace .platform-workspace-mark { width:32px; height:32px; flex:0 0 32px; }
+  .crm-app.platform-admin-workspace .platform-workspace-actions { display:flex; width:auto; margin-left:auto; justify-content:flex-end; align-items:center; flex-wrap:nowrap; gap:8px; }
+  .crm-app.platform-admin-workspace .platform-workspace-actions .dark-mode-toggle { width:40px; min-width:40px; height:40px; margin:0; }
+  .crm-app.platform-admin-workspace .platform-workspace-actions select,.crm-app.platform-admin-workspace .platform-logout { min-height:40px; height:40px; margin:0; }
+}

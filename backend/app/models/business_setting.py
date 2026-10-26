@@ -1,6 +1,6 @@
 """Tenant-owned application settings."""
 
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.bases import TenantBase
@@ -17,4 +17,4 @@ class BusinessSetting(TenantBase):
         Integer, nullable=False, index=True
     )
     key: Mapped[str] = mapped_column(String(100), nullable=False)
-    value: Mapped[str] = mapped_column(String(500), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)

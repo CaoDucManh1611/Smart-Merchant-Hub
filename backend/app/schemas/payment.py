@@ -82,3 +82,10 @@ from app.schemas.sales import OrderOut
 
 SalesPaymentResult.model_rebuild()
 PurchasePaymentResult.model_rebuild()
+
+
+from app.schemas.business_profile import ChargeLine
+class PaymentRequestUpdate(BaseModel):
+    model_config=ConfigDict(extra="forbid",str_strip_whitespace=True)
+    label: str=Field(default="Khoản thu theo đơn",min_length=1,max_length=120)
+    lines: list[ChargeLine]=Field(min_length=1,max_length=20)

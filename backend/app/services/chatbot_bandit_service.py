@@ -175,7 +175,7 @@ def select_chatbot_reply_choice(
         "runtime_binding": RUNTIME_BINDING,
     }
     context_hash = _context_hash(context)
-    arms = sorted(approved)
+    arms = [str(arm) for arm in experiment.variants if str(arm) in approved]
     explore = random.random() < float(policy.epsilon)
     stats = {
         arm: db.query(BanditArmStat)

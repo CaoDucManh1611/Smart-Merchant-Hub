@@ -24,6 +24,17 @@ import server_connector_agent
 from shopee_bot import normalize_message
 
 
+def test_shopee_image_url_is_read_from_json_content_for_live_and_history():
+    source = {
+        "id": "photo-1", "conversation_id": "thread-1", "from_id": "buyer-1",
+        "type": "image", "content": '{"image":{"url":"https://cdn.example/photo.jpg"}}',
+    }
+    live = normalize_message(source)
+    history = shopee_bot.normalize_history_message(source, {"threadId": "thread-1", "customerId": "buyer-1"})
+    assert live["message"] == history["message"] == "[image]"
+    assert live["mediaUrl"] == history["mediaUrl"] == "https://cdn.example/photo.jpg"
+
+
 def test_shopee_bridge_timeout_is_delivery_unknown_not_send_failure():
     pending = Future()
     with pytest.raises(shopee_bot.ShopeeDeliveryUnknown, match="chưa xác nhận"):
@@ -1104,12 +1115,51 @@ def test_meta_local_connector_sends_reply_to_channel_specific_bridge(monkeypatch
     assert sent["json"] == {"threadId": "thread-1", "message": "Chào bạn", "recipientId": "buyer-1"}
 
 
+@pytest.mark.parametrize("provider_status", [401, 403])
+@pytest.mark.parametrize("operation", ["facebook_text", "instagram_text", "image", "media", "shopee", "tiktok"])
+def test_connector_auth_failure_is_not_a_crm_session_failure(monkeypatch, provider_status, operation):
+    monkeypatch.setattr("app.services.shop_bank_transfer.shop_transfer_qr_png", lambda *_args: b"local-qr-png")
+    channel_type = operation.split("_")[0] if operation.endswith("_text") else operation
+    if operation in {"image", "media"}:
+        channel_type = "facebook"
+    channel = type("ChannelRow", (), {
+        "id": 11, "access_token_encrypted": "encrypted-token",
+        "config": {"provider": f"{channel_type}_local_connector"},
+    })()
+    db = type("TenantDb", (), {"scalar": lambda _self, _query: channel})()
+    monkeypatch.setattr(conversations, "_local_connector_thread_id", lambda *_args: "thread-1")
+    monkeypatch.setattr(conversations, "decrypt_token", lambda *_args: "connector-token")
+    response = type("Response", (), {
+        "status_code": provider_status,
+        "json": lambda _self: {"detail": "Connector credentials rejected"},
+    })()
+    monkeypatch.setattr(conversations.httpx, "post", lambda *_args, **_kwargs: response)
+    kwargs = dict(db=db, conversation={"id": 22, "channel_id": 11, "channel": channel_type},
+                  recipient_id="buyer-1", business_id=7)
+    if operation == "image":
+        sender = conversations.send_meta_image
+        kwargs.update(image_url="https://img.vietqr.io/image/970403-account.png?amount=1000", caption="")
+    elif operation == "media":
+        sender = conversations.send_meta_media
+        kwargs.update(media_type="file", media_url="", caption="", uploaded_media={"upload_bytes": b"file"})
+    else:
+        sender = {"shopee": conversations.send_shopee_text, "tiktok": conversations.send_tiktok_text}.get(
+            operation, conversations.send_meta_text
+        )
+        kwargs["text_content"] = "Test reply"
+    with pytest.raises(HTTPException) as error:
+        sender(**kwargs)
+    assert error.value.status_code == 502
+    assert error.value.detail == "Connector credentials rejected"
+
+
 @pytest.mark.parametrize(
     ("channel_type", "setting_name", "port"),
     [("facebook", "META_MESSENGER_BRIDGE_CONTROL_URL", 8093),
      ("instagram", "META_INSTAGRAM_BRIDGE_CONTROL_URL", 8094)],
 )
 def test_meta_local_connector_sends_vietqr_as_image_with_caption(monkeypatch, channel_type, setting_name, port):
+    import base64
     channel = type("ChannelRow", (), {
         "id": 11,
         "access_token_encrypted": "encrypted-token",
@@ -1130,6 +1180,7 @@ def test_meta_local_connector_sends_vietqr_as_image_with_caption(monkeypatch, ch
     monkeypatch.setattr(conversations, "decrypt_token", lambda *_args: "connector-token")
     monkeypatch.setattr(conversations.settings, setting_name, f"http://host.docker.internal:{port}")
     monkeypatch.setattr(conversations.httpx, "post", lambda url, **kwargs: (sent.update(url=url, **kwargs) or response))
+    monkeypatch.setattr("app.services.shop_bank_transfer.shop_transfer_qr_png", lambda *_args: b"local-qr-png")
 
     result, returned_channel = conversations.send_meta_image(
         db=TenantDb(),
@@ -1148,7 +1199,7 @@ def test_meta_local_connector_sends_vietqr_as_image_with_caption(monkeypatch, ch
         "threadId": "thread-1",
         "recipientId": "buyer-1",
         "mediaType": "image",
-        "imageUrl": "https://img.vietqr.io/image/970403-account.png?amount=1000",
+        "imageData": base64.b64encode(b"local-qr-png").decode("ascii"),
         "message": "Thông tin chuyển khoản CHAT-1",
     }
 
@@ -1186,8 +1237,8 @@ def test_conversation_inbox_orders_preview_fields_by_each_message_timestamp():
 
     assert result["items"] == []
     inbox_sql = statements[0]
-    assert inbox_sql.count("m.received_at DESC NULLS LAST") == 5
-    assert "last_message_at DESC" in inbox_sql
+    assert inbox_sql.count("COALESCE(m.received_at, cv.updated_at) DESC") == 5
+    assert "COALESCE(last_message_at, cv.updated_at) DESC NULLS LAST" in inbox_sql
 
 
 def test_shopee_outbound_refuses_when_exact_thread_is_not_found(monkeypatch):

@@ -8,6 +8,7 @@ from app.services.auto_reply_service import (  # noqa: E402
     _is_product_catalog_listing_request,
     _is_product_fact_question,
     _is_recommendation_question,
+    _is_specific_product_lookup,
     _product_hint,
     _requested_variant_tokens,
 )
@@ -68,6 +69,7 @@ def _has_product_reference(query: str) -> bool:
         "loai", "tot", "nhat", "cai", "nay", "xanh", "den", "hong", "do", "size", "sao",
         "mau", "gia", "bao", "nhieu", "con", "khong", "ko", "hien", "tai", "muon", "xem",
         "thong", "tin", "chi", "tiet", "cho", "toi", "minh", "can", "tu", "van",
+        "suat", "goi", "gom", "includes", "this", "that", "package", "slot",
     }
     hint = set(fold_topic_text(_product_hint(query)).split())
     return bool(hint - generic)
@@ -121,6 +123,15 @@ def classify_intent(query: str) -> str:
         return "search_knowledge"
 
     has_product = _has_product_reference(query)
+    explicit_item = re.search(r"\b(?:sku|model|ma)\s+[a-z0-9][a-z0-9-]*\b", folded)
+    named_availability = re.search(r"^(?:(?:shop|ben minh)\s+)?co ban\s+.+\s+khong\b", folded)
+    if has_product and _is_specific_product_lookup(query) and (explicit_item or named_availability):
+        return "lookup_product"
+
+    # Broad discovery wins over price/stock words only without a specific item.
+    if _is_product_catalog_listing_request(query):
+        return "lookup_product_catalog"
+
     is_product_fact = _is_product_fact_question(query)
     is_price = is_price_quote_request(query) or _is_price_question(folded)
     is_stock = is_stock_query_request(query) or is_product_fact or bool(re.search(r"\bcon ko\b", folded))
@@ -142,16 +153,12 @@ def classify_intent(query: str) -> str:
     )):
         return "search_knowledge"
     if has_product and (has_order_reference is False) and any(term in folded for term in (
-        "san pham gi", "la san pham", "ban khong", "ban serun", "kem duong", "serun01",
+        "san pham gi", "la san pham", "ban khong",
     )):
         return "lookup_product"
     if _requested_variant_tokens(query) and has_product:
         return "lookup_product"
 
-    if _is_product_catalog_listing_request(query):
-        return "lookup_product_catalog"
-    if "tong tien" in folded and "mua" in folded:
-        return "clarify_product"
     if is_browsing_request(query):
         return "search_knowledge"
     return "search_knowledge"

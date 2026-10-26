@@ -52,3 +52,27 @@ test("an MFA-required 401 keeps the active token and does not expire the session
     globalThis.fetch = previousFetch;
   }
 });
+
+test("a connector gateway failure preserves the CRM session", async () => {
+  const values = new Map([["crm_access_token", "active-token"]]);
+  const browserWindow = new EventTarget();
+  browserWindow.localStorage = {
+    getItem: (key) => values.get(key) || null,
+    removeItem: (key) => values.delete(key),
+  };
+  const previousWindow = globalThis.window;
+  const previousFetch = globalThis.fetch;
+  globalThis.window = browserWindow;
+  globalThis.fetch = async () => Response.json({ detail: "Meta bridge secret không đúng" }, { status: 502 });
+  let events = 0;
+  browserWindow.addEventListener(AUTH_EXPIRED_EVENT, () => { events += 1; });
+  try {
+    const response = await apiFetch("/api/conversations/1/send", { method: "POST" });
+    assert.equal(response.status, 502);
+    assert.equal(values.get("crm_access_token"), "active-token");
+    assert.equal(events, 0);
+  } finally {
+    globalThis.window = previousWindow;
+    globalThis.fetch = previousFetch;
+  }
+});

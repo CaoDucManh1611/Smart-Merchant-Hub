@@ -1153,7 +1153,7 @@ def send_tiktok_text(
     if response.status_code >= 400:
         detail = payload.get("detail") if isinstance(payload, dict) else None
         raise HTTPException(
-            status_code=502 if response.status_code >= 500 else response.status_code,
+            status_code=502 if response.status_code in {401, 403} or response.status_code >= 500 else response.status_code,
             detail=detail or "TikTok bridge từ chối gửi tin",
         )
     if not isinstance(payload, dict):
@@ -1234,7 +1234,7 @@ def send_shopee_text(
         detail = payload.get("detail") if isinstance(payload, dict) else None
         if response.status_code == 409 and isinstance(payload, dict) and payload.get("code") == "delivery_unknown":
             raise HTTPException(status_code=409, detail=payload)
-        raise HTTPException(status_code=response.status_code, detail=detail or "Shopee connector từ chối gửi tin")
+        raise HTTPException(status_code=502 if response.status_code in {401, 403} else response.status_code, detail=detail or "Shopee connector từ chối gửi tin")
     return payload if isinstance(payload, dict) else {"status": "sent"}, channel
 
 
@@ -1320,7 +1320,8 @@ def send_meta_text(
         detail = payload.get("detail") if isinstance(payload, dict) else None
         if response.status_code == 409 and isinstance(payload, dict) and payload.get("code") == "delivery_unknown":
             raise HTTPException(status_code=409, detail=payload)
-        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi tin")
+        # Bridge authentication failures must not expire the shop user's CRM session.
+        raise HTTPException(status_code=502 if response.status_code in {401, 403} else response.status_code, detail=detail or "Meta connector từ chối gửi tin")
     return payload if isinstance(payload, dict) else {"status": "sent"}, channel
 
 
@@ -1399,7 +1400,14 @@ def send_meta_image(
         and parsed.path.startswith("/image/")
         and parsed.path.lower().endswith(".png")
     )
-    if not is_vietqr:
+    if is_vietqr:
+        from app.services.shop_bank_transfer import shop_transfer_qr_png
+        try:
+            image_bytes = shop_transfer_qr_png(db, business_id, image_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        image_payload = {"imageData": base64.b64encode(image_bytes).decode("ascii")}
+    else:
         # Push validated bytes to Edge. A paired connector token is not a Graph
         # token, and Edge must not fetch arbitrary URLs on the shop's network.
         public_base = urlsplit(get_public_base_url())
@@ -1452,7 +1460,7 @@ def send_meta_image(
         detail = payload.get("detail") if isinstance(payload, dict) else None
         if response.status_code == 409 and isinstance(payload, dict) and payload.get("code") == "delivery_unknown":
             raise HTTPException(status_code=409, detail=payload)
-        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi ảnh")
+        raise HTTPException(status_code=502 if response.status_code in {401, 403} else response.status_code, detail=detail or "Meta connector từ chối gửi ảnh")
     return payload if isinstance(payload, dict) else {"status": "sent"}, channel
 
 
@@ -1548,7 +1556,7 @@ def send_meta_media(
         detail = result.get("detail") if isinstance(result, dict) else None
         if response.status_code == 409 and isinstance(result, dict) and result.get("code") == "delivery_unknown":
             raise HTTPException(status_code=409, detail=result)
-        raise HTTPException(status_code=response.status_code, detail=detail or "Meta connector từ chối gửi media")
+        raise HTTPException(status_code=502 if response.status_code in {401, 403} else response.status_code, detail=detail or "Meta connector từ chối gửi media")
     return result if isinstance(result, dict) else {"status": "sent"}, channel
 
 
@@ -2132,7 +2140,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    m.received_at DESC NULLS LAST,
+                    COALESCE(m.received_at, cv.updated_at) DESC,
                     m.id DESC
 
                 LIMIT 1
@@ -2149,7 +2157,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    m.received_at DESC NULLS LAST,
+                    COALESCE(m.received_at, cv.updated_at) DESC,
                     m.id DESC
 
                 LIMIT 1
@@ -2166,7 +2174,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    m.received_at DESC NULLS LAST,
+                    COALESCE(m.received_at, cv.updated_at) DESC,
                     m.id DESC
 
                 LIMIT 1
@@ -2183,7 +2191,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    m.received_at DESC NULLS LAST,
+                    COALESCE(m.received_at, cv.updated_at) DESC,
                     m.id DESC
 
                 LIMIT 1
@@ -2200,7 +2208,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    m.received_at DESC NULLS LAST,
+                    COALESCE(m.received_at, cv.updated_at) DESC,
                     m.id DESC
 
                 LIMIT 1
@@ -2233,8 +2241,8 @@ def get_conversations(
           {assignment_filter}
 
         ORDER BY
-            last_message_at DESC
-            NULLS LAST
+            COALESCE(last_message_at, cv.updated_at) DESC NULLS LAST,
+            cv.id DESC
     """
 
     params = {"business_id": tenant.business_id}

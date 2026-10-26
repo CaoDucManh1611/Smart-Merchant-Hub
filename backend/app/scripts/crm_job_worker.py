@@ -61,6 +61,10 @@ def main() -> None:
     args = parser.parse_args()
     poll_seconds = max(0.5, args.poll_seconds)
     settings.validate_runtime()
+    from app.core.runtime_revision import LOADED_REVISION
+    from pathlib import Path
+    Path("/tmp/crm-worker-revision").write_text(LOADED_REVISION)
+    logger.info("Worker loaded revision: %s", LOADED_REVISION)
 
     while True:
         try:

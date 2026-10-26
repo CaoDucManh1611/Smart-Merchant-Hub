@@ -1,3 +1,4 @@
+from app.core.runtime_revision import LOADED_REVISION, source_revision
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -168,7 +169,9 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {
-        "status": "ok"
+        "status": "ok",
+        "loaded_revision": LOADED_REVISION,
+        "source_revision": source_revision(),
     }
 
 

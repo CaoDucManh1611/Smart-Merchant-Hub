@@ -787,32 +787,39 @@ def _coalesce_meta_ui_outbound_echo(db: Session, channel_type: str, normalized: 
     if (
         channel_type not in {"facebook", "instagram"}
         or normalized.get("direction") != "outbound"
-        or not saved.get("_created")
         or not saved.get("message_id")
         or not saved.get("conversation_id")
     ):
         return None
     imported = db.get(Message, int(saved["message_id"]))
-    if imported is None:
+    if imported is None or not (imported.raw_payload or {}).get("history_import"):
         return None
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=15)
     candidates = db.scalars(
         select(Message)
         .where(
             Message.conversation_id == int(saved["conversation_id"]),
+            Message.id != imported.id,
             Message.channel == channel_type,
             Message.direction == "outbound",
             Message.sender_type.in_(("bot", "staff")),
-            Message.status.in_(("sent", "received")),
-            Message.external_message_id.like("meta-ui:%"),
+            Message.status.in_(("sending", "sent", "received", "delivery_unknown")),
             or_(Message.sent_at >= cutoff, Message.received_at >= cutoff),
         )
         .order_by(Message.id.desc())
         .limit(25)
     ).all()
-    imported_content = " ".join(str(normalized.get("content") or "").split())
+    from app.services.auto_reply_service import _extract_vietqr_photo, _reply_content_without_vietqr_link
+    def echo_text(value):
+        caption = _reply_content_without_vietqr_link(str(value or ""))
+        return " ".join(re.sub(r"^[^\w]+", "", caption).split())
+    imported_content = echo_text(normalized.get("content"))
     existing = next(
-        (row for row in candidates if " ".join(str(row.content or "").split()) == imported_content),
+        (row for row in candidates
+         if not (row.raw_payload or {}).get("provider_history_message_id")
+         and (row.sender_type == "bot" or str(row.external_message_id or "").startswith("meta-ui:")
+              or ((row.raw_payload or {}).get("meta_response") or {}).get("status") == "sent")
+         and echo_text(row.content) == imported_content),
         None,
     )
     if existing is None:
@@ -820,10 +827,15 @@ def _coalesce_meta_ui_outbound_echo(db: Session, channel_type: str, normalized: 
 
     db.delete(imported)
     db.flush()
+    qr_photo = _extract_vietqr_photo(existing.content or "")
+    if qr_photo:
+        existing.media_url, existing.content = qr_photo
+        existing.media_type = "image"
     existing.external_message_id = str(normalized["message_id"])
     if normalized.get("created_at") is not None:
         existing.received_at = normalized["created_at"]
-    existing.status = "sent"
+    if existing.status != "sending":
+        existing.status = "sent"
     existing.raw_payload = {
         **(existing.raw_payload if isinstance(existing.raw_payload, dict) else {}),
         "provider_history_message_id": str(normalized["message_id"]),

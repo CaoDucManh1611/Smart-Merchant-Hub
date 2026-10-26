@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from binascii import crc_hqx
+from io import BytesIO
 import re
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
@@ -168,6 +169,26 @@ def order_qr_url(
         "accountName": account_name,
     })
     return f"https://img.vietqr.io/image/{bank_bin}-{account_number}-compact2.png?{query}"
+
+
+def shop_transfer_qr_png(db: Session, business_id: int, image_url: str) -> bytes:
+    """Render the stored shop account locally; never accept a substituted recipient."""
+    import qrcode
+    config = read_shop_bank_transfer(db, business_id)
+    parsed = urlsplit(image_url)
+    expected_path = f"/image/{config['bank_bin']}-{config['account_number']}-compact2.png"
+    query = parse_qs(parsed.query)
+    if (not config["enabled"] or parsed.scheme != "https" or parsed.netloc != "img.vietqr.io"
+            or parsed.path != expected_path or set(query) != {"amount", "addInfo", "accountName"}
+            or any(len(values) != 1 for values in query.values())
+            or query["accountName"][0] != config["account_name"]):
+        raise ValueError("Thông tin QR không khớp tài khoản của shop.")
+    amount, reference = query["amount"][0], query["addInfo"][0]
+    if not re.fullmatch(r"[0-9]{1,12}", amount) or int(amount) < 1 or not re.fullmatch(r"[A-Za-z0-9]{1,25}", reference):
+        raise ValueError("Số tiền hoặc nội dung QR không hợp lệ.")
+    output = BytesIO()
+    qrcode.make(qr_content(str(config["bank_bin"]), str(config["account_number"]), int(amount), reference)).save(output, format="PNG")
+    return output.getvalue()
 
 
 def order_transfer_instructions(

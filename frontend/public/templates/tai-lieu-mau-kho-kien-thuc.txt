@@ -1,71 +1,161 @@
-TÀI LIỆU MẪU — KHO KIẾN THỨC SHOP
+MẪU KHO TRI THỨC DOANH NGHIỆP — DÙNG CHUNG NHIỀU LOẠI HÌNH
 
-HƯỚNG DẪN ĐIỀN
-1. Mở tệp bằng Notepad, Word hoặc trình soạn thảo văn bản.
-2. Thay mọi phần trong dấu <...> bằng thông tin thực tế. Không biết thông tin thì bỏ dòng đó, không tự đoán.
-3. Sao chép phần SẢN PHẨM cho mỗi sản phẩm; dùng đúng mã SKU trong danh mục của shop.
-4. Xóa phần hướng dẫn và ví dụ trước khi nhập. Lưu dưới định dạng TXT, mã hóa UTF-8 để giữ tiếng Việt.
-5. Trong Kho kiến thức, chọn “Nhập tệp” để nạp tệp đã điền; hoặc sao chép nội dung vào “Nhập văn bản”.
-6. Kiểm tra trạng thái “Sẵn sàng”, rồi thử hỏi trợ lý về thông tin vừa nhập.
+HƯỚNG DẪN — XÓA PHẦN NÀY TRƯỚC KHI NHẬP
+- Điền phần trong dấu <...> bằng thông tin chủ doanh nghiệp đã xác nhận. Không nhập nguyên mẫu chưa điền.
+- Chỉ giữ phần phù hợp: hàng hóa, dịch vụ, cho thuê hoặc kết hợp. Xóa những phần không áp dụng.
+- Thông tin chưa xác định: ghi rõ nội dung cần xác nhận và người/phòng ban phụ trách; không tự điền một chính sách cho có.
+- Không sao chép ví dụ của doanh nghiệp khác thành chính sách của mình.
+- Giá bán/giá thuê, tồn khả dụng, trạng thái đơn, số tiền đã thu: cập nhật trong CRM, không duy trì thêm bản giá/tồn trong tài liệu.
+- Hình thức thanh toán được phép, thông tin ngân hàng và QR: cấu hình trong Cài đặt. Không ghi mật khẩu, token, OTP hoặc số tài khoản của khách vào tri thức.
+- Trường cần hỏi khách, đơn vị giá và loại cung cấp: cấu hình trong Cài đặt trợ lý; nội dung tài liệu không tự thay đổi cấu hình hoặc tạo công cụ mới.
+- Ngày hiệu lực ghi trong nội dung giúp người đọc hiểu; để ngừng dùng tài liệu cũ phải thao tác ngừng sử dụng/thay thế tại Kho kiến thức. Chỉ đổi tên file chưa đủ.
+- Khi đã điền: xóa hướng dẫn, dấu chỗ trống, phần không dùng và lưu TXT UTF-8. Nhập tệp, chờ Sẵn sàng, rồi kiểm thử theo hướng dẫn đi kèm.
 
-Chỉ ghi nội dung doanh nghiệp cho phép dùng để tư vấn khách hàng.
-Không ghi mật khẩu, token, thông tin riêng tư của khách hoặc dữ liệu thanh toán cá nhân.
-Giá và tồn kho thay đổi thường xuyên: cập nhật tại danh mục Sản phẩm; không dùng tài liệu này thay cho dữ liệu đơn hàng hoặc tồn kho.
-Mẫu chưa điền không nên được nhập vào hệ thống. Tải mẫu không tự tạo tài liệu trong Kho kiến thức.
+========== BẮT ĐẦU NỘI DUNG DOANH NGHIỆP ==========
 
-VÍ DỤ CÁCH VIẾT — CHỈ ĐỂ THAM KHẢO, KHÔNG PHẢI THÔNG TIN CỦA SHOP
-Tên sản phẩm: Bình giữ nhiệt 500 ml
-Màu sắc: Hồng, trắng
-Chất liệu: Thép không gỉ
-Phù hợp với: Người cần mang đồ uống khi đi làm
-Cách sử dụng: Rửa sạch trước lần đầu; đóng nắp kín sau khi sử dụng
-Câu hỏi: Bình có màu hồng không?
-Trả lời: Dòng bình này có phiên bản màu hồng. Tình trạng còn bán cần kiểm tra trong danh mục sản phẩm.
+# 1. PHẠM VI VÀ HIỆU LỰC
+Mã tài liệu: <Mã chính sách, ví dụ mã nội bộ của doanh nghiệp>
+Tên doanh nghiệp: <Tên công khai>
+Phiên bản: <Phiên bản>
+Có hiệu lực từ: <Ngày/tháng/năm và múi giờ>
+Thay thế tài liệu: <Mã/phiên bản cũ hoặc không có>
+Người/phòng ban phê duyệt: <Đơn vị có quyền xác nhận nội dung>
+Áp dụng cho: <Chi nhánh, kênh bán, nhóm sản phẩm/dịch vụ, đối tượng khách>
+Không áp dụng cho: <Ngoại lệ hoặc không có ngoại lệ đã được xác nhận>
+Ngày cần rà soát tiếp: <Ngày>
 
---- BẮT ĐẦU NỘI DUNG CỦA SHOP ---
+# 2. GIỚI THIỆU VÀ LIÊN HỆ
+Doanh nghiệp cung cấp: <Hàng hóa/dịch vụ/tài sản cho thuê; mô tả ngắn, đúng thực tế>
+Khu vực phục vụ: <Khu vực hoặc hình thức trực tuyến>
+Địa chỉ công khai: <Địa chỉ hoặc không công bố>
+Giờ nhân viên hỗ trợ: <Ngày, giờ, múi giờ; quy định ngoài giờ>
+Kênh hỗ trợ công khai: <Hotline/email/trang liên hệ đã xác nhận>
+Ngôn ngữ tư vấn: <Ngôn ngữ>
+Giới hạn tư vấn: <Những việc doanh nghiệp không cung cấp hoặc cần chuyên viên có thẩm quyền>
 
-1. THÔNG TIN SHOP
-Tên shop: <Tên doanh nghiệp hoặc cửa hàng>
-Lĩnh vực: <Shop bán gì hoặc cung cấp dịch vụ gì>
-Giờ tư vấn: <Ngày và giờ có nhân viên hỗ trợ>
-Kênh liên hệ công khai: <Hotline, email hỗ trợ hoặc trang liên hệ>
-Ngày cập nhật tài liệu: <Ngày/tháng/năm>
+# 3. HÀNG HÓA — CHỈ GIỮ NẾU ÁP DỤNG
+Lặp lại mục này cho từng SKU hoặc nhóm có cùng thông số/chính sách.
+Mã SKU đối chiếu CRM: <Mã đúng trong Sản phẩm>
+Tên và tên gọi khác: <Tên, cách gọi khách thường dùng>
+Phiên bản/biến thể: <Màu, cỡ, model; ghi SKU tương ứng nếu quản lý riêng>
+Thông số và đơn vị: <Thông số đã xác nhận>
+Chất liệu/thành phần: <Thông tin được phép công bố>
+Công dụng: <Công dụng có căn cứ>
+Phù hợp với nhu cầu: <Nhu cầu>
+Không phù hợp/giới hạn: <Giới hạn, lưu ý an toàn thực tế>
+Hướng dẫn sử dụng/bảo quản: <Các bước>
+Điểm phân biệt với lựa chọn khác: <So sánh có căn cứ, không phóng đại>
+Phụ kiện/dịch vụ kèm theo: <Danh sách, điều kiện bao gồm; ghi rõ thứ tính phí riêng>
+Link thông tin công khai: <URL thực của doanh nghiệp; bỏ dòng nếu không có>
+Giá và tình trạng còn hàng: Tra dữ liệu sản phẩm hiện hành trong CRM, không suy từ lịch sử tư vấn.
 
-2. SẢN PHẨM
-Mã SKU: <Mã đúng trong danh mục Sản phẩm>
-Tên sản phẩm: <Tên đầy đủ>
-Link sản phẩm: <Đường dẫn trang sản phẩm của shop>
-Nhóm sản phẩm: <Ví dụ: Đồ gia dụng, thời trang>
-Màu sắc / phiên bản: <Liệt kê phiên bản thực tế>
-Kích thước / dung tích: <Thông số và đơn vị>
-Chất liệu / thành phần: <Thông tin được xác nhận>
-Đặc điểm nổi bật: <Lợi ích thực tế, không phóng đại>
-Phù hợp với: <Nhu cầu hoặc đối tượng sử dụng>
-Cách sử dụng / bảo quản: <Hướng dẫn và lưu ý>
-Sản phẩm liên quan: <Mã SKU, tên sản phẩm và lý do phù hợp>
-Điểm cần lưu ý: <Giới hạn, điều kiện sử dụng hoặc cảnh báo nếu có>
+# 4. DỊCH VỤ ĐẶT LỊCH — CHỈ GIỮ NẾU ÁP DỤNG
+Mã/tên dịch vụ đối chiếu CRM: <Mã/tên đúng trong danh mục dịch vụ>
+Nội dung thực hiện: <Bao gồm những việc gì>
+Không bao gồm: <Việc tính thêm phí hoặc không cung cấp>
+Thời lượng: <Khoảng thời gian, điều kiện phát sinh thêm>
+Địa điểm/hình thức: <Tại cơ sở, tại khách, trực tuyến>
+Điều kiện tiếp nhận: <Độ tuổi, tình trạng, tài liệu hoặc chuẩn bị cần thiết; chỉ hỏi dữ liệu cần thiết>
+Khách cần chuẩn bị: <Các bước>
+Quy định đến sớm/đến muộn: <Mốc thời gian và cách xử lý>
+Quy định đổi lịch: <Thời hạn, phí, điều kiện, ngoại lệ cần nhân viên duyệt>
+Quy định hủy lịch/không đến: <Điều kiện và cách tính phí nếu có>
+Khả dụng: Lịch trống phải kiểm tra lịch hiện hành; số lượng hàng hóa không thể hiện lịch trống.
+Năng lực đồng thời/nhân viên phụ trách: <Quy định thực tế; cấu hình và kiểm tra thêm trong module lịch hẹn>
 
-3. CÂU HỎI THƯỜNG GẶP
-Câu hỏi: <Câu hỏi khách thường hỏi>
-Trả lời: <Câu trả lời đúng, rõ ràng, ngắn gọn>
+# 5. TÀI SẢN CHO THUÊ — CHỈ GIỮ NẾU ÁP DỤNG
+Mã tài sản/SKU đối chiếu CRM: <Mã đúng>
+Tên tài sản và mô tả: <Tên, đặc điểm>
+Đơn vị tính giá: <Giờ/ngày/tuần/tháng/lượt; đồng nhất với cấu hình sản phẩm>
+Thời hạn tối thiểu/tối đa: <Điều kiện>
+Cách tính thời gian thuê: <Bắt đầu/kết thúc, ngày lẻ, trễ hạn, gia hạn>
+Thời điểm nhận/trả: <Quy định>
+Bao gồm: <Dịch vụ, vật dụng, quyền sử dụng>
+Không bao gồm: <Các khoản tính riêng>
+Điều kiện bàn giao: <Quy trình kiểm tra và xác nhận>
+Quy định sử dụng: <Giới hạn thực tế>
+Hỏng/mất/bồi thường: <Căn cứ, quy trình kiểm tra và thẩm quyền quyết định>
+Khả dụng: Tra tồn chưa được giữ/đặt trong CRM. Tồn hàng hiện tại không tự chứng minh tài sản trống cho mọi khoảng ngày tương lai.
+Xác nhận thời hạn và khoản thu: <Người/quy trình duyệt; ghi rõ giá cơ sở có phải tổng kỳ thuê hay chưa>
 
-Câu hỏi: <Câu hỏi tiếp theo>
-Trả lời: <Câu trả lời tương ứng>
+# 6. PHÍ, THUẾ VÀ CÁCH TÍNH
+Lặp lại cho từng khoản phí. Không ghi chung mơ hồ “đã bao gồm” nếu có ngoại lệ.
+Tên khoản phí: <Tên>
+Áp dụng cho: <SKU/dịch vụ/nhóm khách/khu vực/thời điểm>
+Căn cứ đầu vào: <Dữ liệu cần có và nguồn lấy>
+Đơn giá/quy tắc: <Đơn giá có đơn vị hoặc quy tắc đã xác nhận>
+Công thức: <Công thức rõ thứ tự tính>
+Đã nằm trong giá cơ sở chưa: <Có/không và phạm vi>
+Làm tròn: <Làm tròn đến đơn vị nào, ở bước nào>
+Thuế: <Đã gồm/chưa gồm/không áp dụng theo chính sách doanh nghiệp>
+Khoản thu có cần nhân viên duyệt: <Điều kiện>
+Nếu thiếu đầu vào: <Thông tin cần hỏi thêm, không tự điền số>
+Nếu nhận ảnh chứng từ/chỉ số: <Cần đọc mục gì, đơn vị, xin khách kiểm tra lại; ảnh không tự xác nhận tiền đã vào tài khoản>
 
-4. CHÍNH SÁCH GIAO HÀNG
-Khu vực giao hàng: <Khu vực được hỗ trợ>
-Thời gian dự kiến: <Thời gian và điều kiện áp dụng>
-Phí vận chuyển: <Quy tắc tính phí hoặc nơi kiểm tra phí>
-Quy trình đặt hàng: <Các bước cần khách xác nhận>
+# 7. TIẾP NHẬN YÊU CẦU, THANH TOÁN VÀ XÁC NHẬN
+Thông tin khách thực sự cần để xử lý: <Liệt kê; đồng nhất với các trường bắt buộc trong Cài đặt trợ lý>
+Thông tin không được yêu cầu qua chat: <Dữ liệu không cần thiết, mật khẩu, OTP và thông tin bị hạn chế>
+Thứ tự tiếp nhận: Thu thông tin cần thiết; hỏi hình thức thanh toán đã được doanh nghiệp cho phép; tóm tắt lựa chọn và khoản giá có căn cứ; xin khách xác nhận gửi yêu cầu.
+Ý nghĩa xác nhận gửi yêu cầu: Khách đồng ý gửi yêu cầu vào hệ thống; không đồng nghĩa nhân viên đã duyệt, hợp đồng đã ký hoặc tiền đã được nhận.
+Các hình thức được hỗ trợ: <Đối chiếu cấu hình thanh toán; ghi điều kiện từng hình thức, không tự bật COD cho dịch vụ/cho thuê>
+Thời điểm phải trả tiền: <Trước/sau bước nào, điều kiện cụ thể được doanh nghiệp phê duyệt>
+Tiền cọc/đợt thu đầu: <Có/không; công thức hoặc khoản cố định và đơn vị, điều kiện áp dụng>
+Hạn thanh toán: <Cách xác định hạn và xử lý quá hạn>
+Điều kiện gửi hướng dẫn chuyển khoản/QR: Khách đồng ý gửi yêu cầu; đã có bảng kê số tiền rõ ràng trong CRM; gửi trước nhân viên xác nhận đơn. Khách chọn COD trả sau chỉ khi được cấu hình cho phép.
+Cách đối soát: <Ai/hệ thống nào xác nhận tiền đã vào; lời khách nói/ảnh biên lai chưa phải trạng thái đã thu>
+Điều kiện doanh nghiệp xác nhận cuối cùng: <Thẩm quyền, điều kiện, cách thông báo>
+Cam kết thời gian phản hồi: <Chỉ ghi nếu doanh nghiệp có thể thực hiện; chưa xác định thì không cam kết>
+Lưu ý triển khai: Cấu hình khoản thu tại Cài đặt trợ lý: giá CRM + phí cố định, hoặc lập bảng kê từng đơn/lịch nếu còn thiếu thời hạn hay chỉ số sử dụng. Tài liệu này mô tả chính sách, không tự tạo hóa đơn hay tự suy ra tiền cọc. Quy trình riêng cần được kiểm thử/cấu hình hoặc triển khai tương ứng trước khi cam kết với khách.
 
-5. ĐỔI TRẢ VÀ BẢO HÀNH
-Điều kiện đổi trả: <Trường hợp được chấp nhận>
-Thời hạn: <Số ngày và thời điểm bắt đầu tính>
-Trường hợp không áp dụng: <Ngoại lệ cụ thể>
-Quy trình hỗ trợ: <Các bước và kênh liên hệ>
-Bảo hành: <Phạm vi, thời gian hoặc ghi rõ không áp dụng nếu đúng>
+# 8. GIAO HÀNG/BÀN GIAO/THỰC HIỆN
+Phạm vi phục vụ: <Khu vực hoặc điều kiện>
+Thời gian dự kiến: <Mốc bắt đầu tính và khoảng thời gian>
+Phí thực hiện: <Đối chiếu mục phí>
+Thông tin cần cung cấp: <Địa chỉ/khung giờ/người nhận; chỉ phần cần thiết>
+Bằng chứng hoàn tất: <Cách doanh nghiệp xác nhận>
+Không giao/không thực hiện được: <Quy trình xử lý và quyền quyết định>
 
-6. KHI CẦN NHÂN VIÊN HỖ TRỢ
-Trường hợp chuyển cho nhân viên: <Vấn đề cần xác minh hoặc xử lý thủ công>
-Thông tin được phép hỏi khách: <Chỉ thông tin cần thiết cho xử lý>
-Câu trả lời khi chưa đủ thông tin: <Cách thông báo và đề nghị nhân viên kiểm tra>
+# 9. ĐỔI TRẢ, HỦY VÀ HOÀN TIỀN
+Áp dụng cho: <Loại yêu cầu/trạng thái/nhóm hàng hoặc dịch vụ>
+Trường hợp được chấp nhận: <Điều kiện>
+Thời hạn và cách tính: <Tính từ lúc nào, múi giờ>
+Trường hợp không áp dụng: <Ngoại lệ>
+Cách tính hoàn/phí hủy: <Công thức, khoản đã sử dụng, phí không hoàn, thuế nếu có>
+Bằng chứng cần thiết: <Chỉ dữ liệu đủ xử lý>
+Nhân viên cần duyệt: <Trường hợp, thẩm quyền>
+Thời gian xử lý dự kiến: <Có căn cứ hoặc chưa xác định>
+Thông báo khi chưa duyệt: Chưa xác nhận hủy/hoàn thành công hoặc đã chuyển tiền nếu hệ thống chưa có kết quả tương ứng.
+
+# 10. BẢO HÀNH VÀ HỖ TRỢ SAU BÁN
+Phạm vi: <Sản phẩm/dịch vụ và điều kiện>
+Thời hạn: <Mốc bắt đầu, thời gian>
+Nội dung hỗ trợ: <Bao gồm/không bao gồm>
+Quy trình tiếp nhận: <Kênh, thông tin cần có>
+Ngoại lệ cần quyết định: <Trường hợp>
+
+# 11. CÂU HỎI THƯỜNG GẶP CÓ NGUỒN
+Lặp lại cho câu hỏi doanh nghiệp thực sự gặp. Không cần viết mọi cách diễn đạt của khách.
+Câu hỏi: <Câu hỏi>
+Thông tin đúng để trả lời: <Các dữ kiện, điều kiện và ngoại lệ; không chép một giá/tồn cũ>
+Căn cứ: <Mục chính sách hoặc mã sản phẩm/dịch vụ hiện hành>
+Thông tin còn cần hỏi: <Nếu có>
+Trường hợp cần nhân viên quyết định: <Nếu có>
+
+# 12. NỘI DUNG CHƯA XÁC NHẬN VÀ THẨM QUYỀN
+Nội dung chưa có thông tin: <Liệt kê cụ thể; không biến thành tuyên bố “không hỗ trợ”>
+Bộ phận xác nhận: <Đơn vị và kênh nội bộ phù hợp; không công khai thông tin riêng tư>
+Trường hợp chỉ cần hỏi khách làm rõ: <Thiếu lựa chọn, ngày, số lượng hoặc nhu cầu>
+Trường hợp cần nhân viên quyết định: <Ngoại lệ giá, khiếu nại, điều khoản chưa có, hủy/hoàn vượt quyền>
+Khi chưa có quyết định: Chỉ thông báo phần chưa xác định, tiếp tục hỗ trợ các câu hỏi khác đã có dữ liệu; không bịa giá, chính sách hoặc xác nhận thu tiền.
+
+
+# 13. QUY TẮC TƯ VẤN VÀ CÁ NHÂN HÓA
+Mục tiêu tư vấn: <Giúp khách chọn theo nhu cầu, ngân sách, điều kiện sử dụng nào?>
+Câu hỏi làm rõ khi thiếu nhu cầu: <Chỉ hỏi điều cần thiết để chọn hàng/dịch vụ/tài sản>
+Điều kiện tương thích hoặc không phù hợp: <Thuộc tính, đối tượng sử dụng, giới hạn có căn cứ>
+Sản phẩm/dịch vụ thay thế: <Mã tham chiếu CRM và lý do; không ghi lại giá hoặc tồn>
+Dữ kiện cần nhân viên quyết định: <Ngoại lệ, ưu đãi ngoài chính sách, tranh chấp, cam kết đặc biệt>
+- Nhu cầu khách vừa sửa được ưu tiên hơn sở thích cũ. Không suy diễn khách đã mua hoặc đã đồng ý chỉ từ lời hỏi.
+- Hồ sơ cá nhân hóa chỉ được dùng theo quyền đồng ý của khách. Không dùng tri thức để tự cấp quyền thu thập dữ liệu.
+- Tư vấn lựa chọn không đồng nghĩa giữ hàng, giữ lịch hoặc xác nhận thanh toán. Các hành động phải theo trạng thái thực tế trong CRM.
+- Nếu không có lựa chọn đáp ứng: nói rõ điều kiện chưa đáp ứng, hỏi khách có muốn đổi điều kiện; không tự đổi ngân sách hay cam kết.

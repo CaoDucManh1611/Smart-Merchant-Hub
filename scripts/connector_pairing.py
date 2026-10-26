@@ -19,6 +19,29 @@ from urllib.parse import urlparse
 
 
 _HEARTBEAT_THREADS: set[str] = set()
+_CONNECTOR_HEALTH: dict[str, tuple[str, str | None]] = {}
+
+
+def message_media_url(*sources: object) -> str:
+    """Find an HTTPS attachment URL in common connector media envelopes."""
+    def find(value: object, depth: int = 0) -> str:
+        if depth > 3:
+            return ""
+        if isinstance(value, str):
+            parsed = urlparse(value.strip())
+            return value.strip()[:2000] if parsed.scheme == "https" and parsed.hostname else ""
+        if isinstance(value, list):
+            return next((url for item in value[:5] if (url := find(item, depth + 1))), "")
+        if isinstance(value, dict):
+            for key in ("media_url", "mediaUrl", "image_url", "imageUrl", "origin_url", "originUrl", "url", "url_list", "urlList"):
+                if url := find(value.get(key), depth + 1):
+                    return url
+            for key in ("image", "images", "media", "attachment", "attachments", "content", "message_content", "messageContent", "rawMessage", "raw_message"):
+                if url := find(value.get(key), depth + 1):
+                    return url
+        return ""
+
+    return next((url for source in sources if (url := find(source))), "")
 
 
 def _is_pairing_code_for_channel(value: str, channel_type: str) -> bool:
@@ -345,11 +368,21 @@ def load_history_checkpoint(path: Path) -> dict:
     return {"version": 1, "completed_threads": [], "complete": False}
 
 
-def mark_history_thread_complete(path: Path, checkpoint: dict, thread_id: str) -> dict:
-    """Atomically persist only thread IDs; a crash before this safely replays via DB dedupe."""
+def mark_history_thread_complete(
+    path: Path, checkpoint: dict, thread_id: str, *, history_row_key: str | None = None
+) -> dict:
+    """Atomically persist completed threads and their stable inbox-row keys."""
     done = set(str(value) for value in checkpoint.get("completed_threads", []))
     done.add(str(thread_id))
-    updated = {"version": 1, "completed_threads": sorted(done), "complete": False}
+    completed_rows = set(str(value) for value in checkpoint.get("completed_row_keys", []))
+    if history_row_key:
+        completed_rows.add(str(history_row_key))
+    updated = {
+        "version": 1,
+        "completed_threads": sorted(done),
+        "completed_row_keys": sorted(completed_rows),
+        "complete": False,
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary_name = tempfile.mkstemp(prefix="history-", suffix=".tmp", dir=path.parent)
     try:
@@ -395,6 +428,7 @@ def report_connector_status(
 ) -> dict:
     if state not in {"online", "error"}:
         return {}
+    _CONNECTOR_HEALTH[channel_type] = (state, error_code)
     payload = {"state": state}
     if error_code:
         payload["error_code"] = str(error_code)[:80]
@@ -442,7 +476,8 @@ def start_connector_heartbeat(channel_type: str, backend_url: str, connector_tok
     def beat() -> None:
         stopped = Event()
         while not stopped.is_set():
-            status = report_connector_status(channel_type, backend_url, connector_token)
+            state, error = _CONNECTOR_HEALTH.get(channel_type, ("online", None))
+            status = report_connector_status(channel_type, backend_url, connector_token, state=state, error_code=error)
             retry_id = str(status.get("retry_id") or "")
             if retry_id and _acknowledge_retry_and_restart(channel_type, backend_url, connector_token, retry_id):
                 return

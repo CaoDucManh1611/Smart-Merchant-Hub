@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.tenancy.crm_session import get_tenant_db
 from app.models.document import Document, DocumentChunk
+from app.services.audit_service import record_audit
 from app.models.crm_job import CrmJob
 from app.models.rag_run import RagRun
 from app.rag.loader import DocumentValidationError, detect_file_type, LOADERS, validate_document_bytes
@@ -231,6 +232,53 @@ async def upload_document(
     return doc
 
 
+@router.post("/{document_id}/replace", response_model=DocumentOut, dependencies=[Depends(require_write_access)])
+def replace_document(
+    document_id: int,
+    replacement_id: int,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    if document_id == replacement_id:
+        raise HTTPException(422, "Bản mới phải khác bản cũ.")
+    rows = db.query(Document).filter(
+        Document.business_id == tenant.business_id,
+        Document.id.in_(sorted((document_id, replacement_id))),
+    ).order_by(Document.id).with_for_update().all()
+    by_id = {row.id: row for row in rows}
+    if len(by_id) != 2:
+        raise HTTPException(404, "Tài liệu không tồn tại trong shop.")
+    old, new = by_id[document_id], by_id[replacement_id]
+    if old.status not in {"ready", "disabled"} or new.status != "ready":
+        raise HTTPException(409, "Bản mới phải xử lý thành công trước khi thay thế.")
+    if any(_has_active_ingestion(db, business_id=tenant.business_id, document_id=row.id) for row in rows):
+        raise HTTPException(409, "Tài liệu đang được xử lý.")
+    old.status = "superseded"
+    record_audit(db, business_id=tenant.business_id, action="replace", resource_type="document",
+                 resource_id=str(document_id), metadata={"replacement_id": replacement_id})
+    db.commit()
+    db.refresh(new)
+    return new
+
+
+@router.post("/{document_id}/availability", response_model=DocumentOut, dependencies=[Depends(require_write_access)])
+def set_document_availability(
+    document_id: int,
+    enabled: bool,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    doc = db.query(Document).filter(Document.id == document_id, Document.business_id == tenant.business_id).with_for_update().first()
+    if doc is None:
+        raise HTTPException(404, "Tài liệu không tồn tại.")
+    if doc.status not in {"ready", "disabled"} or _has_active_ingestion(db, business_id=tenant.business_id, document_id=doc.id):
+        raise HTTPException(409, "Chỉ thay đổi hiệu lực khi tài liệu đã xử lý xong.")
+    doc.status = "ready" if enabled else "disabled"
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
 @router.post("/{document_id}/reindex", response_model=DocumentOut, dependencies=[Depends(require_write_access)])
 async def reindex_document(
     document_id: int,
@@ -244,6 +292,8 @@ async def reindex_document(
     ).first()
     if doc is None:
         raise HTTPException(404, "Tài liệu không tồn tại.")
+    if doc.status in {"disabled", "superseded"}:
+        raise HTTPException(409, "Bật lại hiệu lực tài liệu trước khi xử lý lại.")
     if not doc.source_bytes:
         raise HTTPException(409, "Tài liệu cũ không có bản gốc để reindex; hãy upload lại.")
     if _has_active_ingestion(db, business_id=tenant.business_id, document_id=doc.id):

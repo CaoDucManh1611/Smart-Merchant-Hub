@@ -109,6 +109,7 @@ def _groq_client(api_key: str | None = None):
     return OpenAI(
         api_key=api_key or settings.groq_api_keys[0],
         base_url="https://api.groq.com/openai/v1",
+        max_retries=0,  # Key rotation and provider fallback already own retries.
     )
 
 
@@ -211,7 +212,7 @@ def _messages_to_gemini_format(
     Returns:
         (system_instruction, history_contents)
     """
-    system_instruction = ""
+    system_instructions = []
     history = []
 
     for msg in messages:
@@ -219,13 +220,13 @@ def _messages_to_gemini_format(
         content = msg["content"]
 
         if role == "system":
-            system_instruction = content
+            system_instructions.append(str(content))
         elif role == "user":
             history.append({"role": "user", "parts": content if isinstance(content, list) else [content]})
         elif role == "assistant":
             history.append({"role": "model", "parts": content if isinstance(content, list) else [content]})
 
-    return system_instruction, history
+    return "\n\n".join(system_instructions), history
 
 
 def _gemini_parts(parts: list, types) -> list:

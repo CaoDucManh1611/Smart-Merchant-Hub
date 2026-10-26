@@ -37,7 +37,11 @@ def test_image_only_turn_context_triggers_catalog_matching():
         "Khách gửi ảnh đính kèm. Hãy xem ảnh khi trả lời; nếu chưa có câu hỏi rõ, hỏi một câu làm rõ."
     )
     assert _should_match_image_to_product("Ảnh này còn hàng không?")
+    assert _should_match_image_to_product("Sản phẩm này shop bạn có không?")
+    assert _should_match_image_to_product("Shop có bán mẫu này không?")
     assert not _should_match_image_to_product("Ảnh hóa đơn này bị mờ")
+    assert not _should_match_image_to_product("Chỉ đọc nguyên văn dòng chữ trong ảnh này, chưa cần tra sản phẩm")
+    assert not _should_match_image_to_product("Đọc chữ trong ảnh này và cho biết có sản phẩm tương ứng không?")
 
 
 def test_product_candidates_require_catalog_description_overlap_and_reference_image():
@@ -114,6 +118,18 @@ def test_matcher_describes_then_verifies_against_shop_reference_photos(confidenc
     ]
 
 
+def test_matcher_keeps_uncertain_text_candidates_when_shop_has_no_product_photos():
+    shirt = Product(id=1, business_id=7, sku="SHIRT-PINK-01", name="Áo sơ mi cotton hồng",
+                    description="Áo cotton màu hồng", status="active", metadata_={})
+    db = Mock()
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [shirt]
+    with patch("app.services.auto_reply_service.call_llm_with_image", return_value="Áo sơ mi cotton màu hồng"):
+        match, candidates, _ = _match_customer_image_to_product(
+            db, business_id=7, image_bytes=b"photo", image_mime_type="image/jpeg")
+    assert match is None
+    assert [item.sku for item in candidates] == ["SHIRT-PINK-01"]
+
+
 def test_vision_caller_sends_both_customer_and_reference_images(monkeypatch):
     monkeypatch.setattr(settings, "LLM_PROVIDER", "groq")
     with patch("app.rag.llm_caller.call_groq_vision", return_value="ok") as provider:
@@ -164,6 +180,33 @@ def test_image_product_match_route_is_shared_by_all_supported_channels(channel):
     assert "SHIRT-PINK-01" in reply
     assert "199.000" in reply
     assert "còn 4" in reply
+
+
+def test_graph_enabled_product_photo_uses_catalog_match_even_if_vision_classifies_it_as_reading():
+    db = Mock()
+    conversation = SimpleNamespace(bot_mode="auto", customer_id=8, resolution_outcome=None)
+    db.query.return_value.filter.return_value.first.side_effect = [None, conversation]
+    product = SimpleNamespace(id=91, sku="SHIRT-PINK-01", name="Áo sơ mi hồng", price=199000,
+                              stock_quantity=5, reserved_quantity=1)
+    with patch("app.services.auto_reply_service.settings.CHATBOT_GRAPH_ENABLED", True), \
+         patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+         patch("app.services.auto_reply_service._latest_inbound_image_url", return_value="https://cdn.example/photo.jpg"), \
+         patch("app.services.auto_reply_service._download_meta_image", return_value=(b"photo", "image/jpeg")), \
+         patch("app.services.privacy_service.customer_memory_opt_out_reply", return_value=None), \
+         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+         patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
+         patch("app.services.auto_reply_service.record_quota_usage"), \
+         patch("app.services.auto_reply_service.call_llm_with_image", return_value='{"task":"read_information","description":"Áo hồng"}') as initial_vision, \
+         patch("app.services.auto_reply_service._match_customer_image_to_product", return_value=(product, [product], "Áo hồng")) as matcher, \
+         patch("app.services.conversation_graph.graph_reply") as graph, \
+         patch("app.services.auto_reply_service.send_text_reply") as send:
+        assert process_rag_auto_reply(db=db, conversation_id=4, channel="facebook",
+                                      query_text="Shop có cái trong ảnh này không?", business_id=7)
+    matcher.assert_called_once()
+    graph.assert_not_called()
+    assert "SHIRT-PINK-01" in send.call_args.kwargs["text"]
+    initial_vision.assert_not_called()
 
 
 def test_zalo_personal_accepts_image_only_and_rejects_empty_message():

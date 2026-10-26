@@ -1,5 +1,59 @@
 from app.rag.chunker import chunk_text
 from app.rag.answer_guard import customer_facing_answer, has_valid_citations
+from app.rag.answer_guard import verified_money_calculation
+
+
+def test_meter_reading_with_leading_zero_is_valid_numeric_input():
+    derived=verified_money_calculation([
+        {"left":1220,"operation":"subtract","right":1200},
+        {"left":20,"operation":"multiply","right":3500},
+    ],["Điện 3.500 đồng/kWh"],"Ảnh công tơ ghi 01220 kWh, số cũ 1200")
+    assert "70.000 đồng" in derived
+
+
+def test_customer_reply_hides_grouped_internal_source_markers():
+    assert customer_facing_answer('Giá 2.000.000 đồng [Source 1, 3]. [Nguồn 2; 4]') == 'Giá 2.000.000 đồng.'
+
+
+def test_accentless_money_source_supports_vietnamese_reply():
+    assert has_valid_citations('Phí giao hàng 25.000 đồng [Source 1]',
+        ['Phi giao hang 25.000 dong.'],query='Phi giao hang bao nhieu?')
+
+
+def test_verified_calculation_supports_new_total_without_relaxing_source_guard():
+    sources = ["Tiền điện 3.500 đồng/kWh."]
+    query = "Dùng 10 kWh thì tiền điện bao nhiêu?"
+    answer = "Tiền điện: 10 × 3.500 = 35.000 đồng [Source 1]."
+    assert not has_valid_citations(answer, sources, query=query)
+    derived = verified_money_calculation({"left":10,"right":3500,"operation":"multiply"}, sources, query)
+    assert has_valid_citations(answer.replace("[Source 1]", "[Source 1] [Source 2]"), [*sources, derived], query=query)
+    assert not has_valid_citations("Tiền điện 99.000 đồng [Source 1] [Source 2]", [*sources, derived], query=query)
+
+
+def test_calculation_rejects_invented_rates_and_unsafe_operations():
+    import pytest
+    for calculation in ({"left":10,"right":4000,"operation":"multiply"},
+                        {"left":10,"right":3500,"operation":"eval"},
+                        {"left":True,"right":3500,"operation":"multiply"}):
+        with pytest.raises(ValueError):
+            verified_money_calculation(calculation, ["Điện 3.500 đồng/kWh"], "10 kWh")
+
+
+def test_verified_steps_support_rent_utilities_without_invented_totals():
+    sources = ["Phòng 03 giá 2.000.000 đồng/tháng.", "Nước 100.000 đồng; điện 3.500 đồng/kWh."]
+    query = "Chỉ số điện mới 150, cũ 130; tổng tiền phòng, nước, điện?"
+    steps = [
+        {"left": 150, "right": 130, "operation": "subtract"},
+        {"left": 20, "right": 3500, "operation": "multiply"},
+        {"left": 2000000, "right": 100000, "operation": "add"},
+        {"left": 2100000, "right": 70000, "operation": "add"},
+    ]
+    derived = verified_money_calculation(steps, sources, query)
+    assert "2.170.000 đồng" in derived
+    assert has_valid_citations("Tổng 2.170.000 đồng [Source 3]", [*sources, derived], query=query)
+    import pytest
+    with pytest.raises(ValueError):
+        verified_money_calculation([steps[0], {"left": 20, "right": 4000, "operation": "multiply"}], sources, query)
 
 
 def test_customer_facing_answer_hides_rag_markup():
@@ -485,3 +539,8 @@ def test_hybrid_retrieval_boosts_matching_topic_without_changing_similarity():
 
     assert results[0].chunk_id == delivery.chunk_id
     assert results[0].similarity == delivery.similarity
+
+
+def test_history_is_not_authoritative_for_current_shop_facts():
+    messages = build_prompt(query="Giá hiện tại?", chunks=[], conversation_history=[{"role": "assistant", "content": "Giá cũ 200000"}])
+    assert "không chứng minh dữ kiện hiện tại" in messages[0]["content"]

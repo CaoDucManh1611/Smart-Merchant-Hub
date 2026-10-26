@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import PaymentRequestPanel from "./PaymentRequestPanel.vue";
 import { apiFetch } from "./api-client.js";
 import { appointmentsToIcs } from "./calendar-utils.js";
 import { formatDate, formatDateTime, formatMoney, locale, t } from "./i18n.js";
@@ -106,7 +107,7 @@ const showDate = formatDate;
 const customerName = (id) => customers.value.find((customer) => Number(customer.id) === Number(id))?.name || tr("Khách hàng", "Customer");
 const staffName = (id) => staff.value.find((member) => Number(member.id) === Number(id))?.full_name || tr("Chưa phân công", "Unassigned");
 const statusLabels = {
-  scheduled: "Đã đặt", confirmed: "Đã xác nhận", completed: "Hoàn tất", cancelled: "Đã hủy", no_show: "Không đến",
+  pending: "Chờ nhân viên xác nhận", scheduled: "Đã đặt", confirmed: "Đã xác nhận", completed: "Hoàn tất", cancelled: "Đã hủy", no_show: "Không đến",
   draft: "Bản nháp", sent: "Đã gửi", accepted: "Đã chấp thuận", rejected: "Từ chối", expired: "Hết hạn",
   planned: "Lên kế hoạch", active: "Đang thực hiện", on_hold: "Tạm dừng", completed_project: "Hoàn tất", cancelled_project: "Đã hủy",
   issued: "Đã phát hành", paid: "Đã thanh toán", overdue: "Quá hạn", void: "Đã hủy",
@@ -399,7 +400,8 @@ watch(() => props.module, () => {
           <p v-if="!appointments.length" class="industry-empty">Chưa có lịch hẹn nào.</p>
           <article v-for="item in appointments" :key="item.id" class="industry-row industry-record" data-record-kind="appointment" :data-record-id="String(item.id)" tabindex="-1">
             <div class="industry-record-main"><strong>{{ item.customer_name || customerName(item.customer_id) }} <span class="industry-pill">{{ item.service_name }}</span></strong><small>{{ showTime(item.starts_at) }} – {{ showTime(item.ends_at) }} · {{ staffName(item.assigned_user_id) }}</small><small v-if="item.notes">{{ item.notes }}</small><small>{{ item.reminder_sent_at ? (item.send_customer_reminder ? tr("Đã gửi nhắc qua email", "Email reminder sent") : tr("Đã tạo thông báo nhắc", "Reminder notification created")) : item.reminder_at ? `${tr("Nhắc trước", "Remind before")} ${minutesLabel(item.reminder_minutes_before)}` : tr("Không đặt nhắc", "No reminder set") }}</small></div>
-            <div class="industry-actions"><select :value="item.status" :aria-label="`${tr('Trạng thái lịch', 'Appointment status')} ${item.id}`" @change="setAppointmentStatus(item, $event.target.value)"><option value="scheduled">Đã đặt</option><option value="confirmed">Đã xác nhận</option><option value="completed">Hoàn tất</option><option value="cancelled">Đã hủy</option><option value="no_show">Không đến</option></select><button class="industry-secondary" @click="editAppointment(item)">Sửa lịch</button></div>
+            <PaymentRequestPanel v-if="item.payment_order" :order="item.payment_order" :endpoint="api(`/appointments/${item.id}/payment-request`)" :payment-endpoint="api(`/appointments/${item.id}/payment`)" @saved="load" />
+            <div class="industry-actions"><select :value="item.status" :aria-label="`${tr('Trạng thái lịch', 'Appointment status')} ${item.id}`" @change="setAppointmentStatus(item, $event.target.value)"><option v-if="item.status === 'pending'" value="pending">Chờ nhân viên xác nhận</option><option value="scheduled">Đã đặt</option><option value="confirmed">Đã xác nhận</option><option value="completed">Hoàn tất</option><option value="cancelled">Đã hủy</option><option value="no_show">Không đến</option></select><button class="industry-secondary" @click="editAppointment(item)">Sửa lịch</button></div>
           </article>
         </div>
       </div>
