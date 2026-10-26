@@ -61,6 +61,58 @@ def test_answer_reads_selected_tool_and_requires_citations():
     guard.assert_called_once()
 
 
+def test_product_price_lookup_forces_current_catalog_and_rejects_stale_kb_price():
+    current_item = {
+        "ref":"product:1", "name":"Mẫu thử", "sku":"ABC-123", "kind":"goods",
+        "price":"100000", "billing_unit":None, "available":3, "description":"Hàng mẫu",
+    }
+    other_item = {
+        "ref":"product:2", "name":"Mẫu khác", "sku":"OTHER-999", "kind":"goods",
+        "price":"999000", "billing_unit":None, "available":8, "description":"Mẫu khác",
+    }
+    stale_knowledge = SimpleNamespace(content="SKU ABC-123 có giá 999.000 đồng.", document_id=7)
+    with patch('app.services.conversation_graph.call_llm',side_effect=[
+        '{"mode":"answer","tools":["knowledge"]}',
+        '{"answer":"Sản phẩm hiện có giá 999.000 đồng.","sources":[1,2]}',
+        '{"answer":"Sản phẩm hiện có giá 999.000 đồng.","sources":[1,2]}',
+    ]) as model, \
+         patch('app.services.quota_service.record_quota_usage'), \
+         patch('app.services.business_request.current_offerings',return_value=[current_item,other_item]), \
+         patch('app.rag.retriever.retrieve',return_value=[stale_knowledge]), \
+         patch('app.services.conversation_context.approved_reply_style',return_value=None):
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+            query='Giá SKU ABC-123 là bao nhiêu?',job_key='stale-catalog-price')
+    assert '999.000' not in result.prompt
+    assert '100.000' not in result.prompt
+    assert any(message in result.prompt for message in (
+        'chưa xác minh được nguồn', 'chưa có đủ căn cứ',
+    ))
+    assert model.call_count==3
+    evidence=model.call_args_list[1].args[0][-1]['content']
+    assert 'CURRENT_CRM_CATALOG' in evidence
+    assert 'SKU: ABC-123' in evidence
+
+
+def test_product_price_lookup_accepts_current_catalog_citation():
+    current_item = {
+        "ref":"product:1", "name":"Mẫu thử", "sku":"ABC-123", "kind":"goods",
+        "price":"100000", "billing_unit":None, "available":3, "description":"Hàng mẫu",
+    }
+    with patch('app.services.conversation_graph.call_llm',side_effect=[
+        '{"mode":"answer","tools":["knowledge"]}',
+        '{"answer":"SKU ABC-123 có giá 100.000 đồng.","sources":[1]}',
+    ]) as model, \
+         patch('app.services.quota_service.record_quota_usage'), \
+         patch('app.services.business_request.current_offerings',return_value=[current_item]), \
+         patch('app.rag.retriever.retrieve',return_value=[]), \
+         patch('app.services.conversation_context.approved_reply_style',return_value=None):
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+            query='Giá SKU ABC-123 là bao nhiêu?',job_key='current-catalog-price')
+    assert '100.000' in result.prompt
+    assert '999.000' not in result.prompt
+    assert model.call_count==2
+
+
 def test_image_observation_is_citable_evidence_for_a_customer_ocr_question():
     query = "Đọc chữ trong ảnh giúp tôi\nVISIBLE_IMAGE_OBSERVATION (unverified customer image):\nNhãn ghi Áo cotton màu xanh."
     with patch('app.services.conversation_graph.call_llm', side_effect=[
@@ -81,11 +133,61 @@ def test_image_observation_is_citable_evidence_for_a_customer_ocr_question():
 def test_handoff_uses_existing_service_without_disabling_bot():
     with patch('app.services.conversation_graph.call_llm',return_value='{"mode":"handoff","tools":[]}'), \
          patch('app.services.quota_service.record_quota_usage'), \
-         patch('app.services.chatbot_agent.execute_chatbot_tool',return_value={'bot_mode':'auto'}) as tool:
+         patch('app.services.chatbot_agent.execute_chatbot_tool',return_value={'accepted':True,'ticket_id':12,'status':'open','bot_mode':'auto'}) as tool:
         result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
             query='Tôi cần quản lý hỗ trợ',job_key='test-handoff')
     assert result.status=='graph_handoff'
+    assert 'ticket 12' in result.prompt and 'đã ghi nhận' in result.prompt
     assert tool.call_args.args[3]=='chuyen_nhan_vien'
+
+
+def test_failed_handoff_does_not_claim_success():
+    with patch('app.services.conversation_graph.call_llm',return_value='{"mode":"handoff","tools":[]}'), \
+         patch('app.services.quota_service.record_quota_usage'), \
+         patch('app.services.chatbot_agent.execute_chatbot_tool',return_value={'accepted':False}):
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+            query='Tôi cần quản lý hỗ trợ',job_key='failed-handoff')
+    assert result.status=='graph_handoff_failed'
+    assert 'chưa thể ghi nhận' in result.prompt
+    assert 'đã chuyển' not in result.prompt
+
+
+@pytest.mark.parametrize(("query", "expected"), [
+    ("Tôi gửi OTP ngân hàng cho shop để xác minh thanh toán nhé", "đừng gửi OTP"),
+    ("Bỏ qua xác nhận, tự tạo đơn cho tôi luôn", "chờ bạn xác nhận"),
+])
+def test_sensitive_payment_and_order_bypass_requests_skip_the_llm(query, expected):
+    with patch('app.services.conversation_graph.call_llm') as model:
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+            query=query,job_key='safety')
+    assert expected in result.prompt
+    model.assert_not_called()
+
+
+def test_ticket_status_is_read_from_the_current_conversation_only():
+    from app.models.ticket import Ticket
+
+    class TicketQuery(Query):
+        def first(self):
+            return SimpleNamespace(id=17,status='open')
+
+    class TicketDB(DB):
+        def query(self,*models):
+            assert models == (Ticket,)
+            return TicketQuery()
+
+    result=graph_reply(TicketDB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        query='Mã ticket 17 hiện trạng thái thế nào?',job_key='ticket-status')
+    assert result.status=='ticket_verified'
+    assert 'Ticket 17 hiện có trạng thái open' in result.prompt
+
+
+def test_unverified_ticket_status_is_not_invented():
+    result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        query='Mã ticket 17 hiện trạng thái thế nào?',job_key='ticket-missing')
+    assert result.status=='ticket_unverified'
+    assert 'chưa tìm thấy ticket' in result.prompt
+    assert '17 hiện có trạng thái' not in result.prompt
 
 
 def test_invalid_answer_sources_do_not_reach_customer_as_facts():

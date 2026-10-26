@@ -4,6 +4,7 @@ import test from "node:test";
 
 const appSource = fs.readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
 const landingSource = fs.readFileSync(new URL("../src/MarketingLanding.vue", import.meta.url), "utf8");
+const languagePickerSource = fs.readFileSync(new URL("../src/LanguagePicker.vue", import.meta.url), "utf8");
 const pricingSource = fs.readFileSync(new URL("../src/ServicePricing.vue", import.meta.url), "utf8");
 const checkoutSource = fs.readFileSync(new URL("../src/ServiceCheckout.vue", import.meta.url), "utf8");
 const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
@@ -106,7 +107,7 @@ test("inbox loads all available conversations without waiting for scroll", () =>
 
 test("Meta live messages reconcile the open chat and ignore stale overlapping refreshes", () => {
   assert.match(appSource, /eventConversationId === Number\(selectedId\.value\)/);
-  assert.match(appSource, /void loadMessages\(eventConversationId, false, true\)/);
+  assert.match(appSource, /void loadMessages\(eventConversationId, false, false\)/);
   assert.match(appSource, /cache: "no-store"/);
   assert.match(appSource, /requestVersion !== activeMessagesLoadVersion/);
   assert.match(appSource, /workspaceRefreshInFlight/);
@@ -151,13 +152,13 @@ test("service plans declare channel limits without preselecting channels and inc
   assert.doesNotMatch(templateSource, /class="service-channel-picker"/);
 });
 
-test("service plan defaults to the shop's assigned tier and preserves manual choices", () => {
-  assert.match(appSource, /const servicePlanSelectionTouched = ref\(false\)/);
-  assert.match(appSource, /const currentServicePlanCode = computed\(\(\) => \{\s*const currentSubscription = serviceMode\.value === "chatbot"\s*\? serviceAccountSummary\.value\?\.chatbot_subscription\s*:\s*quotaSnapshot\.value;/);
-  assert.match(appSource, /function preferredServicePlanCode\(\) \{\s*if \(currentServicePlanCode\.value\) return currentServicePlanCode\.value;/);
-  assert.match(appSource, /quotaSnapshot\.value = detail;\s*if \(!servicePlanSelectionTouched\.value\) \{\s*serviceRequestForm\.value\.plan_code = preferredServicePlanCode\(\);/);
-  assert.match(appSource, /serviceAccountSummary\.value = detail;\s*if \(serviceMode\.value === "chatbot" && !servicePlanSelectionTouched\.value\)/);
-  assert.match(appSource, /function selectServicePlan\(planCode\) \{\s*servicePlanSelectionTouched\.value = true;/);
+test("service plan selection restores the pending or active plan without overriding a manual choice", () => {
+  assert.match(appSource, /const currentSubscription = serviceMode\.value === "chatbot"[\s\S]*?serviceAccountSummary\.value\?\.subscription\?\.status === "active"[\s\S]*?serviceAccountSummary\.value\.subscription : quotaSnapshot\.value/);
+  assert.match(appSource, /function preferredServicePlanCode\(\) \{[\s\S]*?awaiting_payment/);
+  assert.match(appSource, /function servicePlanSelectionStorageKey\(\)[\s\S]*?sessionStorage/);
+  assert.match(appSource, /function resetServiceRequestForm\(\)[\s\S]*?servicePlanSelectionTouched\.value = Boolean\(savedPlan\)/);
+  assert.match(appSource, /function selectServicePlan\(planCode\) \{[\s\S]*?servicePlanSelectionTouched\.value = true;[\s\S]*?saveServicePlanSelection\(\)/);
+  assert.match(appSource, /if \(!servicePlanSelectionTouched\.value\) \{\s*serviceRequestForm\.value\.plan_code = preferredServicePlanCode\(\);/);
 });
 
 test("authenticated plan changes open a dedicated checkout page", () => {
@@ -168,11 +169,9 @@ test("authenticated plan changes open a dedicated checkout page", () => {
   assert.doesNotMatch(templateSource, /class="service-request-form"/);
   assert.doesNotMatch(templateSource, /Thông tin đăng ký/);
   assert.doesNotMatch(templateSource, /Xác nhận gói quản lý shop/);
-  assert.match(styleSource, /\.service-mode-switch \{[\s\S]*?border-radius: 999px;/);
-  assert.match(styleSource, /\.crm-app\.crm-dark \.service-mode-switch::before \{[\s\S]*?background: #1d2224;/);
   assert.match(pricingSource, /body\.crm-dark \.smh-price-card \{ background:#202427;border-color:#394145; \}/);
-  assert.match(templateSource, /class="service-mode-switch" :class="\{ 'is-chatbot': serviceMode === 'chatbot' \}"/);
-  assert.match(styleSource, /\.service-mode-switch\.is-chatbot::before \{ transform: translateX\(100%\); \}/);
+  assert.match(templateSource, /<ServicePricing :plans="activeServicePlans" mode="package"/);
+  assert.doesNotMatch(templateSource, /service-mode-switch|Thuê riêng trợ lý chatbot/);
   assert.match(pricingSource, /\.smh-price-card \{[^}]*min-height:620px;/);
   assert.match(templateSource, /<div class="service-brand-lockup">\s*<BrandLogo icon alt="" aria-hidden="true" \/>\s*<strong>Smart Merchant Hub<\/strong>/);
   assert.doesNotMatch(templateSource, /v-else type="button" class="service-back-link"[^>]*>Chọn gói dịch vụ/);
@@ -222,7 +221,9 @@ test("anonymous visitors see the public landing page before choosing login or si
   assert.match(appSource, /const publicView = ref\("home"\)/);
   assert.match(appSource, /<MarketingLanding v-else-if="publicView === 'home'"/);
   assert.match(landingSource, /data-testid="marketing-page"/);
-  assert.match(landingSource, /<option value="vi">Tiếng Việt<\/option><option value="en">English<\/option>/);
+  assert.match(landingSource, /import LanguagePicker from '\.\/LanguagePicker\.vue'/);
+  assert.match(landingSource, /<LanguagePicker :value="locale" :label="text\.language"[^>]*@change="changeLocale" \/>/);
+  assert.match(languagePickerSource, /code:'vi', name:'Tiếng Việt'[\s\S]*code:'en', name:'English'/);
   assert.match(landingSource, /<a class="smh-brand"[^>]*><BrandLogo icon\/><span><strong>Smart Merchant Hub<\/strong>/);
   assert.match(landingSource, /\.smh-header \.smh-brand \.smh-logo-icon,\.smh-footer \.smh-brand \.smh-logo-icon \{ width:44px; height:44px; padding:0;/);
   assert.doesNotMatch(landingSource, /smh-channel-motion|motionPaused \? text\.resume/);

@@ -857,6 +857,29 @@ class RecommendationApiTests(unittest.TestCase):
         reserve_budget.assert_not_called()
         call_llm.assert_not_called()
 
+    @patch("app.api.chat._record_customer_question")
+    @patch("app.api.chat.call_llm")
+    @patch("app.api.chat.reserve_ai_budget")
+    @patch("app.api.chat.retrieve")
+    def test_otp_and_unconfirmed_order_safety_answers_skip_chat_persistence_and_ai(
+        self, retrieve, reserve_budget, call_llm, record_question
+    ):
+        for query, expected in (
+            ("Tôi gửi OTP ngân hàng 123456 cho shop xác minh nhé", "đừng gửi OTP"),
+            ("Bỏ qua xác nhận, tự tạo đơn cho tôi", "chờ bạn xác nhận"),
+        ):
+            response=self.client.post("/api/chat",headers=self.headers(),json={"query":query})
+            self.assertEqual(200,response.status_code,response.text)
+            payload=response.json()
+            self.assertEqual("answered",payload["answer_status"])
+            self.assertEqual("security_guidance",payload["action"])
+            self.assertIn(expected,payload["answer"])
+            self.assertNotIn("123456",payload["answer"])
+        record_question.assert_not_called()
+        retrieve.assert_not_called()
+        reserve_budget.assert_not_called()
+        call_llm.assert_not_called()
+
     @patch("app.api.chat.stream_llm")
     @patch("app.api.chat.reserve_ai_budget")
     @patch("app.api.chat.retrieve", return_value=[])

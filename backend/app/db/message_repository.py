@@ -1,6 +1,13 @@
 import json
+from datetime import UTC, datetime
 
 from sqlalchemy import text
+
+
+def normalize_timestamp_utc(value):
+    if isinstance(value, datetime) and value.tzinfo is not None:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    return value
 
 
 def save_message(
@@ -18,6 +25,7 @@ def save_message(
     """
 
     dialect_name = getattr(getattr(db.get_bind(), "dialect", None), "name", "postgresql")
+    received_at = normalize_timestamp_utc(message.get("received_at"))
     raw_payload_value = "CAST(:raw_payload AS JSONB)" if dialect_name == "postgresql" else ":raw_payload"
     received_at_value = (
         "COALESCE(CAST(:received_at AS TIMESTAMP), CURRENT_TIMESTAMP)"
@@ -128,7 +136,7 @@ def save_message(
                     )
                 ),
 
-            "received_at": message.get("received_at"),
+            "received_at": received_at,
         },
     )
 

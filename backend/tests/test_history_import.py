@@ -195,6 +195,7 @@ def test_duplicate_meta_history_refreshes_corrected_message_timestamp(monkeypatc
         "message_id": 42,
         "conversation_id": 99,
         "channel": "instagram",
+        "is_live": False,
     }
 
 
@@ -290,10 +291,21 @@ def test_live_meta_duplicate_promotes_history_message_to_idempotent_bot_turn(mon
         def get(_model, _channel_id):
             return channel
 
+        def __init__(self):
+            self.updates = []
+
+        def execute(self, statement, params):
+            self.updates.append((str(statement), params))
+
+        @staticmethod
+        def commit():
+            pass
+
     @contextmanager
     def tenant_session(_schema):
-        yield TenantDb()
+        yield tenant_db
 
+    tenant_db = TenantDb()
     scheduled = []
     monkeypatch.setattr(local_connectors, "_connector_channel", lambda *_args: (7, 11))
     monkeypatch.setattr(local_connectors, "_tenant_schema", lambda *_args: "tenant_7")
@@ -317,6 +329,8 @@ def test_live_meta_duplicate_promotes_history_message_to_idempotent_bot_turn(mon
     )
 
     assert result == {"status": "received", "imported": 0, "duplicates": 1, "skipped": 0}
+    assert tenant_db.updates[0][1]["is_live"] is True
+    assert "- 'history_import'" in tenant_db.updates[0][0]
     assert scheduled == [{"business_id": 7, "conversation_id": 99, "message_id": 43}]
 
 
@@ -334,7 +348,12 @@ def test_history_checkpoint_replays_until_a_thread_is_fully_acknowledged(tmp_pat
     checkpoint = connector_pairing.mark_history_thread_complete(path, checkpoint, "thread-1")
 
     resumed = connector_pairing.load_history_checkpoint(path)
-    assert resumed == {"version": 1, "completed_threads": ["thread-1"], "complete": False}
+    assert resumed == {
+        "version": 1,
+        "completed_threads": ["thread-1"],
+        "completed_row_keys": [],
+        "complete": False,
+    }
     connector_pairing.mark_history_complete(path)
     assert connector_pairing.load_history_checkpoint(path)["complete"] is True
     assert connector_pairing.history_checkpoint_path(tmp_path, "tiktok", "token-a") != connector_pairing.history_checkpoint_path(tmp_path, "tiktok", "token-b")
@@ -427,7 +446,7 @@ def test_history_import_keeps_unavailable_timestamp_unknown_instead_of_using_imp
             history_import=True,
         )
         db.refresh(conversation)
-        assert conversation.updated_at.year > 2025
+        assert conversation.updated_at.year == 2025
         assert conversation.last_message_at is None
 
 

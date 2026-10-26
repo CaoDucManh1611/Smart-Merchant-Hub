@@ -81,6 +81,7 @@ async def _receive_meta_webhook(
                                 "media_url": item.attachments[0].url if item.attachments else None,
                                 "attachments": [a.model_dump(mode="json") for a in item.attachments],
                                 "raw_payload": event.raw_payload,
+                                "received_at": item.provider_created_at or event.provider_created_at,
                                 "external_account_id": event.external_account_id,
                                 "business_id": event.business_id,
                                 "channel_id": event.channel_id,

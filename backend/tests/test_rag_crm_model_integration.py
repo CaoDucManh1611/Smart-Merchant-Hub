@@ -544,7 +544,7 @@ def test_rfm_excludes_pending_cancelled_refunded_and_future_orders(database, mod
     assert buyer.features["frequency"] == 1
     assert buyer.features["monetary"] == 150000
     assert buyer.model_version == "rfm_percentile_v1"
-    assert buyer.features["cluster_model_version"] == "data_rag_rfm_demo_v1"
+    assert buyer.features["cluster_model_version"] == buyer.model_version
     assert buyer.segment_label == "new_customer"
     assert new.segment_label == "no_purchase" and new.features["cluster_id"] is None
     assert buyer.features["segment_name"] == "RFM · Khách mới"

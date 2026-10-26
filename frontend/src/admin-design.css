@@ -200,6 +200,7 @@ body { background: var(--crm-frame-bg) !important; }
 }
 .admin-mobile-select { display:none; }
 @media(max-width:600px) {
+  .admin-menu-toggle { display:none; }
   .admin-mobile-select { display:grid; gap:6px; font-size:12px; color:var(--admin-muted); }
   .admin-mobile-select select { width:100%; min-height:44px; padding:8px 12px; border:1px solid var(--admin-line); border-radius:8px; background:var(--admin-surface); color:var(--admin-ink); font:inherit; font-size:14px; font-weight:650; }
   .crm-app.platform-admin-workspace .admin-section-nav.is-open { display:none; }

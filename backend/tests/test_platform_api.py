@@ -788,7 +788,7 @@ class PlatformApiTests(unittest.TestCase):
             business_id, rental_id = business.id, rental.id
         registry = SimpleNamespace(business_id=business_id, schema_name=f"tenant_{business_id}", state="active", feature_enabled=True, tenant_revision="test", migration_error=None)
         mirrored_codes = []
-        with patch("app.api.platform.provision_shop", return_value=registry), patch("app.api.onboarding._sync_platform_subscription", side_effect=lambda _db, _business, plan: mirrored_codes.append(plan.code)):
+        with patch("app.api.platform.provision_shop", return_value=registry), patch("app.api.onboarding._sync_platform_subscription", side_effect=lambda _platform_db, _legacy_db, _business, plan: mirrored_codes.append(plan.code)):
             result = self.client.post(f"/api/platform/subscription-requests/{rental_id}/approve", headers=headers)
             self.assertEqual(200, result.status_code, result.text)
             self.assertEqual(["demo"], mirrored_codes)

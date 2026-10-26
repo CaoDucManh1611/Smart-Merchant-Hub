@@ -1,11 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap");
-
 /* =========================================================
    ROOT
 ========================================================= */
 
 :root {
-  --font-ui: "Source Sans 3", "Segoe UI", "Noto Sans", Arial, sans-serif;
+  --font-ui: system-ui, "Segoe UI", "Noto Sans", Arial, sans-serif;
+  font-size: 17px;
   font-family: var(--font-ui);
   color: #172033;
   background: #eef2f7;
@@ -14471,6 +14470,8 @@ body.crm-dark .service-plan-option small + small { color: #d8ffff; background: #
 .platform-quota-card strong { color: var(--owly-ink); }
 .platform-tenant-detail-grid small,
 .platform-quota-card small { color: var(--owly-muted); font-size: .74rem; }
+.platform-tenant-provisioning-retry { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 12px; border: 1px solid var(--owly-border); border-radius: 10px; background: var(--owly-surface); }
+.platform-tenant-provisioning-retry p { margin: 0; color: var(--owly-ink); font-size: .82rem; }
 .platform-quota-card.warning { border-color: #e4bc65; }
 .platform-quota-card.exceeded { border-color: #dd8c8c; }
 .platform-shop-notice { margin: 0 0 12px; }
@@ -14505,6 +14506,8 @@ body.crm-dark .channel-capacity-alert { color: #ffe3a5; border-color: #816725; b
   .platform-tenant-summary,
   .platform-tenant-detail-grid,
   .platform-quota-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .platform-tenant-provisioning-retry { align-items: stretch; flex-direction: column; }
+  .platform-tenant-provisioning-retry > button { width: 100%; }
   .platform-tenant-actions > button,
   .channel-capacity-alert button { width: 100%; }
   .login-page { padding: 14px; overflow-y: auto; }
@@ -16424,4 +16427,107 @@ body.crm-dark .service-request-dismiss:hover { color: #fff; background: #303a3e;
   .crm-app .channels-layout .settings-card-header p,.crm-app .channels-layout .settings-muted { font-size:13px; line-height:1.5; margin-block:8px; }
   .crm-app .channels-layout .connection-badge { align-self:flex-start; max-width:100%; white-space:normal; }
   .crm-app .channels-layout .channel-summary-actions { margin-top:10px; }
+}
+
+/* Product catalog image picker and inventory editor */
+.crm-app .product-image-upload {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--owly-border, #d5e2e2);
+  border-radius: 12px;
+  color: var(--owly-text, #243638);
+  background: #f7faf9;
+}
+.crm-app .product-image-upload-copy,
+.crm-app .product-image-upload-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.crm-app .product-image-upload-copy { justify-content: space-between; }
+.crm-app .product-image-upload-copy > strong,
+.crm-app .product-adjustment-image > strong { font-size: 13px; }
+.crm-app .product-image-upload-copy > small,
+.crm-app .product-image-upload-actions > small { color: var(--owly-text-muted, #617273); font-size: 12px; font-weight: 400; }
+.crm-app .product-image-upload-control { display: flex; min-width: 0; align-items: center; gap: 14px; }
+.crm-app .product-image-upload-control > img,
+.crm-app .product-image-upload-control > .product-image-preview,
+.crm-app .product-image-placeholder { display: grid; width: 82px; height: 82px; flex: 0 0 82px; place-items: center; overflow: hidden; border: 1px solid var(--owly-border, #d5e2e2); border-radius: 10px; color: #087e78; background: #e8f3f1; object-fit: contain; }
+.crm-app .product-image-preview { position: relative; }
+.crm-app .product-image-preview > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.crm-app .product-image-preview > img.is-load-error { display: none; }
+.crm-app .product-image-preview-error { display: none; position: absolute; inset: 0; place-items: center; padding: 7px; color: #697a7c; font-size: 11px; line-height: 1.3; text-align: center; }
+.crm-app .product-image-preview > img.is-load-error + .product-image-preview-error { display: grid; }
+.crm-app .product-image-placeholder { font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.crm-app .product-image-upload-actions { align-content: center; }
+.crm-app .product-image-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; }
+.crm-app .product-image-pick,
+.crm-app .product-image-remove { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; margin: 0; padding: 0 13px; cursor: pointer; }
+.crm-app .product-image-file-input:focus-visible + .product-image-pick { outline: 3px solid #35b9b2; outline-offset: 2px; }
+.crm-app .product-image-remove { color: #97524c; }
+.crm-app .product-adjustment-image { grid-column: span 2; }
+.crm-app .inventory-stock-editor { display: grid; gap: 12px; margin-top: 16px; padding: 16px; border: 1px solid var(--owly-border, #d5e2e2); border-radius: 12px; background: #f7faf9; }
+.crm-app .inventory-stock-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.crm-app .inventory-stock-editor-head > div:first-child { display: grid; gap: 4px; }
+.crm-app .inventory-stock-editor-head > div:first-child strong { color: #203536; font-size: 15px; }
+.crm-app .inventory-stock-editor-head > div:first-child small { color: #617273; font-size: 12px; }
+.crm-app .inventory-stock-editor .adjustment-preview { min-width: 142px; border: 1px solid #c7e4df; color: #175f5b; background: #e9f5f2; }
+.crm-app .inventory-stock-editor .adjustment-preview strong { color: #075f59; }
+.crm-app .inventory-stock-editor .adjustment-direction { width: fit-content; margin: 0; padding: 4px; border: 1px solid var(--owly-border, #d5e2e2); border-radius: 10px; background: #edf3f2; }
+.crm-app .inventory-stock-editor .adjustment-direction button { min-height: 40px; padding: 0 14px; border-radius: 8px; color: #405456; font-weight: 650; }
+.crm-app .inventory-stock-editor .adjustment-direction button.active { border-color: #087e78; color: #fff; background: #087e78; }
+.crm-app .inventory-stock-editor .adjustment-fields { grid-template-columns: minmax(120px, .45fr) minmax(240px, 1.55fr); gap: 12px; }
+.crm-app .inventory-stock-editor .adjustment-fields label { gap: 6px; color: #405456; font-weight: 600; }
+.crm-app .inventory-stock-editor .adjustment-fields input { min-height: 42px; border-color: var(--owly-border, #c9d8d7); border-radius: 8px; color: #203536; background: #fff; }
+.crm-app .inventory-stock-editor .adjustment-actions { padding-top: 10px; border-top: 1px solid var(--owly-border, #d5e2e2); }
+.crm-app .inventory-stock-editor .adjustment-actions .primary-btn { min-height: 42px; padding: 0 16px; }
+body.crm-dark .crm-app .product-image-upload,
+body.crm-dark .crm-app .inventory-stock-editor { color: #e5eaec; border-color: #39474a; background: #20282a; }
+body.crm-dark .crm-app .product-image-upload-copy > small,
+body.crm-dark .crm-app .product-image-upload-actions > small,
+body.crm-dark .crm-app .inventory-stock-editor-head > div:first-child small { color: #aebcbe; }
+body.crm-dark .crm-app .product-image-upload-control > img,
+body.crm-dark .crm-app .product-image-upload-control > .product-image-preview,
+body.crm-dark .crm-app .product-image-placeholder { border-color: #405255; background: #192123; }
+body.crm-dark .crm-app .product-image-preview-error { color: #b8c5c6; }
+body.crm-dark .crm-app .product-image-remove { color: #f0b5ae; }
+body.crm-dark .crm-app .inventory-stock-editor-head > div:first-child strong { color: #edf6f5; }
+body.crm-dark .crm-app .inventory-stock-editor .adjustment-preview { border-color: #356c69; color: #c4e8e3; background: #193d3b; }
+body.crm-dark .crm-app .inventory-stock-editor .adjustment-preview strong { color: #e1fffa; }
+body.crm-dark .crm-app .inventory-stock-editor .adjustment-direction { border-color: #39474a; background: #1a2022; }
+body.crm-dark .crm-app .inventory-stock-editor .adjustment-direction button { color: #d4dedd; }
+body.crm-dark .crm-app .inventory-stock-editor .adjustment-direction button.active { color: #fff; background: #087e78; }
+body.crm-dark .crm-app .inventory-stock-editor .adjustment-fields label { color: #d6e0df; }
+body.crm-dark .crm-app .inventory-stock-editor .adjustment-fields input { border-color: #465457; color: #edf6f5; background: #171d1f; }
+body.crm-dark .crm-app .inventory-stock-editor .adjustment-actions { border-color: #39474a; }
+@media (max-width: 760px) {
+  .crm-app .inventory-stock-editor-head { align-items: stretch; flex-direction: column; }
+  .crm-app .inventory-stock-editor .adjustment-preview { min-width: 0; }
+  .crm-app .inventory-stock-editor .adjustment-fields { grid-template-columns: 1fr; }
+  .crm-app .product-adjustment-image { grid-column: 1 / -1; }
+}
+@media (max-width: 520px) {
+  .crm-app .product-image-upload { padding: 11px; }
+  .crm-app .product-image-upload-copy { align-items: flex-start; flex-direction: column; }
+  .crm-app .product-image-upload-control { align-items: flex-start; flex-direction: column; }
+  .crm-app .inventory-stock-editor { padding: 12px; }
+  .crm-app .inventory-stock-editor .adjustment-direction { width: 100%; }
+  .crm-app .inventory-stock-editor .adjustment-direction button { flex: 1; padding-inline: 8px; }
+  .crm-app .inventory-stock-editor .adjustment-actions { align-items: stretch; flex-direction: column; }
+}
+.crm-app .products-header.products-catalog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.crm-app .products-catalog-header > div:first-child { min-width: 0; }
+.crm-app .products-catalog-header p { margin-bottom: 0; }
+.crm-app .products-catalog-header .products-header-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 10px; }
+.crm-app .products-catalog-header .products-header-actions > button { min-height: 40px; margin: 0; white-space: nowrap; }
+@media (max-width: 700px) {
+  .crm-app .products-header.products-catalog-header { align-items: flex-start; flex-direction: column; gap: 14px; }
+  .crm-app .products-catalog-header .products-header-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+}
+@media (max-width: 480px) {
+  .crm-app .products-catalog-header .products-header-actions { display: grid; grid-template-columns: 1fr; }
+  .crm-app .products-catalog-header .products-header-actions > button { width: 100%; white-space: normal; }
 }

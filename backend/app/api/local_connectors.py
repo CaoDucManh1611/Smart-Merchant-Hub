@@ -30,6 +30,7 @@ from app.models.business import User
 from app.models.channel import Channel
 from app.models.customer_identity import CustomerIdentity
 from app.models.customer import Customer
+from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
 from app.models.platform_control import PlatformBusiness, TenantRegistry
@@ -694,6 +695,9 @@ async def receive_local_connector_message(
                 "media_type": message_type if message_type in {"image", "video", "audio", "file", "sticker"} else None,
                 "media_url": str(payload.get("mediaUrl") or payload.get("media_url") or "")[:2000] or None,
                 "attachments": attachments[:20],
+                "received_at": _history_datetime(
+                    payload.get("createdAt") or payload.get("created_at") or payload.get("timestamp")
+                ),
                 "raw_payload": {
                     "threadId": thread_id,
                     "message_type": message_type,
@@ -706,7 +710,34 @@ async def receive_local_connector_message(
         )
         if not isinstance(saved, dict):
             raise HTTPException(status_code=500, detail="Không thể lưu tin nhắn từ connector.")
-        if saved.get("_created", True):
+        promoted_history = False
+        if not saved.get("_created", True) and saved.get("message_id"):
+            existing = tenant_db.get(Message, int(saved["message_id"]))
+            raw_payload = dict(existing.raw_payload or {}) if existing and isinstance(existing.raw_payload, dict) else {}
+            if (
+                existing
+                and existing.channel == channel_type
+                and existing.external_user_id == sender_id[:255]
+                and existing.direction == "inbound"
+                and str(raw_payload.get("history_import") or "").lower() == "true"
+            ):
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                live_at = _history_datetime(payload.get("createdAt") or payload.get("created_at")) or now
+                raw_payload.pop("history_import", None)
+                raw_payload["source"] = "local_connector_live"
+                existing.raw_payload = raw_payload
+                existing.received_at = live_at
+                conversation = tenant_db.get(Conversation, int(existing.conversation_id))
+                if conversation:
+                    if conversation.updated_at is None or conversation.updated_at < now:
+                        conversation.updated_at = now
+                    if conversation.last_message_at is None or conversation.last_message_at < live_at:
+                        conversation.last_message_at = live_at
+                tenant_db.commit()
+                saved["received_at"] = live_at
+                saved["raw_payload"] = raw_payload
+                promoted_history = True
+        if saved.get("_created", True) or promoted_history:
             await manager.broadcast(
                 {
                     "type": "message_created",
@@ -929,26 +960,32 @@ def receive_local_connector_history(
                 if (
                     channel_type in {"facebook", "instagram"}
                     and normalized["created_at"]
-                    and (not normalized["is_live"] or normalized["created_at_from_source"])
                     and saved.get("message_id")
                     and saved.get("conversation_id")
                 ):
                     tenant_db.execute(
                         text("""
                             UPDATE messages
-                            SET received_at = :received_at
+                            SET received_at = :received_at,
+                                raw_payload = CASE
+                                    WHEN :is_live THEN COALESCE(raw_payload, '{}'::jsonb) - 'history_import'
+                                    ELSE raw_payload
+                                END
                             WHERE id = :message_id
                               AND conversation_id = :conversation_id
                               AND channel = :channel
                         """),
                         {
                             "received_at": normalized["created_at"],
+                            "is_live": normalized["is_live"],
                             "message_id": int(saved["message_id"]),
                             "conversation_id": int(saved["conversation_id"]),
                             "channel": channel_type,
                         },
                     )
                     tenant_db.commit()
+                    if normalized["is_live"]:
+                        saved["received_at"] = normalized["created_at"]
                 duplicates += 1
                 if normalized["is_live"] and saved.get("conversation_id") and saved.get("message_id"):
                     # A foreground watcher can discover a message after the

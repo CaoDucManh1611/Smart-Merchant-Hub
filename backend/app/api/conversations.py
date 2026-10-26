@@ -65,6 +65,7 @@ from app.services.channel_delivery import (
 )
 from app.services.zalo_media import normalize_zalo_audio_upload
 from app.services.telegram_media import TELEGRAM_VOICE_CONTENT_TYPES, normalize_telegram_voice_upload
+from app.services.meta_media import normalize_meta_audio_upload
 from app.services.media_capabilities import supported_outbound_media_types, unsupported_media_detail
 from app.services.media_resolver import build_media_url
 from app.services.audit_service import record_audit
@@ -741,6 +742,16 @@ async def prepare_uploaded_image(
         media_url,
         file_path,
     )
+
+
+@router.post(
+    "/products/image-upload",
+    dependencies=[Depends(require_write_access)],
+)
+async def upload_product_image(file: UploadFile = File(...)):
+    """Store a normalized public product image for the tenant catalog."""
+    image_url, _file_path = await prepare_uploaded_image(file, conversation_id=0)
+    return {"image_url": image_url}
 
 
 def meta_error_status_code(
@@ -1606,6 +1617,7 @@ def save_outbound_message(
     vào PostgreSQL.
     """
 
+    sent_at = datetime.now(timezone.utc).replace(tzinfo=None)
     result = db.execute(
         text("""
             INSERT INTO messages (
@@ -1619,7 +1631,9 @@ def save_outbound_message(
                 content,
                 media_type,
                 media_url,
-                raw_payload
+                raw_payload,
+                received_at,
+                sent_at
             )
 
             VALUES (
@@ -1633,11 +1647,12 @@ def save_outbound_message(
                 :content,
                 :media_type,
                 :media_url,
-
                 CAST(
                     :raw_payload
                     AS JSONB
-                )
+                ),
+                CAST(:sent_at AS TIMESTAMP),
+                CAST(:sent_at AS TIMESTAMP)
             )
 
             ON CONFLICT (
@@ -1656,7 +1671,8 @@ def save_outbound_message(
                 media_type,
                 media_url,
                 raw_payload,
-                received_at
+                received_at,
+                sent_at
         """),
         {
             "conversation_id":
@@ -1683,6 +1699,8 @@ def save_outbound_message(
 
             "media_url":
                 media_url,
+
+            "sent_at": sent_at,
 
             "raw_payload":
                 json.dumps(
@@ -1721,6 +1739,18 @@ def save_outbound_message(
             )
 
     if row:
+        db.execute(
+            text("""
+                UPDATE conversations
+                SET updated_at = :sent_at,
+                    last_message_at = CASE
+                        WHEN last_message_at IS NULL OR last_message_at < :sent_at THEN :sent_at
+                        ELSE last_message_at
+                    END
+                WHERE id = :conversation_id
+            """),
+            {"conversation_id": conversation_id, "sent_at": sent_at},
+        )
         mark_first_response()
         db.commit()
         return dict(
@@ -1742,7 +1772,8 @@ def save_outbound_message(
                 media_type,
                 media_url,
                 raw_payload,
-                received_at
+                received_at,
+                sent_at
 
             FROM messages
 
@@ -2140,7 +2171,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    COALESCE(m.received_at, cv.updated_at) DESC,
+                    COALESCE(m.received_at, m.sent_at) DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -2157,7 +2188,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    COALESCE(m.received_at, cv.updated_at) DESC,
+                    COALESCE(m.received_at, m.sent_at) DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -2174,7 +2205,7 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    COALESCE(m.received_at, cv.updated_at) DESC,
+                    COALESCE(m.received_at, m.sent_at) DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
@@ -2191,15 +2222,15 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    COALESCE(m.received_at, cv.updated_at) DESC,
+                    COALESCE(m.received_at, m.sent_at) DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
             ) AS last_media_url,
 
-            (
+            COALESCE((
                 SELECT
-                    m.received_at
+                    COALESCE(m.received_at, m.sent_at)
 
                 FROM messages m
 
@@ -2208,11 +2239,18 @@ def get_conversations(
                     = cv.id
 
                 ORDER BY
-                    COALESCE(m.received_at, cv.updated_at) DESC,
+                    COALESCE(m.received_at, m.sent_at) DESC NULLS LAST,
                     m.id DESC
 
                 LIMIT 1
-            ) AS last_message_at,
+            ), cv.last_message_at) AS last_message_at,
+
+            (
+                SELECT MAX(COALESCE(m.received_at, m.sent_at))
+                FROM messages m
+                WHERE m.conversation_id = cv.id
+                  AND COALESCE(m.raw_payload->>'history_import', 'false') != 'true'
+            ) AS last_activity_at,
 
             (
                 SELECT COUNT(*)
@@ -2241,7 +2279,9 @@ def get_conversations(
           {assignment_filter}
 
         ORDER BY
-            COALESCE(last_message_at, cv.updated_at) DESC NULLS LAST,
+            last_activity_at DESC NULLS LAST,
+            last_message_at DESC NULLS LAST,
+            cv.created_at DESC NULLS LAST,
             cv.id DESC
     """
 
@@ -2743,7 +2783,8 @@ def get_conversation_messages(
             m.media_type,
             m.media_url,
             m.raw_payload,
-            m.received_at
+            m.received_at,
+            m.sent_at
 
         FROM messages m
 
@@ -2758,7 +2799,7 @@ def get_conversation_messages(
             )
 
         ORDER BY
-            m.received_at ASC NULLS FIRST,
+            COALESCE(m.received_at, m.sent_at) ASC NULLS FIRST,
             m.id ASC
     """)
 
@@ -4773,6 +4814,11 @@ async def upload_and_send_generic_media(
                     )
             elif channel == "zalo":
                 upload_path, upload_content_type = normalize_zalo_audio_upload(
+                    file_path,
+                    content_type=content_type,
+                )
+            elif channel in {"facebook", "instagram"}:
+                upload_path, upload_content_type = normalize_meta_audio_upload(
                     file_path,
                     content_type=content_type,
                 )

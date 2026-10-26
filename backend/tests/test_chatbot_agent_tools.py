@@ -120,6 +120,9 @@ class ChatbotAgentToolTests(unittest.TestCase):
                     self.assertEqual(mode, conversation.bot_mode)
                     if tool == "chuyen_nhan_vien":
                         self.assertEqual(mode, result["bot_mode"])
+                        self.assertTrue(result["accepted"])
+                        self.assertIsNotNone(result["ticket_id"])
+                        self.assertEqual("open", result["status"])
                     else:
                         self.assertIsNotNone(result["ticket_id"])
 

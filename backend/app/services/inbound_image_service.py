@@ -105,7 +105,11 @@ def download_inbound_image_url(url: str, *, channel_type: str) -> tuple[bytes, s
                     continue
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-                if content_type and not content_type.startswith("image/"):
+                telegram_binary_image = channel_type == "telegram" and content_type in {
+                    "application/octet-stream",
+                    "binary/octet-stream",
+                }
+                if content_type and not content_type.startswith("image/") and not telegram_binary_image:
                     raise ValueError("Provider attachment is not an image")
                 image = bytearray()
                 for chunk in response.iter_bytes():

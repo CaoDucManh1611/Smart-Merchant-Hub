@@ -62,6 +62,7 @@ from app.services.channel_health import check_channel_health
 from app.services.quota_service import QuotaExceededError, release_quota
 from app.services.provider_connection import ProviderConnectionError, verify_and_configure_bot
 from app.services.customer_collection import generate_verification_code, hash_verification_code
+from app.services.platform_business_sync import ensure_platform_business, PlatformBusinessIdentityConflict
 from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, deliver_otp
 from app.core.config import settings
 from app.tenancy.context import TenantContext
@@ -183,7 +184,7 @@ def _active_subscription_for(
     )
 
 
-def _start_platform_provisioning(business: Business, subscription: Subscription) -> str:
+def _start_platform_provisioning(business: Business, subscription: Subscription, legacy_db: Session) -> str:
     """Mirror identity and start the schema saga without blocking signup.
 
     Signup is committed in the legacy compatibility store first.  A temporary
@@ -198,16 +199,7 @@ def _start_platform_provisioning(business: Business, subscription: Subscription)
 
     try:
         with PlatformSessionLocal() as platform_db:
-            platform_business = platform_db.get(PlatformBusiness, business.id)
-            if platform_business is None:
-                platform_business = PlatformBusiness(
-                    id=business.id,
-                    name=business.name,
-                    slug=business.slug,
-                    status=business.status,
-                )
-                platform_db.add(platform_business)
-                platform_db.commit()
+            ensure_platform_business(platform_db, legacy_db, business.id)
             registry = provision_shop(
                 platform_db,
                 business_id=business.id,
@@ -332,19 +324,15 @@ def _require_shop_member_for_purchase(db: Session, business_id: int, actor: User
     return actor
 
 
-def _sync_platform_subscription(platform_db: Session, business: Business, plan: ServicePlan) -> None:
+def _sync_platform_subscription(
+    platform_db: Session,
+    legacy_db: Session,
+    business: Business,
+    plan: ServicePlan,
+) -> None:
     """Mirror the active legacy plan into the control-plane quota tables."""
 
-    platform_business = platform_db.get(PlatformBusiness, business.id)
-    if platform_business is None:
-        platform_business = PlatformBusiness(
-            id=business.id,
-            name=business.name,
-            slug=business.slug,
-            status=business.status,
-        )
-        platform_db.add(platform_business)
-        platform_db.flush()
+    ensure_platform_business(platform_db, legacy_db, business.id)
 
     platform_plan = platform_db.scalar(
         select(PlatformServicePlan).where(PlatformServicePlan.code == plan.code)
@@ -399,12 +387,12 @@ def _sync_platform_subscription(platform_db: Session, business: Business, plan: 
     platform_db.commit()
 
 
-def _mirror_initial_subscription(business: Business, plan: ServicePlan) -> None:
+def _mirror_initial_subscription(business: Business, plan: ServicePlan, legacy_db: Session) -> None:
     """Mirror a newly-created demo subscription into platform quota tables."""
 
     try:
         with PlatformSessionLocal() as platform_db:
-            _sync_platform_subscription(platform_db, business, plan)
+            _sync_platform_subscription(platform_db, legacy_db, business, plan)
     except Exception:  # noqa: BLE001 - the provisioning retry can repair this
         logger.warning("Initial platform subscription mirror deferred for business_id=%s", business.id, exc_info=True)
 
@@ -643,7 +631,7 @@ def purchase_shop_plan(
     # not run the optional platform migration yet; the next restart repairs it.
     if service_type == "package":
         try:
-            _sync_platform_subscription(platform_db, business, plan)
+            _sync_platform_subscription(platform_db, db, business, plan)
         except Exception:  # noqa: BLE001 - subscription must remain usable in local demo
             platform_db.rollback()
             logger.warning("Platform plan mirror deferred for business_id=%s", business_id, exc_info=True)
@@ -859,9 +847,9 @@ def verify_signup_otp(payload: SignupOtpVerify, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=409, detail="Không thể tạo shop với thông tin đã nhập.") from exc
 
-    provisioning_state = _start_platform_provisioning(business, subscription)
+    provisioning_state = _start_platform_provisioning(business, subscription, db)
     if subscription.status == "active" and subscription.service_type == "package":
-        _mirror_initial_subscription(business, plan)
+        _mirror_initial_subscription(business, plan, db)
     return OnboardingShopOut(
         business_id=business.id,
         shop_name=business.name,
@@ -905,7 +893,7 @@ def create_shop(payload: OnboardingShopCreate, db: Session = Depends(get_db)):
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Không thể tạo shop với thông tin đã nhập.") from exc
-    provisioning_state = _start_platform_provisioning(business, subscription)
+    provisioning_state = _start_platform_provisioning(business, subscription, db)
     return OnboardingShopOut(
         business_id=business.id,
         shop_name=business.name,
@@ -941,12 +929,12 @@ def _authorize_provisioning_status(legacy_db: Session, actor: User, business_id:
 
 
 def _ensure_platform_identity(platform_db: Session, legacy_db: Session, business_id: int) -> None:
-    if platform_db.get(PlatformBusiness, business_id) is not None:
-        return
-    business = legacy_db.get(Business, business_id)
-    if business is None:
-        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
-    platform_db.add(PlatformBusiness(id=business.id, name=business.name, slug=business.slug, status=business.status))
+    try:
+        ensure_platform_business(platform_db, legacy_db, business_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.") from exc
+    except PlatformBusinessIdentityConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     platform_db.commit()
 
 

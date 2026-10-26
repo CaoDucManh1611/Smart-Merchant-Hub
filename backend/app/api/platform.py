@@ -25,6 +25,7 @@ from app.models.platform_control import PlatformAudit, PlatformProviderIncident
 from app.database.tenant_session import tenant_session
 from app.tenancy.schema import schema_name_for
 from app.services.channel_service import normalized_connection_state
+from app.services.platform_business_sync import ensure_platform_business, PlatformBusinessIdentityConflict
 from app.schemas.platform import (
     PlatformAuditOut,
     PlatformShopListOut,
@@ -112,6 +113,47 @@ def _same_payment_identity(existing: Payment, payload: PlatformPaymentCreate) ->
         and existing.currency.upper() == payload.currency.strip().upper()
         and existing.provider == payload.provider.strip().lower()
     )
+
+
+def _same_paid_receipt(existing: Payment, business_id: int, payload: PlatformPaymentCreate) -> bool:
+    """A paid receipt for this exact request can be confirmed across admin/provider retries."""
+    return (
+        existing.business_id == business_id
+        and existing.subscription_id == payload.subscription_id
+        and existing.amount == payload.amount
+        and existing.currency.upper() == payload.currency.strip().upper()
+        and existing.status == "paid"
+        and payload.status == "paid"
+    )
+
+
+def _clear_payment_reconciliation(existing: Payment, transaction_id: str) -> bool:
+    evidence = dict(existing.raw_response or {})
+    if not evidence:
+        return False
+    changed = False
+    observations = evidence.get("payos_verified_payments_pending_review")
+    reference = transaction_id.removeprefix("payos:")
+    if isinstance(observations, list):
+        remaining = [
+            item for item in observations
+            if not isinstance(item, dict) or str(item.get("reference") or "") != reference
+        ]
+        if len(remaining) != len(observations):
+            changed = True
+            if remaining:
+                evidence["payos_verified_payments_pending_review"] = remaining
+                evidence["reconciliation_required"] = True
+            else:
+                evidence.pop("payos_verified_payments_pending_review", None)
+                evidence.pop("reconciliation_required", None)
+        elif not observations and evidence.pop("reconciliation_required", None):
+            changed = True
+    elif evidence.pop("reconciliation_required", None):
+        changed = True
+    if changed:
+        existing.raw_response = evidence or None
+    return changed
 
 
 def _apply_payment_status(existing: Payment, payload: PlatformPaymentCreate) -> bool:
@@ -376,6 +418,7 @@ def _payment_out(row: Payment) -> PlatformPaymentOut:
         id=row.id,
         business_id=row.business_id,
         subscription_id=row.subscription_id,
+        subscription_plan_name=row.subscription.plan.name if row.subscription and row.subscription.plan else None,
         amount=row.amount,
         currency=row.currency,
         provider=row.provider,
@@ -660,7 +703,7 @@ def approve_subscription_request(
             # an add-on and must not replace the shop's CRM package.
             from app.api.onboarding import _sync_platform_subscription
 
-            _sync_platform_subscription(platform_db, business, provisioning_plan)
+            _sync_platform_subscription(platform_db, db, business, provisioning_plan)
         _sync_platform_business(platform_db, db, business.id)
         registry = provision_shop(
             platform_db,
@@ -754,6 +797,129 @@ def list_shop_subscriptions(business_id: int, db: Session = Depends(get_db), _ac
     if db.get(Business, business_id) is None:
         raise HTTPException(status_code=404, detail="Shop không tồn tại.")
     return [_subscription_out(row) for row in db.scalars(select(Subscription).where(Subscription.business_id == business_id).order_by(Subscription.id.desc()))]
+
+
+@router.get("/shops/{business_id}/provisioning", response_model=ProvisioningOut)
+def get_shop_provisioning_status(
+    business_id: int,
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    _actor: User = Depends(require_platform_admin),
+):
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
+    active_subscription = db.scalar(select(Subscription).where(
+        Subscription.business_id == business_id,
+        Subscription.service_type == "package",
+        Subscription.status == "active",
+    ).order_by(Subscription.id.desc()))
+    registry = platform_db.scalar(select(TenantRegistry).where(TenantRegistry.business_id == business_id))
+    return ProvisioningOut(
+        business_id=business_id,
+        schema_name=registry.schema_name if registry else schema_name_for(business_id),
+        state=registry.state if registry else "provisioning",
+        feature_enabled=bool(registry.feature_enabled) if registry else False,
+        subscription_active=active_subscription is not None,
+        subscription_status=active_subscription.status if active_subscription else None,
+        tenant_revision=registry.tenant_revision if registry else None,
+        migration_error=registry.migration_error if registry else None,
+    )
+
+
+@router.post(
+    "/subscription-requests/{subscription_id}/provision/retry",
+    response_model=PlatformSubscriptionApprovalOut,
+)
+def retry_approved_subscription_provisioning(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+    actor: User = Depends(require_platform_admin),
+):
+    business_id = db.scalar(select(Subscription.business_id).where(Subscription.id == subscription_id))
+    if business_id is not None:
+        db.scalar(select(Business).where(Business.id == business_id).with_for_update())
+    row = db.scalar(select(Subscription).where(Subscription.id == subscription_id)
+                    .with_for_update().execution_options(populate_existing=True))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Yêu cầu gói dịch vụ không tồn tại.")
+    if row.status != "active":
+        raise HTTPException(status_code=409, detail="Chỉ có thể chuẩn bị lại yêu cầu đã được duyệt.")
+    if row.change_kind == "downgrade":
+        raise HTTPException(status_code=409, detail="Yêu cầu hạ gói không cần chuẩn bị tenant mới.")
+    plan = db.get(ServicePlan, row.plan_id)
+    business = db.get(Business, row.business_id)
+    if plan is None or business is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy shop hoặc gói đã duyệt.")
+
+    from app.api.onboarding import _chatbot_rental_price
+    expected_amount = row.quoted_amount if row.quoted_amount is not None else (
+        _chatbot_rental_price(plan) if row.service_type == "chatbot" else plan.price
+    )
+    if expected_amount > 0:
+        receipt = paid_receipt(db, row)
+        if (receipt is None or receipt.business_id != business.id or receipt.amount != expected_amount
+                or _payment_needs_reconciliation(receipt)):
+            raise HTTPException(status_code=409, detail="Cần đối soát khoản thu đúng số tiền trước khi chuẩn bị tenant.")
+
+    provisioning_plan = plan if row.service_type == "package" else None
+    if row.service_type == "chatbot":
+        package = db.scalar(select(Subscription).where(
+            Subscription.business_id == business.id,
+            Subscription.service_type == "package",
+            Subscription.status == "active",
+        ).order_by(Subscription.id.desc()))
+        if package is None:
+            ensure_default_plans(db)
+            provisioning_plan = db.scalar(select(ServicePlan).where(ServicePlan.code == "demo"))
+            db.add(Subscription(business_id=business.id, plan_id=provisioning_plan.id,
+                                service_type="package", status="active", starts_at=row.starts_at,
+                                auto_renew=False))
+            db.flush()
+
+    record_audit(
+        db,
+        business_id=business.id,
+        user_id=actor.id,
+        action="platform_subscription_provisioning_retried",
+        resource_type="subscription",
+        resource_id=row.id,
+        metadata={"plan_code": plan.code, "service_type": row.service_type or "package"},
+    )
+    db.commit()
+    db.refresh(row)
+    try:
+        if provisioning_plan is not None:
+            from app.api.onboarding import _sync_platform_subscription
+            _sync_platform_subscription(platform_db, db, business, provisioning_plan)
+        _sync_platform_business(platform_db, db, business.id)
+        registry = retry_provision_shop(
+            platform_db,
+            business_id=business.id,
+            idempotency_key=f"platform-subscription-approval-{row.id}",
+        )
+    except ProvisioningValidationError:
+        platform_db.rollback()
+        raise HTTPException(status_code=422, detail="Chưa thể chuẩn bị không gian dữ liệu. Hãy kiểm tra cấu hình tenant.") from None
+    except Exception:  # noqa: BLE001 - keep infrastructure details out of admin responses
+        platform_db.rollback()
+        logger.warning("Tenant provisioning retry deferred for subscription id=%s", row.id, exc_info=True)
+        raise HTTPException(status_code=503, detail="Chưa thể chuẩn bị không gian dữ liệu. Hãy thử lại sau.") from None
+
+    return PlatformSubscriptionApprovalOut(
+        subscription=_subscription_out(row),
+        provisioning=ProvisioningOut(
+            business_id=registry.business_id,
+            schema_name=registry.schema_name,
+            state=registry.state,
+            feature_enabled=registry.feature_enabled,
+            subscription_active=True,
+            subscription_status="active",
+            tenant_revision=registry.tenant_revision,
+            migration_error=registry.migration_error,
+        ),
+    )
 
 
 @router.put("/shops/{business_id}/subscription", response_model=PlatformSubscriptionOut)
@@ -850,9 +1016,10 @@ def record_shop_payment(
     if not payload.provider_transaction_id.strip():
         raise HTTPException(status_code=422, detail="Vui lòng nhập mã giao dịch.")
     transaction_id = payload.provider_transaction_id.strip()
-    existing = db.scalar(
-        select(Payment).where(Payment.provider_transaction_id == transaction_id)
-    )
+    matching_transaction_ids = {transaction_id, f"payos:{transaction_id}"}
+    existing = db.scalar(select(Payment).where(
+        Payment.provider_transaction_id.in_(matching_transaction_ids)
+    ))
     if payload.status == "paid" and (existing is None or existing.status == "pending"):
         another_paid = db.scalar(select(Payment.id).where(
             Payment.subscription_id == subscription.id, Payment.status == "paid",
@@ -863,23 +1030,33 @@ def record_shop_payment(
     if existing is not None:
         if existing.business_id != business_id:
             raise HTTPException(status_code=409, detail="Mã giao dịch đã thuộc shop khác.")
-        if not _same_payment_identity(existing, payload):
-            raise HTTPException(status_code=409, detail="Mã giao dịch đã tồn tại với số tiền hoặc nguồn khác.")
+        already_paid_for_request = _same_paid_receipt(existing, business_id, payload)
+        if not _same_payment_identity(existing, payload) and not already_paid_for_request:
+            raise HTTPException(
+                status_code=409,
+                detail="Mã giao dịch này đã được gắn với khoản thu khác hoặc không khớp. Hãy nhập mã tham chiếu trên sao kê, không nhập số tiền.",
+            )
         if existing.status == "pending" and payload.status == "paid" and payload.amount != expected_amount:
             raise HTTPException(status_code=409, detail="Số tiền thanh toán không khớp giá gói dịch vụ.")
-        changed = _apply_payment_status(existing, payload)
+        reconciled = already_paid_for_request and _clear_payment_reconciliation(existing, transaction_id)
+        changed = _apply_payment_status(existing, payload) or reconciled
         request_advanced = payload.status == "paid" and subscription.status == "awaiting_payment"
         if request_advanced:
             subscription.status = "pending"
-        if changed or request_advanced:
+        if changed or request_advanced or already_paid_for_request:
             record_audit(
                 db,
                 business_id=business_id,
                 user_id=actor.id,
-                action="platform_payment_updated",
+                action="platform_payment_reconciled" if already_paid_for_request else "platform_payment_updated",
                 resource_type="subscription_payment",
                 resource_id=existing.id,
-                metadata={"subscription_id": subscription.id, "status": existing.status, "provider": existing.provider},
+                metadata={
+                    "subscription_id": subscription.id,
+                    "status": existing.status,
+                    "provider": existing.provider,
+                    "confirmed_provider": payload.provider.strip().lower(),
+                },
             )
             db.commit()
             db.refresh(existing)
@@ -908,7 +1085,9 @@ def record_shop_payment(
         db.flush()
     except IntegrityError as exc:
         db.rollback()
-        existing = db.scalar(select(Payment).where(Payment.provider_transaction_id == transaction_id))
+        existing = db.scalar(select(Payment).where(
+            Payment.provider_transaction_id.in_(matching_transaction_ids)
+        ))
         if existing is None or existing.business_id != business_id:
             raise HTTPException(status_code=409, detail="Mã giao dịch đã tồn tại.") from exc
         if not _same_payment_identity(existing, payload) or existing.status != payload.status:
@@ -1287,16 +1466,12 @@ def stage_tenant_schema(
 def _sync_platform_business(platform_db: Session, legacy_db: Session, business_id: int) -> PlatformBusiness:
     """Mirror only shop identity into the platform DB for rollout compatibility."""
 
-    platform_business = platform_db.get(PlatformBusiness, business_id)
-    if platform_business is not None:
-        return platform_business
-    legacy_business = legacy_db.get(Business, business_id)
-    if legacy_business is None:
-        raise HTTPException(status_code=404, detail="Shop không tồn tại.")
-    platform_business = PlatformBusiness(id=business_id, name=legacy_business.name, slug=legacy_business.slug, status=legacy_business.status)
-    platform_db.add(platform_business)
-    platform_db.flush()
-    return platform_business
+    try:
+        return ensure_platform_business(platform_db, legacy_db, business_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Shop không tồn tại.") from exc
+    except PlatformBusinessIdentityConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/shops/{business_id}/provision", response_model=ProvisioningOut)

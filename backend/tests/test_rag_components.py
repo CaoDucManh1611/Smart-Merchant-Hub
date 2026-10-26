@@ -397,6 +397,28 @@ def test_rag_guard_reads_all_table_rows_and_current_prices_override_old_document
     assert has_valid_citations("149.000 đồng [Nguồn 1]", ["Tồn: 2\nGiá: 149000 VND"])
 
 
+def test_current_crm_product_block_keeps_sku_and_price_authoritative_across_fields():
+    current = (
+        "CURRENT_CRM_PRODUCT\nSKU: DM-APP-001\nTên sản phẩm: Áo hồng\n"
+        "Giá hiện hành: 100000 VND\nTồn khả dụng: 18\nMô tả catalog: Cotton"
+    )
+    stale = "DM-APP-001 có thành phần cotton. Giá cũ 999000 VND."
+    answer = "DM-APP-001 có thành phần cotton [Nguồn 2]; giá 100000 VND [Nguồn 1]."
+
+    assert has_valid_citations(
+        answer,
+        [current, stale],
+        authoritative_sources=[current],
+        query="DM-APP-001 thành phần gì?",
+    )
+    assert not has_valid_citations(
+        "DM-APP-001 giá 999000 VND [Nguồn 2] [Nguồn 1]",
+        [current, stale],
+        authoritative_sources=[current],
+        query="DM-APP-001 giá bao nhiêu?",
+    )
+
+
 def test_rag_citation_keeps_product_code_and_numeric_facts_on_the_same_row():
     table = "sku | price_vnd | stock\nDM-APP-001 | 10000 | 4\nDM-APP-002 | 20000 | 9"
     assert has_valid_citations("DM-APP-001 giá 10.000 đồng, còn 4 chiếc [Nguồn 1]", [table])
@@ -473,6 +495,19 @@ def test_rag_citation_must_support_the_answer_topic_not_only_contain_a_number():
     )
 
 
+def test_rag_compatibility_claim_requires_explicit_model_to_product_evidence():
+    query = "SKU XM-LOC-GIO-VIS110 có tương thích với xe Honda Vision 110 không?"
+    unsupported = "sku | product | description\nXM-LOC-GIO-VIS110 | Khóa gió | Dùng cho xe máy"
+    claim = "SKU XM-LOC-GIO-VIS110 tương thích với xe Honda Vision 110 [Nguồn 1]"
+    assert not has_valid_citations(claim, [unsupported], query=query)
+
+    supported = "sku | compatible_models\nXM-LOC-GIO-VIS110 | Honda Vision 110"
+    assert has_valid_citations(claim, [supported], query=query)
+
+    safe_abstention = "Mình chưa thể xác nhận SKU XM-LOC-GIO-VIS110 tương thích với xe Honda Vision 110; bạn gửi mã linh kiện cũ giúp mình nhé. [Nguồn 1]"
+    assert has_valid_citations(safe_abstention, [unsupported], query=query)
+
+
 def test_product_and_safety_answer_must_cite_both_product_row_and_safety_guide():
     sources = [
         "Cosmetics: no verified clinical outcomes or suitability guarantee; do not promise a treatment.",
@@ -505,9 +540,12 @@ def test_rag_run_log_does_not_persist_customer_content(tmp_path, monkeypatch):
 
     path = tmp_path / "runs.jsonl"
     monkeypatch.setattr(run_logger, "_log_path", lambda: path)
-    with run_logger.RagRunLog("chat", query_preview="email private@example.com", filename="private.pdf") as run:
+    with run_logger.RagRunLog("chat", query_preview="email private@example.com", filename="private.pdf",
+                              correlation_id="chatbot-turn:1:2:3", incoming_message_id=3) as run:
         run.finish("error", error="customer private@example.com asked about 1234567890")
     record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["correlation_id"] == "chatbot-turn:1:2:3"
+    assert record["incoming_message_id"] == 3
     assert "private@example.com" not in str(record)
     assert "private.pdf" not in str(record)
     assert "1234567890" not in str(record)

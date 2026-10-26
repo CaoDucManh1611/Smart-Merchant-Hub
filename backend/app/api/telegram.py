@@ -67,6 +67,7 @@ async def receive_telegram_webhook(
                         "media_url": item.attachments[0].url if item.attachments else None,
                         "attachments": [attachment.model_dump(mode="json") for attachment in item.attachments],
                         "raw_payload": event.raw_payload,
+                        "received_at": item.provider_created_at or event.provider_created_at,
                         "business_id": event.business_id,
                         "channel_id": event.channel_id or channel.id,
                     })

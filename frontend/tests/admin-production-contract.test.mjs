@@ -49,7 +49,7 @@ test("payment receipt is recorded from its pending approval and shop details kee
   assert.ok(approvalsStart >= 0 && shopsStart > approvalsStart && plansStart > shopsStart);
   assert.match(approvals, /platform-approval-payment-form[\s\S]*recordPlatformPayment\(request\)/);
   assert.match(approvals, /platformPaymentDrafts\[request\.subscription_id\]/);
-  assert.match(approvals, /Mã giao dịch đã nhận tiền/);
+  assert.match(approvals, /Mã giao dịch trên sao kê/);
   assert.match(approvals, /Xác nhận đã thu tiền/);
   assert.match(appSource, /platform\/shops\/\$\{request\.business_id\}\/payments/);
   assert.doesNotMatch(shops, /platform-payment-form|Mã giao dịch đã nhận tiền|Xác nhận đã thu tiền/);

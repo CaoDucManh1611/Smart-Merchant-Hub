@@ -45,6 +45,7 @@ RUNTIME = Path(os.getenv("SMART_MERCHANT_RUNTIME_DIR") or (Path(os.getenv("LOCAL
 INBOX_ROOT = "https://business.facebook.com/latest/inbox"
 CONNECTOR_STARTED_AT = time.time()
 INBOX_POLL_INTERVAL_SECONDS = 1.0
+HISTORY_RETRY_INTERVAL_SECONDS = 3600
 CONTROL_PAGE = None
 CONTROL_DELIVERY_PAGE = None
 BACKGROUND_HISTORY_PAGE = None
@@ -59,7 +60,7 @@ _META_GENERIC_NAMES = {
 }
 # Bump this when the DOM parser changes so an existing paired shop gets one
 # fresh, full history pass instead of reusing an old "complete" checkpoint.
-META_HISTORY_PARSER_REVISION = "virtualized-history-timestamp-avatar-v8"
+META_HISTORY_PARSER_REVISION = "virtualized-history-timestamp-avatar-v10"
 
 
 class MetaDeliveryUnknown(RuntimeError):
@@ -870,16 +871,8 @@ async def _hover_message_timestamp(page, message_id: str) -> str:
             .filter(node => node.getAttribute('data-message-id') === messageId);
           const marker = markers.find(candidate => {
             const r = candidate.getBoundingClientRect();
-            let pane = candidate.parentElement;
-            for (let depth = 0; pane && pane !== document.body && depth < 14; depth++, pane = pane.parentElement) {
-              const p = pane.getBoundingClientRect();
-              if (p.width > vw * .18 && p.height > vh * .25 && p.x > vw * .14 && p.x < vw * .9
-                && pane.scrollHeight > pane.clientHeight + 10) {
-                return r.width > 0 && r.height > 0 && r.right > p.left && r.left < p.right
-                  && r.bottom > p.top && r.top < p.bottom && r.y < vh && r.bottom > 0;
-              }
-            }
-            return false;
+            return r.width > 0 && r.height > 0 && r.right > 0 && r.left < vw
+              && r.bottom > 0 && r.top < vh;
           });
           if (!marker) return null;
           let bubble = marker;
@@ -909,15 +902,7 @@ async def _hover_message_timestamp(page, message_id: str) -> str:
     # click, open links, or send a message.
     try:
         await page.mouse.move(2, 2)
-        await page.wait_for_function(
-            r"""() => ![...document.querySelectorAll('[role="tooltip"]')].some(node => {
-              const text = (node.innerText || '').replace(/\s+/g, ' ').trim();
-              return /^\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?(?:\s+\d{1,2}\s+tháng\s+\d{1,2}(?:,?\s*\d{4})?|\s+[a-z]{3,9}\s+\d{1,2},?\s*\d{4})?$/i.test(text)
-                || /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(text);
-            })""",
-            timeout=1500,
-            polling=50,
-        )
+        await page.wait_for_timeout(120)
         await page.mouse.move(point["x"], point["y"])
     except Exception:
         return ""
@@ -928,12 +913,41 @@ async def _hover_message_timestamp(page, message_id: str) -> str:
               return /^\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?(?:\s+\d{1,2}\s+tháng\s+\d{1,2}(?:,?\s*\d{4})?|\s+[a-z]{3,9}\s+\d{1,2},?\s*\d{4})?$/i.test(text)
                 || /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(text);
             })""",
-            timeout=1000,
+            timeout=1500,
             polling=50,
         )
     except Exception:
-        return ""
-    values = await page.locator('[role="tooltip"]').all_inner_texts()
+        # Some Business Suite layouts expose hover times as an accessible
+        # label/title portal instead of a role=tooltip node.
+        pass
+    values = await page.evaluate(
+        r"""({x, y}) => {
+          const nodes = [...document.querySelectorAll(
+            '[role="tooltip"], [title], [aria-label], [data-tooltip-content], [datetime], [data-timestamp], [data-time], time, span, div'
+          )].sort((a, b) => Number(!a.matches('[role="tooltip"]')) - Number(!b.matches('[role="tooltip"]')));
+          const found = [];
+          for (const node of nodes) {
+            const rect = node.getBoundingClientRect();
+            if (!rect.width || !rect.height || rect.bottom < 0 || rect.top > innerHeight
+              || rect.right < 0 || rect.left > innerWidth
+              || rect.left > x + 300 || rect.right < x - 300
+              || rect.top > y + 220 || rect.bottom < y - 220) continue;
+            for (const value of [
+              node.getAttribute('datetime'), node.getAttribute('data-timestamp'),
+              node.getAttribute('data-time'), node.getAttribute('data-tooltip-content'),
+              node.getAttribute('aria-label'), node.getAttribute('title'),
+              (!node.children.length || node.matches('[role="tooltip"]')) ? node.innerText : '',
+            ]) {
+              const text = String(value || '').replace(/\s+/g, ' ').trim();
+              if (text.length <= 140 && /(?:\d{1,2}:\d{2}|\d{10,13}|\d{4}-\d\d-\d\dT\d\d:\d\d)/.test(text)) {
+                found.push(text);
+              }
+            }
+          }
+          return [...new Set(found)];
+        }""",
+        point,
+    )
     for value in values:
         timestamp = " ".join(str(value or "").split()).strip()
         if parse_meta_datetime(timestamp) or re.fullmatch(r"\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?", timestamp, re.IGNORECASE):
@@ -1294,6 +1308,33 @@ async def _visible_outbound_images(page) -> list[str]:
     )
 
 
+async def _visible_outbound_audio(page) -> list[str]:
+    """Snapshot sent audio players, excluding pending composer attachments."""
+    return await page.evaluate(
+        r"""() => {
+          const editor = document.querySelector('[data-smart-merchant-meta-composer="active"]');
+          const bottom = editor?.getBoundingClientRect().top || innerHeight * .86;
+          const vw = innerWidth, vh = innerHeight;
+          return [...document.querySelectorAll('audio,[data-testid*="audio" i],[aria-label*="audio" i],[aria-label*="voice" i]')]
+            .filter(node => {
+              const r = node.getBoundingClientRect();
+              if (!r.width || !r.height || r.bottom <= vh * .1 || r.top >= bottom
+                || r.left + r.width / 2 <= vw * .48 || r.right > vw * .98
+                || node.closest('[contenteditable="true"],textarea')) return false;
+              const container = node.closest('[data-message-id],[role="article"],[role="row"]') || node.parentElement;
+              if (!container) return false;
+              const actions = [...container.querySelectorAll('button,[role="button"]')];
+              return !actions.some(button => /remove|delete|xóa|xoá|gỡ/i.test(
+                [button.getAttribute('aria-label'), button.getAttribute('title')].join(' ')));
+            })
+            .map(node => {
+              const container = node.closest('[data-message-id],[role="article"],[role="row"]') || node.parentElement;
+              return `${container?.getAttribute('data-message-id') || ''}:${node.currentSrc || node.src || node.getAttribute('src') || ''}:${node.getAttribute('aria-label') || ''}`;
+            });
+        }"""
+    )
+
+
 async def _attach_meta_image(page, image_path: str | Path, media_type: str = "image") -> None:
     target = await page.evaluate(
         r"""(mediaType) => {
@@ -1303,12 +1344,15 @@ async def _attach_meta_image(page, image_path: str | Path, media_type: str = "im
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
           };
           for (const node of document.querySelectorAll('[data-smart-merchant-meta-upload]')) node.removeAttribute('data-smart-merchant-meta-upload');
-          const wanted = mediaType === 'audio' ? /audio|\.mp3|\.m4a|\.ogg/i :
+          const wanted = mediaType === 'audio' ? /audio|\.(aac|flac|m4a|mp3|ogg|opus|wav|webm)(?:$|[,\s])/i :
             mediaType === 'video' ? /video|\.mp4|\.mov/i : mediaType === 'file' ? /pdf|file|\.doc/i : /image|\.png|\.jpe?g/i;
           const inputs = [...document.querySelectorAll('input[type="file"]')].filter(node => !node.disabled)
             .sort((a, b) => Number(wanted.test(b.accept || '')) - Number(wanted.test(a.accept || '')));
-          if (inputs[0]) {
-            inputs[0].setAttribute('data-smart-merchant-meta-upload', 'active');
+          const input = mediaType === 'audio'
+            ? inputs.find(node => !node.accept || wanted.test(node.accept))
+            : inputs[0];
+          if (input) {
+            input.setAttribute('data-smart-merchant-meta-upload', 'active');
             return {hasInput: true};
           }
           const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible).map(node => {
@@ -1333,7 +1377,11 @@ async def _attach_meta_image(page, image_path: str | Path, media_type: str = "im
             await page.locator('[data-smart-merchant-meta-upload="active"]').click(timeout=5000)
         await (await chooser_info.value).set_files(str(image_path))
     else:
-        raise RuntimeError("Meta không mở được nút đính kèm ảnh trong hộp thư.")
+        raise RuntimeError(
+            "Meta không mở được nút đính kèm audio trong hộp thư."
+            if media_type == "audio"
+            else "Meta không mở được nút đính kèm ảnh trong hộp thư."
+        )
     await page.wait_for_timeout(350)
 
 
@@ -1415,7 +1463,9 @@ async def _send_meta_message(
     existing_message_ids = set(target.get("messageIds") or [])
     existing_outbound_count = await _visible_outbound_text_count(page, message)
     is_image = media_type in {"image", "sticker"}
+    is_audio = media_type == "audio"
     existing_images = Counter(await _visible_outbound_images(page)) if image_path is not None and is_image else Counter()
+    existing_audio = set(await _visible_outbound_audio(page)) if image_path is not None and is_audio else set()
     composer = page.locator('[data-smart-merchant-meta-composer="active"]')
     await composer.fill(message)
     if image_path is not None:
@@ -1488,6 +1538,12 @@ async def _send_meta_message(
                 return {
                     "status": "sent",
                     "message_id": state.get("messageId") or f"meta-ui:{thread_id}:{time.time_ns()}",
+                    "threadId": thread_id,
+                }
+            if is_audio and state and state.get("empty") and set(await _visible_outbound_audio(page)) - existing_audio:
+                return {
+                    "status": "sent",
+                    "message_id": state.get("messageId") or f"meta-audio:{thread_id}:{time.time_ns()}",
                     "threadId": thread_id,
                 }
             if not is_image and state and state.get("empty") and state.get("messageId"):
@@ -1881,6 +1937,18 @@ async def _import_history(
     return checkpoint, len(history)
 
 
+def _history_row_key(row: dict) -> str:
+    """Stable key for a Meta inbox row, independent of its latest-message preview."""
+    display_name = _usable_meta_name(row.get("displayName"))
+    avatar_url = str(row.get("avatarUrl") or "").strip()
+    if not avatar_url.startswith(("https://", "http://")):
+        return ""
+    parsed_avatar = urlparse(avatar_url)
+    avatar_identity = f"{parsed_avatar.netloc.casefold()}{parsed_avatar.path}"
+    identity = f"{display_name.casefold()}|{avatar_identity}"
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 async def _scan_loaded_conversations(
     page, channel_type: str, backend_url: str, token: str, checkpoint_path: Path,
     profile_cache: dict[str, dict] | None = None,
@@ -1888,6 +1956,7 @@ async def _scan_loaded_conversations(
 ) -> bool:
     checkpoint = load_history_checkpoint(checkpoint_path)
     completed = set(str(value) for value in checkpoint.get("completed_threads", []))
+    completed_row_keys = set(str(value) for value in checkpoint.get("completed_row_keys", []))
     imported_threads = 0
     seen_positions: set[str] = set()
     profile_thread_ids: set[str] = set()
@@ -1908,10 +1977,13 @@ async def _scan_loaded_conversations(
         rows = await _conversation_rows(page)
         for row in rows:
             row_key = hashlib.sha256(str(row.get("label") or "").encode("utf-8")).hexdigest()
-            position_key = f"{row.get('index')}:{row_key}"
+            history_row_key = _history_row_key(row)
+            position_key = history_row_key or f"{row.get('index')}:{row_key}"
             if position_key in seen_positions:
                 continue
             seen_positions.add(position_key)
+            if history_row_key and history_row_key in completed_row_keys:
+                continue
             try:
                 fresh_rows = await _conversation_rows(page)
                 fresh_row = next((candidate for candidate in fresh_rows if candidate.get("label") == row.get("label")), None)
@@ -1926,6 +1998,16 @@ async def _scan_loaded_conversations(
                     avatar_thread_ids.add(thread_id)
                 if profile_cache is not None and (display_name or avatar_url):
                     profile_cache[thread_id] = {"displayName": display_name, "avatarUrl": avatar_url}
+                if thread_id in completed:
+                    checkpoint = mark_history_thread_complete(
+                        checkpoint_path,
+                        checkpoint,
+                        thread_id,
+                        history_row_key=history_row_key or None,
+                    )
+                    if history_row_key:
+                        completed_row_keys.add(history_row_key)
+                    continue
                 checkpoint, count = await _import_history(
                     page, channel_type, backend_url, token, checkpoint_path, checkpoint,
                     scroll_oldest=thread_id not in completed,
@@ -1934,8 +2016,16 @@ async def _scan_loaded_conversations(
                     avatar_url=avatar_url,
                     live_after=live_after,
                 )
+                checkpoint = mark_history_thread_complete(
+                    checkpoint_path,
+                    checkpoint,
+                    thread_id,
+                    history_row_key=history_row_key or None,
+                )
                 if thread_id not in completed:
                     completed.add(thread_id)
+                    if history_row_key:
+                        completed_row_keys.add(history_row_key)
                     imported_threads += 1
                     print(f"✅ Đã đồng bộ lịch sử {channel_name} ({count} tin; CRM đã xác nhận các lô).", flush=True)
             except Exception as exc:
@@ -2194,12 +2284,12 @@ async def run() -> None:
                                 print(f"✅ Đã nhập xong lịch sử {channel_label}; luồng realtime vẫn tiếp tục.", flush=True)
                             else:
                                 history_scan_started = False
-                                history_retry_at = asyncio.get_running_loop().time() + 30
-                                print(f"⚠️ Lịch sử {channel_label} còn thiếu hội thoại; sẽ tự thử tiếp trong nền.", flush=True)
+                                history_retry_at = asyncio.get_running_loop().time() + HISTORY_RETRY_INTERVAL_SECONDS
+                                print(f"⚠️ Lịch sử {channel_label} còn thiếu một số hội thoại; chỉ thử lại phần còn thiếu sau 1 giờ. Realtime vẫn hoạt động.", flush=True)
                         except Exception as exc:
                             history_scan_started = False
-                            history_retry_at = asyncio.get_running_loop().time() + 30
-                            print(f"⚠️ Lượt nhập lịch sử Meta bị gián đoạn: {type(exc).__name__}: {str(exc)[:160]}; sẽ tự thử tiếp trong nền.", flush=True)
+                            history_retry_at = asyncio.get_running_loop().time() + HISTORY_RETRY_INTERVAL_SECONDS
+                            print(f"⚠️ Lượt nhập lịch sử Meta bị gián đoạn: {type(exc).__name__}: {str(exc)[:160]}; sẽ thử lại sau 1 giờ. Realtime vẫn hoạt động.", flush=True)
                     if (
                         channel_type == "instagram"
                         and not avatar_scan_started

@@ -2027,8 +2027,25 @@ def advance_customer_collection(
     ).first()
     if customer is None:
         return None
+
+    session = _get_session(db, business_id, customer_id, conversation_id)
     from app.services.customer_order_service import customer_context_reply
-    contextual_reply = customer_context_reply(db, business_id, conversation_id, text) if conversation_id else None
+    # A labeled checkout form can contain "Thanh toán: COD". The generic
+    # payment-intent handler would otherwise mistake that field for a payment
+    # question and consume the whole submission before checkout can save it.
+    checkout_form_values = {}
+    if session and session.purpose == "order" and session.status in {"pending", "partial"}:
+        checkout_form_values, _, _ = _parse_order_form_details(
+            text,
+            session.required_fields or [],
+            form_fragments,
+            fallback_field=session.current_field,
+        )
+    contextual_reply = (
+        customer_context_reply(db, business_id, conversation_id, text)
+        if conversation_id and not checkout_form_values
+        else None
+    )
     if contextual_reply:
         return CollectionFlowResult(session_id=0, status="customer_context", current_field=None, prompt=contextual_reply)
 
@@ -2052,7 +2069,6 @@ def advance_customer_collection(
     if history_reply is not None:
         return history_reply
 
-    session = _get_session(db, business_id, customer_id, conversation_id)
     from app.services.rental_collection import advance_rental_request
     rental_result = advance_rental_request(
         db, business_id=business_id, customer_id=customer_id,

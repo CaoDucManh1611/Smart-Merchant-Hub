@@ -41,7 +41,7 @@ test("payment re-entry is prominent above the plan catalogue and retains the exi
 });
 
 test("selecting a plan with a pending request restores its frozen quote before submission", () => {
-  const select = app.slice(app.indexOf('function selectServicePlan('), app.indexOf('function selectServiceMode('));
+  const select = app.slice(app.indexOf('function selectServicePlan('), app.indexOf('function servicePlanCodeForPurchase('));
   assert.match(select, /\['awaiting_payment', 'pending'\]\.includes\(existing\?\.status\) && existing\.plan_code === servicePlanCodeForPurchase\(planCode\)/);
   assert.match(select, /serviceCheckoutRequest\.value = existing/);
   assert.match(select, /serviceRequestSubmitted\.value = true/);

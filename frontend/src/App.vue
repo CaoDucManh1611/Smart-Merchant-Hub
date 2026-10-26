@@ -62,6 +62,20 @@ import { platformAuditActionLabel, platformAuditResourceLabel } from "./platform
 // works without hard-coding a user's localhost API origin.
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 
+function productImagePreviewUrl(value) {
+  const source = String(value || "").trim();
+  if (!source || source.startsWith("blob:") || source.startsWith("data:")) return source;
+  try {
+    const parsed = new URL(source, window.location.origin);
+    const match = parsed.pathname.match(/\/api\/conversations\/uploads\/([^/]+)$/i);
+    if (!match) return source;
+    const filename = encodeURIComponent(decodeURIComponent(match[1]));
+    return `${String(API_BASE).replace(/\/+$/, "")}/conversations/uploads/${filename}`;
+  } catch {
+    return source;
+  }
+}
+
 // Convert technical/network failures into a short message that is useful to
 // a shop owner.  The original error is still available through `cause` and
 // console logging for diagnostics; it is never shown in the shop UI.
@@ -574,6 +588,9 @@ let tenantProvisioningPollingTimer = null;
 let platformRequestRefreshInFlight = false;
 let workspaceRefreshInFlight = false;
 let conversationsLoadVersion = 0;
+const conversationTimeNow = ref(Date.now());
+let conversationTimeTimer = null;
+let loadedConversationsCustomerScope = null;
 let activeMessagesLoadVersion = 0;
 let activeMessageLoadingVersion = 0;
 let socket = null;
@@ -712,6 +729,8 @@ const productForm = ref({
   description: "",
   product_url: "",
   image_url: "",
+  image_file: null,
+  image_preview_url: "",
   price: 0,
   stock_quantity: 0,
   status: "active",
@@ -1578,7 +1597,8 @@ const selectedServicePlan = computed(() => (
 const currentServicePlanCode = computed(() => {
   const currentSubscription = serviceMode.value === "chatbot"
     ? serviceAccountSummary.value?.chatbot_subscription
-    : quotaSnapshot.value;
+    : (serviceAccountSummary.value?.subscription?.status === "active"
+      ? serviceAccountSummary.value.subscription : quotaSnapshot.value);
   if (serviceMode.value === "chatbot" && currentSubscription?.status !== "active") return "";
   const code = servicePlanCodeForPurchase(currentSubscription?.plan_code);
   return activeServicePlans.value.some((plan) => plan.code === code) ? code : "";
@@ -2377,10 +2397,38 @@ function formatPlanPrice(value, billingCycle = "monthly") {
 }
 
 function preferredServicePlanCode() {
+  const request = serviceMode.value === "chatbot"
+    ? serviceAccountSummary.value?.chatbot_request : serviceAccountSummary.value?.package_request;
+  const requestedCode = servicePlanCodeForPurchase(request?.plan_code);
+  if (["awaiting_payment", "pending"].includes(request?.status)
+    && activeServicePlans.value.some((plan) => plan.code === requestedCode)) return requestedCode;
   if (currentServicePlanCode.value) return currentServicePlanCode.value;
-  return activeServicePlans.value.find((plan) => plan.code === "growth")?.code
+  const defaultCode = serviceMode.value === "chatbot" ? "pro" : "growth";
+  return activeServicePlans.value.find((plan) => plan.code === defaultCode)?.code
     || activeServicePlans.value[0]?.code
-    || "growth";
+    || defaultCode;
+}
+
+function servicePlanSelectionStorageKey() {
+  return `crm-service-selection-${authUser.value?.business_id || "public"}`;
+}
+
+function readServicePlanSelection() {
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(servicePlanSelectionStorageKey()) || "null");
+    return saved?.mode === "package" ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveServicePlanSelection() {
+  try {
+    window.sessionStorage.setItem(servicePlanSelectionStorageKey(), JSON.stringify({
+      mode: serviceMode.value,
+      plan_code: servicePlanSelectionTouched.value ? serviceRequestForm.value.plan_code : null,
+    }));
+  } catch { /* Checkout remains usable when browser storage is unavailable. */ }
 }
 
 function ensureServicePlanSelection() {
@@ -2404,8 +2452,11 @@ async function fetchPublicServicePlans() {
 }
 
 function resetServiceRequestForm() {
-  servicePlanSelectionTouched.value = false;
-  const planCode = preferredServicePlanCode();
+  serviceMode.value = "package";
+  const saved = readServicePlanSelection();
+  const savedPlan = saved && activeServicePlans.value.find((plan) => plan.code === saved.plan_code);
+  servicePlanSelectionTouched.value = Boolean(savedPlan);
+  const planCode = savedPlan?.code || preferredServicePlanCode();
   serviceRequestForm.value = {
     contact_name: authUser.value?.full_name || "",
     email: authUser.value?.email || "",
@@ -2445,11 +2496,14 @@ function normalizeServiceChannels(fillToLimit = false) {
 }
 
 function selectServicePlan(planCode) {
+  planCode = servicePlanCodeForPurchase(planCode);
+  if (!activeServicePlans.value.some((plan) => plan.code === planCode)) return;
   servicePlanSelectionTouched.value = true;
   serviceCheckoutRequest.value = null;
   servicePayment.value = null;
   servicePaymentError.value = "";
   serviceRequestForm.value.plan_code = planCode;
+  saveServicePlanSelection();
   normalizeServiceChannels(false);
   serviceRequestSubmitted.value = false;
   serviceRequestError.value = "";
@@ -2469,25 +2523,19 @@ function selectServicePlan(planCode) {
   }
 }
 
-function selectServiceMode(mode) {
-  serviceCheckoutRequest.value = null;
-  servicePayment.value = null;
-  servicePaymentError.value = "";
-  serviceMode.value = mode === "chatbot" ? "chatbot" : "package";
-  serviceCheckoutOpen.value = false;
-  servicePlanSelectionTouched.value = false;
-  serviceRequestForm.value.plan_code = preferredServicePlanCode();
-  normalizeServiceChannels(false);
-  serviceRequestSubmitted.value = false;
-  serviceRequestReference.value = "";
-  serviceRequestError.value = "";
-  serviceRequestNotice.value = "";
-  servicePurchaseNotice.value = "";
-  servicePurchaseError.value = "";
-  servicePurchaseStatus.value = "";
-}
+watch(() => authUser.value?.business_id, () => {
+  serviceAccountSummary.value = null;
+  quotaSnapshot.value = null;
+  serviceMode.value = "package";
+  resetServiceRequestForm();
+}, { immediate: true, flush: "sync" });
+
+watch([currentTab, () => authUser.value?.business_id], ([tab, businessId]) => {
+  if (tab === "service" && businessId && !serviceAccountLoading.value) void fetchServiceAccountSummary();
+});
 
 function openServicePage() {
+  serviceMode.value = "package";
   serviceLandingOpen.value = false;
   currentTab.value = "service";
   serviceCheckoutOpen.value = false;
@@ -3953,7 +4001,10 @@ const filtered = computed(() => {
       );
 
     }
-  );
+  ).sort((left, right) => (
+    conversationActivityTimestamp(right) - conversationActivityTimestamp(left)
+    || Number(right.conversation_id || 0) - Number(left.conversation_id || 0)
+  ));
 
 });
 
@@ -4125,6 +4176,93 @@ function formatTime(value) {
 
 }
 
+function conversationTime(item) {
+  const value = item?.last_message_at || item?.last_activity_at;
+  if (!value) return uiLocale.value === "en" ? "Unknown" : "Chưa rõ giờ";
+
+  const raw = typeof value === "string" ? value.trim() : value;
+  const normalized = typeof raw === "string"
+    && raw
+    && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)
+    ? `${raw}Z`
+    : raw;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return formatTime(value);
+
+  const elapsedSeconds = Math.max(0, Math.floor((conversationTimeNow.value - date.getTime()) / 1000));
+  let amount;
+  let unit;
+  if (elapsedSeconds < 60) {
+    amount = 0;
+    unit = "now";
+  } else if (elapsedSeconds < 3600) {
+    amount = Math.floor(elapsedSeconds / 60);
+    unit = "minute";
+  } else if (elapsedSeconds < 86400) {
+    amount = Math.floor(elapsedSeconds / 3600);
+    unit = "hour";
+  } else if (elapsedSeconds < 7 * 86400) {
+    amount = Math.floor(elapsedSeconds / 86400);
+    unit = "day";
+  } else if (elapsedSeconds < 30 * 86400) {
+    amount = Math.floor(elapsedSeconds / (7 * 86400));
+    unit = "week";
+  } else if (elapsedSeconds < 365 * 86400) {
+    amount = Math.floor(elapsedSeconds / (30 * 86400));
+    unit = "month";
+  } else {
+    amount = Math.floor(elapsedSeconds / (365 * 86400));
+    unit = "year";
+  }
+
+  const relative = uiLocale.value === "en"
+    ? unit === "now"
+      ? "Just now"
+      : `${amount} ${{ minute: "min", hour: "hr", day: "day", week: "wk", month: "mo", year: "yr" }[unit]} ago`
+    : unit === "now"
+      ? "Vừa xong"
+      : `${amount} ${{ minute: "phút", hour: "giờ", day: "ngày", week: "tuần", month: "tháng", year: "năm" }[unit]}`;
+
+  return relative;
+}
+
+function conversationTimeTitle(item) {
+  const value = item?.last_message_at || item?.last_activity_at;
+  if (!value) {
+    return uiLocale.value === "en"
+      ? "Message time is unavailable in source data"
+      : "Không có thời gian tin nhắn trong dữ liệu nguồn";
+  }
+
+  const raw = typeof value === "string" ? value.trim() : value;
+  const normalized = typeof raw === "string"
+    && raw
+    && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)
+    ? `${raw}Z`
+    : raw;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const exactTime = new Intl.DateTimeFormat(
+    uiLocale.value === "en" ? "en-US" : "vi-VN",
+    { timeZone: "Asia/Ho_Chi_Minh", dateStyle: "medium", timeStyle: "short" },
+  ).format(date);
+  return uiLocale.value === "en"
+    ? `Message time: ${exactTime}`
+    : `Thời gian tin nhắn: ${exactTime}`;
+}
+
+function conversationActivityTimestamp(item) {
+  const raw = item?.last_activity_at || item?.last_message_at;
+  if (!raw) return 0;
+  const normalized = typeof raw === "string"
+    && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw.trim())
+    ? `${raw.trim()}Z`
+    : raw;
+  const timestamp = Date.parse(normalized);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
 
 /* =========================================================
    MESSAGE / MEDIA HELPERS
@@ -4132,7 +4270,19 @@ function formatTime(value) {
 
 function conversationPreview(item) {
 
-  const lastMessage = displayMessageText(item?.last_message, item?.channel);
+  const lastMessage = displayMessageText(
+    item?.last_message,
+    item?.channel,
+    item?.last_message_direction,
+  );
+
+  if (item?.last_media_type === "audio") {
+    const isPlaceholder = /^(?:(?:\d+:)?\d{1,2}:\d{2}\s*)+$|^\[(?:audio|voice|file)\]$/iu.test(lastMessage);
+    return lastMessage && !isPlaceholder
+      ? `🎤 ${lastMessage}`
+      : "🎤 Tin nhắn thoại";
+  }
+
   if (lastMessage) {
     return lastMessage;
   }
@@ -4147,12 +4297,6 @@ function conversationPreview(item) {
     item?.last_media_type === "video"
   ) {
     return "🎥 Video";
-  }
-
-  if (
-    item?.last_media_type === "audio"
-  ) {
-    return "🎵 Âm thanh";
   }
 
   if (
@@ -4375,6 +4519,49 @@ function normalizeMessage(message) {
 }
 
 
+function syncConversationPreview(conversationId, message) {
+
+  const index = conversations.value.findIndex(
+    (item) => Number(item.conversation_id) === Number(conversationId),
+  );
+  if (index < 0 || !message) return;
+
+  const timestampMs = (value) => {
+    const raw = typeof value === "string" ? value.trim() : value;
+    const normalized = typeof raw === "string"
+      && raw
+      && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)
+      ? `${raw}Z`
+      : raw;
+    const parsed = Date.parse(normalized);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+  const normalized = normalizeMessage(message);
+  const timestamp = normalized.received_at || normalized.sent_at || normalized.created_at;
+  const currentTime = timestampMs(conversations.value[index].last_activity_at);
+  const messageTime = timestampMs(timestamp);
+  if (currentTime > messageTime) return;
+
+  conversations.value = conversations.value
+    .map((item, itemIndex) => itemIndex === index
+      ? {
+          ...item,
+          last_message: normalized.content || "",
+          last_message_direction: normalized.direction || item.last_message_direction,
+          last_media_type: normalized.media_type,
+          last_media_url: normalized.media_url,
+          last_message_at: timestamp || item.last_message_at,
+          last_activity_at: timestamp || item.last_activity_at,
+        }
+      : item)
+    .sort((left, right) => (
+      timestampMs(right.last_activity_at || right.created_at)
+      - timestampMs(left.last_activity_at || left.created_at)
+    ));
+
+}
+
+
 function makeClientId() {
   return `client-${crypto.randomUUID()}`;
 }
@@ -4457,6 +4644,7 @@ function handleRealtimeEvent(event) {
   }
 
   const eventConversationId = Number(event.conversation_id);
+  syncConversationPreview(eventConversationId, event.message);
   if (eventConversationId > 0 && eventConversationId === Number(selectedId.value)) {
     const scrollPosition = captureMessageScrollPosition(messagesScrollContainer.value);
     upsertMessage(
@@ -4467,7 +4655,9 @@ function handleRealtimeEvent(event) {
     // The event is a low-latency hint. Reconcile with the canonical API list
     // so a delayed history batch or an optimistic message cannot leave this
     // open chat stale.
-    void loadMessages(eventConversationId, false, true);
+    // Keep the reader's current position unless they were already at the
+    // latest message; incoming events must not pull them through the history.
+    void loadMessages(eventConversationId, false, false);
   }
 
   void loadConversations(false);
@@ -4675,8 +4865,11 @@ function supportedVoiceMimeType(channel = "") {
     "audio/ogg;codecs=opus",
     "audio/mp4",
   ];
-  const candidates = String(channel).toLowerCase() === "telegram"
+  const normalizedChannel = String(channel).toLowerCase();
+  const candidates = normalizedChannel === "telegram"
     ? ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/ogg", "audio/webm", "audio/mp4"]
+    : ["facebook", "instagram"].includes(normalizedChannel)
+      ? ["audio/mp4", "audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/ogg", "audio/webm"]
     : commonCandidates;
   return candidates.find((type) => (
     typeof window.MediaRecorder.isTypeSupported !== "function"
@@ -4756,6 +4949,11 @@ function stopVoiceRecording() {
 async function startVoiceRecording() {
   if (!selectedId.value || sending.value || composerMode.value === "internal" || !canReplyToSelectedConversation.value) return;
   if (voiceRecording.value) return;
+
+  if (typeof window !== "undefined" && window.isSecureContext === false) {
+    error.value = "Ghi âm trên điện thoại cần HTTPS. Hãy mở CRM bằng liên kết https:// rồi cấp quyền micro.";
+    return;
+  }
 
   if (
     typeof navigator === "undefined"
@@ -5226,6 +5424,8 @@ async function loadConversations(showLoading = true, {
 } = {}) {
 
   const requestVersion = ++conversationsLoadVersion;
+  const customerScope = customerId ? Number(customerId) : null;
+  const sameCustomerScope = loadedConversationsCustomerScope === customerScope;
 
   if (showLoading && !append) {
     loading.value = true;
@@ -5266,6 +5466,7 @@ async function loadConversations(showLoading = true, {
         ? page.filter((item) => Number(item.customer_id) === Number(customerId))
         : page;
       conversations.value = inboxLegacyPageCache.value;
+      loadedConversationsCustomerScope = customerScope;
       inboxConversationTotal.value = conversations.value.length;
       inboxHasMore.value = false;
       return;
@@ -5275,9 +5476,41 @@ async function loadConversations(showLoading = true, {
     if (offset > 0) {
       const knownIds = new Set(conversations.value.map((item) => Number(item.conversation_id)));
       conversations.value = [...conversations.value, ...page.filter((item) => !knownIds.has(Number(item.conversation_id)))];
-    } else {
+    } else if (!sameCustomerScope || !conversations.value.length) {
       conversations.value = page;
+    } else {
+      const previousById = new Map(conversations.value.map((item) => [Number(item.conversation_id), item]));
+      const timestampMs = (value) => {
+        const raw = typeof value === "string" ? value.trim() : value;
+        const normalized = typeof raw === "string"
+          && raw
+          && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)
+          ? `${raw}Z`
+          : raw;
+        const parsed = Date.parse(normalized);
+        return Number.isNaN(parsed) ? 0 : parsed;
+      };
+      const hasNewLiveActivity = page.some((item) => {
+        const previous = previousById.get(Number(item.conversation_id));
+        return Boolean(item.last_activity_at)
+          && (!previous || timestampMs(item.last_activity_at) > timestampMs(previous.last_activity_at));
+      });
+
+      if (hasNewLiveActivity) {
+        conversations.value = page;
+      } else {
+        const incomingById = new Map(page.map((item) => [Number(item.conversation_id), item]));
+        const stable = conversations.value
+          .map((item) => incomingById.get(Number(item.conversation_id)))
+          .filter(Boolean);
+        const knownIds = new Set(stable.map((item) => Number(item.conversation_id)));
+        conversations.value = [
+          ...stable,
+          ...page.filter((item) => !knownIds.has(Number(item.conversation_id))),
+        ];
+      }
     }
+    loadedConversationsCustomerScope = customerScope;
     inboxConversationTotal.value = Number(data?.total ?? conversations.value.length);
     inboxHasMore.value = Boolean(data?.has_more);
 
@@ -5415,7 +5648,6 @@ async function loadMessages(
       rawMessages.map(
         normalizeMessage
       );
-
 
     const oldSignature =
       messages.value
@@ -5629,6 +5861,9 @@ async function fetchProducts() {
     products.value = data.items || [];
     const drafts = { ...productAdjustmentDrafts.value };
     const detailsDrafts = {};
+    for (const previousDraft of Object.values(productDetailsDrafts.value)) {
+      if (previousDraft.image_preview_url?.startsWith("blob:")) URL.revokeObjectURL(previousDraft.image_preview_url);
+    }
     for (const product of products.value) {
       if (!drafts[product.id]) drafts[product.id] = { quantity: 1, direction: 1, reason: "" };
       const metadata = product.metadata || product.metadata_ || {};
@@ -5639,6 +5874,8 @@ async function fetchProducts() {
         description: product.description || "",
         product_url: product.product_url || "",
         image_url: product.image_url || metadata.image_url || metadata.photo_url || "",
+        image_file: null,
+        image_preview_url: product.image_url || metadata.image_url || metadata.photo_url || "",
         price: Number(product.price || 0),
       };
     }
@@ -5819,6 +6056,8 @@ async function uploadProductFile(file) {
 }
 
 function resetProductForm() {
+  const previousPreview = productForm.value.image_preview_url;
+  if (previousPreview?.startsWith("blob:")) URL.revokeObjectURL(previousPreview);
   productForm.value = {
     id: null,
     sku: "",
@@ -5826,6 +6065,8 @@ function resetProductForm() {
     description: "",
     product_url: "",
     image_url: "",
+    image_file: null,
+    image_preview_url: "",
     price: 0,
     stock_quantity: 0,
     status: "active",
@@ -5833,6 +6074,8 @@ function resetProductForm() {
 }
 
 function editProduct(product) {
+  const previousPreview = productForm.value.image_preview_url;
+  if (previousPreview?.startsWith("blob:")) URL.revokeObjectURL(previousPreview);
   productForm.value = {
     id: product.id,
     sku: product.sku || "",
@@ -5840,10 +6083,85 @@ function editProduct(product) {
     description: product.description || "",
     product_url: product.product_url || "",
     image_url: product.image_url || product.metadata?.image_url || "",
+    image_file: null,
+    image_preview_url: product.image_url || product.metadata?.image_url || "",
     price: Number(product.price || 0),
     stock_quantity: Number(product.stock_quantity || 0),
     status: product.status || "active",
   };
+}
+
+function handleProductImageSelect(event, productId = null) {
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (!["image/jpeg", "image/png"].includes(file.type)) {
+    productError.value = "Chọn ảnh JPG hoặc PNG.";
+    input.value = "";
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    productError.value = "Ảnh sản phẩm tối đa 8 MB.";
+    input.value = "";
+    return;
+  }
+
+  productError.value = "";
+  const previewUrl = URL.createObjectURL(file);
+  if (productId === null) {
+    const previousPreview = productForm.value.image_preview_url;
+    if (previousPreview?.startsWith("blob:")) URL.revokeObjectURL(previousPreview);
+    productForm.value = {
+      ...productForm.value,
+      image_file: file,
+      image_preview_url: previewUrl,
+    };
+  } else {
+    const draft = productDetailsDrafts.value[productId] || {};
+    if (draft.image_preview_url?.startsWith("blob:")) URL.revokeObjectURL(draft.image_preview_url);
+    productDetailsDrafts.value = {
+      ...productDetailsDrafts.value,
+      [productId]: { ...draft, image_file: file, image_preview_url: previewUrl },
+    };
+  }
+  input.value = "";
+}
+
+function clearProductImage(productId = null) {
+  if (productId === null) {
+    const previousPreview = productForm.value.image_preview_url;
+    if (previousPreview?.startsWith("blob:")) URL.revokeObjectURL(previousPreview);
+    productForm.value = {
+      ...productForm.value,
+      image_url: "",
+      image_file: null,
+      image_preview_url: "",
+    };
+    return;
+  }
+  const draft = productDetailsDrafts.value[productId] || {};
+  if (draft.image_preview_url?.startsWith("blob:")) URL.revokeObjectURL(draft.image_preview_url);
+  productDetailsDrafts.value = {
+    ...productDetailsDrafts.value,
+    [productId]: { ...draft, image_url: "", image_file: null, image_preview_url: "" },
+  };
+}
+
+async function uploadProductImage(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await apiFetch(`${API_BASE}/conversations/products/image-upload`, {
+    method: "POST",
+    body: formData,
+  });
+  const detail = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const reason = typeof detail.detail === "object" ? detail.detail.message : detail.detail;
+    throw new Error(reason || `HTTP ${response.status}`);
+  }
+  const imageUrl = safeProductImageUrl(detail.image_url);
+  if (!imageUrl) throw new Error("Máy chủ chưa trả về link ảnh sản phẩm hợp lệ.");
+  return imageUrl;
 }
 
 async function saveProduct() {
@@ -5857,7 +6175,7 @@ async function saveProduct() {
     productError.value = t("Link sản phẩm phải là URL HTTP(S) hợp lệ, không chứa tài khoản hay mật khẩu.");
     return;
   }
-  if (form.image_url?.trim() && !safeProductImageUrl(form.image_url)) {
+  if (!form.image_file && form.image_url?.trim() && !safeProductImageUrl(form.image_url)) {
     productError.value = t("Link ảnh sản phẩm cần là HTTPS công khai và không chứa tài khoản hay mật khẩu.");
     return;
   }
@@ -5877,12 +6195,13 @@ async function saveProduct() {
     const stockAdjustment = isEdit
       ? Number(form.stock_quantity || 0) - Number(existingProduct?.stock_quantity || 0)
       : 0;
+    const imageUrl = form.image_file ? await uploadProductImage(form.image_file) : safeProductImageUrl(form.image_url);
     const payload = {
       sku: form.sku.trim(),
       name: form.name.trim(),
       description: form.description.trim() || null,
       product_url: safeProductUrl(form.product_url),
-      image_url: safeProductImageUrl(form.image_url),
+      image_url: imageUrl,
       price: Number(form.price || 0),
       status: form.status,
     };
@@ -6053,7 +6372,7 @@ async function saveProductDetails(product) {
     productError.value = t("Link sản phẩm phải là URL HTTP(S) hợp lệ, không chứa tài khoản hay mật khẩu.");
     return;
   }
-  if (imageUrl && !safeProductImageUrl(imageUrl)) {
+  if (!draft.image_file && imageUrl && !safeProductImageUrl(imageUrl)) {
     productError.value = t("Link ảnh sản phẩm cần là HTTPS công khai và không chứa tài khoản hay mật khẩu.");
     return;
   }
@@ -6075,6 +6394,7 @@ async function saveProductDetails(product) {
   productError.value = "";
   productDetailsNotice.value = { ...productDetailsNotice.value, [product.id]: false };
   try {
+    if (draft.image_file) metadata.image_url = await uploadProductImage(draft.image_file);
     const response = await apiFetch(`${API_BASE}/products/${product.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -6090,6 +6410,17 @@ async function saveProductDetails(product) {
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(detail.detail || `HTTP ${response.status}`);
     Object.assign(product, detail);
+    const imagePreview = draft.image_preview_url;
+    if (imagePreview?.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    productDetailsDrafts.value = {
+      ...productDetailsDrafts.value,
+      [product.id]: {
+        ...draft,
+        image_url: metadata.image_url || "",
+        image_file: null,
+        image_preview_url: metadata.image_url || "",
+      },
+    };
     productDetailsNotice.value = { ...productDetailsNotice.value, [product.id]: true };
   } catch (error) {
     productError.value = crmErrorText(
@@ -6588,7 +6919,7 @@ async function fetchQuotaUsage() {
 
 function openSignup(fromPricing = false) {
   signupPlanCode.value = fromPricing === true ? servicePlanCodeForPurchase(serviceRequestForm.value.plan_code) : "demo";
-  signupServiceType.value = fromPricing === true ? serviceMode.value : "package";
+  signupServiceType.value = "package";
   publicView.value = "auth";
   authView.value = "signup";
   signupStep.value = "details";
@@ -7154,6 +7485,14 @@ async function recordPlatformPayment(request) {
   const draft = platformPaymentDrafts.value[request?.subscription_id];
   const amount = Number(request?.quoted_amount);
   if (!request?.subscription_id || !request?.business_id || !Number.isFinite(amount) || amount <= 0 || request.payment_received || !draft?.reference?.trim() || platformPaymentSaving.value) return;
+  const referenceDigits = draft.reference.replace(/\D/g, "");
+  if (referenceDigits && referenceDigits === String(Math.round(amount))) {
+    const confirmedReference = await requestConfirmation(
+      t("Mã bạn nhập giống số tiền gói. Hãy kiểm tra sao kê và nhập mã tham chiếu giao dịch ngân hàng, không nhập số tiền. Bạn vẫn muốn dùng dãy số này làm mã giao dịch?"),
+      { title: t("Kiểm tra mã giao dịch"), confirmLabel: t("Đúng là mã trên sao kê") },
+    );
+    if (!confirmedReference) return;
+  }
   if (!await requestConfirmation(`Bạn xác nhận đã thực nhận ${formatMoney(amount)} từ ${request.shop_name} cho gói ${request.plan_name}? Chỉ ghi nhận khi đã kiểm tra giao dịch.`, { confirmLabel: "Ghi nhận thanh toán" })) return;
   platformPaymentSaving.value = true;
   try {
@@ -7201,16 +7540,18 @@ async function loadPlatformShopDetails(shop) {
   };
 
   try {
-    const [subscriptionResponse, paymentsResponse, usageResponse, subscriptionsResponse] = await Promise.all([
+    const [subscriptionResponse, paymentsResponse, usageResponse, subscriptionsResponse, provisioningResponse] = await Promise.all([
       apiFetch(`${API_BASE}/platform/shops/${shop.id}/subscription`),
       apiFetch(`${API_BASE}/platform/shops/${shop.id}/payments`),
       apiFetch(`${API_BASE}/platform/shops/${shop.id}/usage`),
       apiFetch(`${API_BASE}/platform/shops/${shop.id}/subscriptions`),
+      apiFetch(`${API_BASE}/platform/shops/${shop.id}/provisioning`),
     ]);
     const subscription = subscriptionResponse.ok ? await subscriptionResponse.json() : null;
     const subscriptions = subscriptionsResponse.ok ? await subscriptionsResponse.json() : [];
     const paymentsPayload = paymentsResponse.ok ? await paymentsResponse.json() : [];
     const usage = usageResponse.ok ? await usageResponse.json() : null;
+    const provisioning = provisioningResponse.ok ? await provisioningResponse.json() : null;
     const payments = Array.isArray(paymentsPayload) ? paymentsPayload : paymentsPayload.items || [];
     // A shop without a package is a valid state, not a failed detail load.
     // The subscription endpoint returns 404 for that empty state.
@@ -7226,7 +7567,8 @@ async function loadPlatformShopDetails(shop) {
         subscription,
         payments,
         usage,
-        error: (subscriptionResponse.ok || subscriptionMissing) && paymentsResponse.ok && usageResponse.ok
+        provisioning,
+        error: (subscriptionResponse.ok || subscriptionMissing) && paymentsResponse.ok && usageResponse.ok && provisioningResponse.ok
           ? ""
           : "Một phần thông tin chi tiết chưa tải được. Hãy thử lại.",
       },
@@ -7244,6 +7586,51 @@ async function loadPlatformShopDetails(shop) {
     };
   } finally {
     changePlatformShopIdState(platformShopDetailLoadingIds, shop.id, false);
+  }
+}
+
+function platformShopNeedsProvisioningRetry(shop) {
+  const detail = platformShopDetail(shop?.id);
+  return detail.subscription?.status === "active"
+    && (!detail.provisioning || detail.provisioning.state !== "active");
+}
+
+function platformProvisioningStatusLabel(state) {
+  const labels = {
+    active: "Đã sẵn sàng",
+    provisioning: "Đang chuẩn bị",
+    provision_failed: "Chuẩn bị lỗi",
+    migrating: "Đang di trú",
+    error: "Chuẩn bị lỗi",
+  };
+  return t(labels[state] || "Chưa kiểm tra");
+}
+
+async function retryPlatformSubscriptionProvisioning(shop) {
+  const subscription = platformShopDetail(shop?.id)?.subscription;
+  if (!shop?.id || !subscription?.id || platformShopMutatingIds.value.has(String(shop.id))) return;
+  changePlatformShopIdState(platformShopMutatingIds, shop.id, true);
+  platformError.value = "";
+  platformShopNotice.value = "";
+  try {
+    const response = await apiFetch(`${API_BASE}/platform/subscription-requests/${subscription.id}/provision/retry`, {
+      method: "POST",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = payload.detail?.message || payload.detail || `HTTP ${response.status}`;
+      throw new Error(typeof message === "string" ? message : "Chưa thể chuẩn bị lại dữ liệu tenant.");
+    }
+    const ready = payload.provisioning?.state === "active" && payload.provisioning?.feature_enabled;
+    platformShopNotice.value = ready
+      ? t("Đã chuẩn bị xong không gian dữ liệu cho {shop}. Shop có thể sử dụng gói đã thanh toán.").replace("{shop}", shop.name)
+      : `${t("Đã chạy lại nhưng kho dữ liệu của {shop} chưa sẵn sàng").replace("{shop}", shop.name)}${payload.provisioning?.migration_error ? ` (${payload.provisioning.migration_error})` : "."}`;
+    await fetchPlatformAdmin();
+    await loadPlatformShopDetails(shop);
+  } catch (err) {
+    platformError.value = friendlyErrorMessage(err, "Chưa thể chuẩn bị lại dữ liệu tenant. Vui lòng thử lại sau.");
+  } finally {
+    changePlatformShopIdState(platformShopMutatingIds, shop.id, false);
   }
 }
 
@@ -10499,6 +10886,9 @@ onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
   window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   window.addEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);
+  conversationTimeTimer = window.setInterval(() => {
+    conversationTimeNow.value = Date.now();
+  }, 60_000);
   if (!platformRequestPollingTimer) {
     platformRequestPollingTimer = window.setInterval(() => {
       if (currentTab.value === "platform_admin" && !document.hidden) {
@@ -10785,6 +11175,10 @@ onUnmounted(() => {
   window.removeEventListener("keydown", handleGlobalKeydown);
   window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   window.removeEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);
+  if (conversationTimeTimer) {
+    clearInterval(conversationTimeTimer);
+    conversationTimeTimer = null;
+  }
   stopTenantProvisioningPolling();
   stopTenantWorkspace();
 
@@ -10830,14 +11224,16 @@ function followupProductLabel(item) {
 
 async function fetchServiceAccountSummary() {
   if (!authUser.value?.business_id) return;
+  const businessId = requireBusinessId(authUser.value);
   serviceAccountLoading.value = true;
   serviceAccountError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/onboarding/shops/${requireBusinessId(authUser.value)}/subscription/summary`);
+    const response = await apiFetch(`${API_BASE}/onboarding/shops/${businessId}/subscription/summary`);
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw apiResponseError(response, detail, `HTTP ${response.status}`);
+    if (authUser.value?.business_id !== businessId) return;
     serviceAccountSummary.value = detail;
-    if (serviceMode.value === "chatbot" && !servicePlanSelectionTouched.value) {
+    if (!servicePlanSelectionTouched.value) {
       serviceRequestForm.value.plan_code = preferredServicePlanCode();
       normalizeServiceChannels(false);
     }
@@ -11438,7 +11834,9 @@ function followupRecommendationLabel(item) {
                       title="Cần xử lý: khách xác nhận đơn hoặc AI cần nhân viên hỗ trợ"
                     >{{ conversationUrgentCount(item) }}</span>
                     <span v-else-if="item.unread_count" class="conversation-unread">{{ item.unread_count }}</span>
-                    <time>{{ formatTime(item.last_message_at) }}</time>
+                    <time
+                      :title="conversationTimeTitle(item)"
+                    >{{ conversationTime(item) }}</time>
                   </div>
                 </div>
 
@@ -11860,11 +12258,6 @@ function followupRecommendationLabel(item) {
             <div ref="messagesScrollContainer" class="messages-scroll chat-timeline">
 
 
-              <div class="today">
-                Hôm nay
-              </div>
-
-
               <div
                 v-if="loading"
                 class="loading"
@@ -12128,7 +12521,7 @@ function followupRecommendationLabel(item) {
 
                     {{
                       formatTime(
-                        message.received_at
+                        message.received_at || message.sent_at
                       )
                     }}
 
@@ -13463,6 +13856,7 @@ function followupRecommendationLabel(item) {
             <img src="/brand/logo-mark.svg" alt="" class="admin-art-brand" />
           </div>
           <div class="admin-sidebar-heading"><span>{{ t('KHÔNG GIAN QUẢN TRỊ') }}</span><strong>{{ t('Quản trị nền tảng') }}</strong></div>
+          <button type="button" class="admin-menu-toggle" :aria-expanded="adminMenuOpen" aria-controls="admin-menu-navigation" @click="adminMenuOpen = !adminMenuOpen">{{ t(adminMenuOpen ? 'Ẩn mục quản trị' : 'Chức năng quản trị') }}</button>
           <label class="admin-mobile-select"><span>{{ t('Chức năng quản trị') }}</span><select :value="activePlatformSection" @change="selectPlatformSection($event.target.value)"><option v-for="section in visibleAdminSections" :key="section.id" :value="section.id">{{ t(section.title) }}</option></select></label>
           <nav id="admin-menu-navigation" class="admin-section-nav" :class="{ 'is-open': adminMenuOpen }" :aria-label="t('Đi nhanh đến mục quản trị')">
             <a v-for="section in visibleAdminSections" :key="section.id" :href="adminSectionHash(section.id)" :aria-current="activePlatformSection === section.id ? 'page' : undefined" @click.prevent="selectPlatformSection(section.id)">
@@ -13512,9 +13906,9 @@ function followupRecommendationLabel(item) {
               <div class="platform-approval-detail"><span>Dịch vụ yêu cầu</span><strong>{{ request.plan_name }}</strong><small>{{ platformServiceLabel(request.service_type) }}</small></div>
               <div class="platform-approval-detail"><span>Thời điểm gửi</span><strong>{{ formatPlatformRequestDate(request.requested_at || request.created_at) }}</strong><small v-if="Number(request.quoted_amount) > 0">{{ request.payment_received ? t('Đã ghi nhận tiền vào tài khoản') : request.customer_reported_payment ? t('Khách báo đã thanh toán · cần đối soát giao dịch') : t('Chưa ghi nhận khoản thanh toán') }}</small><small v-else>{{ t('Gói không thu phí') }}</small></div>
               <form v-if="Number(request.quoted_amount) > 0 && !request.payment_received" v-show="platformCan('approvals', 'write')" class="platform-approval-payment-form" @submit.prevent="recordPlatformPayment(request)">
-                <label><span>Mã giao dịch đã nhận tiền · {{ formatMoney(request.quoted_amount) }}</span><input :value="platformPaymentDrafts[request.subscription_id]?.reference || ''" required maxlength="255" placeholder="Mã chuyển khoản / mã biên nhận" @input="platformPaymentDrafts[request.subscription_id] = { ...platformPaymentDrafts[request.subscription_id], reference: $event.target.value }" /></label>
+                <label><span>{{ t('Mã giao dịch trên sao kê') }} · {{ formatMoney(request.quoted_amount) }}</span><input :value="platformPaymentDrafts[request.subscription_id]?.reference || ''" required maxlength="255" :placeholder="t('Mã FT / mã tham chiếu ngân hàng')" @input="platformPaymentDrafts[request.subscription_id] = { ...platformPaymentDrafts[request.subscription_id], reference: $event.target.value }" /></label>
                 <button type="submit" class="primary-btn" :disabled="platformPaymentSaving">{{ platformPaymentSaving ? 'Đang ghi nhận…' : 'Xác nhận đã thu tiền' }}</button>
-                <small>Kiểm tra tiền đã vào tài khoản trước khi xác nhận. Mã giao dịch trùng không được cộng hai lần.</small>
+                <small>{{ t('Nhập mã tham chiếu trên sao kê, không nhập số tiền. Nếu giao dịch này đã ghi cho đúng yêu cầu, xác nhận lại sẽ không cộng doanh thu lần hai.') }}</small>
               </form>
               <div v-if="platformCan('approvals', 'write')" class="platform-approval-actions">
                 <button type="button" class="primary-btn" :disabled="Boolean(platformApprovalLoadingId) || (Number(request.quoted_amount) > 0 && !request.payment_received)" @click="approvePlatformSubscriptionRequest(request)">{{ platformApprovalLoadingId === request.subscription_id ? 'Đang duyệt...' : 'Duyệt & mở CRM' }}</button>
@@ -13558,6 +13952,11 @@ function followupRecommendationLabel(item) {
                     <div class="platform-tenant-detail-grid">
                       <div><span>Gói đang dùng</span><strong>{{ platformShopDetail(shop.id).subscription?.plan_name || shop.plan_name || 'Chưa cấp gói' }}</strong><small>{{ subscriptionStatusMeta(platformShopDetail(shop.id).subscription?.status).label }}</small></div>
                       <div><span>Trạng thái thanh toán</span><strong>{{ paymentStatusMeta(platformShopLatestPayment(shop)?.status).label }}</strong><small v-if="platformShopLatestPayment(shop)?.paid_at">{{ formatDateTime(platformShopLatestPayment(shop).paid_at) }}</small><small v-else>Chưa có giao dịch gần đây</small></div>
+                      <div><span>{{ t('Không gian dữ liệu') }}</span><strong>{{ platformProvisioningStatusLabel(platformShopDetail(shop.id).provisioning?.state) }}</strong><small v-if="platformShopDetail(shop.id).provisioning?.migration_error">{{ platformShopDetail(shop.id).provisioning.migration_error }}</small><small v-else-if="platformShopDetail(shop.id).provisioning?.feature_enabled">{{ t('Đã sẵn sàng') }}</small><small v-else>{{ t('Chưa mở CRM') }}</small></div>
+                    </div>
+                    <div v-if="platformShopNeedsProvisioningRetry(shop) && platformCan('approvals', 'write')" class="platform-tenant-provisioning-retry">
+                      <p>{{ t('Gói đã kích hoạt. Chạy lại bước chuẩn bị kho tenant sẽ không thu tiền thêm.') }}</p>
+                      <button type="button" class="primary-btn" :disabled="platformShopMutatingIds.has(String(shop.id))" @click="retryPlatformSubscriptionProvisioning(shop)">{{ platformShopMutatingIds.has(String(shop.id)) ? t('Đang chuẩn bị...') : t('Thử chuẩn bị CRM lại') }}</button>
                     </div>
                     <div class="platform-quota-card-grid" aria-label="Hạn mức tenant: Kênh kết nối, Nhân viên, Tài liệu và Dung lượng tra cứu">
                       <div v-for="item in platformQuotaCards(platformShopQuota(shop))" :key="item.key" class="platform-quota-card" :class="{ warning: item.nearLimit, exceeded: item.exceeded }">
@@ -13569,7 +13968,7 @@ function followupRecommendationLabel(item) {
                     <div class="platform-payment-history">
                       <h4>Lịch sử thanh toán</h4>
                       <p v-if="!platformShopDetail(shop.id).payments?.length" class="settings-empty">Chưa có giao dịch thanh toán.</p>
-                      <p v-for="payment in platformShopDetail(shop.id).payments" :key="payment.id">{{ payment.provider_transaction_id }} · {{ formatMoney(payment.amount) }} · {{ paymentStatusMeta(payment.status).label }}<strong v-if="payment.reconciliation_required"> · {{ t('Cần admin đối soát') }}</strong></p>
+                      <p v-for="payment in platformShopDetail(shop.id).payments" :key="payment.id">{{ payment.provider_transaction_id }} · {{ payment.subscription_plan_name || `${t('Yêu cầu')} #${payment.subscription_id}` }} · {{ formatMoney(payment.amount) }} · {{ paymentStatusMeta(payment.status).label }}<strong v-if="payment.reconciliation_required"> · {{ t('Cần admin đối soát') }}</strong></p>
                     </div>
                   </template>
                 </section>
@@ -13664,20 +14063,37 @@ function followupRecommendationLabel(item) {
            SẢN PHẨM (PRODUCT CATALOG)
       ==================================================== -->
       <section v-if="currentTab === 'products' && workspaceModuleEnabled('retail')" class="products-layout">
-        <div class="products-header">
+        <div class="products-header products-catalog-header">
           <div>
             <h2>Sản phẩm</h2>
             <p>Theo dõi danh mục sản phẩm và xử lý tồn kho của shop.</p>
           </div>
-          <button type="button" class="settings-refresh" @click="downloadCommerceCsv('/products/export.csv', 'products-inventory.csv', 'products')">{{ crmUiText('Xuất sản phẩm & tồn kho') }}</button>
-          <button type="button" class="secondary-btn" :disabled="!products.length" @click="deleteProductsConfirmation = ''; deleteProductsOpen = true">Xóa tất cả sản phẩm</button>
+          <div class="products-header-actions" aria-label="Thao tác sản phẩm">
+            <button type="button" class="settings-refresh" @click="downloadCommerceCsv('/products/export.csv', 'products-inventory.csv', 'products')">{{ crmUiText('Xuất sản phẩm & tồn kho') }}</button>
+            <button type="button" class="secondary-btn" :disabled="!products.length" @click="deleteProductsConfirmation = ''; deleteProductsOpen = true">Xóa tất cả sản phẩm</button>
+          </div>
         </div>
-        <section v-if="deleteProductsOpen" class="product-form" role="dialog" aria-modal="false" aria-labelledby="delete-products-title">
-          <h3 id="delete-products-title">Xóa tất cả sản phẩm</h3>
-          <p>Tất cả sản phẩm sẽ được gỡ khỏi danh mục. Lịch sử đơn hàng và tồn kho vẫn được giữ. Nhập đúng XÁC NHẬN để tiếp tục.</p>
-          <label>Nhập XÁC NHẬN<input v-model="deleteProductsConfirmation" autocomplete="off" :disabled="deleteProductsSaving" /></label>
-          <button type="button" class="secondary-btn" :disabled="deleteProductsSaving" @click="deleteProductsOpen = false">Hủy</button>
-          <button type="button" class="primary-btn" :disabled="deleteProductsConfirmation !== 'XÁC NHẬN' || deleteProductsSaving" @click="deleteAllProducts">{{ deleteProductsSaving ? 'Đang xóa...' : 'Xóa tất cả sản phẩm' }}</button>
+        <section v-if="deleteProductsOpen" class="product-form product-delete-confirmation" role="dialog" aria-modal="false" aria-labelledby="delete-products-title" aria-describedby="delete-products-warning">
+          <div class="product-delete-heading">
+            <span class="product-delete-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.8 19a1.4 1.4 0 0 0 1.2 2h16a1.4 1.4 0 0 0 1.2-2L12 3Z"/><path d="M12 9v5m0 3h.01"/></svg>
+            </span>
+            <div>
+              <h3 id="delete-products-title">Xóa tất cả sản phẩm?</h3>
+              <p id="delete-products-warning">Thao tác này sẽ gỡ {{ products.length }} sản phẩm khỏi danh mục. Lịch sử đơn hàng và dữ liệu tồn kho vẫn được giữ.</p>
+            </div>
+          </div>
+          <label class="product-delete-input-label" for="delete-products-confirmation">
+            <span>Nhập <strong>XÁC NHẬN</strong> để tiếp tục</span>
+            <input id="delete-products-confirmation" v-model="deleteProductsConfirmation" autocomplete="off" placeholder="XÁC NHẬN" :disabled="deleteProductsSaving" />
+          </label>
+          <div class="product-delete-actions">
+            <button type="button" class="secondary-btn" :disabled="deleteProductsSaving" @click="deleteProductsOpen = false">Hủy</button>
+            <button type="button" class="product-delete-submit" :disabled="deleteProductsConfirmation !== 'XÁC NHẬN' || deleteProductsSaving" @click="deleteAllProducts">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></svg>
+              {{ deleteProductsSaving ? 'Đang xóa...' : 'Xóa tất cả sản phẩm' }}
+            </button>
+          </div>
         </section>
 
         <div
@@ -13723,7 +14139,21 @@ function followupRecommendationLabel(item) {
               <label>Giá bán (đ)<input v-model.number="productForm.price" type="number" required min="0" step="0.01" /></label>
               <label>Số lượng tồn kho<input v-model.number="productForm.stock_quantity" type="number" required min="0" step="1" /></label>
               <label class="product-manual-wide">Link sản phẩm<input v-model="productForm.product_url" type="url" maxlength="2048" placeholder="https://..." /></label>
-              <label class="product-manual-wide">Ảnh sản phẩm<input v-model="productForm.image_url" type="url" maxlength="2048" placeholder="https://...jpg" /><small>Dùng ảnh công khai để bot đối chiếu ảnh khách gửi.</small></label>
+              <div class="product-image-upload product-manual-wide">
+                <div class="product-image-upload-copy"><strong>Ảnh sản phẩm</strong><small>JPG hoặc PNG, tối đa 8 MB. Ảnh được lưu công khai để bot đối chiếu ảnh khách gửi.</small></div>
+                <div class="product-image-upload-control">
+                  <div v-if="productForm.image_preview_url || productForm.image_url" class="product-image-preview">
+                    <img :src="productImagePreviewUrl(productForm.image_preview_url || productForm.image_url)" alt="Ảnh xem trước sản phẩm" loading="lazy" @load="$event.currentTarget.classList.remove('is-load-error')" @error="$event.currentTarget.classList.add('is-load-error')" />
+                    <span class="product-image-preview-error" role="status">Không tải được ảnh</span>
+                  </div>
+                  <div v-else class="product-image-placeholder" aria-hidden="true">Ảnh</div>
+                  <div class="product-image-upload-actions">
+                    <input id="product-image-file" class="product-image-file-input" type="file" accept="image/jpeg,image/png" aria-label="Chọn ảnh sản phẩm" @change="handleProductImageSelect($event)" />
+                    <label class="secondary-btn product-image-pick" for="product-image-file">{{ productForm.image_file ? 'Đổi ảnh' : 'Tải ảnh lên' }}</label>
+                    <button v-if="productForm.image_url || productForm.image_file" type="button" class="secondary-btn product-image-remove" @click="clearProductImage()">Gỡ ảnh</button>
+                  </div>
+                </div>
+              </div>
               <label class="product-manual-wide">Mô tả sản phẩm<textarea v-model="productForm.description" rows="3"></textarea></label>
               <div class="product-manual-wide product-manual-actions"><button type="button" class="secondary-btn" @click="productManualOpen = false">Thu gọn</button><button type="submit" class="primary-btn">{{ productSaving ? 'Đang lưu...' : 'Lưu sản phẩm' }}</button></div>
             </fieldset>
@@ -13806,24 +14236,43 @@ function followupRecommendationLabel(item) {
                         <label>{{ t("Giá bán") }}<input v-model.number="productDetailsDrafts[product.id].price" type="number" min="0" step="1000" required /></label>
                         <label class="product-adjustment-description">{{ t("Mô tả sản phẩm") }}<textarea v-model="productDetailsDrafts[product.id].description" rows="2" maxlength="5000"></textarea></label>
                         <label class="product-adjustment-description">{{ t('Link sản phẩm') }}<input v-model="productDetailsDrafts[product.id].product_url" type="url" inputmode="url" maxlength="2048" placeholder="https://shop.example/item" :aria-invalid="Boolean(productDetailsDrafts[product.id].product_url && !safeProductUrl(productDetailsDrafts[product.id].product_url))" /></label>
-                        <label class="product-adjustment-description">Ảnh sản phẩm<input v-model="productDetailsDrafts[product.id].image_url" type="url" inputmode="url" maxlength="2048" placeholder="https://...jpg" :aria-invalid="Boolean(productDetailsDrafts[product.id].image_url && !safeProductImageUrl(productDetailsDrafts[product.id].image_url))" /></label>
+                        <div class="product-image-upload product-adjustment-image product-adjustment-description">
+                          <strong>Ảnh sản phẩm</strong>
+                          <div class="product-image-upload-control">
+                            <div v-if="productDetailsDrafts[product.id].image_preview_url || productDetailsDrafts[product.id].image_url" class="product-image-preview">
+                              <img :src="productImagePreviewUrl(productDetailsDrafts[product.id].image_preview_url || productDetailsDrafts[product.id].image_url)" :alt="`Ảnh sản phẩm ${product.name}`" loading="lazy" @load="$event.currentTarget.classList.remove('is-load-error')" @error="$event.currentTarget.classList.add('is-load-error')" />
+                              <span class="product-image-preview-error" role="status">Không tải được ảnh</span>
+                            </div>
+                            <div v-else class="product-image-placeholder" aria-hidden="true">Ảnh</div>
+                            <div class="product-image-upload-actions">
+                              <input :id="`product-image-file-${product.id}`" class="product-image-file-input" type="file" accept="image/jpeg,image/png" :disabled="productDetailsSaving[product.id]" :aria-label="`Chọn ảnh cho ${product.name}`" @change="handleProductImageSelect($event, product.id)" />
+                              <label class="secondary-btn product-image-pick" :for="`product-image-file-${product.id}`">{{ productDetailsDrafts[product.id].image_file ? 'Đổi ảnh' : 'Tải ảnh lên' }}</label>
+                              <button v-if="productDetailsDrafts[product.id].image_url || productDetailsDrafts[product.id].image_file" type="button" class="secondary-btn product-image-remove" :disabled="productDetailsSaving[product.id]" @click="clearProductImage(product.id)">Gỡ ảnh</button>
+                              <small>JPG hoặc PNG · tối đa 8 MB</small>
+                            </div>
+                          </div>
+                        </div>
                         <div class="product-adjustment-actions">
                           <small v-if="productDetailsNotice[product.id]" role="status">{{ t("Đã lưu thông tin sản phẩm.") }}</small>
                           <button type="button" class="table-action-btn" :disabled="productDetailsSaving[product.id]" @click="saveProductDetails(product)">{{ productDetailsSaving[product.id] ? t("Đang lưu...") : t("Lưu thông tin") }}</button>
                         </div>
                       </div>
-                      <strong class="product-stock-adjustment-title">{{ t("Điều chỉnh tồn kho") }}</strong>
-                      <div class="adjustment-direction" role="group" aria-label="Loại điều chỉnh">
-                        <button type="button" :class="{ active: Number(productAdjustmentDrafts[product.id].direction) > 0 }" @click="openInventoryAdjustment(product, 1)">Nhập thêm (+)</button>
-                        <button type="button" :class="{ active: Number(productAdjustmentDrafts[product.id].direction) < 0 }" @click="openInventoryAdjustment(product, -1)">Ghi giảm (−)</button>
-                      </div>
-                      <div class="adjustment-fields">
-                        <label>Số lượng<input v-model.number="productAdjustmentDrafts[product.id].quantity" type="number" min="1" step="1" aria-label="Số lượng điều chỉnh" /></label>
-                        <label>Lý do điều chỉnh<input v-model="productAdjustmentDrafts[product.id].reason" maxlength="1000" required placeholder="Ví dụ: kiểm kê, hỏng hàng, nhập bổ sung..." aria-label="Lý do điều chỉnh tồn" /></label>
-                        <div class="adjustment-preview"><span>Tồn sau điều chỉnh</span><strong>{{ inventoryAdjustmentPreview(product) }}</strong></div>
-                      </div>
-                      <div v-if="productAdjustmentError" class="product-error adjustment-inline-error" role="alert">{{ productAdjustmentError }}</div>
-                      <div class="adjustment-actions"><small>Số lượng gửi: {{ inventoryAdjustmentSignedQuantity(product) > 0 ? '+' : '' }}{{ inventoryAdjustmentSignedQuantity(product) }}</small><button type="button" class="primary-btn" :disabled="productAdjustmentSaving[product.id]" @click="adjustProductInventory(product)">{{ productAdjustmentSaving[product.id] ? 'Đang ghi...' : 'Ghi điều chỉnh' }}</button></div>
+                      <section class="inventory-stock-editor" aria-labelledby="inventory-stock-editor-title">
+                        <div class="inventory-stock-editor-head">
+                          <div><strong id="inventory-stock-editor-title">{{ t("Điều chỉnh tồn kho") }}</strong><small>Ghi lý do để lưu thay đổi vào sổ tồn kho.</small></div>
+                          <div class="adjustment-preview"><span>Tồn sau điều chỉnh</span><strong>{{ inventoryAdjustmentPreview(product) }}</strong></div>
+                        </div>
+                        <div class="adjustment-direction" role="group" aria-label="Loại điều chỉnh">
+                          <button type="button" :class="{ active: Number(productAdjustmentDrafts[product.id].direction) > 0 }" @click="openInventoryAdjustment(product, 1)">Nhập thêm (+)</button>
+                          <button type="button" :class="{ active: Number(productAdjustmentDrafts[product.id].direction) < 0 }" @click="openInventoryAdjustment(product, -1)">Ghi giảm (−)</button>
+                        </div>
+                        <div class="adjustment-fields">
+                          <label>Số lượng<input v-model.number="productAdjustmentDrafts[product.id].quantity" type="number" min="1" step="1" aria-label="Số lượng điều chỉnh" /></label>
+                          <label>Lý do điều chỉnh<input v-model="productAdjustmentDrafts[product.id].reason" maxlength="1000" required placeholder="Ví dụ: kiểm kê, hỏng hàng, nhập bổ sung..." aria-label="Lý do điều chỉnh tồn" /></label>
+                        </div>
+                        <div v-if="productAdjustmentError" class="product-error adjustment-inline-error" role="alert">{{ productAdjustmentError }}</div>
+                        <div class="adjustment-actions"><small>Số lượng ghi sổ: {{ inventoryAdjustmentSignedQuantity(product) > 0 ? '+' : '' }}{{ inventoryAdjustmentSignedQuantity(product) }}</small><button type="button" class="primary-btn" :disabled="productAdjustmentSaving[product.id]" @click="adjustProductInventory(product)">{{ productAdjustmentSaving[product.id] ? 'Đang ghi...' : 'Ghi điều chỉnh' }}</button></div>
+                      </section>
                     </div>
                   </td>
                 </tr>
@@ -14685,7 +15134,7 @@ function followupRecommendationLabel(item) {
         <div class="rag-chat-sidebar">
           <div class="setting-card">
             <h3>Trả lời tự động trên các kênh</h3>
-            <p class="setting-desc">Trợ lý tự động trả lời tin nhắn từ khách Facebook, Instagram và Telegram dựa trên kho thông tin của shop.</p>
+            <p class="setting-desc">Trợ lý tự động trả lời tin nhắn từ khách Facebook, Instagram, Telegram, Zalo, TikTok và Shopee dựa trên kho thông tin của shop khi các kênh đã kết nối.</p>
 
             <div class="toggle-row">
               <span>Trả lời tự động:</span>
@@ -15697,7 +16146,7 @@ function followupRecommendationLabel(item) {
         <ServiceCheckout
           :plan="selectedServicePlan"
           :current-plan="currentServicePlan"
-          :mode="serviceMode"
+            mode="package"
           :change-kind="servicePlanChangeKind"
           :buyer="serviceAccountSummary?.buyer"
           :loading="servicePurchaseLoading"
@@ -15728,32 +16177,39 @@ function followupRecommendationLabel(item) {
               <strong>Smart Merchant Hub</strong>
             </div>
             <span class="service-page-kicker">TRIỂN KHAI CHO SHOP</span>
-            <h1>Chọn cách vận hành shop</h1>
-            <p>Quản lý bán hàng hoặc thuê trợ lý chatbot. Chọn gói phù hợp với shop.</p>
+            <h1>Chọn gói quản lý shop</h1>
+            <p>Quản lý bán hàng, chăm sóc khách và kết nối các kênh trong một không gian.</p>
           </div>
           <button v-if="!authUser" type="button" class="service-back-link" @click="closePublicServicePage">{{ t('← Về trang chủ') }}</button>
         </div>
 
-        <div class="service-mode-switch" :class="{ 'is-chatbot': serviceMode === 'chatbot' }" role="tablist" :aria-label="t('Chọn dịch vụ')">
-          <button type="button" class="service-mode-option" :class="{ selected: serviceMode === 'package' }" role="tab" :aria-selected="serviceMode === 'package'" @click="selectServiceMode('package')">{{ t('Gói quản lý shop') }}</button>
-          <button type="button" class="service-mode-option" :class="{ selected: serviceMode === 'chatbot' }" role="tab" :aria-selected="serviceMode === 'chatbot'" @click="selectServiceMode('chatbot')">{{ t('Thuê riêng trợ lý chatbot') }}</button>
+        <div class="service-plan-focus" aria-label="Danh mục đang xem: Gói quản lý shop">
+          <span class="service-plan-focus-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 4.5 4h15l1.5 6.5"/><path d="M4 10v10h16V10M9 20v-6h6v6"/><path d="M3 10a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/></svg>
+          </span>
+          <span class="service-plan-focus-copy">
+            <strong>Gói quản lý shop</strong>
+            <small>Quản lý bán hàng, khách hàng và các kênh trong cùng một không gian.</small>
+          </span>
+          <span class="service-plan-focus-badge"><span aria-hidden="true"></span>Đang xem</span>
         </div>
-        <button v-if="authUser && ['awaiting_payment', 'pending'].includes((serviceMode === 'chatbot' ? serviceAccountSummary?.chatbot_request : serviceAccountSummary?.package_request)?.status)" type="button" class="service-payment-entry" @click="resumeCheckoutRequest">
+
+        <button v-if="authUser && ['awaiting_payment', 'pending'].includes(serviceAccountSummary?.package_request?.status)" type="button" class="service-payment-entry" @click="resumeCheckoutRequest">
           <span class="service-payment-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M3 10h18M7 15h4" stroke-linecap="round" /></svg></span>
           <span class="service-payment-entry-copy"><strong>Thanh toán & yêu cầu của bạn</strong><span>Xem yêu cầu gần nhất & trạng thái thanh toán</span></span>
           <span class="service-payment-entry-action">Mở thanh toán <span aria-hidden="true">→</span></span>
         </button>
         <p v-if="servicePurchaseNotice" class="settings-notice service-purchase-notice" role="status">{{ servicePurchaseNotice }}</p>
-        <ServicePricing :plans="activeServicePlans" :mode="serviceMode" :selected="serviceRequestForm.plan_code" :current-plan="currentServicePlanCode" :authenticated="!!authUser" @select="selectServicePlan" @signup="closePublicServicePage(); openSignup(true)" @login="closePublicServicePage(); openLogin()" />
+        <ServicePricing :plans="activeServicePlans" mode="package" :selected="serviceRequestForm.plan_code" :current-plan="currentServicePlanCode" :authenticated="!!authUser" @select="selectServicePlan" @signup="closePublicServicePage(); openSignup(true)" @login="closePublicServicePage(); openLogin()" />
 
         <div v-if="!authUser" class="service-page-grid guest-pricing">
           <article class="service-benefits-card">
             <span class="service-page-kicker">SHOP NHẬN ĐƯỢC GÌ</span>
-            <h2>{{ t(serviceMode === 'chatbot' ? 'Trợ lý theo cách shop phục vụ' : 'Từ đăng ký đến vận hành') }}</h2>
+            <h2>Từ đăng ký đến vận hành</h2>
             <ol class="service-steps">
               <li><span>01</span><div><strong>Chọn nhu cầu</strong><small>Gói quản lý, kênh và mức hỗ trợ.</small></div></li>
-              <li><span>02</span><div><strong>Thiết lập</strong><small>{{ t(serviceMode === 'chatbot' ? 'Chuẩn bị nội dung và kết nối kênh.' : 'Cấp gói, cấu hình shop và nhân viên.') }}</small></div></li>
-              <li><span>03</span><div><strong>Theo dõi</strong><small>{{ t(serviceMode === 'chatbot' ? 'Kiểm tra câu trả lời và nhận hỗ trợ.' : 'Xử lý hội thoại, đơn bán và công việc.') }}</small></div></li>
+              <li><span>02</span><div><strong>Thiết lập</strong><small>Cấp gói, cấu hình shop và nhân viên.</small></div></li>
+              <li><span>03</span><div><strong>Theo dõi</strong><small>Xử lý hội thoại, đơn bán và công việc.</small></div></li>
             </ol>
             <div class="service-trust-note">Dữ liệu, mã kết nối và lịch sử hội thoại luôn tách riêng theo từng shop.</div>
           </article>
@@ -18488,6 +18944,19 @@ body.crm-dark .customer-import-card input:focus-visible { outline-color: #8bd8d7
 .permission-list li > small { font-size: 13px; }
 
 .service-page-layout { padding-top: clamp(24px, 3vw, 40px); }
+.service-plan-focus { display:flex; align-items:center; gap:14px; width:min(100%, 560px); box-sizing:border-box; margin:0 auto 30px; padding:14px 18px; border:1px solid #b8ddda; border-radius:16px; background:linear-gradient(115deg,#eef8f6,#f8fbfb); color:#183d42; box-shadow:0 5px 18px #087d790d; }
+.service-plan-focus-icon { display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; border:1px solid #c7e5e2; border-radius:13px; background:#fff; color:#087d79; }
+.service-plan-focus-icon svg { width:24px; height:24px; }
+.service-plan-focus-copy { display:grid; gap:3px; min-width:0; }
+.service-plan-focus-copy strong { font-size:16px; line-height:1.35; }
+.service-plan-focus-copy small { color:#526d71; font-size:13px; line-height:1.45; }
+.service-plan-focus-badge { display:inline-flex; align-items:center; gap:7px; flex-shrink:0; margin-left:auto; padding:7px 10px; border:1px solid #c5e3df; border-radius:999px; background:#fff; color:#087d79; font-size:12px; font-weight:750; white-space:nowrap; }
+.service-plan-focus-badge > span { width:7px; height:7px; border-radius:50%; background:#14998e; box-shadow:0 0 0 3px #14998e1c; }
+.crm-dark .service-plan-focus { border-color:#3d6664; background:linear-gradient(115deg,#203b3b,#202b2e); color:#edf5f4; box-shadow:0 5px 18px #00000012; }
+.crm-dark .service-plan-focus-icon { border-color:#315654; background:#193031; color:#85e2db; }
+.crm-dark .service-plan-focus-copy small { color:#b3c6c5; }
+.crm-dark .service-plan-focus-badge { border-color:#3d6664; background:#193031; color:#9be5df; }
+@media(max-width:640px) { .service-plan-focus { margin-bottom:22px; padding:12px; gap:11px; }.service-plan-focus-icon { flex-basis:40px; width:40px; height:40px; }.service-plan-focus-copy strong { font-size:15px; }.service-plan-focus-copy small { font-size:12px; }.service-plan-focus-badge { padding:6px 8px; font-size:11px; } }
 .service-payment-entry { display:flex; align-items:center; gap:16px; width:100%; box-sizing:border-box; margin:0 0 28px; padding:20px 24px; border:1px solid #a6d6d2; border-radius:18px; background:linear-gradient(115deg,#eaf7f4,#f6fbfa); color:#173b42; text-align:left; font:inherit; cursor:pointer; box-shadow:0 5px 18px #087d7910; transition:box-shadow .2s,border-color .2s; }
 .service-payment-entry:hover { border-color:#087d79; box-shadow:0 8px 24px #087d7920; }
 .service-payment-entry:focus-visible { outline:3px solid #087d79; outline-offset:4px; }
@@ -19194,6 +19663,49 @@ body.crm-dark .channel-modal .settings-card-header {
   .customer-ai-actions-heading { align-items: stretch; flex-direction: column; }
   .customer-ai-run { width: 100%; }
   .customer-ai-action-list { grid-template-columns: 1fr; }
+}
+
+.products-layout > .product-delete-confirmation {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 760px);
+  max-width: 760px;
+  box-sizing: border-box;
+  margin: 18px auto 24px;
+  padding: 22px;
+  border: 1px solid color-mix(in srgb, #c74444 38%, var(--owly-border));
+  border-left: 4px solid #c74444;
+  border-radius: 16px;
+  background: var(--owly-surface);
+  color: var(--owly-ink);
+  box-shadow: 0 12px 30px rgba(30, 38, 42, .10);
+}
+.product-delete-heading { display: flex; align-items: flex-start; gap: 14px; }
+.product-delete-icon { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 12px; background: color-mix(in srgb, #c74444 12%, var(--owly-surface)); color: #c74444; }
+.product-delete-icon svg { width: 22px; height: 22px; }
+.product-delete-heading h3 { margin: 0 0 5px; color: var(--owly-ink); font-size: 18px; line-height: 1.35; }
+.product-delete-heading p { margin: 0; color: var(--owly-muted); font-size: 14px; line-height: 1.55; }
+.product-delete-input-label { display: grid; gap: 8px; color: var(--owly-ink); font-size: 13px; font-weight: 650; }
+.product-delete-input-label strong { color: #b83d3d; letter-spacing: .035em; }
+.product-delete-input-label input { width: 100%; min-height: 46px; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--owly-border); border-radius: 10px; outline: none; background: var(--owly-surface); color: var(--owly-ink); font: inherit; font-weight: 500; transition: border-color .16s, box-shadow .16s; }
+.product-delete-input-label input::placeholder { color: var(--owly-muted); opacity: .75; }
+.product-delete-input-label input:focus-visible { border-color: #c74444; box-shadow: 0 0 0 3px rgba(199, 68, 68, .15); }
+.product-delete-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; border-top: 1px solid var(--owly-border); }
+.product-delete-actions > button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 0 16px; border-radius: 10px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: background-color .16s, border-color .16s, transform .16s; }
+.product-delete-submit { border: 1px solid #b93636; background: #b93636; color: #fff; }
+.product-delete-submit:hover:not(:disabled) { border-color: #982d2d; background: #982d2d; transform: translateY(-1px); }
+.product-delete-submit:disabled { opacity: .48; cursor: not-allowed; }
+.product-delete-submit svg { width: 17px; height: 17px; }
+.product-delete-actions .secondary-btn { border: 1px solid var(--owly-border); background: transparent; color: var(--owly-ink); }
+.product-delete-actions .secondary-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--owly-surface) 88%, #168984 12%); }
+.product-delete-actions .secondary-btn:disabled { opacity: .6; cursor: not-allowed; }
+@media (max-width: 560px) {
+  .products-layout > .product-delete-confirmation { gap: 15px; margin: 12px auto 18px; padding: 16px; }
+  .product-delete-heading { gap: 11px; }
+  .product-delete-heading h3 { font-size: 16px; }
+  .product-delete-heading p { font-size: 13px; }
+  .product-delete-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .product-delete-actions > button { padding-inline: 10px; font-size: 12px; }
 }
 
 </style>

@@ -117,8 +117,12 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         # the same quantity to the quote a second time.
         reply_metadata = payload.get("collection_metadata")
         reply_text = payload.get("collection_reply")
+        result = None
         if reply_text is None:
-            result = None
+            from app.services.chatbot_agent import deterministic_transaction_safety_reply
+            safety_reply = deterministic_transaction_safety_reply(query)
+            if safety_reply:
+                result = CollectionFlowResult(session_id=0,status="safety",current_field=None,prompt=safety_reply)
             if settings.CHATBOT_GRAPH_ENABLED:
                 from app.services.auto_reply_service import get_auto_reply_enabled
                 if not get_auto_reply_enabled(db, business_id):
@@ -139,7 +143,7 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
                 from app.services.quota_service import QuotaExceededError
                 try:
                     result = graph_reply(db,business_id=business_id,conversation=conversation,
-                        query=query,job_key=f"{conversation_id}:{message_id}")
+                        query=query,job_key=f"{conversation_id}:{message_id}",platform_db=platform_db)
                 except QuotaExceededError:
                     raise
                 except Exception as error:
@@ -179,6 +183,7 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
                 return False
             processing_ms = round((perf_counter() - turn_started) * 1000, 1)
             delivery_started = perf_counter()
+            delivery_state = "sent"
             try:
                 send_text_reply(
                     db=db, conversation_id=conversation_id, channel=conversation.channel,
@@ -189,10 +194,12 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
             except HTTPException as exc:
                 if exc.status_code != 409 or not isinstance(exc.detail, dict) or exc.detail.get("code") != "delivery_unknown":
                     raise
+                delivery_state = "unknown"
                 logger.warning("Provider delivery unconfirmed for conversation %s; check channel before resending", conversation_id)
             logger.info(
-                "Chatbot turn channel=%s conversation=%s total_ms=%s queue_wait_ms=%s processing_ms=%s delivery_ms=%s",
-                conversation.channel, conversation_id,
+                "Chatbot turn business_id=%s conversation_id=%s message_id=%s correlation_id=%s channel=%s intent=%s delivery_state=%s total_ms=%s queue_wait_ms=%s processing_ms=%s delivery_ms=%s",
+                business_id, conversation_id, message_id, f"chatbot-turn:{business_id}:{conversation_id}:{message_id}",
+                conversation.channel, getattr(result,"status","unknown"), delivery_state,
                 round((datetime.now(timezone.utc).replace(tzinfo=None) - source_time).total_seconds() * 1000, 1),
                 round(queue_wait_ms,1),
                 processing_ms, round((perf_counter() - delivery_started) * 1000, 1),

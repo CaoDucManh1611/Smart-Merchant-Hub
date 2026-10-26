@@ -53,7 +53,7 @@ AGENT_TOOLS = {
     "tao_don_nhap": "Tạo đề xuất đơn nháp sau khi khách đã xác nhận sản phẩm và số lượng.",
     "tao_ticket": "Tạo ticket hỗ trợ và đặt mức ưu tiên.",
     "gan_tag": "Gắn tag cho hồ sơ khách hàng.",
-    "chuyen_nhan_vien": "Yêu cầu nhân viên hỗ trợ hội thoại; chỉ người dùng mới có thể tắt bot.",
+    "chuyen_nhan_vien": "Tạo hoặc dùng lại ticket hỗ trợ cho hội thoại; không tự tắt bot.",
     "dat_lich_cham_soc": "Tạo yêu cầu chăm sóc lại để scheduler xử lý.",
     "dung_mau_tra_loi": "Lấy nội dung mẫu trả lời đã được shop duyệt.",
     "xem_don_cua_khach": "Liệt kê đơn hàng của khách trong hội thoại hiện tại.",
@@ -174,6 +174,28 @@ def deterministic_escalation_reply(text: str, *, handoff_completed: bool = True)
     folded_text = _fold_escalation_text(text)
     if any(_fold_escalation_text(term) in folded_text for term in ESCALATION_TERMS):
         return escalation_reply(text, handoff_completed=handoff_completed)
+    return None
+
+
+def deterministic_transaction_safety_reply(text: str) -> str | None:
+    """Handle OTP-sharing and order-confirmation bypass requests without an LLM."""
+    from app.rag.prompt_builder import detect_reply_language
+
+    folded = _fold_escalation_text(text)
+    english = detect_reply_language(text) == "en"
+    if re.search(r"\botp\b|cvv|ma xac thuc|verification code", folded):
+        if any(term in folded for term in ("ngan hang", "thanh toan", "bank", "payment", "shop", "gui", "send", "share", "lay ma")):
+            return ("For your security, never share an OTP, password, or CVV with the shop or anyone else. The shop does not need these codes to verify payment. Check your bank/app status or ask staff to reconcile the receipt; do not send a verification code."
+                    if english else "Vì an toàn, bạn đừng gửi OTP, mật khẩu hoặc CVV cho shop hay bất kỳ ai. Shop không cần các mã này để xác minh thanh toán; hãy kiểm tra trạng thái trong ứng dụng/ngân hàng hoặc nhờ nhân viên đối soát bằng biên lai, không gửi mã xác thực.")
+    asks_to_bypass = any(term in folded for term in (
+        "bo qua", "khong can xac nhan", "khong xac nhan", "without confirmation", "skip confirmation",
+    ))
+    asks_to_order = any(term in folded for term in (
+        "tao don", "dat don", "dat hang", "create order", "place order", "checkout",
+    ))
+    if asks_to_bypass and asks_to_order:
+        return ("I can prepare the order request, but you must review the product and quantity summary and explicitly confirm before it is submitted. I have not created an order or recorded a payment."
+                if english else "Mình có thể giúp soạn yêu cầu đặt hàng, nhưng cần gửi thông tin sản phẩm và số lượng để bạn kiểm tra, rồi chờ bạn xác nhận rõ ràng trước khi gửi yêu cầu. Mình chưa tạo đơn hay ghi nhận thanh toán.")
     return None
 
 
@@ -394,9 +416,10 @@ def route_escalation(
     text: str,
     *,
     platform_db: Session | None = None,
+    force: bool = False,
 ) -> Ticket | None:
     folded_text = _fold_escalation_text(text)
-    if deterministic_escalation_reply(text) is None:
+    if not force and deterministic_escalation_reply(text) is None:
         return None
     conversation = _conversation(db, business_id, conversation_id)
     existing = db.query(Ticket).filter(
@@ -563,15 +586,20 @@ def execute_chatbot_tool(
         return {"tag": tag.name, "customer_id": conversation.customer_id}
     if tool_name == "chuyen_nhan_vien":
         conversation = _conversation(db, business_id, conversation_id)
-        was_auto = conversation.bot_mode != "human"
-        assignee = _find_assignee(db, business_id, platform_db=platform_db)
-        if assignee:
-            conversation.assigned_user_id = assignee.id
-            db.add(ConversationAssignment(conversation_id=conversation.id, user_id=assignee.id, assignment_type="bot_tool"))
-        if was_auto:
-            _record_handoff(db, business_id, conversation_id, reason_code="bot_requested_staff", reason=args.get("reason") or "tool_call", source="chatbot_tool")
-        record_audit(db, business_id=business_id, action="chatbot_staff_requested", resource_type="conversation", resource_id=conversation_id, metadata={"reason": args.get("reason") or "tool_call"})
-        return {"bot_mode": conversation.bot_mode, "assigned_user_id": assignee.id if assignee else None}
+        ticket = route_escalation(
+            db, business_id, conversation_id,
+            str(args.get("reason") or "Khách cần nhân viên hỗ trợ"),
+            platform_db=platform_db, force=True,
+        )
+        if ticket is None:
+            return {"accepted": False, "bot_mode": conversation.bot_mode}
+        return {
+            "accepted": True,
+            "ticket_id": ticket.id,
+            "status": ticket.status,
+            "bot_mode": conversation.bot_mode,
+            "assigned_user_id": ticket.assigned_user_id,
+        }
     if tool_name == "tao_ticket":
         ticket = route_escalation(
             db,

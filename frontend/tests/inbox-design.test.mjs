@@ -35,8 +35,8 @@ test('expanded customer profile sections use readable form, empty and summary tr
 });
 
 test('the product uses one natural, readable typeface across CRM, marketing and signup', () => {
-  assert.match(globalCss, /family=Source\+Sans\+3/);
-  assert.match(globalCss, /--font-ui:\s*"Source Sans 3"/);
+  assert.match(globalCss, /--font-ui:\s*system-ui,\s*"Segoe UI",\s*"Noto Sans",\s*Arial,\s*sans-serif/);
+  assert.match(globalCss, /font-size:\s*17px/);
   assert.doesNotMatch(globalCss, /family=Inter/);
   assert.match(globalCss, /button,[\s\S]*?font-family:\s*var\(--font-ui\)/);
   assert.match(marketingSource, /font-family:var\(--font-ui\)/);

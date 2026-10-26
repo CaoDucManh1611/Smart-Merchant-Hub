@@ -1237,8 +1237,8 @@ def test_conversation_inbox_orders_preview_fields_by_each_message_timestamp():
 
     assert result["items"] == []
     inbox_sql = statements[0]
-    assert inbox_sql.count("COALESCE(m.received_at, cv.updated_at) DESC") == 5
-    assert "COALESCE(last_message_at, cv.updated_at) DESC NULLS LAST" in inbox_sql
+    assert inbox_sql.count("COALESCE(m.received_at, m.sent_at) DESC NULLS LAST") == 5
+    assert "last_activity_at DESC NULLS LAST" in inbox_sql
 
 
 def test_shopee_outbound_refuses_when_exact_thread_is_not_found(monkeypatch):

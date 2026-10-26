@@ -19,7 +19,7 @@ from app.services.notification_service import create_notification
 from app.services.realtime import manager
 from sqlalchemy.orm import Session
 
-from app.db.message_repository import save_message
+from app.db.message_repository import normalize_timestamp_utc, save_message
 from app.services.meta_config_service import get_meta_config
 from app.services.media_resolver import build_media_url
 from app.services.customer_avatar import build_customer_avatar_url
@@ -1599,6 +1599,37 @@ def process_and_save_message(
     # correctly returns the existing row; stop here so that a duplicate never
     # emits a second workflow, profile extraction or bot reply.
     if saved_message is not None and not saved_message.get("_created", True):
+        source_time = normalize_timestamp_utc(message.get("received_at"))
+        if source_time is not None and source_time != saved_message.get("received_at"):
+            # A later history sync can reveal the provider's original time for
+            # a message first stored from a timestamp-less live event. Repair
+            # that row and recalculate the conversation's exact latest time.
+            db.execute(
+                text("""
+                    UPDATE messages
+                    SET received_at = :received_at
+                    WHERE id = :message_id AND conversation_id = :conversation_id
+                """),
+                {
+                    "message_id": int(saved_message["message_id"]),
+                    "conversation_id": int(conversation_id),
+                    "received_at": source_time,
+                },
+            )
+            db.execute(
+                text("""
+                    UPDATE conversations
+                    SET last_message_at = (
+                        SELECT MAX(COALESCE(received_at, sent_at))
+                        FROM messages
+                        WHERE conversation_id = :conversation_id
+                    )
+                    WHERE id = :conversation_id
+                """),
+                {"conversation_id": int(conversation_id)},
+            )
+            db.commit()
+            saved_message["received_at"] = source_time
         logger.info("Inbound provider delivery already persisted")
         return saved_message
 
@@ -1640,13 +1671,9 @@ def process_and_save_message(
                 },
             )
             db.commit()
-        else:
-            # Keep unknown source time NULL, but surface a newly imported thread in the inbox.
-            db.execute(
-                text("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = :conversation_id"),
-                {"conversation_id": conversation_id},
-            )
-            db.commit()
+        # Unknown-time history imports must not bump updated_at: connectors can
+        # discover old messages during later syncs, which would make an old
+        # conversation jump to the top of the inbox as if it were new.
         return saved_message
 
     # Every outbound workflow spawned by this inbound event receives a
@@ -1687,11 +1714,17 @@ def process_and_save_message(
             """
             UPDATE conversations
             SET updated_at = CURRENT_TIMESTAMP,
-                last_message_at = CURRENT_TIMESTAMP
+                last_message_at = CASE
+                    WHEN last_message_at IS NULL OR last_message_at < :occurred_at THEN :occurred_at
+                    ELSE last_message_at
+                END
             WHERE id = :conversation_id
             """
         ),
-        {"conversation_id": conversation_id},
+        {
+            "conversation_id": conversation_id,
+            "occurred_at": saved_message.get("received_at") or datetime.now(timezone.utc).replace(tzinfo=None),
+        },
     )
     db.execute(
         text(

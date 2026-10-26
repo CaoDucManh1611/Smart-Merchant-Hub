@@ -30,6 +30,73 @@ _ANSWER_CONCEPTS = (*CONCEPTS,
     ("size", "sizes", "kich thuoc", "size range"),
     ("color", "colour", "colors", "colours", "mau sac"),
 )
+_COMPATIBILITY_CUES = (
+    "compatible", "compatibility", "fit", "fits", "work with", "works with",
+    "tuong thich", "phu hop", "dung duoc", "lap duoc", "danh cho",
+)
+_COMPATIBILITY_UNCERTAINTY = (
+    "chua xac nhan", "chua the xac nhan", "khong the xac nhan",
+    "chua du can cu", "chua co du lieu", "khong co du lieu",
+    "can kiem tra", "can nhan vien", "khong cam ket",
+    "cannot confirm", "not confirmed", "not verified", "no evidence",
+)
+_VEHICLE_START = re.compile(r"\b(?:xe|dong xe|mau xe|vehicle|motorcycle)\s+([a-z0-9]+(?:\s+[a-z0-9]+){0,4})")
+_VEHICLE_STOP_WORDS = {"doi", "nam", "phien", "ban", "the", "he", "mau", "loai", "cua", "toi", "minh", "khong", "co", "nha"}
+
+
+def _vehicle_reference(value: str) -> str | None:
+    folded = fold_topic_text(value)
+    match = _VEHICLE_START.search(folded)
+    if not match:
+        return None
+    tokens = []
+    for token in match.group(1).split():
+        if token in _VEHICLE_STOP_WORDS:
+            break
+        tokens.append(token)
+        if len(tokens) == 4:
+            break
+    return " ".join(tokens) if tokens else None
+
+
+def _compatibility_claim_is_supported(
+    answer: str,
+    cited_sources: list[str],
+    query: str | None,
+) -> bool:
+    """Require an explicit model-to-product compatibility statement in one source row."""
+    for line in (line.strip() for line in _CITATION.sub("", answer or "").splitlines()):
+        folded_line = fold_topic_text(line)
+        if not any(contains(folded_line, cue) for cue in _COMPATIBILITY_CUES):
+            continue
+        if any(contains(folded_line, phrase) for phrase in _COMPATIBILITY_UNCERTAINTY):
+            continue
+
+        vehicle = _vehicle_reference(query or "") or _vehicle_reference(line)
+        if not vehicle:
+            return False
+        product_ids = set(identifiers(line)) or set(identifiers(query or ""))
+        supported = False
+        for source in cited_sources:
+            source_lines = source.splitlines()
+            for index, source_line in enumerate(source_lines):
+                folded_source_line = fold_topic_text(source_line)
+                if not contains(folded_source_line, vehicle):
+                    continue
+                has_compatibility_column = index > 0 and any(
+                    contains(fold_topic_text(source_lines[index - 1]), cue) for cue in _COMPATIBILITY_CUES
+                )
+                if not (has_compatibility_column or any(contains(folded_source_line, cue) for cue in _COMPATIBILITY_CUES)):
+                    continue
+                if product_ids and not product_ids.issubset(set(identifiers(source_line))):
+                    continue
+                supported = True
+                break
+            if supported:
+                break
+        if not supported:
+            return False
+    return True
 
 
 def _money_values(value: str) -> set[tuple[str, str]]:
@@ -125,10 +192,21 @@ def _answer_concepts(value: str) -> set[str]:
     folded = re.sub(r"\bavailable (?:data|information|details|evidence)\b", "", folded)
     # Order value is not a product-price claim (e.g. a shipping threshold).
     folded = re.sub(r"\b(?:tong )?gia tri(?: don hang| don)?\b", "", folded)
-    return {
-        aliases[0] for aliases in _ANSWER_CONCEPTS
-        if any(contains(folded, alias) for alias in aliases)
-    }
+    concepts = set()
+    for aliases in _ANSWER_CONCEPTS:
+        concept_text = re.sub(r"\btuong thich\b", "", folded) if aliases[0] == "preference" else folded
+        if any(contains(concept_text, alias) for alias in aliases):
+            concepts.add(aliases[0])
+    compatibility_lines = [
+        fold_topic_text(line) for line in _CITATION.sub("", value or "").splitlines()
+        if any(contains(fold_topic_text(line), cue) for cue in _COMPATIBILITY_CUES)
+    ]
+    if compatibility_lines and all(
+        any(contains(line, phrase) for phrase in _COMPATIBILITY_UNCERTAINTY)
+        for line in compatibility_lines
+    ):
+        concepts.discard("compatibility")
+    return concepts
 
 
 def _product_line_is_supported(
@@ -136,9 +214,10 @@ def _product_line_is_supported(
     identifiers_in_answer: list[str],
     cited_sources: list[str],
     authoritative_sources: list[str] | None,
+    query_numbers: set[str] | None = None,
 ) -> bool:
     """Keep a product's cited code and numeric facts together in its source row."""
-    numeric_facts = _number_values(_CITATION.sub("", answer))
+    numeric_facts = _number_values(_CITATION.sub("", answer)) - (query_numbers or set())
     if len(identifiers_in_answer) != 1 or not numeric_facts:
         return True
 
@@ -176,6 +255,8 @@ def has_valid_citations(
     if not ids or not all(1 <= value <= len(source_texts) for value in ids):
         return False
     cited_sources = [source_texts[index - 1] for index in ids]
+    if not _compatibility_claim_is_supported(answer, cited_sources, query):
+        return False
     # A citation marker alone does not justify invented prices, product codes,
     # or links. Check each against the text explicitly cited by the answer.
     cited_money = set().union(*(_money_values(source) for source in cited_sources))
@@ -195,6 +276,33 @@ def has_valid_citations(
         current_money = set().union(*(_money_values(source) for source in authoritative_sources))
         if not _money_values(answer).issubset(current_money):
             return False
+        requested_ids = set(identifiers(query or ""))
+        if requested_ids:
+            # Catalog evidence may contain many product rows in one source,
+            # while a live product lookup is a multi-line block for one SKU.
+            # Narrow multi-product sources to matching rows; retain the full
+            # block only when it identifies a single product.
+            matching_sources = []
+            for source in authoritative_sources:
+                source_ids = set(identifiers(source))
+                if not requested_ids.intersection(source_ids):
+                    continue
+                if len(source_ids) > 1:
+                    matching_sources.extend(
+                        line for line in source.splitlines()
+                        if requested_ids.intersection(identifiers(line))
+                    )
+                else:
+                    matching_sources.append(source)
+            answer_money = _money_values(answer)
+            answer_numbers = _number_values(_CITATION.sub("", answer)) - _number_values(query or "")
+            if not matching_sources and (answer_money or answer_numbers):
+                return False
+            if matching_sources:
+                product_money = set().union(*(_money_values(source) for source in matching_sources))
+                product_numbers = set().union(*(_number_values(source) for source in matching_sources))
+                if not answer_money.issubset(product_money) or not answer_numbers.issubset(product_numbers):
+                    return False
     cited_identifiers = set().union(*(set(identifiers(source)) for source in cited_sources))
     if not set(identifiers(answer)).issubset(cited_identifiers):
         return False
@@ -216,7 +324,7 @@ def has_valid_citations(
             if not (_number_values(line) - query_numbers).issubset(set().union(*(_number_values(source) for source in line_sources))):
                 return False
         line_identifiers = identifiers(line)
-        if not _product_line_is_supported(line, line_identifiers, line_sources, authoritative_sources):
+        if not _product_line_is_supported(line, line_identifiers, line_sources, authoritative_sources, query_numbers):
             return False
     cited_urls = {
         unicodedata.normalize("NFKC", url).rstrip(".,;:!? ").casefold()

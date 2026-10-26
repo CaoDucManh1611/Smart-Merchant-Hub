@@ -9,7 +9,10 @@ def test_health_check():
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["loaded_revision"]
+    assert body["source_revision"]
 
 
 def test_health_details_reports_safe_component_status():

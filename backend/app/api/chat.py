@@ -34,7 +34,7 @@ from app.rag.llm_caller import call_llm, stream_llm
 from app.rag.run_logger import RagRunLog
 from app.schemas.rag import ChatRequest, ChatResponse, SourceChunk
 from app.services.quota_service import QuotaExceededError, reserve_ai_budget
-from app.services.chatbot_agent import deterministic_escalation_reply
+from app.services.chatbot_agent import deterministic_escalation_reply, deterministic_transaction_safety_reply
 from app.services.crm_knowledge import answer_from_crm
 from app.services.auto_reply_service import _contextual_retrieval_query, _live_product_context_chunk
 from app.services.recommendation_interaction_service import (
@@ -110,6 +110,10 @@ async def chat(
         top_k=request.top_k,
     ) as run:
       try:
+        safety_reply = deterministic_transaction_safety_reply(request.query)
+        if safety_reply:
+            run.finish("safety_answer", phase="complete", answer_chars=len(safety_reply), handoff_required=False)
+            return ChatResponse(answer=safety_reply, sources=[], chunks_found=0, action="security_guidance")
         _record_customer_question(
             db,
             business_id=tenant.business_id,
@@ -312,6 +316,13 @@ async def chat_stream(
             top_k=request.top_k,
         ) as run:
           try:
+            safety_reply = deterministic_transaction_safety_reply(request.query)
+            if safety_reply:
+                run.finish("safety_answer", phase="complete", answer_chars=len(safety_reply), handoff_required=False)
+                yield f"data: {json.dumps({'type': 'sources', 'sources': [], 'chunks_found': 0}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'chunk', 'content': safety_reply}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'answer_status': 'answered', 'handoff_required': False, 'action': 'security_guidance'})}\n\n"
+                return
             _record_customer_question(
                 db,
                 business_id=tenant.business_id,

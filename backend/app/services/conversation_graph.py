@@ -29,6 +29,7 @@ class TurnState(TypedDict, total=False):
     reply_style: str
     reply_metadata: dict
     source_document_ids: list
+    authoritative_source_ids: list
 
 
 def parse_plan(raw):
@@ -96,10 +97,11 @@ def plan_turn(state, model=None):
     return {"plan":plan}
 
 
-def graph_reply(db, *, business_id, conversation, query, job_key):
+def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=None):
     from app.models.message import Message
     from app.models.customer_collection import CustomerCollectionSession, CustomerContact
     from app.models.sales import Product, Order
+    from app.models.ticket import Ticket
     from app.services.quota_service import record_quota_usage
     from app.services.customer_collection_flow import CollectionFlowResult
     from app.rag.topics import fold_topic_text
@@ -108,14 +110,51 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
     from app.rag.run_logger import RagRunLog
     from app.rag.prompt_builder import detect_reply_language
     from app.services.business_request import current_offerings,advance_business_request
+    from app.services.chatbot_agent import deterministic_transaction_safety_reply
+    from app.services.chatbot_router import classify_intent
 
     reply_language=detect_reply_language(query.split("VISIBLE_IMAGE_OBSERVATION",1)[0])
 
     folded_query = fold_topic_text(query)
+    intent = classify_intent(query)
+    catalog_fact_cues = (
+        "gia", "price", "cost", "bao nhieu", "ton kho", "con hang", "het hang", "stock",
+        "available", "kich thuoc", "size", "mau sac", "chat lieu", "sku", "model",
+    )
+    non_product_price_cues = (
+        "kwh", "tien dien", "tien nuoc", "dien nuoc", "phi giao hang", "phi van chuyen",
+        "shipping fee", "delivery fee", "tien phong", "hoa don dien",
+    )
+    crm_catalog_intent = (
+        intent == "lookup_product"
+        and any(cue in folded_query for cue in catalog_fact_cues)
+        and not any(cue in folded_query for cue in non_product_price_cues)
+    )
     if (re.search(r"\b(?:cua khach|khach khac)\b", folded_query)
             and any(term in folded_query for term in ("so dien thoai", "email", "dia chi", "don hang", "don cua", "thong tin don", "ho so", "lich su", "thong tin"))):
         return CollectionFlowResult(session_id=0,status="privacy_other_customer",current_field=None,
             prompt="Mình không thể cung cấp thông tin riêng tư hoặc đơn hàng của khách khác. Nếu bạn cần hỗ trợ đơn của mình, hãy cho mình biết mã đơn nhé.")
+
+    safety_reply = deterministic_transaction_safety_reply(query)
+    if safety_reply:
+        return CollectionFlowResult(session_id=0,status="safety",current_field=None,prompt=safety_reply)
+
+    folded_ticket_query = fold_topic_text(query)
+    if (any(term in folded_ticket_query for term in ("ticket", "phieu ho tro", "ma yeu cau"))
+            and any(term in folded_ticket_query for term in ("trang thai", "tinh trang", "kiem tra", "status", "ma la gi"))):
+        requested_ticket = re.search(r"\b(?:ticket|phieu ho tro|ma yeu cau)(?:\s+(?:so|#))?\s*(\d+)\b", folded_ticket_query)
+        ticket_query = db.query(Ticket).filter(
+            Ticket.business_id == business_id,
+            Ticket.conversation_id == conversation.id,
+        )
+        if requested_ticket:
+            ticket_query = ticket_query.filter(Ticket.id == int(requested_ticket.group(1)))
+        ticket = ticket_query.order_by(Ticket.id.desc()).first()
+        if ticket is None:
+            return CollectionFlowResult(session_id=0,status="ticket_unverified",current_field=None,
+                prompt="Mình chưa tìm thấy ticket đã được xác nhận trong hội thoại này nên chưa thể cung cấp mã hoặc trạng thái. Bạn nhờ nhân viên kiểm tra giúp nhé.")
+        return CollectionFlowResult(session_id=0,status="ticket_verified",current_field=None,
+            prompt=f"Ticket {ticket.id} hiện có trạng thái {ticket.status}.")
 
     def model_plan(state):
         image_question = fold_topic_text(query.split("VISIBLE_IMAGE_OBSERVATION", 1)[0])
@@ -131,6 +170,12 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
             attempts += 1
             return call_llm(messages)
         planned=plan_turn(state, counted_model)
+        if crm_catalog_intent and planned["plan"]["mode"] in {"answer", "chat", "out_of_scope"}:
+            planned={"plan":{
+                **planned["plan"],
+                "mode":"answer",
+                "tools":list(dict.fromkeys(["catalog", *planned["plan"]["tools"]]))[:3],
+            }}
         if "VISIBLE_IMAGE_OBSERVATION" in query and planned["plan"]["mode"]=="workflow":
             planned={"plan":{"mode":"answer","tools":["catalog","knowledge"]}}
         return planned
@@ -145,6 +190,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
                 evidence.append("CUSTOMER_IMAGE_OBSERVATION (unverified; confirm important details): " + observation[:2000])
         recommendation={}
         source_document_ids=[]
+        authoritative_source_ids=[]
         for tool in state["plan"]["tools"]:
             if tool == "recommendations":
                 from app.services.conversation_context import recommendation_evidence, customer_memory
@@ -170,6 +216,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
                     rows.append(f"Mã tham chiếu: {offering['ref']}; Tên: {offering['name']}; SKU: {offering.get('sku','')}; Giá hiện hành: {_format_vnd(offering['price'])} đồng; "
                         f"Đơn vị giá: {offering['billing_unit'] or 'chưa xác định'}; {availability}; Mô tả: {offering['description']}")
                 evidence.append("CURRENT_CRM_CATALOG — Tối đa 100 sản phẩm và 100 dịch vụ hiện hành; không coi danh sách bị giới hạn là toàn bộ danh mục:\n" + "\n".join(rows))
+                authoritative_source_ids.append(len(evidence))
             elif tool == "customer":
                 row=db.query(CustomerCollectionSession).filter(CustomerCollectionSession.business_id==business_id,
                     CustomerCollectionSession.customer_id==conversation.customer_id,
@@ -220,7 +267,8 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
         choice=approved_reply_style(db,business_id,conversation,query,job_key)
         return {"evidence":evidence,"recommendation":recommendation,
             "reply_style":(response_style_instruction(choice.response_style) or "") if choice else "",
-            "reply_metadata":choice.message_metadata() if choice else {},"source_document_ids":list(set(source_document_ids))}
+            "reply_metadata":choice.message_metadata() if choice else {},"source_document_ids":list(set(source_document_ids)),
+            "authoritative_source_ids":authoritative_source_ids}
 
     def compose(state):
         if state.get("payment_reply"): return {"answer":state["payment_reply"]}
@@ -254,7 +302,12 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
             return {"answer":"\n".join(lines)}
         evidence=state["evidence"]
         if not evidence:
-            return {"answer":"Mình chưa có thông tin được xác nhận cho phần này. Mình đã chuyển câu hỏi để nhân viên kiểm tra và phản hồi bạn.","needs_staff_decision":True}
+            missing_evidence_reply = (
+                "I don't have confirmed information for this yet. I notified the shop to review it; assignment to a specific staff member is not confirmed."
+                if reply_language == "en" else
+                "Mình chưa có thông tin được xác nhận cho phần này. Mình đã báo shop để nhân viên kiểm tra; việc phân công nhân viên chưa được xác nhận."
+            )
+            return {"answer":missing_evidence_reply,"needs_staff_decision":True}
         sources="\n\n".join(f"[Source {i+1}] {text}" for i,text in enumerate(evidence))
         record_quota_usage(db,business_id,"ai_calls",1,idempotency_key=f"graph-answer:{job_key}")
         answer=call_llm([{"role":"system","content":
@@ -307,13 +360,14 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
             if type(needs_staff) is not bool:
                 raise ValueError("invalid_staff_decision")
             if needs_staff and ids == []:
-                from app.rag.prompt_builder import detect_reply_language
-                return {"answer":("I don't have confirmed information for this yet. I've sent your question to shop staff to review and get back to you."
-                    if detect_reply_language(query)=="en" else
-                    "Mình chưa có thông tin được xác nhận cho phần này. Mình đã chuyển câu hỏi để nhân viên kiểm tra và phản hồi bạn."),"needs_staff_decision":True}
+                return {"answer":("I don't have confirmed information for this yet. I notified the shop to review it; assignment to a specific staff member is not confirmed."
+                    if reply_language=="en" else
+                    "Mình chưa có thông tin được xác nhận cho phần này. Mình đã báo shop để nhân viên kiểm tra; việc phân công nhân viên chưa được xác nhận."),"needs_staff_decision":True}
             if (not isinstance(parsed.get("answer"),str) or not isinstance(ids,list) or not ids
                     or any(type(i) is not int or not 1 <= i <= len(evidence) for i in ids)):
                 raise ValueError("invalid_answer_sources")
+            if crm_catalog_intent and not set(ids).intersection(state.get("authoritative_source_ids", [])):
+                raise ValueError("current_crm_catalog_citation_required")
             checked_evidence = list(evidence)
             if parsed.get("calculation") is None:
                 from app.rag.answer_guard import _money_values
@@ -336,7 +390,9 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
                 feedback=str(error) if str(error).startswith("unsupported_calculation_operands:") else ""
                 return compose({**state,"_validation_retry":True,"_validation_error":feedback})
             return {"answer":"Mình chưa xác minh được nguồn cho câu trả lời này. Bạn nhờ nhân viên kiểm tra giúp nhé."}
-        if not has_valid_citations(answer,checked_evidence,query=query):
+        authoritative_sources=[evidence[source_id-1] for source_id in state.get("authoritative_source_ids", [])
+            if 1 <= source_id <= len(evidence)]
+        if not has_valid_citations(answer,checked_evidence,authoritative_sources=authoritative_sources,query=query):
             if not state.get("_validation_retry"):
                 record_quota_usage(db,business_id,"ai_calls",1,idempotency_key=f"graph-answer-retry:{job_key}")
                 return compose({**state,"_validation_retry":True})
@@ -372,18 +428,25 @@ def graph_reply(db, *, business_id, conversation, query, job_key):
     graph.add_conditional_edges("plan",lambda s:"tools" if s["plan"]["mode"] in {"answer","chat"} else "workflow" if s["plan"]["mode"]=="workflow" else END,{"tools":"tools","workflow":"workflow",END:END})
     graph.add_edge("workflow","compose")
     graph.add_edge("tools","compose");graph.add_edge("compose",END)
-    with RagRunLog("conversation_graph",business_id=business_id,conversation_id=conversation.id) as run:
+    message_id_part = str(job_key).rsplit(":",1)[-1]
+    incoming_message_id = int(message_id_part) if message_id_part.isdigit() else None
+    with RagRunLog("conversation_graph",business_id=business_id,conversation_id=conversation.id,
+            incoming_message_id=incoming_message_id,correlation_id=f"chatbot-turn:{business_id}:{job_key}") as run:
         state=graph.compile().invoke({"query":query,"history":history,"pending":pending},config={"recursion_limit":5})
         from app.services.conversation_context import evidence_manifest
-        run.finish(state["plan"]["mode"],evidence_manifest=evidence_manifest(state.get("evidence",[])),source_document_ids=state.get("source_document_ids",[]),tools=state["plan"]["tools"],chunks_found=len(state.get("evidence",[])),needs_staff_decision=bool(state.get("needs_staff_decision")))
+        run.finish(state["plan"]["mode"],evidence_manifest=evidence_manifest(state.get("evidence",[])),source_document_ids=state.get("source_document_ids",[]),authoritative_source_ids=state.get("authoritative_source_ids",[]),tools=state["plan"]["tools"],tool_status="completed",chunks_found=len(state.get("evidence",[])),needs_staff_decision=bool(state.get("needs_staff_decision")))
     if state["plan"]["mode"] == "out_of_scope":
         return CollectionFlowResult(session_id=0,status="out_of_scope",current_field=None,
             prompt="Mình hỗ trợ tư vấn sản phẩm, dịch vụ và yêu cầu của bạn tại shop. Mình không cung cấp dữ liệu riêng tư của khách khác, xác nhận thông tin sai hoặc thực hiện việc ngoài phạm vi này. Bạn cần mình hỗ trợ gì về dịch vụ của shop nhé?")
     if state["plan"]["mode"] == "handoff":
         from app.services.chatbot_agent import execute_chatbot_tool
-        execute_chatbot_tool(db,business_id,conversation.id,"chuyen_nhan_vien",{"reason":query[:500]})
+        handoff = execute_chatbot_tool(db,business_id,conversation.id,"chuyen_nhan_vien",{"reason":query[:500]},platform_db=platform_db)
+        if not isinstance(handoff,dict) or handoff.get("accepted") is not True or not handoff.get("ticket_id") or handoff.get("status") not in {"open", "pending"}:
+            return CollectionFlowResult(session_id=0,status="graph_handoff_failed",current_field=None,
+                prompt="Mình chưa thể ghi nhận yêu cầu hỗ trợ lúc này. Chưa có ticket hoặc phân công nhân viên được xác nhận; bạn thử lại sau nhé.")
+        assigned = " Nhân viên đã được phân công." if handoff.get("assigned_user_id") else " Chưa có nhân viên cụ thể được phân công."
         return CollectionFlowResult(session_id=0,status="graph_handoff",current_field=None,
-            prompt="Mình đã chuyển yêu cầu để nhân viên hỗ trợ bạn. Mình chưa thực hiện thêm thay đổi đặt hàng hoặc thanh toán.")
+            prompt=f"Mình đã ghi nhận yêu cầu hỗ trợ với ticket {handoff['ticket_id']}; trạng thái hiện tại là {handoff.get('status', 'open')}.{assigned} Mình chưa thực hiện thêm thay đổi đặt hàng hoặc thanh toán.")
     if state["plan"]["mode"] not in {"answer","chat","workflow"}:
         return None
     if state.get("needs_staff_decision"):

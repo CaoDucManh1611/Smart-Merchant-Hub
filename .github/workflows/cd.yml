@@ -112,6 +112,8 @@ jobs:
             backend:
               image: ${BACKEND_IMAGE}
               pull_policy: always
+              environment:
+                ENVIRONMENT: production
             frontend:
               image: ${FRONTEND_IMAGE}
               pull_policy: always
@@ -121,8 +123,11 @@ jobs:
       - name: Pull verified images
         run: docker compose -f docker-compose.yml -f docker-compose.release.yml pull backend frontend
 
-      - name: Run migrations before rollout
-        run: docker compose -f docker-compose.yml -f docker-compose.release.yml run --rm backend alembic upgrade head
+      - name: Run platform and tenant migrations before rollout
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.release.yml run --rm backend alembic upgrade head
+          docker compose -f docker-compose.yml -f docker-compose.release.yml run --rm backend alembic -c alembic-platform.ini upgrade head
+          docker compose -f docker-compose.yml -f docker-compose.release.yml run --rm backend python -m app.scripts.upgrade_active_tenants --apply
 
       - name: Start verified release
         run: docker compose -f docker-compose.yml -f docker-compose.release.yml up -d backend frontend

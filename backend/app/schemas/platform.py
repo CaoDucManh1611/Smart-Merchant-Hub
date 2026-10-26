@@ -207,6 +207,7 @@ class PlatformPaymentOut(BaseModel):
     id: int
     business_id: int
     subscription_id: int
+    subscription_plan_name: str | None = None
     amount: Decimal = Field(..., ge=0, max_digits=12, decimal_places=2)
     currency: str
     provider: str
