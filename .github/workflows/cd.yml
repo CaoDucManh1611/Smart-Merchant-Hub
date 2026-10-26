@@ -96,16 +96,33 @@ jobs:
       - name: Set up release environment
         shell: bash
         run: |
-          cat > backend/.env <<'EOF'
+          auth_secret="$(openssl rand -hex 32)"
+          channel_encryption_key="$(openssl rand -hex 32)"
+          channel_route_secret="$(openssl rand -hex 32)"
+          facebook_verify_token="$(openssl rand -hex 16)"
+          cat > backend/.env <<EOF
           DATABASE_URL=postgresql+psycopg://ci_user:ci_password@db:5432/crm_chatbot
           ENVIRONMENT=development
-          AUTH_SECRET=ci-only-auth-secret
-          CHANNEL_ENCRYPTION_KEY=ci-only-channel-key
+          AUTH_SECRET=${auth_secret}
+          CHANNEL_ENCRYPTION_KEY=${channel_encryption_key}
+          CHANNEL_ROUTE_SECRET=${channel_route_secret}
+          PUBLIC_BASE_URL=https://localhost
+          FRONTEND_BASE_URL=https://localhost
+          FORCE_HTTPS=true
+          HSTS_ENABLED=true
+          FACEBOOK_VERIFY_TOKEN=${facebook_verify_token}
+          GROQ_API_KEY=ci-only-groq-key
+          RATE_LIMIT_ENABLED=true
+          OTP_DELIVERY_MODE=smtp
+          OTP_SMTP_HOST=localhost
+          OTP_FROM_EMAIL=ci@example.test
+          OTP_SMTP_USERNAME=ci
+          OTP_SMTP_PASSWORD=ci-only-otp-password
           RAG_AUTO_SEED_ENABLED=false
           RAG_AUTO_REPLY_ENABLED=false
           EMBEDDING_PROVIDER=local
           CORS_ORIGINS=http://localhost:5173
-          ALLOWED_HOSTS=*
+          ALLOWED_HOSTS=localhost,127.0.0.1,backend
           EOF
           cat > docker-compose.release.yml <<'EOF'
           services:
@@ -114,6 +131,8 @@ jobs:
               pull_policy: always
               environment:
                 ENVIRONMENT: production
+              healthcheck:
+                test: ["CMD", "python", "-c", "import urllib.request; from sqlalchemy import text; from app.database.platform_session import PlatformSessionLocal; from app.database.tenant_session import TenantSessionLocal; p=PlatformSessionLocal(); t=TenantSessionLocal(); p.execute(text('SELECT 1')); t.execute(text('SELECT 1')); p.close(); t.close(); request=urllib.request.Request('http://127.0.0.1:8000/health', headers={'Host': 'localhost', 'X-Forwarded-Proto': 'https'}); response=urllib.request.urlopen(request, timeout=3); raise SystemExit(0 if response.status == 200 else 1)"]
             frontend:
               image: ${FRONTEND_IMAGE}
               pull_policy: always
