@@ -15,3 +15,4 @@ create_database_if_missing() {
 
 create_database_if_missing crm_platform
 create_database_if_missing crm_tenant
+psql $host_args -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname crm_tenant -c "CREATE EXTENSION IF NOT EXISTS vector"
