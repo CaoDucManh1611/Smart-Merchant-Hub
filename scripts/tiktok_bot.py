@@ -183,7 +183,20 @@ def normalize_seller_message(message: object, inherited: dict | None = None) -> 
     text = _as_text(_first(data, "text", "content_text", "contentText", "body", "message_text", "messageText"))
     if not text and isinstance(raw_content, str) and not isinstance(nested, dict):
         text = raw_content.strip()
-    message_type = str(_first(data, "message_type", "messageType", "msg_type", "type") or "text").strip().lower()
+    raw_message_type = str(_first(
+        data, "message_type", "messageType", "msg_type", "msgType", "type"
+    ) or "").strip().lower()
+    media_url = message_media_url(data)
+    message_type = raw_message_type
+    if message_type in {"photo", "picture", "pic"}:
+        message_type = "image"
+    elif message_type not in {"text", "image", "video", "audio", "file", "sticker"} and media_url:
+        # Seller Center often sends a numeric msgType with the image nested in
+        # message_content. Keep image-only customer messages instead of dropping
+        # them as an unknown message type.
+        message_type = "image"
+    elif not message_type:
+        message_type = "image" if media_url else "text"
     allowed_types = {"text", "image", "video", "audio", "file", "sticker"}
     if message_type not in allowed_types:
         return None
@@ -204,7 +217,8 @@ def normalize_seller_message(message: object, inherited: dict | None = None) -> 
         avatar = str(profile.get("avatarUrl") or "")
     display_name = display_name or str(profile.get("displayName") or "")
     username = username or str(profile.get("username") or "")
-    media_url = message_media_url(data) if message_type == "image" else _as_text(_first(data, "media_url", "mediaUrl", "url", "origin_url", "originUrl"))
+    if message_type != "image":
+        media_url = _as_text(_first(data, "media_url", "mediaUrl", "url", "origin_url", "originUrl"))
     return {
         "authorId": sender_id[:255],
         "displayName": (display_name or username or sender_id)[:255],
@@ -519,15 +533,46 @@ async def _seller_visible_messages(page, row: dict, *, include_outbound: bool = 
               const senderId = String(message?.sender || customerId || '');
               const actualThreadId = String(message?.rawMessage?.conversationId || threadId || '');
               const direction = bubble.className.includes('--other') ? 'inbound' : 'outbound';
-              if (!message || message.msgType !== 1000 || !messageId || !senderId || !actualThreadId || !text) return null;
+              const findImageUrl = (value, depth = 0) => {
+                if (depth > 5 || value == null) return '';
+                if (typeof value === 'string') {
+                  const candidate = value.trim();
+                  return /^https:\/\//i.test(candidate) ? candidate : '';
+                }
+                if (Array.isArray(value)) {
+                  for (const item of value.slice(0, 8)) {
+                    const found = findImageUrl(item, depth + 1);
+                    if (found) return found;
+                  }
+                  return '';
+                }
+                if (typeof value !== 'object') return '';
+                for (const key of ['media_url', 'mediaUrl', 'image_url', 'imageUrl', 'origin_url', 'originUrl', 'url', 'url_list', 'urlList', 'src']) {
+                  const found = findImageUrl(value[key], depth + 1);
+                  if (found) return found;
+                }
+                for (const key of ['image', 'images', 'media', 'attachment', 'attachments', 'content', 'rawMessage']) {
+                  const found = findImageUrl(value[key], depth + 1);
+                  if (found) return found;
+                }
+                return '';
+              };
+              const renderedImage = bubble.querySelector('img');
+              const mediaUrl = findImageUrl(message) || String(renderedImage?.currentSrc || renderedImage?.src || '');
+              const rawType = String(message?.msgType ?? message?.messageType ?? message?.message_type ?? message?.type ?? '').toLowerCase();
+              const messageType = rawType === 'text' || (rawType === '1000' && !mediaUrl)
+                ? 'text'
+                : (mediaUrl || /image|photo|picture/.test(rawType) ? 'image' : '');
+              if (!message || !messageId || !senderId || !actualThreadId || !messageType || (messageType === 'text' && !text)) return null;
               if (!includeOutbound && direction !== 'inbound') return null;
               return {
                 messageId,
                 threadId: actualThreadId,
                 customerId,
                 direction,
-                message: text,
-                messageType: 'text',
+                message: text || `[${messageType}]`,
+                messageType,
+                mediaUrl,
                 createdAt: String(message.createTime || ''),
                 displayName,
                 avatarUrl,
@@ -1038,12 +1083,18 @@ async def run() -> None:
                             conversation_baseline_ready = True
                             print(f"✅ Đang theo dõi {len(rows)} hội thoại Seller Center để tự đồng bộ tin mới.", flush=True)
                         if rows and conversation_baseline_ready and time.monotonic() >= next_history_scan_at:
-                            try:
-                                await _sync_initial_seller_history(page, rows)
-                                next_history_scan_at = time.monotonic() + 60
-                            except Exception as history_error:
-                                next_history_scan_at = time.monotonic() + 60
-                                print(f"⚠️ Đồng bộ hội thoại đang tải chưa xong; bridge sẽ tự thử lại sau 1 phút: {type(history_error).__name__}: {str(history_error)[:180]}", flush=True)
+                            completed_history = set(load_history_checkpoint(HISTORY_CHECKPOINT).get("completed_threads", []))
+                            has_unscanned_history = any(
+                                str(row.get("threadId") or "") not in completed_history
+                                for row in rows
+                                if row.get("threadId")
+                            )
+                            if has_unscanned_history:
+                                try:
+                                    await _sync_initial_seller_history(page, rows)
+                                except Exception as history_error:
+                                    print(f"⚠️ Lịch sử TikTok còn thiếu; sẽ thử lại sau 5 phút. Tin realtime vẫn được theo dõi: {type(history_error).__name__}: {str(history_error)[:180]}", flush=True)
+                            next_history_scan_at = time.monotonic() + 300
                         if conversation_baseline_ready:
                             changed = _track_seller_conversation_changes(rows, observed_conversations)
                             if changed:

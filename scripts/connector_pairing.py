@@ -33,10 +33,10 @@ def message_media_url(*sources: object) -> str:
         if isinstance(value, list):
             return next((url for item in value[:5] if (url := find(item, depth + 1))), "")
         if isinstance(value, dict):
-            for key in ("media_url", "mediaUrl", "image_url", "imageUrl", "origin_url", "originUrl", "url"):
+            for key in ("media_url", "mediaUrl", "image_url", "imageUrl", "origin_url", "originUrl", "url", "url_list", "urlList"):
                 if url := find(value.get(key), depth + 1):
                     return url
-            for key in ("image", "images", "media", "attachment", "attachments", "content"):
+            for key in ("image", "images", "media", "attachment", "attachments", "content", "message_content", "messageContent", "rawMessage", "raw_message"):
                 if url := find(value.get(key), depth + 1):
                     return url
         return ""
@@ -368,11 +368,21 @@ def load_history_checkpoint(path: Path) -> dict:
     return {"version": 1, "completed_threads": [], "complete": False}
 
 
-def mark_history_thread_complete(path: Path, checkpoint: dict, thread_id: str) -> dict:
-    """Atomically persist only thread IDs; a crash before this safely replays via DB dedupe."""
+def mark_history_thread_complete(
+    path: Path, checkpoint: dict, thread_id: str, *, history_row_key: str | None = None
+) -> dict:
+    """Atomically persist completed threads and their stable inbox-row keys."""
     done = set(str(value) for value in checkpoint.get("completed_threads", []))
     done.add(str(thread_id))
-    updated = {"version": 1, "completed_threads": sorted(done), "complete": False}
+    completed_rows = set(str(value) for value in checkpoint.get("completed_row_keys", []))
+    if history_row_key:
+        completed_rows.add(str(history_row_key))
+    updated = {
+        "version": 1,
+        "completed_threads": sorted(done),
+        "completed_row_keys": sorted(completed_rows),
+        "complete": False,
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary_name = tempfile.mkstemp(prefix="history-", suffix=".tmp", dir=path.parent)
     try:

@@ -58,6 +58,7 @@ IN_FLIGHT_MESSAGE_IDS: set[str] = set()
 SYNCED_AVATAR_IDS: set[str] = set()
 SYNCED_AVATAR_URLS: dict[str, str] = {}
 SHOPEE_CONVERSATION_SCAN_COMPLETE = False
+HISTORY_RETRY_INTERVAL_SECONDS = 300
 CONTROL_SERVER: ThreadingHTTPServer | None = None
 CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
 CONTROL_PAGE = None
@@ -186,7 +187,7 @@ def normalize_message(message: object) -> dict | None:
         return None
     if str(message.get("send_by_yourself") or "").strip().lower() in {"true", "1", "yes"}:
         return None
-    raw_content = message.get("content")
+    raw_content = message.get("content", message.get("message_content", message.get("messageContent")))
     try:
         content = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
     except ValueError:
@@ -208,7 +209,13 @@ def normalize_message(message: object) -> dict | None:
         sender.get("avatar_url"), sender.get("avatarUrl"),
         sender.get("avatar"), sender.get("portrait"),
     ) if (avatar := extract_avatar_url(value))), "")
-    message_type = str(message.get("type") or message.get("message_type") or "text").strip().lower()
+    raw_type = str(message.get("type") or message.get("message_type") or message.get("messageType") or "").strip().lower()
+    image_url = message_media_url(message.get("media_url"), content)
+    message_type = raw_type if raw_type in {"text", "image", "video", "audio", "file", "sticker"} else (
+        "image" if image_url else (raw_type or "text")
+    )
+    if message_type in {"photo", "picture", "pic"}:
+        message_type = "image"
     if not text and message_type == "text":
         return None
     return {
@@ -222,7 +229,7 @@ def normalize_message(message: object) -> dict | None:
         "messageType": message_type,
         "createdAt": str(message.get("created_at") or ""),
         "source": str(message.get("source") or "shopee_seller_chat"),
-        "mediaUrl": message_media_url(message.get("media_url"), content) if message_type == "image" else str(message.get("media_url") or ""),
+        "mediaUrl": image_url if message_type == "image" else str(message.get("media_url") or ""),
         "channel": "shopee",
     }
 
@@ -240,12 +247,18 @@ def normalize_history_message(message: object, conversation: dict) -> dict | Non
     customer_id = str(conversation.get("customerId") or "").strip()
     if not message_id or not thread_id or thread_id != str(conversation.get("threadId") or "") or not customer_id:
         return None
-    raw_content = message.get("content")
+    raw_content = message.get("content", message.get("message_content", message.get("messageContent")))
     try:
         content = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
     except ValueError:
         content = raw_content
-    message_type = str(message.get("type") or message.get("message_type") or "text").strip().lower()
+    raw_type = str(message.get("type") or message.get("message_type") or message.get("messageType") or "").strip().lower()
+    image_url = message_media_url(message.get("media_url"), content)
+    message_type = raw_type if raw_type in {"text", "image", "video", "audio", "file", "sticker"} else (
+        "image" if image_url else (raw_type or "text")
+    )
+    if message_type in {"photo", "picture", "pic"}:
+        message_type = "image"
     text = str((content.get("text") if isinstance(content, dict) else "") or
                (content if isinstance(content, str) else "") or message.get("text") or "").strip()
     if message_type not in {"text", "image", "video", "audio", "file", "sticker"}:
@@ -262,7 +275,7 @@ def normalize_history_message(message: object, conversation: dict) -> dict | Non
         "displayName": str(conversation.get("displayName") or customer_id)[:255],
         "avatarUrl": str(conversation.get("avatarUrl") or "")[:2000],
         "createdAt": str(message.get("created_at") or message.get("create_time") or "")[:100],
-        "mediaUrl": message_media_url(message.get("media_url"), content) if message_type == "image" else str(message.get("media_url") or "")[:2000],
+        "mediaUrl": image_url if message_type == "image" else str(message.get("media_url") or "")[:2000],
     }
 
 
@@ -730,30 +743,35 @@ async def _capture_shopee_history(page, row: dict) -> tuple[list[dict], bool]:
         HISTORY_CAPTURE_THREAD = None
 
 
-async def _sync_initial_shopee_history(page) -> None:
+async def _sync_initial_shopee_history(page, attempted_threads: set[str]) -> None:
     checkpoint = load_history_checkpoint(HISTORY_CHECKPOINT)
     if checkpoint.get("complete"):
         return
-    print("📚 Đang quét lịch sử Shopee Seller Chat để nhập an toàn vào CRM…", flush=True)
     rows = await _all_shopee_conversations(page)
     if not rows:
         raise RuntimeError("Chưa đọc được danh sách hội thoại Shopee; lịch sử chưa được đánh dấu hoàn tất.")
     completed = set(str(value) for value in checkpoint.get("completed_threads", []))
+    pending_rows = [
+        row for row in rows
+        if row["threadId"] not in completed and row["threadId"] not in attempted_threads
+    ]
+    if not pending_rows:
+        return
+    print(f"📚 Đang nhập lịch sử Shopee cho {len(pending_rows)} hội thoại mới/chưa thử…", flush=True)
     every_thread_complete = True
-    for row in rows:
-        if row["threadId"] in completed:
-            continue
+    for row in pending_rows:
         if await _shopee_challenge_visible(page):
             print("⚠️ Shopee đang yêu cầu CAPTCHA/xác minh. Đã tạm dừng quét; hãy xử lý thủ công trong Edge, bridge sẽ thử lại sau.", flush=True)
             return
         await page.wait_for_timeout(900)
         messages, history_complete = await _capture_shopee_history(page, row)
+        attempted_threads.add(row["threadId"])
         if not messages:
             if await _shopee_challenge_visible(page):
                 print("⚠️ Shopee đang yêu cầu CAPTCHA/xác minh. Đã tạm dừng quét; hãy xử lý thủ công trong Edge, bridge sẽ thử lại sau.", flush=True)
                 return
             every_thread_complete = False
-            print(f"⚠️ Đã mở {row['displayName']} nhưng bridge chưa bắt được dữ liệu tin nhắn lịch sử; hội thoại chưa được nhập hoặc đánh dấu hoàn tất.", flush=True)
+            print(f"⚠️ Đã mở {row['displayName']} nhưng chưa bắt được lịch sử; sẽ thử lại khi connector khởi động lại. Tin realtime vẫn hoạt động.", flush=True)
             continue
         for start in range(0, len(messages), 100):
             status, detail = await asyncio.to_thread(
@@ -767,7 +785,7 @@ async def _sync_initial_shopee_history(page) -> None:
             print(f"✅ Đã nhập lịch sử Shopee của {row['displayName']} ({len(messages)} tin).", flush=True)
         else:
             every_thread_complete = False
-            print(f"ℹ️ Đã nhập {len(messages)} tin Shopee đang tải của {row['displayName']}; còn lịch sử cũ, sẽ tiếp tục quét.", flush=True)
+            print(f"ℹ️ Đã nhập {len(messages)} tin Shopee đang tải của {row['displayName']}; lịch sử cũ còn thiếu sẽ thử lại khi connector khởi động lại. Realtime vẫn hoạt động.", flush=True)
     if SHOPEE_CONVERSATION_SCAN_COMPLETE and every_thread_complete and all(row["threadId"] in completed for row in rows):
         mark_history_complete(HISTORY_CHECKPOINT)
         print("✅ Đã quét xong các hội thoại lịch sử Shopee hiện có.", flush=True)
@@ -823,6 +841,41 @@ PROBE_JS = r"""
     }
     return '';
   };
+  const imageUrl = (value, depth = 0, insideImage = false) => {
+    if (depth > 5 || value == null) return '';
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (text.startsWith('//')) return `https:${text}`;
+      return insideImage && /^https:\/\//i.test(text) ? text : '';
+    }
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 8)) {
+        const found = imageUrl(item, depth + 1, insideImage);
+        if (found) return found;
+      }
+      return '';
+    }
+    if (typeof value !== 'object') return '';
+    for (const key of ['media_url', 'mediaUrl', 'image_url', 'imageUrl', 'origin_url', 'originUrl']) {
+      const found = imageUrl(value[key], depth + 1, true);
+      if (found) return found;
+    }
+    if (insideImage) {
+      for (const key of ['url', 'url_list', 'urlList', 'src']) {
+        const found = imageUrl(value[key], depth + 1, true);
+        if (found) return found;
+      }
+    }
+    for (const key of ['image', 'images', 'photo', 'photos', 'attachment', 'attachments']) {
+      const found = imageUrl(value[key], depth + 1, true);
+      if (found) return found;
+    }
+    for (const key of ['content', 'message_content', 'messageContent']) {
+      const found = imageUrl(value[key], depth + 1, insideImage);
+      if (found) return found;
+    }
+    return '';
+  };
   const emit = (candidate) => {
     const message = parse(candidate);
     if (!message || typeof message !== 'object') return false;
@@ -831,12 +884,16 @@ PROBE_JS = r"""
     const senderId = message.from_id || message.sender_id || message.from_user_id;
     if (!messageId || !conversationId || !senderId) return false;
     const isSelf = [true, 1, 'true', 'yes'].includes(message.send_by_yourself) || message.send_by_yourself === '1';
-    const rawContent = message.content;
+    const rawContent = message.content ?? message.message_content ?? message.messageContent;
     const content = parse(rawContent);
     const messageText = (content && typeof content === 'object' ? content.text : '') ||
       (typeof rawContent === 'string' ? rawContent : '') || message.text || '';
     const sender = message.from_user || message.sender || message.user_info || {};
-    const type = String(message.type || message.message_type || 'text');
+    const rawType = String(message.type ?? message.message_type ?? message.messageType ?? '').trim().toLowerCase();
+    const mediaUrl = imageUrl({media_url: message.media_url || message.mediaUrl}) || imageUrl(content);
+    const knownTypes = new Set(['text', 'image', 'video', 'audio', 'file', 'sticker']);
+    const type = ['photo', 'picture', 'pic'].includes(rawType) ? 'image' :
+      (knownTypes.has(rawType) ? rawType : (mediaUrl ? 'image' : (rawType || 'text')));
     if (!messageText && type === 'text') return false;
     const safe = {
       id: String(messageId), conversation_id: String(conversationId),
@@ -846,7 +903,7 @@ PROBE_JS = r"""
         sender.avatarUrl || sender.avatar || sender.portrait || ''),
       type, content: {text: String(messageText)}, created_at: String(message.created_at || ''),
       source: String(message.source || ''), send_by_yourself: isSelf,
-      media_url: String(message.media_url || '')
+      media_url: type === 'image' ? mediaUrl : String(message.media_url || '')
     };
     if (window.__SMH_SHOPEE_HISTORY_CAPTURE__) console.log('__SMH_SHOPEE_HISTORY__' + JSON.stringify(safe));
     if (isSelf) return true;
@@ -896,7 +953,8 @@ PROBE_JS = r"""
         if (content && typeof content === 'object') capture({...inherited, ...value, ...content});
       }
       if ((value.message_id || value.msg_id || value.id) &&
-          (value.content != null || value.text != null || value.message != null)) {
+          (value.content != null || value.message_content != null || value.messageContent != null ||
+           value.text != null || value.message != null || value.media_url != null)) {
         capture({...inherited, ...value});
       }
       for (const child of Object.values(value)) walk(child, inherited, depth + 1);
@@ -1313,6 +1371,7 @@ async def run() -> None:
     ORDER_CHECKPOINT = order_checkpoint_path(RUNTIME, "shopee", CONNECTOR_TOKEN)
     order_checkpoint = load_order_checkpoint(ORDER_CHECKPOINT)
     CONTROL_SECRET = CONNECTOR_TOKEN
+    attempted_history_threads: set[str] = set()
     async with async_playwright() as playwright:
         while True:
             try:
@@ -1444,12 +1503,12 @@ async def run() -> None:
                         selected = await select_all_conversations_tab(page)
                         if selected and not all_conversations_selected:
                             print("✅ Shopee đang theo dõi tab Tất cả cuộc trò chuyện.", flush=True)
-                        if selected and time.monotonic() - last_history_scan >= 30:
-                            last_history_scan = time.monotonic()
+                        if selected and time.monotonic() - last_history_scan >= HISTORY_RETRY_INTERVAL_SECONDS:
                             try:
-                                await _sync_initial_shopee_history(page)
+                                await _sync_initial_shopee_history(page, attempted_history_threads)
                             except Exception as history_error:
                                 print(f"⚠️ Đồng bộ lịch sử Shopee đang dở; đã lưu checkpoint để tiếp tục khi chạy lại: {type(history_error).__name__}: {history_error}", flush=True)
+                            last_history_scan = time.monotonic()
                         all_conversations_selected = selected
                     except Exception as exc:
                         if time.monotonic() - last_avatar_sync > 30:
