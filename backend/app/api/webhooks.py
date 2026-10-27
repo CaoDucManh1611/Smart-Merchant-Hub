@@ -5,7 +5,7 @@ that path because their signed headers identify the provider; the existing
 provider-specific URLs remain registered for backwards compatibility.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from app.database.platform_session import get_platform_db
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ async def receive_shop_webhook(
     shop_slug: str,
     payload: dict,
     request: Request,
+    background_tasks: BackgroundTasks,
     platform_db: Session = Depends(get_platform_db),
 ):
     """Dispatch one shop-scoped webhook to the correct provider adapter."""
@@ -74,6 +75,7 @@ async def receive_shop_webhook(
     return await receive_zalo_webhook(
         request=request,
         payload=payload,
+        background_tasks=background_tasks,
         platform_db=platform_db,
         x_bot_api_secret_token=zalo_secret,
         x_zevent_signature=zalo_signature,

@@ -136,6 +136,8 @@ jobs:
             frontend:
               image: ${FRONTEND_IMAGE}
               pull_policy: always
+              healthcheck:
+                test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
           EOF
           docker compose -f docker-compose.yml -f docker-compose.release.yml config --quiet
 
