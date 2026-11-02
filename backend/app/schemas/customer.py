@@ -1,6 +1,7 @@
 """Customer 360 API schemas."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,6 +37,7 @@ class CustomerListItem(BaseModel):
     email: str | None = None
     phone: str | None = None
     channel: str
+    avatar_url: str | None = None
     updated_at: datetime | None = None
     conversation_count: int = 0
 
@@ -64,6 +66,42 @@ class CustomerProfileOut(BaseModel):
     contacts: list[CustomerContactOut] = Field(default_factory=list)
     addresses: list[CustomerAddressOut] = Field(default_factory=list)
     conversation_count: int = 0
+
+
+class CustomerOrderItemOut(BaseModel):
+    id: int
+    product_id: int
+    product_name: str
+    sku: str | None = None
+    quantity: int
+    unit_price: Decimal
+    line_total: Decimal
+
+
+class CustomerOrderOut(BaseModel):
+    id: int
+    order_number: str
+    status: str
+    payment_status: str
+    total_amount: Decimal
+    paid_amount: Decimal
+    refunded_amount: Decimal
+    net_amount: Decimal
+    created_at: datetime | None = None
+    channel: str | None = None
+    items: list[CustomerOrderItemOut] = Field(default_factory=list)
+
+
+class CustomerOrderHistoryOut(BaseModel):
+    items: list[CustomerOrderOut] = Field(default_factory=list)
+    total: int
+    total_orders: int
+    completed_orders: int
+    open_orders: int
+    total_spent: Decimal
+    average_order_value: Decimal
+    total_refunded: Decimal
+    last_purchase_at: datetime | None = None
 
 
 class CustomerFactCreate(BaseModel):

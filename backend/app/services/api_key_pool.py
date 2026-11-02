@@ -183,6 +183,8 @@ def call_with_key_rotation(
     provider: str = "ai",
     circuit_breaker: ProviderCircuitBreaker | None = None,
     failure_scope: str | None = None,
+    max_attempts: int | None = None,
+    slot_timeout_seconds: float = 10,
 ):
     """Run a provider call with bounded key rotation and a per-provider limit."""
 
@@ -190,11 +192,13 @@ def call_with_key_rotation(
     last_error: Exception | None = None
     breaker = circuit_breaker or _provider_breaker
     scope = failure_scope or provider
-    max_attempts = min(pool.snapshot()["key_count"], _MAX_PROVIDER_ATTEMPTS)
-    if max_attempts <= 0:
+    attempt_limit = min(pool.snapshot()["key_count"], _MAX_PROVIDER_ATTEMPTS)
+    if max_attempts is not None:
+        attempt_limit = min(attempt_limit, max(1, int(max_attempts)))
+    if attempt_limit <= 0:
         raise ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")
-    with provider_request_slot(provider):
-        for _ in range(max_attempts):
+    with provider_request_slot(provider, timeout_seconds=slot_timeout_seconds):
+        for _ in range(attempt_limit):
             try:
                 key = pool.next_key(exclude=attempted)
             except ApiKeyPoolUnavailable:
@@ -214,6 +218,6 @@ def call_with_key_rotation(
                 pool.report_failure(key, error)
                 if is_retryable_provider_error(error):
                     breaker.record_failure(scope)
-                if not is_retryable_provider_error(error) or len(attempted) >= max_attempts:
+                if not is_retryable_provider_error(error) or len(attempted) >= attempt_limit:
                     raise
     raise last_error or ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")

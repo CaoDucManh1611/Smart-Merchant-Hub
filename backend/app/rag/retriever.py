@@ -6,21 +6,105 @@ import math
 import re
 import time
 import unicodedata
+from collections.abc import Mapping
 from collections import defaultdict
-from contextlib import nullcontext
-from dataclasses import dataclass, replace
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field, replace
 
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.rag.embedder import embed_query, _validate_vectors
+from app.rag.catalog_filters import catalog_hard_filter_sql, extract_query_hard_filters
 from app.rag.run_logger import query_metadata
 from app.rag.topics import infer_query_topic, topic_matches
 from app.rag.topics import fold_topic_text
 from app.rag.lexical import contains, identifiers, query_terms
 
 logger = logging.getLogger(__name__)
+
+
+def _sqlite_exact_sku(content: object, sku: object) -> int:
+    if content is None or sku is None:
+        return 0
+    pattern = r"(?<![\w-])" + re.escape(str(sku).casefold()) + r"(?![\w-])"
+    return int(re.search(pattern, str(content).casefold()) is not None)
+
+
+def _catalog_filter_sql(
+    db,
+    hard_filters: Mapping[str, object] | None,
+    *,
+    chunk_id_expression: str,
+    chunk_content_expression: str,
+) -> tuple[str, dict[str, object]]:
+    bind = getattr(db, "bind", None)
+    if bind is None and callable(getattr(db, "get_bind", None)):
+        try:
+            bind = db.get_bind()
+        except Exception:
+            bind = None
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "postgresql")
+    if dialect_name == "sqlite" and (hard_filters or {}).get("sku") is not None:
+        raw_connection = db.connection().connection.driver_connection
+        raw_connection.create_function("rag_exact_sku", 2, _sqlite_exact_sku)
+    return catalog_hard_filter_sql(
+        hard_filters,
+        chunk_id_expression=chunk_id_expression,
+        chunk_content_expression=chunk_content_expression,
+        dialect_name=dialect_name,
+    )
+
+
+def _vector_dimension_error(error: Exception) -> bool:
+    message = str(error).casefold()
+    return "dimension" in message and any(
+        marker in message for marker in ("vector", "expected", "different")
+    )
+
+
+def _query_sku_identifiers(
+    query: str,
+    hard_filters: Mapping[str, object] | None = None,
+) -> list[str]:
+    """Treat labelled or SKU-shaped codes as exact IDs, not product specs."""
+    filters = hard_filters if isinstance(hard_filters, Mapping) else extract_query_hard_filters(query)
+    attributes = filters.get("required_attributes") or {}
+    constrained_values: set[str] = set()
+    if isinstance(attributes, Mapping):
+        for value in attributes.values():
+            values = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
+            constrained_values.update(
+                re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKC", str(item)).casefold())
+                for item in values
+            )
+    labelled_skus = {
+        match.group(1).casefold()
+        for match in re.finditer(
+            r"\b(?:sku|mã(?:\s+(?:sản phẩm|hàng))?|ma(?:\s+(?:san pham|hang))?|code|product\s+id|item\s+id)"
+            r"\s*[:#]?\s*([\w]+(?:[-_][\w]+)+)",
+            query,
+            re.IGNORECASE,
+        )
+    }
+    return [
+        identifier for identifier in identifiers(query)
+        if identifier in labelled_skus or identifier.count("-") + identifier.count("_") >= 2
+        if re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKC", identifier).casefold())
+        not in constrained_values
+    ]
+
+_LEXICAL_PRODUCT_METADATA_FIELDS = (
+    "category", "category_name", "product_category", "danh_muc", "product_type",
+    "product_group", "brand", "brand_name", "manufacturer", "thuong_hieu",
+    "model", "model_name", "compatible_with", "compatible_models", "compatibility",
+    "vehicle_compatibility", "fitment", "suitable_for", "use_case", "usage",
+    "service_type", "tags", "keywords", "aliases", "search_terms", "color", "colors",
+    "size", "sizes", "style", "collection", "material", "features", "specs",
+    "specifications", "attributes", "product_attributes", "dietary", "ingredients",
+    "allergens", "skin_type", "expiry", "storage",
+)
 
 _LEXICAL_MINIMUM_SIMILARITY = 0.2
 _RRF_K = 60
@@ -48,6 +132,7 @@ class RetrievedChunk:
     filename: str | None = None
     chunk_index: int | None = None
     ranking_score: float | None = None
+    retrieval_scores: dict[str, float | int] = field(default_factory=dict)
 
 
 def _metadata_dict(value: object) -> dict | None:
@@ -60,7 +145,23 @@ def _metadata_dict(value: object) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-def retrieve(
+def _metadata_search_text(metadata: dict | None) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    values = []
+    pending = [metadata.get(key) for key in _LEXICAL_PRODUCT_METADATA_FIELDS]
+    while pending and len(values) < 64:
+        value = pending.pop()
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple, set)):
+            pending.extend(value)
+        elif isinstance(value, (str, int, float)):
+            values.append(str(value))
+    return " ".join(values)
+
+
+def _retrieve_impl(
     query: str,
     db: Session,
     business_id: int,
@@ -68,7 +169,10 @@ def retrieve(
     similarity_threshold: float | None = None,
     query_embedding: list[float] | None = None,
     diagnostics: dict | None = None,
-    customer_product_weights: dict[str, float] | None = None,
+    hard_filters: Mapping[str, object] | None = None,
+    retrieval_mode: str | None = None,
+    enable_ppr: bool = False,
+    timeout_seconds: float | None = None,
 ) -> list[RetrievedChunk]:
     """
     Tìm các chunks liên quan nhất với query.
@@ -83,14 +187,25 @@ def retrieve(
         Danh sách RetrievedChunk, sắp xếp theo similarity giảm dần
     """
     query = (query or "").strip()
+    selected_mode = str(retrieval_mode or settings.RAG_RETRIEVAL_MODE or "bm25").strip().casefold()
+    if selected_mode not in {"bm25", "hybrid"}:
+        logger.warning("Unknown RAG_RETRIEVAL_MODE=%r; falling back to BM25", selected_mode)
+        selected_mode = "bm25"
+    ppr_enabled = bool(enable_ppr)
     if diagnostics is not None:
         diagnostics.update(
-            retrieval_mode="hybrid",
+            retrieval_mode=selected_mode,
             retrieval_fallback_stage=None,
             retrieval_error_type=None,
-            retrieval_fusion="rrf",
+            retrieval_fusion="rrf" if selected_mode == "hybrid" else None,
             retrieval_lexical_method="bm25",
-            retrieval_reranker="personalized_pagerank",
+            retrieval_reranker="personalized_pagerank_offline" if ppr_enabled else "none",
+            retrieval_version=(
+                "gemini_bm25_rrf_ppr_offline_v1" if selected_mode == "hybrid" and ppr_enabled
+                else "gemini_bm25_rrf_v1" if selected_mode == "hybrid"
+                else "bm25_ppr_offline_v1" if ppr_enabled
+                else "bm25_baseline_v1"
+            ),
         )
     if not query:
         return []
@@ -103,6 +218,27 @@ def retrieve(
     query_topic = infer_query_topic(query)
     started = time.perf_counter()
 
+    if hard_filters is not None and not isinstance(hard_filters, Mapping):
+        raise ValueError("hard_filters must be a mapping")
+    effective_hard_filters = extract_query_hard_filters(query)
+    for key, value in (hard_filters or {}).items():
+        if key == "required_attributes" and isinstance(value, Mapping):
+            effective_hard_filters.setdefault(key, {}).update(value)
+        else:
+            effective_hard_filters[key] = value
+    query_skus = _query_sku_identifiers(query, effective_hard_filters)
+    if query_skus and effective_hard_filters.get("sku") is None:
+        effective_hard_filters["sku"] = query_skus
+    required_attributes = effective_hard_filters.get("required_attributes")
+    filter_count = int(effective_hard_filters.get("object_type") is not None)
+    filter_count += int(effective_hard_filters.get("sku") is not None)
+    filter_count += len(required_attributes) if isinstance(required_attributes, Mapping) else 0
+    if diagnostics is not None:
+        diagnostics.update(
+            retrieval_hard_filter_count=filter_count,
+            retrieval_hard_filter_keys=sorted(effective_hard_filters),
+        )
+
     # Always collect lexical candidates.  They are especially important for
     # product names, SKU codes and documents ingested without embeddings.
     lexical_results = _retrieve_lexical(
@@ -111,6 +247,7 @@ def retrieve(
         max(top_k * 3, top_k),
         business_id=business_id,
         query_topic=query_topic,
+        hard_filters=effective_hard_filters,
         # Lexical coverage is not on the same scale as cosine similarity;
         # keep a separate floor so mixed questions retain every relevant source.
         similarity_threshold=(
@@ -123,6 +260,32 @@ def retrieve(
             retrieval_lexical_hits=len(lexical_results),
             retrieval_bm25_hits=len(lexical_results),
         )
+
+    if selected_mode == "bm25":
+        lexical_scores = [
+            item.ranking_score if item.ranking_score is not None else item.similarity
+            for item in lexical_results
+        ]
+        ranked_lexical = (
+            _personalized_pagerank_rerank(lexical_results, lexical_scores)
+            if ppr_enabled else lexical_results
+        )
+        results = _expand_parent_neighbors(
+            _diverse_candidates(
+                ranked_lexical, top_k,
+                max_per_document=4 if query_topic == "products" else 2,
+            ),
+            db, business_id, top_k, hard_filters=effective_hard_filters,
+        )
+        if diagnostics is not None:
+            diagnostics.update(retrieval_vector_hits=0, retrieval_returned=len(results))
+        logger.info(
+            "BM25 retrieval complete: topic=%s hits=%d returned=%d duration_ms=%.2f",
+            query_topic, len(lexical_results), len(results),
+            (time.perf_counter() - started) * 1000,
+        )
+        return results
+
     vector_results: list[RetrievedChunk] = []
 
     # Bước 1: Embed câu hỏi thành vector; nếu hết quota vẫn dùng từ khóa.
@@ -136,11 +299,16 @@ def retrieve(
     )
     try:
         query_vector = (_validate_vectors([query_embedding], expected_count=1)[0]
-                        if query_embedding is not None else embed_query(query))
+                        if query_embedding is not None else embed_query(
+                            query, timeout_seconds=timeout_seconds,
+                        ))
     except Exception as error:
         if diagnostics is not None:
             diagnostics.update(retrieval_mode="lexical", retrieval_fallback_stage="embedding",
-                               retrieval_error_type=type(error).__name__)
+                               retrieval_error_type=type(error).__name__, retrieval_fusion=None,
+                               retrieval_vector_hits=0,
+                               retrieval_reranker="personalized_pagerank_offline" if ppr_enabled else "none",
+                               retrieval_version="bm25_fallback_ppr_offline_v1" if ppr_enabled else "bm25_fallback_v1")
         logger.warning(
             "Vector query unavailable; using lexical retrieval: error_type=%s",
             type(error).__name__,
@@ -156,18 +324,25 @@ def retrieve(
             item.ranking_score if item.ranking_score is not None else item.similarity
             for item in lexical_results
         ]
+        ranked_lexical = (
+            _personalized_pagerank_rerank(lexical_results, lexical_scores)
+            if ppr_enabled else lexical_results
+        )
         return _expand_parent_neighbors(
             _diverse_candidates(
-                _personalized_pagerank_rerank(
-                    lexical_results, lexical_scores, customer_product_weights,
-                ), top_k,
+                ranked_lexical, top_k,
                 max_per_document=4 if query_topic == "products" else 2,
             ),
-            db, business_id, top_k,
+            db, business_id, top_k, hard_filters=effective_hard_filters,
         )
 
     # Search pgvector using a bound parameter.  Do not interpolate the vector
     # into SQL even though it currently comes from a trusted provider.
+    if diagnostics is not None:
+        diagnostics["retrieval_vector_dimension"] = len(query_vector)
+    vector_filter_sql, vector_filter_params = _catalog_filter_sql(
+        db, effective_hard_filters, chunk_id_expression="dc.id", chunk_content_expression="dc.content",
+    )
     vector_str = "[" + ",".join(f"{float(value):.10g}" for value in query_vector) + "]"
     raw_sql = f"""
         SELECT
@@ -184,6 +359,7 @@ def retrieve(
           AND d.business_id = :business_id
           AND dc.embedding IS NOT NULL
           AND 1 - (dc.embedding <=> CAST(:query_vector AS vector)) >= :threshold
+          {vector_filter_sql}
         ORDER BY dc.embedding <=> CAST(:query_vector AS vector), dc.id
         LIMIT :top_k
     """
@@ -198,12 +374,30 @@ def retrieve(
                     "business_id": business_id,
                     "threshold": similarity_threshold,
                     "top_k": max(top_k * 3, top_k),
+                    **vector_filter_params,
                 },
             ).fetchall()
     except Exception as error:
         if diagnostics is not None:
-            diagnostics.update(retrieval_mode="lexical", retrieval_fallback_stage="vector_search",
-                               retrieval_error_type=type(error).__name__)
+            dimension_mismatch = _vector_dimension_error(error)
+            diagnostic_values = {
+                "retrieval_mode": "lexical",
+                "retrieval_fallback_stage": "vector_dimension_mismatch" if dimension_mismatch else "vector_search",
+                "retrieval_error_type": type(error).__name__,
+                "retrieval_dimension_error": dimension_mismatch,
+                "retrieval_fusion": None,
+                "retrieval_vector_hits": 0,
+                "retrieval_reranker": "personalized_pagerank_offline" if ppr_enabled else "none",
+                "retrieval_version": "bm25_fallback_ppr_offline_v1" if ppr_enabled else "bm25_fallback_v1",
+            }
+            if dimension_mismatch:
+                actual_dimension = len(query_vector)
+                error_dimensions = [int(value) for value in re.findall(r"\b\d{2,5}\b", str(error))]
+                diagnostic_values["retrieval_vector_dimension"] = actual_dimension
+                stored_dimension = next((value for value in error_dimensions if value != actual_dimension), None)
+                if stored_dimension is not None:
+                    diagnostic_values["retrieval_stored_vector_dimension"] = stored_dimension
+            diagnostics.update(diagnostic_values)
         logger.warning(
             "pgvector search unavailable; using lexical retrieval: error_type=%s",
             type(error).__name__,
@@ -219,24 +413,21 @@ def retrieve(
             item.ranking_score if item.ranking_score is not None else item.similarity
             for item in lexical_results
         ]
+        ranked_lexical = (
+            _personalized_pagerank_rerank(lexical_results, lexical_scores)
+            if ppr_enabled else lexical_results
+        )
         return _expand_parent_neighbors(
             _diverse_candidates(
-                _personalized_pagerank_rerank(
-                    lexical_results, lexical_scores, customer_product_weights,
-                ), top_k,
+                ranked_lexical, top_k,
                 max_per_document=4 if query_topic == "products" else 2,
             ),
-            db, business_id, top_k,
+            db, business_id, top_k, hard_filters=effective_hard_filters,
         )
 
     vector_results = []
     for row in rows:
         row_data = row._mapping
-        if identifiers(query) and not any(
-            re.search(r"(?<![\w-])" + re.escape(sku) + r"(?![\w-])", row_data["content"].casefold())
-            for sku in identifiers(query)
-        ):
-            continue
         vector_results.append(
             RetrievedChunk(
                 chunk_id=row_data["id"],
@@ -246,12 +437,13 @@ def retrieve(
                 metadata=_metadata_dict(row_data["chunk_metadata"]),
                 filename=row_data["source_filename"],
                 chunk_index=row_data["chunk_index"],
+                retrieval_scores={"vector_score": float(row_data["similarity"])},
             )
         )
 
     results = _merge_hybrid_results(
         vector_results, lexical_results, top_k, topic=query_topic,
-        customer_product_weights=customer_product_weights,
+        enable_ppr=ppr_enabled,
     )
     if diagnostics is not None:
         diagnostics.update(
@@ -271,7 +463,69 @@ def retrieve(
         (time.perf_counter() - started) * 1000,
     )
 
-    return _expand_parent_neighbors(results, db, business_id, top_k)
+    return _expand_parent_neighbors(results, db, business_id, top_k, hard_filters=effective_hard_filters)
+
+
+@contextmanager
+def _retrieval_statement_timeout(db: Session, timeout_seconds: float | None):
+    """Bound PostgreSQL retrieval statements without leaving a changed session setting."""
+    bind = getattr(db, "bind", None)
+    if bind is None and callable(getattr(db, "get_bind", None)):
+        try:
+            bind = db.get_bind()
+        except Exception:
+            bind = None
+    if (
+        timeout_seconds is None
+        or timeout_seconds <= 0
+        or getattr(getattr(bind, "dialect", None), "name", None) != "postgresql"
+    ):
+        yield
+        return
+
+    timeout_ms = max(1, int(timeout_seconds * 1000))
+    with db.begin_nested():
+        connection = db.connection()
+        previous = connection.execute(sa_text("SHOW statement_timeout")).scalar_one()
+        connection.execute(
+            sa_text("SELECT set_config('statement_timeout', :timeout, true)"),
+            {"timeout": f"{timeout_ms}ms"},
+        )
+        yield
+        connection.execute(
+            sa_text("SELECT set_config('statement_timeout', :timeout, true)"),
+            {"timeout": str(previous)},
+        )
+
+
+def retrieve(
+    query: str,
+    db: Session,
+    business_id: int,
+    top_k: int | None = None,
+    similarity_threshold: float | None = None,
+    query_embedding: list[float] | None = None,
+    diagnostics: dict | None = None,
+    hard_filters: Mapping[str, object] | None = None,
+    retrieval_mode: str | None = None,
+    enable_ppr: bool = False,
+    timeout_seconds: float | None = None,
+) -> list[RetrievedChunk]:
+    """Retrieve with optional provider and PostgreSQL statement timeouts."""
+    with _retrieval_statement_timeout(db, timeout_seconds):
+        return _retrieve_impl(
+            query=query,
+            db=db,
+            business_id=business_id,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+            query_embedding=query_embedding,
+            diagnostics=diagnostics,
+            hard_filters=hard_filters,
+            retrieval_mode=retrieval_mode,
+            enable_ppr=enable_ppr,
+            timeout_seconds=timeout_seconds,
+        )
 
 
 def _is_catalog_product_chunk(item: RetrievedChunk) -> bool:
@@ -301,7 +555,7 @@ def _personalized_pagerank_rerank(
     customer_product_weights: dict[str, float] | None = None,
 ) -> list[RetrievedChunk]:
     """Rerank bounded candidates with query relevance and consented product affinity."""
-    if len(items) < 2:
+    if not items:
         return items
     customer_product_weights = customer_product_weights or {}
 
@@ -318,6 +572,20 @@ def _personalized_pagerank_rerank(
         [score / total for score in scores]
         if total > 0 else [1 / len(items)] * len(items)
     )
+
+    def annotate_pagerank(ranks: list[float]) -> None:
+        ordered = sorted(range(len(items)), key=lambda index: (-ranks[index], index))
+        positions = {index: rank for rank, index in enumerate(ordered, start=1)}
+        for index, item in enumerate(items):
+            item.retrieval_scores = {
+                **(item.retrieval_scores or {}),
+                "ppr_score": float(ranks[index]),
+                "ppr_rank": positions[index],
+            }
+
+    if len(items) < 2:
+        annotate_pagerank(query_prior)
+        return items
     personalized_matches: list[tuple[str | None, float]] = []
     product_chunk_counts: dict[str, int] = defaultdict(int)
     for item in items:
@@ -382,6 +650,7 @@ def _personalized_pagerank_rerank(
                     edges[right][left] += 0.35
 
     if not any(edges) and customer_total <= 0:
+        annotate_pagerank(personalization)
         return items
 
     ranks = personalization[:]
@@ -403,6 +672,7 @@ def _personalized_pagerank_rerank(
             break
         ranks = updated
 
+    annotate_pagerank(ranks)
     return [
         item for index, item in sorted(
             enumerate(items), key=lambda pair: (-ranks[pair[0]], pair[0])
@@ -412,6 +682,7 @@ def _personalized_pagerank_rerank(
 
 def _expand_parent_neighbors(
     results: list[RetrievedChunk], db: Session, business_id: int, top_k: int,
+    *, hard_filters: Mapping[str, object] | None = None,
 ) -> list[RetrievedChunk]:
     """Expand bounded source parents while preserving independently ranked hits."""
     if not results:
@@ -432,18 +703,22 @@ def _expand_parent_neighbors(
             whole_parent = end - start < 16
             if not whole_parent:
                 start, end = max(start, lead.chunk_index - 1), min(end, lead.chunk_index + 1)
+            filter_sql, filter_params = _catalog_filter_sql(
+                db, hard_filters, chunk_id_expression="dc.id", chunk_content_expression="dc.content",
+            )
             try:
                 begin_nested = getattr(db, "begin_nested", None)
                 with begin_nested() if callable(begin_nested) else nullcontext():
-                    rows = db.execute(sa_text("""
+                    rows = db.execute(sa_text(f"""
                         SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
                                d.filename AS source_filename, dc.chunk_index
                         FROM document_chunks dc JOIN documents d ON d.id = dc.document_id
                         WHERE d.status = 'ready' AND d.business_id = :business_id
                           AND d.id = :document_id AND dc.chunk_index BETWEEN :start_index AND :end_index
+                          {filter_sql}
                         ORDER BY dc.chunk_index LIMIT 16
                     """), {"business_id": business_id, "document_id": lead.document_id,
-                            "start_index": start, "end_index": end}).fetchall()
+                            "start_index": start, "end_index": end, **filter_params}).fetchall()
             except Exception as error:
                 logger.warning("Parent retrieval unavailable: %s", type(error).__name__)
                 expanded.append(lead)
@@ -482,20 +757,25 @@ def _expand_parent_neighbors(
     parent_id = (lead.metadata or {}).get("parent_id")
     if parent_id is None or lead.chunk_index is None:
         return results  # legacy chunks have no structural parent
+    filter_sql, filter_params = _catalog_filter_sql(
+        db, hard_filters, chunk_id_expression="dc.id", chunk_content_expression="dc.content",
+    )
     try:
-        rows = db.execute(sa_text("""
+        rows = db.execute(sa_text(f"""
             SELECT dc.id, dc.document_id, dc.content, dc.metadata AS chunk_metadata,
                    d.filename AS source_filename, dc.chunk_index
             FROM document_chunks dc JOIN documents d ON d.id = dc.document_id
             WHERE d.status = 'ready' AND d.business_id = :business_id
               AND d.id = :document_id
               AND dc.chunk_index IN (:previous_index, :next_index)
+              {filter_sql}
             ORDER BY dc.chunk_index
         """), {
             "business_id": business_id,
             "document_id": lead.document_id,
             "previous_index": lead.chunk_index - 1,
             "next_index": lead.chunk_index + 1,
+            **filter_params,
         }).fetchall()
     except Exception as error:
         logger.warning("Parent neighbor lookup unavailable: %s", type(error).__name__)
@@ -522,8 +802,10 @@ def _merge_hybrid_results(
     top_k: int,
     topic: str | None = None,
     customer_product_weights: dict[str, float] | None = None,
+    *,
+    enable_ppr: bool = False,
 ) -> list[RetrievedChunk]:
-    """Fuse independently ranked dense/BM25 lists, then rerank their union with PPR."""
+    """Fuse dense/BM25 candidates; PPR is an explicit offline-only ablation."""
     merged: dict[int, tuple[RetrievedChunk, float]] = {}
     topic_step = 1 / (_RRF_K + 1) - 1 / (_RRF_K + 2)
 
@@ -538,11 +820,27 @@ def _merge_hybrid_results(
         )
         for rank, item in enumerate(ranked_candidates, start=1):
             score = 1 / (_RRF_K + rank)
+            features = dict(item.retrieval_scores or {})
+            if lexical:
+                features.update(
+                    bm25_score=float(item.ranking_score if item.ranking_score is not None else 0.0),
+                    bm25_rank=rank,
+                )
+            else:
+                features.update(vector_score=float(item.similarity), vector_rank=rank)
+            features["rrf_score"] = float(features.get("rrf_score", 0.0)) + score
+            item.retrieval_scores = features
             existing = merged.get(item.chunk_id)
             if existing is None:
                 merged[item.chunk_id] = (item, score)
                 continue
             current_item, current_score = existing
+            current_features = dict(current_item.retrieval_scores or {})
+            for name, value in (item.retrieval_scores or {}).items():
+                if name != "rrf_score":
+                    current_features[name] = value
+            current_features["rrf_score"] = float(current_features.get("rrf_score", 0.0)) + score
+            current_item.retrieval_scores = current_features
             current_item.similarity = max(current_item.similarity, item.similarity)
             if item.ranking_score is not None:
                 current_item.ranking_score = item.ranking_score
@@ -553,14 +851,26 @@ def _merge_hybrid_results(
             score += topic_step
         if topic == "products" and _is_catalog_product_chunk(item):
             score += 2 * topic_step
+        item.retrieval_scores = {
+            **(item.retrieval_scores or {}),
+            "rrf_adjusted_score": float(score),
+        }
         merged[chunk_id] = (item, score)
 
     ranked = sorted(merged.values(), key=lambda pair: (-pair[1], pair[0].chunk_id))
-    reranked = _personalized_pagerank_rerank(
-        [item for item, _score in ranked],
-        [score for _item, score in ranked],
-        customer_product_weights,
-    )
+    for rank, (item, _score) in enumerate(ranked, start=1):
+        item.retrieval_scores = {**(item.retrieval_scores or {}), "rrf_rank": rank}
+    ranked_items = [item for item, _score in ranked]
+    if enable_ppr:
+        for item, score in ranked:
+            item.retrieval_scores = {**(item.retrieval_scores or {}), "ppr_input_score": float(score)}
+        reranked = _personalized_pagerank_rerank(
+            ranked_items,
+            [score for _item, score in ranked],
+            customer_product_weights,
+        )
+    else:
+        reranked = ranked_items
     return _diverse_candidates(
         reranked, top_k,
         max_per_document=4 if topic == "products" else 2,
@@ -574,9 +884,10 @@ def _retrieve_lexical(
     business_id: int,
     query_topic: str | None = None,
     similarity_threshold: float | None = None,
+    hard_filters: Mapping[str, object] | None = None,
 ) -> list[RetrievedChunk]:
     """Generate tenant-scoped lexical candidates and rank them with BM25."""
-    sku_codes = identifiers(query)
+    sku_codes = _query_sku_identifiers(query, hard_filters)
     terms = query_terms(query)
     # A preference is useful for selecting matching products, but generic
     # preference guidelines are not evidence that a particular item is stocked.
@@ -589,14 +900,23 @@ def _retrieve_lexical(
     # (max(200, top_k * 40)); move corpus statistics to indexed PostgreSQL search
     # if retrieval evaluation shows recall loss as a shop's knowledge base grows.
     params = {"business_id": business_id, "candidate_limit": max(200, top_k * 40)}
+    filter_sql, filter_params = _catalog_filter_sql(
+        db, hard_filters, chunk_id_expression="dc.id", chunk_content_expression="dc.content",
+    )
+    params.update(filter_params)
     dialect = getattr(getattr(db, "bind", None), "dialect", None)
     if getattr(dialect, "name", "") == "sqlite":
         # SQLite QA uses the same folding function as production ranking.
         db.connection().connection.driver_connection.create_function("rag_fold", 1, fold_topic_text)
+        metadata_fields = " || ' ' || ".join(
+            f"COALESCE(CAST(json_extract(dc.metadata, '$.{field}') AS TEXT), '')"
+            for field in _LEXICAL_PRODUCT_METADATA_FIELDS
+        )
         searchable = (
             "COALESCE(CAST(dc.content AS TEXT), '') || ' ' "
             "|| COALESCE(json_extract(dc.metadata, '$.section'), '') || ' ' "
-            "|| COALESCE(json_extract(dc.metadata, '$.context'), '')"
+            "|| COALESCE(json_extract(dc.metadata, '$.context'), '') || ' ' || "
+            + metadata_fields
         )
         search_sql = f"rag_fold({searchable})"
     else:
@@ -606,10 +926,15 @@ def _retrieve_lexical(
             "d" if c == "đ" else "".join(x for x in unicodedata.normalize("NFKD", c) if not unicodedata.combining(x))
             for c in accents
         )
+        metadata_fields = " || ' ' || ".join(
+            f"COALESCE(dc.metadata ->> '{field}', '')"
+            for field in _LEXICAL_PRODUCT_METADATA_FIELDS
+        )
         searchable = (
             "COALESCE(CAST(dc.content AS TEXT), '') || ' ' "
             "|| COALESCE(dc.metadata ->> 'section', '') || ' ' "
-            "|| COALESCE(dc.metadata ->> 'context', '')"
+            "|| COALESCE(dc.metadata ->> 'context', '') || ' ' || "
+            + metadata_fields
         )
         search_sql = f"REPLACE(REPLACE(translate(LOWER({searchable}), :fold_from, :fold_to), '-', ' '), '/', ' ')"
 
@@ -638,6 +963,7 @@ def _retrieve_lexical(
                    {normalized_column} AS search_text
             FROM document_chunks dc JOIN documents d ON d.id = dc.document_id
             WHERE d.status = 'ready' AND d.business_id = :business_id
+              {filter_sql}
         )
         SELECT * FROM scoped sc WHERE ({" OR ".join(all_conditions)})
         ORDER BY {sku_order}({match_count}) DESC, sc.id
@@ -652,6 +978,7 @@ def _retrieve_lexical(
             data["content"],
             str(metadata.get("section") or ""),
             str(metadata.get("context") or ""),
+            _metadata_search_text(metadata),
         ))
         folded = fold_topic_text(searchable)
         matches = [any(contains(folded, alias) for alias in aliases) for aliases in terms]
@@ -679,6 +1006,7 @@ def _retrieve_lexical(
         searchable_documents.append(" ".join((
             data["content"], str(metadata.get("section") or ""),
             str(metadata.get("context") or ""),
+            _metadata_search_text(metadata),
         )))
     bm25_scores = _bm25_scores(searchable_documents, terms)
     scored = []
@@ -693,6 +1021,7 @@ def _retrieve_lexical(
             content=data["content"], similarity=score, metadata=metadata,
             filename=data["source_filename"], chunk_index=data["chunk_index"],
             ranking_score=bm25_score,
+            retrieval_scores={"bm25_score": float(bm25_score)},
         )
         rank = (score + (0.08 if topic_matches(metadata, query_topic) else 0)
                 + (0.3 if query_topic == "products" and _is_catalog_product_chunk(chunk) else 0))

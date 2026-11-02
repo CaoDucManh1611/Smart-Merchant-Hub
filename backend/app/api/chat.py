@@ -41,7 +41,7 @@ from app.services.recommendation_interaction_service import (
     RecommendationInteractionError,
     record_interaction,
 )
-from app.services.recommendation_service import rag_personalization_weights
+from app.rag.catalog_filters import extract_query_hard_filters
 
 logger = logging.getLogger(__name__)
 
@@ -155,15 +155,17 @@ async def chat(
             business_id=tenant.business_id,
             top_k=request.top_k,
             diagnostics=retrieval_diagnostics,
-            customer_product_weights=rag_personalization_weights(
-                db, business_id=tenant.business_id, customer_id=request.customer_id,
-            ),
+            hard_filters=extract_query_hard_filters(request.query),
         )
+        current_product = _live_product_context_chunk(db, tenant.business_id, retrieval_query,
+                                                     request.conversation_id or 0)
+        if current_product is not None:
+            chunks = [current_product, *chunks]
 
         run.update(
             phase="build_prompt",
             chunks_found=len(chunks),
-            source_document_ids=sorted({c.document_id for c in chunks}),
+            source_document_ids=sorted({c.document_id for c in chunks if c.document_id > 0}),
             top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
             retrieval_topic=infer_query_topic(request.query),
             retrieval_ms=round((perf_counter() - retrieval_started) * 1000, 2),
@@ -186,10 +188,6 @@ async def chat(
             )
 
         # Bước 2: Build prompt
-        current_product = _live_product_context_chunk(db, tenant.business_id, retrieval_query,
-                                                     request.conversation_id or 0)
-        if current_product is not None:
-            chunks = [current_product, *chunks]
         messages = build_prompt(
             query=request.query,
             chunks=chunks,
@@ -365,12 +363,11 @@ async def chat_stream(
                 business_id=tenant.business_id,
                 top_k=request.top_k,
                 diagnostics=retrieval_diagnostics,
-                customer_product_weights=rag_personalization_weights(
-                    db, business_id=tenant.business_id, customer_id=request.customer_id,
-                ),
+                hard_filters=extract_query_hard_filters(request.query),
             )
-            current_product = _live_product_context_chunk(db, tenant.business_id, retrieval_query,
-                                                         request.conversation_id or 0) if chunks else None
+            current_product = _live_product_context_chunk(
+                db, tenant.business_id, retrieval_query, request.conversation_id or 0,
+            )
             if current_product is not None:
                 chunks = [current_product, *chunks]
 

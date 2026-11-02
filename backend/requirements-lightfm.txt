@@ -1,0 +1,2 @@
+# Optional dependency for offline LightFM training only; serving reads the compact factor artifact.
+lightfm

@@ -1,0 +1,122 @@
+{
+  "run_id": "2026-11-01-11-rag-expanded-benchmark",
+  "status": "evaluation_completed_quality_gate_blocked",
+  "local_only": true,
+  "database": "Docker PostgreSQL local; 14 active tenant schemas",
+  "case_set": {
+    "previous_total": 190,
+    "total": 255,
+    "increase": 65,
+    "retrieval_metric_eligible": 214,
+    "non_retrieval_or_abstention_probes": 41,
+    "metric_eligible_query_families": 74,
+    "counts_by_type": {
+      "product_info": 53,
+      "product_detail": 53,
+      "sku_lookup": 53,
+      "hard_attribute_size": 24,
+      "hard_attribute_color": 10,
+      "policy_faq": 21,
+      "ambiguous_or_missing_context": 10,
+      "no_answer_unknown_sku": 3,
+      "coverage_empty_service": 14,
+      "coverage_empty_rental": 14
+    },
+    "eligible_shops": [
+      {"business_id": 1, "industry": "beauty_personal_care", "case_count": 19},
+      {"business_id": 4, "industry": "motorcycle_parts_accessories", "case_count": 92},
+      {"business_id": 7, "industry": "motorcycle_parts_accessories", "case_count": 103}
+    ],
+    "unclassified_active_tenant_count": 11
+  },
+  "embedding": {
+    "provider": "gemini",
+    "model": "gemini-embedding-001",
+    "dimension": 768,
+    "unique_query_texts": 125,
+    "successful_batches": 2,
+    "successful_batch_sizes": [80, 45],
+    "final_replay_used_local_cache": true,
+    "additional_api_calls_on_final_replay": 0,
+    "preliminary_attempts": "Two preliminary commands hit free-tier 429 quota; successful run was paced across batches."
+  },
+  "dense_run": {
+    "fresh": true,
+    "case_count": 214,
+    "retrieval_modes": {"hybrid": 214},
+    "fallback_stages": {},
+    "abstention_probes_embedded": false
+  },
+  "metrics_at_5": {
+    "bm25": {"case_count": 214, "recall_at_5": 0.985981, "mrr": 0.935514, "ndcg_at_5": 0.948402},
+    "bm25_current_lexical_ppr": {"case_count": 214, "recall_at_5": 0.962617, "mrr": 0.912773, "ndcg_at_5": 0.917557},
+    "bm25_exact_product_sku_ppr_blend_85_15_offline": {"case_count": 214, "recall_at_5": 0.985981, "mrr": 0.935514, "ndcg_at_5": 0.948402},
+    "gemini_vector_only": {"case_count": 214, "recall_at_5": 0.785047, "mrr": 0.757009, "ndcg_at_5": 0.763226},
+    "gemini_bm25_rrf_no_ppr_fresh": {"case_count": 214, "recall_at_5": 0.873832, "mrr": 0.833723, "ndcg_at_5": 0.843967},
+    "gemini_bm25_rrf_current_ppr_fresh": {"case_count": 214, "recall_at_5": 0.705607, "mrr": 0.631620, "ndcg_at_5": 0.649147}
+  },
+  "same_original_53_product_info_queries": {
+    "bm25_fresh": {"recall_at_5": 0.962264, "mrr": 0.924528, "ndcg_at_5": 0.934410},
+    "gemini_bm25_rrf_no_ppr_fresh": {"recall_at_5": 0.792453, "mrr": 0.745283, "ndcg_at_5": 0.757635},
+    "gemini_bm25_rrf_ppr_fresh": {"recall_at_5": 0.566038, "mrr": 0.432390, "ndcg_at_5": 0.463986}
+  },
+  "ndcg_at_5_by_case_type": {
+    "product_info": {"case_count": 53, "bm25": 0.934410, "hybrid_no_ppr": 0.757635, "hybrid_ppr": 0.463986},
+    "product_detail": {"case_count": 53, "bm25": 0.901502, "hybrid_no_ppr": 0.785489, "hybrid_ppr": 0.432258},
+    "sku_lookup": {"case_count": 53, "bm25": 1.000000, "hybrid_no_ppr": 1.000000, "hybrid_ppr": 1.000000},
+    "hard_attribute_size": {"case_count": 24, "bm25": 0.984622, "hybrid_no_ppr": 0.734622, "hybrid_ppr": 0.734622},
+    "hard_attribute_color": {"case_count": 10, "bm25": 1.000000, "hybrid_no_ppr": 1.000000, "hybrid_ppr": 0.926186},
+    "policy_faq": {"case_count": 21, "bm25": 0.905891, "hybrid_no_ppr": 0.866311, "hybrid_ppr": 0.548749}
+  },
+  "ndcg_at_5_by_shop": {
+    "1": {"case_count": 19, "bm25": 0.836463, "hybrid_no_ppr": 0.836463, "hybrid_ppr": 0.941726},
+    "4": {"case_count": 92, "bm25": 1.000000, "hybrid_no_ppr": 0.880435, "hybrid_ppr": 0.677191},
+    "7": {"case_count": 103, "bm25": 0.922963, "hybrid_no_ppr": 0.812779, "hybrid_ppr": 0.570127}
+  },
+  "ppr_diagnosis": {
+    "fresh_dense_hybrid_ppr_degraded_cases": 62,
+    "fresh_dense_ppr_ndcg_delta_vs_no_ppr": -0.194820,
+    "fresh_dense_ppr_recall_delta_vs_no_ppr": -0.168225,
+    "fresh_dense_ppr_mrr_delta_vs_no_ppr": -0.202103,
+    "sample": "Shop 4 product chunk 47626 moved from rank 1 without PPR to rank 2 with PPR; chunks 47644/47645 were promoted through adjacent-chunk edges.",
+    "serving_graph_weights": {"same_product_or_sku": 3.0, "same_document_parent": 2.0, "adjacent_chunk": 0.35},
+    "serving_configuration_changed": false
+  },
+  "hard_filter_audit": {
+    "sku": {"cases": 53, "gold_hits": 53, "leakage_chunks": 0},
+    "size": {"cases": 24, "gold_hits": 24, "leakage_chunks": 0},
+    "color": {"cases": 10, "gold_hits": 10, "leakage_chunks": 0}
+  },
+  "abstention_and_coverage": {
+    "total_probes": 41,
+    "lexical_negative_probes": 31,
+    "bm25_false_positives_on_unknown_sku_service_rental": 0,
+    "dense_negative_probes_run": false
+  },
+  "quality_gate": {
+    "status": "blocked",
+    "reasons": [
+      "Human answer support and correctness have not been reviewed.",
+      "No positive service/rental ground-truth set is available.",
+      "Live stock/status and final answer correctness were not evaluated.",
+      "Current PPR reduces NDCG@5 versus same-run hybrid without PPR."
+    ]
+  },
+  "verification": {
+    "audit_script_py_compile": "passed",
+    "git_diff_check": "passed",
+    "postgresql_audit": "completed",
+    "migrations_run": false,
+    "serving_configuration_changed": false,
+    "committed": false,
+    "pushed": false
+  },
+  "artifacts": {
+    "local_output_directory": "backend/.local-evaluation/rag-audit-20261101-dense-expanded-final/",
+    "human_review_csv": "industry-rag-expanded-human-review.csv",
+    "per_case_results_jsonl": "industry-rag-expanded-results.jsonl",
+    "source_verified_cases_jsonl": "industry-rag-expanded-evaluation-set.jsonl",
+    "ppr_diagnostics_jsonl": "industry-rag-ppr-diagnostics.jsonl",
+    "audit_script": "backend/scripts/audit_rag_retrieval.py"
+  }
+}

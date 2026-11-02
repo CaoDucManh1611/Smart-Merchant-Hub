@@ -1,0 +1,190 @@
+{
+  "run_id": "2026-11-01-12-rag-expanded-benchmark",
+  "status": "completed_with_quality_gate_blocked",
+  "objective": "Add source-grounded RAG retrieval cases, rerun lexical and fresh dense/hybrid evaluation, and preserve a reviewable log.",
+  "environment": {
+    "database": "local PostgreSQL through healthy Docker backend",
+    "tenant_schema_count": 14,
+    "classified_shops": [1, 4, 7],
+    "unclassified_shops": 11,
+    "embedding_provider": "Gemini",
+    "embedding_model": "gemini-embedding-001",
+    "embedding_dimension": 768,
+    "top_k": 5
+  },
+  "case_set": {
+    "previous_total": 255,
+    "current_total": 284,
+    "added_total": 29,
+    "previous_retrieval_eligible": 214,
+    "current_retrieval_eligible": 243,
+    "previous_query_families": 74,
+    "current_query_families": 103,
+    "previous_policy_faq": 21,
+    "current_policy_faq": 50,
+    "added_by_shop": {
+      "1": 7,
+      "7": 22
+    },
+    "added_case_type": "policy_faq",
+    "non_retrieval_probes": {
+      "ambiguous_or_missing_context": 10,
+      "unknown_sku": 3,
+      "empty_service": 14,
+      "empty_rental": 14
+    },
+    "validation": {
+      "unique_case_ids": 284,
+      "duplicate_case_ids": 0,
+      "eligible_labels_missing_target_chunks": 0,
+      "new_cases_missing_source_document": 0,
+      "new_labels": "Exact source-phrase matched; human answer-scope review pending"
+    },
+    "new_intents": {
+      "beauty_shop_1": [
+        "Local delivery estimate",
+        "Day/evening routine timing",
+        "Sunscreen reapplication interval",
+        "Skin-type suitability",
+        "Budget-based product choices",
+        "Combo contents and price",
+        "Order identifier required for customer support"
+      ],
+      "motorcycle_shop_7": [
+        "Repair/install/remote diagnosis scope",
+        "Authorized-dealer and authenticity claims",
+        "Follow-up for unclear product-code image",
+        "Manual-based oil and fitment selection",
+        "Oil type and SKU distinctions",
+        "Spark-plug and air-filter compatibility distinctions",
+        "DOT 4 hydraulic-brake requirement",
+        "Price exclusions for installation/shipping",
+        "No deposit when stock is unavailable",
+        "Conditional cross-sell rules",
+        "No unconfigured discount/promotion",
+        "Evidence for wrong or damaged delivery",
+        "Inspection and warranty proof requirements",
+        "Sensitive payment data handling",
+        "Conditions for sending payment QR/amount",
+        "Multi-item CRM total calculation"
+      ]
+    }
+  },
+  "metrics": {
+    "bm25": {
+      "case_count": 243,
+      "recall_at_5": 0.987654,
+      "mrr": 0.93155,
+      "ndcg_at_5": 0.945888
+    },
+    "bm25_current_ppr": {
+      "case_count": 243,
+      "recall_at_5": 0.934156,
+      "mrr": 0.876543,
+      "ndcg_at_5": 0.884186
+    },
+    "bm25_exact_entity_ppr_85_15_offline": {
+      "case_count": 243,
+      "recall_at_5": 0.987654,
+      "mrr": 0.93155,
+      "ndcg_at_5": 0.945888
+    },
+    "gemini_vector_only": {
+      "case_count": 243,
+      "recall_at_5": 0.777778,
+      "mrr": 0.740878,
+      "ndcg_at_5": 0.749424
+    },
+    "gemini_bm25_rrf_no_ppr": {
+      "case_count": 243,
+      "recall_at_5": 0.888889,
+      "mrr": 0.839506,
+      "ndcg_at_5": 0.852113
+    },
+    "gemini_bm25_rrf_current_ppr": {
+      "case_count": 243,
+      "recall_at_5": 0.679012,
+      "mrr": 0.602195,
+      "ndcg_at_5": 0.620618
+    },
+    "ppr_ndcg_degradation_vs_hybrid_no_ppr": 0.231495,
+    "ppr_ndcg_degraded_case_count": 81,
+    "new_29_cases_ndcg_at_5": {
+      "bm25": 0.927338,
+      "gemini_bm25_rrf_no_ppr": 0.912221,
+      "gemini_bm25_rrf_current_ppr": 0.410096
+    },
+    "previous_255_case_overlap_recalculation": {
+      "retrieval_eligible_count": 214,
+      "bm25_ndcg_at_5": 0.948402,
+      "gemini_bm25_rrf_no_ppr_ndcg_at_5": 0.843967,
+      "gemini_bm25_rrf_current_ppr_ndcg_at_5": 0.649147,
+      "matches_log_11": true
+    },
+    "ndcg_at_5_by_shop": {
+      "1": {
+        "case_count": 26,
+        "bm25": 0.866297,
+        "gemini_bm25_rrf_no_ppr": 0.866297,
+        "gemini_bm25_rrf_current_ppr": 0.94322
+      },
+      "4": {
+        "case_count": 92,
+        "bm25": 1.0,
+        "gemini_bm25_rrf_no_ppr": 0.880435,
+        "gemini_bm25_rrf_current_ppr": 0.677191
+      },
+      "7": {
+        "case_count": 125,
+        "bm25": 0.922617,
+        "gemini_bm25_rrf_no_ppr": 0.828318,
+        "gemini_bm25_rrf_current_ppr": 0.51188
+      }
+    }
+  },
+  "retrieval_checks": {
+    "dense_hybrid_case_count": 243,
+    "dense_hybrid_fallback_count": 0,
+    "hard_filter_gold_hits": {
+      "sku": "53/53",
+      "size": "24/24",
+      "color": "10/10"
+    },
+    "hard_filter_leakage_chunks": 0,
+    "negative_probe_false_positives": 0,
+    "negative_probe_count": 31
+  },
+  "embedding_cache": {
+    "unique_query_count": 154,
+    "reused_cached_vectors": 125,
+    "new_vectors": 29,
+    "gemini_api_batches": 1
+  },
+  "quality_gate": {
+    "status": "blocked",
+    "reasons": [
+      "Current PPR substantially reduces NDCG@5 versus hybrid without PPR.",
+      "Human review of answer support and policy scope is pending.",
+      "No positive service/rental ground-truth set is available.",
+      "Live stock/status and final answer correctness are not evaluated."
+    ],
+    "serving_configuration_changed": false
+  },
+  "changes_and_delivery": {
+    "evaluation_script_updated": true,
+    "serving_code_changed": false,
+    "migration_run": false,
+    "commit_created": false,
+    "push_performed": false
+  },
+  "artifacts": {
+    "report_markdown": "docs/implementation-logs/2026-11-01-12-rag-expanded-benchmark.md",
+    "report_json": "docs/implementation-logs/2026-11-01-12-rag-expanded-benchmark.json",
+    "evaluation_output_directory": "backend/.local-evaluation/rag-audit-20261101-expanded-v2/",
+    "cases": "industry-rag-expanded-evaluation-set.jsonl",
+    "results": "industry-rag-expanded-results.jsonl",
+    "human_review": "industry-rag-expanded-human-review.csv",
+    "ppr_diagnostics": "industry-rag-ppr-diagnostics.jsonl",
+    "source_review": "industry-rag-validated-source-review.csv"
+  }
+}

@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import json
 from unittest.mock import Mock, patch
 import pytest
 from fastapi import HTTPException
@@ -589,7 +590,6 @@ def test_rag_without_context_sends_safe_handoff_without_calling_llm():
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
-        patch("app.services.auto_reply_service.rag_personalization_weights", return_value=None), \
         patch("app.services.auto_reply_service.retrieve", return_value=[]), \
         patch("app.services.auto_reply_service.call_llm") as call_llm, \
         patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "out-1"}) as send, \
@@ -626,7 +626,6 @@ def test_instagram_image_is_passed_to_vision_model_and_gets_a_reply():
         patch("app.services.auto_reply_service.record_explicit_chat_recommendation_decline"), \
         patch("app.services.auto_reply_service._deterministic_customer_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
-        patch("app.services.auto_reply_service.rag_personalization_weights", return_value=None), \
         patch("app.services.auto_reply_service.retrieve", return_value=[]), \
         patch("app.services.auto_reply_service.select_chatbot_reply_choice", return_value=None), \
         patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
@@ -937,3 +936,95 @@ def test_empty_rag_answer_sends_one_safe_handoff_reply():
     send.assert_called_once()
     handoff.assert_called_once()
     assert "đang gặp sự cố" in send.call_args.kwargs["text"].lower()
+
+
+@pytest.mark.parametrize(
+    (
+        "agentic_mode",
+        "expected_retrieval_calls",
+        "candidate_similarity",
+        "expected_prompt_chunk_ids",
+        "expected_retry_would_run",
+        "expected_candidate_accepted",
+        "expected_retry_selected",
+    ),
+    [
+        ("off", 1, 0.8, [21], False, False, False),
+        ("active", 2, 0.8, [22], True, True, True),
+        ("decision_shadow", 1, 0.8, [21], True, False, False),
+        ("execute_shadow", 2, 0.8, [21], True, True, False),
+        ("active", 2, 0.05, [21], True, False, False),
+    ],
+)
+def test_agentic_rag_modes_log_and_preserve_original_hard_filters(
+    tmp_path,
+    agentic_mode,
+    expected_retrieval_calls,
+    candidate_similarity,
+    expected_prompt_chunk_ids,
+    expected_retry_would_run,
+    expected_candidate_accepted,
+    expected_retry_selected,
+):
+    from app.rag.agentic_controller import RagRuntimeOptions
+    from app.rag.retriever import RetrievedChunk
+
+    db = Mock()
+    chunk = RetrievedChunk(
+        chunk_id=22, document_id=3,
+        content="Chính sách giao hàng: đơn nội thành thường giao trong 1 đến 2 ngày.",
+        similarity=candidate_similarity, metadata={}, filename="Chinh sach giao hang",
+    )
+    weak_chunk = RetrievedChunk(
+        chunk_id=21, document_id=3,
+        content="Chính sách giao hàng: đơn nội thành thường giao trong 1 đến 2 ngày.",
+        similarity=0.1, metadata={}, filename="Chinh sach giao hang",
+    )
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+        patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
+        patch("app.services.auto_reply_service._latest_inbound_image_url", return_value=None), \
+        patch("app.services.auto_reply_service._contextual_retrieval_query", return_value="Chính sách giao hàng nội thành?"), \
+        patch("app.services.auto_reply_service._live_product_context_chunk", return_value=None), \
+        patch("app.services.auto_reply_service.load_rag_runtime_options", return_value=RagRuntimeOptions("bm25", agentic_mode, 4, 0.3, 8)), \
+        patch("app.services.auto_reply_service.retrieve", side_effect=[[weak_chunk], [chunk]]) as retrieve, \
+        patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
+        patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "q"}]) as build_prompt, \
+        patch("app.services.auto_reply_service.record_quota_usage"), \
+        patch("app.services.auto_reply_service.estimate_ai_cost", return_value=Decimal("0")), \
+        patch("app.services.auto_reply_service.call_llm", return_value="Đơn nội thành thường giao trong 1 đến 2 ngày [Nguồn 1]."), \
+        patch("app.services.auto_reply_service._get_conversation_recipient", return_value=("telegram", "recipient")), \
+        patch("app.services.auto_reply_service._send_channel_reply", return_value={"message_id": "agentic-1"}) as send, \
+        patch("app.services.auto_reply_service.record_explicit_chat_recommendation_decline"), \
+        patch("app.services.auto_reply_service._notify_rag_handoff_required") as handoff, \
+        patch("app.rag.run_logger.settings.RAG_LOG_FILE", str(tmp_path / "rag.jsonl")):
+        result = process_rag_auto_reply(
+            db=db, conversation_id=4, channel="telegram",
+            query_text="Chính sách giao hàng nội thành?", business_id=1,
+        )
+
+    assert result is True
+    assert retrieve.call_count == expected_retrieval_calls
+    first_filters = retrieve.call_args_list[0].kwargs["hard_filters"]
+    if expected_retrieval_calls == 2:
+        retry_filters = retrieve.call_args_list[1].kwargs["hard_filters"]
+        assert retry_filters == first_filters
+    assert all(call.kwargs["retrieval_mode"] == "bm25" for call in retrieve.call_args_list)
+    assert all(call.kwargs["enable_ppr"] is False for call in retrieve.call_args_list)
+    assert retrieve.call_args_list[0].kwargs["timeout_seconds"] == 8
+    if expected_retrieval_calls == 2:
+        assert 0 < retrieve.call_args_list[1].kwargs["timeout_seconds"] <= 8
+        assert "phí vận chuyển" in retrieve.call_args_list[1].kwargs["query"]
+    assert send.called
+    handoff.assert_not_called()
+    prompt_chunk_ids = [chunk.chunk_id for chunk in build_prompt.call_args.kwargs["chunks"]]
+    assert prompt_chunk_ids == expected_prompt_chunk_ids
+    log_record = json.loads((tmp_path / "rag.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert log_record["agentic_mode"] == agentic_mode
+    assert log_record["agentic_retry_would_run"] is expected_retry_would_run
+    assert log_record["agentic_retry_attempted"] is (agentic_mode in {"active", "execute_shadow"})
+    assert log_record["agentic_retry_candidate_accepted"] is expected_candidate_accepted
+    assert log_record["agentic_retry_selected"] is expected_retry_selected
+    assert log_record["agentic_retry_original_chunk_ids"] == [21]
+    assert log_record["agentic_retry_candidate_chunk_ids"] == ([22] if expected_retrieval_calls == 2 else [])

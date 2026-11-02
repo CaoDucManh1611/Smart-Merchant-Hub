@@ -19,8 +19,14 @@ from app.services.tenant_data_migration import (
 from app.tenancy.schema import schema_name_for, validate_schema_name
 
 
-# New operational state has no legacy shared-database rows to backfill.
-TENANT_LOCAL_ONLY_TABLES = ("channel_outbound_attempts",)
+# These tables have no legacy shared-database rows to backfill.
+TENANT_LOCAL_ONLY_TABLES = (
+    "channel_outbound_attempts",
+    "recommendation_catalog_entries",
+    "recommendation_catalog_attributes",
+    "recommendation_catalog_chunk_mappings",
+    "recommendation_shop_model_states",
+)
 
 
 DEFAULT_TABLE_ORDER = (

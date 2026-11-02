@@ -1,0 +1,108 @@
+{
+  "status": "verified",
+  "shop_count": 14,
+  "revision_counts": {
+    "20261101_0015": 14
+  },
+  "shops": [
+    {
+      "business_id": 1,
+      "schema_name": "shop_1",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 2,
+      "schema_name": "shop_2",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 3,
+      "schema_name": "shop_3",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 4,
+      "schema_name": "shop_4",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 5,
+      "schema_name": "shop_5",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 6,
+      "schema_name": "shop_6",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 7,
+      "schema_name": "shop_7",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 9,
+      "schema_name": "shop_9",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 10,
+      "schema_name": "shop_10",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 11,
+      "schema_name": "shop_11",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 12,
+      "schema_name": "shop_12",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 14,
+      "schema_name": "shop_14",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 15,
+      "schema_name": "shop_15",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    },
+    {
+      "business_id": 16,
+      "schema_name": "shop_16",
+      "before": "20261101_0015",
+      "after": "20261101_0015",
+      "applied": false
+    }
+  ],
+  "database_target": "local Docker PostgreSQL"
+}

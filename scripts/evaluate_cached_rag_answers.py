@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 import app.models
 from app.models.audit_log import AuditLog
+from app.database.bases import TenantBase
 from app.models.customer import Customer
 from app.rag.answer_guard import has_valid_citations
 from app.rag.llm_caller import call_llm
@@ -53,23 +54,38 @@ def main():
         parser.error("Provider interval must be nonnegative.")
     previous = json.loads(args.report.read_text(encoding="utf-8"))
     if args.cases:
-        contracts = {row["id"]: row for row in (
-            json.loads(line) for line in args.cases.read_text(encoding="utf-8").splitlines() if line.strip()
-        )}
+        contracts = {}
+        for line in args.cases.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            contract = json.loads(line)
+            contract_id = contract.get("id") or contract.get("case_id")
+            if not contract_id:
+                parser.error("Original case contract has neither id nor case_id.")
+            contracts[contract_id] = contract
         for case in previous["cases"]:
             if case["id"] not in contracts:
                 parser.error("Case has no original contract: " + case["id"])
             contract = contracts[case["id"]]
             case.update(must_include=contract.get("must_include", []),
                         must_not_include=contract.get("must_not_include", []))
-    if previous.get("retrieval", {}).get("fully_hybrid_cases") != len(previous["cases"]):
-        parser.error("Input must contain a complete vector run, without retrieval fallback.")
+    retrieval = previous.get("retrieval", {})
+    complete_cases = retrieval.get("complete_cases", retrieval.get("fully_hybrid_cases"))
+    if complete_cases != len(previous["cases"]):
+        parser.error("Input must contain retrieval results for every case.")
     unknown = set(args.case_id) - {case["id"] for case in previous["cases"]}
     if unknown:
         parser.error("Unknown case IDs: " + ", ".join(sorted(unknown)))
     engine = create_engine("sqlite://")
-    Customer.__table__.create(engine)
-    AuditLog.__table__.create(engine)
+    privacy_tables = {
+        "customers", "channels", "conversations", "messages", "orders", "products",
+        "customer_facts", "customer_product_interactions", "recommendation_customer_profiles",
+        "recommendation_requests", "recommendation_training_runs", "recommendation_shop_model_states",
+        "experiments", "bandit_policies", "bandit_decisions", "tags", "customer_tags", "audit_logs",
+    }
+    for table in TenantBase.metadata.sorted_tables:
+        if table.name in privacy_tables:
+            table.create(engine, checkfirst=True)
     results, errors = [], Counter()
     citations = citation_cases = generated = crm_actions = 0
     required_found = required_total = forbidden_found = 0

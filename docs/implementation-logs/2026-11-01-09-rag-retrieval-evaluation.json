@@ -1,0 +1,667 @@
+{
+  "status": "completed",
+  "run_mode": "local_postgresql_gemini_embedding_cache_reused",
+  "embedding_model": "gemini-embedding-001",
+  "embedding_dimension": 768,
+  "embedding_api_call_count_this_run": 0,
+  "embedding_generation_api_call_count": 1,
+  "embedding_cache_hit": true,
+  "tenant_count": 14,
+  "labeled_case_count": 53,
+  "industry_case_counts": {
+    "unclassified": 53
+  },
+  "methods": {
+    "bm25_only": {
+      "case_count": 53,
+      "hit_at_5": 0.962264,
+      "recall_at_5": 0.962264,
+      "mrr": 0.924528,
+      "ndcg_at_5": 0.93441
+    },
+    "bm25_plus_ppr_lexical_fallback": {
+      "case_count": 53,
+      "hit_at_5": 0.981132,
+      "recall_at_5": 0.95283,
+      "mrr": 0.86478,
+      "ndcg_at_5": 0.872418
+    },
+    "gemini_bm25_rrf_ppr": {
+      "case_count": 53,
+      "hit_at_5": 0.584906,
+      "recall_at_5": 0.566038,
+      "mrr": 0.43239,
+      "ndcg_at_5": 0.463986
+    },
+    "gemini_bm25_rrf_no_ppr": {
+      "case_count": 53,
+      "hit_at_5": 0.792453,
+      "recall_at_5": 0.792453,
+      "mrr": 0.745283,
+      "ndcg_at_5": 0.757635
+    },
+    "gemini_vector_only": {
+      "case_count": 53,
+      "hit_at_5": 0.735849,
+      "recall_at_5": 0.735849,
+      "mrr": 0.669811,
+      "ndcg_at_5": 0.684075
+    }
+  },
+  "shops": [
+    {
+      "business_id": 1,
+      "industry": "unclassified",
+      "case_count": 4,
+      "queries_with_bm25_results": 4,
+      "ppr_order_changed_count": 4,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 4,
+        "hit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 0.75,
+        "ndcg_at_5": 0.815465
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 4,
+        "hit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 0.5,
+        "ndcg_at_5": 0.625
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 4,
+        "hit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 0.75,
+        "ndcg_at_5": 0.815465
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 4,
+        "hit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 0.75,
+        "ndcg_at_5": 0.815465
+      },
+      "gemini_vector_only": {
+        "case_count": 4,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 2,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 3,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 4,
+      "industry": "unclassified",
+      "case_count": 25,
+      "queries_with_bm25_results": 25,
+      "ppr_order_changed_count": 20,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 25,
+        "hit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_5": 1.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 25,
+        "hit_at_5": 1.0,
+        "recall_at_5": 1.0,
+        "mrr": 0.96,
+        "ndcg_at_5": 0.970474
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 25,
+        "hit_at_5": 0.6,
+        "recall_at_5": 0.6,
+        "mrr": 0.443333,
+        "ndcg_at_5": 0.483413
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 25,
+        "hit_at_5": 0.84,
+        "recall_at_5": 0.84,
+        "mrr": 0.84,
+        "ndcg_at_5": 0.84
+      },
+      "gemini_vector_only": {
+        "case_count": 25,
+        "hit_at_5": 0.84,
+        "recall_at_5": 0.84,
+        "mrr": 0.84,
+        "ndcg_at_5": 0.84
+      }
+    },
+    {
+      "business_id": 5,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 6,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 7,
+      "industry": "unclassified",
+      "case_count": 24,
+      "queries_with_bm25_results": 23,
+      "ppr_order_changed_count": 20,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 24,
+        "hit_at_5": 0.916667,
+        "recall_at_5": 0.916667,
+        "mrr": 0.875,
+        "ndcg_at_5": 0.885911
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 24,
+        "hit_at_5": 0.958333,
+        "recall_at_5": 0.895833,
+        "mrr": 0.826389,
+        "ndcg_at_5": 0.811513
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 24,
+        "hit_at_5": 0.5,
+        "recall_at_5": 0.458333,
+        "mrr": 0.368056,
+        "ndcg_at_5": 0.38517
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 24,
+        "hit_at_5": 0.708333,
+        "recall_at_5": 0.708333,
+        "mrr": 0.645833,
+        "ndcg_at_5": 0.6622
+      },
+      "gemini_vector_only": {
+        "case_count": 24,
+        "hit_at_5": 0.75,
+        "recall_at_5": 0.75,
+        "mrr": 0.604167,
+        "ndcg_at_5": 0.635665
+      }
+    },
+    {
+      "business_id": 9,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 10,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 11,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 12,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 14,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 15,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    },
+    {
+      "business_id": 16,
+      "industry": "unclassified",
+      "case_count": 0,
+      "queries_with_bm25_results": 0,
+      "ppr_order_changed_count": 0,
+      "gemini_hybrid_fallback_count": 0,
+      "bm25_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "bm25_plus_ppr_lexical_fallback": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_bm25_rrf_no_ppr": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      },
+      "gemini_vector_only": {
+        "case_count": 0,
+        "hit_at_5": 0.0,
+        "recall_at_5": 0.0,
+        "mrr": 0.0,
+        "ndcg_at_5": 0.0
+      }
+    }
+  ],
+  "human_answer_review": {
+    "status": "pending_reviewer_and_model_answers",
+    "template_rows": 53,
+    "csv_filename": "industry-rag-answer-human-review.csv"
+  },
+  "limits": [
+    "Cases cover only products with tenant-validated catalog-to-ready-chunk mappings; services/rentals without mappings are excluded.",
+    "Machine-generated labels are provisional until a domain reviewer confirms the mapped source answers the query.",
+    "No LLM answer was generated; the CSV is a human review queue, not a completed answer-quality evaluation.",
+    "No cross-encoder or LightFM model was trained or enabled.",
+    "Gemini query embeddings were generated once in a batch or read from a local temporary cache; dense retrieval and production RRF/PPR were run against the local tenant databases."
+  ]
+}

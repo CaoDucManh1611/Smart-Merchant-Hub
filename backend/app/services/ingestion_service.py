@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.document import Document, DocumentChunk
+from app.models.sales import Product
 from app.rag.loader import DocumentValidationError, load_document, detect_file_type
 from app.rag.semantic_chunker import chunk_document, contextual_embedding_text
 from app.rag.semantic_chunker import _parse_model_boundaries
@@ -21,6 +22,7 @@ from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog, safe_error_message
 from app.rag.topics import infer_document_topic
 from app.services.product_catalog_service import sync_catalog_products
+from app.services.recommendation_catalog_service import sync_product_catalog_entry
 from app.services.quota_service import QuotaExceededError, check_quota, reserve_ai_budget
 
 logger = logging.getLogger(__name__)
@@ -350,12 +352,39 @@ def ingest_document(
                     source_document_id=doc.id,
                     text=raw_text,
                 )
-                if synced_products:
-                    logger.info(
-                        "Synchronized %d structured products from document id=%d",
-                        len(synced_products),
-                        document_id,
+                db.flush()
+                stored_chunks = db.query(DocumentChunk).filter(
+                    DocumentChunk.document_id == doc.id,
+                ).all()
+                catalog_products = db.query(Product).filter(
+                    Product.business_id == doc.business_id,
+                ).all()
+                mapped_products = 0
+                import re
+                for product in catalog_products:
+                    sku = str(product.sku or "").strip()
+                    if not sku:
+                        continue
+                    sku_pattern = re.compile(rf"(?<![\w]){re.escape(sku)}(?![\w])", re.IGNORECASE)
+                    mapped_chunk_ids = [
+                        chunk.id for chunk in stored_chunks
+                        if sku_pattern.search(chunk.content or "")
+                    ]
+                    if not mapped_chunk_ids:
+                        continue
+                    sync_product_catalog_entry(
+                        db,
+                        product,
+                        source="knowledge_document",
+                        document_chunk_ids=mapped_chunk_ids,
                     )
+                    mapped_products += 1
+                logger.info(
+                    "Synchronized %d structured products and rebuilt %d exact-SKU catalog mappings from document id=%d",
+                    len(synced_products),
+                    mapped_products,
+                    document_id,
+                )
             db.commit()
             report(100, "complete", len(chunks), len(chunks))
 

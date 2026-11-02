@@ -1,0 +1,67 @@
+{
+  "status": "implemented_locally",
+  "git": {
+    "committed": false,
+    "pushed": false
+  },
+  "runtime_restarted": false,
+  "runtime_environment_mode": {
+    "backend": "bm25",
+    "worker": "bm25"
+  },
+  "retrieval": {
+    "default_mode": "bm25",
+    "hybrid_mode": "explicit evaluation opt-in",
+    "ppr": "offline opt-in only; not enabled by serving callers",
+    "hard_filters": [
+      "business_id/shop",
+      "SKU",
+      "typed exact attributes"
+    ],
+    "filters_applied_before_limit": true,
+    "rfm_in_knowledge_retrieval": false,
+    "rfm_in_product_recommendation_ranking": true
+  },
+  "catalog_safety": {
+    "current_source": "tenant Product catalog",
+    "facts": ["sale status", "current price", "available stock"],
+    "inactive_products_resolved_for_current_status": true,
+    "source_is_citable": true
+  },
+  "benchmark_reference": {
+    "freshly_rerun": false,
+    "source_log": "2026-11-01-12-rag-expanded-benchmark.json",
+    "eligible_cases": 243,
+    "bm25_ndcg_at_5": 0.945888,
+    "hybrid_no_ppr_ndcg_at_5": 0.852113,
+    "hybrid_ppr_ndcg_at_5": 0.620618
+  },
+  "verification": {
+    "targeted_retrieval_and_chatbot_tests": {
+      "passed": 101,
+      "failed": 0
+    },
+    "crm_rag_integration_initial": {
+      "passed": 45,
+      "failed": 1,
+      "failure_reason": "fallback test expected hybrid without explicitly selecting it"
+    },
+    "crm_rag_integration_rerun_after_test_update": {
+      "passed": 1,
+      "scope": "previously failing case only"
+    },
+    "conversation_and_recommendation_tests_in_backend_container": {
+      "passed": 78,
+      "failed": 1,
+      "failure": "test_feedback_becomes_one_traced_reward_and_is_tenant_safe returned HTTP 400; this is the chatbot feedback/bandit endpoint, outside the retrieval path"
+    },
+    "python_compile": "passed"
+  },
+  "not_done": [
+    "No full rerun of test_rag_crm_model_integration.py after updating its single test",
+    "No fresh 243-case retrieval benchmark",
+    "No human review of final chatbot answers",
+    "No database migration",
+    "No server restart; backend startup command would rerun database upgrade commands"
+  ]
+}

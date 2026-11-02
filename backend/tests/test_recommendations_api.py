@@ -1228,8 +1228,8 @@ class RecommendationApiTests(unittest.TestCase):
                 policy_id=decision.policy_id,
                 arm="balanced",
                 context_hash=decision.context_hash,
-                pulls=20,
-                reward_sum=Decimal("15"),
+                pulls=60,
+                reward_sum=Decimal("45"),
             ))
             db.commit()
 

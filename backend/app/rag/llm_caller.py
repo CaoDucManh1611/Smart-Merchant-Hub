@@ -246,7 +246,9 @@ def _gemini_parts(parts: list, types) -> list:
     return result
 
 
-def _call_gemini_once(messages: list[dict], api_key: str, model: str | None = None) -> str:
+def _call_gemini_once(
+    messages: list[dict], api_key: str, model: str | None = None, *, include_usage: bool = False
+) -> str | tuple[str, dict]:
     """Gọi một lần Gemini API với key đã được chọn."""
     from google import genai
     from google.genai import types
@@ -256,7 +258,7 @@ def _call_gemini_once(messages: list[dict], api_key: str, model: str | None = No
     )
 
     if not history:
-        return ""
+        return ("", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}) if include_usage else ""
     contents = [
         types.Content(
             role=item["role"],
@@ -270,15 +272,31 @@ def _call_gemini_once(messages: list[dict], api_key: str, model: str | None = No
             contents=contents,
             config=types.GenerateContentConfig(system_instruction=system_instruction or None),
         )
-    return response.text or ""
+    answer = response.text or ""
+    if not include_usage:
+        return answer
+    usage = getattr(response, "usage_metadata", None)
+
+    def token_count(name: str) -> int | None:
+        value = getattr(usage, name, None)
+        return int(value) if value is not None else None
+
+    return answer, {
+        "prompt_tokens": token_count("prompt_token_count"),
+        "completion_tokens": token_count("candidates_token_count"),
+        "thoughts_tokens": token_count("thoughts_token_count"),
+        "total_tokens": token_count("total_token_count"),
+    }
 
 
-def call_gemini(messages: list[dict], *, model: str | None = None) -> str:
+def call_gemini(
+    messages: list[dict], *, model: str | None = None, include_usage: bool = False
+) -> str | tuple[str, dict]:
     """Gọi Gemini API (non-streaming) với pool key."""
     model = (model or settings.LLM_MODEL).removeprefix("models/")
     return _call_with_key_rotation(
         _provider_pool("gemini", model),
-        lambda key: _call_gemini_once(messages, key, model),
+        lambda key: _call_gemini_once(messages, key, model, include_usage=include_usage),
         provider="gemini",
         failure_scope=f"gemini:{model}",
     )

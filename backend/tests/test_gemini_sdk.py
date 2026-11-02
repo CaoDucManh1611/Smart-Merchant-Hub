@@ -31,7 +31,15 @@ def test_gemini_generation_uses_supported_google_genai_client(monkeypatch):
     class Models:
         def generate_content(self, **kwargs):
             calls.append(kwargs)
-            return types.SimpleNamespace(text="Xin chào")
+            return types.SimpleNamespace(
+                text="Xin chào",
+                usage_metadata=types.SimpleNamespace(
+                    prompt_token_count=8,
+                    candidates_token_count=3,
+                    thoughts_token_count=1,
+                    total_token_count=12,
+                ),
+            )
 
     class Client:
         def __init__(self, **kwargs):
@@ -67,3 +75,19 @@ def test_gemini_generation_uses_supported_google_genai_client(monkeypatch):
     assert calls[1]["model"] == "gemini-test"
     assert calls[1]["config"].system_instruction == "Trả lời ngắn gọn"
     assert calls[1]["contents"][0].role == "user"
+
+    answer, usage = _call_gemini_once(
+        [
+            {"role": "system", "content": "Trả lời ngắn gọn"},
+            {"role": "user", "content": "Xin chào"},
+        ],
+        "test-key",
+        include_usage=True,
+    )
+    assert answer == "Xin chào"
+    assert usage == {
+        "prompt_tokens": 8,
+        "completion_tokens": 3,
+        "thoughts_tokens": 1,
+        "total_tokens": 12,
+    }

@@ -41,12 +41,38 @@ def customer_memory(db, business_id, customer_id):
 
 def recommendation_evidence(db, business_id, conversation, query):
     from app.schemas.recommendation import RecommendationRequestCreate
-    from app.services.recommendation_service import serve_recommendations, active_recommendation_experiment_id
+    from app.rag.retriever import retrieve
+    from app.rag.catalog_filters import extract_query_hard_filters
+    from app.services.recommendation_service import (
+        active_recommendation_experiment_id,
+        rag_candidates_from_chunks,
+        serve_recommendations,
+    )
+    retrieval_diagnostics = {}
+    chunks = retrieve(
+        query=query,
+        db=db,
+        business_id=business_id,
+        top_k=30,
+        diagnostics=retrieval_diagnostics,
+        hard_filters=extract_query_hard_filters(query, object_type="product"),
+    )
+    rag_candidates, retrieval_trace = rag_candidates_from_chunks(
+        db, business_id=business_id, chunks=chunks,
+    )
     request = serve_recommendations(db, business_id=business_id, payload=RecommendationRequestCreate(
         customer_id=conversation.customer_id, query=query[:1000], limit=5,
         experiment_id=active_recommendation_experiment_id(db, business_id=business_id),
-        context={"surface": "conversation_graph", "conversation_id": conversation.id},
-    ))
+        rag_candidates=rag_candidates,
+        context={
+            "surface": "conversation_graph",
+            "conversation_id": conversation.id,
+            "source_channel": str(conversation.channel or "unknown"),
+            "retrieval_trace": retrieval_trace,
+            "retrieval_diagnostics": retrieval_diagnostics,
+            "hard_filters": extract_query_hard_filters(query, object_type="product"),
+        },
+    ), record_impressions=False)
     request.context = {**(request.context or {}), "surface":"conversation_graph", "conversation_id":conversation.id}
     db.flush()
     return {"request_id": request.request_id, "strategy": request.strategy,

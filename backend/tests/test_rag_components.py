@@ -73,7 +73,9 @@ from app.rag.retriever import (
     _bm25_scores,
     _merge_hybrid_results,
     _personalized_pagerank_rerank,
+    _query_sku_identifiers,
 )
+from app.rag.catalog_filters import extract_query_hard_filters
 from app.rag.topics import infer_document_topic, infer_query_topic
 
 
@@ -228,10 +230,23 @@ def test_hybrid_retriever_personalized_pagerank_promotes_related_chunks():
         similarity=0.4, metadata={}, chunk_index=0,
     )
 
-    results = _merge_hybrid_results([query_match, related, unrelated], [], top_k=3)
+    results = _merge_hybrid_results(
+        [query_match, related, unrelated], [], top_k=3, enable_ppr=True,
+    )
 
     assert [item.chunk_id for item in results] == [1, 2, 3]
     assert [item.similarity for item in results] == [0.9, 0.2, 0.4]
+
+
+def test_hybrid_merge_keeps_ppr_opt_in():
+    from unittest.mock import patch
+
+    item = RetrievedChunk(chunk_id=1, document_id=1, content="hit", similarity=0.9, metadata={})
+    with patch("app.rag.retriever._personalized_pagerank_rerank", wraps=_personalized_pagerank_rerank) as ppr:
+        _merge_hybrid_results([item], [], top_k=1)
+        ppr.assert_not_called()
+        _merge_hybrid_results([item], [], top_k=1, enable_ppr=True)
+        ppr.assert_called_once()
 
 
 def test_ppr_blends_consented_customer_product_prior_with_query_rank():
@@ -252,6 +267,39 @@ def test_ppr_blends_consented_customer_product_prior_with_query_rank():
     assert [item.chunk_id for item in _personalized_pagerank_rerank(
         [query_match, customer_match], [0.52, 0.48],
     )] == [1, 2]
+
+
+def test_hard_filter_extractor_keeps_complete_industry_size_values():
+    assert extract_query_hard_filters("Tìm kích thước 70/90-17") == {
+        "required_attributes": {"size": "70/90-17"},
+    }
+    assert extract_query_hard_filters("Tìm size 1 lít") == {
+        "required_attributes": {"size": "1 lít"},
+    }
+    assert extract_query_hard_filters("Tìm kích thước 0.8 lít") == {
+        "required_attributes": {"size": "0.8 lít"},
+    }
+    assert extract_query_hard_filters("Tìm size CR7HSA") == {
+        "required_attributes": {"size": "cr7hsa"},
+    }
+
+
+def test_hard_filter_size_code_is_not_also_treated_as_an_exact_sku():
+    query = "Có Bugi NGK CPR8EA-9 kích thước cpr8ea-9 không?"
+    hard_filters = extract_query_hard_filters(query)
+    assert hard_filters == {"required_attributes": {"size": "cpr8ea-9"}}
+    assert _query_sku_identifiers(query, hard_filters) == []
+
+    query_with_both = "Có mã XM-CR7HSA kích thước CPR8EA-9 không?"
+    assert _query_sku_identifiers(
+        query_with_both, extract_query_hard_filters(query_with_both),
+    ) == ["xm-cr7hsa"]
+
+
+def test_product_specification_is_not_mistaken_for_sku():
+    query = "Thông tin về nhớt 10W-40 chai 1 lít"
+    assert _query_sku_identifiers(query) == []
+    assert _query_sku_identifiers("Tìm SKU XM-NHOT-4T-MA2-1L") == ["xm-nhot-4t-ma2-1l"]
 
 
 def test_hybrid_retrieval_limits_one_document_from_filling_the_entire_context():

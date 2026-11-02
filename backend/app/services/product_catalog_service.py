@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 import re
+import unicodedata
 
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,140 @@ class CatalogProductRecord:
     aliases: tuple[str, ...]
     components: tuple[str, ...] = ()
     attributes: dict[str, list[str]] | None = None
+    status: str = "active"
+
+
+_TABLE_FIELD_ALIASES = {
+    "sku": {"sku", "ma", "ma_sku", "ma_san_pham", "product_code", "item_code", "code"},
+    "name": {"name", "ten", "san_pham", "ten_san_pham", "product", "product_name", "item_name"},
+    "price": {"price", "price_vnd", "selling_price", "gia", "gia_ban", "don_gia", "unit_price"},
+    "stock_quantity": {"stock", "stock_quantity", "ton", "ton_kho", "ton_hien_tai", "so_luong_ton", "quantity_in_stock", "inventory", "available_stock"},
+    "description": {"description", "mo_ta", "product_description"},
+    "product_url": {"product_url", "product_link", "link_san_pham", "url_san_pham"},
+    "name_en": {"name_en", "english_name", "ten_tieng_anh", "ten_san_pham_tieng_anh", "product_name_en"},
+    "status": {"status", "trang_thai"},
+    "category": {"category", "danh_muc"},
+    "suitable_for": {"suitable_for", "phu_hop", "phu_hop_voi", "doi_tuong_phu_hop"},
+    "color": {"color", "colors", "colour", "mau", "mau_sac"},
+    "size": {"size", "sizes", "kich_thuoc"},
+    "volume": {"volume", "capacity", "dung_tich", "the_tich"},
+    "keywords": {"keywords", "keyword", "tu_khoa"},
+}
+_TABLE_FIELD_BY_ALIAS = {
+    alias: field for field, aliases in _TABLE_FIELD_ALIASES.items() for alias in aliases
+}
+_VOLUME_VALUE = re.compile(
+    r"\b(?:millilit(?:er|re)s?|ml|cl|dl|lít|lit(?:er|re)?s?)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalise_header(value: str) -> str:
+    folded = unicodedata.normalize("NFKD", str(value or "").casefold())
+    folded = "".join(char for char in folded if not unicodedata.combining(char)).replace("đ", "d")
+    return re.sub(r"[^a-z0-9]+", "_", folded).strip("_")
+
+
+def _table_cells(line: str) -> list[str]:
+    return [cell.strip().strip("`").strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _table_header_fields(cells: list[str]) -> dict[str, int]:
+    fields: dict[str, int] = {}
+    for index, cell in enumerate(cells):
+        field = _TABLE_FIELD_BY_ALIAS.get(_normalise_header(cell))
+        if field is not None:
+            fields.setdefault(field, index)
+    return fields
+
+
+def _is_table_separator(cells: list[str]) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in cells)
+
+
+def _extract_table_products(text: str) -> list[CatalogProductRecord]:
+    """Read pipe-delimited catalog tables with explicit SKU, price, and stock columns."""
+    lines = (text or "").splitlines()
+    records: list[CatalogProductRecord] = []
+    index = 0
+    while index < len(lines):
+        if "|" not in lines[index]:
+            index += 1
+            continue
+        headers = _table_cells(lines[index])
+        fields = _table_header_fields(headers)
+        if not {"sku", "name", "price", "stock_quantity"}.issubset(fields):
+            index += 1
+            continue
+
+        index += 1
+        if index < len(lines) and "|" in lines[index] and _is_table_separator(_table_cells(lines[index])):
+            index += 1
+        while index < len(lines) and "|" in lines[index]:
+            cells = _table_cells(lines[index])
+            if _is_table_separator(cells):
+                index += 1
+                continue
+            if {"sku", "name", "price", "stock_quantity"}.issubset(_table_header_fields(cells)):
+                break
+            index += 1
+            required_indexes = (fields["sku"], fields["name"], fields["price"], fields["stock_quantity"])
+            if max(required_indexes) >= len(cells):
+                continue
+            sku = cells[fields["sku"]].strip()
+            name = cells[fields["name"]].strip()
+            price_text = cells[fields["price"]].strip()
+            stock_text = cells[fields["stock_quantity"]].strip()
+            if not sku or not name or not price_text or not stock_text:
+                continue
+            try:
+                price = _parse_integer(price_text)
+                stock_quantity = _parse_integer(stock_text)
+            except (TypeError, ValueError):
+                continue
+
+            attributes: dict[str, list[str]] = {}
+            core_fields = {"sku", "name", "price", "stock_quantity", "description", "product_url", "name_en", "status"}
+            for column, header in enumerate(headers):
+                if column >= len(cells) or not cells[column]:
+                    continue
+                field = _TABLE_FIELD_BY_ALIAS.get(_normalise_header(header))
+                if field in core_fields:
+                    continue
+                key = field or _normalise_header(header)
+                if not key:
+                    continue
+                if key == "size" and _VOLUME_VALUE.search(cells[column]):
+                    key = "volume"
+                values = (
+                    [part.strip() for part in re.split(r"[;,]", cells[column]) if part.strip()]
+                    if key in {"size", "color", "keywords"} else [cells[column]]
+                )
+                attributes[key] = values
+
+            description = cells[fields["description"]] if "description" in fields and fields["description"] < len(cells) else ""
+            status = "active"
+            if "status" in fields and fields["status"] < len(cells) and cells[fields["status"]]:
+                status_value = _normalise_header(cells[fields["status"]])
+                if status_value in {"active", "dang_ban", "dang_kinh_doanh", "available", "in_stock", "con_hang", "het_hang", "out_of_stock"}:
+                    status = "active"
+                elif status_value in {"inactive", "archived", "deleted", "ngung_ban", "ngung_kinh_doanh"}:
+                    status = "archived"
+                else:
+                    continue
+            elif "status" in fields:
+                continue
+            records.append(CatalogProductRecord(
+                sku=sku,
+                name=name,
+                price=Decimal(price),
+                stock_quantity=stock_quantity,
+                description=description,
+                aliases=tuple(_build_aliases(name)),
+                attributes=attributes or None,
+                status=status,
+            ))
+    return records
 
 
 def extract_catalog_products(text: str) -> list[CatalogProductRecord]:
@@ -66,7 +201,27 @@ def extract_catalog_products(text: str) -> list[CatalogProductRecord]:
             components=tuple(components),
             attributes=attributes,
         ))
-    return records
+    records.extend(_extract_table_products(text))
+    unique: dict[str, CatalogProductRecord] = {}
+    for record in records:
+        key = record.sku.casefold()
+        previous = unique.get(key)
+        if previous is None:
+            unique[key] = record
+            continue
+        attributes = {**(record.attributes or {}), **(previous.attributes or {})}
+        unique[key] = CatalogProductRecord(
+            sku=previous.sku,
+            name=previous.name,
+            price=previous.price,
+            stock_quantity=previous.stock_quantity,
+            description=previous.description or record.description,
+            aliases=tuple(dict.fromkeys((*previous.aliases, *record.aliases))),
+            components=tuple(dict.fromkeys((*previous.components, *record.components))),
+            attributes=attributes or None,
+            status=previous.status,
+        )
+    return list(unique.values())
 
 
 def _parse_integer(value: str) -> int:
@@ -148,7 +303,7 @@ def sync_catalog_products(
                 description=record.description,
                 price=record.price,
                 stock_quantity=record.stock_quantity,
-                status="active",
+                status=record.status,
                 metadata_={
                     "aliases": list(record.aliases),
                     "catalog_source_document_id": source_document_id,
@@ -168,6 +323,7 @@ def sync_catalog_products(
             product.description = record.description
             product.price = record.price
             product.stock_quantity = record.stock_quantity
+            product.status = record.status
             metadata.update({
                 "aliases": list(record.aliases),
                 "catalog_source_document_id": source_document_id,
@@ -181,9 +337,18 @@ def sync_catalog_products(
             synced.append(product)
         elif source_id is None:
             # Do not overwrite manually managed price/stock; only enrich the
-            # record with aliases so future queries can resolve it.
+            # record with aliases and missing explicit facets from the document.
             aliases = list(dict.fromkeys([*(metadata.get("aliases") or []), *record.aliases]))
-            if aliases != metadata.get("aliases"):
-                product.metadata_ = {**metadata, "aliases": aliases}
-                synced.append(product)
+            attributes = dict(metadata.get("attributes") or {})
+            for key, value in (record.attributes or {}).items():
+                attributes.setdefault(key, value)
+            if aliases != metadata.get("aliases") or attributes != metadata.get("attributes"):
+                product.metadata_ = {**metadata, "aliases": aliases, **({"attributes": attributes} if attributes else {})}
+            # Even an unchanged canonical product needs its matching document
+            # chunks linked so exact catalog filters can run before LIMIT.
+            synced.append(product)
+        else:
+            # The product is already owned by another source document. Preserve
+            # that canonical row, but link this exact-SKU evidence to it.
+            synced.append(product)
     return synced

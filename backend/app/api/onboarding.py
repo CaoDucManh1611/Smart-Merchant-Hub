@@ -63,6 +63,7 @@ from app.services.quota_service import QuotaExceededError, release_quota
 from app.services.provider_connection import ProviderConnectionError, verify_and_configure_bot
 from app.services.customer_collection import generate_verification_code, hash_verification_code
 from app.services.platform_business_sync import ensure_platform_business, PlatformBusinessIdentityConflict
+from app.services.recommendation_catalog_service import sync_product_catalog_entry
 from app.services.otp_delivery import OtpDeliveryError, OtpDeliveryNotConfigured, deliver_otp
 from app.core.config import settings
 from app.tenancy.context import TenantContext
@@ -1765,6 +1766,7 @@ def import_products(
                     note="Đối soát tồn từ onboarding import",
                 ))
             updated += 1
+        sync_product_catalog_entry(tenant_db, product, source="onboarding_product_import")
     try:
         tenant_db.commit()
     except IntegrityError as exc:

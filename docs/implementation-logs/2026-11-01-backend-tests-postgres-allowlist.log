@@ -1,0 +1,1657 @@
+ Container smart-merchant-hub-backend-run-9f51f375c39a Creating 
+ Container smart-merchant-hub-backend-run-9f51f375c39a Created 
+........................................................................ [  4%]
+............................sss......................................... [  8%]
+..F..............................................................F.. [ 12%]
+.F.F.................................................................... [ 17%]
+........................................................................ [ 21%]
+...................................................................... [ 26%]
+........................................................................ [ 30%]
+..................................................................... [ 34%]
+..................................F..................................... [ 39%]
+........................................................................ [ 43%]
+.................................................s................ [ 47%]
+............ss.......................................................... [ 52%]
+........................................................................ [ 56%]
+........................................................................ [ 60%]
+........................................................ [ 64%]
+....................................................................F... [ 68%]
+..............................FF.FFFFFF................................. [ 73%]
+.....F............................F............................... [ 77%]
+........................................................................ [ 81%]
+........................................................................ [ 86%]
+........................................................................ [ 90%]
+....F............F...................................................... [ 94%]
+........................................................................ [ 99%]
+............                                                             [100%]
+=================================== FAILURES ===================================
+_ test_cached_evaluation_checks_sources_and_verifies_privacy_in_an_isolated_fixture _
+
+self = <sqlalchemy.engine.base.Connection object at 0x79688b934620>
+dialect = <sqlalchemy.dialects.postgresql.psycopg.PGDialect_psycopg object at 0x79688b9346e0>
+context = <sqlalchemy.dialects.postgresql.psycopg.PGExecutionContext_psycopg object at 0x79688b936750>
+statement = <sqlalchemy.dialects.postgresql.psycopg.PGCompiler_psycopg object at 0x79688b934ec0>
+parameters = [{'business_id_1': 1, 'customer_id_1': 1, 'source_type_1_1': 'extracted', 'source_type_1_2': 'order_summary'}]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -> CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+>                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <psycopg.Cursor [closed] [BAD] at 0x796890503dd0>
+query = 'SELECT customer_facts.id, customer_facts.business_id, customer_facts.customer_id, customer_facts.fact_type, customer_...ustomer_id_1)s::INTEGER AND customer_facts.source_type IN (%(source_type_1_1)s::VARCHAR, %(source_type_1_2)s::VARCHAR)'
+params = {'business_id_1': 1, 'customer_id_1': 1, 'source_type_1_1': 'extracted', 'source_type_1_2': 'order_summary'}
+
+    def execute(
+        self,
+        query: Query,
+        params: Params | None = None,
+        *,
+        prepare: bool | None = None,
+        binary: bool | None = None,
+    ) -> Self:
+        """
+        Execute a query or command to the database.
+        """
+        try:
+            with self._conn.lock:
+                self._conn.wait(
+                    self._execute_gen(query, params, prepare=prepare, binary=binary)
+                )
+        except e._NO_TRACEBACK as ex:
+>           raise ex.with_traceback(None)
+E           psycopg.errors.UndefinedTable: relation "customer_facts" does not exist
+E           LINE 2: FROM customer_facts 
+E                        ^
+
+/usr/local/lib/python3.12/site-packages/psycopg/cursor.py:117: UndefinedTable
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/workspace/backend/.pytest_tmp/cases/test_cached_evaluation_checks_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x79688b90b020>
+
+>   ???
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_cached_rag_answers.py:31: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../scripts/evaluate_cached_rag_answers.py:84: in main
+    privacy = customer_memory_opt_out_reply(db, 1, 1, case["query"])
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/services/privacy_service.py:60: in customer_memory_opt_out_reply
+    stop_customer_personalization(db, business_id, customer_id)
+app/services/privacy_service.py:169: in stop_customer_personalization
+    for fact in db.scalars(select(CustomerFact).where(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py:2459: in scalars
+    return self._execute_internal(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/session.py:2249: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/context.py:306: in orm_execute_statement
+    result = conn.execute(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1419: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py:527: in _execute_on_connection
+    return connection._execute_clauseelement(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
+    ret = self._execute_context(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
+    return self._exec_single_context(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <psycopg.Cursor [closed] [BAD] at 0x796890503dd0>
+query = 'SELECT customer_facts.id, customer_facts.business_id, customer_facts.customer_id, customer_facts.fact_type, customer_...ustomer_id_1)s::INTEGER AND customer_facts.source_type IN (%(source_type_1_1)s::VARCHAR, %(source_type_1_2)s::VARCHAR)'
+params = {'business_id_1': 1, 'customer_id_1': 1, 'source_type_1_1': 'extracted', 'source_type_1_2': 'order_summary'}
+
+    def execute(
+        self,
+        query: Query,
+        params: Params | None = None,
+        *,
+        prepare: bool | None = None,
+        binary: bool | None = None,
+    ) -> Self:
+        """
+        Execute a query or command to the database.
+        """
+        try:
+            with self._conn.lock:
+                self._conn.wait(
+                    self._execute_gen(query, params, prepare=prepare, binary=binary)
+                )
+        except e._NO_TRACEBACK as ex:
+>           raise ex.with_traceback(None)
+E           sqlalchemy.exc.ProgrammingError: (psycopg.errors.UndefinedTable) relation "customer_facts" does not exist
+E           LINE 2: FROM customer_facts 
+E                        ^
+E           [SQL: SELECT customer_facts.id, customer_facts.business_id, customer_facts.customer_id, customer_facts.fact_type, customer_facts.fact_key, customer_facts.fact_value_json, customer_facts.confidence, customer_facts.source_type, customer_facts.source_message_id, customer_facts.source_order_id, customer_facts.observed_at, customer_facts.valid_from, customer_facts.valid_until, customer_facts.extractor, customer_facts.extractor_version, customer_facts.is_verified, customer_facts.created_at, customer_facts.updated_at 
+E           FROM customer_facts 
+E           WHERE customer_facts.business_id = %(business_id_1)s::INTEGER AND customer_facts.customer_id = %(customer_id_1)s::INTEGER AND customer_facts.source_type IN (%(source_type_1_1)s::VARCHAR, %(source_type_1_2)s::VARCHAR)]
+E           [parameters: {'business_id_1': 1, 'customer_id_1': 1, 'source_type_1_1': 'extracted', 'source_type_1_2': 'order_summary'}]
+E           (Background on this error at: https://sqlalche.me/e/20/f405)
+
+/usr/local/lib/python3.12/site-packages/psycopg/cursor.py:117: ProgrammingError
+----------------------------- Captured stdout call -----------------------------
+1/3 verified: answered
+2/3 invented: handoff_required
+_____________ test_recommendation_uses_explicit_product_attributes _____________
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af7b1a0>
+
+    def _recommendation_reply(
+        db: Session,
+        *,
+        business_id: int,
+        query_text: str,
+        language: str = "vi",
+        customer_id: int | None = None,
+        conversation_id: int | None = None,
+        source_channel: str | None = None,
+        reply_metadata: dict | None = None,
+    ) -> str | None:
+        """Use customer-aware ranking in live chats, with the safe catalog matcher as fallback."""
+        folded_query = _fold_text(query_text)
+        hard_filters = extract_query_hard_filters(query_text, object_type="product")
+        rag_candidates = []
+        retrieval_trace = []
+        retrieval_diagnostics = {}
+        try:
+            chunks = retrieve(
+                query=query_text,
+                db=db,
+                business_id=business_id,
+                top_k=30,
+                diagnostics=retrieval_diagnostics,
+                hard_filters=hard_filters,
+                customer_product_weights=rag_personalization_weights(
+                    db, business_id=business_id, customer_id=customer_id,
+                ),
+            )
+            rag_candidates, retrieval_trace = rag_candidates_from_chunks(
+                db, business_id=business_id, chunks=chunks,
+            )
+        except Exception as error:
+            logger.warning("RAG scores unavailable for product ranking: %s", type(error).__name__)
+    
+        # Do not let a general popularity/personalization ranker override a hard
+        # product need (for example, face-care items); it may rank unrelated stock.
+        if not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
+            try:
+                experiment_id = active_recommendation_experiment_id(db, business_id=business_id)
+                recommendation = serve_recommendations(
+                    db,
+                    business_id=business_id,
+                    payload=RecommendationRequestCreate(
+                        customer_id=customer_id,
+                        limit=3,
+                        query=query_text,
+                        context={
+                            "source_channel": str(source_channel or "unknown"),
+                            "surface": "chatbot",
+                            "conversation_id": conversation_id,
+                            "retrieval_trace": retrieval_trace,
+                            "retrieval_diagnostics": retrieval_diagnostics,
+                            "hard_filters": hard_filters,
+                        },
+                        rag_candidates=rag_candidates,
+                        experiment_id=experiment_id,
+                    ),
+                    record_impressions=False,
+                )
+                items = recommendation.served_items or []
+                if items:
+                    lines = []
+                    reasons = {
+                        "explicit_color_preference": ("đúng màu bạn đã chọn", "matches the color you chose"),
+                        "stated_preference_affinity": ("dựa trên sở thích bạn đã chia sẻ", "based on preferences you shared"),
+                        "purchased_color_affinity": ("cùng màu với sản phẩm bạn từng mua", "matches a color you purchased before"),
+                        "customer_interaction_affinity": ("liên quan sản phẩm bạn từng quan tâm", "related to products you viewed"),
+                        "co_purchase_affinity": ("thường được mua cùng sản phẩm bạn đã mua", "often bought with a product you purchased"),
+                        "repeated_question_interest": ("liên quan nhu cầu bạn từng hỏi", "related to a need you asked about before"),
+                        "tenant_popularity": ("đang được khách của shop quan tâm", "popular with this shop's customers"),
+                        "rag_relevance": ("liên quan yêu cầu bạn đang tìm", "related to your current request"),
+                        "eligible_catalog_fallback": ("đang bán và còn hàng", "currently available in the catalog"),
+                    }
+                    for item in items:
+                        name = str(item.get("name") or "Sản phẩm")
+                        price = _format_vnd(item.get("price") or 0)
+                        available = item.get("available")
+                        line = f"- {name} — {price} đồng"
+                        if isinstance(available, int):
+                            line += f" (còn {available})"
+                        reason = reasons.get(str(item.get("reason") or ""))
+                        if reason:
+                            line += f"\n  {'Why' if language == 'en' else 'Lý do'}: {reason[1 if language == 'en' else 0]}"
+                        product_url = str(item.get("click_url") or item.get("product_url") or "").strip()
+                        if product_url:
+                            line += f"\n  {product_url}"
+                        lines.append(line)
+                    if reply_metadata is not None:
+                        reply_metadata["recommendation"] = {
+                            "request_id": recommendation.request_id,
+                            "product_ids": [int(item["product_id"]) for item in items if item.get("product_id") is not None],
+                            "source_channel": str(source_channel or "unknown"),
+                        }
+                    if language == "en":
+                        return "Based on what you asked for, these options may fit:\n" + "\n".join(lines) + "\nWhich one would you like to know more about?"
+                    return "Dựa trên nhu cầu của bạn, mấy sản phẩm này có thể phù hợp:\n" + "\n".join(lines) + "\nBạn muốn mình tư vấn kỹ hơn mẫu nào ạ?"
+            except Exception as error:
+                db.rollback()
+                logger.warning("Personalized product ranking unavailable; using catalog matcher: %s", type(error).__name__)
+    
+        query_terms = {
+            token
+            for token in folded_query.split()
+            if len(token) >= 3
+            and token not in _PRODUCT_HINT_STOP_WORDS
+            and token not in _NON_PRODUCT_HINT_WORDS
+            and token not in {"phu", "hop", "mang", "nho", "gon", "duoi", "ngan", "sach", "di", "lam", "can", "dung"}
+        }
+    
+        budget = re.search(
+            r"(?:dưới|tối đa|under|below|less than)\s*(\d[\d.,]*)\s*(k|nghìn|ngàn|triệu|m|million)?\b",
+            query_text,
+            re.IGNORECASE,
+        )
+        max_price = None
+        if budget:
+            amount = int(re.sub(r"\D", "", budget.group(1)) or "0")
+            unit = _fold_text(budget.group(2) or "")
+            scale = 1_000_000 if unit in {"trieu", "m", "million"} else 1_000 if unit in {"k", "nghin", "ngan"} else 1
+            max_price = amount * scale
+    
+        wants_hot_water = any(term in folded_query for term in ("nuoc nong", "giu nong", "giu nuoc nong", "hot water", "keep hot", "keep warm"))
+        wants_container = any(term in folded_query for term in ("binh", "chai", "bottle", "thermos", "flask")) or (
+            wants_hot_water and any(term in folded_query for term in ("mang", "dung nuoc", "dut nuoc", "carry", "take to work"))
+        )
+    
+        try:
+            products = db.query(Product).filter(
+                Product.business_id == business_id,
+                Product.status == "active",
+            ).order_by(Product.id.asc()).all()
+        except Exception:
+            return None
+    
+        matches: list[tuple[int, Product]] = []
+        for product in products:
+            metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+            raw_attributes = metadata.get("attributes") if isinstance(metadata.get("attributes"), dict) else {}
+            values = [
+                _fold_text(value)
+                for raw in raw_attributes.values()
+                for value in (raw if isinstance(raw, list) else [raw])
+                if str(value or "").strip()
+            ]
+            searchable_text = _fold_text(" ".join((
+                str(product.name or ""), str(getattr(product, "description", None) or ""),
+                " ".join(product_aliases(product)), " ".join(values),
+            )))
+            if _contains_any_phrase(folded_query, _EXPLICIT_PRODUCT_NEEDS) and not _contains_any_phrase(
+                searchable_text, _SKINCARE_CATALOG_EVIDENCE,
+            ):
+                continue
+            product_name = _fold_text(product.name)
+            available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+            if available <= 0:
+                continue
+            if max_price is not None and Decimal(str(product.price or 0)) > max_price:
+                continue
+            if wants_container and not any(term in product_name.split() for term in ("binh", "chai", "bottle", "thermos", "flask")):
+                continue
+            verified_hot_use = any(term in product_name for term in ("giu nhiet", "giu nong", "thermos", "insulated")) or any(
+                term in value for value in values for term in ("giu nuoc nong", "dung nuoc nong", "keep hot water")
+            )
+            if wants_hot_water and not verified_hot_use:
+                continue
+            score = 0
+            for value in values:
+                if value in folded_query:
+                    score += 3
+                elif query_terms.intersection(value.split()):
+                    score += 1
+            score += len(query_terms & set(searchable_text.split()))
+            if wants_container or wants_hot_water or max_price is not None:
+                score += 1
+            if score:
+                matches.append((score, product))
+    
+        if not matches:
+            return None
+        matches.sort(key=lambda item: (-item[0], item[1].id or 0))
+    
+        try:
+>           recommendation = record_catalog_match_recommendation(
+                db,
+                business_id=business_id,
+                customer_id=customer_id,
+                query=query_text,
+                products=matches,
+                context={
+                    "surface": "chatbot",
+                    "conversation_id": conversation_id,
+                    "source_channel": str(source_channel or "unknown"),
+                    "retrieval_trace": retrieval_trace,
+                    "retrieval_diagnostics": retrieval_diagnostics,
+                },
+                rag_candidates=rag_candidates,
+            )
+
+app/services/auto_reply_service.py:1698: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af7b1a0>
+
+    def record_catalog_match_recommendation(
+        db: Session,
+        *,
+        business_id: int,
+        customer_id: int | None,
+        query: str,
+        products: list[tuple[int, Product]],
+        context: dict,
+        rag_candidates: list[RagCandidate] | None = None,
+    ) -> RecommendationRequest:
+        """Persist the safe catalog-matcher fallback using the same exposure contract."""
+        personalized_id = customer_id if _personalization_allowed(db, business_id, customer_id) else None
+        profile, _cache_hit = (
+            _cached_personalization_profile(db, business_id, personalized_id)
+            if personalized_id is not None else (None, False)
+        )
+        rag_by_product = {candidate.product_id: candidate for candidate in rag_candidates or []}
+        best_score = max((score for score, _product in products), default=1)
+        candidate_snapshot = []
+        request_id = str(uuid4())
+        served_items = []
+        for rank, (match_score, product) in enumerate(products[:50], start=1):
+            rag = rag_by_product.get(int(product.id))
+            feature_snapshot = {
+                "catalog_match_score": float(match_score),
+                "rag_relevance": float(rag.relevance) if rag else None,
+                "rag_bm25_score": rag.bm25_score if rag else None,
+                "rag_vector_score": rag.vector_score if rag else None,
+                "rag_rrf_score": rag.rrf_score if rag else None,
+                "rag_ppr_score": rag.ppr_score if rag else None,
+                "rag_bm25_rank": rag.bm25_rank if rag else None,
+                "rag_vector_rank": rag.vector_rank if rag else None,
+                "rag_rrf_rank": rag.rrf_rank if rag else None,
+                "rag_ppr_rank": rag.ppr_rank if rag else None,
+                "rag_retrieval_rank": rag.retrieval_rank if rag else None,
+                "rfm_segment": profile.segment_label if profile else None,
+            }
+            candidate_snapshot.append({
+                "product_id": int(product.id),
+                "rank": rank,
+                "score": round(float(match_score) / max(float(best_score), 1.0), 6),
+                "feature_snapshot": feature_snapshot,
+            })
+            if rank > 3:
+                continue
+            available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+            item = {
+                "product_id": int(product.id),
+                "object_type": "product",
+                "recommendation_object_id": str(product.id),
+                "catalog_revision": (
+                    int(product.metadata_.get("recommendation_catalog_revision"))
+                    if isinstance(product.metadata_, dict)
+                    and str(product.metadata_.get("recommendation_catalog_revision", "")).isdigit()
+                    else None
+                ),
+                "sku": str(product.sku),
+                "name": str(product.name),
+                "price": float(product.price or 0),
+                "available": available,
+>               "product_url": safe_http_url(product.product_url),
+                                             ^^^^^^^^^^^^^^^^^^^
+                "score": round(float(match_score) / max(float(best_score), 1.0), 6),
+                "model_score": None,
+                "reason": "catalog_attribute_match",
+                "position": rank,
+                "selection_probability": None,
+                "personalization_signals": ["rfm_segment"] if personalized_id and profile else [],
+                "purchase_facets": [],
+                "feature_snapshot": feature_snapshot,
+            }
+E           AttributeError: 'types.SimpleNamespace' object has no attribute 'product_url'
+
+app/services/recommendation_service.py:1247: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+>   ???
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_chatbot_answer_routing.py:301: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/auto_reply_service.py:1878: in _deterministic_customer_reply
+    recommendation = _recommendation_reply(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af7b1a0>
+
+    def _recommendation_reply(
+        db: Session,
+        *,
+        business_id: int,
+        query_text: str,
+        language: str = "vi",
+        customer_id: int | None = None,
+        conversation_id: int | None = None,
+        source_channel: str | None = None,
+        reply_metadata: dict | None = None,
+    ) -> str | None:
+        """Use customer-aware ranking in live chats, with the safe catalog matcher as fallback."""
+        folded_query = _fold_text(query_text)
+        hard_filters = extract_query_hard_filters(query_text, object_type="product")
+        rag_candidates = []
+        retrieval_trace = []
+        retrieval_diagnostics = {}
+        try:
+            chunks = retrieve(
+                query=query_text,
+                db=db,
+                business_id=business_id,
+                top_k=30,
+                diagnostics=retrieval_diagnostics,
+                hard_filters=hard_filters,
+                customer_product_weights=rag_personalization_weights(
+                    db, business_id=business_id, customer_id=customer_id,
+                ),
+            )
+            rag_candidates, retrieval_trace = rag_candidates_from_chunks(
+                db, business_id=business_id, chunks=chunks,
+            )
+        except Exception as error:
+            logger.warning("RAG scores unavailable for product ranking: %s", type(error).__name__)
+    
+        # Do not let a general popularity/personalization ranker override a hard
+        # product need (for example, face-care items); it may rank unrelated stock.
+        if not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
+            try:
+                experiment_id = active_recommendation_experiment_id(db, business_id=business_id)
+                recommendation = serve_recommendations(
+                    db,
+                    business_id=business_id,
+                    payload=RecommendationRequestCreate(
+                        customer_id=customer_id,
+                        limit=3,
+                        query=query_text,
+                        context={
+                            "source_channel": str(source_channel or "unknown"),
+                            "surface": "chatbot",
+                            "conversation_id": conversation_id,
+                            "retrieval_trace": retrieval_trace,
+                            "retrieval_diagnostics": retrieval_diagnostics,
+                            "hard_filters": hard_filters,
+                        },
+                        rag_candidates=rag_candidates,
+                        experiment_id=experiment_id,
+                    ),
+                    record_impressions=False,
+                )
+                items = recommendation.served_items or []
+                if items:
+                    lines = []
+                    reasons = {
+                        "explicit_color_preference": ("đúng màu bạn đã chọn", "matches the color you chose"),
+                        "stated_preference_affinity": ("dựa trên sở thích bạn đã chia sẻ", "based on preferences you shared"),
+                        "purchased_color_affinity": ("cùng màu với sản phẩm bạn từng mua", "matches a color you purchased before"),
+                        "customer_interaction_affinity": ("liên quan sản phẩm bạn từng quan tâm", "related to products you viewed"),
+                        "co_purchase_affinity": ("thường được mua cùng sản phẩm bạn đã mua", "often bought with a product you purchased"),
+                        "repeated_question_interest": ("liên quan nhu cầu bạn từng hỏi", "related to a need you asked about before"),
+                        "tenant_popularity": ("đang được khách của shop quan tâm", "popular with this shop's customers"),
+                        "rag_relevance": ("liên quan yêu cầu bạn đang tìm", "related to your current request"),
+                        "eligible_catalog_fallback": ("đang bán và còn hàng", "currently available in the catalog"),
+                    }
+                    for item in items:
+                        name = str(item.get("name") or "Sản phẩm")
+                        price = _format_vnd(item.get("price") or 0)
+                        available = item.get("available")
+                        line = f"- {name} — {price} đồng"
+                        if isinstance(available, int):
+                            line += f" (còn {available})"
+                        reason = reasons.get(str(item.get("reason") or ""))
+                        if reason:
+                            line += f"\n  {'Why' if language == 'en' else 'Lý do'}: {reason[1 if language == 'en' else 0]}"
+                        product_url = str(item.get("click_url") or item.get("product_url") or "").strip()
+                        if product_url:
+                            line += f"\n  {product_url}"
+                        lines.append(line)
+                    if reply_metadata is not None:
+                        reply_metadata["recommendation"] = {
+                            "request_id": recommendation.request_id,
+                            "product_ids": [int(item["product_id"]) for item in items if item.get("product_id") is not None],
+                            "source_channel": str(source_channel or "unknown"),
+                        }
+                    if language == "en":
+                        return "Based on what you asked for, these options may fit:\n" + "\n".join(lines) + "\nWhich one would you like to know more about?"
+                    return "Dựa trên nhu cầu của bạn, mấy sản phẩm này có thể phù hợp:\n" + "\n".join(lines) + "\nBạn muốn mình tư vấn kỹ hơn mẫu nào ạ?"
+            except Exception as error:
+                db.rollback()
+                logger.warning("Personalized product ranking unavailable; using catalog matcher: %s", type(error).__name__)
+    
+        query_terms = {
+            token
+            for token in folded_query.split()
+            if len(token) >= 3
+            and token not in _PRODUCT_HINT_STOP_WORDS
+            and token not in _NON_PRODUCT_HINT_WORDS
+            and token not in {"phu", "hop", "mang", "nho", "gon", "duoi", "ngan", "sach", "di", "lam", "can", "dung"}
+        }
+    
+        budget = re.search(
+            r"(?:dưới|tối đa|under|below|less than)\s*(\d[\d.,]*)\s*(k|nghìn|ngàn|triệu|m|million)?\b",
+            query_text,
+            re.IGNORECASE,
+        )
+        max_price = None
+        if budget:
+            amount = int(re.sub(r"\D", "", budget.group(1)) or "0")
+            unit = _fold_text(budget.group(2) or "")
+            scale = 1_000_000 if unit in {"trieu", "m", "million"} else 1_000 if unit in {"k", "nghin", "ngan"} else 1
+            max_price = amount * scale
+    
+        wants_hot_water = any(term in folded_query for term in ("nuoc nong", "giu nong", "giu nuoc nong", "hot water", "keep hot", "keep warm"))
+        wants_container = any(term in folded_query for term in ("binh", "chai", "bottle", "thermos", "flask")) or (
+            wants_hot_water and any(term in folded_query for term in ("mang", "dung nuoc", "dut nuoc", "carry", "take to work"))
+        )
+    
+        try:
+            products = db.query(Product).filter(
+                Product.business_id == business_id,
+                Product.status == "active",
+            ).order_by(Product.id.asc()).all()
+        except Exception:
+            return None
+    
+        matches: list[tuple[int, Product]] = []
+        for product in products:
+            metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+            raw_attributes = metadata.get("attributes") if isinstance(metadata.get("attributes"), dict) else {}
+            values = [
+                _fold_text(value)
+                for raw in raw_attributes.values()
+                for value in (raw if isinstance(raw, list) else [raw])
+                if str(value or "").strip()
+            ]
+            searchable_text = _fold_text(" ".join((
+                str(product.name or ""), str(getattr(product, "description", None) or ""),
+                " ".join(product_aliases(product)), " ".join(values),
+            )))
+            if _contains_any_phrase(folded_query, _EXPLICIT_PRODUCT_NEEDS) and not _contains_any_phrase(
+                searchable_text, _SKINCARE_CATALOG_EVIDENCE,
+            ):
+                continue
+            product_name = _fold_text(product.name)
+            available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+            if available <= 0:
+                continue
+            if max_price is not None and Decimal(str(product.price or 0)) > max_price:
+                continue
+            if wants_container and not any(term in product_name.split() for term in ("binh", "chai", "bottle", "thermos", "flask")):
+                continue
+            verified_hot_use = any(term in product_name for term in ("giu nhiet", "giu nong", "thermos", "insulated")) or any(
+                term in value for value in values for term in ("giu nuoc nong", "dung nuoc nong", "keep hot water")
+            )
+            if wants_hot_water and not verified_hot_use:
+                continue
+            score = 0
+            for value in values:
+                if value in folded_query:
+                    score += 3
+                elif query_terms.intersection(value.split()):
+                    score += 1
+            score += len(query_terms & set(searchable_text.split()))
+            if wants_container or wants_hot_water or max_price is not None:
+                score += 1
+            if score:
+                matches.append((score, product))
+    
+        if not matches:
+            return None
+        matches.sort(key=lambda item: (-item[0], item[1].id or 0))
+    
+        try:
+            recommendation = record_catalog_match_recommendation(
+                db,
+                business_id=business_id,
+                customer_id=customer_id,
+                query=query_text,
+                products=matches,
+                context={
+                    "surface": "chatbot",
+                    "conversation_id": conversation_id,
+                    "source_channel": str(source_channel or "unknown"),
+                    "retrieval_trace": retrieval_trace,
+                    "retrieval_diagnostics": retrieval_diagnostics,
+                },
+                rag_candidates=rag_candidates,
+            )
+            items = recommendation.served_items or []
+            if reply_metadata is not None and items:
+                reply_metadata["recommendation"] = {
+                    "request_id": recommendation.request_id,
+                    "product_ids": [int(item["product_id"]) for item in items],
+                    "source_channel": str(source_channel or "unknown"),
+                }
+            if items:
+                lines = []
+                for item in items:
+                    name = str(item.get("name") or "Sản phẩm")
+                    price = _format_vnd(item.get("price") or 0)
+                    available = item.get("available")
+                    line = f"- {name} — {price} đồng"
+                    if isinstance(available, int):
+                        line += f" (còn {available})"
+                    if item.get("click_url"):
+                        line += f"\n  {item['click_url']}"
+                    lines.append(line)
+                if language == "en":
+                    return "These products may suit your needs:\n" + "\n".join(lines) + "\nWhich one would you like to know more about?"
+                return (
+                    "Mình tìm thấy một số sản phẩm phù hợp với nhu cầu của bạn:\n"
+                    + "\n".join(lines)
+                    + "\nBạn muốn xem sản phẩm nào để mình tư vấn thêm?"
+                )
+        except Exception as error:
+>           db.rollback()
+            ^^^^^^^^^^^
+E           AttributeError: '_DB' object has no attribute 'rollback'
+
+app/services/auto_reply_service.py:1740: AttributeError
+------------------------------ Captured log call -------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:1548 RAG scores unavailable for product ranking: AttributeError
+_______ test_need_recommendation_filters_wrong_category_and_budget_first _______
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af3f590>
+
+    def _recommendation_reply(
+        db: Session,
+        *,
+        business_id: int,
+        query_text: str,
+        language: str = "vi",
+        customer_id: int | None = None,
+        conversation_id: int | None = None,
+        source_channel: str | None = None,
+        reply_metadata: dict | None = None,
+    ) -> str | None:
+        """Use customer-aware ranking in live chats, with the safe catalog matcher as fallback."""
+        folded_query = _fold_text(query_text)
+        hard_filters = extract_query_hard_filters(query_text, object_type="product")
+        rag_candidates = []
+        retrieval_trace = []
+        retrieval_diagnostics = {}
+        try:
+            chunks = retrieve(
+                query=query_text,
+                db=db,
+                business_id=business_id,
+                top_k=30,
+                diagnostics=retrieval_diagnostics,
+                hard_filters=hard_filters,
+                customer_product_weights=rag_personalization_weights(
+                    db, business_id=business_id, customer_id=customer_id,
+                ),
+            )
+            rag_candidates, retrieval_trace = rag_candidates_from_chunks(
+                db, business_id=business_id, chunks=chunks,
+            )
+        except Exception as error:
+            logger.warning("RAG scores unavailable for product ranking: %s", type(error).__name__)
+    
+        # Do not let a general popularity/personalization ranker override a hard
+        # product need (for example, face-care items); it may rank unrelated stock.
+        if not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
+            try:
+>               experiment_id = active_recommendation_experiment_id(db, business_id=business_id)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+app/services/auto_reply_service.py:1554: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af3f590>
+
+    def active_recommendation_experiment_id(db: Session, *, business_id: int) -> int | None:
+        """Return an explicitly running recommendation experiment, if configured."""
+>       rows = db.query(Experiment, BanditPolicy).join(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            BanditPolicy, BanditPolicy.experiment_id == Experiment.id,
+        ).filter(
+            Experiment.business_id == business_id,
+            Experiment.status == "running",
+            BanditPolicy.business_id == business_id,
+            BanditPolicy.status == "active",
+        ).order_by(Experiment.id.desc(), BanditPolicy.id.desc()).all()
+E       AttributeError: '_Query' object has no attribute 'join'
+
+app/services/recommendation_service.py:224: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+>   ???
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_chatbot_answer_routing.py:369: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af3f590>
+
+    def _recommendation_reply(
+        db: Session,
+        *,
+        business_id: int,
+        query_text: str,
+        language: str = "vi",
+        customer_id: int | None = None,
+        conversation_id: int | None = None,
+        source_channel: str | None = None,
+        reply_metadata: dict | None = None,
+    ) -> str | None:
+        """Use customer-aware ranking in live chats, with the safe catalog matcher as fallback."""
+        folded_query = _fold_text(query_text)
+        hard_filters = extract_query_hard_filters(query_text, object_type="product")
+        rag_candidates = []
+        retrieval_trace = []
+        retrieval_diagnostics = {}
+        try:
+            chunks = retrieve(
+                query=query_text,
+                db=db,
+                business_id=business_id,
+                top_k=30,
+                diagnostics=retrieval_diagnostics,
+                hard_filters=hard_filters,
+                customer_product_weights=rag_personalization_weights(
+                    db, business_id=business_id, customer_id=customer_id,
+                ),
+            )
+            rag_candidates, retrieval_trace = rag_candidates_from_chunks(
+                db, business_id=business_id, chunks=chunks,
+            )
+        except Exception as error:
+            logger.warning("RAG scores unavailable for product ranking: %s", type(error).__name__)
+    
+        # Do not let a general popularity/personalization ranker override a hard
+        # product need (for example, face-care items); it may rank unrelated stock.
+        if not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
+            try:
+                experiment_id = active_recommendation_experiment_id(db, business_id=business_id)
+                recommendation = serve_recommendations(
+                    db,
+                    business_id=business_id,
+                    payload=RecommendationRequestCreate(
+                        customer_id=customer_id,
+                        limit=3,
+                        query=query_text,
+                        context={
+                            "source_channel": str(source_channel or "unknown"),
+                            "surface": "chatbot",
+                            "conversation_id": conversation_id,
+                            "retrieval_trace": retrieval_trace,
+                            "retrieval_diagnostics": retrieval_diagnostics,
+                            "hard_filters": hard_filters,
+                        },
+                        rag_candidates=rag_candidates,
+                        experiment_id=experiment_id,
+                    ),
+                    record_impressions=False,
+                )
+                items = recommendation.served_items or []
+                if items:
+                    lines = []
+                    reasons = {
+                        "explicit_color_preference": ("đúng màu bạn đã chọn", "matches the color you chose"),
+                        "stated_preference_affinity": ("dựa trên sở thích bạn đã chia sẻ", "based on preferences you shared"),
+                        "purchased_color_affinity": ("cùng màu với sản phẩm bạn từng mua", "matches a color you purchased before"),
+                        "customer_interaction_affinity": ("liên quan sản phẩm bạn từng quan tâm", "related to products you viewed"),
+                        "co_purchase_affinity": ("thường được mua cùng sản phẩm bạn đã mua", "often bought with a product you purchased"),
+                        "repeated_question_interest": ("liên quan nhu cầu bạn từng hỏi", "related to a need you asked about before"),
+                        "tenant_popularity": ("đang được khách của shop quan tâm", "popular with this shop's customers"),
+                        "rag_relevance": ("liên quan yêu cầu bạn đang tìm", "related to your current request"),
+                        "eligible_catalog_fallback": ("đang bán và còn hàng", "currently available in the catalog"),
+                    }
+                    for item in items:
+                        name = str(item.get("name") or "Sản phẩm")
+                        price = _format_vnd(item.get("price") or 0)
+                        available = item.get("available")
+                        line = f"- {name} — {price} đồng"
+                        if isinstance(available, int):
+                            line += f" (còn {available})"
+                        reason = reasons.get(str(item.get("reason") or ""))
+                        if reason:
+                            line += f"\n  {'Why' if language == 'en' else 'Lý do'}: {reason[1 if language == 'en' else 0]}"
+                        product_url = str(item.get("click_url") or item.get("product_url") or "").strip()
+                        if product_url:
+                            line += f"\n  {product_url}"
+                        lines.append(line)
+                    if reply_metadata is not None:
+                        reply_metadata["recommendation"] = {
+                            "request_id": recommendation.request_id,
+                            "product_ids": [int(item["product_id"]) for item in items if item.get("product_id") is not None],
+                            "source_channel": str(source_channel or "unknown"),
+                        }
+                    if language == "en":
+                        return "Based on what you asked for, these options may fit:\n" + "\n".join(lines) + "\nWhich one would you like to know more about?"
+                    return "Dựa trên nhu cầu của bạn, mấy sản phẩm này có thể phù hợp:\n" + "\n".join(lines) + "\nBạn muốn mình tư vấn kỹ hơn mẫu nào ạ?"
+            except Exception as error:
+>               db.rollback()
+                ^^^^^^^^^^^
+E               AttributeError: '_DB' object has no attribute 'rollback'
+
+app/services/auto_reply_service.py:1613: AttributeError
+------------------------------ Captured log call -------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:1548 RAG scores unavailable for product ranking: AttributeError
+_____ test_hot_water_need_without_product_noun_recommends_verified_thermos _____
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af3ce60>
+
+    def _recommendation_reply(
+        db: Session,
+        *,
+        business_id: int,
+        query_text: str,
+        language: str = "vi",
+        customer_id: int | None = None,
+        conversation_id: int | None = None,
+        source_channel: str | None = None,
+        reply_metadata: dict | None = None,
+    ) -> str | None:
+        """Use customer-aware ranking in live chats, with the safe catalog matcher as fallback."""
+        folded_query = _fold_text(query_text)
+        hard_filters = extract_query_hard_filters(query_text, object_type="product")
+        rag_candidates = []
+        retrieval_trace = []
+        retrieval_diagnostics = {}
+        try:
+            chunks = retrieve(
+                query=query_text,
+                db=db,
+                business_id=business_id,
+                top_k=30,
+                diagnostics=retrieval_diagnostics,
+                hard_filters=hard_filters,
+                customer_product_weights=rag_personalization_weights(
+                    db, business_id=business_id, customer_id=customer_id,
+                ),
+            )
+            rag_candidates, retrieval_trace = rag_candidates_from_chunks(
+                db, business_id=business_id, chunks=chunks,
+            )
+        except Exception as error:
+            logger.warning("RAG scores unavailable for product ranking: %s", type(error).__name__)
+    
+        # Do not let a general popularity/personalization ranker override a hard
+        # product need (for example, face-care items); it may rank unrelated stock.
+        if not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
+            try:
+>               experiment_id = active_recommendation_experiment_id(db, business_id=business_id)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+app/services/auto_reply_service.py:1554: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af3ce60>
+
+    def active_recommendation_experiment_id(db: Session, *, business_id: int) -> int | None:
+        """Return an explicitly running recommendation experiment, if configured."""
+>       rows = db.query(Experiment, BanditPolicy).join(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            BanditPolicy, BanditPolicy.experiment_id == Experiment.id,
+        ).filter(
+            Experiment.business_id == business_id,
+            Experiment.status == "running",
+            BanditPolicy.business_id == business_id,
+            BanditPolicy.status == "active",
+        ).order_by(Experiment.id.desc(), BanditPolicy.id.desc()).all()
+E       AttributeError: '_Query' object has no attribute 'join'
+
+app/services/recommendation_service.py:224: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+>   ???
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_chatbot_answer_routing.py:435: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/services/auto_reply_service.py:1878: in _deterministic_customer_reply
+    recommendation = _recommendation_reply(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <test_chatbot_answer_routing._DB object at 0x79688af3ce60>
+
+    def _recommendation_reply(
+        db: Session,
+        *,
+        business_id: int,
+        query_text: str,
+        language: str = "vi",
+        customer_id: int | None = None,
+        conversation_id: int | None = None,
+        source_channel: str | None = None,
+        reply_metadata: dict | None = None,
+    ) -> str | None:
+        """Use customer-aware ranking in live chats, with the safe catalog matcher as fallback."""
+        folded_query = _fold_text(query_text)
+        hard_filters = extract_query_hard_filters(query_text, object_type="product")
+        rag_candidates = []
+        retrieval_trace = []
+        retrieval_diagnostics = {}
+        try:
+            chunks = retrieve(
+                query=query_text,
+                db=db,
+                business_id=business_id,
+                top_k=30,
+                diagnostics=retrieval_diagnostics,
+                hard_filters=hard_filters,
+                customer_product_weights=rag_personalization_weights(
+                    db, business_id=business_id, customer_id=customer_id,
+                ),
+            )
+            rag_candidates, retrieval_trace = rag_candidates_from_chunks(
+                db, business_id=business_id, chunks=chunks,
+            )
+        except Exception as error:
+            logger.warning("RAG scores unavailable for product ranking: %s", type(error).__name__)
+    
+        # Do not let a general popularity/personalization ranker override a hard
+        # product need (for example, face-care items); it may rank unrelated stock.
+        if not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
+            try:
+                experiment_id = active_recommendation_experiment_id(db, business_id=business_id)
+                recommendation = serve_recommendations(
+                    db,
+                    business_id=business_id,
+                    payload=RecommendationRequestCreate(
+                        customer_id=customer_id,
+                        limit=3,
+                        query=query_text,
+                        context={
+                            "source_channel": str(source_channel or "unknown"),
+                            "surface": "chatbot",
+                            "conversation_id": conversation_id,
+                            "retrieval_trace": retrieval_trace,
+                            "retrieval_diagnostics": retrieval_diagnostics,
+                            "hard_filters": hard_filters,
+                        },
+                        rag_candidates=rag_candidates,
+                        experiment_id=experiment_id,
+                    ),
+                    record_impressions=False,
+                )
+                items = recommendation.served_items or []
+                if items:
+                    lines = []
+                    reasons = {
+                        "explicit_color_preference": ("đúng màu bạn đã chọn", "matches the color you chose"),
+                        "stated_preference_affinity": ("dựa trên sở thích bạn đã chia sẻ", "based on preferences you shared"),
+                        "purchased_color_affinity": ("cùng màu với sản phẩm bạn từng mua", "matches a color you purchased before"),
+                        "customer_interaction_affinity": ("liên quan sản phẩm bạn từng quan tâm", "related to products you viewed"),
+                        "co_purchase_affinity": ("thường được mua cùng sản phẩm bạn đã mua", "often bought with a product you purchased"),
+                        "repeated_question_interest": ("liên quan nhu cầu bạn từng hỏi", "related to a need you asked about before"),
+                        "tenant_popularity": ("đang được khách của shop quan tâm", "popular with this shop's customers"),
+                        "rag_relevance": ("liên quan yêu cầu bạn đang tìm", "related to your current request"),
+                        "eligible_catalog_fallback": ("đang bán và còn hàng", "currently available in the catalog"),
+                    }
+                    for item in items:
+                        name = str(item.get("name") or "Sản phẩm")
+                        price = _format_vnd(item.get("price") or 0)
+                        available = item.get("available")
+                        line = f"- {name} — {price} đồng"
+                        if isinstance(available, int):
+                            line += f" (còn {available})"
+                        reason = reasons.get(str(item.get("reason") or ""))
+                        if reason:
+                            line += f"\n  {'Why' if language == 'en' else 'Lý do'}: {reason[1 if language == 'en' else 0]}"
+                        product_url = str(item.get("click_url") or item.get("product_url") or "").strip()
+                        if product_url:
+                            line += f"\n  {product_url}"
+                        lines.append(line)
+                    if reply_metadata is not None:
+                        reply_metadata["recommendation"] = {
+                            "request_id": recommendation.request_id,
+                            "product_ids": [int(item["product_id"]) for item in items if item.get("product_id") is not None],
+                            "source_channel": str(source_channel or "unknown"),
+                        }
+                    if language == "en":
+                        return "Based on what you asked for, these options may fit:\n" + "\n".join(lines) + "\nWhich one would you like to know more about?"
+                    return "Dựa trên nhu cầu của bạn, mấy sản phẩm này có thể phù hợp:\n" + "\n".join(lines) + "\nBạn muốn mình tư vấn kỹ hơn mẫu nào ạ?"
+            except Exception as error:
+>               db.rollback()
+                ^^^^^^^^^^^
+E               AttributeError: '_DB' object has no attribute 'rollback'
+
+app/services/auto_reply_service.py:1613: AttributeError
+------------------------------ Captured log call -------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:1548 RAG scores unavailable for product ranking: AttributeError
+_______ LeadPipelineApiTests.test_create_and_list_lead_is_tenant_scoped ________
+
+self = <test_lead_pipeline_api.LeadPipelineApiTests testMethod=test_create_and_list_lead_is_tenant_scoped>
+
+>   ???
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_lead_pipeline_api.py:80: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/query.py:2808: in one
+    return self._iter().one()  # type: ignore
+           ^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/result.py:1827: in one
+    return self._only_one_row(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sqlalchemy.engine.result.ScalarResult object at 0x796889158050>
+raise_for_second_row = True, raise_for_none = True, scalar = False
+
+    def _only_one_row(
+        self,
+        raise_for_second_row: bool,
+        raise_for_none: bool,
+        scalar: bool,
+    ) -> Optional[_R]:
+        onerow = self._fetchone_impl
+    
+        row: Optional[_InterimRowType[Any]] = onerow(hard_close=True)
+        if row is None:
+            if raise_for_none:
+>               raise exc.NoResultFound(
+                    "No row was found when one was required"
+                )
+E               sqlalchemy.exc.NoResultFound: No row was found when one was required
+
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/result.py:772: NoResultFound
+___________ test_exact_multisegment_sku_never_returns_a_similar_code ___________
+
+database = <sqlalchemy.orm.session.Session object at 0x79687a433440>
+
+>   ???
+E   assert (0 == 1)
+E    +  where 0 = len([])
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:104: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.rag.retriever:retriever.py:205 Vector query unavailable; using lexical retrieval: error_type=RuntimeError
+WARNING  app.rag.retriever:retriever.py:205 Vector query unavailable; using lexical retrieval: error_type=RuntimeError
+_ test_chat_opt_out_updates_only_authenticated_customer_and_is_idempotent[Please don't remember that I like pink.] _
+
+database = <sqlalchemy.orm.session.Session object at 0x796899ed3980>
+query = "Please don't remember that I like pink."
+
+>   ???
+E   AssertionError: assert None is not None
+E    +  where None = get(<class 'app.models.customer_fact.CustomerFact'>, 1)
+E    +    where get = <sqlalchemy.orm.session.Session object at 0x796899ed3980>.get
+E    +    and   1 = <app.models.customer_fact.CustomerFact object at 0x79687e9b83e0>.id
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:452: AssertionError
+_ test_chat_opt_out_updates_only_authenticated_customer_and_is_idempotent[\u0110\u1eebng ghi nh\u1edb s\u1edf th\xedch c\u1ee7a t\xf4i] _
+
+database = <sqlalchemy.orm.session.Session object at 0x796879db4b30>
+query = 'Đừng ghi nhớ sở thích của tôi'
+
+>   ???
+E   AssertionError: assert None is not None
+E    +  where None = get(<class 'app.models.customer_fact.CustomerFact'>, 1)
+E    +    where get = <sqlalchemy.orm.session.Session object at 0x796879db4b30>.get
+E    +    and   1 = <app.models.customer_fact.CustomerFact object at 0x796878fda180>.id
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:452: AssertionError
+____ test_channel_opt_out_updates_customer_once_before_rag_or_ai[facebook] _____
+
+database = <sqlalchemy.orm.session.Session object at 0x796878eba1b0>
+channel = 'facebook'
+
+>   ???
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:489: AssertionError
+____ test_channel_opt_out_updates_customer_once_before_rag_or_ai[instagram] ____
+
+database = <sqlalchemy.orm.session.Session object at 0x796878c261e0>
+channel = 'instagram'
+
+>   ???
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:489: AssertionError
+____ test_channel_opt_out_updates_customer_once_before_rag_or_ai[telegram] _____
+
+database = <sqlalchemy.orm.session.Session object at 0x7968798a8dd0>
+channel = 'telegram'
+
+>   ???
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:489: AssertionError
+______ test_channel_opt_out_updates_customer_once_before_rag_or_ai[zalo] _______
+
+database = <sqlalchemy.orm.session.Session object at 0x79687db53da0>
+channel = 'zalo'
+
+>   ???
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:489: AssertionError
+_____ test_channel_opt_out_updates_customer_once_before_rag_or_ai[tiktok] ______
+
+database = <sqlalchemy.orm.session.Session object at 0x796878ad7590>
+channel = 'tiktok'
+
+>   ???
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:489: AssertionError
+_____ test_channel_opt_out_updates_customer_once_before_rag_or_ai[shopee] ______
+
+database = <sqlalchemy.orm.session.Session object at 0x7968788ff560>
+channel = 'shopee'
+
+>   ???
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:489: AssertionError
+_ RagTenantIsolationTests.test_product_recommendation_keeps_multiple_catalog_rows_ahead_of_generic_guides _
+
+self = <test_rag_tenant_isolation.RagTenantIsolationTests testMethod=test_product_recommendation_keeps_multiple_catalog_rows_ahead_of_generic_guides>
+
+>   ???
+E   assert 0 == 4
+E    +  where 0 = len([])
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_tenant_isolation.py:136: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.rag.retriever:retriever.py:205 Vector query unavailable; using lexical retrieval: error_type=RuntimeError
+_ RecommendationApiTests.test_segment_training_runs_through_durable_job_queue __
+
+self = <test_recommendations_api.RecommendationApiTests testMethod=test_segment_training_runs_through_durable_job_queue>
+
+>   ???
+E   AssertionError: 'exploitation' != 'warmup_default'
+E   - exploitation
+E   + warmup_default
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:1246: AssertionError
+________________ test_migration_order_covers_every_tenant_table ________________
+
+>   ???
+E   AssertionError: assert False
+E    +  where False = <built-in method issubset of set object at 0x796884a5d000>(({'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} | {'channel_outbound_attempts'}))
+E    +    where <built-in method issubset of set object at 0x796884a5d000> = {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...}.issubset
+E    +      where {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} = set(FacadeDict({'customers': Table('customers', MetaData(), Column('id', Integer(), table=<customers>, primary_key=True, n... server_default=DefaultClause(<sqlalchemy.sql.functions.now at 0x7968b490d310; now>, for_update=False)), schema=None)}))
+E    +        where FacadeDict({'customers': Table('customers', MetaData(), Column('id', Integer(), table=<customers>, primary_key=True, n... server_default=DefaultClause(<sqlalchemy.sql.functions.now at 0x7968b490d310; now>, for_update=False)), schema=None)}) = MetaData().tables
+E    +          where MetaData() = TenantBase.metadata
+E    +    and   {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} = set(('customers', 'customer_identities', 'customer_contacts', 'customer_addresses', 'customer_facts', 'customer_notes', ...))
+E    +    and   {'channel_outbound_attempts'} = set(('channel_outbound_attempts',))
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_tenant_data_migration.py:91: AssertionError
+________ test_two_tenant_schemas_upgrade_independently_and_idempotently ________
+
+self = <sqlalchemy.engine.base.Connection object at 0x7968702830e0>
+dialect = <sqlalchemy.dialects.postgresql.psycopg.PGDialect_psycopg object at 0x7968ccd41280>
+context = <sqlalchemy.dialects.postgresql.psycopg.PGExecutionContext_psycopg object at 0x796875b416d0>
+statement = <sqlalchemy.dialects.postgresql.base.PGDDLCompiler object at 0x796875b40f20>
+parameters = [immutabledict({})]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -> CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+>                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <psycopg.Cursor [closed] [IDLE] (host=db user=postgres database=crm_tenant_test) at 0x796872856c90>
+query = '\nCREATE TABLE shop_91931339191.recommendation_catalog_entries (\n\tid SERIAL NOT NULL, \n\tbusiness_id INTEGER NOT N...\tPRIMARY KEY (id), \n\tCONSTRAINT uq_rce_business_type_external UNIQUE (business_id, object_type, external_id)\n)\n\n'
+params = immutabledict({})
+
+    def execute(
+        self,
+        query: Query,
+        params: Params | None = None,
+        *,
+        prepare: bool | None = None,
+        binary: bool | None = None,
+    ) -> Self:
+        """
+        Execute a query or command to the database.
+        """
+        try:
+            with self._conn.lock:
+                self._conn.wait(
+                    self._execute_gen(query, params, prepare=prepare, binary=binary)
+                )
+        except e._NO_TRACEBACK as ex:
+>           raise ex.with_traceback(None)
+E           psycopg.errors.DuplicateTable: relation "recommendation_catalog_entries" already exists
+
+/usr/local/lib/python3.12/site-packages/psycopg/cursor.py:117: DuplicateTable
+
+The above exception was the direct cause of the following exception:
+
+>   ???
+
+C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_tenant_migration_runner.py:39: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app/tenancy/migration_runner.py:44: in upgrade_tenant_schema
+    command.upgrade(_config(connection, schema), revision)
+/usr/local/lib/python3.12/site-packages/alembic/command.py:487: in upgrade
+    script.run_env()
+/usr/local/lib/python3.12/site-packages/alembic/script/base.py:550: in run_env
+    util.load_python_file(self.dir, "env.py")
+/usr/local/lib/python3.12/site-packages/alembic/util/pyfiles.py:114: in load_python_file
+    module = load_module_py(module_id, path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/alembic/util/pyfiles.py:132: in load_module_py
+    spec.loader.exec_module(module)  # type: ignore
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<frozen importlib._bootstrap_external>:999: in exec_module
+    ???
+<frozen importlib._bootstrap>:488: in _call_with_frames_removed
+    ???
+alembic_tenant/env.py:80: in <module>
+    run_migrations_online()
+alembic_tenant/env.py:62: in run_migrations_online
+    context.run_migrations()
+<string>:8: in run_migrations
+    ???
+/usr/local/lib/python3.12/site-packages/alembic/runtime/environment.py:970: in run_migrations
+    self.get_context().run_migrations(**kw)
+/usr/local/lib/python3.12/site-packages/alembic/runtime/migration.py:616: in run_migrations
+    step.migration_fn(**kw)
+alembic_tenant/versions/20261101_0015_recommendation_catalog.py:17: in upgrade
+    op.create_table("recommendation_catalog_entries",
+<string>:8: in create_table
+    ???
+<string>:3: in create_table
+    ???
+/usr/local/lib/python3.12/site-packages/alembic/operations/ops.py:1323: in create_table
+    return operations.invoke(op)
+           ^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/alembic/operations/base.py:448: in invoke
+    return fn(self, operation)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/alembic/operations/toimpl.py:139: in create_table
+    operations.impl.create_table(table, **kw)
+/usr/local/lib/python3.12/site-packages/alembic/ddl/impl.py:434: in create_table
+    self._exec(schema.CreateTable(table, **kw))
+/usr/local/lib/python3.12/site-packages/alembic/ddl/impl.py:252: in _exec
+    return conn.execute(construct, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1419: in execute
+    return meth(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/ddl.py:187: in _execute_on_connection
+    return connection._execute_ddl(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1530: in _execute_ddl
+    ret = self._execute_context(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
+    return self._exec_single_context(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <psycopg.Cursor [closed] [IDLE] (host=db user=postgres database=crm_tenant_test) at 0x796872856c90>
+query = '\nCREATE TABLE shop_91931339191.recommendation_catalog_entries (\n\tid SERIAL NOT NULL, \n\tbusiness_id INTEGER NOT N...\tPRIMARY KEY (id), \n\tCONSTRAINT uq_rce_business_type_external UNIQUE (business_id, object_type, external_id)\n)\n\n'
+params = immutabledict({})
+
+    def execute(
+        self,
+        query: Query,
+        params: Params | None = None,
+        *,
+        prepare: bool | None = None,
+        binary: bool | None = None,
+    ) -> Self:
+        """
+        Execute a query or command to the database.
+        """
+        try:
+            with self._conn.lock:
+                self._conn.wait(
+                    self._execute_gen(query, params, prepare=prepare, binary=binary)
+                )
+        except e._NO_TRACEBACK as ex:
+>           raise ex.with_traceback(None)
+E           sqlalchemy.exc.ProgrammingError: (psycopg.errors.DuplicateTable) relation "recommendation_catalog_entries" already exists
+E           [SQL: 
+E           CREATE TABLE shop_91931339191.recommendation_catalog_entries (
+E           	id SERIAL NOT NULL, 
+E           	business_id INTEGER NOT NULL, 
+E           	object_type VARCHAR(30) NOT NULL, 
+E           	external_id VARCHAR(120) NOT NULL, 
+E           	sku_norm VARCHAR(120), 
+E           	name VARCHAR(255) NOT NULL, 
+E           	description TEXT, 
+E           	status VARCHAR(30) DEFAULT 'active' NOT NULL, 
+E           	availability VARCHAR(30) DEFAULT 'in_stock' NOT NULL, 
+E           	stock_quantity NUMERIC(14, 3), 
+E           	price NUMERIC(14, 2), 
+E           	currency VARCHAR(3), 
+E           	revision INTEGER DEFAULT '1' NOT NULL, 
+E           	source VARCHAR(60) DEFAULT 'catalog_sync' NOT NULL, 
+E           	metadata_ JSON, 
+E           	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL, 
+E           	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL, 
+E           	PRIMARY KEY (id), 
+E           	CONSTRAINT uq_rce_business_type_external UNIQUE (business_id, object_type, external_id)
+E           )
+E           
+E           ]
+E           (Background on this error at: https://sqlalche.me/e/20/f405)
+
+/usr/local/lib/python3.12/site-packages/psycopg/cursor.py:117: ProgrammingError
+----------------------------- Captured stderr call -----------------------------
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260915_0001, initial tenant schema template
+INFO  [alembic.runtime.migration] Running upgrade 20260915_0001 -> 20260921_0002, Persist progress for background knowledge-base ingestion.
+INFO  [alembic.runtime.migration] Running upgrade 20260921_0002 -> 20260923_0003, Add tenant-local recommendation serving, feedback, profiles, and signals.
+INFO  [alembic.runtime.migration] Running upgrade 20260923_0003 -> 20260926_0004, Add service appointments and B2B quotes, projects, and invoices.
+INFO  [alembic.runtime.migration] Running upgrade 20260926_0004 -> 20260926_0005, Add shop-specific CRM fields and pipeline configuration.
+INFO  [alembic.runtime.migration] Running upgrade 20260926_0005 -> 20260926_0006, Track appointment opt-in and CRM email delivery.
+INFO  [alembic.runtime.migration] Running upgrade 20260926_0006 -> 20260926_0007, Store staff-confirmed conversation outcomes.
+INFO  [alembic.runtime.migration] Running upgrade 20260926_0007 -> 20260929_0008, Add document fingerprints and stable RAG processing error codes.
+INFO  [alembic.runtime.migration] Running upgrade 20260929_0008 -> 20260930_0009, Persist idempotency state for outbound channel delivery.
+INFO  [alembic.runtime.migration] Running upgrade 20260930_0009 -> 20261001_0010, Make B2B invoice payment retries idempotent without rewriting old receipts.
+INFO  [alembic.runtime.migration] Running upgrade 20261001_0010 -> 20261001_0011, Track first-response deadlines separately from ticket resolution deadlines.
+INFO  [alembic.runtime.migration] Running upgrade 20261001_0011 -> 20261002_0012, Add product links and customer preference extraction opt-out.
+INFO  [alembic.runtime.migration] Running upgrade 20261002_0012 -> 20261006_0013, Allow imported messages to retain an unknown source timestamp.
+INFO  [alembic.runtime.migration] Running upgrade 20261006_0013 -> 20261025_0014, Allow validated business profiles beyond scalar setting length.
+INFO  [alembic.runtime.migration] Running upgrade 20261025_0014 -> 20261101_0015, Generic recommendation catalog, interaction versions and per-shop quality gate.
+=============================== warnings summary ===============================
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_impression_record_contains_blend_version_and_weights
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:208: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:96: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+  /workspace/backend/scripts/train_live_recommendation_reranker.py:150: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff = datetime.utcnow() - timedelta(days=max(1, lookback_days))
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  /usr/local/lib/python3.12/site-packages/sklearn/linear_model/_logistic.py:451: DeprecationWarning: scipy.optimize: The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1.18.0.
+    opt_res = optimize.minimize(
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  /workspace/backend/scripts/train_live_recommendation_reranker.py:729: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "trained_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_cached_rag_answers.py::test_cached_evaluation_checks_sources_and_verifies_privacy_in_an_isolated_fixture
+FAILED tests/test_chatbot_answer_routing.py::test_recommendation_uses_explicit_product_attributes
+FAILED tests/test_chatbot_answer_routing.py::test_need_recommendation_filters_wrong_category_and_budget_first
+FAILED tests/test_chatbot_answer_routing.py::test_hot_water_need_without_product_noun_recommends_verified_thermos
+FAILED tests/test_lead_pipeline_api.py::LeadPipelineApiTests::test_create_and_list_lead_is_tenant_scoped
+FAILED tests/test_rag_crm_model_integration.py::test_exact_multisegment_sku_never_returns_a_similar_code
+FAILED tests/test_rag_crm_model_integration.py::test_chat_opt_out_updates_only_authenticated_customer_and_is_idempotent[Please don't remember that I like pink.]
+FAILED tests/test_rag_crm_model_integration.py::test_chat_opt_out_updates_only_authenticated_customer_and_is_idempotent[\u0110\u1eebng ghi nh\u1edb s\u1edf th\xedch c\u1ee7a t\xf4i]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[facebook]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[instagram]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[telegram]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[zalo]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[tiktok]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[shopee]
+FAILED tests/test_rag_tenant_isolation.py::RagTenantIsolationTests::test_product_recommendation_keeps_multiple_catalog_rows_ahead_of_generic_guides
+FAILED tests/test_recommendations_api.py::RecommendationApiTests::test_segment_training_runs_through_durable_job_queue
+FAILED tests/test_tenant_data_migration.py::test_migration_order_covers_every_tenant_table
+FAILED tests/test_tenant_migration_runner.py::test_two_tenant_schemas_upgrade_independently_and_idempotently
+18 failed, 1607 passed, 6 skipped, 9 warnings, 37 subtests passed in 1116.95s (0:18:36)
+

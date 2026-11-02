@@ -1,0 +1,31 @@
+
+=================================== ERRORS ====================================
+_____________ ERROR collecting tests/test_conversation_context.py _____________
+ImportError while importing test module 'C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_context.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_conversation_context.py:10: in <module>
+    from app.services.conversation_graph import graph_reply, parse_plan
+app\services\conversation_graph.py:11: in <module>
+    from langgraph.graph import StateGraph, START, END
+E   ModuleNotFoundError: No module named 'langgraph'
+______________ ERROR collecting tests/test_conversation_graph.py ______________
+ImportError while importing test module 'C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_conversation_graph.py:5: in <module>
+    from app.services.conversation_graph import parse_plan, plan_turn, graph_reply
+app\services\conversation_graph.py:11: in <module>
+    from langgraph.graph import StateGraph, START, END
+E   ModuleNotFoundError: No module named 'langgraph'
+=========================== short test summary info ===========================
+ERROR tests/test_conversation_context.py
+ERROR tests/test_conversation_graph.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!
+2 errors in 7.80s

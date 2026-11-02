@@ -9,6 +9,7 @@ import math
 import random
 import re
 import time
+import unicodedata
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -16,6 +17,7 @@ from uuid import uuid4
 from urllib.parse import urlsplit
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -30,10 +32,22 @@ from app.models.recommendation import (
     RecommendationTrainingRun,
     CustomerProductInteraction,
 )
+from app.models.recommendation_quality_gate import RecommendationShopModelState
 from app.models.sales import Order, OrderItem, Product
-from app.schemas.recommendation import RecommendationRequestCreate
+from app.rag.catalog_filters import attribute_key_aliases, attribute_value_aliases
+from app.schemas.recommendation import RagCandidate, RecommendationRequestCreate
 from app.services.recommendation_artifacts import RecommendationArtifactError, registry as artifact_registry
 from app.services.recommendation_artifacts import stated_budget
+from app.services.recommendation_learning import (
+    LIGHTFM_ALGORITHM,
+    LIVE_RERANKER_ALGORITHM,
+    LIVE_RERANKER_BLEND_VERSION,
+    blend_candidate_scores,
+    lightfm_customer_key,
+    live_reranker_blend_profile,
+    score_candidate as score_live_candidate,
+    score_lightfm_candidate,
+)
 from app.rag.topics import fold_topic_text
 from app.services.customer_fact_extractor import get_customer_fact_extraction_enabled
 from app.services.recommendation_interaction_service import (
@@ -51,7 +65,7 @@ PERSONALIZATION_CACHE_VERSION = "rfm_product_signals_v1"
 SEGMENT_MODEL_VERSION = "rfm_kmeans_v2"
 MIN_SEGMENT_CUSTOMERS = 20
 STRATEGIES = {"balanced", "personalized", "popular", "rag"}
-MIN_BANDIT_TRAINING_EVENTS = 20
+MIN_BANDIT_TRAINING_EVENTS = 50
 INTERACTION_WEIGHTS = {
     "view": 0.05,
     "impression": 0.0,
@@ -99,6 +113,43 @@ class RecommendationServiceError(ValueError):
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+
+
+def _active_live_feedback_reranker(db: Session, business_id: int) -> tuple[dict | None, int | None]:
+    try:
+        with db.begin_nested():
+            state = db.query(RecommendationShopModelState).filter(
+                RecommendationShopModelState.business_id == business_id,
+            ).one_or_none()
+            supported_algorithms = {LIVE_RERANKER_ALGORITHM, LIGHTFM_ALGORITHM}
+            if state is None or not state.enabled or state.gate_status != "passed" or state.algorithm not in supported_algorithms:
+                return None, None
+            state_metrics = state.metrics if isinstance(state.metrics, dict) else {}
+            try:
+                training_run_id = int(state_metrics.get("active_training_run_id"))
+            except (TypeError, ValueError):
+                return None, None
+            run = db.query(RecommendationTrainingRun).filter(
+                RecommendationTrainingRun.id == training_run_id,
+                RecommendationTrainingRun.business_id == business_id,
+                RecommendationTrainingRun.algorithm == state.algorithm,
+                RecommendationTrainingRun.status == "succeeded",
+            ).first()
+    except SQLAlchemyError:
+        # Until the tenant migration is applied, ranking remains on baseline.
+        return None, None
+    artifact = run.artifact if run and isinstance(run.artifact, dict) else {}
+    artifact_algorithm = artifact.get("algorithm")
+    if artifact_algorithm is None and state.algorithm == LIVE_RERANKER_ALGORITHM:
+        artifact_algorithm = LIVE_RERANKER_ALGORITHM if str(artifact.get("model_version") or "").startswith(LIVE_RERANKER_ALGORITHM) else None
+    if (
+        run is None
+        or artifact_algorithm != state.algorithm
+        or artifact.get("serving_enabled") is not True
+        or artifact.get("model_version") != state.model_version
+    ):
+        return None, None
+    return artifact, int(run.id)
 
 
 def _now() -> datetime:
@@ -219,9 +270,13 @@ def _select_strategy(
     payload: RecommendationRequestCreate,
     subject_key: str,
     context: dict | None = None,
-) -> tuple[str, int | None]:
+) -> tuple[str, int | None, dict]:
     if payload.experiment_id is None:
-        return "balanced", None
+        return "balanced", None, {
+            "policy": "deterministic",
+            "selection_reason": "no_experiment",
+            "selection_probability": 1.0,
+        }
     experiment = db.query(Experiment).filter(
         Experiment.id == payload.experiment_id,
         Experiment.business_id == business_id,
@@ -230,7 +285,7 @@ def _select_strategy(
         raise RecommendationServiceError("Experiment không tồn tại trong shop này.", 404)
     if experiment.status != "running":
         raise RecommendationServiceError("Experiment recommendation phải ở trạng thái running.", 409)
-    variants = [str(item).strip() for item in (experiment.variants or [])]
+    variants = list(dict.fromkeys(str(item).strip() for item in (experiment.variants or [])))
     if not variants or any(item not in STRATEGIES for item in variants):
         raise RecommendationServiceError("Variants chỉ được dùng: balanced, personalized, popular, rag.")
     policy = db.query(BanditPolicy).filter(
@@ -243,8 +298,8 @@ def _select_strategy(
             business_id=business_id,
             experiment_id=experiment.id,
             version="recommendation-v1",
-            epsilon=Decimal("0.10"),
-            config={"objective": "terminal_conversion_reward"},
+            epsilon=Decimal("0.02"),
+            config={"objective": "terminal_conversion_reward", "min_training_events": MIN_BANDIT_TRAINING_EVENTS},
             status="active",
         )
         db.add(policy)
@@ -263,7 +318,7 @@ def _select_strategy(
         BanditArmStat.policy_id == policy.id,
     ).scalar() or 0)
     try:
-        minimum_events = max(1, min(10000, int(
+        minimum_events = max(MIN_BANDIT_TRAINING_EVENTS, min(10000, int(
             (policy.config or {}).get("min_training_events", MIN_BANDIT_TRAINING_EVENTS)
         )))
     except (AttributeError, TypeError, ValueError):
@@ -272,22 +327,44 @@ def _select_strategy(
         # Keep the experiment on its first declared variant until enough
         # terminal outcomes exist; impressions/clicks alone are not rewards.
         strategy, reason = variants[0], "warmup_default"
+        selection_probability = 1.0
+        applied_epsilon = 0.0
     else:
-        explore = random.random() < float(policy.epsilon)
-        if explore or not any(stat and stat.pulls for stat in stats.values()):
-            strategy, reason = random.choice(variants), "exploration"
+        epsilon = min(0.05, max(0.0, float(policy.epsilon)))
+        if not any(stat and stat.pulls for stat in stats.values()):
+            strategy, reason = variants[0], "context_warmup_default"
+            selection_probability = 1.0
+            applied_epsilon = 0.0
         else:
-            strategy = max(variants, key=lambda arm: (
+            applied_epsilon = epsilon
+            observed_arms = [arm for arm in variants if stats[arm] and stats[arm].pulls]
+            greedy_strategy = max(observed_arms, key=lambda arm: (
                 float(((stats[arm].reward_sum or 0) / max(1, stats[arm].pulls)) if stats[arm] else 0),
                 arm,
             ))
-            reason = "exploitation"
+            if random.random() < epsilon:
+                strategy, reason = random.choice(variants), "exploration"
+            else:
+                strategy, reason = greedy_strategy, "exploitation"
+            selection_probability = epsilon / len(variants)
+            if strategy == greedy_strategy:
+                selection_probability += 1.0 - epsilon
+    selection = {
+        "policy": "epsilon_greedy_strategy_v1" if payload.experiment_id is not None else "deterministic",
+        "selection_reason": reason,
+        "selection_probability": round(float(selection_probability), 8),
+        "epsilon": applied_epsilon,
+        "available_strategies": variants,
+        "observed_terminal_outcomes": observed_outcomes,
+        "warmup_minimum": minimum_events,
+    }
+    decision_context = {**(context or payload.context or {}), "_strategy_selection": selection}
     decision = BanditDecision(
         business_id=business_id,
         experiment_id=experiment.id,
         subject_key=subject_key,
         arm=strategy,
-        context=context,
+        context=decision_context,
         policy_id=policy.id,
         policy_version=policy.version,
         context_hash=context_hash,
@@ -295,7 +372,7 @@ def _select_strategy(
     )
     db.add(decision)
     db.flush()
-    return strategy, decision.id
+    return strategy, decision.id, selection
 
 
 def _recent_and_historical_products(db: Session, business_id: int, customer_id: int | None) -> tuple[set[int], set[int]]:
@@ -546,11 +623,49 @@ def _tokens(value: str) -> list[str]:
     return [token for token in re.findall(r"\w+", value.lower()) if len(token) > 1]
 
 
+def _catalog_attribute_text(product: Product) -> str:
+    metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+    keys = {
+        "category", "category_name", "product_category", "danh_muc", "danh_mục",
+        "product_type", "product_group", "type", "loai_san_pham", "loại_sản_phẩm",
+        "brand", "brand_name", "manufacturer", "thuong_hieu", "thương_hiệu",
+        "model", "model_name", "compatible_with", "compatible_models", "compatibility",
+        "vehicle_compatibility", "fitment", "suitable_for", "use_case", "usage", "service_type",
+        "tags", "keywords", "aliases", "search_terms", "features", "specifications",
+        "color", "colors", "colour", "colours", "mau", "mau_sac", "màu_sắc",
+        "size", "sizes", "style", "collection", "material", "chat_lieu", "chất_liệu",
+        "attributes", "product_attributes", "specs", "dietary", "ingredients",
+        "allergens", "skin_type", "expiry", "storage",
+    }
+    values = []
+    for key, value in metadata.items():
+        if str(key).strip().casefold() not in keys:
+            continue
+        pending = [value]
+        while pending and len(values) < 64:
+            item = pending.pop()
+            if isinstance(item, dict):
+                pending.extend(item.values())
+            elif isinstance(item, (list, tuple, set)):
+                pending.extend(item)
+            elif isinstance(item, (str, int, float)):
+                values.append(str(item))
+    return " ".join(values)
+
+
+def _catalog_attribute_overlap(query: str | None, product: Product) -> float:
+    query_tokens = set(_tokens(fold_topic_text(query or "")))
+    if not query_tokens:
+        return 0.0
+    attributes = set(_tokens(fold_topic_text(_catalog_attribute_text(product))))
+    return len(query_tokens & attributes) / len(query_tokens)
+
+
 def _query_overlap(query: str | None, product: Product) -> float:
-    tokens = set(_tokens(query or ""))
+    tokens = set(_tokens(fold_topic_text(query or "")))
     if not tokens:
         return 0.0
-    searchable = set(_tokens(f"{product.name} {product.description or ''}"))
+    searchable = set(_tokens(fold_topic_text(f"{product.name} {product.description or ''}")))
     return sum(token in searchable for token in tokens) / len(tokens)
 
 
@@ -781,6 +896,88 @@ def _filter_query_candidates(products: list[Product], query: str | None) -> list
             and (not mentioned or fold_topic_text(str((p.metadata_ or {}).get("category") or "")) in mentioned)]
 
 
+def _safe_hard_filters(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, object] = {}
+    if value.get("object_type") is not None:
+        result["object_type"] = str(value["object_type"]).strip().casefold()
+    sku = value.get("sku")
+    if sku is not None:
+        values = sku if isinstance(sku, (list, tuple, set, frozenset)) else [sku]
+        result["sku"] = {
+            " ".join(unicodedata.normalize("NFKC", str(item)).casefold().split())
+            for item in values if str(item).strip()
+        }
+    attributes = value.get("required_attributes")
+    if isinstance(attributes, dict):
+        result["required_attributes"] = {
+            unicodedata.normalize("NFKC", str(key)).strip().casefold(): unicodedata.normalize("NFKC", str(expected)).strip().casefold()
+            for key, expected in attributes.items() if str(key).strip() and str(expected).strip()
+        }
+    return result
+
+
+def _product_matches_hard_filters(product: Product, filters: dict[str, object]) -> bool:
+    if not filters:
+        return True
+    if filters.get("object_type") not in (None, "product"):
+        return False
+    sku_values = filters.get("sku")
+    product_sku = " ".join(unicodedata.normalize("NFKC", str(product.sku)).casefold().split())
+    if sku_values and product_sku not in sku_values:
+        return False
+    required = filters.get("required_attributes")
+    if isinstance(required, dict):
+        metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+        attributes = metadata.get("attributes") if isinstance(metadata.get("attributes"), dict) else {}
+        normalized_attributes = {
+            "_".join(unicodedata.normalize("NFKC", str(name)).casefold().split()): actual
+            for source in (metadata, attributes)
+            for name, actual in source.items()
+        }
+        for key, expected in required.items():
+            actual = next((
+                normalized_attributes["_".join(alias.split())]
+                for alias in attribute_key_aliases(str(key))
+                if "_".join(alias.split()) in normalized_attributes
+            ), None)
+            actual_values = actual if isinstance(actual, (list, tuple, set)) else [actual]
+            normalized = {
+                " ".join(unicodedata.normalize("NFKC", str(item)).casefold().split())
+                for item in actual_values if item is not None
+            }
+            accepted = set(attribute_value_aliases(str(key), expected))
+            if not accepted.intersection(normalized):
+                return False
+    return True
+
+
+def _product_quality_validation(product: Product, business_id: int, filters: dict[str, object]) -> dict[str, object]:
+    available = int(product.stock_quantity or 0) - int(product.reserved_quantity or 0)
+    required = filters.get("required_attributes")
+    attributes_match = _product_matches_hard_filters(product, {"required_attributes": required}) if required else None
+    sku_values = filters.get("sku")
+    sku_match = (
+        " ".join(unicodedata.normalize("NFKC", str(product.sku)).casefold().split()) in sku_values
+        if sku_values else None
+    )
+    object_type_match = filters.get("object_type") in (None, "product")
+    checks = {
+        "shop_match": int(product.business_id) == int(business_id),
+        "active": product.status == "active",
+        "available": available > 0,
+        "sku_match": sku_match,
+        "object_type_match": object_type_match,
+        "required_attributes_match": attributes_match,
+    }
+    return {
+        **checks,
+        "required_attribute_count": len(required) if isinstance(required, dict) else 0,
+        "compliant": all(value is not False for value in checks.values()),
+    }
+
+
 def _explicit_sku_matches(products: list[Product], query: str | None) -> set[int]:
     text = fold_topic_text(query)
     return {
@@ -913,8 +1110,254 @@ def _cached_personalization_profile(
     return profile, False
 
 
-def serve_recommendations(db: Session, *, business_id: int, payload: RecommendationRequestCreate) -> RecommendationRequest:
+def rag_candidates_from_chunks(
+    db: Session,
+    *,
+    business_id: int,
+    chunks: list,
+) -> tuple[list[RagCandidate], list[dict]]:
+    """Map retrieved chunks to this shop's products and keep a content-free score trace."""
+    products = db.query(Product.id, Product.sku).filter(Product.business_id == business_id).all()
+    owned_ids = {int(product_id) for product_id, _sku in products}
+    sku_to_id = {str(sku).strip().casefold(): int(product_id) for product_id, sku in products if sku}
+    by_product: dict[int, dict[str, float | int]] = {}
+    trace = []
+    score_names = ("bm25_score", "vector_score", "rrf_score", "ppr_score")
+    rank_names = ("bm25_rank", "vector_rank", "rrf_rank", "ppr_rank", "retrieval_rank")
+
+    for result_rank, chunk in enumerate(chunks[:100], start=1):
+        metadata = chunk.metadata if isinstance(getattr(chunk, "metadata", None), dict) else {}
+        product_id = None
+        try:
+            candidate_id = int(metadata.get("product_id"))
+            if candidate_id in owned_ids:
+                product_id = candidate_id
+        except (TypeError, ValueError):
+            pass
+        if product_id is None and metadata.get("sku"):
+            product_id = sku_to_id.get(str(metadata["sku"]).strip().casefold())
+
+        raw_scores = getattr(chunk, "retrieval_scores", {})
+        safe_scores = {}
+        if isinstance(raw_scores, dict):
+            for name in (*score_names, *rank_names):
+                value = raw_scores.get(name)
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)):
+                    safe_scores[name] = int(value) if name in rank_names else float(value)
+        safe_scores["retrieval_rank"] = result_rank
+        trace.append({
+            "chunk_id": int(chunk.chunk_id),
+            "document_id": int(chunk.document_id),
+            "product_id": product_id,
+            "result_rank": result_rank,
+            "scores": safe_scores,
+        })
+        if product_id is None:
+            continue
+        product_scores = by_product.setdefault(product_id, {})
+        for name in score_names:
+            if name in safe_scores:
+                current = product_scores.get(name)
+                product_scores[name] = max(float(current), safe_scores[name]) if current is not None else safe_scores[name]
+        for name in rank_names:
+            if name in safe_scores:
+                current = product_scores.get(name)
+                product_scores[name] = min(int(current), safe_scores[name]) if current is not None else safe_scores[name]
+
+    max_ppr = max((scores.get("ppr_score", 0.0) for scores in by_product.values()), default=0.0)
+    max_bm25 = max((scores.get("bm25_score", 0.0) for scores in by_product.values()), default=0.0)
+    candidates = []
+    for product_id, scores in by_product.items():
+        if scores.get("ppr_score") is not None and max_ppr > 0:
+            relevance = scores["ppr_score"] / max_ppr
+        elif scores.get("vector_score") is not None:
+            relevance = min(1.0, max(0.0, scores["vector_score"]))
+        else:
+            relevance = scores.get("bm25_score", 0.0) / max_bm25 if max_bm25 > 0 else 0.0
+        candidates.append(RagCandidate(
+            product_id=product_id,
+            relevance=min(1.0, max(0.0, relevance)),
+            **{name: scores.get(name) for name in score_names},
+            **{name: scores.get(name) for name in rank_names},
+        ))
+    candidates.sort(key=lambda candidate: (-candidate.relevance, candidate.product_id))
+    return candidates, trace
+
+
+def record_catalog_match_recommendation(
+    db: Session,
+    *,
+    business_id: int,
+    customer_id: int | None,
+    query: str,
+    products: list[tuple[int, Product]],
+    context: dict,
+    rag_candidates: list[RagCandidate] | None = None,
+) -> RecommendationRequest:
+    """Persist the safe catalog-matcher fallback using the same exposure contract."""
+    personalized_id = customer_id if _personalization_allowed(db, business_id, customer_id) else None
+    profile, _cache_hit = (
+        _cached_personalization_profile(db, business_id, personalized_id)
+        if personalized_id is not None else (None, False)
+    )
+    rag_by_product = {candidate.product_id: candidate for candidate in rag_candidates or []}
+    best_score = max((score for score, _product in products), default=1)
+    candidate_snapshot = []
+    request_id = str(uuid4())
+    served_items = []
+    for rank, (match_score, product) in enumerate(products[:50], start=1):
+        rag = rag_by_product.get(int(product.id))
+        feature_snapshot = {
+            "catalog_match_score": float(match_score),
+            "rag_relevance": float(rag.relevance) if rag else None,
+            "rag_bm25_score": rag.bm25_score if rag else None,
+            "rag_vector_score": rag.vector_score if rag else None,
+            "rag_rrf_score": rag.rrf_score if rag else None,
+            "rag_ppr_score": rag.ppr_score if rag else None,
+            "rag_bm25_rank": rag.bm25_rank if rag else None,
+            "rag_vector_rank": rag.vector_rank if rag else None,
+            "rag_rrf_rank": rag.rrf_rank if rag else None,
+            "rag_ppr_rank": rag.ppr_rank if rag else None,
+            "rag_retrieval_rank": rag.retrieval_rank if rag else None,
+            "rfm_segment": profile.segment_label if profile else None,
+        }
+        candidate_snapshot.append({
+            "product_id": int(product.id),
+            "rank": rank,
+            "score": round(float(match_score) / max(float(best_score), 1.0), 6),
+            "feature_snapshot": feature_snapshot,
+        })
+        if rank > 3:
+            continue
+        available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+        item = {
+            "product_id": int(product.id),
+            "object_type": "product",
+            "recommendation_object_id": str(product.id),
+            "catalog_revision": (
+                int(product.metadata_.get("recommendation_catalog_revision"))
+                if isinstance(product.metadata_, dict)
+                and str(product.metadata_.get("recommendation_catalog_revision", "")).isdigit()
+                else None
+            ),
+            "sku": str(product.sku),
+            "name": str(product.name),
+            "price": float(product.price or 0),
+            "available": available,
+            "product_url": safe_http_url(getattr(product, "product_url", None)),
+            "score": round(float(match_score) / max(float(best_score), 1.0), 6),
+            "model_score": None,
+            "reason": "catalog_attribute_match",
+            "position": rank,
+            "selection_probability": None,
+            "personalization_signals": ["rfm_segment"] if personalized_id and profile else [],
+            "purchase_facets": [],
+            "feature_snapshot": feature_snapshot,
+        }
+        if item["product_url"]:
+            item["click_url"] = _recommendation_click_url(
+                business_id=business_id,
+                request_id=request_id,
+                product_id=int(product.id),
+            ) or item["product_url"]
+        served_items.append(item)
+
+    rfm_features = profile.features if profile and isinstance(profile.features, dict) else {}
+    row = RecommendationRequest(
+        business_id=business_id,
+        request_id=request_id,
+        customer_id=personalized_id,
+        experiment_id=None,
+        bandit_decision_id=None,
+        strategy="catalog_matcher",
+        model_version="catalog_matcher_v1",
+        context={
+            **context,
+            "query": query if personalized_id is not None else "",
+            "query_hash": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+            "query_chars": len(query),
+            "rfm_segment": profile.segment_label if profile else None,
+            "rfm_rules_version": RFM_RULES_VERSION if profile else None,
+            "rfm_snapshot": {
+                key: rfm_features.get(key) for key in ("recency_days", "frequency", "monetary")
+            } if profile else None,
+            "ranking_weights": {"catalog_match": 1.0},
+            "eligible_candidate_count": len(products),
+            "candidate_snapshot": candidate_snapshot,
+            "personalization_applied": False,
+            "item_selection_policy": "deterministic_catalog_matcher",
+            "item_policy_randomized": False,
+            "blend_version": "baseline_only_v1",
+        },
+        served_items=served_items,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def serve_recommendations(
+    db: Session,
+    *,
+    business_id: int,
+    payload: RecommendationRequestCreate,
+    record_impressions: bool = True,
+) -> RecommendationRequest:
     started = time.perf_counter()
+    source_context = payload.context if isinstance(payload.context, dict) else {}
+    hard_filters = _safe_hard_filters(source_context.get("hard_filters"))
+    surface = str(source_context.get("surface") or "api")[:40]
+    conversation_id = source_context.get("conversation_id")
+    try:
+        conversation_id = int(conversation_id) if conversation_id is not None else None
+    except (TypeError, ValueError):
+        conversation_id = None
+    retrieval_trace = source_context.get("retrieval_trace")
+    safe_retrieval_trace = []
+    if isinstance(retrieval_trace, list):
+        for trace_position, item in enumerate(retrieval_trace[:100], start=1):
+            if not isinstance(item, dict) or not isinstance(item.get("scores"), dict):
+                continue
+            scores = {
+                key: int(value) if key.endswith("_rank") or key == "retrieval_rank" else float(value)
+                for key, value in item["scores"].items()
+                if key in {"bm25_score", "vector_score", "rrf_score", "ppr_score", "bm25_rank", "vector_rank", "rrf_rank", "ppr_rank", "retrieval_rank"}
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value))
+            }
+            try:
+                chunk_id, document_id = int(item["chunk_id"]), int(item["document_id"])
+                product_id = int(item["product_id"]) if item.get("product_id") is not None else None
+                result_rank = int(item.get("result_rank") or trace_position)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if result_rank < 1:
+                result_rank = trace_position
+            safe_retrieval_trace.append({
+                "chunk_id": chunk_id,
+                "document_id": document_id,
+                "product_id": product_id,
+                "result_rank": result_rank,
+                "scores": scores,
+            })
+    raw_diagnostics = source_context.get("retrieval_diagnostics")
+    safe_diagnostics = {}
+    if isinstance(raw_diagnostics, dict):
+        for key, value in raw_diagnostics.items():
+            if key not in {
+                "retrieval_mode", "retrieval_fallback_stage", "retrieval_error_type",
+                "retrieval_fusion", "retrieval_lexical_method", "retrieval_reranker",
+                "retrieval_vector_hits", "retrieval_lexical_hits", "retrieval_bm25_hits",
+            }:
+                continue
+            if isinstance(value, str):
+                safe_diagnostics[key] = value[:80]
+            elif isinstance(value, int) and not isinstance(value, bool):
+                safe_diagnostics[key] = value
+            elif value is None:
+                safe_diagnostics[key] = None
     customer = _customer_or_raise(db, business_id, payload.customer_id)
     personalized_id = customer.id if customer and _personalization_allowed(db, business_id, customer.id) else None
     selection_payload = payload
@@ -928,13 +1371,17 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
     cached_features = profile.features if profile else {}
     cached_signals = (cached_features.get("product_signal_cache") or {}).get("signals") or {}
     rfm_segment = profile.segment_label if profile else "unclassified"
+    bandit_context = {
+        key: value for key, value in selection_payload.context.items()
+        if key not in {"retrieval_trace", "retrieval_diagnostics", "hard_filters"}
+    }
     learning_context = {
-        **selection_payload.context,
+        **bandit_context,
         "rfm_segment": rfm_segment,
         "rfm_rules_version": RFM_RULES_VERSION,
         "source_channel": customer.channel,
     } if personalized_id is not None and customer is not None else {}
-    strategy, bandit_decision_id = _select_strategy(
+    strategy, bandit_decision_id, strategy_selection = _select_strategy(
         db,
         business_id=business_id,
         payload=selection_payload,
@@ -945,7 +1392,27 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         strategy,
         rfm_segment if personalized_id is not None else None,
     )
-    request_context = {**learning_context, "ranking_weights": ranking_weights, "profile_cache_hit": profile_cache_hit}
+    request_context = {
+        **learning_context,
+        "ranking_weights": ranking_weights,
+        "profile_cache_hit": profile_cache_hit,
+        "surface": surface,
+        "conversation_id": conversation_id,
+        "query_hash": hashlib.sha256((payload.query or "").encode("utf-8")).hexdigest(),
+        "query_chars": len(payload.query or ""),
+        "retrieval_trace": safe_retrieval_trace,
+        "retrieval_diagnostics": safe_diagnostics,
+        "strategy_selection": strategy_selection,
+        "item_selection_policy": "deterministic_ranker",
+        "item_policy_randomized": False,
+        "blend_version": "baseline_only_v1",
+        "behavioral_reranker": None,
+    }
+    if personalized_id is not None:
+        request_context["rfm_snapshot"] = {
+            key: cached_features.get(key)
+            for key in ("recency_days", "frequency", "monetary")
+        }
     recent, historical = set(cached_signals.get("recent", [])), set(cached_signals.get("historical", []))
     candidates = db.query(Product).filter(
         Product.business_id == business_id,
@@ -959,6 +1426,7 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         and (product.id not in recent or product.id in explicit_skus)
     ]
     candidates = _filter_query_candidates(candidates, payload.query)
+    candidates = [product for product in candidates if _product_matches_hard_filters(product, hard_filters)]
     data_rag_scores, data_rag_status = {}, "disabled"
     customer_features = (
         {key: float(cached_features[key]) for key in ("recency_days", "frequency", "monetary", "total_items", "distinct_products", "avg_order_value")}
@@ -988,7 +1456,8 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             available_personalization_signals.add("past_questions")
         if profile and cached_features.get("frequency", 0) > 0:
             available_personalization_signals.add("rfm_segment")
-    rag_scores = {candidate.product_id: candidate.relevance for candidate in payload.rag_candidates}
+    rag_candidates_by_product = {candidate.product_id: candidate for candidate in payload.rag_candidates}
+    rag_scores = {product_id: candidate.relevance for product_id, candidate in rag_candidates_by_product.items()}
     popularity_signal = Counter(popularity)
     popularity_signal.update(interaction_popularity)
     max_popularity = max(1, max(popularity_signal.values(), default=0))
@@ -1008,8 +1477,9 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
         popularity_score = float(popularity_signal.get(product.id, 0) / max_popularity)
         rag_score = float(rag_scores.get(product.id, 0.0))
         current_query_score = _query_overlap(payload.query, product)
+        catalog_match_score = _catalog_attribute_overlap(payload.query, product)
         historic_query_score = _historic_interest_overlap(historic_tokens, product)
-        lexical_score = max(current_query_score, 0.35 * historic_query_score)
+        lexical_score = max(current_query_score, catalog_match_score, 0.35 * historic_query_score)
         score = _score(
             strategy,
             affinity_score,
@@ -1038,6 +1508,8 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             reason = "linucb_demo_rerank"
         elif rag_score > 0:
             reason = "rag_relevance"
+        elif catalog_match_score > current_query_score:
+            reason = "catalog_attribute_match"
         elif color_match:
             reason = color_signal or "color_affinity"
         elif purchase_facet_score > 0:
@@ -1071,18 +1543,54 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             item_signals.add("past_questions")
         if personalized_id is not None and cached_features.get("frequency", 0) > 0:
             item_signals.add("rfm_segment")
+        rag_candidate = rag_candidates_by_product.get(int(product.id))
         scored_items.append({
             "product_id": product.id,
+            "object_type": "product",
+            "recommendation_object_id": str(product.id),
+            "catalog_revision": (
+                int(product.metadata_.get("recommendation_catalog_revision"))
+                if isinstance(product.metadata_, dict)
+                and str(product.metadata_.get("recommendation_catalog_revision", "")).isdigit()
+                else None
+            ),
             "sku": product.sku,
             "name": product.name,
             "price": float(product.price or 0),
             "available": max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0),
             "product_url": safe_http_url(product.product_url),
+            "quality_validation": _product_quality_validation(product, business_id, hard_filters),
             "score": round(score, 6),
             "model_score": round(data_rag_scores[product.id], 6) if product.id in data_rag_scores else None,
             "reason": reason,
             "personalization_signals": sorted(item_signals),
             "purchase_facets": matched_purchase_facets,
+            "feature_snapshot": {
+                "catalog_match_score": round(catalog_match_score, 6),
+                "affinity_score": round(affinity_score, 6),
+                "co_purchase_score": round(co_purchase_score, 6),
+                "interaction_score": round(interaction_score, 6),
+                "purchase_facet_score": round(purchase_facet_score, 6),
+                "popularity_score": round(popularity_score, 6),
+                "rag_relevance": round(rag_score, 6),
+                "rag_bm25_score": rag_candidate.bm25_score if rag_candidate else None,
+                "rag_vector_score": rag_candidate.vector_score if rag_candidate else None,
+                "rag_rrf_score": rag_candidate.rrf_score if rag_candidate else None,
+                "rag_ppr_score": rag_candidate.ppr_score if rag_candidate else None,
+                "rag_bm25_rank": rag_candidate.bm25_rank if rag_candidate else None,
+                "rag_vector_rank": rag_candidate.vector_rank if rag_candidate else None,
+                "rag_rrf_rank": rag_candidate.rrf_rank if rag_candidate else None,
+                "rag_ppr_rank": rag_candidate.ppr_rank if rag_candidate else None,
+                "rag_retrieval_rank": rag_candidate.retrieval_rank if rag_candidate else None,
+                "query_overlap_score": round(current_query_score, 6),
+                "historic_query_overlap_score": round(historic_query_score, 6),
+                "purchase_facet_affinity": round(purchase_facet_score, 6),
+                "stated_preference_score": round(preference_score, 6),
+                "color_match": bool(color_match),
+                "ncf_score": ncf_score,
+                "linucb_score": linucb_score,
+                "rfm_segment": rfm_segment if personalized_id is not None else None,
+            },
         })
     scored_items.sort(key=lambda item: (-item["score"], item["product_id"]))
     shortlist = scored_items[:3]
@@ -1108,11 +1616,123 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             continue
         item["score"] = round(float(item["score"]) + 0.30 * interest_score, 6)
         item["staff_interest_percent"] = round(interest_score * 100)
+        item["feature_snapshot"]["staff_interest_score"] = round(interest_score, 6)
         item["personalization_signals"] = sorted(set(item["personalization_signals"]) | {"product_interest"})
         if item["reason"] in {"eligible_catalog_fallback", "tenant_popularity"}:
             item["reason"] = "staff_recorded_product_interest"
     scored_items.sort(key=lambda item: (-item["score"], item["product_id"]))
+    live_reranker, live_reranker_run_id = _active_live_feedback_reranker(db, business_id)
+    if live_reranker is not None:
+        reranker_algorithm = str(live_reranker.get("algorithm") or LIVE_RERANKER_ALGORITHM)
+        rfm_snapshot = request_context.get("rfm_snapshot")
+        scored_items.sort(key=lambda item: (-item["score"], item["product_id"]))
+        rerank_pool = scored_items[:50]
+        baseline_scores = {
+            int(item["product_id"]): float(item["score"])
+            for item in rerank_pool
+        }
+        baseline_ranks = {
+            int(item["product_id"]): rank
+            for rank, item in enumerate(rerank_pool, start=1)
+        }
+        model_scores = {}
+        for item in rerank_pool:
+            product_id = int(item["product_id"])
+            rank = baseline_ranks[product_id]
+            if reranker_algorithm == LIGHTFM_ALGORITHM:
+                customer_key = lightfm_customer_key(
+                    settings.CHANNEL_ENCRYPTION_KEY,
+                    business_id,
+                    personalized_id,
+                ) if personalized_id is not None else None
+                model_score = score_lightfm_candidate(
+                    live_reranker,
+                    customer_key=customer_key,
+                    product_id=product_id,
+                    rfm_snapshot=rfm_snapshot,
+                    personalization_allowed=personalized_id is not None,
+                )
+            else:
+                model_score = score_live_candidate(
+                    live_reranker,
+                    item,
+                    rank=rank,
+                    rfm_snapshot=rfm_snapshot,
+                    personalization_allowed=personalized_id is not None,
+                )
+            if model_score is None or not math.isfinite(float(model_score)):
+                continue
+            model_scores[product_id] = float(model_score)
+        if len(model_scores) >= 2:
+            query_intent, retrieval_weight = live_reranker_blend_profile(payload.query)
+            blended_scores = blend_candidate_scores(
+                baseline_scores,
+                model_scores,
+                baseline_weight=retrieval_weight,
+            )
+            for item in rerank_pool:
+                product_id = int(item["product_id"])
+                baseline_score = baseline_scores[product_id]
+                model_score = model_scores.get(product_id)
+                blended_score = blended_scores[product_id]
+                item["feature_snapshot"]["live_reranker_baseline_score"] = round(baseline_score, 8)
+                item["feature_snapshot"]["live_reranker_baseline_rank"] = baseline_ranks[product_id]
+                item["feature_snapshot"]["live_reranker_blend_version"] = LIVE_RERANKER_BLEND_VERSION
+                item["feature_snapshot"]["live_reranker_blended_score"] = round(blended_score, 8)
+                if model_score is not None:
+                    item["model_score"] = round(model_score, 8)
+                    item["feature_snapshot"]["live_reranker_score"] = round(model_score, 8)
+                    item["reason"] = f"{reranker_algorithm}_blend"
+                item["score"] = round(blended_score, 8)
+            rerank_pool.sort(key=lambda item: (
+                -item["score"],
+                baseline_ranks[int(item["product_id"])],
+                int(item["product_id"]),
+            ))
+            scored_items = rerank_pool + scored_items[50:]
+            request_context["behavioral_reranker"] = {
+                "algorithm": reranker_algorithm,
+                "blend_version": LIVE_RERANKER_BLEND_VERSION,
+                "training_run_id": live_reranker_run_id,
+                "applied": True,
+                "query_intent": query_intent,
+                "retrieval_weight": retrieval_weight,
+                "model_weight": round(1.0 - retrieval_weight, 2),
+                "candidate_pool_size": len(rerank_pool),
+                "scored_candidate_count": len(model_scores),
+                "score_normalization": "min_max_per_candidate_pool",
+            }
+            request_context["blend_version"] = LIVE_RERANKER_BLEND_VERSION
+        else:
+            request_context["behavioral_reranker"] = {
+                "algorithm": reranker_algorithm,
+                "training_run_id": live_reranker_run_id,
+                "applied": False,
+                "reason": "fewer_than_two_valid_candidate_scores",
+                "candidate_pool_size": len(rerank_pool),
+                "scored_candidate_count": len(model_scores),
+            }
     served_items = scored_items[:payload.limit]
+    for item in scored_items:
+        item["feature_snapshot"]["staff_interest_score"] = round(
+            float(manual_interest_scores.get(int(item["product_id"]), 0.0)), 6,
+        )
+        item["feature_snapshot"]["model_score"] = item.get("model_score")
+        item["feature_snapshot"]["final_score"] = float(item["score"])
+    candidate_snapshot = [
+        {
+            "product_id": int(item["product_id"]),
+            "rank": rank,
+            "score": float(item["score"]),
+            "quality_validation": item.get("quality_validation"),
+            "feature_snapshot": item.get("feature_snapshot", {}),
+        }
+        for rank, item in enumerate(scored_items[:50], start=1)
+    ]
+    request_context["candidate_snapshot"] = candidate_snapshot
+    for position, item in enumerate(served_items, start=1):
+        item["position"] = position
+        item["selection_probability"] = None
     used_personalization_signals = sorted({
         signal
         for item in served_items
@@ -1129,6 +1749,9 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
             if click_url:
                 item["click_url"] = click_url
     model_versions = [MODEL_VERSION]
+    reranker_trace = request_context.get("behavioral_reranker")
+    if isinstance(reranker_trace, dict) and reranker_trace.get("applied"):
+        model_versions.append(str(reranker_trace.get("algorithm") or LIVE_RERANKER_ALGORITHM))
     if data_rag_scores:
         model_versions.append("data_rag_demo_v1")
     if ncf_scores:
@@ -1165,7 +1788,8 @@ def serve_recommendations(db: Session, *, business_id: int, payload: Recommendat
     )
     db.add(row)
     db.flush()
-    record_recommendation_impressions(db, request=row)
+    if record_impressions:
+        record_recommendation_impressions(db, request=row)
     db.commit()
     db.refresh(row)
     return row

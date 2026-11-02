@@ -9,6 +9,8 @@ venv/
 .env
 backend/.env
 backend/sample_data/
+backend/.local-evaluation/
+backend/uploads/
 backend/rag_runs.jsonl
 
 # Node
@@ -38,6 +40,11 @@ backups/
 *.secrets.json
 backend/.pytest_tmp/
 .pytest_tmp/
+
+# Local database inventory and transient traces may contain tenant/runtime data.
+docs/implementation-logs/2026-11-01-system-inventory/
+docs/implementation-logs/2026-11-01-system-inventory.zip
+docs/implementation-logs/.failed-traces.tmp
 
 # Local QA scratch copies and downloaded test dependencies.
 /work/

@@ -116,7 +116,7 @@ def test_accentless_query_and_english_synonym_find_vietnamese_evidence(database)
         assert retrieve("return refund policy", database, business_id=1)
         diagnostics = {}
         assert retrieve("Xin đọc thật kỹ rồi giải thích cho tôi chính sách hoàn tiền nhé", database,
-                        business_id=1, diagnostics=diagnostics)
+                        business_id=1, diagnostics=diagnostics, retrieval_mode="hybrid")
         assert diagnostics["retrieval_fallback_stage"] == "embedding"
         assert diagnostics["retrieval_error_type"] == "RuntimeError"
 
@@ -449,7 +449,7 @@ def test_chat_opt_out_updates_only_authenticated_customer_and_is_idempotent(data
     assert database.get(Customer, 1).fact_extraction_opt_out
     assert not database.get(Customer, 2).fact_extraction_opt_out
     assert not database.get(Customer, 3).fact_extraction_opt_out
-    assert database.get(CustomerFact, fact.id) is not None
+    assert database.get(CustomerFact, fact.id) is None
     assert database.query(AuditLog).filter(AuditLog.action == "customer_fact_collection_update").count() == 1
     with pytest.raises(Exception) as exc:
         answer_from_crm(database, 1, ChatRequest(query=query, customer_id=3))

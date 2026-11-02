@@ -10,7 +10,7 @@ Retrieval-Augmented Generation cho CRM Chatbot.
 | `semantic_chunker.py` | Chia theo cấu trúc, câu hoàn chỉnh và ranh giới Gemini; thêm ngữ cảnh cho embedding |
 | `chunker.py` | Chunker cũ, giữ cho tương thích và kiểm thử |
 | `embedder.py` | Chuyển text → vector embedding (local Sentence-Transformers / Gemini / OpenAI) |
-| `retriever.py` | Gemini vector + BM25 → RRF → Personalized PageRank |
+| `retriever.py` | BM25 baseline; optional Gemini vector + RRF; PPR dành cho đánh giá offline |
 | `prompt_builder.py` | Xây dựng prompt cho LLM từ context + query |
 | `llm_caller.py` | Gọi LLM API, hỗ trợ streaming (Groq / Gemini / OpenAI) |
 | `run_logger.py` | Ghi một bản ghi JSON cho mỗi lần RAG xử lý |
@@ -30,8 +30,35 @@ webhook Facebook/Instagram sẽ được truy xuất từ tài liệu đó.
 
 ### Query (user hỏi)
 ```
-User query → Gemini embedding + BM25 → RRF → PPR → prompt_builder.py → LLM → Response
+User query → BM25 (mặc định) hoặc Hybrid Gemini + BM25 + RRF → bằng chứng → LLM → Response
 ```
+
+PPR hiện tắt trong serving vì benchmark đã lưu cho thấy chất lượng giảm; chỉ bật qua
+tham số tường minh khi chạy ablation offline. Câu hỏi giá/tồn kho sản phẩm đi qua
+catalog PostgreSQL có cấu trúc và được trả lời từ dữ liệu hiện hành; giá/tồn kho trong
+chunk tài liệu không được coi là dữ kiện mới nhất. Bằng chứng catalog ghi `source`,
+`fetched_at` và phạm vi `shop_catalog` (tồn kho chung của shop; chưa có tồn riêng theo
+kênh bán).
+
+Mỗi shop cấu hình retrieval và điều phối độc lập trong `business_settings`:
+
+- `rag_retrieval_mode`: `bm25` hoặc `hybrid`; mặc định `bm25`.
+- `rag_agentic_mode`: `off`, `decision_shadow`, `execute_shadow` hoặc `active`; mặc định `off`.
+- Khóa cũ `rag_agentic_enabled` vẫn được đọc khi shop chưa đặt `rag_agentic_mode`.
+
+`decision_shadow` chỉ ghi liệu controller có kích hoạt hay không. `execute_shadow` cũng
+chạy truy vấn phụ nhưng không dùng kết quả của nó khi tạo câu trả lời. `active` mới được
+phép thay bằng chứng, nếu điểm tín hiệu của kết quả mới tốt hơn. Log ghi mode, lý do,
+ID chunk ban đầu/ứng viên và điểm so sánh; không ghi nội dung chunk.
+
+Điểm BM25/vector/RRF là tín hiệu xếp hạng, không phải xác suất trả lời đúng. Bộ so sánh
+dùng điểm cao nhất và trung bình top 3 trong cùng một retrieval mode, không thưởng cho
+việc trả về nhiều chunk hơn. Ngưỡng yếu chỉ quyết định có thử một truy vấn sửa hay không;
+chưa được xem là ngưỡng chất lượng câu trả lời cho đến khi hiệu chỉnh trên case đã duyệt.
+Mỗi lượt tối đa 4 lượt đọc; timeout tối đa 30 giây. Embedding provider và lệnh
+PostgreSQL cũng nhận timeout. Nếu retry lỗi, hệ thống giữ bằng chứng ban đầu và chạy
+các kiểm tra nguồn/bàn giao hiện có. Đây là workflow xác định, không gọi thêm LLM để
+lập kế hoạch. RFM/LightFM chỉ xếp hạng gợi ý sản phẩm.
 
 Khi `LLM_PROVIDER=groq`, lỗi quota, xác thực, mất kết nối, timeout hoặc circuit
 breaker mở sẽ chuyển sang `GEMINI_FALLBACK_MODEL` (mặc định
@@ -61,15 +88,16 @@ trong cùng project không làm tăng quota. Không tự đổi model embedding.
 - Retrieval mở rộng cả đoạn cha khi tối đa 16 chunk và 6.000 ký tự; nếu lớn hơn, lấy hàng xóm gần nhất. Tổng nội dung bổ sung tối đa 12.000 ký tự/lượt truy xuất; giữ các kết quả độc lập và thứ tự nguồn trong đoạn cha.
 - Tài liệu cũ tiếp tục được đọc theo metadata cũ. Reindex từ bản gốc để áp dụng đầy đủ `structure-semantic-context-v2`; không trộn vector từ model khác trong một chỉ mục.
 
-Retriever giữ nguyên Gemini embedding và chỉ mục vector hiện có. Mỗi truy vấn lấy
+Retriever giữ nguyên Gemini embedding và chỉ mục vector hiện có. Mặc định production
+dùng BM25; `rag_retrieval_mode=hybrid` bật nhánh ngữ nghĩa để pilot riêng theo shop.
+Mỗi truy vấn hybrid lấy
 ứng viên vector theo độ gần cosine, đồng thời lấy ứng viên từ khóa có phạm vi
 `business_id`, chuẩn hóa dấu tiếng Việt và ưu tiên SKU chính xác. BM25 chấm thứ
 hạng từ khóa trên tối đa `max(200, top_k × 40)` ứng viên khớp; RRF hợp nhất thứ
-hạng BM25 và vector mà không cộng trực tiếp hai thang điểm khác nhau; Personalized
-PageRank dùng liên kết sản phẩm, chunk cha và chunk liền kề để xếp hạng lại tập
-đã hợp nhất. Không đổi model embedding hoặc schema nên không cần re-embed kho tài
-liệu. Nếu Gemini embedding hoặc truy vấn vector lỗi, BM25 vẫn chạy và tiếp tục
-qua PPR. Candidate BM25 hiện được chấm trong Python trên tập giới hạn; theo dõi
+hạng BM25 và vector mà không cộng trực tiếp hai thang điểm khác nhau. PPR không chạy
+trong serving mặc định. Không đổi model embedding hoặc schema nên không cần re-embed
+kho tài liệu. Nếu Gemini embedding hoặc truy vấn vector lỗi, BM25 vẫn chạy. Candidate
+BM25 hiện được chấm trong Python trên tập giới hạn; theo dõi
 Recall@K để quyết định khi nào cần chuyển thống kê/chấm điểm sang chỉ mục tìm kiếm
 PostgreSQL khi kho tri thức lớn lên.
 
@@ -154,7 +182,26 @@ RAG_AUTO_SEED_ENABLED=true
 RAG_AUTO_SEED_DIR=sample_data/knowledge_base
 RAG_AUTO_SEED_FAST_MODE=false
 RAG_AUTO_REPLY_ENABLED=true
+RAG_RETRIEVAL_MODE=bm25
+RAG_AGENTIC_ENABLED=false
+RAG_AGENTIC_MODE=off
+RAG_AGENTIC_MAX_TOOL_CALLS=4
+RAG_AGENTIC_RETRY_THRESHOLD=0.3
+RAG_AGENTIC_TIMEOUT_SECONDS=8
 ```
+
+Đánh giá pilot trên cùng một bộ case lưu sẵn; `--with-hybrid` thêm embedding Gemini
+theo batch để so sánh BM25 và Hybrid no-PPR:
+
+```powershell
+python backend/scripts/evaluate_agentic_rag_pilot.py
+python backend/scripts/evaluate_agentic_rag_pilot.py --with-hybrid
+```
+
+Script ghi kết quả theo shop và loại câu hỏi, Hit/Recall@5, MRR, NDCG@5, số lần retry,
+độ trễ retrieval p50/p95 và các ca không có nhãn kỳ vọng. Đây là đánh giá retrieval,
+không gọi LLM trả lời; do đó không kết luận độ đúng câu trả lời, hỗ trợ trích dẫn,
+vi phạm tồn kho ở câu trả lời, hay token/chi phí LLM.
 
 ## RAG run log
 

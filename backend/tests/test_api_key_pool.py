@@ -78,6 +78,24 @@ class ApiKeyPoolTests(unittest.TestCase):
         self.assertEqual("open", breaker.state("groq"))
         self.assertEqual("closed", breaker.state("gemini"))
 
+    def test_call_can_enforce_a_single_provider_attempt(self):
+        calls = []
+
+        def fail(key):
+            calls.append(key)
+            raise RuntimeError("HTTP 429 rate limit")
+
+        with self.assertRaisesRegex(RuntimeError, "429"):
+            call_with_key_rotation(
+                ApiKeyPool(["key-a", "key-b"]),
+                fail,
+                provider="test-single-attempt",
+                max_attempts=1,
+                slot_timeout_seconds=0,
+            )
+
+        self.assertEqual(1, len(calls))
+
 
 if __name__ == "__main__":
     unittest.main()

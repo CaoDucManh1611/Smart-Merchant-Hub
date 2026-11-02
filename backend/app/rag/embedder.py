@@ -130,6 +130,8 @@ def _gemini_embed_batch_once(genai, types, api_key: str, batch: list[str], model
 def _embed_query_with_gemini(
     text: str,
     model: str,
+    *,
+    timeout_seconds: float | None = None,
 ) -> list[float]:
     """Embed 1 query duy nhất bằng Gemini (dùng task_type khác)."""
     from google import genai
@@ -137,14 +139,24 @@ def _embed_query_with_gemini(
 
     result = call_with_key_rotation(
         _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
-        lambda key: _gemini_embed_query_once(genai, types, key, text, model),
+        lambda key: _gemini_embed_query_once(
+            genai, types, key, text, model, timeout_seconds=timeout_seconds,
+        ),
         provider="embedding",
+        max_attempts=1 if timeout_seconds is not None else None,
+        slot_timeout_seconds=0 if timeout_seconds is not None else 10,
     )
     return result
 
 
-def _gemini_embed_query_once(genai, types, api_key: str, text: str, model: str) -> list[float]:
-    with genai.Client(api_key=api_key) as client:
+def _gemini_embed_query_once(
+    genai, types, api_key: str, text: str, model: str, *,
+    timeout_seconds: float | None = None,
+) -> list[float]:
+    options = None
+    if timeout_seconds is not None:
+        options = types.HttpOptions(timeout=max(1, int(timeout_seconds * 1000)))
+    with genai.Client(api_key=api_key, http_options=options) as client:
         response = client.models.embed_content(
             model=model.removeprefix("models/"),
             contents=text,
@@ -271,7 +283,7 @@ def embed_texts(
     return _validate_vectors(vectors, expected_count=len(texts))
 
 
-def embed_query(text: str) -> list[float]:
+def embed_query(text: str, *, timeout_seconds: float | None = None) -> list[float]:
     """
     Embed 1 câu query duy nhất.
     Dùng task_type khác (retrieval_query) cho Gemini
@@ -285,11 +297,14 @@ def embed_query(text: str) -> list[float]:
     return list(_cached_query_embedding(
         settings.EMBEDDING_PROVIDER, settings.EMBEDDING_MODEL,
         settings.EMBEDDING_DIMENSION, text.strip(),
+        max(1, int(timeout_seconds * 1000)) if timeout_seconds is not None else None,
     ))
 
 
 @lru_cache(maxsize=512)
-def _cached_query_embedding(provider: str, model: str, dimension: int, text: str) -> tuple[float, ...]:
+def _cached_query_embedding(
+    provider: str, model: str, dimension: int, text: str, timeout_ms: int | None = None,
+) -> tuple[float, ...]:
 
     logger.info(
         "Embedding query with %s/%s",
@@ -300,9 +315,25 @@ def _cached_query_embedding(provider: str, model: str, dimension: int, text: str
     if provider == "local":
         vector = _embed_query_with_local(text, model)
     elif provider == "gemini":
-        vector = _embed_query_with_gemini(text, model)
+        vector = _embed_query_with_gemini(
+            text, model, timeout_seconds=timeout_ms / 1000 if timeout_ms is not None else None,
+        )
     elif provider == "openai":
-        vectors = _embed_with_openai([text], model)
+        if timeout_ms is None:
+            vectors = _embed_with_openai([text], model)
+        else:
+            from openai import OpenAI
+
+            response = call_with_key_rotation(
+                _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
+                lambda key: OpenAI(api_key=key, timeout=timeout_ms / 1000).embeddings.create(
+                    model=model, input=[text],
+                ),
+                provider="embedding",
+                max_attempts=1,
+                slot_timeout_seconds=0,
+            )
+            vectors = [item.embedding for item in response.data]
         vector = vectors[0]
     else:
         raise ValueError(

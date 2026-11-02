@@ -38,6 +38,13 @@ from app.models.sales import Product
 from app.schemas.recommendation import RecommendationRequestCreate
 
 from app.rag.retriever import retrieve, RetrievedChunk
+from app.rag.catalog_filters import extract_query_hard_filters
+from app.rag.agentic_controller import (
+    corrective_query,
+    evidence_quality,
+    load_rag_runtime_options,
+    retrieval_is_weak,
+)
 from app.rag.lexical import identifiers
 from app.rag.answer_guard import customer_facing_answer, has_valid_citations
 from app.rag.prompt_builder import (
@@ -74,10 +81,14 @@ from app.services.chatbot_bandit_service import (
 )
 from app.services.recommendation_service import (
     active_recommendation_experiment_id,
-    rag_personalization_weights,
+    rag_candidates_from_chunks,
+    record_catalog_match_recommendation,
     serve_recommendations,
 )
-from app.services.recommendation_interaction_service import record_explicit_chat_recommendation_decline
+from app.services.recommendation_interaction_service import (
+    record_chat_recommendation_impressions,
+    record_explicit_chat_recommendation_decline,
+)
 
 logger = logging.getLogger(__name__)
 SAVED_REPLY_COMMAND = re.compile(r"^(/(?:[a-zA-Z0-9_-]+))(?:@[a-zA-Z0-9_]+)?$")
@@ -294,6 +305,7 @@ _STOCK_TERMS = (
     "het hang", "so luong", "bao nhieu cai", "bao nhieu chiec", "con bao nhieu", "con may chiec", "con may cai", "bao nhieu san pham",
     "in stock", "available", "how many", "units left",
 )
+_SALE_STATUS_TERMS = ("con ban", "dang ban", "ngung ban", "trang thai ban")
 _PRICE_TERMS = (
     "gia bao nhieu", "gia cua", "gia nhu nao", "gia the nao", "gia san pham",
     "gia mau", "gia model", "gia sku", "hoi gia", "bao nhieu tien", "thanh tien",
@@ -686,6 +698,33 @@ def _get_conversation_recipient(
         ) from exc
 
 
+def _record_sent_recommendation_exposure(
+    db: Session,
+    *,
+    business_id: int | None,
+    conversation_id: int,
+    message_id: int | None,
+    channel: str,
+    extra_metadata: dict | None,
+) -> None:
+    recommendation = extra_metadata.get("recommendation") if isinstance(extra_metadata, dict) else None
+    if business_id is None or not isinstance(recommendation, dict):
+        return
+    try:
+        record_chat_recommendation_impressions(
+            db,
+            business_id=int(business_id),
+            conversation_id=conversation_id,
+            message_id=message_id,
+            channel=channel,
+            recommendation=recommendation,
+        )
+        db.commit()
+    except Exception as error:
+        db.rollback()
+        logger.warning("Recommendation exposure logging failed: %s", type(error).__name__)
+
+
 def _save_auto_reply_outbound(
     db: Session,
     conversation_id: int,
@@ -732,6 +771,14 @@ def _save_auto_reply_outbound(
                     auto_reply_key=auto_reply_key,
                 )
             db.commit()
+            _record_sent_recommendation_exposure(
+                db,
+                business_id=int(conversation_business_id) if conversation_business_id is not None else None,
+                conversation_id=conversation_id,
+                message_id=updated.id,
+                channel=channel,
+                extra_metadata=extra_metadata,
+            )
             _schedule_saved_message_event(db, updated.id)
             return
     db.execute(
@@ -749,7 +796,9 @@ def _save_auto_reply_outbound(
                 media_type,
                 media_url,
                 raw_payload,
-                metadata
+                metadata,
+                status,
+                sent_at
             )
             VALUES (
                 :conversation_id,
@@ -763,7 +812,9 @@ def _save_auto_reply_outbound(
                 :media_type,
                 :media_url,
                 CAST(:raw_payload AS JSONB),
-                CAST(:metadata AS JSONB)
+                CAST(:metadata AS JSONB),
+                'sent',
+                NOW()
             )
             ON CONFLICT (external_message_id) DO NOTHING
             """
@@ -798,6 +849,14 @@ def _save_auto_reply_outbound(
                     auto_reply_key=auto_reply_key,
                 )
                 db.commit()
+            _record_sent_recommendation_exposure(
+                db,
+                business_id=int(conversation_business_id) if conversation_business_id is not None else None,
+                conversation_id=conversation_id,
+                message_id=sent.id,
+                channel=channel,
+                extra_metadata=extra_metadata,
+            )
             _schedule_saved_message_event(db, sent.id)
             return
 
@@ -810,6 +869,14 @@ def _save_auto_reply_outbound(
         Message.sender_type == "bot",
         Message.direction == "outbound",
     ).order_by(Message.id.desc()).first()
+    _record_sent_recommendation_exposure(
+        db,
+        business_id=int(conversation_business_id) if conversation_business_id is not None else None,
+        conversation_id=conversation_id,
+        message_id=sent.id if sent is not None else None,
+        channel=channel,
+        extra_metadata=extra_metadata,
+    )
     _schedule_saved_message_event(db, sent.id if sent is not None else None)
 
 
@@ -1153,7 +1220,10 @@ def _is_product_fact_question(text: str, *, conversation_id: int | None = None) 
     folded = _fold_text(text)
     if not folded:
         return False
-    if _has_any_term(folded, _STOCK_TERMS) or re.search(r"\bcon\b.{0,50}\bkhong\b", folded):
+    if (
+        _has_any_term(folded, _STOCK_TERMS + _SALE_STATUS_TERMS)
+        or re.search(r"\bcon\b.{0,50}\bkhong\b", folded)
+    ):
         # ``is_browsing_request`` also recognises the phrase "còn hàng".  A
         # stock question must still reach the exact-product/follow-up router,
         # otherwise a bare "còn hàng không?" falls through to RAG.
@@ -1208,6 +1278,7 @@ def _find_exact_product(
     text: str,
     *,
     conversation_id: int | None = None,
+    include_inactive: bool = False,
 ) -> tuple[Product | None, str]:
     """Resolve an explicit product name/SKU, then a short conversational follow-up.
 
@@ -1218,10 +1289,10 @@ def _find_exact_product(
     folded = _fold_text(text)
     hint = _product_hint(text)
     try:
-        products = db.query(Product).filter(
-            Product.business_id == business_id,
-            Product.status == "active",
-        ).order_by(Product.id.asc()).all()
+        product_query = db.query(Product).filter(Product.business_id == business_id)
+        if not include_inactive:
+            product_query = product_query.filter(Product.status == "active")
+        products = product_query.order_by(Product.id.asc()).all()
         products = list(products)
     except Exception:
         return None, hint
@@ -1332,26 +1403,34 @@ def _contextual_retrieval_query(
 
 
 def _live_product_context_chunk(db: Session, business_id: int, query: str, conversation_id: int) -> RetrievedChunk | None:
-    """Supply current product facts alongside retrieved descriptions for every channel."""
+    """Supply current price, stock and sale status from the shop's canonical catalog."""
     # Explicit catalog identities also ground questions about attributes outside the keyword list.
-    product, _ = _find_exact_product(db, business_id, query)
+    product, _ = _find_exact_product(db, business_id, query, include_inactive=True)
     if product is None and _is_product_attribute_question(query):
-        product, _ = _find_exact_product(db, business_id, query, conversation_id=conversation_id)
+        product, _ = _find_exact_product(
+            db, business_id, query, conversation_id=conversation_id, include_inactive=True,
+        )
     if product is None:
         return None
     available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
     availability = _rental_availability(product) if _is_rental_room(product) else f"Tồn khả dụng: {available}"
+    status = str(getattr(product, "status", "inactive") or "inactive").strip().casefold()
+    sale_status = "Đang bán" if status == "active" else f"Không đang bán (trạng thái: {status})"
     content = (
         "CURRENT_CRM_PRODUCT\n"
         f"SKU: {product.sku or ''}\nTên sản phẩm: {product.name}\n"
+        f"Trạng thái bán hiện hành: {sale_status}\n"
         f"Giá hiện hành: {_format_vnd(product.price)} VND\n{availability}\n"
         f"Mô tả catalog: {getattr(product, 'description', None) or ''}"
     )
+    fetched_at = datetime.now(timezone.utc).isoformat()
     return RetrievedChunk(
         chunk_id=-int(product.id), document_id=0, content=content, similarity=1.0,
-        metadata={"source_kind": "crm_product", "type": "crm_product", "product_id": product.id,
+        metadata={"source": "Danh mục sản phẩm hiện hành", "source_kind": "crm_product",
+                  "type": "crm_product", "product_id": product.id,
                   "sku": product.sku, "price": float(product.price), "available": available,
-                  "as_of": datetime.now(timezone.utc).isoformat()},
+                  "status": status, "fetched_at": fetched_at,
+                  "availability_scope": "shop_catalog"},
         filename="Danh mục sản phẩm hiện hành", chunk_index=None,
     )
 
@@ -1458,14 +1537,34 @@ def _recommendation_reply(
     query_text: str,
     language: str = "vi",
     customer_id: int | None = None,
+    conversation_id: int | None = None,
     source_channel: str | None = None,
     reply_metadata: dict | None = None,
 ) -> str | None:
     """Use customer-aware ranking in live chats, with the safe catalog matcher as fallback."""
     folded_query = _fold_text(query_text)
+    hard_filters = extract_query_hard_filters(query_text, object_type="product")
+    rag_candidates = []
+    retrieval_trace = []
+    retrieval_diagnostics = {}
+    try:
+        chunks = retrieve(
+            query=query_text,
+            db=db,
+            business_id=business_id,
+            top_k=30,
+            diagnostics=retrieval_diagnostics,
+            hard_filters=hard_filters,
+        )
+        rag_candidates, retrieval_trace = rag_candidates_from_chunks(
+            db, business_id=business_id, chunks=chunks,
+        )
+    except Exception as error:
+        logger.warning("RAG scores unavailable for product ranking: %s", type(error).__name__)
+
     # Do not let a general popularity/personalization ranker override a hard
     # product need (for example, face-care items); it may rank unrelated stock.
-    if customer_id is not None and not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
+    if not _has_any_term(folded_query, _EXPLICIT_PRODUCT_NEEDS):
         try:
             experiment_id = active_recommendation_experiment_id(db, business_id=business_id)
             recommendation = serve_recommendations(
@@ -1475,9 +1574,18 @@ def _recommendation_reply(
                     customer_id=customer_id,
                     limit=3,
                     query=query_text,
-                    context={"source_channel": str(source_channel or "unknown"), "surface": "chatbot"},
+                    context={
+                        "source_channel": str(source_channel or "unknown"),
+                        "surface": "chatbot",
+                        "conversation_id": conversation_id,
+                        "retrieval_trace": retrieval_trace,
+                        "retrieval_diagnostics": retrieval_diagnostics,
+                        "hard_filters": hard_filters,
+                    },
+                    rag_candidates=rag_candidates,
                     experiment_id=experiment_id,
                 ),
+                record_impressions=False,
             )
             items = recommendation.served_items or []
             if items:
@@ -1600,6 +1708,53 @@ def _recommendation_reply(
     if not matches:
         return None
     matches.sort(key=lambda item: (-item[0], item[1].id or 0))
+
+    try:
+        recommendation = record_catalog_match_recommendation(
+            db,
+            business_id=business_id,
+            customer_id=customer_id,
+            query=query_text,
+            products=matches,
+            context={
+                "surface": "chatbot",
+                "conversation_id": conversation_id,
+                "source_channel": str(source_channel or "unknown"),
+                "retrieval_trace": retrieval_trace,
+                "retrieval_diagnostics": retrieval_diagnostics,
+            },
+            rag_candidates=rag_candidates,
+        )
+        items = recommendation.served_items or []
+        if reply_metadata is not None and items:
+            reply_metadata["recommendation"] = {
+                "request_id": recommendation.request_id,
+                "product_ids": [int(item["product_id"]) for item in items],
+                "source_channel": str(source_channel or "unknown"),
+            }
+        if items:
+            lines = []
+            for item in items:
+                name = str(item.get("name") or "Sản phẩm")
+                price = _format_vnd(item.get("price") or 0)
+                available = item.get("available")
+                line = f"- {name} — {price} đồng"
+                if isinstance(available, int):
+                    line += f" (còn {available})"
+                if item.get("click_url"):
+                    line += f"\n  {item['click_url']}"
+                lines.append(line)
+            if language == "en":
+                return "These products may suit your needs:\n" + "\n".join(lines) + "\nWhich one would you like to know more about?"
+            return (
+                "Mình tìm thấy một số sản phẩm phù hợp với nhu cầu của bạn:\n"
+                + "\n".join(lines)
+                + "\nBạn muốn xem sản phẩm nào để mình tư vấn thêm?"
+            )
+    except Exception as error:
+        db.rollback()
+        logger.warning("Catalog-match recommendation logging failed: %s", type(error).__name__)
+
     lines = []
     for _score, product in matches[:3]:
         available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
@@ -1734,23 +1889,6 @@ def _deterministic_customer_reply(
         )
     ):
         return AMBIGUOUS_PRICE_REPLY, "product_price_clarification"
-    if _is_recommendation_question(query_text):
-        recommendation = _recommendation_reply(
-            db,
-            business_id=business_id,
-            query_text=query_text,
-            language="en" if detect_reply_language(query_text) == "en" else "vi",
-            customer_id=customer_id,
-            source_channel=source_channel,
-            reply_metadata=reply_metadata,
-        )
-        if recommendation:
-            return recommendation, "product_recommendation"
-        # If no product carries a matching attribute, continue through the
-        # knowledge-base route so the assistant can ask a clarifying question
-        # instead of inventing suitability.
-        return None
-
     if re.search(r"\b(?:con phong(?: tro)? khong|so luong phong)\b", folded) and not re.search(
         r"\bphong(?: tro)?\s+0*\d+\b", folded,
     ):
@@ -1783,7 +1921,7 @@ def _deterministic_customer_reply(
         return reply, "product_stock_clarification"
     specific_lookup = _is_specific_product_lookup(query_text)
     english = detect_reply_language(query_text) == "en"
-    if not product_fact and not specific_lookup:
+    if not product_fact and not specific_lookup and not _is_recommendation_question(query_text):
         return None
 
     product, hint = _find_exact_product(
@@ -1792,6 +1930,24 @@ def _deterministic_customer_reply(
         query_text,
         conversation_id=conversation_id,
     )
+    if product is not None and _has_any_term(folded, _SALE_STATUS_TERMS):
+        name = product_display_name(product, "en" if english else "vi")
+        sku = str(getattr(product, "sku", None) or "").strip()
+        available = max(int(product.stock_quantity or 0) - int(product.reserved_quantity or 0), 0)
+        active = str(getattr(product, "status", "inactive") or "inactive").strip().casefold() == "active"
+        if english:
+            identity = f" (SKU {sku})" if sku else ""
+            if not active:
+                return f"{name}{identity} is not currently listed for sale.", "product_sale_status"
+            if available:
+                return f"{name}{identity} is currently listed and has {available} units in stock.", "product_sale_status"
+            return f"{name}{identity} is still listed, but it is currently out of stock.", "product_sale_status"
+        identity = f" (SKU {sku})" if sku else ""
+        if not active:
+            return f"{name}{identity} hiện không được niêm yết để bán.", "product_sale_status"
+        if available:
+            return f"{name}{identity} hiện đang bán và còn {available} sản phẩm.", "product_sale_status"
+        return f"{name}{identity} vẫn đang được niêm yết nhưng hiện đã hết hàng.", "product_sale_status"
     if product is not None and product_fact:
         return _format_product_fact_reply(product, folded, language="en" if english else "vi"), "product_fact"
     if product is not None and specific_lookup:
@@ -1819,6 +1975,26 @@ def _deterministic_customer_reply(
         if english:
             return "I could not match that product to the shop catalog. Please send its exact name or SKU.", "product_not_found"
         return PRODUCT_NOT_FOUND_REPLY, "product_not_found"
+    # A product name such as "serum" can also be a recommendation hint. Resolve
+    # explicit price, stock, and SKU questions first so they never turn into a
+    # generic recommendation for a different product.
+    if _is_recommendation_question(query_text):
+        recommendation = _recommendation_reply(
+            db,
+            business_id=business_id,
+            query_text=query_text,
+            language="en" if detect_reply_language(query_text) == "en" else "vi",
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+            source_channel=source_channel,
+            reply_metadata=reply_metadata,
+        )
+        if recommendation:
+            return recommendation, "product_recommendation"
+        # If no product carries a matching attribute, continue through the
+        # knowledge-base route so the assistant can ask a clarifying question
+        # instead of inventing suitability.
+        return None
     return None
 
 
@@ -2034,6 +2210,7 @@ def process_rag_auto_reply(
     bandit_choice: ChatbotBanditChoice | None = None
     reply_metadata: dict = {}
     external_reply_sent = False
+    rag_options = load_rag_runtime_options(db, business_id)
 
     def turn_is_current() -> bool:
         if expected_latest_inbound_id is None:
@@ -2198,6 +2375,8 @@ def process_rag_auto_reply(
                     result = graph_reply(db,business_id=business_id,conversation=conversation,
                         query=query_text + "\nVISIBLE_IMAGE_OBSERVATION (unverified customer image, ask customer to confirm any reading before billing):\n" + observation["description"][:2000],
                         job_key=auto_reply_key or run.run_id)
+                    if result is not None and isinstance(getattr(result, "metadata", None), dict):
+                        reply_metadata.update(result.metadata)
                     send_reply(result.prompt if result else "Mình cần bạn xác nhận nội dung đọc từ ảnh trước khi xử lý yêu cầu. Bạn muốn mình kiểm tra thông tin nào?")
                     run.finish("image_graph",phase="complete")
                     return True
@@ -2389,6 +2568,17 @@ def process_rag_auto_reply(
         )
         if deterministic_reply:
             reply_text, route = deterministic_reply
+            if route in {"product_fact", "product_lookup", "product_detail_catalog", "product_comparison", "rental_availability_current"}:
+                source_chunk = _live_product_context_chunk(db, business_id, query_text, conversation_id)
+                if source_chunk is not None:
+                    reply_metadata["crm_data_sources"] = [{
+                        "type": "crm_product",
+                        "source": source_chunk.metadata.get("source"),
+                        "fetched_at": source_chunk.metadata.get("fetched_at"),
+                        "product_id": source_chunk.metadata.get("product_id"),
+                        "sku": source_chunk.metadata.get("sku"),
+                        "availability_scope": source_chunk.metadata.get("availability_scope"),
+                    }]
             handoff_required = route.endswith("_no_data")
             if handoff_required:
                 send_handoff_reply(reply_text, reason="no_verified_sales_data")
@@ -2422,31 +2612,124 @@ def process_rag_auto_reply(
         # 1. Retrieve
         retrieval_started = perf_counter()
         retrieval_diagnostics = {}
+        agentic_tool_calls = 0
+        agentic_retry_attempted = False
+        agentic_retry_would_run = False
+        agentic_retry_candidate_accepted = False
+        agentic_retry_selected = False
+        agentic_retry_candidate_chunk_ids = []
+        agentic_retry_candidate_quality = None
+        agentic_retry_ms = 0.0
         retrieval_query = _contextual_retrieval_query(
             db,
             business_id,
             query_text,
             conversation_id,
         )
-        chunks = [] if _is_casual_query(query_text) else retrieve(
-            query=retrieval_query,
-            db=db,
-            top_k=top_k,
-            similarity_threshold=similarity_threshold,
-            business_id=business_id,
-            diagnostics=retrieval_diagnostics,
-            customer_product_weights=rag_personalization_weights(
-                db, business_id=business_id, customer_id=customer_id,
-            ),
-        )
+        retrieval_hard_filters = extract_query_hard_filters(retrieval_query)
+        try:
+            chunks = [] if _is_casual_query(query_text) else retrieve(
+                query=retrieval_query,
+                db=db,
+                top_k=top_k,
+                similarity_threshold=similarity_threshold,
+                business_id=business_id,
+                diagnostics=retrieval_diagnostics,
+                hard_filters=retrieval_hard_filters,
+                retrieval_mode=rag_options.retrieval_mode,
+                enable_ppr=False,
+                timeout_seconds=rag_options.timeout_seconds,
+            )
+        except Exception as error:
+            chunks = []
+            retrieval_diagnostics.update(
+                retrieval_fallback_stage="retrieval_timeout_or_error",
+                retrieval_error_type=type(error).__name__,
+            )
+            logger.warning("RAG retrieval failed safely: %s", type(error).__name__)
+        if not _is_casual_query(query_text):
+            agentic_tool_calls = 1  # tenant-scoped retrieval tool
+        retrieval_chunks = chunks
+        original_retrieval_chunk_ids = [chunk.chunk_id for chunk in retrieval_chunks]
+        original_evidence_quality = evidence_quality(retrieval_chunks)
         current_product = _live_product_context_chunk(db, business_id, retrieval_query, conversation_id)
         if current_product is not None:
+            agentic_tool_calls += 1  # read-only live catalog tool
             chunks = [current_product, *chunks]
             reply_metadata["crm_product"] = current_product.metadata
+        agentic_reason = None
+        retry_is_eligible = (
+            rag_options.agentic_mode != "off"
+            and not inbound_image_url
+            and not _is_casual_query(query_text)
+            and retrieval_is_weak(retrieval_chunks, rag_options.retry_threshold)
+            and agentic_tool_calls < rag_options.max_tool_calls
+            and (perf_counter() - retrieval_started) < rag_options.timeout_seconds
+        )
+        retry_query = corrective_query(retrieval_query) if retry_is_eligible else retrieval_query
+        agentic_retry_would_run = bool(retry_is_eligible and retry_query != retrieval_query)
+        if agentic_retry_would_run:
+            agentic_reason = "empty_or_low_confidence_retrieval"
+            if rag_options.agentic_mode != "decision_shadow":
+                agentic_retry_attempted = True
+                agentic_started = perf_counter()
+                retry_diagnostics = {}
+                remaining_timeout = max(
+                    0.1, rag_options.timeout_seconds - (agentic_started - retrieval_started),
+                )
+                agentic_tool_calls += 1
+                try:
+                    retry_chunks = retrieve(
+                        query=retry_query,
+                        db=db,
+                        top_k=top_k,
+                        similarity_threshold=similarity_threshold,
+                        business_id=business_id,
+                        diagnostics=retry_diagnostics,
+                        # Keep all tenant, SKU, object type, and typed attribute
+                        # constraints from the original customer request.
+                        hard_filters=retrieval_hard_filters,
+                        retrieval_mode=rag_options.retrieval_mode,
+                        enable_ppr=False,
+                        timeout_seconds=remaining_timeout,
+                    )
+                    agentic_retry_candidate_chunk_ids = [chunk.chunk_id for chunk in retry_chunks]
+                    agentic_retry_candidate_quality = evidence_quality(retry_chunks)
+                    if agentic_retry_candidate_quality > evidence_quality(retrieval_chunks):
+                        agentic_retry_candidate_accepted = True
+                        if rag_options.agentic_mode == "active":
+                            agentic_retry_selected = True
+                            retrieval_chunks = retry_chunks
+                            chunks = ([current_product] if current_product is not None else []) + retry_chunks
+                            retrieval_diagnostics.update(retry_diagnostics)
+                except Exception as error:
+                    retry_diagnostics.update(
+                        retrieval_fallback_stage="agentic_retry_timeout_or_error",
+                        retrieval_error_type=type(error).__name__,
+                    )
+                    logger.warning("Agentic retrieval retry failed safely: %s", type(error).__name__)
+                agentic_retry_ms = round((perf_counter() - agentic_started) * 1000, 2)
+                if retry_diagnostics.get("retrieval_error_type"):
+                    retrieval_diagnostics.update(retry_diagnostics)
         run.update(
             retrieval_topic=infer_query_topic(query_text),
             retrieval_ms=round((perf_counter() - retrieval_started) * 1000, 2),
             retrieval_top_similarity=round(max((c.similarity for c in chunks), default=0), 4),
+            rag_retrieval_setting=rag_options.retrieval_mode,
+            agentic_mode=rag_options.agentic_mode,
+            agentic_timeout_seconds=rag_options.timeout_seconds,
+            agentic_enabled=rag_options.agentic_enabled,
+            agentic_tool_calls=agentic_tool_calls,
+            agentic_retry_would_run=agentic_retry_would_run,
+            agentic_retry_attempted=agentic_retry_attempted,
+            agentic_retry_candidate_accepted=agentic_retry_candidate_accepted,
+            agentic_retry_selected=agentic_retry_selected,
+            agentic_retry_original_chunk_ids=original_retrieval_chunk_ids,
+            agentic_retry_candidate_chunk_ids=agentic_retry_candidate_chunk_ids,
+            agentic_retry_original_evidence_quality=original_evidence_quality,
+            agentic_retry_candidate_evidence_quality=agentic_retry_candidate_quality,
+            agentic_retry_reason=agentic_reason,
+            agentic_retry_ms=agentic_retry_ms,
             **retrieval_diagnostics,
         )
         if policy_kind and chunks and not _chunk_supports_policy(chunks, policy_kind):

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import re
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.customer import Customer
@@ -16,7 +17,13 @@ from app.models.customer_note import CustomerNote
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.crm_extended import CustomerTag, Tag
-from app.models.recommendation import CustomerProductInteraction, RecommendationCustomerProfile, RecommendationRequest
+from app.models.recommendation import (
+    CustomerProductInteraction,
+    RecommendationCustomerProfile,
+    RecommendationRequest,
+    RecommendationTrainingRun,
+)
+from app.models.recommendation_quality_gate import RecommendationShopModelState
 from app.models.sales import Order
 from app.models.saas import DataLifecycleRequest
 from app.models.experimentation import BanditDecision
@@ -50,13 +57,14 @@ def customer_memory_opt_out_reply(db: Session, business_id: int, customer_id: in
         raise HTTPException(404, "Không tìm thấy khách hàng trong shop này.")
     if not customer.fact_extraction_opt_out:
         customer.fact_extraction_opt_out = True
+        stop_customer_personalization(db, business_id, customer_id)
         record_audit(db, business_id=business_id, actor_type="customer",
                      action="customer_fact_collection_update", resource_type="customer", resource_id=customer_id,
                      metadata={"opt_out": True, "source": "customer_chat"})
         db.commit()
     return (
-        "I've stopped saving preferences and using saved preferences to personalize suggestions for your profile. Existing records have not been deleted; shop staff can help with a deletion request."
-        if english else "Mình đã ngừng lưu sở thích và dùng sở thích đã lưu để cá nhân hóa gợi ý cho bạn. Thông tin cũ chưa bị xóa; nhân viên có thể hỗ trợ nếu bạn muốn xóa."
+        "I've stopped using saved preferences for personalization and removed the stored personalization profile and learned recommendation artifacts."
+        if english else "Mình đã ngừng lưu sở thích và dùng chúng để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này."
     )
 
 
@@ -107,6 +115,58 @@ def _scrub_personalized_bandit_decisions(db: Session, business_id: int, customer
         decision.context_hash = None
 
 
+def _invalidate_consent_derived_models(db: Session, business_id: int) -> None:
+    """Fail closed and erase learned reranker artifacts after a personalization opt-out."""
+    from app.services.recommendation_learning import (
+        LIGHTFM_ALGORITHM,
+        LEGACY_LIGHTFM_ALGORITHMS,
+        LIVE_RERANKER_ALGORITHM,
+        clear_lightfm_factor_cache,
+    )
+
+    run_count = 0
+    try:
+        with db.begin_nested():
+            runs = db.scalars(select(RecommendationTrainingRun).where(
+                RecommendationTrainingRun.business_id == business_id,
+                RecommendationTrainingRun.algorithm.in_(
+                    (LIGHTFM_ALGORITHM, LIVE_RERANKER_ALGORITHM, *LEGACY_LIGHTFM_ALGORITHMS)
+                ),
+                RecommendationTrainingRun.status == "succeeded",
+            )).all()
+            for run in runs:
+                run.artifact = {}
+                run.status = "invalidated"
+                run.error_message = "personalization consent withdrawn; retrain from currently consented data"
+            run_count = len(runs)
+    except SQLAlchemyError:
+        db.info.setdefault("recommendation_model_invalidation_warnings", set()).add(int(business_id))
+
+    try:
+        with db.begin_nested():
+            state = db.scalar(select(RecommendationShopModelState).where(
+                RecommendationShopModelState.business_id == business_id,
+            ))
+            if state is not None:
+                metrics = state.metrics if isinstance(state.metrics, dict) else {}
+                state.algorithm = "baseline"
+                state.model_version = None
+                state.enabled = False
+                state.gate_status = "retrain_required"
+                state.metrics = {
+                    **metrics,
+                    "active_training_run_id": None,
+                    "invalidation_reason": "personalization_consent_withdrawn",
+                    "invalidated_run_count": run_count,
+                    "invalidated_at": datetime.now(timezone.utc).isoformat(),
+                }
+    except SQLAlchemyError:
+        # A missing gate migration already makes serving fall back to baseline.
+        db.info.setdefault("recommendation_model_invalidation_warnings", set()).add(int(business_id))
+    finally:
+        clear_lightfm_factor_cache()
+
+
 def stop_customer_personalization(db: Session, business_id: int, customer_id: int) -> None:
     """Erase derived profile, RFM labels, and retained query text after opt-out."""
     for fact in db.scalars(select(CustomerFact).where(
@@ -145,6 +205,7 @@ def stop_customer_personalization(db: Session, business_id: int, customer_id: in
         request.bandit_decision_id = None
         request.experiment_id = None
     _scrub_personalized_bandit_decisions(db, business_id, customer_id)
+    _invalidate_consent_derived_models(db, business_id)
 
 
 def export_customer_data(db: Session, business_id: int) -> tuple[dict, dict[str, int]]:
@@ -280,6 +341,7 @@ def _anonymize_customer(db: Session, customer: Customer, *, deleted: bool) -> di
         request.bandit_decision_id = None
         request.experiment_id = None
     _scrub_personalized_bandit_decisions(db, customer.business_id, customer.id)
+    _invalidate_consent_derived_models(db, customer.business_id)
     for note in db.scalars(select(CustomerNote).where(CustomerNote.customer_id == customer.id)).all():
         note.content = "[REDACTED]"
     conversations = db.scalars(select(Conversation).where(Conversation.business_id == customer.business_id, Conversation.customer_id == customer.id)).all()

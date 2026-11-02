@@ -15,7 +15,12 @@ def _install_fake_gemini(monkeypatch, dimension: int):
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
 
+    class HttpOptions:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
     fake_types.EmbedContentConfig = EmbedContentConfig
+    fake_types.HttpOptions = HttpOptions
 
     class Models:
         def embed_content(self, **kwargs):
@@ -69,6 +74,27 @@ def test_gemini_query_embedding_requests_same_output_dimension(monkeypatch):
     assert len(vector) == 768
     assert calls[0]["config"].output_dimensionality == 768
     assert calls[0]["config"].task_type == "RETRIEVAL_QUERY"
+
+
+def test_gemini_query_embedding_applies_agent_timeout(monkeypatch):
+    monkeypatch.setattr(settings, "EMBEDDING_DIMENSION", 768)
+    monkeypatch.setattr(settings, "EMBEDDING_API_KEY", "test-key")
+    _install_fake_gemini(monkeypatch, 768)
+    from google import genai
+
+    original_client = genai.Client
+    client_options = []
+
+    class RecordingClient(original_client):
+        def __init__(self, **kwargs):
+            client_options.append(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(genai, "Client", RecordingClient)
+
+    _embed_query_with_gemini("catalog item", "gemini-embedding-001", timeout_seconds=1.25)
+
+    assert client_options[0]["http_options"].timeout == 1250
 
 
 def test_query_batch_uses_query_task_and_deduplicates(monkeypatch):

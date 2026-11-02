@@ -20,10 +20,30 @@ from app.models.recommendation import (
     RecommendationFeedback,
     RecommendationRequest,
 )
+from app.models.recommendation_catalog import RecommendationCatalogEntry
 from app.models.sales import Order, OrderItem, Product
+from app.services.recommendation_learning import LIGHTFM_ALGORITHM, LIVE_RERANKER_ALGORITHM
 
 
 PRODUCT_REQUIRED_EVENTS = {"view", "impression", "click", "cart", "purchase", "skip", "refund"}
+_PERSONALIZED_FEATURE_KEYS = (
+    "affinity_score", "co_purchase_score", "interaction_score", "purchase_facet_score",
+    "historic_query_overlap_score", "purchase_facet_affinity", "stated_preference_score",
+    "color_match", "ncf_score", "linucb_score", "rfm_segment",
+)
+
+
+def _behavioral_reranker_log(context: dict[str, Any]) -> dict[str, Any]:
+    trace = context.get("behavioral_reranker")
+    if not isinstance(trace, dict) or trace.get("algorithm") not in {LIVE_RERANKER_ALGORITHM, LIGHTFM_ALGORITHM}:
+        return {}
+    return {
+        key: trace.get(key)
+        for key in (
+            "algorithm", "blend_version", "applied", "query_intent", "retrieval_weight",
+            "model_weight", "training_run_id", "candidate_pool_size", "scored_candidate_count",
+        )
+    }
 
 
 class RecommendationInteractionError(ValueError):
@@ -60,6 +80,10 @@ def apply_recommendation_outcome(
     if existing is not None:
         return existing
     reward = _FEEDBACK_REWARDS[event_type]
+    event_metadata = {
+        **(metadata or {}),
+        **_recommendation_event_snapshot(db, request=request, product_id=product_id),
+    }
     feedback = RecommendationFeedback(
         business_id=request.business_id,
         recommendation_request_id=request.id,
@@ -67,7 +91,7 @@ def apply_recommendation_outcome(
         event_type=event_type,
         reward=reward,
         idempotency_key=idempotency_key,
-        event_metadata=metadata or {},
+        event_metadata=event_metadata,
     )
     db.add(feedback)
 
@@ -139,12 +163,87 @@ def _existing_or_add(
     return row
 
 
+def _has_personalization_consent(db: Session, *, business_id: int, customer_id: int | None) -> bool:
+    if customer_id is None:
+        return False
+    consent = db.query(CustomerConsent.status).filter(
+        CustomerConsent.business_id == business_id,
+        CustomerConsent.customer_id == customer_id,
+        CustomerConsent.purpose == "personalization",
+    ).order_by(CustomerConsent.id.desc()).first()
+    return consent is not None and consent[0] == "granted"
+
+
+def _recommendation_event_snapshot(
+    db: Session,
+    *,
+    request: RecommendationRequest,
+    product_id: int | None = None,
+    object_type: str = "product",
+    recommendation_object_id: str | None = None,
+) -> dict[str, Any]:
+    """Copy server-owned ranking features onto each linked outcome event."""
+    context = request.context if isinstance(request.context, dict) else {}
+    served_item = None
+    position = None
+    target_id = str(recommendation_object_id if recommendation_object_id is not None else product_id)
+    for item_position, item in enumerate(request.served_items or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("object_type") or "product").casefold()
+        item_id = item.get("recommendation_object_id")
+        if item_id is None:
+            item_id = item.get("product_id") if item_type == "product" else item.get("object_id")
+        matches = item_type == object_type and str(item_id) == target_id
+        if matches:
+            served_item = item
+            position = int(item.get("position") or item_position)
+            break
+    served_item = served_item if isinstance(served_item, dict) else {}
+    consent_granted = _has_personalization_consent(
+        db, business_id=request.business_id, customer_id=request.customer_id,
+    )
+    feature_snapshot = dict(served_item.get("feature_snapshot")) if isinstance(served_item.get("feature_snapshot"), dict) else {}
+    if not consent_granted:
+        for key in _PERSONALIZED_FEATURE_KEYS:
+            feature_snapshot.pop(key, None)
+    reranker_log = _behavioral_reranker_log(context)
+    snapshot: dict[str, Any] = {
+        "request_id": request.request_id,
+        "strategy": request.strategy,
+        "model_version": request.model_version,
+        "object_type": object_type,
+        "recommendation_object_id": target_id,
+        "catalog_revision": served_item.get("catalog_revision"),
+        "position": position,
+        "score": served_item.get("score"),
+        "feature_snapshot": feature_snapshot,
+        "query_hash": context.get("query_hash"),
+        "query_chars": context.get("query_chars"),
+        "surface": context.get("surface"),
+        "item_selection_policy": context.get("item_selection_policy"),
+        "item_policy_randomized": bool(context.get("item_policy_randomized", False)),
+        "strategy_selection": context.get("strategy_selection") if isinstance(context.get("strategy_selection"), dict) else {},
+        "blend_version": context.get("blend_version") or reranker_log.get("blend_version"),
+        "behavioral_reranker": reranker_log,
+    }
+    if consent_granted:
+        snapshot.update({
+            "rfm_segment": context.get("rfm_segment"),
+            "rfm_rules_version": context.get("rfm_rules_version"),
+            "rfm_snapshot": context.get("rfm_snapshot") if isinstance(context.get("rfm_snapshot"), dict) else None,
+        })
+    return snapshot
+
+
 def record_interaction(
     db: Session,
     *,
     business_id: int,
     customer_id: int | None,
     product_id: int | None,
+    object_type: str = "product",
+    recommendation_object_id: str | None = None,
     request_id: str | None,
     event_type: str,
     source: str,
@@ -156,8 +255,18 @@ def record_interaction(
     """Validate tenant ownership, then persist an idempotent user signal."""
     normalized_event = event_type.strip().lower()
     normalized_source = source.strip().lower()
-    if normalized_event in PRODUCT_REQUIRED_EVENTS and product_id is None:
-        raise RecommendationInteractionError("Loại interaction này cần product_id.")
+    normalized_object_type = str(object_type or "product").strip().casefold()
+    if normalized_object_type not in {"product", "service", "rental"}:
+        raise RecommendationInteractionError("object_type không hợp lệ.")
+    if normalized_object_type != "product" and product_id is not None:
+        raise RecommendationInteractionError("product_id chỉ dùng cho object_type=product.")
+    if normalized_object_type == "product" and product_id is None and recommendation_object_id and str(recommendation_object_id).isdigit():
+        product_id = int(recommendation_object_id)
+    if product_id is not None and recommendation_object_id is not None and str(product_id) != str(recommendation_object_id):
+        raise RecommendationInteractionError("product_id và recommendation_object_id không khớp.")
+    object_id = str(recommendation_object_id or product_id or "").strip() or None
+    if normalized_event in PRODUCT_REQUIRED_EVENTS and object_id is None:
+        raise RecommendationInteractionError("Loại interaction này cần ID đối tượng được gợi ý.")
     if customer_id is not None:
         customer = db.query(Customer).filter(
             Customer.id == customer_id,
@@ -171,7 +280,7 @@ def record_interaction(
             CustomerConsent.customer_id == customer_id,
             CustomerConsent.purpose == "personalization",
         ).order_by(CustomerConsent.id.desc()).first()
-        if latest_consent is not None and latest_consent.status == "revoked":
+        if latest_consent is None or latest_consent.status != "granted":
             customer_id = None
             query = None
             metadata = None
@@ -182,6 +291,14 @@ def record_interaction(
         ).first()
         if product is None:
             raise RecommendationInteractionError("Sản phẩm không tồn tại trong shop này.", 404)
+    elif object_id is not None:
+        catalog_entry = db.query(RecommendationCatalogEntry).filter(
+            RecommendationCatalogEntry.business_id == business_id,
+            RecommendationCatalogEntry.object_type == normalized_object_type,
+            RecommendationCatalogEntry.external_id == object_id,
+        ).first()
+        if catalog_entry is None:
+            raise RecommendationInteractionError("Đối tượng gợi ý không tồn tại trong shop này.", 404)
 
     request: RecommendationRequest | None = None
     if request_id:
@@ -193,6 +310,26 @@ def record_interaction(
             raise RecommendationInteractionError("Lần gợi ý không tồn tại trong shop này.", 404)
         if customer_id is not None and request.customer_id is not None and request.customer_id != customer_id:
             raise RecommendationInteractionError("Customer không khớp với lần gợi ý.", 409)
+        if normalized_event in PRODUCT_REQUIRED_EVENTS and object_id is not None:
+            served_ids = set()
+            for item in request.served_items or []:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("object_type") or "product").casefold()
+                item_id = item.get("recommendation_object_id")
+                if item_id is None:
+                    item_id = item.get("product_id") if item_type == "product" else item.get("object_id")
+                if item_id is not None:
+                    served_ids.add((item_type, str(item_id)))
+            if (normalized_object_type, object_id) not in served_ids:
+                raise RecommendationInteractionError("Đối tượng không thuộc danh sách đã gợi ý.", 409)
+            metadata = {
+                **(metadata or {}),
+                **_recommendation_event_snapshot(
+                    db, request=request, product_id=product_id,
+                    object_type=normalized_object_type, recommendation_object_id=object_id,
+                ),
+            }
 
     row = _existing_or_add(
         db,
@@ -201,6 +338,18 @@ def record_interaction(
         values={
             "customer_id": customer_id,
             "product_id": product_id,
+            "object_type": normalized_object_type,
+            "recommendation_object_id": object_id,
+            "catalog_revision": (
+                int(metadata["catalog_revision"])
+                if isinstance(metadata, dict) and str(metadata.get("catalog_revision", "")).isdigit()
+                else None
+            ),
+            "model_version": (
+                str(metadata["model_version"])[:120]
+                if isinstance(metadata, dict) and metadata.get("model_version")
+                else (request.model_version if request else None)
+            ),
             "recommendation_request_id": request.id if request else None,
             "event_type": normalized_event,
             "source": normalized_source,
@@ -216,27 +365,264 @@ def record_recommendation_impressions(
     db: Session,
     *,
     request: RecommendationRequest,
+    source: str = "recommendation",
+    conversation_id: int | None = None,
+    message_id: int | None = None,
+    channel: str | None = None,
+    product_ids: set[int] | None = None,
+    object_refs: set[tuple[str, str]] | None = None,
 ) -> None:
-    """Record each served item once, within the request transaction."""
-    for item in request.served_items or []:
-        product_id = item.get("product_id")
-        if not isinstance(product_id, int):
+    """Record each displayed item once, with its ranker snapshot."""
+    context = request.context if isinstance(request.context, dict) else {}
+    consent_granted = _has_personalization_consent(
+        db, business_id=request.business_id, customer_id=request.customer_id,
+    )
+    reranker_log = _behavioral_reranker_log(context)
+    for position, item in enumerate(request.served_items or [], start=1):
+        if not isinstance(item, dict):
             continue
+        object_type = str(item.get("object_type") or "product").casefold()
+        object_id = item.get("recommendation_object_id")
+        if object_id is None:
+            object_id = item.get("product_id") if object_type == "product" else item.get("object_id")
+        if object_type not in {"product", "service", "rental"} or object_id is None:
+            continue
+        object_id = str(object_id)
+        product_id = int(object_id) if object_type == "product" and object_id.isdigit() else None
+        if object_type == "product" and product_id is None:
+            continue
+        if product_ids is not None and (product_id is None or product_id not in product_ids):
+            continue
+        if object_refs is not None and (object_type, object_id) not in object_refs:
+            continue
+        feature_snapshot = dict(item.get("feature_snapshot")) if isinstance(item.get("feature_snapshot"), dict) else {}
+        if not consent_granted:
+            for key in _PERSONALIZED_FEATURE_KEYS:
+                feature_snapshot.pop(key, None)
         _existing_or_add(
             db,
             business_id=request.business_id,
-            idempotency_key=f"recommendation:{request.request_id}:impression:{product_id}",
+            idempotency_key=f"recommendation:{request.request_id}:impression:{object_type}:{object_id}",
             values={
-                "customer_id": request.customer_id,
+                "customer_id": request.customer_id if consent_granted else None,
                 "product_id": product_id,
+                "object_type": object_type,
+                "recommendation_object_id": object_id,
+                "catalog_revision": int(item["catalog_revision"]) if str(item.get("catalog_revision", "")).isdigit() else None,
+                "model_version": request.model_version,
                 "recommendation_request_id": request.id,
                 "event_type": "impression",
-                "source": "recommendation",
+                "source": source,
                 "query_text": None,
-                "event_metadata": {"strategy": request.strategy, "model_version": request.model_version},
+                "event_metadata": {
+                    "request_id": request.request_id,
+                    "object_type": object_type,
+                    "recommendation_object_id": object_id,
+                    "catalog_revision": int(item["catalog_revision"]) if str(item.get("catalog_revision", "")).isdigit() else None,
+                    "strategy": request.strategy,
+                    "model_version": request.model_version,
+                    "blend_version": context.get("blend_version") or reranker_log.get("blend_version"),
+                    "behavioral_reranker": reranker_log,
+                    "position": int(item.get("position") or position),
+                    "selection_probability": item.get("selection_probability"),
+                    "score": item.get("score"),
+                    "quality_validation": item.get("quality_validation") if isinstance(item.get("quality_validation"), dict) else None,
+                    "feature_snapshot": feature_snapshot,
+                    "surface": context.get("surface"),
+                    "conversation_id": conversation_id or context.get("conversation_id"),
+                    "message_id": message_id,
+                    "channel": channel or context.get("source_channel"),
+                    "item_selection_policy": context.get("item_selection_policy", "deterministic_ranker"),
+                    "item_policy_randomized": bool(context.get("item_policy_randomized", False)),
+                    "strategy_selection": context.get("strategy_selection") if isinstance(context.get("strategy_selection"), dict) else {},
+                    "query_hash": context.get("query_hash"),
+                    "query_chars": context.get("query_chars"),
+                    "rfm_segment": context.get("rfm_segment") if consent_granted else None,
+                    "rfm_rules_version": context.get("rfm_rules_version") if consent_granted else None,
+                    "rfm_snapshot": context.get("rfm_snapshot") if consent_granted and isinstance(context.get("rfm_snapshot"), dict) else None,
+                    "retrieval_diagnostics": context.get("retrieval_diagnostics") if isinstance(context.get("retrieval_diagnostics"), dict) else {},
+                },
                 "occurred_at": _occurred_at(None),
             },
         )
+
+
+def record_chat_recommendation_impressions(
+    db: Session,
+    *,
+    business_id: int,
+    conversation_id: int,
+    message_id: int | None,
+    channel: str,
+    recommendation: dict[str, Any] | None,
+) -> bool:
+    """Record recommendations only after their outbound chat message was saved."""
+    request_id = recommendation.get("request_id") if isinstance(recommendation, dict) else None
+    if not request_id:
+        return False
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == business_id,
+    ).first()
+    if conversation is None:
+        return False
+    message = db.query(Message).filter(
+        Message.id == message_id,
+        Message.conversation_id == conversation_id,
+        Message.sender_type == "bot",
+        Message.direction == "outbound",
+        Message.status == "sent",
+    ).first() if message_id is not None else None
+    if message is None:
+        return False
+    message_metadata = message.metadata_ if isinstance(message.metadata_, dict) else {}
+    saved_recommendation = message_metadata.get("recommendation")
+    if not isinstance(saved_recommendation, dict) or str(saved_recommendation.get("request_id")) != str(request_id):
+        return False
+    request = db.query(RecommendationRequest).filter(
+        RecommendationRequest.business_id == business_id,
+        RecommendationRequest.request_id == str(request_id),
+    ).first()
+    if request is None:
+        return False
+    context = request.context if isinstance(request.context, dict) else {}
+    if context.get("conversation_id") != conversation_id:
+        return False
+    if request.customer_id is not None and request.customer_id != conversation.customer_id:
+        return False
+    def fold_visible_text(value: str) -> str:
+        folded = "".join(
+            char for char in unicodedata.normalize("NFKD", value.casefold())
+            if not unicodedata.combining(char)
+        ).replace("đ", "d")
+        return " ".join("".join(char if char.isalnum() or char.isspace() else " " for char in folded).split())
+
+    visible_text = fold_visible_text(str(message.content or ""))
+    padded_visible_text = f" {visible_text} "
+    displayed_object_refs: set[tuple[str, str]] = set()
+    for item in request.served_items or []:
+        if not isinstance(item, dict):
+            continue
+        object_type = str(item.get("object_type") or "product").casefold()
+        object_id = item.get("recommendation_object_id")
+        if object_id is None:
+            object_id = item.get("product_id") if object_type == "product" else item.get("object_id")
+        if object_type not in {"product", "service", "rental"} or object_id is None:
+            continue
+        name = fold_visible_text(str(item.get("name") or ""))
+        sku = fold_visible_text(str(item.get("sku") or ""))
+        click_url = str(item.get("click_url") or "")
+        name_visible = len(name) >= 3 and f" {name} " in padded_visible_text
+        sku_visible = bool(sku) and f" {sku} " in padded_visible_text
+        if name_visible or sku_visible or (click_url and click_url in str(message.content or "")):
+            displayed_object_refs.add((object_type, str(object_id)))
+    if not displayed_object_refs:
+        return False
+    record_recommendation_impressions(
+        db,
+        request=request,
+        source="chatbot",
+        conversation_id=conversation_id,
+        message_id=message_id,
+        channel=channel,
+        object_refs=displayed_object_refs,
+    )
+    return True
+
+
+def record_chat_recommendation_cart(
+    db: Session,
+    *,
+    business_id: int,
+    customer_id: int,
+    conversation_id: int | None,
+    collection_session_id: int,
+    product_ids: set[int],
+) -> int:
+    """Link a confirmed quote/cart line to a recently displayed recommendation.
+
+    Attribution requires a real chatbot impression for the same conversation
+    and product; merely mentioning or browsing a catalog item is not enough.
+    """
+    if not conversation_id or not product_ids:
+        return 0
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.business_id == business_id,
+        Conversation.customer_id == customer_id,
+    ).first()
+    if conversation is None:
+        return 0
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+    recorded = 0
+    for product_id in sorted(product_ids):
+        impressions = db.query(CustomerProductInteraction).join(
+            RecommendationRequest,
+            RecommendationRequest.id == CustomerProductInteraction.recommendation_request_id,
+        ).filter(
+            CustomerProductInteraction.business_id == business_id,
+            CustomerProductInteraction.customer_id == customer_id,
+            CustomerProductInteraction.product_id == product_id,
+            CustomerProductInteraction.event_type == "impression",
+            CustomerProductInteraction.source == "chatbot",
+            CustomerProductInteraction.recommendation_request_id.is_not(None),
+            CustomerProductInteraction.occurred_at >= cutoff,
+            RecommendationRequest.business_id == business_id,
+        ).order_by(CustomerProductInteraction.occurred_at.desc()).limit(30).all()
+
+        request = None
+        for impression in impressions:
+            metadata = impression.event_metadata if isinstance(impression.event_metadata, dict) else {}
+            try:
+                same_conversation = int(metadata.get("conversation_id")) == conversation_id
+            except (TypeError, ValueError):
+                same_conversation = False
+            if not same_conversation:
+                continue
+            candidate = db.get(RecommendationRequest, impression.recommendation_request_id)
+            if candidate is None or candidate.business_id != business_id:
+                continue
+            if candidate.customer_id is not None and candidate.customer_id != customer_id:
+                continue
+            if not any(
+                isinstance(item, dict) and str(item.get("product_id", "")).isdigit()
+                and int(item["product_id"]) == product_id
+                for item in (candidate.served_items or [])
+            ):
+                continue
+            request = candidate
+            break
+        if request is None:
+            continue
+
+        idempotency_key = f"chat-cart:{collection_session_id}:{request.request_id}:{product_id}"
+        record_interaction(
+            db,
+            business_id=business_id,
+            customer_id=customer_id,
+            product_id=product_id,
+            request_id=request.request_id,
+            event_type="cart",
+            source="chat_checkout",
+            query=None,
+            idempotency_key=idempotency_key,
+            metadata={
+                "collection_session_id": collection_session_id,
+                "cart_action": "order_confirmation_quote",
+            },
+            occurred_at=None,
+        )
+        apply_recommendation_outcome(
+            db,
+            request=request,
+            product_id=product_id,
+            event_type="cart",
+            idempotency_key=f"{idempotency_key}:feedback",
+            metadata={"source": "chat_checkout", "collection_session_id": collection_session_id},
+        )
+        recorded += 1
+    return recorded
 
 
 def _recommendation_request_for_order_item(
@@ -424,8 +810,7 @@ def record_order_purchase_interactions(db: Session, *, order: Order) -> None:
         CustomerConsent.customer_id == order.customer_id,
         CustomerConsent.purpose == "personalization",
     ).order_by(CustomerConsent.id.desc()).first()
-    if consent and consent[0] == "revoked":
-        return
+    consent_granted = consent is not None and consent[0] == "granted"
     items = db.query(OrderItem).filter(OrderItem.order_id == order.id).order_by(OrderItem.id.asc()).all()
     for item in items:
         interaction = _existing_or_add(
@@ -433,8 +818,10 @@ def record_order_purchase_interactions(db: Session, *, order: Order) -> None:
             business_id=order.business_id,
             idempotency_key=f"order:{order.id}:purchase:{item.id}",
             values={
-                "customer_id": order.customer_id,
+                "customer_id": order.customer_id if consent_granted else None,
                 "product_id": item.product_id,
+                "object_type": "product",
+                "recommendation_object_id": str(item.product_id),
                 "order_id": order.id,
                 "event_type": "purchase",
                 "source": "order",
@@ -446,6 +833,16 @@ def record_order_purchase_interactions(db: Session, *, order: Order) -> None:
         request = _recommendation_request_for_order_item(db, order=order, item=item)
         if request is not None:
             interaction.recommendation_request_id = request.id
+            interaction.event_metadata = {
+                **(interaction.event_metadata or {}),
+                **_recommendation_event_snapshot(db, request=request, product_id=int(item.product_id)),
+            }
+            interaction.model_version = request.model_version
+            interaction.catalog_revision = (
+                int(interaction.event_metadata["catalog_revision"])
+                if str(interaction.event_metadata.get("catalog_revision", "")).isdigit()
+                else None
+            )
             apply_recommendation_outcome(
                 db,
                 request=request,
@@ -465,8 +862,7 @@ def record_order_refund_interactions(db: Session, *, order: Order) -> None:
         CustomerConsent.customer_id == order.customer_id,
         CustomerConsent.purpose == "personalization",
     ).order_by(CustomerConsent.id.desc()).first()
-    if consent and consent[0] == "revoked":
-        return
+    consent_granted = consent is not None and consent[0] == "granted"
     items = db.query(OrderItem).filter(OrderItem.order_id == order.id).order_by(OrderItem.id.asc()).all()
     for item in items:
         interaction = _existing_or_add(
@@ -474,8 +870,10 @@ def record_order_refund_interactions(db: Session, *, order: Order) -> None:
             business_id=order.business_id,
             idempotency_key=f"order:{order.id}:refund:{item.id}",
             values={
-                "customer_id": order.customer_id,
+                "customer_id": order.customer_id if consent_granted else None,
                 "product_id": item.product_id,
+                "object_type": "product",
+                "recommendation_object_id": str(item.product_id),
                 "order_id": order.id,
                 "event_type": "refund",
                 "source": "order",
@@ -497,6 +895,14 @@ def record_order_refund_interactions(db: Session, *, order: Order) -> None:
         ).first() if request_id is not None else None
         if request is not None:
             interaction.recommendation_request_id = request.id
+            snapshot = _recommendation_event_snapshot(db, request=request, product_id=int(item.product_id))
+            interaction.event_metadata = {**(interaction.event_metadata or {}), **snapshot}
+            interaction.model_version = request.model_version
+            interaction.catalog_revision = (
+                int(snapshot["catalog_revision"])
+                if str(snapshot.get("catalog_revision", "")).isdigit()
+                else None
+            )
             apply_recommendation_outcome(
                 db,
                 request=request,

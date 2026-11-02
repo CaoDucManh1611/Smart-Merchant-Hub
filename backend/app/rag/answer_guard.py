@@ -8,12 +8,25 @@ from app.rag.lexical import CONCEPTS, contains, identifiers
 from app.rag.topics import fold_topic_text
 
 
-_CITATION = re.compile(r"\[(?:Nguồn|Source)\s+(\d+)\]", re.IGNORECASE)
+_CITATION = re.compile(
+    r"\[(?P<markers>(?:Nguồn|Source)\s+\d+"
+    r"(?:\s*[,;]\s*(?:(?:Nguồn|Source)\s+)?\d+)*)\]",
+    re.IGNORECASE,
+)
+_CITATION_NUMBER = re.compile(r"(?:(?:Nguồn|Source)\s+)?(\d+)", re.IGNORECASE)
+
+
+def _citation_ids(value: str) -> list[int]:
+    return [
+        int(number)
+        for citation in _CITATION.finditer(value or "")
+        for number in _CITATION_NUMBER.findall(citation.group("markers"))
+    ]
 
 
 def customer_facing_answer(answer: str) -> str:
     """Hide verified RAG source markers and Markdown from channel messages."""
-    without_citations = re.sub(r"\[(?:Nguồn|Source)\s+\d+(?:\s*[,;]\s*\d+)*\]", "", answer or "", flags=re.IGNORECASE)
+    without_citations = _CITATION.sub("", answer or "")
     without_markdown = without_citations.replace("***", "").replace("**", "")
     return "\n".join(re.sub(r"[ \t]+([.,;:!?])", r"\1", line.strip()) for line in without_markdown.splitlines()).strip()
 _MONEY = re.compile(
@@ -251,7 +264,7 @@ def has_valid_citations(
     This verifies attribution, not whether the cited passage proves every
     claim. Staff should still review consequential price or policy answers.
     """
-    ids = [int(value) for value in _CITATION.findall(answer or "")]
+    ids = _citation_ids(answer or "")
     if not ids or not all(1 <= value <= len(source_texts) for value in ids):
         return False
     cited_sources = [source_texts[index - 1] for index in ids]
@@ -315,7 +328,7 @@ def has_valid_citations(
     # A citation to the right document is not enough if the answer combines a
     # product code from one row with another row's stock, size, or price.
     for line in (line.strip(" |\t") for line in (answer or "").splitlines()):
-        line_ids = [int(value) for value in _CITATION.findall(line)]
+        line_ids = _citation_ids(line)
         line_sources = [source_texts[index - 1] for index in line_ids] if line_ids else cited_sources
         line = _CITATION.sub("", line).strip()
         if line_ids:

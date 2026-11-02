@@ -3,6 +3,7 @@
 import csv
 import hashlib
 import io
+import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -43,6 +44,7 @@ from app.services.workflow_engine import emit_workflow_event
 from app.auth.dependencies import require_admin_access, require_write_access
 from app.services.audit_service import record_audit
 from app.services.order_service import SalesOrderOperationError, SALES_TRANSITIONS as ORDER_TRANSITIONS, transition_sales_order
+from app.services.recommendation_catalog_service import sync_product_catalog_entry
 from app.tenancy.workspace_modules import require_module_enabled
 
 
@@ -114,6 +116,12 @@ _PRODUCT_IMPORT_FIELDS = {
     "sizes": "sizes",
     "kich_thuoc": "sizes",
     "kích_thước": "sizes",
+    "volume": "volume",
+    "capacity": "volume",
+    "dung_tich": "volume",
+    "dung_tích": "volume",
+    "the_tich": "volume",
+    "thể_tích": "volume",
     "keywords": "keywords",
     "tu_khoa": "keywords",
     "từ_khóa": "keywords",
@@ -174,11 +182,15 @@ def _parse_import_stock(value: str, *, row_number: int) -> int:
 def _import_product_attributes(values: dict[str, str]) -> dict[str, list[str]]:
     """Turn optional CSV facet columns into searchable product metadata."""
     attributes: dict[str, list[str]] = {}
-    for key in ("category", "suitable_for", "colors", "sizes", "keywords"):
+    for key in ("category", "suitable_for", "colors", "sizes", "volume", "keywords"):
         raw = str(values.get(key) or "").strip()
         if not raw:
             continue
-        parts = [" ".join(part.strip().split()) for part in raw.replace(";", ",").split(",")]
+        parts = (
+            [" ".join(part.strip().split()) for part in re.split(r";|,(?!\d)", raw)]
+            if key == "volume"
+            else [" ".join(part.strip().split()) for part in raw.replace(";", ",").split(",")]
+        )
         attributes[key] = list(dict.fromkeys(part for part in parts if part))
     return attributes
 
@@ -591,6 +603,8 @@ async def import_products(
             restocked += 1
             restocked_quantity += stock
 
+        sync_product_catalog_entry(db, product, source="sales_csv_import")
+
     result = {
         "filename": filename,
         "imported": imported,
@@ -658,6 +672,7 @@ def create_product(
     )
     db.add(product)
     db.flush()
+    sync_product_catalog_entry(db, product, source="sales_product_create")
     initial_stock = int(product.stock_quantity or 0)
     if initial_stock > 0:
         db.add(StockMovement(
@@ -721,6 +736,7 @@ def update_product(
         else:
             metadata.pop("image_url", None)
         product.metadata_ = metadata or None
+    sync_product_catalog_entry(db, product, source="sales_product_update")
     try:
         db.commit()
     except IntegrityError as exc:
@@ -749,6 +765,7 @@ def delete_all_products(
         # Preserve historical order/stock references and free the original SKU for reimport.
         product.sku = f"deleted-{product.id}"
         product.status = "deleted"
+        sync_product_catalog_entry(db, product, source="sales_product_delete_all")
     record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None,
                  action="delete_all", resource_type="product", resource_id="all",
                  metadata={"count": len(products)})
@@ -765,6 +782,7 @@ def delete_product(
 ):
     product = _product(db, product_id, tenant)
     product.status = "archived"
+    sync_product_catalog_entry(db, product, source="sales_product_archive")
     db.commit()
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="archive", resource_type="product", resource_id=str(product.id))

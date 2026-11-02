@@ -43,6 +43,9 @@ class _DB:
     def query(self, *args, **kwargs):
         return _Query(self.rows)
 
+    def rollback(self):
+        pass
+
 
 def _db():
     return _DB([
@@ -142,6 +145,37 @@ def test_known_product_price_and_stock_are_read_from_live_catalogue():
     )
 
     assert reply == ("Dạ, Điện gia dụng mẫu 01 đang có giá 349.000 đồng và hiện còn 46 sản phẩm ạ.", "product_fact")
+
+
+def test_named_serum_price_question_is_not_routed_to_recommendations():
+    product = SimpleNamespace(
+        id=9, name="Serum", sku="SERUM-02", price=200000,
+        stock_quantity=0, reserved_quantity=0, status="active", metadata_={},
+    )
+
+    reply = _deterministic_customer_reply(
+        _DB([product]), business_id=1, conversation_id=1,
+        query_text="Serum giá hiện tại bao nhiêu?",
+    )
+
+    assert reply == ("Dạ, Serum đang có giá 200.000 đồng ạ.", "product_fact")
+
+
+def test_sku_sale_status_distinguishes_active_listing_from_zero_stock():
+    product = SimpleNamespace(
+        id=9, name="Serum", sku="SERUM-02", price=200000,
+        stock_quantity=0, reserved_quantity=0, status="active", metadata_={},
+    )
+
+    reply = _deterministic_customer_reply(
+        _DB([product]), business_id=1, conversation_id=1,
+        query_text="Mã SKU SERUM-02 tên hàng gì và hiện còn bán không?",
+    )
+
+    assert reply == (
+        "Serum (SKU SERUM-02) vẫn đang được niêm yết nhưng hiện đã hết hàng.",
+        "product_sale_status",
+    )
 
 
 def test_product_link_question_returns_catalogue_url():
@@ -632,6 +666,26 @@ def test_rental_attribute_question_does_not_short_circuit_to_price_and_stock():
         "Phòng 11 có wifi không?", 1)
     assert chunk is not None
     assert "Có wifi miễn phí" in chunk.content
+    assert "Trạng thái bán hiện hành: Đang bán" in chunk.content
+
+
+def test_live_catalog_context_reports_inactive_product_and_current_stock_price():
+    product = SimpleNamespace(
+        id=12, name="Áo mẫu", sku="AO-12", price=125000,
+        stock_quantity=4, reserved_quantity=2, status="inactive",
+        description="Áo cotton", metadata_={},
+    )
+
+    chunk = auto_reply_service._live_product_context_chunk(_DB([product]), 2, "Áo mẫu AO-12", 1)
+
+    assert chunk is not None
+    assert "Trạng thái bán hiện hành: Không đang bán" in chunk.content
+    assert "Giá hiện hành: 125.000 VND" in chunk.content
+    assert "Tồn khả dụng: 2" in chunk.content
+    assert chunk.metadata["status"] == "inactive"
+    assert chunk.metadata["source"] == "Danh mục sản phẩm hiện hành"
+    assert chunk.metadata["availability_scope"] == "shop_catalog"
+    assert chunk.metadata["fetched_at"]
 
 
 def test_missing_target_and_generic_details_across_industries():

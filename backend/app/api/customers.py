@@ -3,16 +3,18 @@
 import csv
 import hashlib
 import io
+import unicodedata
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database.platform_session import get_platform_db
 from app.db.dependencies import get_db
@@ -25,7 +27,7 @@ from app.models.customer_note import CustomerNote
 from app.models.crm_extended import ConversationTag, CustomerTag, Tag
 from app.models.crm_extended import ConversationAssignment
 from app.models.message import Message
-from app.models.sales import Order
+from app.models.sales import Order, OrderItem
 from app.models.purchase_order import PurchaseOrder
 from app.models.lead import Lead
 from app.models.ticket import Ticket, TicketComment, TicketEvent
@@ -54,6 +56,9 @@ from app.schemas.customer import (
     CustomerMessageSearchOut,
     CustomerNoteCreate,
     CustomerNoteOut,
+    CustomerOrderHistoryOut,
+    CustomerOrderItemOut,
+    CustomerOrderOut,
     CustomerProfileOut,
     CustomerTagCreate,
     CustomerTagListOut,
@@ -76,6 +81,7 @@ from app.schemas.customer_merge import (
     CustomerSegmentUpdate,
 )
 from app.tenancy.context import TenantContext
+from app.rag.topics import fold_topic_text
 from app.tenancy.crm_session import get_tenant_db
 from app.tenancy.dependencies import get_tenant_context
 from app.services.customer_fact_extractor import (
@@ -101,11 +107,38 @@ from app.services.crm_workspace_config import get_crm_workspace_config, validate
 from app.services.customer_profile import normalize_email, normalize_name, normalize_phone
 from app.services.chatbot_followup import schedule_segment_followups
 from app.services.job_service import enqueue_job
-from app.services.order_metrics import completed_order_conditions, net_order_amount_expression
+from app.services.order_metrics import completed_order_conditions, net_order_amount_expression, net_order_value
 from app.services.customer_next_actions import suggest_customer_next_actions
 
 
 router = APIRouter()
+
+_CUSTOMER_SEARCH_ACCENTS = "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
+_CUSTOMER_SEARCH_ASCII = "".join(
+    "d" if char == "đ" else unicodedata.normalize("NFKD", char).encode("ascii", "ignore").decode()
+    for char in _CUSTOMER_SEARCH_ACCENTS
+)
+
+
+def _fold_customer_search_column(db: Session, column):
+    dialect = getattr(getattr(db.get_bind(), "dialect", None), "name", "")
+    if dialect == "sqlite":
+        connection = db.connection().connection
+        driver_connection = getattr(connection, "driver_connection", connection)
+        driver_connection.create_function("rag_fold", 1, fold_topic_text)
+        return func.rag_fold(column)
+    if dialect == "postgresql":
+        return func.translate(func.lower(column), _CUSTOMER_SEARCH_ACCENTS, _CUSTOMER_SEARCH_ASCII)
+    return func.lower(column)
+
+
+def _customer_search_match(db: Session, column, query: str, folded_query: str):
+    matches = [column.ilike(f"%{query}%")]
+    if folded_query:
+        matches.append(_fold_customer_search_column(db, column).ilike(f"%{folded_query}%"))
+    return or_(*matches)
+
+
 MAX_CUSTOMER_IMPORT_BYTES = 2 * 1024 * 1024
 MAX_CUSTOMER_IMPORT_ROWS = 5000
 
@@ -526,6 +559,12 @@ def _customer_list_out(db: Session, query, *, offset: int = 0, limit: int = 200)
             email=customer.email,
             phone=customer.phone,
             channel=customer.channel,
+            avatar_url=refresh_customer_avatar_url(
+                customer.avatar_url,
+                customer_id=customer.id,
+                business_id=customer.business_id,
+                channel=customer.channel,
+            ),
             updated_at=customer.updated_at,
             conversation_count=count,
         ))
@@ -737,6 +776,8 @@ def list_customers(
     tenant: TenantContext = Depends(get_tenant_context),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None, max_length=160),
+    channel: str | None = Query(default=None, max_length=40),
     tag: str | None = Query(default=None, min_length=1, max_length=80),
     tag_ids: str | None = Query(default=None, max_length=500),
     match_mode: str = Query(default="all", pattern="^(all|any)$"),
@@ -745,6 +786,29 @@ def list_customers(
         Customer.business_id == tenant.business_id,
         Customer.status != "merged",
     )
+    normalized_query = str(q or "").strip()
+    if normalized_query:
+        folded_query = fold_topic_text(normalized_query)
+        matching_identity_ids = db.query(CustomerIdentity.customer_id).filter(
+            CustomerIdentity.business_id == tenant.business_id,
+            or_(
+                _customer_search_match(db, CustomerIdentity.username, normalized_query, folded_query),
+                _customer_search_match(db, CustomerIdentity.display_name, normalized_query, folded_query),
+                _customer_search_match(db, CustomerIdentity.external_user_id, normalized_query, folded_query),
+            ),
+        )
+        query_matches = or_(
+            _customer_search_match(db, Customer.name, normalized_query, folded_query),
+            _customer_search_match(db, Customer.email, normalized_query, folded_query),
+            _customer_search_match(db, Customer.phone, normalized_query, folded_query),
+            Customer.id.in_(matching_identity_ids),
+        )
+        if normalized_query.isdecimal():
+            query_matches = or_(query_matches, Customer.id == int(normalized_query))
+        base = base.filter(query_matches)
+    normalized_channel = str(channel or "").strip().lower()
+    if normalized_channel:
+        base = base.filter(func.lower(Customer.channel) == normalized_channel)
     if tag:
         tagged_customer_ids = db.query(CustomerTag.customer_id).join(
             Tag, Tag.id == CustomerTag.tag_id
@@ -775,24 +839,7 @@ def list_customers(
                 CustomerTag.tag_id.in_(normalized_tag_ids),
             )
             base = base.filter(Customer.id.in_(customer_ids))
-    total = base.count()
-    customers = base.order_by(Customer.updated_at.desc(), Customer.id.desc()).offset(offset).limit(limit).all()
-    items = []
-    for customer in customers:
-        count = db.query(func.count(Conversation.id)).filter(
-            Conversation.business_id == tenant.business_id,
-            Conversation.customer_id == customer.id,
-        ).scalar() or 0
-        items.append(CustomerListItem(
-            id=customer.id,
-            name=customer.name,
-            email=customer.email,
-            phone=customer.phone,
-            channel=customer.channel,
-            updated_at=customer.updated_at,
-            conversation_count=count,
-        ))
-    return CustomerListOut(items=items, total=total)
+    return _customer_list_out(db, base, offset=offset, limit=limit)
 
 
 @router.post("/{customer_id}/merge-preview", response_model=CustomerMergePreviewOut, dependencies=[Depends(require_write_access)])
@@ -1271,6 +1318,98 @@ def get_customer(
         contacts=[CustomerContactOut.model_validate(contact) for contact in contacts],
         addresses=[CustomerAddressOut.model_validate(address) for address in addresses],
         conversation_count=len(conversations),
+    )
+
+
+@router.get("/{customer_id}/orders", response_model=CustomerOrderHistoryOut)
+def get_customer_order_history(
+    customer_id: int,
+    db: Session = Depends(get_tenant_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    status: str | None = Query(default=None, min_length=1, max_length=30),
+    limit: int = Query(default=10, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return a tenant-scoped order history and net completed-purchase totals."""
+    customer = _get_customer(db, customer_id, tenant)
+    base_query = db.query(Order).filter(
+        Order.business_id == tenant.business_id,
+        Order.customer_id == customer.id,
+    )
+    total_orders = base_query.count()
+    completed_count, spent_total, last_purchase_at = base_query.filter(
+        *completed_order_conditions(),
+    ).with_entities(
+        func.count(Order.id),
+        func.coalesce(func.sum(net_order_amount_expression()), 0),
+        func.max(Order.created_at),
+    ).one()
+    completed_count = int(completed_count or 0)
+    total_spent = Decimal(str(spent_total or 0))
+    average_order_value = (
+        (total_spent / completed_count).quantize(Decimal("0.01"))
+        if completed_count else Decimal("0.00")
+    )
+    open_orders = base_query.filter(
+        Order.status.notin_(("completed", "refunded", "cancelled", "failed")),
+    ).count()
+    total_refunded = base_query.with_entities(
+        func.coalesce(func.sum(Order.refunded_amount), 0),
+    ).scalar()
+
+    order_query = db.query(Order).options(
+        joinedload(Order.items).joinedload(OrderItem.product),
+        joinedload(Order.conversation),
+    ).filter(
+        Order.business_id == tenant.business_id,
+        Order.customer_id == customer.id,
+    )
+    if status:
+        order_query = order_query.filter(Order.status == status)
+    filtered_total = order_query.count()
+    orders = order_query.order_by(
+        Order.created_at.desc(), Order.id.desc(),
+    ).offset(offset).limit(limit).all()
+
+    return CustomerOrderHistoryOut(
+        items=[CustomerOrderOut(
+            id=order.id,
+            order_number=order.order_number,
+            status=order.status,
+            payment_status=order.payment_status,
+            total_amount=order.total_amount,
+            paid_amount=order.paid_amount,
+            refunded_amount=order.refunded_amount,
+            net_amount=net_order_value(order),
+            created_at=order.created_at,
+            channel=(
+                order.conversation.channel
+                if order.conversation and order.conversation.business_id == tenant.business_id
+                else None
+            ),
+            items=[CustomerOrderItemOut(
+                id=item.id,
+                product_id=item.product_id,
+                product_name=(
+                    item.product_name_snapshot
+                    or (item.product.name if item.product else None)
+                    or item.sku_snapshot
+                    or "Sản phẩm"
+                ),
+                sku=item.sku_snapshot or (item.product.sku if item.product else None),
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                line_total=item.line_total,
+            ) for item in order.items],
+        ) for order in orders],
+        total=filtered_total,
+        total_orders=total_orders,
+        completed_orders=completed_count,
+        open_orders=int(open_orders or 0),
+        total_spent=total_spent,
+        average_order_value=average_order_value,
+        total_refunded=Decimal(str(total_refunded or 0)),
+        last_purchase_at=last_purchase_at,
     )
 
 

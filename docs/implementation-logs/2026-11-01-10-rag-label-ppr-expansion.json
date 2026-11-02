@@ -1,0 +1,80 @@
+{
+  "status": "evaluation_completed_quality_gate_blocked",
+  "local_only": true,
+  "database": "local Docker PostgreSQL; 14 tenant schemas",
+  "source_review": {
+    "input_csv": "backend/.local-evaluation/industry-rag-answer-human-review.csv",
+    "sample_count": 53,
+    "product_identity_supported_by_mapped_ready_chunk": 53,
+    "unsupported_identity_labels": 0,
+    "verification_rule": "expected chunk belongs to tenant and ready document; chunk text contains product name or canonical SKU",
+    "answer_text_present": 0,
+    "human_answer_scores_present": 0,
+    "human_answer_review": "pending; topical identity support does not certify all answer claims, current price, or stock"
+  },
+  "shop_industry_inference": [
+    {"business_id": 1, "industry": "beauty_personal_care", "evidence": "Lunari/Beauty document and skincare catalog", "product_cases": 4},
+    {"business_id": 4, "industry": "motorcycle_parts_accessories", "evidence": "motorcycle parts document and catalog", "product_cases": 25},
+    {"business_id": 7, "industry": "motorcycle_parts_accessories", "evidence": "motorcycle parts document and catalog", "product_cases": 24},
+    {"business_ids": [2, 3, 5, 6, 9, 10, 11, 12, 14, 15, 16], "industry": "unclassified", "reason": "no sufficient local documents or catalog evidence"}
+  ],
+  "bug_fixed": {
+    "description": "A hard-filter size/model code such as CPR8EA-9 was also inferred as an exact SKU and excluded a correctly mapped product whose canonical SKU differs.",
+    "implementation": "Exclude query identifiers equal to normalized required-attribute values; preserve unrelated SKU identifiers.",
+    "result": {"sku_gold_hits": "53/53", "size_gold_hits": "24/24", "color_gold_hits": "10/10", "filter_leakage_chunks": 0},
+    "focused_tests": "2 passed",
+    "python_compile": "passed",
+    "git_diff_check": "passed"
+  },
+  "metrics_at_k5": {
+    "same_53_product_info_queries": {
+      "bm25_fresh": {"recall": 0.962264, "mrr": 0.924528, "ndcg": 0.934410},
+      "bm25_current_ppr_fresh": {"recall": 0.952830, "mrr": 0.864780, "ndcg": 0.872418},
+      "bm25_product_sku_edges_only_ppr_85_15_offline": {"recall": 0.962264, "mrr": 0.924528, "ndcg": 0.934410},
+      "historical_gemini_bm25_rrf_no_ppr": {"recall": 0.792453, "mrr": 0.745283, "ndcg": 0.757635, "rerun": false},
+      "historical_gemini_bm25_rrf_current_ppr": {"recall": 0.566038, "mrr": 0.432390, "ndcg": 0.463986, "rerun": false},
+      "historical_hybrid_saved_top5_product_sku_ppr_85_15": {"recall": 0.792453, "mrr": 0.745283, "ndcg": 0.757635, "candidate_pool_limited": true}
+    },
+    "expanded_149_retrieval_labeled_queries": {
+      "bm25_fresh": {"recall": 0.986577, "mrr": 0.959732, "ndcg": 0.966761},
+      "bm25_current_ppr_fresh": {"recall": 0.983221, "mrr": 0.934004, "ndcg": 0.940277},
+      "bm25_product_sku_edges_only_ppr_85_15_offline": {"recall": 0.986577, "mrr": 0.959732, "ndcg": 0.966761}
+    }
+  },
+  "expanded_cases": {
+    "product_info": 53,
+    "sku_lookup": 53,
+    "hard_attribute_size": 24,
+    "hard_attribute_color": 10,
+    "policy_faq": 9,
+    "ambiguous_or_missing_context": 10,
+    "unknown_sku_abstention": 3,
+    "empty_service_coverage": 14,
+    "empty_rental_coverage": 14,
+    "total": 190,
+    "retrieval_metric_eligible": 149,
+    "false_positives_on_31_abstention_and_empty_coverage_probes": 0
+  },
+  "per_shop_original_product_info_ndcg_at_5": {
+    "1": {"industry": "beauty_personal_care", "n": 4, "bm25": 0.815465, "current_ppr": 0.625, "product_sku_only_ppr": 0.815465},
+    "4": {"industry": "motorcycle_parts_accessories", "n": 25, "bm25": 1.0, "current_ppr": 0.970474, "product_sku_only_ppr": 1.0},
+    "7": {"industry": "motorcycle_parts_accessories", "n": 24, "bm25": 0.885911, "current_ppr": 0.811513, "product_sku_only_ppr": 0.885911}
+  },
+  "ppr_diagnosis": {
+    "historical_dense_hybrid_degraded_queries": 23,
+    "current_lexical_product_info_degraded_queries": 3,
+    "serving_edge_weights": {"same_product_or_sku": 3.0, "same_document_parent": 2.0, "adjacent_chunk": 0.35},
+    "example": "Bugi CR7HSA expected chunk 47626 drops rank 1 to 2; unrelated mirror chunks 47644/47645 rise through adjacent-chunk links from horn/coolant chunks 47643/47646.",
+    "conclusion": "document proximity and shared parent can outrank exact product relevance; exact product/SKU-only edges held baseline ranking in this offline set"
+  },
+  "dense_hybrid_rerun": {
+    "performed": false,
+    "reason": "Gemini key and query embedding cache unavailable; prior dense metrics reused only for same-label comparison"
+  },
+  "quality_gate": {
+    "status": "blocked",
+    "reasons": ["dense hybrid not rerun", "answer text and human scores absent", "no positive service/rental dataset", "live stock and answer-level safety not measured"],
+    "serving_configuration_changed": false
+  },
+  "delivery": {"committed": false, "pushed": false, "migrations_run": false}
+}

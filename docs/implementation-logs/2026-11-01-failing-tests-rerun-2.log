@@ -1,0 +1,49 @@
+ Container smart-merchant-hub-backend-run-8f05779f39d8 Creating 
+ Container smart-merchant-hub-backend-run-8f05779f39d8 Created 
+F.......................                                                 [100%]
+=================================== FAILURES ===================================
+E   psycopg.errors.UndefinedTable: relation "customer_product_interactions" does not exist
+    LINE 2: FROM customer_product_interactions 
+                 ^
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.ProgrammingError: (psycopg.errors.UndefinedTable) relation "customer_product_interactions" does not exist
+    LINE 2: FROM customer_product_interactions 
+                 ^
+    [SQL: SELECT customer_product_interactions.id, customer_product_interactions.business_id, customer_product_interactions.customer_id, customer_product_interactions.product_id, customer_product_interactions.object_type, customer_product_interactions.recommendation_object_id, customer_product_interactions.catalog_revision, customer_product_interactions.model_version, customer_product_interactions.recommendation_request_id, customer_product_interactions.order_id, customer_product_interactions.event_type, customer_product_interactions.source, customer_product_interactions.query_text, customer_product_interactions.idempotency_key, customer_product_interactions.event_metadata, customer_product_interactions.occurred_at 
+    FROM customer_product_interactions 
+    WHERE customer_product_interactions.business_id = %(business_id_1)s::INTEGER AND customer_product_interactions.customer_id = %(customer_id_1)s::INTEGER]
+    [parameters: {'business_id_1': 1, 'customer_id_1': 1}]
+    (Background on this error at: https://sqlalche.me/e/20/f405)
+----------------------------- Captured stdout call -----------------------------
+1/3 verified: answered
+2/3 invented: handoff_required
+/usr/local/lib/python3.12/site-packages/psycopg/cursor.py:117: sqlalchemy.exc.ProgrammingError: (psycopg.errors.UndefinedTable) relation "customer_product_interactions" does not exist
+=============================== warnings summary ===============================
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_impression_record_contains_blend_version_and_weights
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:208: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:96: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+  /workspace/backend/scripts/train_live_recommendation_reranker.py:150: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff = datetime.utcnow() - timedelta(days=max(1, lookback_days))
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  /usr/local/lib/python3.12/site-packages/sklearn/linear_model/_logistic.py:451: DeprecationWarning: scipy.optimize: The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1.18.0.
+    opt_res = optimize.minimize(
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  /workspace/backend/scripts/train_live_recommendation_reranker.py:729: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "trained_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_cached_rag_answers.py::test_cached_evaluation_checks_sources_and_verifies_privacy_in_an_isolated_fixture
+1 failed, 23 passed, 9 warnings in 40.29s
+

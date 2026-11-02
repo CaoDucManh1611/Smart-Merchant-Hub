@@ -16,6 +16,7 @@ from app.schemas.inventory import (
     StockMovementOut,
 )
 from app.services.audit_service import record_audit
+from app.services.recommendation_catalog_service import sync_product_catalog_entry
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
 from app.tenancy.workspace_modules import require_module_enabled
@@ -94,6 +95,7 @@ def adjust_inventory(
     )
     db.add(movement)
     db.flush()
+    sync_product_catalog_entry(db, product, source="inventory_adjustment")
     record_audit(
         db,
         business_id=tenant.business_id,

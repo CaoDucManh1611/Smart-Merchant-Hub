@@ -69,6 +69,8 @@ from app.models.recommendation import (  # noqa: F401,E402
     RecommendationRequest,
     RecommendationTrainingRun,
 )
+from app.models.recommendation_catalog import RecommendationCatalogAttribute, RecommendationCatalogChunkMapping, RecommendationCatalogEntry
+from app.models.recommendation_quality_gate import RecommendationShopModelState
 from app.models.saas import DataLifecycleRequest  # noqa: F401,E402
 from app.models.industry_modules import (  # noqa: F401,E402
     AppointmentService,
@@ -125,6 +127,10 @@ TENANT_TABLE_NAMES = (
     "recommendation_feedback",
     "recommendation_customer_profiles",
     "recommendation_training_runs",
+    "recommendation_catalog_entries",
+    "recommendation_catalog_attributes",
+    "recommendation_catalog_chunk_mappings",
+    "recommendation_shop_model_states",
     "customer_product_interactions",
     "appointment_services",
     "appointments",

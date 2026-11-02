@@ -72,6 +72,10 @@ class CustomerProductInteraction(TenantBase):
     product_id: Mapped[int | None] = mapped_column(
         ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    object_type: Mapped[str] = mapped_column(String(30), nullable=False, default="product", server_default="product")
+    recommendation_object_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    catalog_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
     recommendation_request_id: Mapped[int | None] = mapped_column(
         ForeignKey("recommendation_requests.id", ondelete="SET NULL"), nullable=True, index=True
     )

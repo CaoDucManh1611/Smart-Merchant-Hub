@@ -1,0 +1,64 @@
+ Container smart-merchant-hub-backend-run-4f41519f78be Creating 
+ Container smart-merchant-hub-backend-run-4f41519f78be Created 
+F.......FFFFFF.F..                                                       [100%]
+=================================== FAILURES ===================================
+E   psycopg.errors.UndefinedTable: relation "messages" does not exist
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.ProgrammingError: (psycopg.errors.UndefinedTable) relation "messages" does not exist
+    [SQL: 
+    CREATE TABLE customer_facts (
+    	id SERIAL NOT NULL, 
+    	business_id INTEGER NOT NULL, 
+    	customer_id INTEGER NOT NULL, 
+    	fact_type VARCHAR(50) NOT NULL, 
+    	fact_key VARCHAR(120) NOT NULL, 
+    	fact_value_json JSON NOT NULL, 
+    	confidence FLOAT NOT NULL, 
+    	source_type VARCHAR(30) NOT NULL, 
+    	source_message_id INTEGER, 
+    	source_order_id INTEGER, 
+    	observed_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL, 
+    	valid_from TIMESTAMP WITHOUT TIME ZONE, 
+    	valid_until TIMESTAMP WITHOUT TIME ZONE, 
+    	extractor VARCHAR(80), 
+    	extractor_version VARCHAR(40), 
+    	is_verified BOOLEAN NOT NULL, 
+    	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL, 
+    	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL, 
+    	PRIMARY KEY (id), 
+    	FOREIGN KEY(customer_id) REFERENCES customers (id) ON DELETE CASCADE, 
+    	FOREIGN KEY(source_message_id) REFERENCES messages (id) ON DELETE SET NULL, 
+    	FOREIGN KEY(source_order_id) REFERENCES orders (id) ON DELETE SET NULL
+    )
+    
+    ]
+    (Background on this error at: https://sqlalche.me/e/20/f405)
+/usr/local/lib/python3.12/site-packages/psycopg/cursor.py:117: sqlalchemy.exc.ProgrammingError: (psycopg.errors.UndefinedTable) relation "messages" does not exist
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+/workspace/backend/tests/test_rag_crm_model_integration.py:489: AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+/workspace/backend/tests/test_rag_crm_model_integration.py:489: AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+/workspace/backend/tests/test_rag_crm_model_integration.py:489: AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+/workspace/backend/tests/test_rag_crm_model_integration.py:489: AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+/workspace/backend/tests/test_rag_crm_model_integration.py:489: AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+E   AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+/workspace/backend/tests/test_rag_crm_model_integration.py:489: AssertionError: assert 'đã ngừng lưu sở thích' in 'Mình đã ngừng lưu và dùng sở thích để cá nhân hóa, đồng thời xóa hồ sơ cá nhân hóa và model gợi ý đã học từ dữ liệu này.'
+E   AssertionError: 'exploitation' != 'warmup_default'
+    - exploitation
+    + warmup_default
+/usr/local/lib/python3.12/unittest/case.py:715: AssertionError: 'exploitation' != 'warmup_default'
+=========================== short test summary info ============================
+FAILED tests/test_cached_rag_answers.py::test_cached_evaluation_checks_sources_and_verifies_privacy_in_an_isolated_fixture
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[facebook]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[instagram]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[telegram]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[zalo]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[tiktok]
+FAILED tests/test_rag_crm_model_integration.py::test_channel_opt_out_updates_customer_once_before_rag_or_ai[shopee]
+FAILED tests/test_recommendations_api.py::RecommendationApiTests::test_segment_training_runs_through_durable_job_queue
+8 failed, 10 passed in 39.72s
+

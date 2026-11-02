@@ -9,6 +9,15 @@ from pydantic import BaseModel, ConfigDict, Field
 class RagCandidate(BaseModel):
     product_id: int = Field(..., ge=1)
     relevance: float = Field(..., ge=0, le=1)
+    bm25_score: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    vector_score: float | None = Field(default=None, ge=-1, le=1, allow_inf_nan=False)
+    rrf_score: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    ppr_score: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    bm25_rank: int | None = Field(default=None, ge=1)
+    vector_rank: int | None = Field(default=None, ge=1)
+    rrf_rank: int | None = Field(default=None, ge=1)
+    ppr_rank: int | None = Field(default=None, ge=1)
+    retrieval_rank: int | None = Field(default=None, ge=1)
 
 
 class RecommendationRequestCreate(BaseModel):
@@ -76,6 +85,8 @@ InteractionSource = Literal["web", "chatbot", "rag", "recommendation", "order", 
 class RecommendationInteractionCreate(BaseModel):
     customer_id: int | None = Field(default=None, ge=1)
     product_id: int | None = Field(default=None, ge=1)
+    object_type: Literal["product", "service", "rental"] = "product"
+    recommendation_object_id: str | None = Field(default=None, min_length=1, max_length=120)
     request_id: str | None = Field(default=None, min_length=1, max_length=64)
     event_type: InteractionEventType
     source: InteractionSource = "api"
@@ -90,6 +101,9 @@ class RecommendationInteractionOut(BaseModel):
     id: int
     customer_id: int | None = None
     product_id: int | None = None
+    object_type: str = "product"
+    recommendation_object_id: str | None = None
+    model_version: str | None = None
     request_id: str | None = None
     event_type: str
     source: str

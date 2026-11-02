@@ -10,6 +10,7 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models import Business, Conversation, Customer, Lead
 from app.models.recommendation import CustomerProductInteraction
+from app.models.customer_collection import CustomerConsent
 from app.models.sales import Product
 
 
@@ -31,6 +32,14 @@ class LeadPipelineApiTests(unittest.TestCase):
             other_customer = Customer(business_id=two.id, channel="facebook", external_user_id="lead-b", name="Buyer B")
             db.add_all([customer, other_customer])
             db.flush()
+            db.add(CustomerConsent(
+                business_id=one.id,
+                customer_id=customer.id,
+                purpose="personalization",
+                status="granted",
+                source_channel="telegram",
+                policy_version="test-v1",
+            ))
             conversation = Conversation(business_id=one.id, customer_id=customer.id, channel="telegram")
             product = Product(business_id=one.id, sku="LEAD-1", name="Serum", price=Decimal("100"), stock_quantity=10)
             db.add_all([conversation, product])

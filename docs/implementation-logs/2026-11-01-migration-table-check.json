@@ -1,0 +1,27 @@
+{
+  "tenant_schemas_seen": 14,
+  "schemas_with_all_new_tables": 14,
+  "new_table_names": [
+    "recommendation_catalog_attributes",
+    "recommendation_catalog_chunk_mappings",
+    "recommendation_catalog_entries",
+    "recommendation_shop_model_states"
+  ],
+  "schema_table_counts": {
+    "shop_1": 4,
+    "shop_10": 4,
+    "shop_11": 4,
+    "shop_12": 4,
+    "shop_14": 4,
+    "shop_15": 4,
+    "shop_16": 4,
+    "shop_2": 4,
+    "shop_3": 4,
+    "shop_4": 4,
+    "shop_5": 4,
+    "shop_6": 4,
+    "shop_7": 4,
+    "shop_9": 4
+  },
+  "migration_verified": true
+}

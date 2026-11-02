@@ -20,6 +20,8 @@ from app.models.industry_modules import Appointment, AppointmentService
 from app.models.sales import Order
 from app.schemas.payment import PaymentRequestUpdate,PaymentCreate
 from app.services.customer_collection import customer_email_for_delivery
+from app.services.recommendation_catalog_service import sync_appointment_service_catalog_entry
+from app.services.recommendation_interaction_service import record_interaction, RecommendationInteractionError
 from app.services.job_service import enqueue_job
 from app.services.workflow_engine import emit_workflow_event
 from app.tenancy.context import TenantContext
@@ -223,6 +225,8 @@ def create_service(payload: ServiceCreate, db: Session = Depends(get_tenant_db),
         duration_minutes=payload.duration_minutes, price=payload.price,
     )
     db.add(row)
+    db.flush()
+    sync_appointment_service_catalog_entry(db, row, source="appointment_service_create")
     db.commit()
     db.refresh(row)
     return row
@@ -240,6 +244,7 @@ def update_service(
         raise HTTPException(status_code=422, detail="Tên dịch vụ không được để trống.")
     for key, value in changes.items():
         setattr(row, key, value.strip() if key in {"name", "description"} and value else value)
+    sync_appointment_service_catalog_entry(db, row, source="appointment_service_update")
     db.commit()
     db.refresh(row)
     return row
@@ -361,6 +366,28 @@ def update_appointment(
             except SalesOrderOperationError as error:raise HTTPException(error.status_code,error.detail) from error
     db.flush()
     _enqueue_reminder(db, row)
+    if row.status == "completed" and previous_status != "completed":
+        service = _service(db, row.service_id, tenant, active=False)
+        sync_appointment_service_catalog_entry(db, service, source="completed_appointment")
+        try:
+            record_interaction(
+                db,
+                business_id=tenant.business_id,
+                customer_id=row.customer_id,
+                product_id=None,
+                object_type="service",
+                recommendation_object_id=str(row.service_id),
+                request_id=None,
+                event_type="purchase",
+                source="order",
+                query=None,
+                idempotency_key=f"appointment:{row.id}:service-completed",
+                metadata={"appointment_id": row.id, "service_id": row.service_id},
+                occurred_at=row.updated_at,
+            )
+        except RecommendationInteractionError as exc:
+            db.rollback()
+            raise HTTPException(exc.status_code, exc.detail) from exc
     db.commit()
     db.refresh(row)
     if row.status != previous_status:

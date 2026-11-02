@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+import logging
 import re
 from threading import Thread
 import unicodedata
@@ -51,6 +52,37 @@ from app.services.product_resolver import (
     resolve_product_mentions,
 )
 from app.rag.prompt_builder import detect_reply_language
+
+
+logger = logging.getLogger(__name__)
+
+
+def _record_recommended_cart_items(
+    db: Session,
+    *,
+    business_id: int,
+    customer_id: int,
+    conversation_id: int | None,
+    collection_session_id: int,
+    product_ids: set[int],
+) -> None:
+    """Record recommendation attribution without jeopardizing checkout."""
+    if not product_ids:
+        return
+    try:
+        from app.services.recommendation_interaction_service import record_chat_recommendation_cart
+
+        with db.begin_nested():
+            record_chat_recommendation_cart(
+                db,
+                business_id=business_id,
+                customer_id=customer_id,
+                conversation_id=conversation_id,
+                collection_session_id=collection_session_id,
+                product_ids=product_ids,
+            )
+    except Exception as error:
+        logger.warning("Could not attribute chat checkout to a recommendation: %s", type(error).__name__)
 from app.services.notification_service import create_notification
 from app.database.tenant_session import tenant_session
 from app.tenancy.schema import schema_name_for
@@ -1023,6 +1055,14 @@ def _start_product_quote(
     )
     db.add(session)
     db.flush()
+    _record_recommended_cart_items(
+        db,
+        business_id=business_id,
+        customer_id=customer_id,
+        conversation_id=conversation_id,
+        collection_session_id=session.id,
+        product_ids={int(item["product_id"]) for item in items},
+    )
     if conversation_id is not None:
         try:
             from app.services.chatbot_followup import schedule_abandoned_checkout_followup
@@ -2532,6 +2572,14 @@ def advance_customer_collection(
             _set_quote_items(quote, items)
             session.collected_fields = quote
             session.last_activity_at = _now()
+            _record_recommended_cart_items(
+                db,
+                business_id=business_id,
+                customer_id=customer_id,
+                conversation_id=conversation_id,
+                collection_session_id=session.id,
+                product_ids={int(product.id) for product in additional_products},
+            )
             db.commit()
             return CollectionFlowResult(
                 session_id=session.id,

@@ -184,7 +184,12 @@ def login(
             user_id=user.id,
             action="login",
             resource_type="auth_session",
-            metadata={"email": user.email},
+            metadata={
+                "email": user.email,
+                "actor_name": user.full_name,
+                "actor_email": user.email,
+                "actor_role": user.role,
+            },
         )
     db.commit()
     limiter.reset(login_key)
@@ -599,7 +604,18 @@ def logout(
     if session is not None:
         session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if user.business_id is not None:
-        record_audit(db, business_id=user.business_id, user_id=user.id, action="logout", resource_type="auth_session")
+        record_audit(
+            db,
+            business_id=user.business_id,
+            user_id=user.id,
+            action="logout",
+            resource_type="auth_session",
+            metadata={
+                "actor_name": user.full_name,
+                "actor_email": user.email,
+                "actor_role": user.role,
+            },
+        )
     db.commit()
 
 
@@ -704,7 +720,20 @@ def list_audit_logs(
 ):
     if user.business_id != tenant.business_id or user.role not in {"owner", "admin"}:
         raise HTTPException(status_code=403, detail="Chỉ quản trị viên mới xem được audit log.")
-    rows = db.query(AuditLog).filter(
+    rows = db.query(AuditLog, User.full_name, User.email, User.role).outerjoin(
+        User,
+        (User.id == AuditLog.user_id) & (User.business_id == AuditLog.business_id),
+    ).filter(
         AuditLog.business_id == tenant.business_id,
     ).order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).all()
-    return rows
+    result = []
+    for audit_log, actor_name, actor_email, actor_role in rows:
+        item = AuditLogOut.model_validate(audit_log).model_dump()
+        actor_snapshot = audit_log.metadata_ or {}
+        item.update(
+            actor_name=actor_name or actor_snapshot.get("actor_name"),
+            actor_email=actor_email or actor_snapshot.get("actor_email") or actor_snapshot.get("email"),
+            actor_role=actor_role or actor_snapshot.get("actor_role"),
+        )
+        result.append(item)
+    return result

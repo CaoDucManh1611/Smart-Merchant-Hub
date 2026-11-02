@@ -1,0 +1,40 @@
+{
+  "evaluated_at_local": "2026-11-01 15:53 Asia/Bangkok",
+  "status": "blocked_by_database_schema",
+  "actual_data_evaluation": {
+    "attempted": true,
+    "database_read_only_probe": "connected",
+    "reachable_user_table_count": 88,
+    "expected_platform_registry": "tenant_registry",
+    "actual_similar_table": "public.tenant_schema_registry",
+    "missing_expected_recommendation_tables": [
+      "recommendation_requests",
+      "recommendation_feedback",
+      "customer_product_interactions"
+    ],
+    "reason": "The configured platform and tenant URLs both fall back to legacy DATABASE_URL; the reachable database does not expose the tenant_registry table expected by the trainer, and recommendation request/feedback/interaction tables are absent from the reachable schema.",
+    "metrics_computed": false
+  },
+  "offline_test_evaluation": {
+    "temporal_split": "chronological 80/20",
+    "synthetic_requests": 6,
+    "baseline_ndcg_at_3": 0.63093,
+    "baseline_plus_reranker_ndcg_at_3": 1.0,
+    "blend_version": "normalized_baseline_blend_v1",
+    "note": "Deterministic test fixture only; not a claim about shop performance."
+  },
+  "activation": {
+    "requested": false,
+    "serving_enabled": false,
+    "training_artifact_persisted": false
+  },
+  "superseded_by": "2026-11-01-system-inventory/REPORT.md",
+  "correction": {
+    "runtime_platform_database": "crm_platform",
+    "runtime_tenant_database": "crm_tenant",
+    "tenant_registry_exists": true,
+    "recommendation_tables_exist": true,
+    "prior_probe_database": "crm_chatbot",
+    "actual_label_blocker": "Existing customer_product_interactions contain impressions only; no observed click/cart/purchase/skip labels in shop_4 or shop_7."
+  }
+}

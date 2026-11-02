@@ -1,6 +1,7 @@
 <script setup>
 import {
   computed,
+  defineAsyncComponent,
   onMounted,
   onUnmounted,
   ref,
@@ -56,6 +57,8 @@ import {
   subscriptionStatusMeta,
 } from "./platform-admin-utils.js";
 import { platformAuditActionLabel, platformAuditResourceLabel } from "./platform-audit-labels.js";
+
+const CustomerManagement = defineAsyncComponent(() => import("./CustomerManagement.vue"));
 
 // Keep browser requests same-origin by default. Vite proxies /api to the
 // backend container in development, and an Ngrok frontend address therefore
@@ -599,7 +602,7 @@ let reconnectTimer = null;
 /* RAG & TAB STATE */
 const currentTab = ref("inbox"); // 'inbox' | 'products' | 'orders' | 'leads' | 'tickets' | 'reports' | 'documents' | 'rag_chat' | 'experiments' | 'channels' | 'webhooks' | 'settings' | 'platform_admin' | 'service'
 const RESTORABLE_WORKSPACE_TABS = new Set([
-  "inbox", "work_queue", "leads", "tickets", "products", "orders", "purchase-orders",
+  "inbox", "customers", "work_queue", "leads", "tickets", "products", "orders", "purchase-orders",
   "appointments", "commercial", "business_hours", "sla_rules", "documents", "rag_chat",
   "workflows", "experiments", "reports", "channels", "webhooks", "settings", "service",
 ]);
@@ -8732,6 +8735,7 @@ function invalidateTeamOtp() {
   teamOtpSent.value = false;
   teamForm.value.otp = "";
   teamNotice.value = "";
+  teamError.value = "";
 }
 
 function teamPasswordIsStrong(password) {
@@ -8740,10 +8744,30 @@ function teamPasswordIsStrong(password) {
   return value.length >= 12 && groups.filter(Boolean).length >= 3;
 }
 
+function isValidTeamEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
+const teamOtpRequestReady = computed(() =>
+  String(teamForm.value.full_name || "").trim().length >= 2
+  && isValidTeamEmail(teamForm.value.email)
+  && teamPasswordIsStrong(teamForm.value.password)
+);
+
+const teamOtpSubmitReady = computed(() =>
+  teamOtpSent.value
+  && /^\d{6}$/.test(String(teamForm.value.otp || "").trim())
+  && teamPasswordIsStrong(teamForm.value.password)
+);
+
+function sanitizeTeamOtp() {
+  teamForm.value.otp = String(teamForm.value.otp || "").replace(/\D/g, "").slice(0, 6);
+}
+
 async function requestTeamOtp() {
   const form = teamForm.value;
-  if (!form.full_name.trim() || !form.email.trim()) {
-    teamError.value = "Nhập họ tên và email công việc trước khi gửi mã OTP.";
+  if (form.full_name.trim().length < 2 || !isValidTeamEmail(form.email)) {
+    teamError.value = "Nhập họ tên hợp lệ và email đúng định dạng trước khi gửi mã OTP.";
     return;
   }
   if (!teamPasswordIsStrong(form.password)) {
@@ -8774,7 +8798,7 @@ async function requestTeamOtp() {
     teamForm.value.email = String(detail.email || form.email).trim().toLowerCase();
     teamForm.value.otp = "";
     teamOtpSent.value = true;
-    teamNotice.value = "Mã OTP đã được gửi tới email công việc. Mã có hiệu lực trong 10 phút.";
+    teamNotice.value = "";
   } catch (err) {
     teamError.value = friendlyErrorMessage(err, "Chưa thể gửi mã OTP. Vui lòng thử lại sau.");
   } finally {
@@ -11317,6 +11341,9 @@ function followupRecommendationLabel(item) {
           >
             <svg class="nav-icon nav-icon-inbox" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.6 7.6 0 0 1-8 7.5 8.8 8.8 0 0 1-3.6-.8L4 20l1.4-3.5A7.1 7.1 0 0 1 4 12a7.6 7.6 0 0 1 8-7.5 7.6 7.6 0 0 1 8 7Z" /></svg>
             <b>{{ t("Hộp thư & Khách hàng 360") }}</b>
+          </button>
+          <button class="menu-item" :class="{ active: currentTab === 'customers' }" :disabled="!tenantReady" :title="t('Danh sách khách hàng')" @click="currentTab = 'customers'">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M17 14a4.7 4.7 0 0 1 3.5 4.5" /></svg><b>{{ t("Danh sách khách hàng") }}</b>
           </button>
           <button class="menu-item" :class="{ active: currentTab === 'leads' }" :disabled="!tenantReady" :title="t('Khách quan tâm')" @click="currentTab = 'leads'; fetchOrderCustomers(); fetchProducts(); fetchLeads()">
             <svg class="nav-icon nav-icon-pipeline" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7v5.5l-3.6 2V12Z" /></svg><b>{{ t("Khách quan tâm") }}</b>
@@ -14292,6 +14319,8 @@ function followupRecommendationLabel(item) {
       <!-- ===================================================
            SALES PIPELINE (LEADS)
       ==================================================== -->
+      <CustomerManagement v-if="currentTab === 'customers' && tenantReady" />
+
       <section v-if="currentTab === 'leads'" class="products-layout leads-layout">
         <div class="products-header">
           <div>
@@ -16022,29 +16051,28 @@ function followupRecommendationLabel(item) {
           <div v-if="teamError" class="settings-notice team-error">{{ teamError }}</div>
           <div v-if="teamNotice" class="settings-notice" role="status">{{ teamNotice }}</div>
 
-          <form class="team-form" @submit.prevent="saveTeamMember">
-            <input v-model="teamForm.full_name" @input="invalidateTeamOtp" required maxlength="255" placeholder="Họ và tên" />
-            <div class="team-email-field">
-              <input v-model="teamForm.email" @input="invalidateTeamOtp" required type="email" maxlength="255" autocomplete="email" placeholder="Email công việc" />
-              <button type="button" class="team-otp-button" :disabled="teamOtpSending" @click="requestTeamOtp">
-                {{ teamOtpSending ? 'Đang gửi...' : teamOtpSent ? 'Gửi lại OTP' : 'Gửi mã OTP' }}
+          <form class="team-form" :aria-busy="teamOtpSending || teamSaving" @submit.prevent="saveTeamMember">
+            <div class="team-form-heading">
+              <div><span class="team-form-step">1</span><div><strong>Thông tin nhân viên</strong><p>Điền thông tin rồi gửi mã xác minh tới email công việc.</p></div></div>
+              <span v-if="teamOtpSent" class="team-otp-complete">✓ Mã đã gửi</span>
+            </div>
+            <div class="team-form-grid">
+              <label class="team-form-field"><span>Họ và tên</span><input v-model="teamForm.full_name" @input="invalidateTeamOtp" required minlength="2" maxlength="255" autocomplete="name" placeholder="Ví dụ: Nguyễn Minh An" :disabled="teamOtpSending || teamSaving" /></label>
+              <label class="team-form-field"><span>Email công việc</span><input v-model="teamForm.email" @input="invalidateTeamOtp" required type="email" maxlength="255" autocomplete="email" placeholder="ten@congty.vn" :disabled="teamOtpSending || teamSaving" /></label>
+              <label class="team-form-field team-password-field"><span>Mật khẩu ban đầu</span><input v-model="teamForm.password" @input="invalidateTeamOtp" required type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="Ít nhất 12 ký tự" :disabled="teamOtpSending || teamSaving" /><small>Ít nhất 12 ký tự, gồm 3 nhóm: chữ thường, chữ hoa, số hoặc ký tự đặc biệt.</small></label>
+              <label class="team-form-field"><span>Vai trò nhân viên</span><select v-model="teamForm.role" @change="invalidateTeamOtp" aria-label="Vai trò nhân viên" :disabled="teamOtpSending || teamSaving"><option value="admin">Quản trị viên</option><option value="sales">Nhân viên bán hàng</option><option value="support">Nhân viên CSKH</option><option value="agent">Nhân viên</option><option value="viewer">Chỉ xem</option></select></label>
+            </div>
+            <div class="team-otp-panel">
+              <div class="team-otp-copy">
+                <span class="team-form-step">2</span>
+                <div><strong>Xác minh email</strong><p>{{ teamOtpSent ? `Mã OTP đã gửi tới ${teamForm.email}; email có kèm mã shop đăng nhập.` : 'Email OTP sẽ ghi tên và mã shop để nhân viên đăng nhập đúng shop.' }}</p></div>
+              </div>
+              <label class="team-form-field team-otp-code"><span>Mã xác minh 6 số</span><input v-model="teamForm.otp" @input="sanitizeTeamOtp" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="••••••" :disabled="!teamOtpSent || teamOtpSending || teamSaving" /></label>
+              <button type="button" class="team-otp-button" :disabled="teamOtpSending || teamSaving || !teamOtpRequestReady" @click="requestTeamOtp">
+                {{ teamOtpSending ? 'Đang gửi mã…' : teamOtpSent ? 'Gửi lại mã' : 'Gửi mã xác minh' }}
               </button>
             </div>
-            <input v-model="teamForm.otp" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="Mã OTP 6 số" :disabled="!teamOtpSent" />
-            <div class="team-password-field">
-              <input v-model="teamForm.password" @input="invalidateTeamOtp" required type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="Mật khẩu (≥ 12 ký tự)" />
-              <small>Ít nhất 12 ký tự, gồm 3 nhóm: chữ thường, chữ hoa, số, ký tự đặc biệt.</small>
-            </div>
-            <select v-model="teamForm.role" @change="invalidateTeamOtp" aria-label="Vai trò nhân viên">
-              <option value="admin">Quản trị viên</option>
-              <option value="sales">Nhân viên bán hàng</option>
-              <option value="support">Nhân viên CSKH</option>
-              <option value="agent">Nhân viên</option>
-              <option value="viewer">Chỉ xem</option>
-            </select>
-            <button class="primary-btn" type="submit" :disabled="teamSaving">
-              {{ teamSaving ? 'Đang xác minh...' : 'Thêm nhân viên' }}
-            </button>
+            <div class="team-form-footer"><small>Thay đổi tên, email, mật khẩu hoặc vai trò sẽ hủy mã đã gửi để bảo vệ tài khoản.</small><button class="primary-btn" type="submit" :disabled="teamSaving || teamOtpSending || !teamOtpSubmitReady">{{ teamSaving ? 'Đang xác minh…' : 'Thêm nhân viên' }}</button></div>
           </form>
 
           <div v-if="teamLoading" class="settings-empty">Đang tải đội ngũ...</div>
@@ -16136,7 +16164,15 @@ function followupRecommendationLabel(item) {
             </div>
             <div v-if="!auditLogs.length" class="settings-empty">Chưa có nhật ký thao tác.</div>
             <ul v-else class="audit-list account-audit-scroll" tabindex="0" aria-label="Nhật ký thao tác">
-              <li v-for="log in auditLogs" :key="log.id"><strong>{{ log.action }}</strong> · {{ resourceLabel(log.resource_type) }} {{ log.resource_id ? `#${log.resource_id}` : '' }} · {{ log.created_at ? formatDateTime(log.created_at) : '' }}</li>
+              <li v-for="log in auditLogs" :key="log.id" class="audit-log-item">
+                <div class="audit-log-action"><strong>{{ log.action }}</strong><span>· {{ resourceLabel(log.resource_type) }} {{ log.resource_id ? `#${log.resource_id}` : '' }}</span></div>
+                <div class="audit-log-actor">
+                  <strong>{{ log.actor_name || log.metadata?.actor_name || (log.user_id ? `${t('Nhân viên')} #${log.user_id}` : log.actor_type === 'staff' ? t('Nhân viên') : t('Hệ thống')) }}</strong>
+                  <span v-if="log.actor_email || log.metadata?.actor_email || log.metadata?.email">{{ log.actor_email || log.metadata?.actor_email || log.metadata?.email }}</span>
+                  <span v-if="log.actor_role || log.metadata?.actor_role">{{ roleLabel(log.actor_role || log.metadata?.actor_role) }}</span>
+                </div>
+                <time v-if="log.created_at" :datetime="log.created_at">{{ formatDateTime(log.created_at) }}</time>
+              </li>
             </ul>
           </div>
         </div>
@@ -16283,7 +16319,7 @@ function followupRecommendationLabel(item) {
               <label class="login-remember"><input v-model="loginRememberMe" type="checkbox" /><span>{{ t('Ghi nhớ đăng nhập') }}</span></label>
               <button type="button" class="login-forgot-link" @click="openPasswordReset">{{ t('Quên mật khẩu?') }}</button>
             </div>
-            <label>{{ t('Mã shop') }} <span>{{ t('(không bắt buộc)') }}</span><input v-model="loginForm.shop_slug" type="text" maxlength="120" autocomplete="organization" placeholder="shop-cua-ban" /></label>
+            <label>{{ t('Mã shop (nếu email dùng nhiều shop)') }}<input v-model="loginForm.shop_slug" type="text" maxlength="120" autocomplete="organization" placeholder="shop-cua-ban" /></label>
             <button class="login-submit" type="submit" :disabled="authLoading || authRateLimitSeconds > 0">
               <span>{{ t(authLoading ? 'Đang xác thực...' : authRateLimitSeconds > 0 ? 'Tạm khóa đăng nhập' : 'Đăng nhập') }}</span>
             </button>
@@ -16395,6 +16431,13 @@ function followupRecommendationLabel(item) {
 
 <style scoped>
 [data-work-record]:focus { outline: 3px solid #17888c; outline-offset: -3px; }
+.account-audit-scroll li.audit-log-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, .65fr) auto; align-items: center; gap: 8px 16px; }
+.audit-log-action { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.audit-log-action span, .audit-log-actor span { color: var(--crm-muted, #718096); }
+.audit-log-actor { display: grid; min-width: 0; gap: 2px; font-size: 12px; }
+.audit-log-actor strong, .audit-log-actor span { overflow-wrap: anywhere; }
+.audit-log-item time { color: var(--crm-muted, #718096); font-size: 12px; white-space: nowrap; }
+@media (max-width: 760px) { .account-audit-scroll li.audit-log-item { grid-template-columns: minmax(0, 1fr); } }
 .docs-table-scroll { max-width: 100%; overflow-x: auto; }
 .docs-table-scroll .docs-table { min-width: 760px; }
 .docs-table-scroll:focus-visible { outline: 2px solid #17888c; outline-offset: 2px; }
@@ -18822,34 +18865,155 @@ body.crm-dark .customer-import-card input:focus-visible { outline-color: #8bd8d7
   margin-bottom: 5px;
 }
 .team-form {
-  grid-template-columns: minmax(140px, 1.05fr) minmax(240px, 1.45fr) minmax(130px, .8fr) minmax(220px, 1.55fr) minmax(130px, .85fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   margin: 20px 0 22px;
-  padding: 14px;
+  padding: 18px;
   border: 1px solid var(--owly-border);
   border-radius: 14px;
   background: var(--owly-surface);
 }
-.team-form input,
-.team-form select {
-  min-height: 42px;
-  border-color: var(--owly-border);
+.team-form-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.team-form-heading > div,
+.team-otp-copy {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+.team-form-step {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--salon-accent);
+  background: color-mix(in srgb, var(--salon-accent) 12%, var(--owly-surface));
+  font-size: 13px;
+  font-weight: 800;
+}
+.team-form-heading strong,
+.team-otp-copy strong { font-size: 14px; }
+.team-form-heading p,
+.team-otp-copy p {
+  margin: 3px 0 0;
+  color: var(--owly-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.team-otp-complete {
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: #148061;
+  background: color-mix(in srgb, #169b76 12%, var(--owly-surface));
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.team-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+.team-form-field {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  color: var(--owly-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+.team-form-field input,
+.team-form-field select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  border: 1px solid var(--owly-border);
   border-radius: 10px;
+  padding: 10px 12px;
   background: var(--owly-surface);
   color: var(--owly-ink);
+  font: inherit;
+  font-size: 13px;
+}
+.team-form-field input:focus-visible,
+.team-form-field select:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--salon-accent) 28%, transparent);
+  outline-offset: 2px;
+  border-color: var(--salon-accent);
+}
+.team-form-field input:disabled {
+  cursor: not-allowed;
+  opacity: .65;
+}
+.team-form-field small {
+  color: var(--owly-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.team-otp-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 260px) auto;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--salon-accent) 26%, var(--owly-border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--salon-accent) 5%, var(--owly-surface));
+}
+.team-otp-copy { font-size: 12px; }
+.team-otp-code input {
+  text-align: center;
+  letter-spacing: .35em;
+  font-size: 18px;
+  font-weight: 800;
 }
 .team-otp-button {
+  min-width: 158px;
   min-height: 42px;
+  align-self: end;
   border-color: var(--salon-accent);
+  border-radius: 10px;
+  padding: 0 14px;
   color: #fff;
   background: linear-gradient(135deg, var(--salon-accent), #257c9b);
   box-shadow: 0 6px 14px rgba(37, 124, 155, .16);
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
 }
 .team-otp-button:hover:not(:disabled) {
   background: linear-gradient(135deg, #238a8b, #216e8d);
 }
-.team-password-field small {
+.team-otp-button:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+.team-form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+}
+.team-form-footer small {
   color: var(--owly-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.team-form-footer .primary-btn {
+  min-height: 44px;
+  padding-inline: 18px;
+  white-space: nowrap;
 }
 .team-table-wrap {
   margin-top: 4px;
@@ -18988,18 +19152,10 @@ body.crm-dark .customer-import-card input:focus-visible { outline-color: #8bd8d7
 .service-form-footnote { font-size: 12px; line-height: 1.5; }
 
 @media (max-width: 1050px) {
-  .team-form {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+  .team-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .team-otp-panel { grid-template-columns: minmax(0, 1fr) minmax(180px, .7fr) auto; }
   .permission-form {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .team-email-field,
-  .team-password-field {
-    grid-column: span 2;
-  }
-  .team-form > button {
-    min-height: 42px;
   }
 }
 
@@ -19009,10 +19165,13 @@ body.crm-dark .customer-import-card input:focus-visible { outline-color: #8bd8d7
   .crm-config-row, .crm-config-add-row { align-items: stretch; flex-direction: column; }
   .workspace-profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .business-profile-wide { grid-column: auto; }
-  .team-form,
-  .permission-form { grid-template-columns: 1fr; }
-  .team-email-field,
-  .team-password-field,
+  .team-form-grid,
+  .team-otp-panel,
+  .permission-form { grid-template-columns: minmax(0, 1fr); }
+  .team-form-heading,
+  .team-form-footer { align-items: stretch; flex-direction: column; }
+  .team-otp-button,
+  .team-form-footer .primary-btn { width: 100%; }
   .permission-form > button { grid-column: auto; }
   .team-table { min-width: 680px; }
   .team-table-wrap { overflow-x: auto; }

@@ -128,6 +128,9 @@ class AuditLogOut(BaseModel):
     business_id: int
     user_id: int | None = None
     actor_type: str = "system"
+    actor_name: str | None = None
+    actor_email: str | None = None
+    actor_role: str | None = None
     correlation_id: str | None = None
     action: str
     resource_type: str

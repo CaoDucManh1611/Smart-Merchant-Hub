@@ -99,6 +99,9 @@ def request_team_otp(
 ):
     """Send an email OTP before creating a staff account."""
     business_id = _require_team_admin(actor, tenant)
+    business = db.query(Business).filter(Business.id == business_id).first()
+    if business is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thông tin shop hiện tại.")
     email = _normalize_email(payload.email)
     _ensure_unique_email(db, email, tenant)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -118,7 +121,7 @@ def request_team_otp(
     challenge = SignupEmailChallenge(
         email=email,
         owner_name=payload.full_name.strip(),
-        shop_name=f"team:{business_id}",
+        shop_name=business.name,
         purpose="team_invite",
         business_id=business_id,
         role=normalize_team_role(payload.role),
@@ -137,6 +140,9 @@ def request_team_otp(
             destination=email,
             code=code,
             smtp_config=get_shop_otp_smtp_config(smtp_settings_db, business_id),
+            purpose="team_invite",
+            shop_name=business.name,
+            shop_slug=business.slug,
         )
         if not delivery.delivered:
             db.rollback()
