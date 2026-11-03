@@ -168,6 +168,101 @@ def test_revoked_consent_immediately_stops_cached_personalization(shop):
     assert result.context["personalization_applied"] is False
 
 
+def test_personalization_withdrawal_invalidates_shop_trained_rfm_model(shop):
+    db, business, customer, _, _, _, _ = shop
+    run = RecommendationTrainingRun(
+        business_id=business.id,
+        algorithm=recommender.SEGMENT_ALGORITHM,
+        status="succeeded",
+        artifact={"segmenter": {
+            "status": "trained",
+            "model_version": recommender.SEGMENT_MODEL_VERSION,
+            "algorithm": recommender.SEGMENT_ALGORITHM,
+        }},
+    )
+    db.add(run)
+    db.commit()
+
+    from app.services.privacy_service import stop_customer_personalization
+    stop_customer_personalization(db, business.id, customer.id)
+    db.commit()
+
+    db.refresh(run)
+    assert run.status == "invalidated"
+    assert run.artifact == {}
+    assert recommender._active_shop_rfm_segmenter(db, business.id) is None
+
+
+def test_catalog_match_logs_rfm_only_when_top_three_order_changes(shop, monkeypatch):
+    db, business, customer, _, _, products, _ = shop
+    profile = RecommendationCustomerProfile(
+        business_id=business.id,
+        customer_id=customer.id,
+        segment_label="loyal",
+        model_version="test-rfm-v1",
+        features={
+            "frequency": 2,
+            "recommendation_segment_label": "loyal",
+            "cluster_model_version": "industry_rfm_cold_start_v1",
+            "cluster_model_source": "industry_prior",
+            "cluster_model_industry": "general_retail",
+            "rfm_model_confidence": "low",
+            "rfm_model_consent_peer_count": 1,
+            "product_signal_cache": {"signals": {}},
+        },
+    )
+    monkeypatch.setattr(recommender, "_cached_personalization_profile", lambda *_args, **_kwargs: (profile, True))
+    monkeypatch.setattr(recommender, "_co_purchase_counts", lambda *_args, **_kwargs: {products[1].id: 8})
+    monkeypatch.setattr(recommender, "_popular_counts", lambda *_args, **_kwargs: {products[0].id: 10, products[1].id: 2})
+
+    request = recommender.record_catalog_match_recommendation(
+        db,
+        business_id=business.id,
+        customer_id=customer.id,
+        query="Bình phù hợp",
+        products=[(10, products[0]), (10, products[1])],
+        context={},
+    )
+
+    assert request.served_items[0]["product_id"] == products[1].id
+    assert request.context["rfm_score_computed"] is True
+    assert request.context["rfm_display_order_changed"] is True
+    assert request.context["rfm_ranker_applied"] is True
+    assert request.context["rfm_model_applied"] is True
+
+
+def test_catalog_match_does_not_claim_rfm_rerank_for_single_candidate(shop, monkeypatch):
+    db, business, customer, _, _, products, _ = shop
+    profile = RecommendationCustomerProfile(
+        business_id=business.id,
+        customer_id=customer.id,
+        segment_label="loyal",
+        model_version="test-rfm-v1",
+        features={
+            "frequency": 1,
+            "recommendation_segment_label": "loyal",
+            "cluster_model_version": "industry_rfm_cold_start_v1",
+            "cluster_model_source": "industry_prior",
+            "product_signal_cache": {"signals": {}},
+        },
+    )
+    monkeypatch.setattr(recommender, "_cached_personalization_profile", lambda *_args, **_kwargs: (profile, True))
+
+    request = recommender.record_catalog_match_recommendation(
+        db,
+        business_id=business.id,
+        customer_id=customer.id,
+        query="SKU-RED",
+        products=[(10, products[0])],
+        context={},
+    )
+
+    assert request.context["rfm_score_computed"] is False
+    assert request.context["rfm_display_order_changed"] is False
+    assert request.context["rfm_ranker_applied"] is False
+    assert request.context["rfm_model_applied"] is False
+
+
 def test_rag_ppr_weights_use_saved_rfm_and_product_signals_only_with_consent(shop):
     db, business, customer, peer, _, products, _ = shop
     db.add(RecommendationCustomerProfile(
@@ -200,6 +295,7 @@ def test_rag_ppr_weights_use_saved_rfm_and_product_signals_only_with_consent(sho
 
 def test_training_precomputes_cache_using_same_tenant_population(shop):
     db, business, customer, peer, _, _, now = shop
+    db.autoflush = False
     add_order(db, customer, now, total=100)
     add_order(db, peer, now, total=1000)
     run = RecommendationTrainingRun(business_id=business.id, algorithm="deterministic_rfm_kmeans", status="queued")

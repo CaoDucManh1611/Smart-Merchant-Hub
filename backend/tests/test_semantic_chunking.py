@@ -228,7 +228,7 @@ def test_ingestion_embeds_context_and_stores_only_source(monkeypatch):
     monkeypatch.setattr(ingestion_service.settings, "GEMINI_API_KEY", "")
     monkeypatch.setattr(ingestion_service.settings, "GEMINI_API_KEYS", "")
     monkeypatch.setattr(ingestion_service, "check_quota", lambda *a, **k: SimpleNamespace(allowed=True))
-    monkeypatch.setattr(ingestion_service, "sync_catalog_products", lambda *a, **k: 0)
+    monkeypatch.setattr(ingestion_service, "sync_catalog_products", lambda *a, **k: [])
     with Session(engine) as db:
         business = Business(name="Test", slug="context-test")
         db.add(business)
@@ -241,7 +241,7 @@ def test_ingestion_embeds_context_and_stores_only_source(monkeypatch):
         assert doc.status == "ready"
         assert captured[0].startswith("Document: policy.md\nSection: Đổi trả")
         assert chunk.content == "# Đổi trả\nKhách được đổi trong 7 ngày."
-        assert chunk.metadata_["chunking_version"] == "structure-semantic-context-v2"
+        assert chunk.metadata_["chunking_version"] == "structure-semantic-context-v3"
 
 
 def test_html_and_docx_headings_survive_extraction():

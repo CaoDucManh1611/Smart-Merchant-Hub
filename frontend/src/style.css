@@ -16531,3 +16531,37 @@ body.crm-dark .crm-app .inventory-stock-editor .adjustment-actions { border-colo
   .crm-app .products-catalog-header .products-header-actions { display: grid; grid-template-columns: 1fr; }
   .crm-app .products-catalog-header .products-header-actions > button { width: 100%; white-space: normal; }
 }
+
+/* Keep mobile browsers from zooming the page when a small form field receives focus. */
+@media (max-width: 760px), (pointer: coarse) {
+  .crm-app :is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]):not([type="color"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
+    select,
+    textarea
+  ) {
+    font-size: 16px !important;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer textarea {
+    min-height: 52px;
+    padding: 10px 12px;
+    line-height: 1.4;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .send {
+    min-height: 48px;
+    height: 48px;
+    padding-inline: 16px;
+  }
+}
+
+@container (max-width: 420px) {
+  .crm-app:not(.platform-admin-workspace) .chat-composer .right-actions {
+    flex: 1 1 100%;
+  }
+
+  .crm-app:not(.platform-admin-workspace) .chat-composer .send {
+    width: 100%;
+    justify-content: center;
+  }
+}

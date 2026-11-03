@@ -1,0 +1,1122 @@
+
+> crm-chatbot-frontend@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ registration date uses Vietnam timezone and does not invent missing dates (25.1081ms)
+✔ shop list puts newly assigned IDs first without mutating fetched records (1.818ms)
+✔ sidebar illustration is decorative, uses local branding and respects reduced motion (5.4345ms)
+✔ shared section heading precedes both columns and sidebar scrolling is viewport bounded (3.8001ms)
+✔ admin navigation includes support and preserves legacy hashes (1.2975ms)
+✔ admin panels remain mounted and navigation exposes history, focus and mobile semantics (8.1966ms)
+✔ hash changes restore selection, close mobile menu and focus heading (8.9757ms)
+✔ App navigation template compiles and panel visibility uses v-show rather than remounting (3899.463ms)
+✔ platform admin connection health lists each shop's linked social channels (5.397ms)
+✔ platform admin loads shop subscription, payment and quota details through existing APIs (2.2134ms)
+✔ payment receipt is recorded from its pending approval and shop details keep history only (1.2422ms)
+✔ connector downloads make one ZIP save through the browser (0.6874ms)
+✔ Facebook and Instagram open focused connector dialogs (1.3089ms)
+✔ shop lifecycle actions expose confirmation, busy and result states (0.2796ms)
+✔ auth keeps OTP verification inline in the signup form (1.2092ms)
+✔ channel cards expose quota blockers and normalized provider states (0.4082ms)
+✔ social channel cards distinguish reserved plan slots from live connectors (14.2984ms)
+✔ paired local connectors must be disconnected before a replacement pairing code (0.7392ms)
+✔ sales guidance uses plain language and marks changes that need approval (0.9202ms)
+✔ admin, auth and channel layouts have explicit mobile overflow protection (5.8861ms)
+✔ knowledge-base copy describes retrieval without claiming automatic training (2.7551ms)
+✔ customer personalization uses compact facts and keeps opt-out controls visible (1.171ms)
+✔ topic summary describes its purpose in plain language (0.6224ms)
+✔ experiment lab shows production-readiness boundaries (0.769ms)
+✔ approved reply trials can affect live chat only through bounded response styles (1.8648ms)
+✔ a 401 clears the expired token and emits one session event (86.6389ms)
+✔ an MFA-required 401 keeps the active token and does not expire the session (4.9194ms)
+✔ maintenance preserves the session and loads it after the server recovers (10.4558ms)
+✔ an expired session still clears authentication (1.6585ms)
+✔ shared branding uses transparent logo marks in application and public landing (21.7987ms)
+✔ pricing uses the current catalogue and existing selection handlers (47.9769ms)
+✔ project creation includes customer (2.2948ms)
+✔ project update preserves customer (2.273ms)
+✔ project customer selector is disabled while editing (0.4953ms)
+✔ calendar export emits escaped, stable appointment events and skips malformed rows (4.5364ms)
+(node:2296) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ labels Telegram conversations as Telegram (0.9752ms)
+✔ labels local Shopee connector conversations as Shopee (0.1888ms)
+✖ does not fall back to Facebook for unknown channels (1.3642ms)
+✔ chat refresh follows the newest message when the user was at the latest message (1.4916ms)
+✔ chat refresh preserves the visible message while the user reads older messages (1.3354ms)
+✔ checkout never replaces a frozen payment or quote with a changed catalogue price (2.8754ms)
+✔ downgrade classification does not depend on catalogue display order or equal channel counts (0.2562ms)
+✔ rejected request is not displayed as activated (0.3806ms)
+✔ paid plans show payment before admin review (0.1625ms)
+✔ commerce exports are tenant-scoped snapshots and exclude Shopee (1.174ms)
+✔ order CSV import previews rows and only creates idempotent drafts (0.9896ms)
+✔ commerce reports share filters, scope Shopee, and open every source type (0.5345ms)
+✔ invoice collection retries reuse a durable idempotency key until saved (0.2351ms)
+✔ appointments, commercial modules, and sales orders share the knowledge-base outer frame (0.9293ms)
+✔ connection support is collapsed by default and preserves ticket workflow (779.2478ms)
+✔ RAG assistant displays cited document chunks and handoff state (5.0191ms)
+✔ customer CSV and consent flows require preview and evidence before saving (3.9912ms)
+✔ team roles and segment campaigns are available in the operations UI (0.8185ms)
+✔ CRM shell uses neutral product branding instead of legacy food branding (3.6204ms)
+✔ inbox loads all available conversations without waiting for scroll (2.7186ms)
+✖ Meta live messages reconcile the open chat and ignore stale overlapping refreshes (3.9567ms)
+✔ inbox supports confirmed bulk assignment for selected conversations (0.8695ms)
+✔ inbox shows blue unread badges and red badges for urgent customer work (0.5988ms)
+✔ customer 360 shows bought products and staff can process a customer-confirmed invoice (0.9874ms)
+✔ service plans declare channel limits without preselecting channels and include the 3-platform tier (2.8384ms)
+✔ service plan defaults to the shop's assigned tier and preserves manual choices (4.6501ms)
+✔ authenticated plan changes open a dedicated checkout page (4.1754ms)
+✔ dark conversation shell uses a quiet one-pixel frame (0.9251ms)
+✔ business hours support dated exceptions and use the knowledge-base label consistently (0.7284ms)
+✔ tenant identity comes from the authenticated session, never a hardcoded browser selector (9.0565ms)
+✔ customer avatars use the local API proxy and fall back when providers reject stale URLs (0.7631ms)
+✔ CRM shell exposes the product's operational navigation (4.7012ms)
+✔ anonymous visitors see the public landing page before choosing login or signup (13.1208ms)
+✔ login, recovery, and signup surfaces follow the selected theme without a language picker (7.3871ms)
+✔ auth forms stay scrollable when taller than the viewport and keep theme text readable (1.8776ms)
+✔ dark notifications and conversation actions remain readable and correctly shaped (26.2371ms)
+✔ notifications can be marked all read and the bell stays rounded in dark mode (1.3364ms)
+✔ notifications can be cleared after confirmation (2.0333ms)
+✔ login form surfaces a retry countdown when the auth endpoint rate-limits (0.9737ms)
+✔ login shows the configured admin email in valid email fields (1.0496ms)
+✖ platform admins land in the shop control plane instead of the CRM inbox (22.0022ms)
+✔ platform admins use a dedicated shop-administration shell, not CRM chrome (2ms)
+✔ a restored admin session waits for the role check before rendering any CRM chrome (1.0808ms)
+✔ operations navigation keeps only customer-facing processing modules (10.3264ms)
+✔ AI navigation keeps knowledge and workflow without assistant or rule lab shortcuts (0.615ms)
+✔ Knowledge Base opens and returns from the RAG assistant with a stacked mobile layout (12.9661ms)
+✔ Knowledge Base keeps refresh visible above the horizontally scrollable document table (2.1071ms)
+✔ Knowledge Base warns before either document or chunk quota is reached (0.9601ms)
+✔ mobile CRM header wraps its actions instead of clipping them (1.5751ms)
+✔ conversation header wraps controls inside the embedded browser width (0.7129ms)
+✔ light conversation and Customer 360 surfaces use the shared blue-teal palette (1.7541ms)
+✔ product and sales screens expose processing controls without intake forms (1.0805ms)
+✔ sidebar groups customer, operations, AI, and system navigation (1.9459ms)
+✔ AI Rule Lab supports creating and filtering explainable rule suggestions (2.286ms)
+✔ AI experiments can be created from the AI Lab (1.1742ms)
+✔ AI Lab operates model versions, experiment reports, and bandit policies (0.933ms)
+✔ Knowledge Base exposes durable RAG run status and retry action (1.7132ms)
+✔ CRM operations expose attribution, lead conversion, and lead activity actions (1.1438ms)
+✔ report workspace applies shared date, channel, owner, status, and source filters (0.8214ms)
+✔ report workspace exposes tenant platform quality signals (3.5924ms)
+✔ report workspace exposes provider circuit state (0.992ms)
+✔ AI quality dashboard exposes handoff and duplicate reply signals (6.8659ms)
+✔ Inbox records staff-confirmed outcomes for chatbot conversations (3.994ms)
+✔ Team settings expose tenant-scoped permission overrides (6.911ms)
+✖ platform administration exposes shop status, usage, and schema pilot controls (2.6085ms)
+✔ platform administration surfaces pending package approvals before tenant operations (1.5962ms)
+✔ shop self-service signup verifies email before creating a shop (2.3361ms)
+✔ channel onboarding exposes guided Telegram and Zalo token verification (1.2035ms)
+✔ linked channels are split into social connections and webhook operations (1.3619ms)
+✔ P1 explainable AI evidence is visible in the unified timeline (0.6388ms)
+✔ P1 conversation revenue metrics are visible in the AI dashboard (1.0119ms)
+✔ P2 workflow builder exposes durable trigger, action and run controls (1.3084ms)
+✔ shops can configure customer fields and lead stages, and Customer 360 edits configured values (0.4817ms)
+✔ P2 logistics and payment history remain actionable in sales orders (1.0197ms)
+✔ settings expose session, MFA, and privacy controls (1.5141ms)
+✔ CRM exposes a three-step quick action palette (1.5794ms)
+✔ sidebar navigation stays compact without repeated record-count badges (0.2789ms)
+✔ AI navigation keeps knowledge and workflow under one group (0.2803ms)
+✔ Customer 360 labels the complete profile timeline (0.9789ms)
+✔ assigned conversations remain visible but make other staff read-only (0.3627ms)
+✔ Customer 360 keeps activity history compact and scopes a selected staff member (0.8771ms)
+✔ Customer 360 searches chat messages in pages and jumps to the matching bubble (1.2385ms)
+✔ Customer 360 contact cards stay readable in the narrow details panel (1.0031ms)
+✔ Customer 360 displays the collected profile name, email, and phone (3.2359ms)
+✔ product advice reports real personalization signals and drafts proactive preference questions (1.6227ms)
+✔ Customer 360 translates stored fact keys and duplicate-match labels into Vietnamese (1.6354ms)
+✔ Customer 360 projects one primary contact/address and keeps history expandable (1.1911ms)
+✔ Order table keeps actions compact and keyboard discoverable (15.9538ms)
+✔ Customer Ops masks customer PII consistently across order and CRM selectors (3.8051ms)
+✔ Customer Ops exposes a recoverable Customer 360 error state (1.745ms)
+✔ Customer Ops refreshes the Customer 360 timeline after staff actions (3.2295ms)
+✔ Internal notes save without referencing an unrelated media variable (2.3129ms)
+✔ settings do not render or poll the CSAT dashboard (2.2534ms)
+✔ Customer 360 details use a scrollable panel so the full profile remains visible (2.8743ms)
+✔ Customer Ops has explicit tablet and mobile layout fallbacks (3.7944ms)
+✔ Customer Ops restores keyboard focus when responsive panels close (1.1839ms)
+✖ Zalo has its own channel label and branded icon fallback (0.4895ms)
+✔ inventory stock summary separates total, available, and reserved quantities (1.5812ms)
+✔ sidebar collapse control toggles a real collapsed state (0.8639ms)
+✔ collapsed sidebar hides navigation text instead of clipping it (2.1404ms)
+✔ CRM workspace header keeps core actions without redundant copy (0.5033ms)
+✔ compact CRM header preserves search and wraps controls at narrow widths (0.8278ms)
+✔ workspace avatar stays circular when the header becomes compact (1.9942ms)
+✔ collapsing Customer 360 frees chat width and keeps a right-side reopen control (3.0538ms)
+✔ Customer 360 sections keep their actions behind keyboard-operable disclosures (4.387ms)
+✔ compact inbox workspace keeps every new UI control actionable (1.5058ms)
+✔ inbox search and channel filters share a compact row without removing filter actions (1.1038ms)
+✔ empty workspace explains missing data without rendering fake customer records (1.6173ms)
+✔ every rendered button declares a click handler or form behavior (4.4236ms)
+✔ every directly referenced UI event handler exists (130.6642ms)
+✔ CSV export uses authenticated apiFetch and visible feedback (2.1159ms)
+✔ network-backed controls expose busy, success, and failure feedback (4.9943ms)
+✔ destructive follow-up cancellation requires confirmation and reports errors (0.5536ms)
+✔ top workspace controls are interactive and searchable (0.7772ms)
+✔ workspace navigation and header use a consistent vector icon system (1.5773ms)
+✔ inbox uses a polished filter toolbar instead of a native multi-select (1.405ms)
+✔ inbox keeps actionable quick tabs and a complete channel selector (1.8973ms)
+✔ inbox no longer renders the selected-customer order strip (1.4541ms)
+✔ sales order history exposes logistics metadata without a separate delivery module (1.9741ms)
+✔ inbox workspace fills the remaining viewport instead of reserving a blank lower area (0.7776ms)
+✔ inbox header and conversation rows expose readable status hierarchy (1.0629ms)
+✔ chat workspace uses a neutral timeline and aligned composer layout (2.0174ms)
+✔ chat controls are actionable and the composer keeps a standard input hint (4.1394ms)
+✔ inbox personal filters narrow conversations by customer phone and email (0.8486ms)
+✔ conversation header can limit the inbox to accounts linked to its customer (1.9677ms)
+✔ chat bot toggle stays on one line in the compact header (0.8012ms)
+✔ embedded conversation keeps its controls while compacting the header and composer (3.6918ms)
+✔ opening a conversation marks its inbound messages as read through the Inbox API (1.4431ms)
+✔ chat attachments stay compact and action menu labels remain readable (1.0615ms)
+✔ chat attachment tray exposes a Messenger-style removable thumbnail (1.164ms)
+✔ chat attachment tray sits above the input without a media-type selector (0.9382ms)
+✔ chat composer queues multiple media items without filenames or quick replies (3.8605ms)
+✔ chat composer keeps non-JPEG images on the generic media upload path (1.5718ms)
+✔ chat retries preserve the original outbound idempotency key (2.4521ms)
+✔ chat composer replaces the search control with a voice recorder (1.8238ms)
+✔ expired-session copy follows the current interface language (1.1069ms)
+✔ dark auth links stay on-theme and clickable controls share a restrained press state (1.2014ms)
+✔ CRM keeps the current neutral Smart Merchant Hub branding (7.6181ms)
+✔ CRM uses the Owly-inspired dark rail with a polished salon accent (1.5911ms)
+✔ CRM operational pages use a shared centered content frame (4.013ms)
+✔ opening reply templates keeps the composer expanded and focuses the picker (3.1137ms)
+✔ reply templates append editable drafts without sending messages or creating orders (0.9753ms)
+✔ manual sales entry uses existing product pricing and draft creation without recording payment (2.8642ms)
+✔ payment re-entry is prominent above the plan catalogue and retains the existing action (2.0628ms)
+✔ selecting a plan with a pending request restores its frozen quote before submission (0.3569ms)
+✔ paid checkout creates a QR first, then lets the shop report payment or cancel (33.4921ms)
+✔ product editor sends and safely displays the API product URL (29.0374ms)
+✔ local connectors are only visually online after backend heartbeat (2.5581ms)
+✔ plan payment confirmation is an inline checkout state, not a modal (30.8919ms)
+✔ login password visibility toggles without replacing the bound password field (5.403ms)
+✔ pending payment review keeps the status and cancel action in a responsive row (0.6287ms)
+✔ Customer 360 uses customer-scoped product suggestions instead of next actions (4.2562ms)
+✔ customer tag names omit empty chips (53.7934ms)
+✔ conversation segment filter matches the selected customer tag (0.4768ms)
+✔ conversation tag filter supports all and any modes (0.2737ms)
+✔ Customer 360 groups customers using plain-language labels (4.5607ms)
+✔ uses tenant-backed customer tags and omits empty labels (1.9459ms)
+✔ returns no tags when the profile has no tags (0.2404ms)
+✔ Data_RAG model preview is available in the experiment workspace and stays synthetic/read-only (5.176ms)
+(node:1644) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ UI locale switches, persists, and falls back to Vietnamese for untranslated copy (3.6889ms)
+✔ Vietnamese CRM terminology is simplified consistently across pages (3.7107ms)
+✔ English UI copy replaces CRM jargon with plain language (5.9966ms)
+✔ English localizes every default sales pipeline stage consistently (1.0835ms)
+✔ English RAG assistant toggle uses a clear active-state label (0.229ms)
+✔ Vue static copy and accessible labels are routed through the active locale (21.799ms)
+✖ English covers all Vietnamese static Vue copy and localizes dates and currency (1625.1095ms)
+✔ English localizes derived CRM status labels and channel limit messages (1.1953ms)
+✔ English localizes dynamic CRM and chatbot plan names and descriptions (0.5951ms)
+✔ English localizes plain-language customer groups and the compact service request introduction (0.4928ms)
+✔ English localizes dynamic workspace business profile labels and descriptions (3.4455ms)
+✔ English covers the work queue and business-module notices (0.476ms)
+✔ inbox presentation is scoped away from public auth and platform administration (4.8808ms)
+✔ inbox supports dark mode, existing panel collapse, keyboard focus and narrow screens (1.2266ms)
+✔ expanded customer profile sections use readable form, empty and summary treatments (0.3836ms)
+✔ the product uses one natural, readable typeface across CRM, marketing and signup (1.3443ms)
+(node:14724) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ inbox channel list includes all supported platforms and counts conversations (3.9296ms)
+✖ inbox channel list appends an active provider not in the default catalog (0.5334ms)
+✔ saved inbox views are bounded and malformed filters fall back safely (37.9579ms)
+✔ inventory report starts compact and reveals more rows on demand (10.9775ms)
+✔ knowledge template is downloadable without triggering the upload picker (10.809ms)
+✔ leader feedback removes redundant header-level new-item controls (4.7595ms)
+✔ product workspace is processing-only rather than an intake form (1.5409ms)
+✔ sales order workspace keeps lifecycle processing without an intake form (0.8284ms)
+✔ sales orders show customer contact and a plain-language order history (1.7553ms)
+✔ ticket descriptions occupy a dedicated readable table column (0.9428ms)
+✔ new shops wait for tenant provisioning before tenant workspace requests run (2.2095ms)
+✔ platform admin can edit the separate chatbot rental price (0.5333ms)
+✔ sidebar and social channels use explicit light and dark theme surfaces (0.5993ms)
+✔ manual product form keeps file import and shows existing products above fields (3.6153ms)
+✔ manual product saves trimmed fields and initial stock through existing API (4.6664ms)
+✔ manual product rejects invalid numbers, duplicate SKU and repeated submission (51.6821ms)
+✔ story auto rotation is guarded and resources are cleaned up (1.5949ms)
+✔ manual selection preserves auto rotation and all six logos are local vectors (4.1093ms)
+✔ story illustrations keep readable contrast on their light surfaces (0.255ms)
+✔ media picker exposes only attachments supported by the selected channel (4.7338ms)
+✔ composer applies capability-specific picker and voice controls (0.8262ms)
+✔ resolves backend-relative media URLs against the API origin (1.405ms)
+✔ keeps provider, blob, and data media URLs unchanged (0.3857ms)
+✔ turns legacy audio and sticker messages into displayable attachments (1.639ms)
+✔ hides the legacy TikTok media prefix but keeps the customer message (0.3941ms)
+✔ hides Meta sender metadata and collapses a matching imported bot echo (1.5825ms)
+✔ keeps a separate repeated Meta message outside the echo time window (0.2244ms)
+✔ hides an adjacent imported Meta echo when the provider omitted its timestamp (0.328ms)
+✔ audio message bubbles reserve room for a seek bar (0.7187ms)
+✔ unreadNotificationCount ignores notifications the staff member has already read (10.4041ms)
+✔ notificationDestination sends a chatbot draft notification to Sales Orders (1.5219ms)
+✔ notificationDestination sends a customer-confirmed invoice to Sales Orders (0.3523ms)
+✔ critical conversation badges include only unread order approvals and AI handoffs (0.2609ms)
+✔ notificationDestination opens the inbox for an AI handoff (0.1942ms)
+✔ notificationDestination sends a CSAT response to its conversation (0.1826ms)
+✔ notificationDestination sends a new customer message to its conversation (0.1569ms)
+✔ notificationDestination opens the appointment schedule for a reminder (0.1477ms)
+✔ CRM orders UI wires Sales Order lifecycle, payment and refund endpoints (2.2723ms)
+✔ CRM order status picker only offers valid next lifecycle steps (0.7826ms)
+✔ CRM order history renders meaningful lifecycle and payment events (0.8995ms)
+✔ CRM order history action is an explicit control that reveals the panel (0.5618ms)
+✔ CRM orders page is processing-only and receives orders from Inbox or AI (0.373ms)
+✔ CRM orders page remains vertically scrollable when content exceeds the viewport (0.4373ms)
+✔ CRM purchase UI wires receipts and supplier debt payment (0.7529ms)
+✔ CRM purchase UI selects active suppliers and exposes PO history (2.0139ms)
+✔ CRM purchase UI supports partial receiving quantities per PO line (0.614ms)
+✔ CRM inventory UI records stock changes through the adjustment ledger (0.7059ms)
+✔ CRM inventory adjustment uses an expandable, signed quantity control (1.7157ms)
+✔ product adjustment panel can edit product details and the chatbot English name (1.0651ms)
+✔ CRM reports UI renders inventory and received purchase costs (0.8106ms)
+✔ CRM product editor records stock changes through the inventory adjustment API (0.8216ms)
+✔ password recovery opens its own screen and returns to sign in after reset (9.9006ms)
+✔ remembering sign-in keeps only one active browser token (1.8396ms)
+(node:10612) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ platform quota cards use business labels for staff, channels and knowledge capacity (4.3847ms)
+✔ payment and subscription states are presented in Vietnamese (1.0888ms)
+✔ latest payment selects the newest payment without mutating input (2.0134ms)
+✔ channel capacity always explains why another channel cannot be connected (0.597ms)
+✔ connection states distinguish verifying, reconnect, error and disconnected (0.3965ms)
+✔ all existing platform audit actions display readable Vietnamese labels (10.0038ms)
+✔ audit records show Vietnamese resource names and safe fallback labels (0.2463ms)
+✔ platform admin audit renders localized labels instead of raw action codes (5.1702ms)
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+✔ OTP component compiles with installed Vue (153.7908ms)
+✔ save clears password and reload never populates it from saved metadata (111.2875ms)
+✖ failed save clears password, renders alert and releases busy controls (19.3878ms)
+✔ failed initial load shows retry and hides forms (5.8079ms)
+✔ test email controls are removed while SMTP configuration remains (22.0128ms)
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+[Vue warn]: Property "canWrite" was accessed during render but is not defined on instance.
+  at <App>
+✔ VietQR settings load banks and PUT only primary receiving-account fields, including legacy GET compatibility (448.966ms)
+✔ legacy receiving bank remains selectable when bank_options is absent (234.6213ms)
+✔ failed save preserves receiving-account draft and releases disabled controls (61.0174ms)
+✔ local configuration check sends no bank/provider request payload and makes no verification claim (284.0322ms)
+✔ checkout uses server QR payload and frozen amount; manual confirmation only, historical payOS retained (11.0423ms)
+✔ support tickets start collapsed with a summary and retain their response form (1.7584ms)
+✔ admin support sends a single multi-channel ticket response through the platform API (5.4135ms)
+✔ Customer 360 preserves names while masking email and phone (1.0511ms)
+✔ product import offers a downloadable CSV using supported import columns (10.6288ms)
+✔ product CSV includes the UTF-8 BOM required for direct opening in Excel (9.4606ms)
+✔ order import offers a CSV matching the supported import fields (0.541ms)
+✔ accepts only usable product HTTP(S) links (1.191ms)
+✔ catalog image references require publicly usable HTTPS links (0.2737ms)
+✔ reports show four primary metrics and collapse optional content without dropping reports (1610.1801ms)
+✔ sales orders scroll independently with a sticky header and keyboard access (66.2838ms)
+✔ shop bank check validates local QR data without claiming bank verification (2.453ms)
+✔ sample VietQR payload matches the backend validation fixture (0.6475ms)
+✔ sample VietQR renders to a local PNG data URL (95.1709ms)
+✔ bank selector has a transfer-enabled fallback and merges server bank options (16.9915ms)
+✔ shop settings can save a private SMTP sender for staff and customer order OTP (7.3315ms)
+✔ restoring the settings tab reloads saved shop email settings automatically (0.5644ms)
+✔ account verification email editor is not shown in shop settings (3.105ms)
+✔ authentication CTAs have no decorative arrows (1.2553ms)
+✔ registration keeps OTP verification inline in the signup form (0.8235ms)
+✔ signup can request email verification as soon as a valid email is entered (0.8919ms)
+✔ pricing signup carries the selected plan and service type through OTP verification (2.5079ms)
+✔ admin billing uses backend data and requires explicit receipt confirmation (0.8303ms)
+✔ plan checkout distinguishes downgrade requests and never starts a refund (0.4263ms)
+✔ frontend never selects a tenant with a hardcoded id or header (7.4816ms)
+✔ tenant API paths are derived from the authenticated shop (0.6074ms)
+✔ a waiting tenant automatically refreshes provisioning and opens CRM once ready (2.4794ms)
+✔ filters ticket conversations to the selected customer (2.1694ms)
+✔ returns no conversations when no customer is selected (0.5031ms)
+✔ timelineActor gives Customer 360 a human-readable owner for each chat message (16.9711ms)
+✔ conversationBotStatus makes chatbot takeover state clear in Customer 360 (8.7085ms)
+✔ webhook redesign preserves status refresh and connection navigation (2.2138ms)
+✔ webhook typography and responsive cards have a reduced-motion alternative (1.0322ms)
+✔ work queue uses live record statuses and due dates (2.9917ms)
+✔ missing deadlines and completed records never become urgent work (0.245ms)
+ℹ tests 315
+ℹ suites 0
+ℹ pass 306
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6716.8417
+
+✖ failing tests:
+
+test at tests\channel-utils.test.mjs:13:1
+✖ does not fall back to Facebook for unknown channels (1.3642ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  'Zalo' !== 'ZALO'
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/channel-utils.test.mjs:14:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Zalo',
+    expected: 'ZALO',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\crm-shell.test.mjs:107:1
+✖ Meta live messages reconcile the open chat and ignore stale overlapping refreshes (3.9567ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /void loadMessages\(eventConversationId, false, true\)/. Input:
+
+  '<script setup>\r\n' +
+    'import {\r\n' +
+    '  computed,\r\n' +
+    '  onMounted,\r\n' +
+    '  onUnmounted,\r\n' +
+    '  ref,\r\n' +
+    '  nextTick,\r\n' +
+    '  watch,\r\n' +
+    '} from "vue";\r\n' +
+    '\r\n' +
+    'import "./style.css";\r\n' +
+    'import SignupBrandScene from "./SignupBrandScene.vue";\r\n' +
+    'import { channelLabel } from "./channel-utils.js";\r\n' +
+    'import { safeProductImageUrl, safeProductUrl } from "./product-url.js";\r\n' +
+    'import { customerTagDisplayName, customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";\r\n' +
+    'import { filterConversationsForCustomer } from "./ticket-utils.js";\r\n' +
+    'import { displayAttachments, displayMessageText, resolveMediaUrl, visibleConversationMessages } from "./media-utils.js";\r\n' +
+    'import { captureMessageScrollPosition, restoreMessageScrollPosition, scrollMessageContainerToLatest } from "./chat-scroll.js";\r\n' +
+    'import { outboundMediaAccept, outboundMediaTypes, supportsOutboundMedia } from "./media-capabilities.js";\r\n' +
+    'import { getInboxChannels } from "./inbox-utils.js";\r\n' +
+    'import { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxViews } from "./inbox-view-utils.js";\r\n' +
+    'import { conversationBotStatus, timelineActor } from "./timeline-utils.js";\r\n' +
+    'import { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";\r\n' +
+    'import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";\r\n' +
+    'import { apiFetch, AUTH_EXPIRED_EVENT } from "./api-client.js";\r\n' +
+    'import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";\r\n' +
+    'import { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";\r\n' +
+    'import QRCode from "qrcode";\r\n' +
+    'import { buildVietQrPreviewPayload } from "./vietqr-preview.js";\r\n' +
+    'import { mergeVietnamBankOptions } from "./vietnam-banks.js";\r\n' +
+    'import IndustryModules from "./IndustryModules.vue";\r\n' +
+    'import WorkQueue from "./WorkQueue.vue";\r\n' +
+    'import DataRagPreview from "./DataRagPreview.vue";\r\n' +
+    'import MarketingLanding from "./MarketingLanding.vue";\r\n' +
+    'import BrandLogo from "./BrandLogo.vue";\r\n' +
+    'import ServicePricing from "./ServicePricing.vue";\r\n' +
+    'import ServiceCheckout from "./ServiceCheckout.vue";\r\n' +
+    'import ConnectionSupport from "./ConnectionSupport.vue";\r\n' +
+    'import PlatformSupport from "./PlatformSupport.vue";\r\n' +
+    'import PlatformOtpEmail from "./PlatformOtpEmail.vue";\r\n' +
+    'import PlatformPaymentSettings from "./PlatformPaymentSettings.vue";\r\n' +
+    'import PlatformBackups from "./PlatformBackups.vue";\r\n' +
+    'import PlatformKnowledge from "./PlatformKnowledge.vue";\r\n' +
+    'import PlatformTeam from "./PlatformTeam.vue";\r\n' +
+    'import ServiceAdvisor from "./ServiceAdvisor.vue";\r\n' +
+    'import { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash, newestShopsFirst, subscriptionRegistrationDate } from "./admin-navigation.js";\r\n' +
+    'import { planChangeKind } from "./checkout-utils.js";\r\n' +
+    'import {\r\n' +
+    '  channelCapacityState,\r\n' +
+    '  connectionStateMeta,\r\n' +
+    '  latestPayment,\r\n' +
+    '  paymentStatusMeta,\r\n' +
+    '  platformQuotaCards,\r\n' +
+    '  subscriptionStatusMeta,\r\n' +
+    '} from "./platform-admin-utils.js";\r\n' +
+    'import { platformAuditActionLabel, platformAuditResourceLabel } from "./platform-audit-labels.js";\r\n' +
+    '\r\n' +
+    '// Keep browser requests same-origin by default. Vite proxies /api to the\r\n' +
+    '// backend container in development, and an Ngrok frontend address therefore\r\n' +
+    "// works without hard-coding a user's localhost API origin.\r\n" +
+    'const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";\r\n' +
+    '\r\n' +
+    '// Convert technical/network failures into a short message that is useful to\r\n' +
+    '// a shop owner.  The original error is still available through `cause` and\r\n' +
+    '// console logging for diagnostics; it is never shown in the shop UI.\r\n' +
+    'function friendlyErrorMessage(error, fallback = "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.") {\r\n' +
+    '  const rawMessage = error?.message\r\n' +
+    '    || (typeof error === "string" ? error : error?.detail?.message || error?.detail || "");\r\n' +
+    '  const message = String(rawMessage).trim();\r\n' +
+    '  if (!message) return fallback;\r\n' +
+    '  if (/failed\\b|networkerror|network request failed|load failed|connection refused|timeout|exception|(?:^|\\s)http\\s*\\d{3}|internal server|backend|máy chủ|server|smtp|database|sql|traceback|\\bapi\\b|oauth|webhook|access[_ -]?token|\\btoken\\b/i.test(message)) {\r\n' +
+    '    return fallback;\r\n' +
+    '  }\r\n' +
+    '  return message;\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    '// Only localize copy authored by this screen. API details and customer content\r\n' +
+    '// are not translation keys, so unknown errors use a localized safe fallback.\r\n' +
+    'const crmEnglishCopy = {\r\n' +
+    '  "Email này không khớp với tài khoản trong hệ thống. Hãy kiểm tra lại email và mã shop.": "This email does not match an account in the system. Check the email address and shop code.",\r\n' +
+    `  "Quản lý các kênh Facebook, Instagram, Telegram, Zalo, TikTok và Shopee của cửa hàng này.": "Manage this shop's Facebook, Instagram, Telegram, Zalo, TikTok, and Shopee channels.",\r\n` +
+    '  "Mỗi cửa hàng chỉ xem thông tin kết nối, tin nhắn và lịch sử của chính mình. Dữ liệu luôn được giữ riêng.": "Each shop only sees its own connection details, messages, and history. Data always stays separate.",\r\n' +
+    '  "Khách quan tâm": "Interested customers",\r\n' +
+    '  "Lượt kết nối đang giữ": "Channel slots in use",\r\n' +
+    '  "Kênh cần kết nối lại vẫn giữ lượt; ngắt kết nối để giải phóng.": "Channels that need reconnecting still use a slot; disconnect them to free it.",\r\n' +
+    '  "Cần ghép nối": "Pairing required",\r\n' +
+    '  "Đã lưu, chưa hoạt động": "Saved, not active",\r\n' +
+    '  "Gói hiện tại": "Current plan",\r\n' +
+    '  "Đang hoạt động": "Active",\r\n' +
+    '  "ĐANG HOẠT ĐỘNG": "ACTIVE",\r\n' +
+    '  "Không hoạt động": "Inactive",\r\n' +
+    '  "Đã kết nối": "Connected",\r\n' +
+    '  "Đang chờ kết nối": "Waiting to connect",\r\n' +
+    '  "Chưa kết nối": "Not connected",\r\n' +
+    '  "Cần kiểm tra": "Needs attention",\r\n' +
+    '  "Trang Facebook và tin nhắn Messenger.": "Facebook Page and Messenger messages.",\r\n' +
+    '  "Tài khoản Instagram chuyên nghiệp và tin nhắn.": "Professional Instagram account and messages.",\r\n' +
+    '  "Có thể kết nối bằng tài khoản Meta hoặc đăng nhập vào công cụ quản lý của Meta trên máy này.": "Connect with your Meta account or sign in to Meta Business Suite on this computer.",\r\n' +
+    '  "Kênh Telegram riêng của cửa hàng.": "A dedicated Telegram channel for this shop.",\r\n' +
+    '  "Nhập mã kết nối do Telegram cấp để hệ thống nhận tin nhắn tự động.": "Enter the connection code from Telegram so the system can receive messages automatically.",\r\n' +
+    `  "Kênh Zalo chính thức của cửa hàng.": "This shop's official Zalo channel.",\r\n` +
+    '  "Dùng mã kết nối Zalo để nhận tin nhắn. Nếu dùng tài khoản cá nhân, hãy nhập mã bắt đầu bằng": "Use the Zalo connection code to receive messages. For a personal account, enter a code beginning with",\r\n' +
+    '  "Dùng ứng dụng trên máy cửa hàng để nhận tin nhắn TikTok.": "Use the app on this computer to receive TikTok messages.",\r\n' +
+    '  "Nhập mã kết nối tạm thời; tài khoản vẫn đăng nhập trên máy chạy ứng dụng.": "Enter a temporary connection code. The account stays signed in on the computer running the app.",\r\n' +
+    '  "Tin nhắn và chăm sóc khách hàng trên Shopee.": "Shopee messages and customer support.",\r\n' +
+    '  "Nhận tin nhắn Shopee trên máy này. Đăng nhập trong cửa sổ trình duyệt do ứng dụng mở.": "Receive Shopee messages on this computer. Sign in in the browser window opened by the app.",\r\n' +
+    '  "Kết nối kênh bán hàng": "Connect a sales channel",\r\n' +
+    '  "KÊNH CỦA CỬA HÀNG": "SHOP CHANNEL",\r\n' +
+    '  "Kết nối Facebook": "Connect Facebook",\r\n' +
+    '  "Kết nối Instagram": "Connect Instagram",\r\n' +
+    '  "Kết nối Facebook và Instagram": "Connect Facebook and Instagram",\r\n' +
+    '  "Mã kết nối chỉ dùng cho cửa hàng này và không chia sẻ với cửa hàng khác.": "This connection code is only for this shop and is not shared with other shops.",\r\n' +
+    '  "Hướng dẫn kết nối Telegram và Zalo. Quét mã để mở trang hướng dẫn.": "Telegram and Zalo setup instructions. Scan the code to open the setup guide.",\r\n' +
+    '  "Mã kết nối": "Connection code",\r\n' +
+    '  "Mã quét để mở hướng dẫn Zalo": "Scan to open the Zalo guide",\r\n' +
+    '  "Mã quét để mở hướng dẫn Telegram": "Scan to open the Telegram guide",\r\n' +
+    '  "Hướng dẫn kết nối Zalo và Telegram.": "Instructions for connecting Zalo and Telegram.",\r\n' +
+    '  "Mở hướng dẫn Zalo": "Open the Zalo guide",\r\n' +
+    '  "Mở hướng dẫn Telegram": "Open the Telegram guide",\r\n' +
+    '  "Không thể kết nối thêm": "You cannot connect more channels",\r\n' +
+    '  "Đang kiểm tra...": "Checking...",\r\n' +
+    '  "Kiểm tra và kết nối": "Check and connect",\r\n' +
+    `  "Kênh Zalo chính thức của cửa hàng.": "This shop's official Zalo channel.",\r\n` +
+    '  "Mở trang tạo kênh Telegram.": "Open the Telegram channel setup page.",\r\n' +
+    '  "Nhập /newbot rồi làm theo hướng dẫn.": "Enter /newbot and follow the instructions.",\r\n' +
+    '  "Chưa có kênh Zalo nào được kết nối.": "No Zalo channel is connected yet.",\r\n' +
+    '  "Chưa có kênh Telegram nào được kết nối.": "No Telegram channel is connected yet.",\r\n' +
+    '  "Đang nhận tin": "Receiving messages",\r\n' +
+    '  "Đã ngắt nhận tin": "Message delivery is disconnected",\r\n' +
+    '  "Cần kiểm tra việc nhận tin": "Message delivery needs attention",\r\n' +
+    '  "Zalo đã kết nối và đang nhận tin.": "Zalo is connected and receiving messages.",\r\n' +
+    '  "Telegram đã kết nối và đang nhận tin.": "Telegram is connected and receiving messages.",\r\n' +
+    '  "Tài khoản Meta đã kết nối. Ngắt kết nối tại đây chỉ gỡ quyền Meta; ứng dụng trên máy này vẫn hoạt động.": "Your Meta account is connected. Disconnecting here only removes Meta access; the app on this computer will keep running.",\r\n' +
+    '  "Ngắt quyền Meta": "Remove Meta access",\r\n' +
+    '  "Đang ngắt kết nối…": "Disconnecting…",\r\n' +
+    '  "Ngắt kết nối Meta? Facebook và Instagram dùng chung quyền truy cập này.": "Disconnect Meta? Facebook and Instagram share this account access.",\r\n' +
+    '  "Ngắt kết nối Meta": "Disconnect Meta",\r\n' +
+    '  "Đã ngắt kết nối Meta.": "Meta disconnected.",\r\n' +
+    '  "Chưa thể ngắt kết nối Meta. Vui lòng thử lại sau.": "Could not disconnect Meta. Please try again later.",\r\n' +
+    '  "NHẬN TIN NHẮN TRÊN MÁY NÀY": "RECEIVE MESSAGES ON THIS COMPUTER",\r\n' +
+    '  "Bạn chỉ cần đăng nhập. Tài khoản được lưu trên máy chạy ứng dụng.": "Just sign in. Your account is stored on the computer running the app.",\r\n' +
+    '  "Công cụ quản lý của Meta": "Meta Business Suite",\r\n' +
+    '  "Đăng nhập một lần. Hệ thống sẽ tải các tin nhắn đã có, tự tiếp tục nếu bị gián đoạn, rồi nhận tin mới. Việc này chạy nền nên bạn vẫn nhận được tin nh'... 933658 more characters
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/crm-shell.test.mjs:109:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '<script setup>\r\nimport {\r\n  computed,\r\n  onMounted,\r\n  onUnmounted,\r\n  ref,\r\n  nextTick,\r\n  watch,\r\n} from "vue";\r\n\r\nimport "./style.css";\r\nimport SignupBrandScene from "./SignupBrandScene.vue";\r\nimport { channelLabel } from "./channel-utils.js";\r\nimport { safeProductImageUrl, safeProductUrl } from "./product-url.js";\r\nimport { customerTagDisplayName, customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";\r\nimport { filterConversationsForCustomer } from "./ticket-utils.js";\r\nimport { displayAttachments, displayMessageText, resolveMediaUrl, visibleConversationMessages } from "./media-utils.js";\r\nimport { captureMessageScrollPosition, restoreMessageScrollPosition, scrollMessageContainerToLatest } from "./chat-scroll.js";\r\nimport { outboundMediaAccept, outboundMediaTypes, supportsOutboundMedia } from "./media-capabilities.js";\r\nimport { getInboxChannels } from "./inbox-utils.js";\r\nimport { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxViews } from "./inbox-view-utils.js";\r\nimport { conversationBotStatus, timelineActor } from "./timeline-utils.js";\r\nimport { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";\r\nimport { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";\r\nimport { apiFetch, AUTH_EXPIRED_EVENT } from "./api-client.js";\r\nimport { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";\r\nimport { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";\r\nimport QRCode from "qrcode";\r\nimport { buildVietQrPreviewPayload } from "./vietqr-preview.js";\r\nimport { mergeVietnamBankOptions } from "./vietnam-banks.js";\r\nimport IndustryModules from "./IndustryModules.vue";\r\nimport WorkQueue from "./WorkQueue.vue";\r\nimport DataRagPreview from "./DataRagPreview.vue";\r\nimport MarketingLanding from "./MarketingLanding.vue";\r\nimport BrandLogo from "./BrandLogo.vue";\r\nimport ServicePricing from "./ServicePricing.vue";\r\nimport ServiceCheckout from "./ServiceCheckout.vue";\r\nimport ConnectionSupport from "./ConnectionSupport.vue";\r\nimport PlatformSupport from "./PlatformSupport.vue";\r\nimport PlatformOtpEmail from "./PlatformOtpEmail.vue";\r\nimport PlatformPaymentSettings from "./PlatformPaymentSettings.vue";\r\nimport PlatformBackups from "./PlatformBackups.vue";\r\nimport PlatformKnowledge from "./PlatformKnowledge.vue";\r\nimport PlatformTeam from "./PlatformTeam.vue";\r\nimport ServiceAdvisor from "./ServiceAdvisor.vue";\r\nimport { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash, newestShopsFirst, subscriptionRegistrationDate } from "./admin-navigation.js";\r\nimport { planChangeKind } from "./checkout-utils.js";\r\nimport {\r\n  channelCapacityState,\r\n  connectionStateMeta,\r\n  latestPayment,\r\n  paymentStatusMeta,\r\n  platformQuotaCards,\r\n  subscriptionStatusMeta,\r\n} from "./platform-admin-utils.js";\r\nimport { platformAuditActionLabel, platformAuditResourceLabel } from "./platform-audit-labels.js";\r\n\r\n// Keep browser requests same-origin by default. Vite proxies /api to the\r\n// backend container in development, and an Ngrok frontend address therefore\r\n// works without hard-coding a user\'s localhost API origin.\r\nconst API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";\r\n\r\n// Convert technical/network failures into a short message that is useful to\r\n// a shop owner.  The original error is still available through `cause` and\r\n// console logging for diagnostics; it is never shown in the shop UI.\r\nfunction friendlyErrorMessage(error, fallback = "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.") {\r\n  const rawMessage = error?.message\r\n    || (typeof error === "string" ? error : error?.detail?.message || error?.detail || "");\r\n  const message = String(rawMessage).trim();\r\n  if (!message) return fallback;\r\n  if (/failed\\b|networkerror|network request failed|load failed|connection refused|timeout|exception|(?:^|\\s)http\\s*\\d{3}|internal server|backend|máy chủ|server|smtp|database|sql|traceback|\\bapi\\b|oauth|webhook|access[_ -]?token|\\btoken\\b/i.test(message)) {\r\n    return fallback;\r\n  }\r\n  return message;\r\n}\r\n\r\n// Only localize copy authored by this screen. API details and customer content\r\n// are not translation keys, so unknown errors use a localized safe fallback.\r\nconst crmEnglishCopy = {\r\n  "Email này không khớp với tài khoản trong hệ thống. Hãy kiểm tra lại email và mã shop.": "This email does not match an account in the system. Check the email address and shop code.",\r\n  "Quản lý các kênh Facebook, Instagram, Telegram, Zalo, TikTok và Shopee của cửa hàng này.": "Manage this shop\'s Facebook, Instagram, Telegram, Zalo, TikTok, and Shopee channels.",\r\n  "Mỗi cửa hàng chỉ xem thông tin kết nối, tin nhắn và lịch sử của chính mình. Dữ liệu luôn được giữ riêng.": "Each shop only sees its own connection details, messages, and history. Data always stays separate.",\r\n  "Khách quan tâm": "Interested customers",\r\n  "Lượt kết nối đang giữ": "Channel slots in use",\r\n  "Kênh cần kết nối lại vẫn giữ lượt; ngắt kết nối để giải phóng.": "Channels that need reconnecting still use a slot; disconnect them to free it.",\r\n  "Cần ghép nối": "Pairing required",\r\n  "Đã lưu, chưa hoạt động": "Saved, not active",\r\n  "Gói hiện tại": "Current plan",\r\n  "Đang hoạt động": "Active",\r\n  "ĐANG HOẠT ĐỘNG": "ACTIVE",\r\n  "Không hoạt động": "Inactive",\r\n  "Đã kết nối": "Connected",\r\n  "Đang chờ kết nối": "Waiting to connect",\r\n  "Chưa kết nối": "Not connected",\r\n  "Cần kiểm tra": "Needs attention",\r\n  "Trang Facebook và tin nhắn Messenger.": "Facebook Page and Messenger messages.",\r\n  "Tài khoản Instagram chuyên nghiệp và tin nhắn.": "Professional Instagram account and messages.",\r\n  "Có thể kết nối bằng tài khoản Meta hoặc đăng nhập vào công cụ quản lý của Meta trên máy này.": "Connect with your Meta account or sign in to Meta Business Suite on this computer.",\r\n  "Kênh Telegram riêng của cửa hàng.": "A dedicated Telegram channel for this shop.",\r\n  "Nhập mã kết nối do Telegram cấp để hệ thống nhận tin nhắn tự động.": "Enter the connection code from Telegram so the system can receive messages automatically.",\r\n  "Kênh Zalo chính thức của cửa hàng.": "This shop\'s official Zalo channel.",\r\n  "Dùng mã kết nối Zalo để nhận tin nhắn. Nếu dùng tài khoản cá nhân, hãy nhập mã bắt đầu bằng": "Use the Zalo connection code to receive messages. For a personal account, enter a code beginning with",\r\n  "Dùng ứng dụng trên máy cửa hàng để nhận tin nhắn TikTok.": "Use the app on this computer to receive TikTok messages.",\r\n  "Nhập mã kết nối tạm thời; tài khoản vẫn đăng nhập trên máy chạy ứng dụng.": "Enter a temporary connection code. The account stays signed in on the computer running the app.",\r\n  "Tin nhắn và chăm sóc khách hàng trên Shopee.": "Shopee messages and customer support.",\r\n  "Nhận tin nhắn Shopee trên máy này. Đăng nhập trong cửa sổ trình duyệt do ứng dụng mở.": "Receive Shopee messages on this computer. Sign in in the browser window opened by the app.",\r\n  "Kết nối kênh bán hàng": "Connect a sales channel",\r\n  "KÊNH CỦA CỬA HÀNG": "SHOP CHANNEL",\r\n  "Kết nối Facebook": "Connect Facebook",\r\n  "Kết nối Instagram": "Connect Instagram",\r\n  "Kết nối Facebook và Instagram": "Connect Facebook and Instagram",\r\n  "Mã kết nối chỉ dùng cho cửa hàng này và không chia sẻ với cửa hàng khác.": "This connection code is only for this shop and is not shared with other shops.",\r\n  "Hướng dẫn kết nối Telegram và Zalo. Quét mã để mở trang hướng dẫn.": "Telegram and Zalo setup instructions. Scan the code to open the setup guide.",\r\n  "Mã kết nối": "Connection code",\r\n  "Mã quét để mở hướng dẫn Zalo": "Scan to open the Zalo guide",\r\n  "Mã quét để mở hướng dẫn Telegram": "Scan to open the Telegram guide",\r\n  "Hướng dẫn kết nối Zalo và Telegram.": "Instructions for connecting Zalo and Telegram.",\r\n  "Mở hướng dẫn Zalo": "Open the Zalo guide",\r\n  "Mở hướng dẫn Telegram": "Open the Telegram guide",\r\n  "Không thể kết nối thêm": "You cannot connect more channels",\r\n  "Đang kiểm tra...": "Checking...",\r\n  "Kiểm tra và kết nối": "Check and connect",\r\n  "Kênh Zalo chính thức của cửa hàng.": "This shop\'s official Zalo channel.",\r\n  "Mở trang tạo kênh Telegram.": "Open the Telegram channel setup page.",\r\n  "Nhập /newbot rồi làm theo hướng dẫn.": "Enter /newbot and follow the instructions.",\r\n  "Chưa có kênh Zalo nào được kết nối.": "No Zalo channel is connected yet.",\r\n  "Chưa có kênh Telegram nào được kết nối.": "No Telegram channel is connected yet.",\r\n  "Đang nhận tin": "Receiving messages",\r\n  "Đã ngắt nhận tin": "Message delivery is disconnected",\r\n  "Cần kiểm tra việc nhận tin": "Message delivery needs attention",\r\n  "Zalo đã kết nối và đang nhận tin.": "Zalo is connected and receiving messages.",\r\n  "Telegram đã kết nối và đang nhận tin.": "Telegram is connected and receiving messages.",\r\n  "Tài khoản Meta đã kết nối. Ngắt kết nối tại đây chỉ gỡ quyền Meta; ứng dụng trên máy này vẫn hoạt động.": "Your Meta account is connected. Disconnecting here only removes Meta access; the app on this computer will keep running.",\r\n  "Ngắt quyền Meta": "Remove Meta access",\r\n  "Đang ngắt kết nối…": "Disconnecting…",\r\n  "Ngắt kết nối Meta? Facebook và Instagram dùng chung quyền truy cập này.": "Disconnect Meta? Facebook and Instagram share this account access.",\r\n  "Ngắt kết nối Meta": "Disconnect Meta",\r\n  "Đã ngắt kết nối Meta.": "Meta disconnected.",\r\n  "Chưa thể ngắt kết nối Meta. Vui lòng thử lại sau.": "Could not disconnect Meta. Please try again later.",\r\n  "NHẬN TIN NHẮN TRÊN MÁY NÀY": "RECEIVE MESSAGES ON THIS COMPUTER",\r\n  "Bạn chỉ cần đăng nhập. Tài khoản được lưu trên máy chạy ứng dụng.": "Just sign in. Your account is stored on the computer running the app.",\r\n  "Công cụ quản lý của Meta": "Meta Business Suite",\r\n  "Đăng nhập một lần. Hệ thống sẽ tải các tin nhắn đã có, tự tiếp tục nếu bị gián đoạn, rồi nhận tin mới. Việc này chạy nền nên bạn vẫn nhận được tin nh'... 933658 more characters,
+    expected: /void loadMessages\(eventConversationId, false, true\)/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at tests\crm-shell.test.mjs:311:1
+✖ platform admins land in the shop control plane instead of the CRM inbox (22.0022ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /loadThemePreference\(\);\s+if \(platformAdmin\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/. Input:
+
+  'onMounted(async () => {\r\n' +
+    '\r\n' +
+    '  window.addEventListener("hashchange", syncPlatformSectionFromHash);\r\n' +
+    '  window.addEventListener("keydown", handleGlobalKeydown);\r\n' +
+    '  window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);\r\n' +
+    '  window.addEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);\r\n' +
+    '  if (!platformRequestPollingTimer) {\r\n' +
+    '    platformRequestPollingTimer = window.setInterval(() => {\r\n' +
+    '      if (currentTab.value === "platform_admin" && !document.hidden) {\r\n' +
+    '        void refreshPlatformSubscriptionRequests();\r\n' +
+    '      }\r\n' +
+    '    }, 10000);\r\n' +
+    '  }\r\n' +
+    '\r\n' +
+    '  void fetchPublicServicePlans();\r\n' +
+    '  loadThemePreference();\r\n' +
+    '  try {\r\n' +
+    '    await loadAuthSession();\r\n' +
+    '    await fetchPlatformAdmin();\r\n' +
+    '    // Tenant data is only loaded after the platform session identifies an\r\n' +
+    '    // active shop. Anonymous mode exposes the login gate only.\r\n' +
+    '    if (!authUser.value) {\r\n' +
+    '      currentTab.value = "settings";\r\n' +
+    '      return;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    loadBusinessProfile();\r\n' +
+    '    loadThemePreference({ restoreLegacyBusiness: true });\r\n' +
+    '    if (platformAdmin.value) {\r\n' +
+    '      // Keep a restored platform-admin session in the control plane as well;\r\n' +
+    '      // it must not fall through to the tenant CRM workspace on refresh.\r\n' +
+    '      currentTab.value = "platform_admin";\r\n' +
+    '      return;\r\n' +
+    '    }\r\n' +
+    '    loadSavedInboxViews();\r\n' +
+    '    await fetchTenantProvisioning();\r\n' +
+    '    if (!tenantReady.value) {\r\n' +
+    '      currentTab.value = "service";\r\n' +
+    '      return;\r\n' +
+    '    }\r\n' +
+    '    await initializeTenantWorkspace();\r\n' +
+    '    restoreWorkspaceTab();\r\n' +
+    '  } finally {\r\n' +
+    '    // Do not briefly render the tenant CRM before the platform role is known.\r\n' +
+    '    sessionBootstrapLoading.value = false;\r\n' +
+    '  }\r\n' +
+    '\r\n' +
+    '});\r\n' +
+    '\r\n' +
+    '\r\n' +
+    '/* =========================================================\r\n' +
+    '   STOP POLLING\r\n' +
+    '========================================================= */\r\n' +
+    '\r\n' +
+    'function applyCannedResponse() {\r\n' +
+    '  const canned = cannedResponses.value.find((item) => String(item.id) === String(selectedCannedId.value));\r\n' +
+    '  if (!canned) return;\r\n' +
+    '  draft.value = canned.content || "";\r\n' +
+    '  selectedCannedId.value = "";\r\n' +
+    '  focusComposer();\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    'async function fetchChatbotRuntime() {\r\n' +
+    '  chatbotConfigError.value = "";\r\n' +
+    '  try {\r\n' +
+    '    const [configResponse, cannedResponse] = await Promise.all([\r\n' +
+    '      apiFetch(`${API_BASE}/chatbot/config`),\r\n' +
+    '      apiFetch(`${API_BASE}/chatbot/canned-responses`),\r\n' +
+    '    ]);\r\n' +
+    '    if (configResponse.ok) {\r\n' +
+    '      chatbotConfig.value = { ...chatbotConfig.value, ...(await configResponse.json()) };\r\n' +
+    '      businessHoursJson.value = JSON.stringify(chatbotConfig.value.business_hours || {}, null, 2);\r\n' +
+    '      const weekdayRange = chatbotConfig.value.business_hours?.mon?.[0];\r\n' +
+    '      if (Array.isArray(weekdayRange)) {\r\n' +
+    '        businessHoursForm.value.start = weekdayRange[0] || businessHoursForm.value.start;\r\n' +
+    '        businessHoursForm.value.end = weekdayRange[1] || businessHoursForm.value.end;\r\n' +
+    '      }\r\n' +
+    '      const configuredHours = chatbotConfig.value.business_hours || {};\r\n' +
+    '      businessHoursDays.value = Object.fromEntries(\r\n' +
+    '        businessHourDayLabels.map(([key]) => [key, Array.isArray(configuredHours[key]) && configuredHours[key].length > 0]),\r\n' +
+    '      );\r\n' +
+    '      businessHoursForm.value.enabled = Object.values(businessHoursDays.value).some(Boolean);\r\n' +
+    '      const configuredSpecialDates = configuredHours.special_dates || {};\r\n' +
+    '      specialBusinessDates.value = Object.entries(configuredSpecialDates).map(([date, rule]) => ({\r\n' +
+    '        date,\r\n' +
+    '        closed: Boolean(rule?.closed),\r\n' +
+    '        start: rule?.windows?.[0]?.[0] || "08:00",\r\n' +
+    '        end: rule?.windows?.[0]?.[1] || "17:30",\r\n' +
+    '      })).sort((left, right) => left.date.localeCompare(right.date));\r\n' +
+    '    }\r\n' +
+    '    if (cannedResponse.ok) cannedResponses.value = (await cannedResponse.json()).items || [];\r\n' +
+    '  } catch (err) {\r\n' +
+    '    chatbotConfigError.value = friendlyErrorMessage(err, "Chưa tải được cài đặt trợ lý. Vui lòng thử lại sau.");\r\n' +
+    '  }\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    'async function saveChatbotRuntime() {\r\n' +
+    '  chatbotConfigSaving.value = true;\r\n' +
+    '  chatbotConfigError.value = "";\r\n' +
+    '  try {\r\n' +
+    '    let businessHours = chatbotConfig.value.business_hours;\r\n' +
+    '    try {\r\n' +
+    '      businessHours = JSON.parse(businessHoursJson.value || "{}");\r\n' +
+    '    } catch {\r\n' +
+    '      throw new Error("Giờ hoạt động không đúng định dạng.");\r\n' +
+    '    }\r\n' +
+    '    const response = await apiFetch(`${API_BASE}/chatbot/config`, {\r\n' +
+    '      method: "PUT",\r\n' +
+    '      headers: { "Content-Type": "application/json" },\r\n' +
+    '      body: JSON.stringify({\r\n' +
+    '        name: chatbotConfig.value.name,\r\n' +
+    '        enabled: chatbotConfig.value.enabled,\r\n' +
+    '        handoff_enabled: chatbotConfig.value.handoff_enabled,\r\n' +
+    '        top_k: Number(chatbotConfig.value.top_k),\r\n' +
+    '        similarity_threshold: Number(chatbotConfig.value.similarity_threshold),\r\n' +
+    '        business_hours: businessHours,\r\n' +
+    '      }),\r\n' +
+    '    });\r\n' +
+    '    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);\r\n' +
+    '    chatbotConfig.value = { ...chatbotConfig.value, ...(await response.json()) };\r\n' +
+    '    businessHoursJson.value = JSON.stringify(chatbotConfig.value.business_hours || {}, null, 2);\r\n' +
+    '  } catch (err) {\r\n' +
+    '    chatbotConfigError.value = friendlyErrorMessage(err, "Chưa thể lưu cài đặt trợ lý. Vui lòng thử lại sau.");\r\n' +
+    '  } finally {\r\n' +
+    '    chatbotConfigSaving.value = false;\r\n' +
+    '  }\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    'async function saveCannedResponse() {\r\n' +
+    '  cannedResponseSaving.value = true;\r\n' +
+    '  cannedResponseError.value = "";\r\n' +
+    '  try {\r\n' +
+    '    const response = await apiFetch(`${API_BASE}/chatbot/canned-responses`, {\r\n' +
+    '      method: "POST",\r\n' +
+    '      headers: { "Content-Type": "application/json" },\r\n' +
+    '      body: JSON.stringify(cannedResponseForm.value),\r\n' +
+    '    });\r\n' +
+    '    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);\r\n' +
+    '    cannedResponses.value = [...cannedResponses.value, await response.json()];\r\n' +
+    '    cannedResponseForm.value = { shortcut: "/", title: "", content: "", enabled: true };\r\n' +
+    '  } catch (err) {\r\n' +
+    '    cannedResponseError.value = friendlyErrorMessage(err, "Chưa thể lưu mẫu trả lời. Vui lòng thử lại sau.");\r\n' +
+    '  } finally {\r\n' +
+    '    cannedResponseSaving.value = false;\r\n' +
+    '  }\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    'async function toggleBotMode() {\r\n' +
+    '  if (!selected.value?.conversation_id) return;\r\n' +
+    '  const mode = selectedBotMode.value === "human" ? "resume" : "pause";\r\n' +
+    '  const customerId = selected.value.customer_id;\r\n' +
+    '  try {\r\n' +
+    '    const response = await apiFetch(`${API_BASE}/chatbot/conversations/${selected.value.conversation_id}/${mode}`, {\r\n' +
+    '      method: "POST",\r\n' +
+    '      headers: { "Content-Type": "application/json" },\r\n' +
+    '      body: JSON.stringify({ reason: mode === "pause" ? "Nhân viên tiếp quản từ hệ thống" : "Nhân viên trả lại cho bot" }),\r\n' +
+    '    });\r\n' +
+    '    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);\r\n' +
+    '    const { bot_mode } = await response.json();\r\n' +
+    '    conversations.value = conversations.value.map((item) => Number(item.conversation_id) === Number(selected.value.conversation_id)\r\n' +
+    '      ? { ...item, bot_mode }\r\n' +
+    '      : item);\r\n' +
+    '    await loadCustomer360(customerId);\r\n' +
+    '  } catch (err) {\r\n' +
+    '    error.value = friendlyErrorMessage(err, "Chưa thể đổi cách trả lời. Vui lòng thử lại sau.");\r\n' +
+    '  }\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    'async function saveSelectedConversationOutcome(value) {\r\n' +
+    '  const conversation = selected.value;\r\n' +
+    '  if (!conversation?.conversation_id || conversationOutcomeSaving.value) return;\r\n' +
+    '  conversationOutcomeSaving.value = true;\r\n' +
+    '  conversationOutcomeError.value = "";\r\n' +
+    '  try {\r\n' +
+    '    const response = await apiFetch(`${API_BASE}/conversations/${conversation.conversation_id}/outcome`, {\r\n' +
+    '      method: "PATCH",\r\n' +
+    '      headers: { "Content-Type": "application/json" },\r\n' +
+    '      body: JSON.stringify({ outcome: value || null }),\r\n' +
+    '    });\r\n' +
+    '    const detail = await response.json().catch(() => ({}));\r\n' +
+    '    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);\r\n' +
+    '    conversations.value = conversations.value.map((item) => Number(item.conversation_id) === Number(conversation.conversation_id)\r\n' +
+    '      ? { ...item, resolution_outcome: detail.resolution_outcome }\r\n' +
+    '      : item);\r\n' +
+    '  } catch (err) {\r\n' +
+    '    conversationOutcomeError.value = friendlyErrorMessage(err, "Chưa lưu được kết quả hội thoại. Vui lòng thử lại.");\r\n' +
+    '  } finally {\r\n' +
+    '    conversationOutcomeSaving.value = false;\r\n' +
+    '  }\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    'async function fetchFollowups() {\r\n' +
+    '  followupsLoading.value = true;\r\n' +
+    '  followupError.value = "";\r\n' +
+    '  try {\r\n' +
+    '    const response = await apiFetch(`${API_BASE}/chatbot/followups?status=${encodeURIComponent(followupStatusFilter.value)}`);\r\n' +
+    '    if (!response.ok) {\r\n' +
+    '      const detail = await response.json().catch(() => ({}));\r\n' +
+    '      throw new Error(detail.detail || `HTTP ${response.status}`);\r\n' +
+    '    }\r\n' +
+    '    followups.value = (await response.json()).items || [];\r\n' +
+    '  } catch (err) {\r\n' +
+    '    followupError.value = friendlyErrorMessage(err, "Chưa tải được lịch nhắc chăm sóc. Vui lòng thử lại sau.");\r\n' +
+    '  } finally {\r\n' +
+    '    followupsLoading.value = false;\r\n' +
+    '  }\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    'async function scheduleSegmentCampaign() {\r\n' +
+    '  const form = segmentCampaignForm.value;\r\n' +
+    '  if (!form.segment_id || !form.message.trim() || !form.run_at) {\r\n' +
+    '    followupError.value = uiLocale.value === "en"\r\n' +
+    '      ? "Choose a customer group, message, and send time."\r\n' +
+    '      : "Hãy chọn nhóm khách, nội dung và thời gian gửi.";\r\n' +
+    '    return;\r\n' +
+    '  }\r\n' +
+    '  segmentCampaignSaving.value = true;\r\n' +
+    '  followupError.value = "";\r\n' +
+    '  followupNotice.value = "";\r\n' +
+    '  try {\r\n' +
+    '    const response = await apiFetch(`${API_BASE}/customers/segments/${segmentCampaignForm.value.segment_id}/followups`, {\r\n' +
+    '      method: "POST",\r\n' +
+    '      headers: { "Content-Type": "application/json" },\r\n' +
+    '      body: JSON.stringify({\r\n' +
+    '        message: form.message.trim(),\r\n' +
+    '        run_at: new Date(form.run_at).toISOString(),\r\n' +
+    '      }),\r\n' +
+    '    });\r\n' +
+    '    const result = await response.json().catch(() => ({}));\r\n' +
+    '    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);\r\n' +
+    '    followupNotice.value = uiLocale.value === "en"\r\n' +
+    '      ? `Scheduled ${result.scheduled || 0}/${result.matched || 0} customers. ${result.consent_required || 0} need consent.`\r\n' +
+    '      : `Đ'... 518925 more characters
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/crm-shell.test.mjs:316:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'onMounted(async () => {\r\n\r\n  window.addEventListener("hashchange", syncPlatformSectionFromHash);\r\n  window.addEventListener("keydown", handleGlobalKeydown);\r\n  window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);\r\n  window.addEventListener("visibilitychange", handleTenantProvisioningVisibilityChange);\r\n  if (!platformRequestPollingTimer) {\r\n    platformRequestPollingTimer = window.setInterval(() => {\r\n      if (currentTab.value === "platform_admin" && !document.hidden) {\r\n        void refreshPlatformSubscriptionRequests();\r\n      }\r\n    }, 10000);\r\n  }\r\n\r\n  void fetchPublicServicePlans();\r\n  loadThemePreference();\r\n  try {\r\n    await loadAuthSession();\r\n    await fetchPlatformAdmin();\r\n    // Tenant data is only loaded after the platform session identifies an\r\n    // active shop. Anonymous mode exposes the login gate only.\r\n    if (!authUser.value) {\r\n      currentTab.value = "settings";\r\n      return;\r\n    }\r\n\r\n    loadBusinessProfile();\r\n    loadThemePreference({ restoreLegacyBusiness: true });\r\n    if (platformAdmin.value) {\r\n      // Keep a restored platform-admin session in the control plane as well;\r\n      // it must not fall through to the tenant CRM workspace on refresh.\r\n      currentTab.value = "platform_admin";\r\n      return;\r\n    }\r\n    loadSavedInboxViews();\r\n    await fetchTenantProvisioning();\r\n    if (!tenantReady.value) {\r\n      currentTab.value = "service";\r\n      return;\r\n    }\r\n    await initializeTenantWorkspace();\r\n    restoreWorkspaceTab();\r\n  } finally {\r\n    // Do not briefly render the tenant CRM before the platform role is known.\r\n    sessionBootstrapLoading.value = false;\r\n  }\r\n\r\n});\r\n\r\n\r\n/* =========================================================\r\n   STOP POLLING\r\n========================================================= */\r\n\r\nfunction applyCannedResponse() {\r\n  const canned = cannedResponses.value.find((item) => String(item.id) === String(selectedCannedId.value));\r\n  if (!canned) return;\r\n  draft.value = canned.content || "";\r\n  selectedCannedId.value = "";\r\n  focusComposer();\r\n}\r\n\r\nasync function fetchChatbotRuntime() {\r\n  chatbotConfigError.value = "";\r\n  try {\r\n    const [configResponse, cannedResponse] = await Promise.all([\r\n      apiFetch(`${API_BASE}/chatbot/config`),\r\n      apiFetch(`${API_BASE}/chatbot/canned-responses`),\r\n    ]);\r\n    if (configResponse.ok) {\r\n      chatbotConfig.value = { ...chatbotConfig.value, ...(await configResponse.json()) };\r\n      businessHoursJson.value = JSON.stringify(chatbotConfig.value.business_hours || {}, null, 2);\r\n      const weekdayRange = chatbotConfig.value.business_hours?.mon?.[0];\r\n      if (Array.isArray(weekdayRange)) {\r\n        businessHoursForm.value.start = weekdayRange[0] || businessHoursForm.value.start;\r\n        businessHoursForm.value.end = weekdayRange[1] || businessHoursForm.value.end;\r\n      }\r\n      const configuredHours = chatbotConfig.value.business_hours || {};\r\n      businessHoursDays.value = Object.fromEntries(\r\n        businessHourDayLabels.map(([key]) => [key, Array.isArray(configuredHours[key]) && configuredHours[key].length > 0]),\r\n      );\r\n      businessHoursForm.value.enabled = Object.values(businessHoursDays.value).some(Boolean);\r\n      const configuredSpecialDates = configuredHours.special_dates || {};\r\n      specialBusinessDates.value = Object.entries(configuredSpecialDates).map(([date, rule]) => ({\r\n        date,\r\n        closed: Boolean(rule?.closed),\r\n        start: rule?.windows?.[0]?.[0] || "08:00",\r\n        end: rule?.windows?.[0]?.[1] || "17:30",\r\n      })).sort((left, right) => left.date.localeCompare(right.date));\r\n    }\r\n    if (cannedResponse.ok) cannedResponses.value = (await cannedResponse.json()).items || [];\r\n  } catch (err) {\r\n    chatbotConfigError.value = friendlyErrorMessage(err, "Chưa tải được cài đặt trợ lý. Vui lòng thử lại sau.");\r\n  }\r\n}\r\n\r\nasync function saveChatbotRuntime() {\r\n  chatbotConfigSaving.value = true;\r\n  chatbotConfigError.value = "";\r\n  try {\r\n    let businessHours = chatbotConfig.value.business_hours;\r\n    try {\r\n      businessHours = JSON.parse(businessHoursJson.value || "{}");\r\n    } catch {\r\n      throw new Error("Giờ hoạt động không đúng định dạng.");\r\n    }\r\n    const response = await apiFetch(`${API_BASE}/chatbot/config`, {\r\n      method: "PUT",\r\n      headers: { "Content-Type": "application/json" },\r\n      body: JSON.stringify({\r\n        name: chatbotConfig.value.name,\r\n        enabled: chatbotConfig.value.enabled,\r\n        handoff_enabled: chatbotConfig.value.handoff_enabled,\r\n        top_k: Number(chatbotConfig.value.top_k),\r\n        similarity_threshold: Number(chatbotConfig.value.similarity_threshold),\r\n        business_hours: businessHours,\r\n      }),\r\n    });\r\n    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);\r\n    chatbotConfig.value = { ...chatbotConfig.value, ...(await response.json()) };\r\n    businessHoursJson.value = JSON.stringify(chatbotConfig.value.business_hours || {}, null, 2);\r\n  } catch (err) {\r\n    chatbotConfigError.value = friendlyErrorMessage(err, "Chưa thể lưu cài đặt trợ lý. Vui lòng thử lại sau.");\r\n  } finally {\r\n    chatbotConfigSaving.value = false;\r\n  }\r\n}\r\n\r\nasync function saveCannedResponse() {\r\n  cannedResponseSaving.value = true;\r\n  cannedResponseError.value = "";\r\n  try {\r\n    const response = await apiFetch(`${API_BASE}/chatbot/canned-responses`, {\r\n      method: "POST",\r\n      headers: { "Content-Type": "application/json" },\r\n      body: JSON.stringify(cannedResponseForm.value),\r\n    });\r\n    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);\r\n    cannedResponses.value = [...cannedResponses.value, await response.json()];\r\n    cannedResponseForm.value = { shortcut: "/", title: "", content: "", enabled: true };\r\n  } catch (err) {\r\n    cannedResponseError.value = friendlyErrorMessage(err, "Chưa thể lưu mẫu trả lời. Vui lòng thử lại sau.");\r\n  } finally {\r\n    cannedResponseSaving.value = false;\r\n  }\r\n}\r\n\r\nasync function toggleBotMode() {\r\n  if (!selected.value?.conversation_id) return;\r\n  const mode = selectedBotMode.value === "human" ? "resume" : "pause";\r\n  const customerId = selected.value.customer_id;\r\n  try {\r\n    const response = await apiFetch(`${API_BASE}/chatbot/conversations/${selected.value.conversation_id}/${mode}`, {\r\n      method: "POST",\r\n      headers: { "Content-Type": "application/json" },\r\n      body: JSON.stringify({ reason: mode === "pause" ? "Nhân viên tiếp quản từ hệ thống" : "Nhân viên trả lại cho bot" }),\r\n    });\r\n    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);\r\n    const { bot_mode } = await response.json();\r\n    conversations.value = conversations.value.map((item) => Number(item.conversation_id) === Number(selected.value.conversation_id)\r\n      ? { ...item, bot_mode }\r\n      : item);\r\n    await loadCustomer360(customerId);\r\n  } catch (err) {\r\n    error.value = friendlyErrorMessage(err, "Chưa thể đổi cách trả lời. Vui lòng thử lại sau.");\r\n  }\r\n}\r\n\r\nasync function saveSelectedConversationOutcome(value) {\r\n  const conversation = selected.value;\r\n  if (!conversation?.conversation_id || conversationOutcomeSaving.value) return;\r\n  conversationOutcomeSaving.value = true;\r\n  conversationOutcomeError.value = "";\r\n  try {\r\n    const response = await apiFetch(`${API_BASE}/conversations/${conversation.conversation_id}/outcome`, {\r\n      method: "PATCH",\r\n      headers: { "Content-Type": "application/json" },\r\n      body: JSON.stringify({ outcome: value || null }),\r\n    });\r\n    const detail = await response.json().catch(() => ({}));\r\n    if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);\r\n    conversations.value = conversations.value.map((item) => Number(item.conversation_id) === Number(conversation.conversation_id)\r\n      ? { ...item, resolution_outcome: detail.resolution_outcome }\r\n      : item);\r\n  } catch (err) {\r\n    conversationOutcomeError.value = friendlyErrorMessage(err, "Chưa lưu được kết quả hội thoại. Vui lòng thử lại.");\r\n  } finally {\r\n    conversationOutcomeSaving.value = false;\r\n  }\r\n}\r\n\r\nasync function fetchFollowups() {\r\n  followupsLoading.value = true;\r\n  followupError.value = "";\r\n  try {\r\n    const response = await apiFetch(`${API_BASE}/chatbot/followups?status=${encodeURIComponent(followupStatusFilter.value)}`);\r\n    if (!response.ok) {\r\n      const detail = await response.json().catch(() => ({}));\r\n      throw new Error(detail.detail || `HTTP ${response.status}`);\r\n    }\r\n    followups.value = (await response.json()).items || [];\r\n  } catch (err) {\r\n    followupError.value = friendlyErrorMessage(err, "Chưa tải được lịch nhắc chăm sóc. Vui lòng thử lại sau.");\r\n  } finally {\r\n    followupsLoading.value = false;\r\n  }\r\n}\r\n\r\nasync function scheduleSegmentCampaign() {\r\n  const form = segmentCampaignForm.value;\r\n  if (!form.segment_id || !form.message.trim() || !form.run_at) {\r\n    followupError.value = uiLocale.value === "en"\r\n      ? "Choose a customer group, message, and send time."\r\n      : "Hãy chọn nhóm khách, nội dung và thời gian gửi.";\r\n    return;\r\n  }\r\n  segmentCampaignSaving.value = true;\r\n  followupError.value = "";\r\n  followupNotice.value = "";\r\n  try {\r\n    const response = await apiFetch(`${API_BASE}/customers/segments/${segmentCampaignForm.value.segment_id}/followups`, {\r\n      method: "POST",\r\n      headers: { "Content-Type": "application/json" },\r\n      body: JSON.stringify({\r\n        message: form.message.trim(),\r\n        run_at: new Date(form.run_at).toISOString(),\r\n      }),\r\n    });\r\n    const result = await response.json().catch(() => ({}));\r\n    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);\r\n    followupNotice.value = uiLocale.value === "en"\r\n      ? `Scheduled ${result.scheduled || 0}/${result.matched || 0} customers. ${result.consent_required || 0} need consent.`\r\n      : `Đ'... 518925 more characters,
+    expected: /loadThemePreference\(\);\s+if \(platformAdmin\.value\) \{[\s\S]*?currentTab\.value = "platform_admin";[\s\S]*?return;/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at tests\crm-shell.test.mjs:543:1
+✖ platform administration exposes shop status, usage, and schema pilot controls (2.6085ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /platform\/audit-logs/. Input:
+
+  '<script setup>\r\n' +
+    'import {\r\n' +
+    '  computed,\r\n' +
+    '  onMounted,\r\n' +
+    '  onUnmounted,\r\n' +
+    '  ref,\r\n' +
+    '  nextTick,\r\n' +
+    '  watch,\r\n' +
+    '} from "vue";\r\n' +
+    '\r\n' +
+    'import "./style.css";\r\n' +
+    'import SignupBrandScene from "./SignupBrandScene.vue";\r\n' +
+    'import { channelLabel } from "./channel-utils.js";\r\n' +
+    'import { safeProductImageUrl, safeProductUrl } from "./product-url.js";\r\n' +
+    'import { customerTagDisplayName, customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";\r\n' +
+    'import { filterConversationsForCustomer } from "./ticket-utils.js";\r\n' +
+    'import { displayAttachments, displayMessageText, resolveMediaUrl, visibleConversationMessages } from "./media-utils.js";\r\n' +
+    'import { captureMessageScrollPosition, restoreMessageScrollPosition, scrollMessageContainerToLatest } from "./chat-scroll.js";\r\n' +
+    'import { outboundMediaAccept, outboundMediaTypes, supportsOutboundMedia } from "./media-capabilities.js";\r\n' +
+    'import { getInboxChannels } from "./inbox-utils.js";\r\n' +
+    'import { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxViews } from "./inbox-view-utils.js";\r\n' +
+    'import { conversationBotStatus, timelineActor } from "./timeline-utils.js";\r\n' +
+    'import { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";\r\n' +
+    'import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";\r\n' +
+    'import { apiFetch, AUTH_EXPIRED_EVENT } from "./api-client.js";\r\n' +
+    'import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";\r\n' +
+    'import { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";\r\n' +
+    'import QRCode from "qrcode";\r\n' +
+    'import { buildVietQrPreviewPayload } from "./vietqr-preview.js";\r\n' +
+    'import { mergeVietnamBankOptions } from "./vietnam-banks.js";\r\n' +
+    'import IndustryModules from "./IndustryModules.vue";\r\n' +
+    'import WorkQueue from "./WorkQueue.vue";\r\n' +
+    'import DataRagPreview from "./DataRagPreview.vue";\r\n' +
+    'import MarketingLanding from "./MarketingLanding.vue";\r\n' +
+    'import BrandLogo from "./BrandLogo.vue";\r\n' +
+    'import ServicePricing from "./ServicePricing.vue";\r\n' +
+    'import ServiceCheckout from "./ServiceCheckout.vue";\r\n' +
+    'import ConnectionSupport from "./ConnectionSupport.vue";\r\n' +
+    'import PlatformSupport from "./PlatformSupport.vue";\r\n' +
+    'import PlatformOtpEmail from "./PlatformOtpEmail.vue";\r\n' +
+    'import PlatformPaymentSettings from "./PlatformPaymentSettings.vue";\r\n' +
+    'import PlatformBackups from "./PlatformBackups.vue";\r\n' +
+    'import PlatformKnowledge from "./PlatformKnowledge.vue";\r\n' +
+    'import PlatformTeam from "./PlatformTeam.vue";\r\n' +
+    'import ServiceAdvisor from "./ServiceAdvisor.vue";\r\n' +
+    'import { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash, newestShopsFirst, subscriptionRegistrationDate } from "./admin-navigation.js";\r\n' +
+    'import { planChangeKind } from "./checkout-utils.js";\r\n' +
+    'import {\r\n' +
+    '  channelCapacityState,\r\n' +
+    '  connectionStateMeta,\r\n' +
+    '  latestPayment,\r\n' +
+    '  paymentStatusMeta,\r\n' +
+    '  platformQuotaCards,\r\n' +
+    '  subscriptionStatusMeta,\r\n' +
+    '} from "./platform-admin-utils.js";\r\n' +
+    'import { platformAuditActionLabel, platformAuditResourceLabel } from "./platform-audit-labels.js";\r\n' +
+    '\r\n' +
+    '// Keep browser requests same-origin by default. Vite proxies /api to the\r\n' +
+    '// backend container in development, and an Ngrok frontend address therefore\r\n' +
+    "// works without hard-coding a user's localhost API origin.\r\n" +
+    'const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";\r\n' +
+    '\r\n' +
+    '// Convert technical/network failures into a short message that is useful to\r\n' +
+    '// a shop owner.  The original error is still available through `cause` and\r\n' +
+    '// console logging for diagnostics; it is never shown in the shop UI.\r\n' +
+    'function friendlyErrorMessage(error, fallback = "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.") {\r\n' +
+    '  const rawMessage = error?.message\r\n' +
+    '    || (typeof error === "string" ? error : error?.detail?.message || error?.detail || "");\r\n' +
+    '  const message = String(rawMessage).trim();\r\n' +
+    '  if (!message) return fallback;\r\n' +
+    '  if (/failed\\b|networkerror|network request failed|load failed|connection refused|timeout|exception|(?:^|\\s)http\\s*\\d{3}|internal server|backend|máy chủ|server|smtp|database|sql|traceback|\\bapi\\b|oauth|webhook|access[_ -]?token|\\btoken\\b/i.test(message)) {\r\n' +
+    '    return fallback;\r\n' +
+    '  }\r\n' +
+    '  return message;\r\n' +
+    '}\r\n' +
+    '\r\n' +
+    '// Only localize copy authored by this screen. API details and customer content\r\n' +
+    '// are not translation keys, so unknown errors use a localized safe fallback.\r\n' +
+    'const crmEnglishCopy = {\r\n' +
+    '  "Email này không khớp với tài khoản trong hệ thống. Hãy kiểm tra lại email và mã shop.": "This email does not match an account in the system. Check the email address and shop code.",\r\n' +
+    `  "Quản lý các kênh Facebook, Instagram, Telegram, Zalo, TikTok và Shopee của cửa hàng này.": "Manage this shop's Facebook, Instagram, Telegram, Zalo, TikTok, and Shopee channels.",\r\n` +
+    '  "Mỗi cửa hàng chỉ xem thông tin kết nối, tin nhắn và lịch sử của chính mình. Dữ liệu luôn được giữ riêng.": "Each shop only sees its own connection details, messages, and history. Data always stays separate.",\r\n' +
+    '  "Khách quan tâm": "Interested customers",\r\n' +
+    '  "Lượt kết nối đang giữ": "Channel slots in use",\r\n' +
+    '  "Kênh cần kết nối lại vẫn giữ lượt; ngắt kết nối để giải phóng.": "Channels that need reconnecting still use a slot; disconnect them to free it.",\r\n' +
+    '  "Cần ghép nối": "Pairing required",\r\n' +
+    '  "Đã lưu, chưa hoạt động": "Saved, not active",\r\n' +
+    '  "Gói hiện tại": "Current plan",\r\n' +
+    '  "Đang hoạt động": "Active",\r\n' +
+    '  "ĐANG HOẠT ĐỘNG": "ACTIVE",\r\n' +
+    '  "Không hoạt động": "Inactive",\r\n' +
+    '  "Đã kết nối": "Connected",\r\n' +
+    '  "Đang chờ kết nối": "Waiting to connect",\r\n' +
+    '  "Chưa kết nối": "Not connected",\r\n' +
+    '  "Cần kiểm tra": "Needs attention",\r\n' +
+    '  "Trang Facebook và tin nhắn Messenger.": "Facebook Page and Messenger messages.",\r\n' +
+    '  "Tài khoản Instagram chuyên nghiệp và tin nhắn.": "Professional Instagram account and messages.",\r\n' +
+    '  "Có thể kết nối bằng tài khoản Meta hoặc đăng nhập vào công cụ quản lý của Meta trên máy này.": "Connect with your Meta account or sign in to Meta Business Suite on this computer.",\r\n' +
+    '  "Kênh Telegram riêng của cửa hàng.": "A dedicated Telegram channel for this shop.",\r\n' +
+    '  "Nhập mã kết nối do Telegram cấp để hệ thống nhận tin nhắn tự động.": "Enter the connection code from Telegram so the system can receive messages automatically.",\r\n' +
+    `  "Kênh Zalo chính thức của cửa hàng.": "This shop's official Zalo channel.",\r\n` +
+    '  "Dùng mã kết nối Zalo để nhận tin nhắn. Nếu dùng tài khoản cá nhân, hãy nhập mã bắt đầu bằng": "Use the Zalo connection code to receive messages. For a personal account, enter a code beginning with",\r\n' +
+    '  "Dùng ứng dụng trên máy cửa hàng để nhận tin nhắn TikTok.": "Use the app on this computer to receive TikTok messages.",\r\n' +
+    '  "Nhập mã kết nối tạm thời; tài khoản vẫn đăng nhập trên máy chạy ứng dụng.": "Enter a temporary connection code. The account stays signed in on the computer running the app.",\r\n' +
+    '  "Tin nhắn và chăm sóc khách hàng trên Shopee.": "Shopee messages and customer support.",\r\n' +
+    '  "Nhận tin nhắn Shopee trên máy này. Đăng nhập trong cửa sổ trình duyệt do ứng dụng mở.": "Receive Shopee messages on this computer. Sign in in the browser window opened by the app.",\r\n' +
+    '  "Kết nối kênh bán hàng": "Connect a sales channel",\r\n' +
+    '  "KÊNH CỦA CỬA HÀNG": "SHOP CHANNEL",\r\n' +
+    '  "Kết nối Facebook": "Connect Facebook",\r\n' +
+    '  "Kết nối Instagram": "Connect Instagram",\r\n' +
+    '  "Kết nối Facebook và Instagram": "Connect Facebook and Instagram",\r\n' +
+    '  "Mã kết nối chỉ dùng cho cửa hàng này và không chia sẻ với cửa hàng khác.": "This connection code is only for this shop and is not shared with other shops.",\r\n' +
+    '  "Hướng dẫn kết nối Telegram và Zalo. Quét mã để mở trang hướng dẫn.": "Telegram and Zalo setup instructions. Scan the code to open the setup guide.",\r\n' +
+    '  "Mã kết nối": "Connection code",\r\n' +
+    '  "Mã quét để mở hướng dẫn Zalo": "Scan to open the Zalo guide",\r\n' +
+    '  "Mã quét để mở hướng dẫn Telegram": "Scan to open the Telegram guide",\r\n' +
+    '  "Hướng dẫn kết nối Zalo và Telegram.": "Instructions for connecting Zalo and Telegram.",\r\n' +
+    '  "Mở hướng dẫn Zalo": "Open the Zalo guide",\r\n' +
+    '  "Mở hướng dẫn Telegram": "Open the Telegram guide",\r\n' +
+    '  "Không thể kết nối thêm": "You cannot connect more channels",\r\n' +
+    '  "Đang kiểm tra...": "Checking...",\r\n' +
+    '  "Kiểm tra và kết nối": "Check and connect",\r\n' +
+    `  "Kênh Zalo chính thức của cửa hàng.": "This shop's official Zalo channel.",\r\n` +
+    '  "Mở trang tạo kênh Telegram.": "Open the Telegram channel setup page.",\r\n' +
+    '  "Nhập /newbot rồi làm theo hướng dẫn.": "Enter /newbot and follow the instructions.",\r\n' +
+    '  "Chưa có kênh Zalo nào được kết nối.": "No Zalo channel is connected yet.",\r\n' +
+    '  "Chưa có kênh Telegram nào được kết nối.": "No Telegram channel is connected yet.",\r\n' +
+    '  "Đang nhận tin": "Receiving messages",\r\n' +
+    '  "Đã ngắt nhận tin": "Message delivery is disconnected",\r\n' +
+    '  "Cần kiểm tra việc nhận tin": "Message delivery needs attention",\r\n' +
+    '  "Zalo đã kết nối và đang nhận tin.": "Zalo is connected and receiving messages.",\r\n' +
+    '  "Telegram đã kết nối và đang nhận tin.": "Telegram is connected and receiving messages.",\r\n' +
+    '  "Tài khoản Meta đã kết nối. Ngắt kết nối tại đây chỉ gỡ quyền Meta; ứng dụng trên máy này vẫn hoạt động.": "Your Meta account is connected. Disconnecting here only removes Meta access; the app on this computer will keep running.",\r\n' +
+    '  "Ngắt quyền Meta": "Remove Meta access",\r\n' +
+    '  "Đang ngắt kết nối…": "Disconnecting…",\r\n' +
+    '  "Ngắt kết nối Meta? Facebook và Instagram dùng chung quyền truy cập này.": "Disconnect Meta? Facebook and Instagram share this account access.",\r\n' +
+    '  "Ngắt kết nối Meta": "Disconnect Meta",\r\n' +
+    '  "Đã ngắt kết nối Meta.": "Meta disconnected.",\r\n' +
+    '  "Chưa thể ngắt kết nối Meta. Vui lòng thử lại sau.": "Could not disconnect Meta. Please try again later.",\r\n' +
+    '  "NHẬN TIN NHẮN TRÊN MÁY NÀY": "RECEIVE MESSAGES ON THIS COMPUTER",\r\n' +
+    '  "Bạn chỉ cần đăng nhập. Tài khoản được lưu trên máy chạy ứng dụng.": "Just sign in. Your account is stored on the computer running the app.",\r\n' +
+    '  "Công cụ quản lý của Meta": "Meta Business Suite",\r\n' +
+    '  "Đăng nhập một lần. Hệ thống sẽ tải các tin nhắn đã có, tự tiếp tục nếu bị gián đoạn, rồi nhận tin mới. Việc này chạy nền nên bạn vẫn nhận được tin nh'... 933658 more characters
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/crm-shell.test.mjs:547:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '<script setup>\r\nimport {\r\n  computed,\r\n  onMounted,\r\n  onUnmounted,\r\n  ref,\r\n  nextTick,\r\n  watch,\r\n} from "vue";\r\n\r\nimport "./style.css";\r\nimport SignupBrandScene from "./SignupBrandScene.vue";\r\nimport { channelLabel } from "./channel-utils.js";\r\nimport { safeProductImageUrl, safeProductUrl } from "./product-url.js";\r\nimport { customerTagDisplayName, customerTagNames, matchesCustomerTagFilter } from "./customer-utils.js";\r\nimport { filterConversationsForCustomer } from "./ticket-utils.js";\r\nimport { displayAttachments, displayMessageText, resolveMediaUrl, visibleConversationMessages } from "./media-utils.js";\r\nimport { captureMessageScrollPosition, restoreMessageScrollPosition, scrollMessageContainerToLatest } from "./chat-scroll.js";\r\nimport { outboundMediaAccept, outboundMediaTypes, supportsOutboundMedia } from "./media-capabilities.js";\r\nimport { getInboxChannels } from "./inbox-utils.js";\r\nimport { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxViews } from "./inbox-view-utils.js";\r\nimport { conversationBotStatus, timelineActor } from "./timeline-utils.js";\r\nimport { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";\r\nimport { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";\r\nimport { apiFetch, AUTH_EXPIRED_EVENT } from "./api-client.js";\r\nimport { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";\r\nimport { formatDate, formatDateTime, formatMoney, locale as uiLocale, setLocale as setUiLocale, t } from "./i18n.js";\r\nimport QRCode from "qrcode";\r\nimport { buildVietQrPreviewPayload } from "./vietqr-preview.js";\r\nimport { mergeVietnamBankOptions } from "./vietnam-banks.js";\r\nimport IndustryModules from "./IndustryModules.vue";\r\nimport WorkQueue from "./WorkQueue.vue";\r\nimport DataRagPreview from "./DataRagPreview.vue";\r\nimport MarketingLanding from "./MarketingLanding.vue";\r\nimport BrandLogo from "./BrandLogo.vue";\r\nimport ServicePricing from "./ServicePricing.vue";\r\nimport ServiceCheckout from "./ServiceCheckout.vue";\r\nimport ConnectionSupport from "./ConnectionSupport.vue";\r\nimport PlatformSupport from "./PlatformSupport.vue";\r\nimport PlatformOtpEmail from "./PlatformOtpEmail.vue";\r\nimport PlatformPaymentSettings from "./PlatformPaymentSettings.vue";\r\nimport PlatformBackups from "./PlatformBackups.vue";\r\nimport PlatformKnowledge from "./PlatformKnowledge.vue";\r\nimport PlatformTeam from "./PlatformTeam.vue";\r\nimport ServiceAdvisor from "./ServiceAdvisor.vue";\r\nimport { ADMIN_SECTIONS, adminSectionFromHash, adminSectionHash, newestShopsFirst, subscriptionRegistrationDate } from "./admin-navigation.js";\r\nimport { planChangeKind } from "./checkout-utils.js";\r\nimport {\r\n  channelCapacityState,\r\n  connectionStateMeta,\r\n  latestPayment,\r\n  paymentStatusMeta,\r\n  platformQuotaCards,\r\n  subscriptionStatusMeta,\r\n} from "./platform-admin-utils.js";\r\nimport { platformAuditActionLabel, platformAuditResourceLabel } from "./platform-audit-labels.js";\r\n\r\n// Keep browser requests same-origin by default. Vite proxies /api to the\r\n// backend container in development, and an Ngrok frontend address therefore\r\n// works without hard-coding a user\'s localhost API origin.\r\nconst API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";\r\n\r\n// Convert technical/network failures into a short message that is useful to\r\n// a shop owner.  The original error is still available through `cause` and\r\n// console logging for diagnostics; it is never shown in the shop UI.\r\nfunction friendlyErrorMessage(error, fallback = "Chưa thể hoàn tất yêu cầu. Vui lòng thử lại sau.") {\r\n  const rawMessage = error?.message\r\n    || (typeof error === "string" ? error : error?.detail?.message || error?.detail || "");\r\n  const message = String(rawMessage).trim();\r\n  if (!message) return fallback;\r\n  if (/failed\\b|networkerror|network request failed|load failed|connection refused|timeout|exception|(?:^|\\s)http\\s*\\d{3}|internal server|backend|máy chủ|server|smtp|database|sql|traceback|\\bapi\\b|oauth|webhook|access[_ -]?token|\\btoken\\b/i.test(message)) {\r\n    return fallback;\r\n  }\r\n  return message;\r\n}\r\n\r\n// Only localize copy authored by this screen. API details and customer content\r\n// are not translation keys, so unknown errors use a localized safe fallback.\r\nconst crmEnglishCopy = {\r\n  "Email này không khớp với tài khoản trong hệ thống. Hãy kiểm tra lại email và mã shop.": "This email does not match an account in the system. Check the email address and shop code.",\r\n  "Quản lý các kênh Facebook, Instagram, Telegram, Zalo, TikTok và Shopee của cửa hàng này.": "Manage this shop\'s Facebook, Instagram, Telegram, Zalo, TikTok, and Shopee channels.",\r\n  "Mỗi cửa hàng chỉ xem thông tin kết nối, tin nhắn và lịch sử của chính mình. Dữ liệu luôn được giữ riêng.": "Each shop only sees its own connection details, messages, and history. Data always stays separate.",\r\n  "Khách quan tâm": "Interested customers",\r\n  "Lượt kết nối đang giữ": "Channel slots in use",\r\n  "Kênh cần kết nối lại vẫn giữ lượt; ngắt kết nối để giải phóng.": "Channels that need reconnecting still use a slot; disconnect them to free it.",\r\n  "Cần ghép nối": "Pairing required",\r\n  "Đã lưu, chưa hoạt động": "Saved, not active",\r\n  "Gói hiện tại": "Current plan",\r\n  "Đang hoạt động": "Active",\r\n  "ĐANG HOẠT ĐỘNG": "ACTIVE",\r\n  "Không hoạt động": "Inactive",\r\n  "Đã kết nối": "Connected",\r\n  "Đang chờ kết nối": "Waiting to connect",\r\n  "Chưa kết nối": "Not connected",\r\n  "Cần kiểm tra": "Needs attention",\r\n  "Trang Facebook và tin nhắn Messenger.": "Facebook Page and Messenger messages.",\r\n  "Tài khoản Instagram chuyên nghiệp và tin nhắn.": "Professional Instagram account and messages.",\r\n  "Có thể kết nối bằng tài khoản Meta hoặc đăng nhập vào công cụ quản lý của Meta trên máy này.": "Connect with your Meta account or sign in to Meta Business Suite on this computer.",\r\n  "Kênh Telegram riêng của cửa hàng.": "A dedicated Telegram channel for this shop.",\r\n  "Nhập mã kết nối do Telegram cấp để hệ thống nhận tin nhắn tự động.": "Enter the connection code from Telegram so the system can receive messages automatically.",\r\n  "Kênh Zalo chính thức của cửa hàng.": "This shop\'s official Zalo channel.",\r\n  "Dùng mã kết nối Zalo để nhận tin nhắn. Nếu dùng tài khoản cá nhân, hãy nhập mã bắt đầu bằng": "Use the Zalo connection code to receive messages. For a personal account, enter a code beginning with",\r\n  "Dùng ứng dụng trên máy cửa hàng để nhận tin nhắn TikTok.": "Use the app on this computer to receive TikTok messages.",\r\n  "Nhập mã kết nối tạm thời; tài khoản vẫn đăng nhập trên máy chạy ứng dụng.": "Enter a temporary connection code. The account stays signed in on the computer running the app.",\r\n  "Tin nhắn và chăm sóc khách hàng trên Shopee.": "Shopee messages and customer support.",\r\n  "Nhận tin nhắn Shopee trên máy này. Đăng nhập trong cửa sổ trình duyệt do ứng dụng mở.": "Receive Shopee messages on this computer. Sign in in the browser window opened by the app.",\r\n  "Kết nối kênh bán hàng": "Connect a sales channel",\r\n  "KÊNH CỦA CỬA HÀNG": "SHOP CHANNEL",\r\n  "Kết nối Facebook": "Connect Facebook",\r\n  "Kết nối Instagram": "Connect Instagram",\r\n  "Kết nối Facebook và Instagram": "Connect Facebook and Instagram",\r\n  "Mã kết nối chỉ dùng cho cửa hàng này và không chia sẻ với cửa hàng khác.": "This connection code is only for this shop and is not shared with other shops.",\r\n  "Hướng dẫn kết nối Telegram và Zalo. Quét mã để mở trang hướng dẫn.": "Telegram and Zalo setup instructions. Scan the code to open the setup guide.",\r\n  "Mã kết nối": "Connection code",\r\n  "Mã quét để mở hướng dẫn Zalo": "Scan to open the Zalo guide",\r\n  "Mã quét để mở hướng dẫn Telegram": "Scan to open the Telegram guide",\r\n  "Hướng dẫn kết nối Zalo và Telegram.": "Instructions for connecting Zalo and Telegram.",\r\n  "Mở hướng dẫn Zalo": "Open the Zalo guide",\r\n  "Mở hướng dẫn Telegram": "Open the Telegram guide",\r\n  "Không thể kết nối thêm": "You cannot connect more channels",\r\n  "Đang kiểm tra...": "Checking...",\r\n  "Kiểm tra và kết nối": "Check and connect",\r\n  "Kênh Zalo chính thức của cửa hàng.": "This shop\'s official Zalo channel.",\r\n  "Mở trang tạo kênh Telegram.": "Open the Telegram channel setup page.",\r\n  "Nhập /newbot rồi làm theo hướng dẫn.": "Enter /newbot and follow the instructions.",\r\n  "Chưa có kênh Zalo nào được kết nối.": "No Zalo channel is connected yet.",\r\n  "Chưa có kênh Telegram nào được kết nối.": "No Telegram channel is connected yet.",\r\n  "Đang nhận tin": "Receiving messages",\r\n  "Đã ngắt nhận tin": "Message delivery is disconnected",\r\n  "Cần kiểm tra việc nhận tin": "Message delivery needs attention",\r\n  "Zalo đã kết nối và đang nhận tin.": "Zalo is connected and receiving messages.",\r\n  "Telegram đã kết nối và đang nhận tin.": "Telegram is connected and receiving messages.",\r\n  "Tài khoản Meta đã kết nối. Ngắt kết nối tại đây chỉ gỡ quyền Meta; ứng dụng trên máy này vẫn hoạt động.": "Your Meta account is connected. Disconnecting here only removes Meta access; the app on this computer will keep running.",\r\n  "Ngắt quyền Meta": "Remove Meta access",\r\n  "Đang ngắt kết nối…": "Disconnecting…",\r\n  "Ngắt kết nối Meta? Facebook và Instagram dùng chung quyền truy cập này.": "Disconnect Meta? Facebook and Instagram share this account access.",\r\n  "Ngắt kết nối Meta": "Disconnect Meta",\r\n  "Đã ngắt kết nối Meta.": "Meta disconnected.",\r\n  "Chưa thể ngắt kết nối Meta. Vui lòng thử lại sau.": "Could not disconnect Meta. Please try again later.",\r\n  "NHẬN TIN NHẮN TRÊN MÁY NÀY": "RECEIVE MESSAGES ON THIS COMPUTER",\r\n  "Bạn chỉ cần đăng nhập. Tài khoản được lưu trên máy chạy ứng dụng.": "Just sign in. Your account is stored on the computer running the app.",\r\n  "Công cụ quản lý của Meta": "Meta Business Suite",\r\n  "Đăng nhập một lần. Hệ thống sẽ tải các tin nhắn đã có, tự tiếp tục nếu bị gián đoạn, rồi nhận tin mới. Việc này chạy nền nên bạn vẫn nhận được tin nh'... 933658 more characters,
+    expected: /platform\/audit-logs/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at tests\crm-shell.test.mjs:861:1
+✖ Zalo has its own channel label and branded icon fallback (0.4895ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /zalo:\s*["']ZALO["']/. Input:
+
+  'import { t } from "./i18n.js";\r\n' +
+    '\r\n' +
+    'export const CHANNEL_LABELS = {\r\n' +
+    '  facebook: "Facebook",\r\n' +
+    '  instagram: "Instagram",\r\n' +
+    '  telegram: "Telegram",\r\n' +
+    '  zalo: "Zalo",\r\n' +
+    '  tiktok: "TikTok",\n' +
+    '  shopee: "Shopee",\r\n' +
+    '};\n' +
+    '\r\n' +
+    'export function channelLabel(channel) {\r\n' +
+    '  const normalized = String(channel || "").toLowerCase();\r\n' +
+    '  return CHANNEL_LABELS[normalized] || (normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : t("Kênh khác"));\r\n' +
+    '}\r\n'
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/crm-shell.test.mjs:862:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'import { t } from "./i18n.js";\r\n\r\nexport const CHANNEL_LABELS = {\r\n  facebook: "Facebook",\r\n  instagram: "Instagram",\r\n  telegram: "Telegram",\r\n  zalo: "Zalo",\r\n  tiktok: "TikTok",\n  shopee: "Shopee",\r\n};\n\r\nexport function channelLabel(channel) {\r\n  const normalized = String(channel || "").toLowerCase();\r\n  return CHANNEL_LABELS[normalized] || (normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : t("Kênh khác"));\r\n}\r\n',
+    expected: /zalo:\s*["']ZALO["']/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at tests\i18n.test.mjs:89:1
+✖ English covers all Vietnamese static Vue copy and localizes dates and currency (1625.1095ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+  + [
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Mức quan tâm shop ghi nhận (giảm dần theo thời gian):',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Mã giao dịch đã nhận tiền ·',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Kiểm tra tiền đã vào tài khoản trước khi xác nhận. Mã giao dịch trùng không được cộng hai lần.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa có giao dịch thanh toán.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: TRẠNG THÁI KÊNH',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Xem từng shop đã liên kết với nền tảng nào và các kết nối cần kiểm tra. Không hiển thị thông tin đăng nhập.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Đang kiểm tra kết nối của các shop...',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa có shop nào để kiểm tra.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa đọc được kết nối của shop. Vui lòng kiểm tra lại.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Shop chưa thiết lập kết nối nào.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Lỗi kết nối gần đây',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa ghi nhận lỗi kết nối gần đây.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: NHẬT KÝ',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Ghi lại thao tác quản lý cửa hàng, gói dịch vụ, thanh toán và dữ liệu.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Khách quan tâm',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Theo dõi sản phẩm khách đang cân nhắc và tiến độ tư vấn.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Ghi nhận khách quan tâm',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: placeholder=Ví dụ: Quan tâm combo nồi chiên',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Sản phẩm khách quan tâm',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa chọn sản phẩm',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Mức độ quan tâm (%)',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chọn sản phẩm khách đang quan tâm và đánh giá mức quan tâm từ 0–100%. Ghi nhận này giúp sản phẩm được ưu tiên hơn trong gợi ý ở hồ sơ khách hàng 360; mức ưu tiên giảm dần theo thời gian và chỉ áp dụng khi khách cho phép cá nhân hóa.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Đang tải danh sách khách quan tâm...',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa có ghi nhận khách quan tâm nào.',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Mức quan tâm',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Sản phẩm:',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Trợ lý bán hàng',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\ConnectionSupport.vue: aria-label=Nền tảng hỗ trợ',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\ConnectionSupport.vue: aria-label=Kênh được hỗ trợ',
+  +   'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\ConnectionSupport.vue: Phản hồi từ đội hỗ trợ'
+  + ]
+  - []
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/i18n.test.mjs:149:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Mức quan tâm shop ghi nhận (giảm dần theo thời gian):', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Mã giao dịch đã nhận tiền ·', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Kiểm tra tiền đã vào tài khoản trước khi xác nhận. Mã giao dịch trùng không được cộng hai lần.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa có giao dịch thanh toán.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: TRẠNG THÁI KÊNH', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Xem từng shop đã liên kết với nền tảng nào và các kết nối cần kiểm tra. Không hiển thị thông tin đăng nhập.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Đang kiểm tra kết nối của các shop...', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa có shop nào để kiểm tra.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa đọc được kết nối của shop. Vui lòng kiểm tra lại.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Shop chưa thiết lập kết nối nào.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Lỗi kết nối gần đây', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa ghi nhận lỗi kết nối gần đây.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: NHẬT KÝ', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Ghi lại thao tác quản lý cửa hàng, gói dịch vụ, thanh toán và dữ liệu.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Khách quan tâm', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Theo dõi sản phẩm khách đang cân nhắc và tiến độ tư vấn.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Ghi nhận khách quan tâm', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: placeholder=Ví dụ: Quan tâm combo nồi chiên', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Sản phẩm khách quan tâm', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa chọn sản phẩm', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Mức độ quan tâm (%)', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chọn sản phẩm khách đang quan tâm và đánh giá mức quan tâm từ 0–100%. Ghi nhận này giúp sản phẩm được ưu tiên hơn trong gợi ý ở hồ sơ khách hàng 360; mức ưu tiên giảm dần theo thời gian và chỉ áp dụng khi khách cho phép cá nhân hóa.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Đang tải danh sách khách quan tâm...', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Chưa có ghi nhận khách quan tâm nào.', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Mức quan tâm', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Sản phẩm:', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\App.vue: Trợ lý bán hàng', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\ConnectionSupport.vue: aria-label=Nền tảng hỗ trợ', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\ConnectionSupport.vue: aria-label=Kênh được hỗ trợ', 'C:\\Users\\Administrator\\Documents\\Codex\\2026-09-03\\referenced-chatgpt-conversation-this-is-an\\work\\smart-merchant-hub\\frontend\\src\\ConnectionSupport.vue: Phản hồi từ đội hỗ trợ' ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at tests\inbox-utils.test.mjs:6:1
+✖ inbox channel list includes all supported platforms and counts conversations (3.9296ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+
+    [
+      {
+        count: 0,
+        label: 'Facebook',
+        value: 'facebook'
+  ...
+        count: 2,
+  +     label: 'Zalo',
+  -     label: 'ZALO',
+        value: 'zalo'
+      },
+      {
+        count: 0,
+        label: 'TikTok',
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/inbox-utils.test.mjs:14:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { value: 'facebook', label: 'Facebook', count: 0 }, { value: 'instagram', label: 'Instagram', count: 0 }, { value: 'telegram', label: 'Telegram', count: 1 }, { value: 'zalo', label: 'Zalo', count: 2 }, { value: 'tiktok', label: 'TikTok', count: 0 }, { value: 'shopee', label: 'Shopee', count: 1 } ],
+    expected: [ { value: 'facebook', label: 'Facebook', count: 0 }, { value: 'instagram', label: 'Instagram', count: 0 }, { value: 'telegram', label: 'Telegram', count: 1 }, { value: 'zalo', label: 'ZALO', count: 2 }, { value: 'tiktok', label: 'TikTok', count: 0 }, { value: 'shopee', label: 'Shopee', count: 1 } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at tests\inbox-utils.test.mjs:24:1
+✖ inbox channel list appends an active provider not in the default catalog (0.5334ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'Whatsapp'
+  - 'WHATSAPP'
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/inbox-utils.test.mjs:28:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Whatsapp',
+    expected: 'WHATSAPP',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests\platform-otp-email.test.mjs:41:1
+✖ failed save clears password, renders alert and releases busy controls (19.3878ms)
+  AssertionError [ERR_ASSERTION]: The input was expected to not match the regular expression /<fieldset disabled|FAKE-TEST-ONLY/. Input:
+
+  '<article id="admin-otp-email" class="platform-admin-panel otp-email-panel"><div class="platform-admin-panel-heading"><div><span class="card-eyebrow">EMAIL HỆ THỐNG</span><h3>Email gửi OTP</h3><p>Cấu hình một lần. Mã xác minh được tự động gửi đến email mà khách nhập khi đăng ký.</p></div><button type="button" class="settings-refresh">Tải lại</button></div><p role="alert" class="settings-notice team-error">Cấu hình chưa hợp lệ.</p><!--v-if--><form><fieldset disabled><label class="otp-email-toggle"><input type="checkbox" checked> Bật Gmail gửi OTP chung cho hệ thống</label><div class="otp-email-fields"><label>Gmail gửi<input type="email" autocomplete="off" required placeholder="email-he-thong@gmail.com" value="sender@example.test"></label><label>Email người gửi<input type="email" autocomplete="off" required placeholder="Cùng địa chỉ Gmail gửi" value="sender@example.test"></label><label>Tên người gửi<input maxlength="120" required value="Test sender"></label><label>Mật khẩu ứng dụng Gmail<input type="password" autocomplete="new-password" placeholder="Đã lưu — để trống để giữ nguyên" aria-describedby="otp-password-help" value></label></div><p id="otp-password-help">Dùng mật khẩu ứng dụng, không dùng mật khẩu đăng nhập Gmail. Mật khẩu được mã hóa và không hiển thị lại.</p><p>Máy chủ Gmail: smtp.gmail.com · Cổng 587 · STARTTLS. Bật xác minh 2 bước trong Google, sau đó tạo <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">mật khẩu ứng dụng</a>.</p><button class="primary-btn" type="submit">Lưu cấu hình email</button></fieldset></form></article>'
+
+      at TestContext.<anonymous> (file:///C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/frontend/tests/platform-otp-email.test.mjs:51:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '<article id="admin-otp-email" class="platform-admin-panel otp-email-panel"><div class="platform-admin-panel-heading"><div><span class="card-eyebrow">EMAIL HỆ THỐNG</span><h3>Email gửi OTP</h3><p>Cấu hình một lần. Mã xác minh được tự động gửi đến email mà khách nhập khi đăng ký.</p></div><button type="button" class="settings-refresh">Tải lại</button></div><p role="alert" class="settings-notice team-error">Cấu hình chưa hợp lệ.</p><!--v-if--><form><fieldset disabled><label class="otp-email-toggle"><input type="checkbox" checked> Bật Gmail gửi OTP chung cho hệ thống</label><div class="otp-email-fields"><label>Gmail gửi<input type="email" autocomplete="off" required placeholder="email-he-thong@gmail.com" value="sender@example.test"></label><label>Email người gửi<input type="email" autocomplete="off" required placeholder="Cùng địa chỉ Gmail gửi" value="sender@example.test"></label><label>Tên người gửi<input maxlength="120" required value="Test sender"></label><label>Mật khẩu ứng dụng Gmail<input type="password" autocomplete="new-password" placeholder="Đã lưu — để trống để giữ nguyên" aria-describedby="otp-password-help" value></label></div><p id="otp-password-help">Dùng mật khẩu ứng dụng, không dùng mật khẩu đăng nhập Gmail. Mật khẩu được mã hóa và không hiển thị lại.</p><p>Máy chủ Gmail: smtp.gmail.com · Cổng 587 · STARTTLS. Bật xác minh 2 bước trong Google, sau đó tạo <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">mật khẩu ứng dụng</a>.</p><button class="primary-btn" type="submit">Lưu cấu hình email</button></fieldset></form></article>',
+    expected: /<fieldset disabled|FAKE-TEST-ONLY/,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }

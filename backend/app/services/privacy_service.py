@@ -27,6 +27,7 @@ from app.models.recommendation_quality_gate import RecommendationShopModelState
 from app.models.sales import Order
 from app.models.saas import DataLifecycleRequest
 from app.models.experimentation import BanditDecision
+from app.services.rfm_segments import RFM_CLUSTER_ALGORITHM
 
 
 def customer_memory_opt_out_reply(db: Session, business_id: int, customer_id: int | None, query: str) -> str | None:
@@ -130,7 +131,12 @@ def _invalidate_consent_derived_models(db: Session, business_id: int) -> None:
             runs = db.scalars(select(RecommendationTrainingRun).where(
                 RecommendationTrainingRun.business_id == business_id,
                 RecommendationTrainingRun.algorithm.in_(
-                    (LIGHTFM_ALGORITHM, LIVE_RERANKER_ALGORITHM, *LEGACY_LIGHTFM_ALGORITHMS)
+                    (
+                        LIGHTFM_ALGORITHM,
+                        LIVE_RERANKER_ALGORITHM,
+                        *LEGACY_LIGHTFM_ALGORITHMS,
+                        RFM_CLUSTER_ALGORITHM,
+                    )
                 ),
                 RecommendationTrainingRun.status == "succeeded",
             )).all()

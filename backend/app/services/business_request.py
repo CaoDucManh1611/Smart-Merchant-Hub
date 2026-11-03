@@ -26,14 +26,14 @@ def current_offerings(db,business_id,profile=None):
         kind=meta.get("offering_type",profile.default_offering_type)
         if kind not in {"goods","service","rental"}: kind=profile.default_offering_type
         result.append({"ref":f"product:{product.id}","name":product.name,"sku":product.sku,"kind":kind,
-            "price":str(product.price),"billing_unit":meta.get("billing_unit") or profile.default_billing_unit,
+            "price":str(product.price),"billing_unit":meta.get("billing_unit") or profile.default_billing_unit or ("lần" if kind=="service" else None),
             "available":None if kind=="service" else max(0,int(product.stock_quantity or 0)-int(product.reserved_quantity or 0)),
-            "availability_basis":"staff-reviewed schedule" if kind=="service" else "current unreserved inventory",
+            "availability_basis":"staff-reviewed schedule" if kind=="service" else "current inventory count; date-specific rental availability is not checked" if kind=="rental" else "current unreserved inventory",
             "description":(product.description or "")[:1000]})
     services=db.query(AppointmentService).filter(AppointmentService.business_id==business_id,AppointmentService.is_active.is_(True)).order_by(AppointmentService.id).limit(100).all() if "appointments" in modules else []
     for service in services:
         result.append({"ref":f"service:{service.id}","name":service.name,"kind":"service","price":str(service.price),
-            "billing_unit":profile.default_billing_unit,"duration_minutes":service.duration_minutes,
+            "billing_unit":profile.default_billing_unit or "lần","duration_minutes":service.duration_minutes,
             "available":None,"availability_basis":"staff-reviewed schedule","description":(service.description or "")[:1000]})
     return result
 

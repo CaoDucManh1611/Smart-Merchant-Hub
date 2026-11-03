@@ -11,6 +11,8 @@ from app.models.sales import Order, OrderItem
 from app.services.order_metrics import completed_order_conditions, net_order_amount_expression
 
 RFM_RULES_VERSION = "rfm_percentile_v1"
+RFM_CLUSTER_MODEL_VERSION = "shop_rfm_minibatch_kmeans_v1"
+RFM_CLUSTER_ALGORITHM = "shop_scoped_rfm_minibatch_kmeans"
 
 RFM_GROUPS = (
     "RFM · Khách mới",

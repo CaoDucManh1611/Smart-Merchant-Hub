@@ -28,6 +28,7 @@ from app.services.shop_bank_transfer import (
     save_shop_bank_transfer,
     validate_shop_bank_transfer,
 )
+from app.services.industry_rfm_prior import industry_rfm_prior_status
 from app.models.business import User
 from app.tenancy.context import TenantContext
 from app.tenancy.crm_session import get_tenant_db
@@ -41,6 +42,9 @@ router = APIRouter(prefix="/workspace")
 class WorkspaceModulesUpdate(BaseModel):
     business_type: Literal["retail", "services", "b2b", "mixed"]
     enabled_modules: list[Literal["retail", "appointments", "projects"]] = Field(max_length=3)
+    recommendation_industry: Literal[
+        "general_retail", "fashion", "grocery", "ecommerce", "services", "b2b", "mixed",
+    ] | None = None
 
 
 class ShopOtpEmailUpdate(BaseModel):
@@ -188,6 +192,11 @@ def read_modules(
     config = get_workspace_config(db, tenant.business_id)
     return {
         **config,
+        "rfm_model": {
+            **industry_rfm_prior_status(),
+            "selected_industry": config["recommendation_industry"],
+            "shop_model_minimum_consented_buyers": 20,
+        },
         "modules": [
             {"id": "core", "name": "Lõi CRM", "available": True, "enabled": True},
             {"id": "retail", "name": "Bán lẻ", "available": True, "enabled": "retail" in config["enabled_modules"]},
@@ -207,6 +216,7 @@ def update_modules(
     config = save_workspace_config(db, tenant.business_id, {
         "business_type": payload.business_type,
         "enabled_modules": payload.enabled_modules,
+        "recommendation_industry": payload.recommendation_industry,
     })
     db.commit()
     return config

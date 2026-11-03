@@ -455,6 +455,24 @@ async def _conversation_rows(page) -> list[dict]:
                 || Math.abs(a.r.y - rowRect.y) - Math.abs(b.r.y - rowRect.y));
             return candidates[0] || null;
           };
+          const threadIdFor = row => {
+            const nodes = [row, ...row.querySelectorAll('[data-thread-id],[data-conversation-id],[data-selected-item-id]')];
+            for (const node of nodes) {
+              for (const attr of ['data-thread-id', 'data-conversation-id', 'data-selected-item-id']) {
+                const value = (node.getAttribute(attr) || '').trim();
+                if (value) return value.slice(0, 255);
+              }
+            }
+            for (const link of row.querySelectorAll('a[href]')) {
+              try {
+                const url = new URL(link.href, location.href);
+                const value = url.searchParams.get('selected_item_id')
+                  || url.searchParams.get('thread_id') || url.searchParams.get('conversation_id');
+                if (value) return value.slice(0, 255);
+              } catch {}
+            }
+            return '';
+          };
           return [...document.querySelectorAll('[role="presentation"]')].map((e, index) => {
             const r = e.getBoundingClientRect();
             const text = (e.innerText || '').trim();
@@ -467,13 +485,13 @@ async def _conversation_rows(page) -> list[dict]:
               .replace(/(?:'s)?\s*(?:profile picture|profile photo|ảnh đại diện)$/i, '').trim();
             // The row title names the customer; avatar alt text can be a Meta action label.
             const displayName = [lines[0] || '', altName].find(value => value && !ignored.has(value.toLocaleLowerCase())) || '';
-            return {e, index, r, text, displayName, avatarUrl: avatar?.url || ''};
+            return {e, index, r, text, displayName, avatarUrl: avatar?.url || '', threadId: threadIdFor(e)};
           }).filter(x => x.text.length > 4 && x.r.width > box.width * 0.8
             && x.r.height >= 55 && x.r.height <= 180
             && x.r.x >= box.x - 4 && x.r.x < box.x + box.width * 0.1
             && x.r.y >= box.y - 3 && x.r.y < box.bottom
             && getComputedStyle(x.e).cursor === 'pointer')
-          .map(x => ({index: x.index, label: x.text.slice(0, 1000), displayName: x.displayName.slice(0, 255), avatarUrl: x.avatarUrl}));
+          .map(x => ({index: x.index, label: x.text.slice(0, 1000), displayName: x.displayName.slice(0, 255), avatarUrl: x.avatarUrl, threadId: x.threadId}));
         }"""
     )
 
@@ -1105,6 +1123,8 @@ async def _visible_message_rows(page, channel_type: str, thread_id: str, display
                 if (node === child) break;
               }
               let text = (messageNode.innerText || '').trim();
+              const audio = messageNode.querySelector('audio,[data-testid*="audio" i],[data-testid*="voice" i],[aria-label*="voice" i],[aria-label*="audio" i],[aria-label*="âm thanh" i],[aria-label*="thoại" i]');
+              const video = messageNode.querySelector('video');
               const photo = [...messageNode.querySelectorAll('img')].find(node => {
                 const r = node.getBoundingClientRect();
                 try {
@@ -1113,16 +1133,30 @@ async def _visible_message_rows(page, channel_type: str, thread_id: str, display
                     && (u.hostname.endsWith('.fbcdn.net') || u.hostname.endsWith('.cdninstagram.com'));
                 } catch { return false; }
               });
-              if (!id || (!text && !photo)) continue;
+              const mediaNode = video || audio;
+              const messageType = video ? 'video' : audio ? 'audio' : photo ? 'image' : 'text';
+              const mediaCandidate = mediaNode?.currentSrc || mediaNode?.src
+                || mediaNode?.querySelector('source')?.src || '';
+              let mediaUrl = '';
+              try {
+                const media = new URL(mediaCandidate);
+                if (media.protocol === 'https:' && /(^|\.)(fbcdn\.net|cdninstagram\.com|fbsbx\.com)$/.test(media.hostname)) mediaUrl = media.href;
+              } catch {}
+              if (!id || (!text && !photo && !audio && !video)) continue;
               const textNode = [...messageNode.querySelectorAll('span,div')]
                 .filter(e => e.children.length === 0 && (e.innerText || '').trim())
                 .sort((a, b) => (b.innerText || '').length - (a.innerText || '').length)[0];
-              const bubble = (photo || textNode || marker).getBoundingClientRect();
+              const bubbleNode = [mediaNode, photo, textNode, marker].find(node => {
+                if (!node) return false;
+                const rect = node.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+              }) || marker;
+              const bubble = bubbleNode.getBoundingClientRect();
               const incoming = bubble.left + bubble.width / 2 < rr.left + rr.width / 2;
               if (!incoming) text = text.replace(/\s*(?:(?:Đã gửi|Đã xem|Sent|Seen)\s*)?Người gửi\s*:\s*[\s\S]*$/iu, '').trim();
-              if (!text && !photo) continue;
+              if (!text && !photo && !audio && !video) continue;
               const perMessageTimestamp = timestampFrom(messageNode, marker);
-              result.push({messageId: id, message: text.slice(0, 10000), messageType: photo ? 'image' : 'text', mediaUrl: photo ? (photo.currentSrc || photo.src) : '', direction: incoming ? 'inbound' : 'outbound', timestamp: perMessageTimestamp, dateLabel: dateLabelFor(marker) || dateLabel, bubbleX: Math.round(bubble.left), bubbleY: Math.round(bubble.top)});
+              result.push({messageId: id, message: text.slice(0, 10000), messageType, mediaUrl: mediaUrl || (messageType === 'image' ? (photo.currentSrc || photo.src) : ''), direction: incoming ? 'inbound' : 'outbound', timestamp: perMessageTimestamp, dateLabel: dateLabelFor(marker) || dateLabel, bubbleX: Math.round(bubble.left), bubbleY: Math.round(bubble.top)});
             }
           }
           return result;
@@ -1143,8 +1177,12 @@ async def _visible_message_rows(page, channel_type: str, thread_id: str, display
             "customerId": thread_id,
             "displayName": display_name,
             "avatarUrl": avatar_url,
-            "messageType": "image" if item.get("messageType") == "image" else "text",
+            "messageType": str(item.get("messageType") or "text")
+            if item.get("messageType") in {"text", "image", "video", "audio"} else "text",
             "mediaUrl": str(item.get("mediaUrl") or "")[:2000] or None,
+            "attachments": [
+                {"media_type": str(item.get("messageType")), "url": str(item.get("mediaUrl") or "")[:2000]}
+            ] if item.get("messageType") in {"audio", "video"} and item.get("mediaUrl") else [],
         }
         for item in raw
     ]
@@ -1949,6 +1987,23 @@ def _history_row_key(row: dict) -> str:
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
+def _conversation_row_key(row: dict) -> str:
+    thread_id = str(row.get("threadId") or "").strip()
+    if thread_id:
+        return f"thread:{thread_id}"
+    profile_key = _history_row_key(row)
+    if profile_key:
+        return f"profile:{profile_key}"
+    return f"index:{row.get('index')}"
+
+
+def _defer_meta_sync_retry(retry_state: dict[str, tuple[int, float]], key: str) -> int:
+    attempt = retry_state.get(key, (0, 0.0))[0] + 1
+    delay = min(30, 2 ** min(attempt, 5))
+    retry_state[key] = (attempt, time.monotonic() + delay)
+    return delay
+
+
 async def _scan_loaded_conversations(
     page, channel_type: str, backend_url: str, token: str, checkpoint_path: Path,
     profile_cache: dict[str, dict] | None = None,
@@ -2090,9 +2145,12 @@ async def _sync_changed_conversations(
     checkpoint_path: Path, observed_rows: dict[str, str], rows: list[dict],
     profile_cache: dict[str, dict],
     live_after: float | None = None,
+    retry_state: dict[str, tuple[int, float]] | None = None,
+    skip_thread_id: str = "",
+    skip_row_key: str = "",
 ) -> None:
     row_signatures = {
-        str(row.get("index")): str(row.get("label") or "")
+        _conversation_row_key(row): str(row.get("label") or "")
         for row in rows
     }
     if not observed_rows:
@@ -2101,16 +2159,25 @@ async def _sync_changed_conversations(
 
     changed = [
         row for row in rows
-        if observed_rows.get(str(row.get("index"))) != row_signatures.get(str(row.get("index")))
+        if observed_rows.get(_conversation_row_key(row)) != row_signatures.get(_conversation_row_key(row))
     ]
-    previous_labels = "\n".join(observed_rows.values())
     for row in changed[:5]:
-        row_key = str(row.get("index"))
+        row_key = _conversation_row_key(row)
+        if (
+            (skip_thread_id and str(row.get("threadId") or "").strip() == skip_thread_id)
+            or (skip_row_key and row_key == skip_row_key)
+        ):
+            continue
+        if retry_state and retry_state.get(row_key, (0, 0.0))[1] > time.monotonic():
+            continue
         try:
             fresh_rows = await _conversation_rows(page)
-            fresh_row = next((candidate for candidate in fresh_rows if candidate.get("label") == row.get("label")), None)
+            fresh_row = next(
+                (candidate for candidate in fresh_rows if _conversation_row_key(candidate) == row_key),
+                None,
+            ) or next((candidate for candidate in fresh_rows if candidate.get("label") == row.get("label")), None)
             if fresh_row is None:
-                continue
+                raise RuntimeError("Meta inbox row changed during refresh")
             thread_id = await _open_meta_conversation(page, fresh_row, channel_type)
             profile = {
                 "displayName": _usable_meta_name(fresh_row.get("displayName")),
@@ -2125,21 +2192,22 @@ async def _sync_changed_conversations(
                 thread_id=thread_id,
                 display_name=profile["displayName"], avatar_url=profile["avatarUrl"],
                 live_after=live_after,
-                changed_row_labels=(previous_labels, row_signatures[row_key])
+                changed_row_labels=(observed_rows[row_key], row_signatures[row_key])
                 if row_key in observed_rows else None,
             )
-            # A transient Meta navigation/ID error must not consume this row
-            # change; the next poll can retry it instead of losing the event.
             observed_rows[row_key] = row_signatures[row_key]
+            if retry_state is not None:
+                retry_state.pop(row_key, None)
             print(
                 f"🔔 Đã cập nhật hội thoại {_channel_name(channel_type)} "
                 f"({count} tin đang hiển thị).",
                 flush=True,
             )
         except Exception as exc:
+            delay = _defer_meta_sync_retry(retry_state, row_key) if retry_state is not None else 2
             print(
-                f"⚠️ Chưa đồng bộ được hoạt động chat Meta mới: "
-                f"{type(exc).__name__}: {str(exc)[:140]}.",
+                f"⚠️ Chưa đồng bộ được hoạt động chat Meta mới ({type(exc).__name__}); "
+                f"thử lại sau {delay} giây.",
                 flush=True,
             )
 
@@ -2248,6 +2316,7 @@ async def run() -> None:
                 observed_threads: dict[str, str] = {}
                 observed_message_ids: dict[str, set[str]] = {}
                 observed_rows: dict[str, str] = {}
+                sync_retry_state: dict[str, tuple[int, float]] = {}
                 profile_cache: dict[str, dict] = {}
                 while _cdp_ready(port) and not page.is_closed():
                     state = _inbox_state(page)
@@ -2331,7 +2400,7 @@ async def run() -> None:
                     if monitor_conversation_changes:
                         if not observed_rows:
                             observed_rows.update({
-                                str(row.get("index")): str(row.get("label") or "")
+                                _conversation_row_key(row): str(row.get("label") or "")
                                 for row in rows
                             })
                     if (
@@ -2368,6 +2437,8 @@ async def run() -> None:
                                 except Exception:
                                     pass
                             avatar_scan_page = None
+                    active_sync_thread_id = ""
+                    active_sync_row_key = ""
                     current_id = await _active_thread_id(page)
                     if current_id:
                         profile = profile_cache.get(current_id, {})
@@ -2381,33 +2452,50 @@ async def run() -> None:
                             ]
                         signature = hashlib.sha256(json.dumps(messages, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
                         if observed_threads.get(current_id) != signature:
+                            active_sync_thread_id = current_id
+                            profile_key = _history_row_key({"displayName": name, "avatarUrl": avatar_url})
+                            if profile_key:
+                                active_sync_row_key = f"profile:{profile_key}"
+                            retry_key = f"thread:{current_id}"
+                            if sync_retry_state.get(retry_key, (0, 0.0))[1] > time.monotonic():
+                                messages_to_sync = None
+                            else:
+                                previous_message_ids = observed_message_ids.get(current_id)
+                                messages_to_sync = messages if previous_message_ids is None else [
+                                    item for item in messages
+                                    if str(item.get("messageId") or "") not in previous_message_ids
+                                ]
                             current_message_ids = {
                                 str(item.get("messageId") or "")
                                 for item in messages
                                 if item.get("messageId")
                             }
-                            previous_message_ids = observed_message_ids.get(current_id)
-                            live_message_ids = {
-                                str(item.get("messageId") or "")
-                                for item in messages
-                                if item.get("messageId")
-                                and item.get("direction") == "inbound"
-                                and previous_message_ids is not None
-                                and str(item.get("messageId")) not in previous_message_ids
-                            }
-                            status, detail = await asyncio.to_thread(
-                                _send_history,
-                                channel_type,
-                                backend_url,
-                                connector_token,
-                                messages,
-                                live_message_ids=live_message_ids,
-                            ) if messages else (200, "")
-                            if 200 <= status < 300:
-                                observed_threads[current_id] = signature
-                                observed_message_ids[current_id] = current_message_ids
-                            elif detail:
-                                print(f"⚠️ CRM chưa nhận được tin {channel_label} (HTTP {status}; {str(detail).split(chr(58),1)[0][:60]}).", flush=True)
+                            if messages_to_sync is not None:
+                                live_message_ids = {
+                                    str(item.get("messageId") or "")
+                                    for item in messages_to_sync
+                                    if item.get("messageId")
+                                    and item.get("direction") == "inbound"
+                                    and previous_message_ids is not None
+                                }
+                                status, detail = await asyncio.to_thread(
+                                    _send_history,
+                                    channel_type,
+                                    backend_url,
+                                    connector_token,
+                                    messages_to_sync,
+                                    live_message_ids=live_message_ids,
+                                ) if messages_to_sync else (200, "")
+                                if 200 <= status < 300:
+                                    observed_threads[current_id] = signature
+                                    observed_message_ids[current_id] = current_message_ids
+                                    sync_retry_state.pop(retry_key, None)
+                                else:
+                                    delay = _defer_meta_sync_retry(sync_retry_state, retry_key)
+                                    print(
+                                        f"⚠️ CRM chưa nhận được tin {channel_label} (HTTP {status}); thử lại sau {delay} giây.",
+                                        flush=True,
+                                    )
                         elif current_id not in observed_message_ids:
                             observed_message_ids[current_id] = {
                                 str(item.get("messageId") or "")
@@ -2416,7 +2504,7 @@ async def run() -> None:
                             }
                     if monitor_conversation_changes:
                         row_signatures = {
-                            str(row.get("index")): str(row.get("label") or "")
+                            _conversation_row_key(row): str(row.get("label") or "")
                             for row in rows
                         }
                         if any(
@@ -2433,6 +2521,9 @@ async def run() -> None:
                                 rows,
                                 profile_cache,
                                 live_after=CONNECTOR_STARTED_AT,
+                                retry_state=sync_retry_state,
+                                skip_thread_id=active_sync_thread_id,
+                                skip_row_key=active_sync_row_key,
                             )
                     await asyncio.sleep(INBOX_POLL_INTERVAL_SECONDS)
                 if history_scan_task is not None:

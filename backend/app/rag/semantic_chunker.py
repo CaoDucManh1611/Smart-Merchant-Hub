@@ -16,6 +16,7 @@ _MAX_SEMANTIC_CHARS = 8000
 _SENTENCE_END = re.compile(r'(?<=[.!?。！？])\s+(?=[A-ZÀ-Ỵ0-9“"\'])')
 _ABBREVIATIONS = {"mr.", "mrs.", "ms.", "dr.", "prof.", "e.g.", "i.e.", "tp.", "ts.", "ths."}
 _TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
+_PAGE_MARKER = re.compile(r"(?m)^\s*\[Trang\s+(\d+)\]\s*$", re.IGNORECASE)
 
 
 def _parse_model_boundaries(raw: str, count: int) -> list[int] | None:
@@ -219,13 +220,29 @@ def chunk_document(text: str, filename: str, *, chunk_size: int = 800,
                         groups.append(("freeform", filename, _pack(parts, chunk_size)))
 
     chunks: list[Chunk] = []
+    active_page: int | None = None
     for parent_id, (kind, section, segments) in enumerate(groups):
         parent_start = len(chunks)
         for segment in segments:
+            page_matches = list(_PAGE_MARKER.finditer(segment))
+            page_numbers = [int(match.group(1)) for match in page_matches]
+            starts_with_page_marker = bool(
+                page_matches and not segment[:page_matches[0].start()].strip()
+            )
+            page_start = (
+                page_numbers[0] if starts_with_page_marker and page_numbers
+                else active_page or (page_numbers[0] if page_numbers else None)
+            )
+            page_end = page_numbers[-1] if page_numbers else active_page
+            if page_numbers:
+                active_page = page_numbers[-1]
             metadata = {**(source_metadata or {}), "source": filename,
                         "parent_id": parent_id, "section": section, "unit_type": kind,
                         "parent_start": parent_start, "parent_end": parent_start + len(segments) - 1,
-                        "chunking_version": "structure-semantic-context-v2"}
+                        "chunking_version": "structure-semantic-context-v3"}
+            if page_start is not None:
+                metadata["page_start"] = page_start
+                metadata["page_end"] = page_end or page_start
             if kind == "product" and (sku := _SKU.search(segment)):
                 metadata["sku"] = sku.group(1)
             context = f"Document: {filename[:200]}\nSection: {section[:300]}"

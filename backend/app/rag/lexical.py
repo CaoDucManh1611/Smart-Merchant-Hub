@@ -21,7 +21,9 @@ doc ky
 # Phrases express the same commerce concept; they do not add factual claims.
 CONCEPTS = (
     ("pink", "hong"), ("gray", "grey", "xam"),
-    ("shirt", "shirts", "ao thun"), ("bag", "bags", "tui"),
+    ("shirt", "shirts", "ao thun", "ao phong"), ("bag", "bags", "tui"),
+    ("sunscreen", "sunblock", "kem chong nang", "kcn"),
+    ("size", "sizes", "sizing", "sz"),
     ("jacket", "jackets", "ao khoac"), ("skirt", "chan vay"),
     ("charger", "chargers", "cu sac", "sac"),
     ("cable", "cables", "cap usb", "cap"),

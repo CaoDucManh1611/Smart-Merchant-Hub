@@ -13,9 +13,14 @@ import unicodedata
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from statistics import median
 from uuid import uuid4
 from urllib.parse import urlsplit
 
+import numpy as np
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -38,6 +43,12 @@ from app.rag.catalog_filters import attribute_key_aliases, attribute_value_alias
 from app.schemas.recommendation import RagCandidate, RecommendationRequestCreate
 from app.services.recommendation_artifacts import RecommendationArtifactError, registry as artifact_registry
 from app.services.recommendation_artifacts import stated_budget
+from app.services.industry_rfm_prior import (
+    INDUSTRY_RFM_PRIOR_VERSION,
+    IndustryRfmPriorUnavailable,
+    predict_industry_rfm_prior,
+    semantic_labels_for_centers,
+)
 from app.services.recommendation_learning import (
     LIGHTFM_ALGORITHM,
     LIVE_RERANKER_ALGORITHM,
@@ -56,13 +67,22 @@ from app.services.recommendation_interaction_service import (
     record_recommendation_impressions,
 )
 from app.services.order_metrics import completed_order_conditions, net_order_value
-from app.services.rfm_segments import RFM_RULES_VERSION, customer_rfm_profiles
+from app.tenancy.workspace_modules import get_workspace_config
+from app.services.rfm_segments import (
+    RFM_CLUSTER_ALGORITHM,
+    RFM_CLUSTER_MODEL_VERSION,
+    RFM_SEGMENT_KEYS,
+    RFM_RULES_VERSION,
+    customer_rfm_profiles,
+)
 
 
 REVENUE_ORDER_STATUSES = ("delivered", "completed")
 MODEL_VERSION = "item_affinity_rfm_v5"
-PERSONALIZATION_CACHE_VERSION = "rfm_product_signals_v1"
-SEGMENT_MODEL_VERSION = "rfm_kmeans_v2"
+PERSONALIZATION_CACHE_VERSION = "rfm_product_signals_v2_industry_prior"
+SEGMENT_MODEL_VERSION = RFM_CLUSTER_MODEL_VERSION
+SEGMENT_ALGORITHM = RFM_CLUSTER_ALGORITHM
+RFM_CLUSTER_RANDOM_STATE = 20261101
 MIN_SEGMENT_CUSTOMERS = 20
 STRATEGIES = {"balanced", "personalized", "popular", "rag"}
 MIN_BANDIT_TRAINING_EVENTS = 50
@@ -71,6 +91,7 @@ INTERACTION_WEIGHTS = {
     "impression": 0.0,
     "click": 0.25,
     "cart": 0.60,
+    "checkout_intent": 0.25,
     "purchase": 1.0,
     "skip": -0.35,
     "refund": -1.0,
@@ -113,6 +134,14 @@ class RecommendationServiceError(ValueError):
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+
+
+def _require_clean_read_only_session(db: Session, *, persist: bool) -> None:
+    """Prevent offline evaluation queries from flushing caller-owned writes."""
+    if not persist and (db.new or db.dirty or db.deleted):
+        raise RecommendationServiceError(
+            "Offline recommendation evaluation requires a clean database session.", 409,
+        )
 
 
 def _active_live_feedback_reranker(db: Session, business_id: int) -> tuple[dict | None, int | None]:
@@ -939,7 +968,7 @@ def _product_matches_hard_filters(product: Product, filters: dict[str, object]) 
         for key, expected in required.items():
             actual = next((
                 normalized_attributes["_".join(alias.split())]
-                for alias in attribute_key_aliases(str(key))
+                for alias in attribute_key_aliases(str(key), expected)
                 if "_".join(alias.split()) in normalized_attributes
             ), None)
             actual_values = actual if isinstance(actual, (list, tuple, set)) else [actual]
@@ -1028,6 +1057,147 @@ def _score(
     )
 
 
+def _consented_rfm_peer_reference(
+    db: Session,
+    business_id: int,
+    profiles: dict[int, dict],
+) -> tuple[float | None, int]:
+    """Build the cold-start money baseline only from currently consented buyers."""
+    if not get_customer_fact_extraction_enabled(db, business_id):
+        return None, 0
+    consent_rows = db.query(CustomerConsent.customer_id, CustomerConsent.status).filter(
+        CustomerConsent.business_id == business_id,
+        CustomerConsent.purpose == "personalization",
+    ).order_by(CustomerConsent.id.asc()).all()
+    latest: dict[int, str] = {}
+    for customer_id, status in consent_rows:
+        latest[int(customer_id)] = str(status)
+    granted_ids = {customer_id for customer_id, status in latest.items() if status == "granted"}
+    if not granted_ids:
+        return None, 0
+    eligible_ids = {
+        int(customer_id)
+        for (customer_id,) in db.query(Customer.id).filter(
+            Customer.business_id == business_id,
+            Customer.id.in_(granted_ids),
+            Customer.status != "merged",
+            Customer.fact_extraction_opt_out.is_(False),
+        ).all()
+    }
+    buyer_spend = [
+        max(0.0, float(profiles[customer_id].get("monetary") or 0))
+        for customer_id in eligible_ids
+        if customer_id in profiles and int(profiles[customer_id].get("frequency") or 0) > 0
+    ]
+    # A stable median needs several peers. Before that, the prior treats M as
+    # neutral and still predicts from R and F rather than learning from one user.
+    if len(buyer_spend) < 5:
+        return None, len(buyer_spend)
+    return float(median(buyer_spend)), len(buyer_spend)
+
+
+def _active_shop_rfm_segmenter(db: Session, business_id: int) -> dict | None:
+    run = db.query(RecommendationTrainingRun).filter(
+        RecommendationTrainingRun.business_id == business_id,
+        RecommendationTrainingRun.algorithm.in_((SEGMENT_ALGORITHM, "rfm_rules_insufficient_cluster_samples")),
+        RecommendationTrainingRun.status == "succeeded",
+    ).order_by(RecommendationTrainingRun.id.desc()).first()
+    artifact = run.artifact if run and isinstance(run.artifact, dict) else {}
+    segmenter = artifact.get("segmenter") if isinstance(artifact.get("segmenter"), dict) else {}
+    if (
+        segmenter.get("status") != "trained"
+        or segmenter.get("model_version") != SEGMENT_MODEL_VERSION
+        or segmenter.get("algorithm") != SEGMENT_ALGORITHM
+    ):
+        return None
+    return segmenter
+
+
+def _predict_shop_rfm_segmenter(segmenter: dict, features: dict) -> dict | None:
+    names = segmenter.get("feature_names")
+    mean = segmenter.get("scaler_mean")
+    scale = segmenter.get("scaler_scale")
+    centers = segmenter.get("centers_scaled")
+    if (
+        names != ["recency_days", "frequency", "monetary"]
+        or not isinstance(mean, list) or len(mean) != 3
+        or not isinstance(scale, list) or len(scale) != 3
+        or not isinstance(centers, list) or not centers
+        or any(not isinstance(center, list) or len(center) != 3 for center in centers)
+    ):
+        return None
+    try:
+        raw = [math.log1p(max(0.0, float(features[name]))) for name in names]
+        normalized = [(value - float(center)) / float(divisor) for value, center, divisor in zip(raw, mean, scale)]
+        if any(not math.isfinite(value) for value in normalized) or any(float(value) <= 0 for value in scale):
+            return None
+        cluster_id = min(
+            range(len(centers)),
+            key=lambda index: sum((value - float(center)) ** 2 for value, center in zip(normalized, centers[index])),
+        )
+        label_map = segmenter.get("cluster_segment_labels") or semantic_labels_for_centers(centers)
+        label = str(label_map[str(cluster_id)])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    from app.services.rfm_segments import RFM_SEGMENT_KEYS
+    segment_name = next((name for name, key in RFM_SEGMENT_KEYS.items() if key == label), "RFM · Duy trì")
+    return {
+        "cluster_id": int(cluster_id),
+        "cluster_model_version": SEGMENT_MODEL_VERSION,
+        "cluster_model_source": "shop_trained",
+        "recommendation_segment_label": label,
+        "recommendation_segment_name": segment_name,
+        "rfm_scores": features.get("rfm_scores"),
+        "rfm_model_confidence": "shop_trained",
+    }
+
+
+def _recommendation_rfm_assignment(
+    db: Session,
+    *,
+    business_id: int,
+    statistics: dict,
+    profiles: dict[int, dict],
+) -> dict:
+    if int(statistics.get("frequency") or 0) <= 0:
+        return {
+            "cluster_id": None,
+            "cluster_model_version": RFM_RULES_VERSION,
+            "cluster_model_source": "no_purchase_rule",
+            "recommendation_segment_label": statistics["segment_label"],
+            "recommendation_segment_name": statistics["segment_name"],
+            "rfm_scores": statistics.get("rfm_scores"),
+            "rfm_model_confidence": "no_purchase",
+        }
+    segmenter = _active_shop_rfm_segmenter(db, business_id)
+    if segmenter is not None:
+        assignment = _predict_shop_rfm_segmenter(segmenter, statistics)
+        if assignment is not None:
+            return assignment
+    peer_median, peer_count = _consented_rfm_peer_reference(db, business_id, profiles)
+    config = get_workspace_config(db, business_id)
+    try:
+        assignment = predict_industry_rfm_prior(
+            statistics,
+            industry=config.get("recommendation_industry", "general_retail"),
+            peer_median_monetary=peer_median,
+            consented_buyer_count=peer_count,
+        )
+    except IndustryRfmPriorUnavailable:
+        assignment = None
+    if assignment is not None:
+        return assignment
+    return {
+        "cluster_id": None,
+        "cluster_model_version": RFM_RULES_VERSION,
+        "cluster_model_source": "rules_artifact_unavailable",
+        "recommendation_segment_label": statistics["segment_label"],
+        "recommendation_segment_name": statistics["segment_name"],
+        "rfm_scores": statistics.get("rfm_scores"),
+        "rfm_model_confidence": "fallback_rules",
+    }
+
+
 def _personalization_source_signature(db: Session, business_id: int, customer_id: int) -> str:
     """Cheap aggregates detect changed orders/signals without loading order lines.
 
@@ -1058,22 +1228,36 @@ def _personalization_source_signature(db: Session, business_id: int, customer_id
     customers = db.query(Customer.id).filter(
         Customer.business_id == business_id, Customer.status != "merged",
     ).order_by(Customer.id).all()
+    consents = db.query(
+        CustomerConsent.customer_id, CustomerConsent.purpose, CustomerConsent.status, CustomerConsent.id,
+    ).filter(CustomerConsent.business_id == business_id).order_by(CustomerConsent.id.asc()).all()
+    latest_segmenter = db.query(RecommendationTrainingRun.id, RecommendationTrainingRun.completed_at).filter(
+        RecommendationTrainingRun.business_id == business_id,
+        RecommendationTrainingRun.algorithm.in_((SEGMENT_ALGORITHM, "rfm_rules_insufficient_cluster_samples")),
+        RecommendationTrainingRun.status == "succeeded",
+    ).order_by(RecommendationTrainingRun.id.desc()).first()
+    workspace = get_workspace_config(db, business_id)
     source = [PERSONALIZATION_CACHE_VERSION, RFM_RULES_VERSION, now.strftime("%Y-%m-%dT%H"),
-              [list(row) for row in orders], list(interactions), list(catalog), [row[0] for row in customers]]
+              [list(row) for row in orders], list(interactions), list(catalog), [row[0] for row in customers],
+              [list(row) for row in consents], workspace.get("recommendation_industry"),
+              list(latest_segmenter) if latest_segmenter else None]
     return hashlib.sha256(json.dumps(source, default=str, ensure_ascii=False).encode()).hexdigest()
 
 
 def _cached_personalization_profile(
     db: Session, business_id: int, customer_id: int, *, rfm_profiles: dict | None = None,
+    persist: bool = True,
 ) -> tuple[RecommendationCustomerProfile, bool]:
     """Persist deterministic RFM/product preferences; never call an AI provider.
 
     Caller must enforce current personalization consent before entering here.
     Price, available inventory and explicit customer preferences stay live.
     """
-    db.query(Customer.id).filter(
+    _require_clean_read_only_session(db, persist=persist)
+    customer_query = db.query(Customer.id).filter(
         Customer.business_id == business_id, Customer.id == customer_id,
-    ).with_for_update().one()
+    )
+    (customer_query.with_for_update() if persist else customer_query).one()
     profile = db.query(RecommendationCustomerProfile).filter(
         RecommendationCustomerProfile.business_id == business_id,
         RecommendationCustomerProfile.customer_id == customer_id,
@@ -1083,7 +1267,14 @@ def _cached_personalization_profile(
     cache = features.get("product_signal_cache") or {}
     if rfm_profiles is None and cache.get("signature") == signature:
         return profile, True
-    statistics = (rfm_profiles if rfm_profiles is not None else customer_rfm_profiles(db, business_id, as_of=_now()))[customer_id]
+    all_profiles = rfm_profiles if rfm_profiles is not None else customer_rfm_profiles(db, business_id, as_of=_now())
+    statistics = all_profiles[customer_id]
+    model_assignment = _recommendation_rfm_assignment(
+        db,
+        business_id=business_id,
+        statistics=statistics,
+        profiles=all_profiles,
+    )
     recent, historical = _recent_and_historical_products(db, business_id, customer_id)
     signals = {
         "recent": sorted(recent), "historical": sorted(historical),
@@ -1093,12 +1284,29 @@ def _cached_personalization_profile(
         "historic_tokens": dict(_historic_query_tokens(db, business_id, customer_id)),
     }
     now = _now()
+    for key in (
+        "cluster_id", "cluster_model_version", "cluster_model_source", "cluster_model_industry",
+        "cluster_model_backing", "recommendation_segment_label", "recommendation_segment_name",
+        "rfm_model_confidence", "rfm_model_consent_peer_count", "rfm_percentile_scores",
+    ):
+        features.pop(key, None)
     features.update({
         **statistics, "has_completed_order": statistics["frequency"] > 0,
         "as_of": now.isoformat(), "basis": "all_completed_or_paid_delivered_net_of_refunds",
         "rfm_rules_version": RFM_RULES_VERSION,
+        "rfm_percentile_scores": statistics.get("rfm_scores"),
+        **model_assignment,
         "product_signal_cache": {"signature": signature, "version": PERSONALIZATION_CACHE_VERSION, "signals": signals},
     })
+    if not persist:
+        return RecommendationCustomerProfile(
+            business_id=business_id,
+            customer_id=customer_id,
+            features=features,
+            segment_label=statistics["segment_label"],
+            model_version=RFM_RULES_VERSION,
+            trained_at=now,
+        ), False
     if profile is None:
         profile = RecommendationCustomerProfile(business_id=business_id, customer_id=customer_id)
         db.add(profile)
@@ -1108,6 +1316,13 @@ def _cached_personalization_profile(
     profile.trained_at = now
     db.flush()
     return profile, False
+
+
+def _recommendation_segment(profile: RecommendationCustomerProfile | None) -> str | None:
+    if profile is None:
+        return None
+    features = profile.features if isinstance(profile.features, dict) else {}
+    return str(features.get("recommendation_segment_label") or profile.segment_label)
 
 
 def rag_candidates_from_chunks(
@@ -1193,15 +1408,77 @@ def record_catalog_match_recommendation(
     products: list[tuple[int, Product]],
     context: dict,
     rag_candidates: list[RagCandidate] | None = None,
+    persist: bool = True,
 ) -> RecommendationRequest:
     """Persist the safe catalog-matcher fallback using the same exposure contract."""
+    _require_clean_read_only_session(db, persist=persist)
     personalized_id = customer_id if _personalization_allowed(db, business_id, customer_id) else None
     profile, _cache_hit = (
-        _cached_personalization_profile(db, business_id, personalized_id)
+        _cached_personalization_profile(db, business_id, personalized_id, persist=persist)
         if personalized_id is not None else (None, False)
     )
+    rfm_features = profile.features if profile and isinstance(profile.features, dict) else {}
     rag_by_product = {candidate.product_id: candidate for candidate in rag_candidates or []}
     best_score = max((score for score, _product in products), default=1)
+    rfm_segment = _recommendation_segment(profile)
+    rfm_model_source = str(rfm_features.get("cluster_model_source") or "")
+    rfm_model_eligible = bool(
+        personalized_id is not None
+        and int(rfm_features.get("frequency") or 0) > 0
+        and rfm_model_source in {"industry_prior", "shop_trained"}
+    )
+    rfm_score_computed = False
+    rfm_ranker_applied = False
+    rfm_display_order_changed = False
+    rfm_tiebreak_scores: dict[int, float] = {}
+    rfm_ranking_weights = None
+    baseline_products = sorted(products, key=lambda item: (-float(item[0]), int(item[1].id or 0)))
+    products = baseline_products
+    baseline_display_order = [int(product.id) for _, product in baseline_products[:3]]
+    if rfm_model_eligible and len(products) > 1:
+        rfm_score_computed = True
+        signals = (rfm_features.get("product_signal_cache") or {}).get("signals") or {}
+        historical = {int(value) for value in signals.get("historical", []) if str(value).isdigit()}
+        co_purchase = _co_purchase_counts(db, business_id, historical)
+        popularity = _popular_counts(db, business_id)
+        interactions = Counter({int(key): float(value) for key, value in (signals.get("interactions") or {}).items()})
+        purchase_facets = {
+            str(key): Counter(values)
+            for key, values in (signals.get("purchase_facets") or {}).items()
+            if isinstance(values, dict)
+        }
+        max_co_purchase = max(1, max((co_purchase.get(int(product.id), 0) for _, product in products), default=0))
+        max_popularity = max(1, max((popularity.get(int(product.id), 0) for _, product in products), default=0))
+        max_interaction = max(1.0, max((abs(interactions.get(int(product.id), 0.0)) for _, product in products), default=0.0))
+        best_catalog_score = max(1.0, float(best_score))
+        rfm_ranking_weights = _recommendation_weights("rag", rfm_segment)
+        for match_score, product in products:
+            product_id = int(product.id)
+            facet_score, _matched_facets = _purchase_facet_affinity(purchase_facets, product)
+            co_purchase_score = float(co_purchase.get(product_id, 0) / max_co_purchase)
+            interaction_score = max(-1.0, min(1.0, float(interactions.get(product_id, 0.0) / max_interaction)))
+            affinity_score = max(-1.0, min(1.0, 0.50 * co_purchase_score + 0.25 * interaction_score + 0.25 * facet_score))
+            popularity_score = float(popularity.get(product_id, 0) / max_popularity)
+            rag = rag_by_product.get(product_id)
+            rag_score = float(rag.relevance) if rag else 0.0
+            lexical_score = min(1.0, max(0.0, float(match_score) / best_catalog_score))
+            rfm_tiebreak_scores[product_id] = _score(
+                "rag", affinity_score, popularity_score, rag_score, lexical_score,
+                rfm_segment=rfm_segment,
+            )
+    products = sorted(
+        products,
+        key=lambda item: (
+            -float(item[0]),
+            -rfm_tiebreak_scores.get(int(item[1].id), 0.0),
+            int(item[1].id or 0),
+        ),
+    )
+    rfm_display_order_changed = (
+        rfm_score_computed
+        and [int(product.id) for _, product in products[:3]] != baseline_display_order
+    )
+    rfm_ranker_applied = rfm_display_order_changed
     candidate_snapshot = []
     request_id = str(uuid4())
     served_items = []
@@ -1219,7 +1496,17 @@ def record_catalog_match_recommendation(
             "rag_rrf_rank": rag.rrf_rank if rag else None,
             "rag_ppr_rank": rag.ppr_rank if rag else None,
             "rag_retrieval_rank": rag.retrieval_rank if rag else None,
-            "rfm_segment": profile.segment_label if profile else None,
+            "rfm_segment": _recommendation_segment(profile),
+            "rfm_model_version": rfm_features.get("cluster_model_version") if profile else None,
+            "rfm_model_source": rfm_features.get("cluster_model_source") if profile else None,
+            "rfm_model_industry": (rfm_features.get("cluster_model_industry") or rfm_features.get("cluster_model_backing")) if profile else None,
+            "rfm_model_backing": rfm_features.get("cluster_model_backing") if profile else None,
+            "rfm_model_confidence": rfm_features.get("rfm_model_confidence") if profile else None,
+            "rfm_model_consent_peer_count": rfm_features.get("rfm_model_consent_peer_count") if profile else None,
+            "rfm_ranker_applied": rfm_ranker_applied,
+            "rfm_score_computed": rfm_score_computed,
+            "rfm_display_order_changed": rfm_display_order_changed,
+            "rfm_tiebreak_score": rfm_tiebreak_scores.get(int(product.id)),
         }
         candidate_snapshot.append({
             "product_id": int(product.id),
@@ -1250,7 +1537,7 @@ def record_catalog_match_recommendation(
             "reason": "catalog_attribute_match",
             "position": rank,
             "selection_probability": None,
-            "personalization_signals": ["rfm_segment"] if personalized_id and profile else [],
+            "personalization_signals": ["rfm_segment"] if rfm_score_computed else [],
             "purchase_facets": [],
             "feature_snapshot": feature_snapshot,
         }
@@ -1262,7 +1549,6 @@ def record_catalog_match_recommendation(
             ) or item["product_url"]
         served_items.append(item)
 
-    rfm_features = profile.features if profile and isinstance(profile.features, dict) else {}
     row = RecommendationRequest(
         business_id=business_id,
         request_id=request_id,
@@ -1270,30 +1556,47 @@ def record_catalog_match_recommendation(
         experiment_id=None,
         bandit_decision_id=None,
         strategy="catalog_matcher",
-        model_version="catalog_matcher_v1",
+        model_version="catalog_matcher_rfm_tiebreak_v1" if rfm_score_computed else "catalog_matcher_v1",
         context={
             **context,
+            "traffic_type": str(context.get("traffic_type") or ("live" if persist else "offline_eval"))[:24],
             "query": query if personalized_id is not None else "",
             "query_hash": hashlib.sha256(query.encode("utf-8")).hexdigest(),
             "query_chars": len(query),
-            "rfm_segment": profile.segment_label if profile else None,
+            "rfm_segment": _recommendation_segment(profile),
+            "rfm_model_version": rfm_features.get("cluster_model_version") if profile else None,
+            "rfm_model_source": rfm_features.get("cluster_model_source") if profile else None,
+            "rfm_model_industry": (rfm_features.get("cluster_model_industry") or rfm_features.get("cluster_model_backing")) if profile else None,
+            "rfm_model_backing": rfm_features.get("cluster_model_backing") if profile else None,
+            "rfm_model_confidence": rfm_features.get("rfm_model_confidence") if profile else None,
+            "rfm_model_consent_peer_count": rfm_features.get("rfm_model_consent_peer_count") if profile else None,
+            "rfm_ranker_applied": rfm_ranker_applied,
+            "rfm_score_computed": rfm_score_computed,
+            "rfm_display_order_changed": rfm_display_order_changed,
             "rfm_rules_version": RFM_RULES_VERSION if profile else None,
             "rfm_snapshot": {
                 key: rfm_features.get(key) for key in ("recency_days", "frequency", "monetary")
             } if profile else None,
-            "ranking_weights": {"catalog_match": 1.0},
+            "ranking_weights": {
+                "catalog_match_primary": 1.0,
+                "rfm_tiebreak": rfm_ranking_weights,
+            },
             "eligible_candidate_count": len(products),
             "candidate_snapshot": candidate_snapshot,
-            "personalization_applied": False,
+            "personalization_applied": rfm_score_computed,
+            "personalization_signals": ["rfm_segment"] if rfm_score_computed else [],
+            "rfm_model_applied": rfm_score_computed,
+            "rfm_ranker_version": "catalog_matcher_rfm_tiebreak_v1" if rfm_score_computed else "catalog_matcher_v1",
             "item_selection_policy": "deterministic_catalog_matcher",
             "item_policy_randomized": False,
-            "blend_version": "baseline_only_v1",
+            "blend_version": "catalog_matcher_rfm_tiebreak_v1" if rfm_score_computed else "catalog_matcher_v1",
         },
         served_items=served_items,
     )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
+    if persist:
+        db.add(row)
+        db.commit()
+        db.refresh(row)
     return row
 
 
@@ -1303,7 +1606,9 @@ def serve_recommendations(
     business_id: int,
     payload: RecommendationRequestCreate,
     record_impressions: bool = True,
+    persist: bool = True,
 ) -> RecommendationRequest:
+    _require_clean_read_only_session(db, persist=persist)
     started = time.perf_counter()
     source_context = payload.context if isinstance(payload.context, dict) else {}
     hard_filters = _safe_hard_filters(source_context.get("hard_filters"))
@@ -1361,16 +1666,37 @@ def serve_recommendations(
     customer = _customer_or_raise(db, business_id, payload.customer_id)
     personalized_id = customer.id if customer and _personalization_allowed(db, business_id, customer.id) else None
     selection_payload = payload
-    if customer is not None and personalized_id is None:
-        selection_payload = payload.model_copy(update={"context": {}, "experiment_id": None})
+    if not persist or (customer is not None and personalized_id is None):
+        updates = {"experiment_id": None}
+        if customer is not None and personalized_id is None:
+            updates["context"] = {}
+        selection_payload = payload.model_copy(update=updates)
     subject_key = f"customer:{personalized_id}" if personalized_id else "anonymous"
     profile = None
     profile_cache_hit = False
     if personalized_id is not None:
-        profile, profile_cache_hit = _cached_personalization_profile(db, business_id, personalized_id)
+        profile, profile_cache_hit = _cached_personalization_profile(
+            db, business_id, personalized_id, persist=persist,
+        )
     cached_features = profile.features if profile else {}
     cached_signals = (cached_features.get("product_signal_cache") or {}).get("signals") or {}
-    rfm_segment = profile.segment_label if profile else "unclassified"
+    rfm_segment = _recommendation_segment(profile) or "unclassified"
+    rfm_model_source = str(cached_features.get("cluster_model_source") or "")
+    rfm_model_applied = bool(
+        personalized_id is not None
+        and int(cached_features.get("frequency") or 0) > 0
+        and rfm_model_source in {"industry_prior", "shop_trained"}
+    )
+    rfm_weights_applied = personalized_id is not None and profile is not None
+    rfm_blend_version = (
+        "rag_rfm_industry_prior_weights_v1"
+        if rfm_model_applied and rfm_model_source == "industry_prior"
+        else "rag_rfm_shop_model_weights_v1"
+        if rfm_model_applied and rfm_model_source == "shop_trained"
+        else "rag_rfm_rule_segment_weights_v1"
+        if rfm_weights_applied
+        else "rag_product_baseline_v1"
+    )
     bandit_context = {
         key: value for key, value in selection_payload.context.items()
         if key not in {"retrieval_trace", "retrieval_diagnostics", "hard_filters"}
@@ -1379,6 +1705,9 @@ def serve_recommendations(
         **bandit_context,
         "rfm_segment": rfm_segment,
         "rfm_rules_version": RFM_RULES_VERSION,
+        "rfm_model_version": cached_features.get("cluster_model_version"),
+        "rfm_model_source": cached_features.get("cluster_model_source"),
+        "rfm_model_industry": cached_features.get("cluster_model_industry") or cached_features.get("cluster_model_backing"),
         "source_channel": customer.channel,
     } if personalized_id is not None and customer is not None else {}
     strategy, bandit_decision_id, strategy_selection = _select_strategy(
@@ -1395,6 +1724,8 @@ def serve_recommendations(
     request_context = {
         **learning_context,
         "ranking_weights": ranking_weights,
+        "traffic_type": str(source_context.get("traffic_type") or ("live" if persist else "offline_eval"))[:24],
+        "evaluation_run_id": str(source_context.get("evaluation_run_id") or "")[:120] or None,
         "profile_cache_hit": profile_cache_hit,
         "surface": surface,
         "conversation_id": conversation_id,
@@ -1405,13 +1736,24 @@ def serve_recommendations(
         "strategy_selection": strategy_selection,
         "item_selection_policy": "deterministic_ranker",
         "item_policy_randomized": False,
-        "blend_version": "baseline_only_v1",
+        "blend_version": rfm_blend_version,
+        "rfm_ranker_applied": rfm_weights_applied,
+        "rfm_model_applied": rfm_model_applied,
+        "rfm_ranker_version": rfm_blend_version,
         "behavioral_reranker": None,
     }
     if personalized_id is not None:
         request_context["rfm_snapshot"] = {
             key: cached_features.get(key)
             for key in ("recency_days", "frequency", "monetary")
+        }
+        request_context["rfm_model_snapshot"] = {
+            key: cached_features.get(key)
+            for key in (
+                "cluster_id", "cluster_model_version", "cluster_model_source",
+                "cluster_model_industry", "cluster_model_backing", "recommendation_segment_label",
+                "rfm_model_confidence", "rfm_model_consent_peer_count",
+            )
         }
     recent, historical = set(cached_signals.get("recent", [])), set(cached_signals.get("historical", []))
     candidates = db.query(Product).filter(
@@ -1590,6 +1932,14 @@ def serve_recommendations(
                 "ncf_score": ncf_score,
                 "linucb_score": linucb_score,
                 "rfm_segment": rfm_segment if personalized_id is not None else None,
+                "rfm_model_version": cached_features.get("cluster_model_version") if personalized_id is not None else None,
+                "rfm_model_source": cached_features.get("cluster_model_source") if personalized_id is not None else None,
+                "rfm_model_industry": (cached_features.get("cluster_model_industry") or cached_features.get("cluster_model_backing")) if personalized_id is not None else None,
+                "rfm_model_backing": cached_features.get("cluster_model_backing") if personalized_id is not None else None,
+                "rfm_model_confidence": cached_features.get("rfm_model_confidence") if personalized_id is not None else None,
+                "rfm_model_consent_peer_count": cached_features.get("rfm_model_consent_peer_count") if personalized_id is not None else None,
+                "rfm_ranker_applied": rfm_weights_applied,
+                "rfm_model_applied": rfm_model_applied,
             },
         })
     scored_items.sort(key=lambda item: (-item["score"], item["product_id"]))
@@ -1786,12 +2136,13 @@ def serve_recommendations(
         },
         served_items=served_items,
     )
-    db.add(row)
-    db.flush()
-    if record_impressions:
-        record_recommendation_impressions(db, request=row)
-    db.commit()
-    db.refresh(row)
+    if persist:
+        db.add(row)
+        db.flush()
+        if record_impressions:
+            record_recommendation_impressions(db, request=row)
+        db.commit()
+        db.refresh(row)
     return row
 
 
@@ -1804,7 +2155,18 @@ def record_feedback(
     event_type: str,
     idempotency_key: str,
     metadata: dict,
+    verified_click: bool = False,
 ) -> RecommendationFeedback:
+    if event_type != "click":
+        raise RecommendationServiceError(
+            "Chỉ ghi nhận click qua luồng feedback này; giỏ hàng, mua, bỏ qua và hoàn tiền phải do luồng máy chủ xác minh.",
+            422,
+        )
+    if not verified_click:
+        raise RecommendationServiceError(
+            "Click chỉ được ghi nhận từ liên kết sản phẩm có chữ ký.",
+            403,
+        )
     existing = db.query(RecommendationFeedback).filter(
         RecommendationFeedback.business_id == business_id,
         RecommendationFeedback.idempotency_key == idempotency_key,
@@ -1846,24 +2208,59 @@ def record_feedback(
     return row
 
 
-def _kmeans(vectors: list[list[float]], k: int, iterations: int = 25) -> list[int]:
-    if not vectors:
-        return []
-    centers = [list(vector) for vector in vectors[:k]]
-    labels = [0] * len(vectors)
-    for _ in range(iterations):
-        changed = False
-        groups: defaultdict[int, list[list[float]]] = defaultdict(list)
-        for index, vector in enumerate(vectors):
-            label = min(range(k), key=lambda center: sum((value - centers[center][position]) ** 2 for position, value in enumerate(vector)))
-            changed = changed or labels[index] != label
-            labels[index] = label
-            groups[label].append(vector)
-        for label, group in groups.items():
-            centers[label] = [sum(vector[position] for vector in group) / len(group) for position in range(len(group[0]))]
-        if not changed:
-            break
-    return labels
+def _fit_shop_rfm_segmenter(profiles: list[dict]) -> tuple[list[int], dict]:
+    """Fit a bounded, reproducible cluster model on one shop's eligible buyers."""
+    if not profiles:
+        return [], {"status": "no_eligible_buyers"}
+    feature_names = ("recency_days", "frequency", "monetary")
+    matrix = np.asarray([
+        [math.log1p(max(0.0, float(profile[name]))) for name in feature_names]
+        for profile in profiles
+    ], dtype=np.float64)
+    scaler = StandardScaler()
+    normalized = scaler.fit_transform(matrix)
+    cluster_count = min(4, len(profiles))
+    model = MiniBatchKMeans(
+        n_clusters=cluster_count,
+        random_state=RFM_CLUSTER_RANDOM_STATE,
+        n_init=10,
+        max_iter=100,
+        batch_size=min(1024, max(32, cluster_count * 8)),
+        reassignment_ratio=0.01,
+    )
+    labels = model.fit_predict(normalized).astype(int).tolist()
+    cluster_sizes = dict(Counter(str(label) for label in labels))
+    if len(cluster_sizes) < 2 or len(cluster_sizes) >= len(profiles):
+        return [-1] * len(profiles), {
+            "status": "degenerate_clusters_fallback_to_rules",
+            "requested_clusters": cluster_count,
+            "cluster_sizes": cluster_sizes,
+        }
+    sample_size = min(5000, len(profiles))
+    quality = round(float(silhouette_score(
+        normalized,
+        labels,
+        sample_size=sample_size,
+        random_state=RFM_CLUSTER_RANDOM_STATE,
+    )), 6)
+    return labels, {
+        "status": "trained",
+        "model_version": SEGMENT_MODEL_VERSION,
+        "algorithm": SEGMENT_ALGORITHM,
+        "preprocessing": "log1p + StandardScaler",
+        "feature_names": list(feature_names),
+        "random_state": RFM_CLUSTER_RANDOM_STATE,
+        "training_customer_count": len(profiles),
+        "requested_clusters": cluster_count,
+        "cluster_count": len(cluster_sizes),
+        "cluster_sizes": cluster_sizes,
+        "silhouette_sample_size": sample_size,
+        "silhouette_score": quality,
+        "scaler_mean": [float(value) for value in scaler.mean_],
+        "scaler_scale": [float(value) for value in scaler.scale_],
+        "centers_scaled": [[float(value) for value in center] for center in model.cluster_centers_],
+        "cluster_segment_labels": semantic_labels_for_centers(model.cluster_centers_.tolist()),
+    }
 
 
 def train_customer_segments(db: Session, *, business_id: int, training_run_id: int) -> RecommendationTrainingRun:
@@ -1898,36 +2295,28 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
         all_profiles = customer_rfm_profiles(db, business_id, as_of=now)
         profiles = [all_profiles[customer.id] for customer in customers if customer.id in all_profiles]
         if not profiles:
-            run.status, run.metrics, run.artifact, run.completed_at = "succeeded", {"customers": 0, "clusters": 0, "learning_ready":False, "minimum_cluster_customers":MIN_SEGMENT_CUSTOMERS}, {
-                "model_version": SEGMENT_MODEL_VERSION, "segmenter_version": RFM_RULES_VERSION,
+            run.algorithm = SEGMENT_ALGORITHM
+            run.status, run.metrics, run.artifact, run.completed_at = "succeeded", {"customers": 0, "buyers": 0, "clusters": 0, "learning_ready": False, "minimum_cluster_customers": MIN_SEGMENT_CUSTOMERS}, {
+                "model_version": RFM_RULES_VERSION,
+                "segmenter_version": SEGMENT_MODEL_VERSION,
+                "algorithm": SEGMENT_ALGORITHM,
+                "reason": "no consented customers with personalization enabled",
             }, _now()
             db.commit()
             return run
         buyers = [profile for profile in profiles if profile["frequency"] > 0]
-        labels = []
-        profile_model_version, algorithm = SEGMENT_MODEL_VERSION, "deterministic_rfm_kmeans"
-        try:
-            imported = [artifact_registry.data_rag_segment(business_id, profile) for profile in buyers]
-            if imported and all(label is not None for label in imported):
-                labels = [int(label) for label in imported]
-                profile_model_version, algorithm = "data_rag_rfm_demo_v1", "imported_data_rag_kmeans"
-            else:
-                imported = [artifact_registry.demo_segmentation_label(profile) for profile in buyers]
-                if imported and all(label is not None for label in imported):
-                    labels = [int(label) for label in imported]
-                    profile_model_version, algorithm = "uci_kmeans_demo_v1", "imported_uci_kmeans"
-        except (RecommendationArtifactError, KeyError, TypeError, ValueError):
-            labels = []
         learning_ready = len(buyers) >= MIN_SEGMENT_CUSTOMERS
+        segmenter_report: dict = {"status": "insufficient_consenting_buyers"}
+        labels: list[int] = []
+        profile_model_version, algorithm = RFM_RULES_VERSION, "rfm_rules_insufficient_cluster_samples"
         if not learning_ready:
             labels = [-1] * len(buyers)
-            profile_model_version, algorithm = RFM_RULES_VERSION, "rfm_rules_insufficient_cluster_samples"
-        if learning_ready and not labels:
-            raw = [[math.log1p(max(0.0, float(profile[key]))) for key in ("recency_days", "frequency", "monetary")] for profile in buyers]
-            means = [sum(v[i] for v in raw) / len(raw) for i in range(3)]
-            deviations = [math.sqrt(sum((v[i] - means[i]) ** 2 for v in raw) / len(raw)) or 1.0 for i in range(3)]
-            normalized = [[(v[i] - means[i]) / deviations[i] for i in range(3)] for v in raw]
-            labels = _kmeans(normalized, min(4, len(buyers)))
+        else:
+            labels, segmenter_report = _fit_shop_rfm_segmenter(buyers)
+            if segmenter_report.get("status") == "trained":
+                profile_model_version, algorithm = SEGMENT_MODEL_VERSION, SEGMENT_ALGORITHM
+            else:
+                labels = [-1] * len(buyers)
         by_customer = {p["customer_id"]: label for p, label in zip(buyers, labels)}
         labels = [by_customer.get(p["customer_id"], -1) for p in profiles]
         segment_by_customer = {
@@ -1935,19 +2324,82 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
             for profile in profiles
         }
         group_counts: Counter[str] = Counter(name for _, name, _ in segment_by_customer.values())
+        workspace = get_workspace_config(db, business_id)
+        consented_peer_median = float(median(float(profile["monetary"]) for profile in buyers)) if len(buyers) >= 5 else None
+        cluster_labels = segmenter_report.get("cluster_segment_labels") or {}
+        prior_assigned = 0
+        # Publish the final training-run identity in this transaction before
+        # rebuilding profile signatures. The cache signature includes the
+        # active run id/completion time, so setting these after the profile
+        # loop would make every freshly trained profile look stale immediately.
+        run.algorithm = algorithm
+        run.status = "succeeded"
+        run.completed_at = _now()
+        run.artifact = {
+            "model_version": profile_model_version,
+            "segmenter_version": SEGMENT_MODEL_VERSION,
+            "algorithm": algorithm,
+            "segmenter": segmenter_report,
+        }
+        # Tenant runtime sessions disable autoflush; make the completed model
+        # visible to the profile-signature query in the same transaction.
+        db.flush()
 
         for profile, label in zip(profiles, labels):
             segment_key, segment_name, rfm_scores = segment_by_customer[int(profile["customer_id"])]
             row, _ = _cached_personalization_profile(
                 db, business_id, int(profile["customer_id"]), rfm_profiles=all_profiles,
             )
+            if label >= 0 and segmenter_report.get("status") == "trained":
+                recommendation_label = str(cluster_labels.get(str(label), segment_key))
+                recommendation_name = next((name for name, key in RFM_SEGMENT_KEYS.items() if key == recommendation_label), segment_name)
+                model_assignment = {
+                    "cluster_id": int(label),
+                    "cluster_model_version": SEGMENT_MODEL_VERSION,
+                    "cluster_model_source": "shop_trained",
+                    "recommendation_segment_label": recommendation_label,
+                    "recommendation_segment_name": recommendation_name,
+                    "rfm_scores": rfm_scores,
+                    "rfm_model_confidence": "shop_trained",
+                }
+            elif int(profile["frequency"]) > 0:
+                try:
+                    model_assignment = predict_industry_rfm_prior(
+                        profile,
+                        industry=workspace.get("recommendation_industry", "general_retail"),
+                        peer_median_monetary=consented_peer_median,
+                        consented_buyer_count=len(buyers),
+                    )
+                except IndustryRfmPriorUnavailable:
+                    model_assignment = None
+                model_assignment = model_assignment or {
+                    "cluster_id": None,
+                    "cluster_model_version": RFM_RULES_VERSION,
+                    "cluster_model_source": "rules_artifact_unavailable",
+                    "recommendation_segment_label": segment_key,
+                    "recommendation_segment_name": segment_name,
+                    "rfm_scores": rfm_scores,
+                    "rfm_model_confidence": "fallback_rules",
+                }
+                prior_assigned += int(model_assignment.get("cluster_model_source") == "industry_prior")
+            else:
+                model_assignment = {
+                    "cluster_id": None,
+                    "cluster_model_version": RFM_RULES_VERSION,
+                    "cluster_model_source": "no_purchase_rule",
+                    "recommendation_segment_label": segment_key,
+                    "recommendation_segment_name": segment_name,
+                    "rfm_scores": rfm_scores,
+                    "rfm_model_confidence": "no_purchase",
+                }
             values = {
                 "segment_label": segment_key,
                 "features": {**row.features, **{key: profile[key] for key in ("recency_days", "frequency", "monetary", "total_items", "distinct_products", "avg_order_value")},
-                             "has_completed_order": profile["frequency"] > 0, "cluster_id": label if label >= 0 else None,
+                             "has_completed_order": profile["frequency"] > 0,
                              "segment_name": segment_name,
-                             "rfm_scores": rfm_scores, "rfm_rules_version": RFM_RULES_VERSION,
-                             "cluster_model_version": profile_model_version,
+                             "rfm_percentile_scores": rfm_scores,
+                             **model_assignment,
+                             "rfm_rules_version": RFM_RULES_VERSION,
                              "as_of": now.isoformat(), "basis": "all_completed_or_paid_delivered_net_of_refunds"},
                 "model_version": RFM_RULES_VERSION,
                 "trained_at": _now(),
@@ -1958,19 +2410,27 @@ def train_customer_segments(db: Session, *, business_id: int, training_run_id: i
                 for key, value in values.items():
                     setattr(row, key, value)
         run.status = "succeeded"
+        run.algorithm = algorithm
         run.metrics = {
             "customers": len(profiles),
-            "learning_ready": learning_ready, "minimum_cluster_customers":MIN_SEGMENT_CUSTOMERS,
+            "personalization_consented_customers": len(profiles),
+            "consented_buyers": len(buyers),
+            "learning_ready": learning_ready and segmenter_report.get("status") == "trained",
+            "minimum_cluster_customers": MIN_SEGMENT_CUSTOMERS,
+            "industry_prior_assigned_customers": prior_assigned,
+            "industry_prior_model_version": INDUSTRY_RFM_PRIOR_VERSION if prior_assigned else None,
+            "recommendation_industry": workspace.get("recommendation_industry"),
             "clusters": len(set(labels) - {-1}),
-            "orders": sum(profile["frequency"] for profile in all_profiles.values()),
+            "orders_for_consented_customers": sum(profile["frequency"] for profile in profiles),
             "groups": dict(group_counts),
+            "segmenter": {key: value for key, value in segmenter_report.items() if key not in {"scaler_mean", "scaler_scale", "centers_scaled"}},
         }
         run.artifact = {
             "model_version": profile_model_version,
-            "segmenter_version": RFM_RULES_VERSION,
+            "segmenter_version": SEGMENT_MODEL_VERSION,
             "algorithm": algorithm,
+            "segmenter": segmenter_report,
         }
-        run.completed_at = _now()
         db.commit()
     except Exception as exc:
         db.rollback()

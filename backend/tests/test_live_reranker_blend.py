@@ -28,10 +28,37 @@ from app.services.recommendation_learning import (
     candidate_features,
     live_reranker_blend_profile,
 )
-from scripts.train_live_recommendation_reranker import _load_groups, _ranking_metrics, _train
+from scripts.train_live_recommendation_reranker import (
+    POSITIVE_RELEVANCE,
+    _group_temporal_at,
+    _is_offline_or_synthetic_request,
+    _load_groups,
+    _ranking_metrics,
+    _train,
+)
 
 
 class RerankerBlendUnitTests(TestCase):
+    def test_checkout_intent_and_legacy_cart_are_not_purchase_strength_labels(self):
+        self.assertEqual(1, POSITIVE_RELEVANCE["click"])
+        self.assertEqual(1, POSITIVE_RELEVANCE["cart"])
+        self.assertEqual(1, POSITIVE_RELEVANCE["checkout_intent"])
+        self.assertEqual(3, POSITIVE_RELEVANCE["purchase"])
+
+    def test_trainer_excludes_legacy_offline_and_synthetic_requests(self):
+        self.assertTrue(_is_offline_or_synthetic_request(SimpleNamespace(context={
+            "surface": "chatbot", "conversation_id": 0,
+        })))
+        self.assertTrue(_is_offline_or_synthetic_request(SimpleNamespace(context={
+            "traffic_type": "synthetic",
+        })))
+        self.assertTrue(_is_offline_or_synthetic_request(SimpleNamespace(context={
+            "evaluation_run_id": "rag-snapshot:2026-11-03:run-1",
+        })))
+        self.assertFalse(_is_offline_or_synthetic_request(SimpleNamespace(context={
+            "surface": "chatbot", "conversation_id": 12, "traffic_type": "live",
+        })))
+
     def test_specific_and_discovery_queries_get_distinct_baseline_weights(self):
         self.assertEqual(("specific", 0.85), live_reranker_blend_profile("Áo cotton màu xanh size L"))
         self.assertEqual(("discovery", 0.65), live_reranker_blend_profile("Gợi ý sản phẩm cho mình"))
@@ -132,15 +159,21 @@ class RerankerDatabaseTests(TestCase):
             revoked = self._customer(db, "revoked")
             opted_out = self._customer(db, "opted-out", opted_out=True)
             no_consent = self._customer(db, "no-consent")
+            consent_at = datetime.utcnow() - timedelta(hours=2)
             db.add_all([
                 CustomerConsent(business_id=self.business_id, customer_id=eligible.id,
-                                purpose="personalization", status="granted"),
+                                purpose="personalization", status="granted",
+                                granted_at=consent_at, created_at=consent_at),
                 CustomerConsent(business_id=self.business_id, customer_id=revoked.id,
-                                purpose="personalization", status="granted"),
+                                purpose="personalization", status="granted",
+                                granted_at=consent_at, created_at=consent_at),
                 CustomerConsent(business_id=self.business_id, customer_id=revoked.id,
-                                purpose="personalization", status="revoked"),
+                                purpose="personalization", status="revoked",
+                                revoked_at=consent_at + timedelta(minutes=1),
+                                created_at=consent_at + timedelta(minutes=1)),
                 CustomerConsent(business_id=self.business_id, customer_id=opted_out.id,
-                                purpose="personalization", status="granted"),
+                                purpose="personalization", status="granted",
+                                granted_at=consent_at, created_at=consent_at),
             ])
             db.flush()
             self._request_with_impressions(db, eligible, "eligible-request")
@@ -166,6 +199,117 @@ class RerankerDatabaseTests(TestCase):
             setting.value = "false"
             db.flush()
             self.assertEqual([], _load_groups(db, self.business_id, lookback_days=14))
+
+    def test_training_uses_only_requests_and_events_after_latest_consent_grant(self):
+        with Session(self.engine) as db:
+            customer = self._customer(db, "consent-timing")
+            now = datetime.utcnow()
+            first_grant_at = now - timedelta(hours=3)
+            revoked_at = now - timedelta(hours=2)
+            granted_at = now - timedelta(minutes=30)
+            db.add_all([
+                CustomerConsent(
+                    business_id=self.business_id,
+                    customer_id=customer.id,
+                    purpose="personalization",
+                    status="granted",
+                    granted_at=first_grant_at,
+                    created_at=first_grant_at,
+                ),
+                CustomerConsent(
+                    business_id=self.business_id,
+                    customer_id=customer.id,
+                    purpose="personalization",
+                    status="revoked",
+                    revoked_at=revoked_at,
+                    created_at=revoked_at,
+                ),
+                CustomerConsent(
+                    business_id=self.business_id,
+                    customer_id=customer.id,
+                    purpose="personalization",
+                    status="granted",
+                    granted_at=granted_at,
+                    created_at=granted_at,
+                ),
+            ])
+            db.flush()
+            before_grant = self._request_with_impressions(db, customer, "before-regrant")
+            before_grant.created_at = granted_at - timedelta(minutes=5)
+            after_grant = self._request_with_impressions(db, customer, "after-regrant")
+            after_grant.created_at = granted_at + timedelta(minutes=5)
+            db.add_all([
+                CustomerProductInteraction(
+                    business_id=self.business_id,
+                    customer_id=customer.id,
+                    product_id=self.product_ids[0],
+                    recommendation_request_id=after_grant.id,
+                    event_type="checkout_intent",
+                    source="recommendation",
+                    idempotency_key="pre-regrant-event",
+                    event_metadata={},
+                    occurred_at=granted_at - timedelta(minutes=1),
+                ),
+                CustomerProductInteraction(
+                    business_id=self.business_id,
+                    customer_id=customer.id,
+                    product_id=self.product_ids[1],
+                    recommendation_request_id=after_grant.id,
+                    event_type="click",
+                    source="recommendation",
+                    idempotency_key="post-regrant-click",
+                    event_metadata={},
+                    occurred_at=granted_at + timedelta(minutes=10),
+                ),
+            ])
+            db.flush()
+
+            groups = _load_groups(db, self.business_id, lookback_days=14)
+
+        self.assertEqual(["after-regrant"], [group["request_id"] for group in groups])
+        relevance = {member["product_id"]: member["relevance"] for member in groups[0]["members"]}
+        self.assertEqual(0, relevance[self.product_ids[0]])
+        self.assertEqual(1, relevance[self.product_ids[1]])
+
+    def test_training_split_timestamp_uses_latest_event_not_request_created_at(self):
+        with Session(self.engine) as db:
+            customer = self._customer(db, "temporal")
+            consent_at = datetime.utcnow() - timedelta(days=1)
+            db.add(CustomerConsent(
+                business_id=self.business_id,
+                customer_id=customer.id,
+                purpose="personalization",
+                status="granted",
+                granted_at=consent_at,
+                created_at=consent_at,
+            ))
+            db.flush()
+            now = datetime.utcnow()
+            older_request = self._request_with_impressions(db, customer, "old-request-late-feedback")
+            newer_request = self._request_with_impressions(db, customer, "new-request-early-feedback")
+            older_request.created_at = now - timedelta(hours=4)
+            newer_request.created_at = now - timedelta(hours=3)
+            for row in db.query(CustomerProductInteraction).filter(
+                CustomerProductInteraction.recommendation_request_id == older_request.id,
+            ).all():
+                row.occurred_at = now - timedelta(hours=2)
+            for row in db.query(CustomerProductInteraction).filter(
+                CustomerProductInteraction.recommendation_request_id == newer_request.id,
+            ).all():
+                row.occurred_at = now - timedelta(hours=2, minutes=30)
+            db.flush()
+
+            groups = _load_groups(db, self.business_id, lookback_days=14)
+
+            by_request = {group["request_id"]: group for group in groups}
+            self.assertLess(
+                _group_temporal_at(by_request["new-request-early-feedback"]),
+                _group_temporal_at(by_request["old-request-late-feedback"]),
+            )
+            self.assertGreater(
+                by_request["old-request-late-feedback"]["outcome_at"],
+                by_request["old-request-late-feedback"]["created_at"],
+            )
 
     def test_impression_record_contains_blend_version_and_weights(self):
         with Session(self.engine) as db:

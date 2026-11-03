@@ -2257,6 +2257,7 @@ def get_conversations(
                 FROM messages m
                 WHERE m.conversation_id = cv.id
                   AND m.direction = 'inbound'
+                  AND COALESCE(m.raw_payload->>'history_import', 'false') != 'true'
                   AND COALESCE(m.status, 'received') != 'read'
             ) AS unread_count,
 

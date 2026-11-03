@@ -61,7 +61,7 @@ class RecommendationResponse(BaseModel):
 
 class RecommendationFeedbackCreate(BaseModel):
     product_id: int = Field(..., ge=1)
-    event_type: Literal["impression", "click", "cart", "purchase", "skip", "refund"]
+    event_type: Literal["click"]
     idempotency_key: str = Field(..., min_length=1, max_length=160)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -76,9 +76,7 @@ class RecommendationFeedbackOut(BaseModel):
     occurred_at: datetime | None = None
 
 
-InteractionEventType = Literal[
-    "view", "search", "ask", "impression", "click", "cart", "purchase", "skip", "refund"
-]
+InteractionEventType = Literal["view", "search", "ask"]
 InteractionSource = Literal["web", "chatbot", "rag", "recommendation", "order", "api"]
 
 

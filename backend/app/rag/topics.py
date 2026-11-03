@@ -8,12 +8,28 @@ from pathlib import Path
 
 
 TOPIC_TERMS: dict[str, tuple[str, ...]] = {
-    "delivery": ("giao hang", "van chuyen", "phi ship", "cuoc ship", "nhan hang", "thoi gian giao"),
-    "returns": ("doi tra", "doi hang", "tra hang", "hoan tien", "bao hanh"),
-    "payments": ("thanh toan", "chuyen khoan", "tien mat", "cod", "hoa don", "vat"),
-    "shop": ("thong tin shop", "gio ho tro", "kenh ho tro", "dia chi", "lien he"),
+    "delivery": (
+        "giao hang", "van chuyen", "phi ship", "cuoc ship", "nhan hang", "thoi gian giao",
+        "shipping", "delivery", "shipping fee", "delivery fee", "shipment", "tracking",
+    ),
+    "returns": (
+        "doi tra", "doi hang", "tra hang", "hoan tien", "bao hanh",
+        "return", "returns", "exchange", "refund", "warranty", "guarantee",
+    ),
+    "payments": (
+        "thanh toan", "chuyen khoan", "tien mat", "cod", "hoa don",
+        "hoa don vat", "thue vat", "gia tri gia tang",
+        "payment", "payments", "pay", "bank transfer", "cash", "invoice",
+    ),
+    "shop": (
+        "thong tin shop", "gio ho tro", "kenh ho tro", "dia chi", "lien he",
+        "shop address", "contact", "contact us", "opening hours", "business hours",
+    ),
     "products": ("san pham", "sku", "ton kho", "gia niem yet", "danh muc", "mau sac", "kich thuoc"),
-    "faq": ("cau hoi thuong gap", "huong dan", "tro ly", "ho tro khach hang"),
+    "faq": (
+        "cau hoi thuong gap", "huong dan", "tro ly", "ho tro khach hang",
+        "faq", "how to", "help", "support",
+    ),
 }
 
 
@@ -24,12 +40,21 @@ def fold_topic_text(value: object) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", normalized).split())
 
 
+def topic_term_matches(text: str, term: str) -> bool:
+    if " " not in term:
+        return f" {term} " in f" {text} "
+    return term in text
+
+
 def infer_document_topic(filename: str, text: str = "") -> str:
     """Infer a stable topic label from a filename and its headings/content."""
     filename_text = fold_topic_text(Path(filename or "").stem)
     folded = fold_topic_text(f"{filename_text} {text[:6000]}")
     scores = {
-        topic: sum(2 if term in filename_text else 1 for term in terms if term in folded)
+        topic: sum(
+            2 if topic_term_matches(filename_text, term) else 1
+            for term in terms if topic_term_matches(folded, term)
+        )
         for topic, terms in TOPIC_TERMS.items()
     }
     best_topic, best_score = max(scores.items(), key=lambda item: item[1])
@@ -40,7 +65,7 @@ def infer_query_topic(query: str) -> str | None:
     """Return a topic only when the query has a clear topic signal."""
     folded = fold_topic_text(query)
     scores = {
-        topic: sum(1 for term in terms if term in folded)
+        topic: sum(1 for term in terms if topic_term_matches(folded, term))
         for topic, terms in TOPIC_TERMS.items()
     }
     best_topic, best_score = max(scores.items(), key=lambda item: item[1])

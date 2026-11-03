@@ -40,9 +40,17 @@ chunk tài liệu không được coi là dữ kiện mới nhất. Bằng chứ
 `fetched_at` và phạm vi `shop_catalog` (tồn kho chung của shop; chưa có tồn riêng theo
 kênh bán).
 
-Mỗi shop cấu hình retrieval và điều phối độc lập trong `business_settings`:
+Mặc định serving khóa vào BM25 và tắt corrective controller. Bộ nạp cấu hình
+trả ngay `bm25/off`, không đọc `business_settings` cho từng tin nhắn, giúp tránh
+embedding/RRF/retry thử nghiệm và giảm một lượt truy vấn cấu hình ở đường nóng.
+Các giá trị cũ của shop không thể tự bật nhánh thử nghiệm. Chỉ cho phép override
+retrieval/controller khi đặt `RAG_EXPERIMENTAL_SERVING_ENABLED=true` rõ ràng trong
+môi trường chạy; khi đó cấu hình theo shop mới được đọc.
 
-- `rag_retrieval_mode`: `bm25` hoặc `hybrid`; mặc định `bm25`.
+Khi mở cờ thử nghiệm, mỗi shop có thể cấu hình retrieval và điều phối trong
+`business_settings`:
+
+- `rag_retrieval_mode`: `bm25`, `hybrid` hoặc `auto`; mặc định `bm25`.
 - `rag_agentic_mode`: `off`, `decision_shadow`, `execute_shadow` hoặc `active`; mặc định `off`.
 - Khóa cũ `rag_agentic_enabled` vẫn được đọc khi shop chưa đặt `rag_agentic_mode`.
 
@@ -85,11 +93,40 @@ trong cùng project không làm tăng quota. Không tự đổi model embedding.
 - Gemini chỉ trả chỉ số ranh giới cho các đơn vị nguồn. Tối đa 16 đơn vị/8.000 ký tự mỗi lượt và 32 lượt/tài liệu; lỗi, quota hoặc JSON sai dùng fallback cục bộ. Các giới hạn này giữ chi phí và độ trễ có trần.
 - Embedding nhận tên tài liệu, đường dẫn mục, SKU và văn bản chunk. Ngữ cảnh được lấy từ nguồn, không tạo tóm tắt mới bằng LLM; `DocumentChunk.content` giữ nguyên nội dung để trích dẫn.
 - Metadata `parent_start`, `parent_end`, `parent_id` cho phép dựng lại đoạn cha từ các chunk cùng tài liệu/shop mà không lưu bản sao đoạn cha.
+- Chunk mới lưu `document_id`, SHA-256 nguồn, lần reindex và phiên bản chunker trong metadata. PDF có `page_start`/`page_end` để truy ngược trang; chunk cũ không có trường này vẫn truy xuất bình thường.
 - Retrieval mở rộng cả đoạn cha khi tối đa 16 chunk và 6.000 ký tự; nếu lớn hơn, lấy hàng xóm gần nhất. Tổng nội dung bổ sung tối đa 12.000 ký tự/lượt truy xuất; giữ các kết quả độc lập và thứ tự nguồn trong đoạn cha.
-- Tài liệu cũ tiếp tục được đọc theo metadata cũ. Reindex từ bản gốc để áp dụng đầy đủ `structure-semantic-context-v2`; không trộn vector từ model khác trong một chỉ mục.
+- Tài liệu cũ tiếp tục được đọc theo metadata cũ. Reindex từ bản gốc để áp dụng đầy đủ `structure-semantic-context-v3`; không trộn vector từ model khác trong một chỉ mục.
 
 Retriever giữ nguyên Gemini embedding và chỉ mục vector hiện có. Mặc định production
-dùng BM25; `rag_retrieval_mode=hybrid` bật nhánh ngữ nghĩa để pilot riêng theo shop.
+dùng BM25; `rag_retrieval_mode=hybrid` bật nhánh ngữ nghĩa cho pilot riêng theo shop.
+`rag_retrieval_mode=auto` chạy BM25 trước; nếu câu không có SKU/bộ lọc cứng và
+ứng viên BM25 rỗng hoặc điểm phủ từ khóa cao nhất dưới 0.45 thì mới gọi vector
+và hợp nhất RRF. Có SKU/thuộc tính ràng buộc thì giữ BM25 và bộ lọc SQL chính xác.
+Ngưỡng 0.45 là tín hiệu định tuyến, không phải xác suất đúng; `auto` cần được bật
+thử theo shop và so với baseline trước khi dùng rộng.
+Trong ablation cùng snapshot ngày 2026-11-03 (243 câu), audit độc lập nghiêm ngặt
+đạt BM25 NDCG@5 0.769579, `auto` 0.767734, hybrid không PPR 0.758394 và hybrid
+có PPR 0.502747. MMR đạt 0.770391; bootstrap ghép cặp 95% CI của phần chênh lệch
+với BM25 bao gồm 0 nên chưa có bằng chứng tăng ổn định. Vì vậy BM25 vẫn mặc định,
+MMR vẫn tắt và PPR không dùng trong serving. Các con số trước audit nghiêm ngặt đã
+bị thay thế: bộ đếm cũ coi một mapping khớp là đủ, dù chunk còn chứa sản phẩm khác.
+
+Hàng rào lọc nghiêm ngặt trong working tree hiện không thấy chunk sai
+shop/SKU/thuộc tính trong 118 ca lọc cứng, trên 68 chunk trả về. SKU/thuộc tính chỉ
+nhận chunk có mapping catalog xác nhận; văn bản SKU cũ chưa map sẽ fail closed.
+Tài liệu cũ còn chunk trộn nhiều SKU, nên hàng rào loại cả chunk đó và độ bao phủ
+giảm. Reindex nguồn gốc bằng `structure-semantic-context-v3` để tách mục sản phẩm
+rồi chạy lại audit trước khi triển khai rộng; không tự reindex vì embedding từ xa
+có thể tiêu tốn quota. Độ trễ/chi phí online chưa được đo.
+Các log truy xuất ghi cả mode được yêu cầu, mode thực tế và lý do định tuyến. Câu
+tiếp nối trong hội thoại vẫn dùng ngữ cảnh sản phẩm gần nhất; lexical search giữ
+chuẩn hóa dấu và từ đồng nghĩa hiện có, còn các cặp `thuộc tính: giá trị` được
+lọc exact nếu key nằm trong tập alias thuộc tính đã khai báo. Các nhãn không nhận
+diện được giữ ở phần truy vấn mềm; hệ thống không tự biến mọi cụm `key: value`
+thành điều kiện loại kết quả. Một số key dùng chung như thời lượng, dòng xe/đời xe,
+loại phòng, chất liệu, thương hiệu và màu được map về key catalog. Bộ lọc do caller
+cung cấp đã kiểm chứng được ưu tiên hơn giá trị suy ra từ câu hỏi; xung đột chỉ ghi
+tên trường vào diagnostic, không ghi giá trị khách nhập.
 Mỗi truy vấn hybrid lấy
 ứng viên vector theo độ gần cosine, đồng thời lấy ứng viên từ khóa có phạm vi
 `business_id`, chuẩn hóa dấu tiếng Việt và ưu tiên SKU chính xác. BM25 chấm thứ
@@ -100,6 +137,29 @@ kho tài liệu. Nếu Gemini embedding hoặc truy vấn vector lỗi, BM25 v�
 BM25 hiện được chấm trong Python trên tập giới hạn; theo dõi
 Recall@K để quyết định khi nào cần chuyển thống kê/chấm điểm sang chỉ mục tìm kiếm
 PostgreSQL khi kho tri thức lớn lên.
+
+Chọn đoạn cho context mặc định dùng thứ hạng retrieval và giới hạn số đoạn mỗi tài
+liệu. Có thể truyền `enable_mmr=true` vào `retrieve()` để chạy ablation MMR từ vựng
+trên tập ứng viên đã giới hạn; độ trùng dùng Jaccard token nên đây chỉ là tín hiệu
+đa dạng rẻ, không phải cosine ngữ nghĩa. Cờ này mặc định tắt, không được bật cho
+shop nếu chưa so sánh Recall@K/NDCG@K và kiểm tra nguồn bắt buộc trên cùng tập case.
+
+`query_expansion.py` cung cấp bộ lập kế hoạch thử nghiệm cho multi-query/HyDE: giữ
+nguyên truy vấn gốc và bộ lọc cứng, tối đa hai biến thể, tối đa một lần gọi callback
+chỉ khi retrieval yếu. Văn bản HyDE tách khỏi truy vấn và không thể dùng làm nguồn
+trích dẫn. Hiện helper chưa được nối vào auto-reply hoặc serving, chưa được chấm
+hiệu quả đầu cuối và không phát sinh lời gọi model trong luồng khách hàng.
+
+Time-weighted retrieval, contextual compression và Map-Reduce/Refine/Map-rerank
+chưa được bật hoặc đánh giá. Chỉ thử chúng với dữ liệu có thời gian hoặc câu hỏi
+dài/nhiều nguồn tương ứng; không thêm vào đường trả lời chung khi chưa có holdout
+đo lợi ích và độ trễ.
+
+Sau retrieval, hệ thống mở rộng parent/neighbor có giới hạn ký tự và vẫn áp dụng
+hard filters, kiểm tra nguồn/trích dẫn và chuyển nhân viên như hiện có. Agentic retry
+chỉ thêm tối đa một truy vấn sửa có từ khóa theo intent, giữ nguyên câu gốc và bộ
+lọc; không chạy HyDE hoặc nhiều biến thể LLM song song. Những nhánh đó chưa được bật
+vì chưa có đánh giá ghép cặp chứng minh lợi ích so với chi phí và độ trễ.
 
 ## API Endpoints
 
@@ -155,11 +215,16 @@ thêm `answer_status` và `handoff_required`; khi LLM hỏng giữa stream, even
 để giao diện loại bỏ phần trả lời dở dang.
 
 Trong auto-reply theo kênh, thiếu nguồn hoặc dịch vụ LLM lỗi sẽ gửi thông báo
-phù hợp, tạo notification `rag_handoff_required`, chuyển `bot_mode=human`, và
-ghi `resolution_outcome=needs_human`. Notification chỉ lưu mã lý do và ID hội
-thoại/khách hàng để nhân viên mở đúng hồ sơ, không lưu câu hỏi. Endpoint chat nội bộ
-chỉ trả cờ `handoff_required`; UI không được hiểu cờ này là hội thoại đã tự động
-được chuyển cho một nhân viên cụ thể.
+phù hợp, tạo notification `rag_handoff_required`, và ghi
+`resolution_outcome=needs_human` mà không đổi tùy chọn `bot_mode` của shop. Khi
+hội thoại còn trạng thái này, auto-reply tạm dừng đến khi nhân viên xử lý. Một
+inbound turn chỉ tạo một notification; nếu phát sinh thêm lý do bàn giao, các mã
+lý do được gộp vào cùng bản ghi. Notification không lưu nội dung câu hỏi.
+
+Nếu nhà cung cấp đã nhận tin nhưng lưu CRM thất bại, hệ thống đánh dấu trạng thái
+gửi chưa xác định và không gửi lại tự động. Nhân viên cần kiểm tra hộp thư kênh
+trước khi thử lại. Endpoint chat nội bộ chỉ trả cờ `handoff_required`; UI không
+được hiểu cờ này là hội thoại đã tự động được chuyển cho một nhân viên cụ thể.
 
 ## Cấu hình (.env)
 
@@ -183,6 +248,7 @@ RAG_AUTO_SEED_DIR=sample_data/knowledge_base
 RAG_AUTO_SEED_FAST_MODE=false
 RAG_AUTO_REPLY_ENABLED=true
 RAG_RETRIEVAL_MODE=bm25
+RAG_EXPERIMENTAL_SERVING_ENABLED=false
 RAG_AGENTIC_ENABLED=false
 RAG_AGENTIC_MODE=off
 RAG_AGENTIC_MAX_TOOL_CALLS=4
@@ -235,8 +301,22 @@ dùng cho embedding vì Groq không cung cấp embedding trong pipeline hiện t
 - RFM điều chỉnh trọng số sở thích/mức phổ biến/RAG, không phải xác suất mua.
   Mức quan tâm nhập tay lấy bản ghi mới nhất, kể cả 0%; SKU được hỏi cụ thể,
   ngân sách, màu và tồn khả dụng là điều kiện bắt buộc trước xếp hạng.
+- Luồng chatbot lấy chunk qua retrieval hiện hành, ánh xạ chunk sang sản phẩm
+  thuộc đúng shop, rồi mới dùng RFM để xếp hạng các sản phẩm. RFM không đổi thứ
+  tự chunk kiến thức, không thay BM25/RRF/PPR và không nới bộ lọc cứng. Với câu
+  khớp sản phẩm cụ thể, điểm khớp catalog luôn là khóa sắp xếp chính; model RFM
+  chỉ phân hạng phụ các sản phẩm có cùng điểm khớp.
+- Snapshot mỗi lượt lưu `rfm_ranker_applied`, phiên bản blend, phiên bản/nguồn
+  model, ngành tham chiếu, độ tin cậy và số khách consent làm mốc. Shop mới dùng
+  industry prior sau khi khách có đơn và consent; model học riêng của shop chỉ
+  thay prior khi huấn luyện thành công.
+- Ở nhánh khớp catalog, `rfm_score_computed` nghĩa là đã tính điểm tie-break;
+  `rfm_display_order_changed` và `rfm_ranker_applied` chỉ bật khi top 3 hiển thị
+  thực sự đổi thứ tự. Khi khách rút consent, model phân cụm riêng của shop bị
+  vô hiệu hóa và cần huấn luyện lại từ dữ liệu còn consent.
 - `RecommendationRequest.context` lưu `profile_cache_hit`, `profile_as_of`,
-  trọng số và `ranking_elapsed_ms`; phần tính RFM/sở thích không gọi LLM.
+  trọng số, phiên bản blend và `ranking_elapsed_ms`; phần tính RFM/sở thích
+  không gọi LLM.
 
 Đo chất lượng với bộ câu hỏi/khách được gán nhãn độc lập. Trong JSONL cases,
 thêm `expected_product_ids`, `forbidden_product_ids`, `expected_rfm_segment`;

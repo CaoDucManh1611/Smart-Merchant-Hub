@@ -22,6 +22,7 @@ def create_notification(
     body: str | None = None,
     user_id: int | None = None,
     metadata: dict | None = None,
+    idempotency_key: str | None = None,
 ) -> Notification:
     """Store a notification before any optional delivery integration runs."""
     notification = Notification(
@@ -31,6 +32,7 @@ def create_notification(
         title=title.strip()[:255],
         body=body,
         metadata_=metadata or {},
+        idempotency_key=idempotency_key,
     )
     db.add(notification)
     db.flush()

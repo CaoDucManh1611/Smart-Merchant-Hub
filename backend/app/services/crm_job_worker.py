@@ -23,7 +23,11 @@ from app.services.workflow_engine import execute_workflow
 from app.services.chatbot_followup import dispatch_due_followups
 from app.services.order_service import release_expired_draft_reservations
 from app.services.rag_job_service import dispatch_rag_job
-from app.services.recommendation_service import train_customer_segments
+from app.services.recommendation_service import (
+    SEGMENT_ALGORITHM,
+    SEGMENT_MODEL_VERSION,
+    train_customer_segments,
+)
 from app.services.conversation_turn_service import dispatch_chatbot_turn
 from app.services.customer_fact_extractor import (
     dispatch_customer_fact_extraction,
@@ -236,10 +240,10 @@ def _dispatch_weekly_customer_learning(db: Session, business_id: int) -> dict:
     if queued is None:
         run = RecommendationTrainingRun(
             business_id=business_id,
-            algorithm="deterministic_rfm_kmeans",
+            algorithm=SEGMENT_ALGORITHM,
             status="queued",
             metrics={},
-            artifact={"model_version": "rfm_kmeans_v2", "trigger": "weekly_customer_learning"},
+            artifact={"model_version": SEGMENT_MODEL_VERSION, "trigger": "weekly_customer_learning"},
         )
         db.add(run)
         db.flush()

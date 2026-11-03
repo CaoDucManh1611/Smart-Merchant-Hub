@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import math
 from pathlib import Path
@@ -59,8 +59,37 @@ from app.services.customer_fact_extractor import get_customer_fact_extraction_en
 from app.tenancy.schema import schema_name_for, validate_schema_name
 
 
-POSITIVE_RELEVANCE = {"click": 1, "cart": 2, "purchase": 3}
-TRACKED_EVENTS = {"impression", "click", "cart", "purchase", "skip", "refund"}
+POSITIVE_RELEVANCE = {"click": 1, "cart": 1, "checkout_intent": 1, "purchase": 3}
+TRACKED_EVENTS = {"impression", "click", "cart", "checkout_intent", "purchase", "skip", "refund"}
+
+
+def _group_temporal_at(group: dict[str, Any]) -> datetime:
+    """Use when feedback was observed, falling back for legacy snapshots."""
+    value = group.get("outcome_at") or group.get("created_at")
+    if not isinstance(value, datetime):
+        return datetime.min
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _is_offline_or_synthetic_request(request: RecommendationRequest) -> bool:
+    context = request.context if isinstance(request.context, dict) else {}
+    traffic_type = str(context.get("traffic_type") or "").casefold()
+    if traffic_type in {"offline_eval", "offline_test", "synthetic"}:
+        return True
+    run_id = str(context.get("evaluation_run_id") or "").casefold()
+    if run_id.startswith(("rag-snapshot:", "offline-eval:", "synthetic:")):
+        return True
+    # Older snapshot evaluations predate traffic_type and use 0 as a sentinel;
+    # real persisted CRM conversation IDs are positive database IDs.
+    if str(context.get("surface") or "").casefold() == "chatbot":
+        try:
+            if int(context.get("conversation_id")) <= 0:
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
 
 
 def _parse_args() -> argparse.Namespace:
@@ -157,6 +186,7 @@ def _load_groups(db, business_id: int, lookback_days: int) -> list[dict[str, Any
         RecommendationRequest.business_id == business_id,
         RecommendationRequest.created_at >= cutoff,
     ).order_by(RecommendationRequest.created_at.asc(), RecommendationRequest.id.asc()).all()
+    requests = [request for request in requests if not _is_offline_or_synthetic_request(request)]
     customer_ids = {int(request.customer_id) for request in requests if request.customer_id is not None}
     if not customer_ids:
         return []
@@ -168,23 +198,33 @@ def _load_groups(db, business_id: int, lookback_days: int) -> list[dict[str, Any
             Customer.fact_extraction_opt_out.is_(False),
         ).all()
     }
-    latest_consent: dict[int, str] = {}
-    for customer_id, status in db.query(
+    consent_started_at: dict[int, datetime] = {}
+    for customer_id, status, granted_at, created_at in db.query(
         CustomerConsent.customer_id,
         CustomerConsent.status,
+        CustomerConsent.granted_at,
+        CustomerConsent.created_at,
     ).filter(
         CustomerConsent.business_id == business_id,
         CustomerConsent.customer_id.in_(eligible_customer_ids),
         CustomerConsent.purpose == "personalization",
     ).order_by(CustomerConsent.id.asc()).all():
-        latest_consent[int(customer_id)] = str(status)
-    eligible_customer_ids = {
-        customer_id for customer_id in eligible_customer_ids
-        if latest_consent.get(customer_id) == "granted"
-    }
+        customer_key = int(customer_id)
+        if str(status) == "granted":
+            effective_at = granted_at or created_at
+            if isinstance(effective_at, datetime):
+                consent_started_at[customer_key] = _group_temporal_at({"created_at": effective_at})
+            else:
+                consent_started_at.pop(customer_key, None)
+        else:
+            consent_started_at.pop(customer_key, None)
+    eligible_customer_ids = set(consent_started_at)
     requests = [
         request for request in requests
-        if request.customer_id is not None and int(request.customer_id) in eligible_customer_ids
+        if request.customer_id is not None
+        and int(request.customer_id) in eligible_customer_ids
+        and isinstance(request.created_at, datetime)
+        and _group_temporal_at({"created_at": request.created_at}) >= consent_started_at[int(request.customer_id)]
     ]
     request_by_id = {request.id: request for request in requests}
     if not request_by_id:
@@ -193,12 +233,25 @@ def _load_groups(db, business_id: int, lookback_days: int) -> list[dict[str, Any
 
     events: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
 
-    def add_event(request_id: int | None, product_id: int | None, event_type: str, metadata: Any) -> None:
-        if request_id not in request_by_id or product_id is None or event_type not in TRACKED_EVENTS:
+    def add_event(
+        request_id: int | None,
+        product_id: int | None,
+        event_type: str,
+        metadata: Any,
+        occurred_at: datetime | None = None,
+    ) -> None:
+        request = request_by_id.get(request_id)
+        if request is None or product_id is None or event_type not in TRACKED_EVENTS:
             return
-        entry = events[request_id].setdefault(product_id, {"impressed": False, "positions": [], "types": set()})
+        event_time = _group_temporal_at({"outcome_at": occurred_at, "created_at": request.created_at})
+        if event_time < consent_started_at.get(int(request.customer_id), datetime.max):
+            return
+        entry = events[request_id].setdefault(
+            product_id, {"impressed": False, "positions": [], "types": set(), "occurred_at": []},
+        )
         entry["types"].add(event_type)
         entry["impressed"] = entry["impressed"] or event_type == "impression"
+        entry["occurred_at"].append(event_time)
         if isinstance(metadata, dict):
             try:
                 position = int(metadata.get("position"))
@@ -212,13 +265,19 @@ def _load_groups(db, business_id: int, lookback_days: int) -> list[dict[str, Any
         CustomerProductInteraction.recommendation_request_id.in_(request_ids),
         CustomerProductInteraction.event_type.in_(sorted(TRACKED_EVENTS)),
     ).yield_per(500):
-        add_event(row.recommendation_request_id, row.product_id, row.event_type, row.event_metadata)
+        add_event(
+            row.recommendation_request_id, row.product_id, row.event_type,
+            row.event_metadata, row.occurred_at,
+        )
     for row in db.query(RecommendationFeedback).filter(
         RecommendationFeedback.business_id == business_id,
         RecommendationFeedback.recommendation_request_id.in_(request_ids),
         RecommendationFeedback.event_type.in_(sorted(TRACKED_EVENTS)),
     ).yield_per(500):
-        add_event(row.recommendation_request_id, row.product_id, row.event_type, row.event_metadata)
+        add_event(
+            row.recommendation_request_id, row.product_id, row.event_type,
+            row.event_metadata, row.occurred_at,
+        )
 
     groups = []
     for request in requests:
@@ -285,6 +344,13 @@ def _load_groups(db, business_id: int, lookback_days: int) -> list[dict[str, Any
             "request_id": request.request_id,
             "customer_id": int(request.customer_id),
             "created_at": request.created_at,
+            # Split on the latest observed impression/feedback for this slate,
+            # not the request creation time. Delayed clicks or purchases must
+            # not leak into a training window merely because the request was old.
+            "outcome_at": max(
+                (timestamp for event in request_events.values() for timestamp in event["occurred_at"]),
+                default=_group_temporal_at({"created_at": request.created_at}),
+            ),
             "query": str(context.get("query") or ""),
             "candidate_pool": candidate_pool,
             "members": members,
@@ -494,7 +560,7 @@ def _quality_violation_metrics(
 
 
 def _train_lightfm(groups: list[dict[str, Any]], args: argparse.Namespace) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    ordered = sorted(groups, key=lambda group: group["created_at"] or datetime.min)
+    ordered = sorted(groups, key=_group_temporal_at)
     if len(ordered) < 2:
         return None, {"algorithm": LIGHTFM_ALGORITHM, "requests_with_exposures": len(ordered), "reason": "need at least two exposed requests for a temporal split"}
     split = min(len(ordered) - 1, max(1, int(len(ordered) * 0.8)))
@@ -514,10 +580,11 @@ def _train_lightfm(groups: list[dict[str, Any]], args: argparse.Namespace) -> tu
         "holdout_positive_requests": baseline_metrics["positive_holdout_requests"],
         "baseline_ndcg_at_3": baseline_metrics["ndcg_at_3"],
         "baseline_precision_at_3": baseline_metrics["precision_at_3"],
-        "training_start": train_groups[0]["created_at"].isoformat() if train_groups[0].get("created_at") else None,
-        "training_end": train_groups[-1]["created_at"].isoformat() if train_groups[-1].get("created_at") else None,
-        "holdout_start": holdout_groups[0]["created_at"].isoformat() if holdout_groups[0].get("created_at") else None,
-        "holdout_end": holdout_groups[-1]["created_at"].isoformat() if holdout_groups[-1].get("created_at") else None,
+        "training_start": _group_temporal_at(train_groups[0]).isoformat(),
+        "training_end": _group_temporal_at(train_groups[-1]).isoformat(),
+        "holdout_start": _group_temporal_at(holdout_groups[0]).isoformat(),
+        "holdout_end": _group_temporal_at(holdout_groups[-1]).isoformat(),
+        "temporal_split_basis": "latest_recommendation_event_occurred_at",
     }
     if len(consented_customers) < args.min_consented_customers:
         return None, {**counts, "reason": "insufficient explicitly consented customers for the configured shop threshold"}
@@ -759,7 +826,7 @@ def _train(groups: list[dict[str, Any]], args: argparse.Namespace) -> tuple[dict
     # learned reranker; the CLI always supplies the selected algorithm.
     if getattr(args, "algorithm", LIVE_RERANKER_ALGORITHM) == LIGHTFM_ALGORITHM:
         return _train_lightfm(groups, args)
-    groups.sort(key=lambda group: group["created_at"] or datetime.min)
+    groups.sort(key=_group_temporal_at)
     if len(groups) < 2:
         return None, {"requests_with_exposures": len(groups), "reason": "need at least two exposed requests for a temporal split"}
     split = min(len(groups) - 1, max(1, int(len(groups) * 0.8)))
@@ -775,10 +842,11 @@ def _train(groups: list[dict[str, Any]], args: argparse.Namespace) -> tuple[dict
     consented_customers = {int(group["customer_id"]) for group in groups if group.get("customer_id") is not None}
     holdout_customers = {int(group["customer_id"]) for group in holdout_groups if group.get("customer_id") is not None}
     split_timestamps = {
-        "training_start": train_groups[0]["created_at"].isoformat() if train_groups[0].get("created_at") else None,
-        "training_end": train_groups[-1]["created_at"].isoformat() if train_groups[-1].get("created_at") else None,
-        "holdout_start": holdout_groups[0]["created_at"].isoformat() if holdout_groups[0].get("created_at") else None,
-        "holdout_end": holdout_groups[-1]["created_at"].isoformat() if holdout_groups[-1].get("created_at") else None,
+        "training_start": _group_temporal_at(train_groups[0]).isoformat(),
+        "training_end": _group_temporal_at(train_groups[-1]).isoformat(),
+        "holdout_start": _group_temporal_at(holdout_groups[0]).isoformat(),
+        "holdout_end": _group_temporal_at(holdout_groups[-1]).isoformat(),
+        "temporal_split_basis": "latest_recommendation_event_occurred_at",
     }
     counts = {
         **split_timestamps,

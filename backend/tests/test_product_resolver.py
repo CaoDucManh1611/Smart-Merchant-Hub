@@ -1,6 +1,7 @@
 import unittest
 from decimal import Decimal
 from unittest.mock import Mock
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -12,7 +13,11 @@ from app.models.customer import Customer
 from app.models.message import Message
 from app.models.sales import Product
 from app.services.customer_collection_flow import _start_product_quote
-from app.services.product_resolver import resolve_product, resolve_product_mentions
+from app.services.product_resolver import (
+    find_explicit_product_mentions,
+    resolve_product,
+    resolve_product_mentions,
+)
 
 
 class ProductResolverTests(unittest.TestCase):
@@ -97,6 +102,78 @@ class ProductResolverTests(unittest.TestCase):
             self.assertIsNotNone(product)
             self.assertEqual("COMBO-01", product.sku)
 
+    def test_resolves_follow_up_from_one_exact_product_in_latest_bot_reply(self):
+        with Session(self.engine) as db:
+            db.query(Message).filter(Message.conversation_id == self.conversation_id).delete()
+            db.add_all([
+                Message(
+                    conversation_id=self.conversation_id,
+                    channel="instagram",
+                    direction="inbound",
+                    sender_type="customer",
+                    content="Bạn có combo chăm sóc da cơ bản không?",
+                ),
+                Message(
+                    conversation_id=self.conversation_id,
+                    channel="instagram",
+                    direction="outbound",
+                    sender_type="bot",
+                    content="Combo chăm sóc da cơ bản có giá 799.000 đồng.",
+                ),
+            ])
+            db.commit()
+
+            product = resolve_product(
+                db,
+                business_id=self.business_id,
+                conversation_id=self.conversation_id,
+                text="Cái đó còn hàng không?",
+            )
+
+            self.assertIsNotNone(product)
+            self.assertEqual("COMBO-01", product.sku)
+            db.query(Message).filter(Message.conversation_id == self.conversation_id).delete()
+            db.commit()
+
+    def test_does_not_guess_between_products_in_latest_bot_reply(self):
+        with Session(self.engine) as db:
+            db.query(Message).filter(Message.conversation_id == self.conversation_id).delete()
+            db.query(Product).filter(
+                Product.business_id == self.business_id,
+                Product.sku == "HOME-01",
+            ).delete()
+            db.add(Product(
+                business_id=self.business_id,
+                sku="HOME-01",
+                name="Điện gia dụng mẫu 01",
+                price=Decimal("349000"),
+                stock_quantity=4,
+                status="active",
+            ))
+            db.add(Message(
+                conversation_id=self.conversation_id,
+                channel="instagram",
+                direction="outbound",
+                sender_type="bot",
+                content="Combo chăm sóc da cơ bản hoặc Điện gia dụng mẫu 01 đều có thể phù hợp.",
+            ))
+            db.commit()
+
+            product = resolve_product(
+                db,
+                business_id=self.business_id,
+                conversation_id=self.conversation_id,
+                text="Cái đó còn hàng không?",
+            )
+
+            self.assertIsNone(product)
+            db.query(Message).filter(Message.conversation_id == self.conversation_id).delete()
+            db.query(Product).filter(
+                Product.business_id == self.business_id,
+                Product.sku == "HOME-01",
+            ).delete()
+            db.commit()
+
     def test_quantity_number_does_not_override_an_explicit_numbered_product_name(self):
         with Session(self.engine) as db:
             appliance = Product(
@@ -163,6 +240,17 @@ class ProductResolverTests(unittest.TestCase):
 
 
 class DemoProductResolverRegressionTests(unittest.TestCase):
+    def test_tire_size_comparison_matches_each_requested_dimension(self):
+        products = [
+            SimpleNamespace(id=1, sku="TIRE-7090", name="Lop xe so 70/90-17 khong sam", metadata_={}),
+            SimpleNamespace(id=2, sku="TIRE-8090", name="Lop xe so 80/90-17 khong sam", metadata_={}),
+            SimpleNamespace(id=3, sku="TIRE-90100", name="Lop xe so 90/100-17 khong sam", metadata_={}),
+        ]
+        matches = find_explicit_product_mentions(
+            products, "Shop co lop 70/90-17 va 80/90-17 khong? So sanh gia giup toi."
+        )
+        self.assertEqual([1, 2], [product.id for product in matches])
+
     def test_exact_demo_name_beats_earlier_weak_quantity_match(self):
         bottle = Product(
             id=53, business_id=4, sku="BOTTLE-600",

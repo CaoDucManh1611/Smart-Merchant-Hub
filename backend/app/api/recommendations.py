@@ -1,7 +1,7 @@
 """Tenant-scoped product recommendation serving and feedback endpoints."""
 
 from types import SimpleNamespace
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,8 @@ from app.schemas.recommendation import (
 from app.services.job_service import enqueue_job
 from app.services.recommendation_service import (
     RecommendationServiceError,
+    SEGMENT_ALGORITHM,
+    SEGMENT_MODEL_VERSION,
     record_feedback,
     safe_http_url,
     serve_recommendations,
@@ -43,6 +45,30 @@ from app.tenancy.dependencies import get_tenant_context
 
 router = APIRouter(prefix="/recommendations")
 
+_LINK_PREVIEW_USER_AGENT_MARKERS = (
+    "facebookexternalhit", "meta-externalagent", "twitterbot", "linkedinbot",
+    "slackbot", "discordbot", "telegrambot", "whatsapp", "pinterestbot",
+    "googlebot", "bingbot", "crawler", "spider", "linkpreview",
+)
+
+
+def _is_user_activated_product_navigation(http_request: Request) -> bool:
+    """Exclude known unfurl/prefetch traffic without dropping older browsers."""
+    purpose = " ".join((
+        http_request.headers.get("purpose", ""),
+        http_request.headers.get("sec-purpose", ""),
+    )).casefold()
+    if any(marker in purpose for marker in ("prefetch", "prerender", "preview")):
+        return False
+
+    user_agent = http_request.headers.get("user-agent", "").casefold()
+    if any(marker in user_agent for marker in _LINK_PREVIEW_USER_AGENT_MARKERS):
+        return False
+
+    # Safari and some embedded browsers omit Fetch Metadata, so accept them
+    # unless they explicitly report that navigation has no user activation.
+    return http_request.headers.get("sec-fetch-user") in (None, "?1")
+
 
 def _raise_service_error(exc: RecommendationServiceError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -54,13 +80,14 @@ def _raise_interaction_error(exc: RecommendationInteractionError) -> None:
 
 @router.get("/click/{business_id}/{request_id}/{product_id}", include_in_schema=False)
 def track_recommendation_click(
+    http_request: Request,
     business_id: int,
     request_id: str,
     product_id: int,
     expires: int = Query(...),
     signature: str = Query(...),
 ):
-    """Record a signed product-link click, then redirect to the shop catalog URL."""
+    """Record a signed user click, then redirect to the product URL."""
     if not verify_recommendation_click_signature(
         business_id=business_id,
         request_id=request_id,
@@ -87,20 +114,25 @@ def track_recommendation_click(
         target_url = safe_http_url(product.product_url if product else None)
         if target_url is None:
             raise HTTPException(status_code=404, detail="Không tìm thấy liên kết sản phẩm.")
-        try:
-            record_feedback(
-                db,
-                business_id=business_id,
-                request_id=request_id,
-                product_id=product_id,
-                event_type="click",
-                idempotency_key=f"tracked-click:{request_id}:{product_id}",
-                metadata={"source": "signed_product_link"},
-            )
-        except Exception:
-            # A telemetry failure should not turn a valid customer-facing link
-            # into a broken product page.
-            db.rollback()
+        # Link-preview bots and speculative fetches can follow signed URLs.
+        if _is_user_activated_product_navigation(http_request):
+            try:
+                record_feedback(
+                    db,
+                    business_id=business_id,
+                    request_id=request_id,
+                    product_id=product_id,
+                    event_type="click",
+                    idempotency_key=f"tracked-click:{request_id}:{product_id}",
+                    metadata={
+                        "source": "signed_product_link",
+                        "user_activation_header": http_request.headers.get("sec-fetch-user"),
+                    },
+                    verified_click=True,
+                )
+            except Exception:
+                # Telemetry failure must not break a valid customer-facing link.
+                db.rollback()
     return RedirectResponse(target_url, status_code=307)
 
 
@@ -157,7 +189,7 @@ def track_interaction(
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    """Ingest a tenant-scoped browse, chat, cart, or conversion signal."""
+    """Ingest low-risk browse/search/ask signals; exposures and outcomes are server-owned."""
     try:
         row, request_id = record_interaction(
             db,
@@ -247,28 +279,11 @@ def recommend(
 def feedback(
     request_id: str,
     payload: RecommendationFeedbackCreate,
-    db: Session = Depends(get_tenant_db),
-    tenant: TenantContext = Depends(get_tenant_context),
 ):
-    try:
-        row = record_feedback(
-            db,
-            business_id=tenant.business_id,
-            request_id=request_id,
-            product_id=payload.product_id,
-            event_type=payload.event_type,
-            idempotency_key=payload.idempotency_key,
-            metadata=payload.metadata,
-        )
-    except RecommendationServiceError as exc:
-        _raise_service_error(exc)
-    return RecommendationFeedbackOut(
-        id=row.id,
-        request_id=request_id,
-        product_id=row.product_id,
-        event_type=row.event_type,
-        reward=float(row.reward),
-        occurred_at=row.occurred_at,
+    """Retain a clear migration response; clicks are accepted only on signed links."""
+    raise HTTPException(
+        status_code=410,
+        detail="Endpoint feedback trực tiếp đã ngừng nhận click. Hãy dùng liên kết sản phẩm có chữ ký.",
     )
 
 
@@ -279,10 +294,10 @@ def schedule_segment_training(
 ):
     run = RecommendationTrainingRun(
         business_id=tenant.business_id,
-        algorithm="deterministic_rfm_kmeans",
+        algorithm=SEGMENT_ALGORITHM,
         status="queued",
         metrics={},
-        artifact={"model_version": "rfm_kmeans_v2"},
+        artifact={"model_version": SEGMENT_MODEL_VERSION},
     )
     db.add(run)
     db.flush()

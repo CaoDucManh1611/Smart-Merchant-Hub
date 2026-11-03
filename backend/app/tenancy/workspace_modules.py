@@ -16,7 +16,21 @@ from app.tenancy.dependencies import get_tenant_context
 SETTING_KEY = "workspace_modules"
 MODULES = {"retail", "appointments", "projects"}
 PROFILES = {"retail", "services", "b2b", "mixed"}
-DEFAULT_CONFIG = {"business_type": "retail", "enabled_modules": ["retail"]}
+RETAIL_RFM_PRIOR_INDUSTRIES = {"general_retail", "fashion", "grocery", "ecommerce"}
+DEFAULT_CONFIG = {
+    "business_type": "retail",
+    "enabled_modules": ["retail"],
+    "recommendation_industry": "general_retail",
+}
+
+
+def _default_rfm_industry(business_type: str) -> str:
+    return {
+        "retail": "general_retail",
+        "services": "services",
+        "b2b": "b2b",
+        "mixed": "mixed",
+    }.get(business_type, "general_retail")
 
 
 def get_workspace_config(db: Session, business_id: int) -> dict:
@@ -32,18 +46,33 @@ def get_workspace_config(db: Session, business_id: int) -> dict:
         config = DEFAULT_CONFIG
     profile = config.get("business_type")
     enabled = config.get("enabled_modules")
+    normalized_profile = profile if isinstance(profile, str) and profile in PROFILES else DEFAULT_CONFIG["business_type"]
+    recommendation_industry = config.get("recommendation_industry")
+    if normalized_profile == "retail":
+        valid_industry = recommendation_industry in RETAIL_RFM_PRIOR_INDUSTRIES
+    else:
+        valid_industry = recommendation_industry == normalized_profile
     return {
-        "business_type": profile if isinstance(profile, str) and profile in PROFILES else DEFAULT_CONFIG["business_type"],
+        "business_type": normalized_profile,
         "enabled_modules": [module for module in enabled if isinstance(module, str) and module in MODULES]
         if isinstance(enabled, list)
         else DEFAULT_CONFIG["enabled_modules"],
+        "recommendation_industry": recommendation_industry if valid_industry else _default_rfm_industry(normalized_profile),
     }
 
 
 def save_workspace_config(db: Session, business_id: int, config: dict) -> dict:
+    business_type = config["business_type"]
+    requested_industry = config.get("recommendation_industry")
+    valid_industry = (
+        requested_industry in RETAIL_RFM_PRIOR_INDUSTRIES
+        if business_type == "retail"
+        else requested_industry == business_type
+    )
     normalized = {
-        "business_type": config["business_type"],
+        "business_type": business_type,
         "enabled_modules": sorted(set(config["enabled_modules"]) & MODULES),
+        "recommendation_industry": requested_industry if valid_industry else _default_rfm_industry(business_type),
     }
     value = json.dumps(normalized, separators=(",", ":"))
     setting = db.query(BusinessSetting).filter(

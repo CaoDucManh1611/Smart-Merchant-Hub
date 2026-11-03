@@ -25,7 +25,7 @@ from app.models.platform_control import TenantRegistry
 from app.rag.agentic_controller import corrective_query, evidence_quality, retrieval_is_weak
 from app.rag.catalog_filters import extract_query_hard_filters
 from app.rag.embedder import _embed_with_gemini
-from app.rag.retriever import retrieve
+from app.rag.retriever import retrieve, _retry_retrieval_mode
 from app.tenancy.schema import schema_name_for, validate_schema_name
 
 
@@ -213,7 +213,12 @@ def run(cases_path: Path, output_path: Path, *, gemini: bool) -> dict:
                 retry_diagnostics = {}
                 retry = corrective_query(query)
                 if retrieval_is_weak(baseline_chunks, settings.RAG_AGENTIC_RETRY_THRESHOLD) and retry != query:
-                    retry_args = {**arguments, "query": retry, "diagnostics": retry_diagnostics}
+                    retry_args = {
+                        **arguments,
+                        "query": retry,
+                        "diagnostics": retry_diagnostics,
+                        "retrieval_mode": _retry_retrieval_mode(mode, diagnostics),
+                    }
                     if gemini:
                         retry_args["query_embedding"] = query_vectors[retry]
                     retry_started = time.perf_counter()

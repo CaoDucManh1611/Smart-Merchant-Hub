@@ -72,10 +72,25 @@ from app.rag.retriever import (
     RetrievedChunk,
     _bm25_scores,
     _merge_hybrid_results,
+    _merge_hard_filters,
+    _expand_parent_neighbors,
+    _lexical_mmr_candidates,
+    _lexical_sku_identifiers,
     _personalized_pagerank_rerank,
     _query_sku_identifiers,
+    _reranker_diagnostic_name,
+    _retrieval_version,
+    _retrieve_lexical,
+    _retry_retrieval_mode,
+    _select_retrieval_mode,
+    _should_preserve_policy_sources,
 )
-from app.rag.catalog_filters import extract_query_hard_filters
+from app.rag.catalog_filters import (
+    catalog_hard_filter_sql,
+    extract_query_hard_filters,
+    validate_hard_filters,
+)
+from app.rag.semantic_chunker import chunk_document
 from app.rag.topics import infer_document_topic, infer_query_topic
 
 
@@ -249,6 +264,46 @@ def test_hybrid_merge_keeps_ppr_opt_in():
         ppr.assert_called_once()
 
 
+def test_lexical_mmr_is_opt_in_and_selects_less_redundant_evidence():
+    candidates = [
+        RetrievedChunk(1, 10, "Áo khoác xanh cotton size M, chất liệu mềm", .9, {}),
+        RetrievedChunk(2, 10, "Áo khoác xanh cotton size M, chất liệu vải mềm", .8, {}),
+        RetrievedChunk(3, 20, "Chính sách đổi trả áo khoác trong 7 ngày", .7, {}),
+        RetrievedChunk(4, 30, "Áo khoác size M có lớp chống nước", .6, {}),
+    ]
+
+    baseline = _merge_hybrid_results([], candidates, top_k=3)
+    diverse = _merge_hybrid_results([], candidates, top_k=3, enable_mmr=True)
+
+    assert [item.chunk_id for item in baseline] == [1, 2, 3]
+    assert [item.chunk_id for item in diverse] == [1, 3, 4]
+
+
+def test_lexical_mmr_validates_diversity_weight_and_keeps_rank_for_empty_text():
+    import pytest
+
+    empty = RetrievedChunk(1, 10, "", .9, {})
+    next_item = RetrievedChunk(2, 20, "", .8, {})
+    assert [item.chunk_id for item in _lexical_mmr_candidates([empty, next_item], 2)] == [1, 2]
+    with pytest.raises(ValueError, match="diversity_weight"):
+        _lexical_mmr_candidates([empty], 1, diversity_weight=1.1)
+
+
+def test_reranker_diagnostics_keep_both_opt_in_ablation_names():
+    assert _reranker_diagnostic_name(True, True) == (
+        "personalized_pagerank_offline+lexical_mmr_experimental_v1"
+    )
+
+
+def test_retrieval_version_records_all_rerankers_on_vector_fallback():
+    assert _retrieval_version("hybrid", True, True, fallback=True) == (
+        "bm25_fallback_ppr_offline_lexical_mmr_experimental_v1"
+    )
+    assert _retrieval_version("hybrid", False, True) == (
+        "gemini_bm25_rrf_lexical_mmr_experimental_v1"
+    )
+
+
 def test_ppr_blends_consented_customer_product_prior_with_query_rank():
     query_match = RetrievedChunk(
         chunk_id=1, document_id=10, content="Bình đỏ", similarity=0.52,
@@ -274,10 +329,10 @@ def test_hard_filter_extractor_keeps_complete_industry_size_values():
         "required_attributes": {"size": "70/90-17"},
     }
     assert extract_query_hard_filters("Tìm size 1 lít") == {
-        "required_attributes": {"size": "1 lít"},
+        "required_attributes": {"volume": "1 lít"},
     }
     assert extract_query_hard_filters("Tìm kích thước 0.8 lít") == {
-        "required_attributes": {"size": "0.8 lít"},
+        "required_attributes": {"volume": "0.8 lít"},
     }
     assert extract_query_hard_filters("Tìm size CR7HSA") == {
         "required_attributes": {"size": "cr7hsa"},
@@ -294,6 +349,425 @@ def test_hard_filter_size_code_is_not_also_treated_as_an_exact_sku():
     assert _query_sku_identifiers(
         query_with_both, extract_query_hard_filters(query_with_both),
     ) == ["xm-cr7hsa"]
+
+
+def test_explicit_industry_attributes_are_extracted_but_live_fields_are_not():
+    filters = extract_query_hard_filters(
+        "Tìm dịch vụ, thời lượng: 60 phút, loại phòng: Deluxe; giá: 500000"
+    )
+    assert filters["required_attributes"] == {
+        "duration_minutes": "60 phút",
+        "room_type": "Deluxe",
+    }
+    assert "gia" not in filters["required_attributes"]
+    assert extract_query_hard_filters("Ghi chú: dùng cho dịp đi chơi") == {}
+    assert extract_query_hard_filters("Thời gian: giao ngày mai") == {}
+    assert "color" not in extract_query_hard_filters("Tìm sản phẩm màu xanh").get("required_attributes", {})
+    assert extract_query_hard_filters("Tìm áo màu xanh lá")["required_attributes"]["color"] == "green"
+
+
+def test_common_industry_aliases_map_to_catalog_keys_and_numeric_duration():
+    filters = extract_query_hard_filters("duration: 1 hour, room type: Deluxe")
+    sql, params = catalog_hard_filter_sql(
+        filters,
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+    )
+    assert "rca.key_norm IN" in sql
+    assert "duration_minutes" in params.values()
+    assert "60" in params.values()
+    assert "room_type" in params.values()
+    assert "deluxe" in params.values()
+
+
+def test_volume_hard_filter_matches_legacy_size_key_with_exact_unit_value():
+    filters = extract_query_hard_filters("Có dầu phanh kích thước 250 ml không?")
+    assert filters["required_attributes"] == {"volume": "250 ml"}
+    sql, params = catalog_hard_filter_sql(
+        filters,
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+    )
+    assert "sizes" in params.values()
+    assert "250 ml" in params.values()
+
+    non_measure_sql, non_measure_params = catalog_hard_filter_sql(
+        {"required_attributes": {"volume": "L"}},
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+    )
+    assert "rca.key_norm IN" in non_measure_sql
+    assert "sizes" not in non_measure_params.values()
+
+
+def test_sku_hard_filter_rejects_mixed_catalog_chunks_before_ranking():
+    import sqlite3
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript("""
+        CREATE TABLE document_chunks (id INTEGER PRIMARY KEY, content TEXT, metadata TEXT);
+        CREATE TABLE recommendation_catalog_chunk_mappings (
+            document_chunk_id INTEGER, catalog_entry_id INTEGER
+        );
+        CREATE TABLE recommendation_catalog_entries (
+            id INTEGER PRIMARY KEY, business_id INTEGER, object_type TEXT, sku_norm TEXT
+        );
+        CREATE TABLE recommendation_catalog_attributes (
+            catalog_entry_id INTEGER, key_norm TEXT, normalized_value TEXT
+        );
+        INSERT INTO document_chunks VALUES
+            (1, 'SERUM-02 200000; SERUM-01 420000', '{}'),
+            (2, 'SERUM-02 200000', '{}'),
+            (3, 'VARIANT-A and VARIANT-B', '{}'),
+            (4, 'size L and size M', '{}'),
+            (5, 'size L', '{}'),
+            (6, 'LEGACY-01 single product', '{"sku":"legacy-01","unit_type":"product"}'),
+            (7, 'LEGACY-01 and LEGACY-02 mixed list', '{"sku":"legacy-01","unit_type":"freeform"}');
+        INSERT INTO recommendation_catalog_entries VALUES
+            (10, 7, 'product', 'serum-02'), (11, 7, 'product', 'serum-01'),
+            (12, 7, 'product', 'variant-a'), (13, 7, 'product', 'variant-b'),
+            (14, 7, 'product', 'size-l'), (15, 7, 'product', 'size-m');
+        INSERT INTO recommendation_catalog_chunk_mappings VALUES
+            (1, 10), (1, 11), (2, 10), (3, 12), (3, 13), (4, 14), (4, 15), (5, 14);
+        INSERT INTO recommendation_catalog_attributes VALUES
+            (14, 'size', 'l'), (15, 'size', 'm');
+    """)
+
+    predicate, params = catalog_hard_filter_sql(
+        {"sku": "SERUM-02", "object_type": "product"},
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+        chunk_metadata_expression="dc.metadata",
+        dialect_name="sqlite",
+    )
+    rows = connection.execute(
+        "SELECT dc.id FROM document_chunks dc WHERE 1 = 1 " + predicate,
+        {**params, "business_id": 7},
+    ).fetchall()
+
+    assert rows == [(2,)]
+
+    allowed_variants, variant_params = catalog_hard_filter_sql(
+        {"sku": ["VARIANT-A", "VARIANT-B"], "object_type": "product"},
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+        dialect_name="sqlite",
+    )
+    variant_rows = connection.execute(
+        "SELECT dc.id FROM document_chunks dc WHERE 1 = 1 " + allowed_variants,
+        {**variant_params, "business_id": 7},
+    ).fetchall()
+    assert variant_rows == [(3,)]
+
+    size_filter, size_params = catalog_hard_filter_sql(
+        {"required_attributes": {"size": "L"}},
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+        dialect_name="sqlite",
+    )
+    size_rows = connection.execute(
+        "SELECT dc.id FROM document_chunks dc WHERE 1 = 1 " + size_filter,
+        {**size_params, "business_id": 7},
+    ).fetchall()
+    assert size_rows == [(5,)]
+
+    legacy_filter, legacy_params = catalog_hard_filter_sql(
+        {"sku": "LEGACY-01", "object_type": "product"},
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+        chunk_metadata_expression="dc.metadata",
+        dialect_name="sqlite",
+    )
+    legacy_rows = connection.execute(
+        "SELECT dc.id FROM document_chunks dc WHERE 1 = 1 " + legacy_filter,
+        {**legacy_params, "business_id": 7},
+    ).fetchall()
+    assert legacy_rows == []
+    assert "legacy_sku_exact_0" not in legacy_filter
+
+
+def test_attribute_filter_can_preserve_unmapped_policy_chunks_for_policy_queries():
+    sql, _ = catalog_hard_filter_sql(
+        {"required_attributes": {"room type": "Deluxe"}},
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+        chunk_metadata_expression="dc.metadata",
+        preserve_policy_sources=True,
+    )
+    assert "returns" in sql and "payments" in sql
+    assert "NOT EXISTS (SELECT 1 FROM recommendation_catalog_chunk_mappings rcm_policy" in sql
+
+
+def test_sql_preserves_only_unmapped_policy_chunks_for_mixed_sku_query():
+    import sqlite3
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript("""
+        CREATE TABLE document_chunks (id INTEGER PRIMARY KEY, content TEXT, metadata TEXT);
+        CREATE TABLE recommendation_catalog_chunk_mappings (
+            document_chunk_id INTEGER, catalog_entry_id INTEGER
+        );
+        CREATE TABLE recommendation_catalog_entries (
+            id INTEGER PRIMARY KEY, business_id INTEGER, object_type TEXT, sku_norm TEXT
+        );
+        CREATE TABLE recommendation_catalog_attributes (
+            catalog_entry_id INTEGER, key_norm TEXT, normalized_value TEXT
+        );
+        INSERT INTO document_chunks VALUES
+            (1, 'Đổi trả trong 7 ngày', '{"topic":"returns"}'),
+            (2, 'Mô tả sản phẩm', '{"topic":"products"}'),
+            (3, 'Mapped policy-like text', '{"topic":"returns"}');
+        INSERT INTO recommendation_catalog_entries VALUES
+            (10, 7, 'product', 'another-sku');
+        INSERT INTO recommendation_catalog_chunk_mappings VALUES (3, 10);
+    """)
+    predicate, params = catalog_hard_filter_sql(
+        {"sku": "SERUM-02", "object_type": "product"},
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+        chunk_metadata_expression="dc.metadata",
+        preserve_policy_sources=True,
+        dialect_name="sqlite",
+    )
+
+    rows = connection.execute(
+        "SELECT dc.id FROM document_chunks dc WHERE 1 = 1 " + predicate,
+        {**params, "business_id": 7},
+    ).fetchall()
+
+    assert rows == [(1,)]
+
+
+def test_sku_and_object_type_filters_keep_unmapped_policy_evidence_for_mixed_questions():
+    cases = (
+        {"sku": "SERUM-02"},
+        {"sku": "SERUM-02", "object_type": "product"},
+        {"sku": "SERUM-02", "required_attributes": {"color": "red"}},
+        {"sku": "SERUM-02", "object_type": "product", "required_attributes": {"color": "red"}},
+    )
+    for filters in cases:
+        sql, _ = catalog_hard_filter_sql(
+            filters,
+            chunk_id_expression="dc.id",
+            chunk_content_expression="dc.content",
+            chunk_metadata_expression="dc.metadata",
+            preserve_policy_sources=True,
+        )
+        assert "legacy_sku_exact_0" not in sql
+        assert "returns" in sql and "payments" in sql
+
+
+def test_lexical_sku_post_filter_keeps_policy_evidence_for_mixed_query():
+    from types import SimpleNamespace
+
+    rows = [
+        SimpleNamespace(_mapping={
+            "id": 1, "document_id": 10, "content": "Serum hàng hóa, 200.000 đồng.",
+            "chunk_metadata": {"topic": "products"}, "source_filename": "catalog.txt", "chunk_index": 0,
+            "exact_catalog_sku_match": 1,
+        }),
+        SimpleNamespace(_mapping={
+            "id": 2, "document_id": 20, "content": "Chính sách đổi trả trong vòng 7 ngày.",
+            "chunk_metadata": {"topic": "returns"}, "source_filename": "policy.txt", "chunk_index": 0,
+        }),
+    ]
+
+    class _PostgresDB:
+        bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def execute(self, statement, *_args, **_kwargs):
+            sql = str(statement)
+            assert "exact_catalog_sku_match" in sql
+            assert "recommendation_catalog_chunk_mappings rcm_lexical_sku" in sql
+            order_clause = sql.split("ORDER BY ", 1)[1].split(" DESC", 1)[0]
+            assert "sc.exact_catalog_sku_match = 1" in order_clause
+            return SimpleNamespace(fetchall=lambda: rows)
+
+    result = _retrieve_lexical(
+        "SERUM-02 đổi trả thế nào?",
+        _PostgresDB(),
+        top_k=5,
+        business_id=1,
+        query_topic="products",
+        similarity_threshold=0.2,
+        hard_filters={"sku": "SERUM-02"},
+        preserve_policy_sources=True,
+    )
+
+    assert {chunk.chunk_id for chunk in result} == {1, 2}
+
+
+def test_hybrid_selection_reserves_policy_evidence_for_mixed_questions():
+    candidates = [
+        RetrievedChunk(index, index, "product catalog item", 1 - index / 100, {"topic": "products"})
+        for index in range(1, 5)
+    ]
+    candidates.append(RetrievedChunk(5, 50, "policy catalog item", .2, {"topic": "returns"}))
+
+    result = _merge_hybrid_results(
+        [], candidates, top_k=3, topic="products", preserve_policy_sources=True,
+    )
+
+    assert len(result) == 3
+    assert any((item.metadata or {}).get("topic") == "returns" for item in result)
+
+
+def test_parent_expansion_does_not_evict_reserved_policy_evidence():
+    from types import SimpleNamespace
+    from app.rag.retriever import _expand_parent_neighbors
+
+    product = RetrievedChunk(1, 10, "product lead", .9, {"parent_id": "p"}, chunk_index=1)
+    policy = RetrievedChunk(2, 20, "return policy", .4, {"topic": "returns"})
+    neighbor = SimpleNamespace(_mapping={
+        "id": 3, "document_id": 10, "content": "product neighbor",
+        "chunk_metadata": {"parent_id": "p"}, "source_filename": "catalog.txt", "chunk_index": 2,
+    })
+    db = SimpleNamespace(
+        bind=SimpleNamespace(dialect=SimpleNamespace(name="postgresql")),
+        execute=lambda *_args, **_kwargs: SimpleNamespace(fetchall=lambda: [neighbor]),
+    )
+
+    result = _expand_parent_neighbors(
+        [product, policy], db, business_id=1, top_k=2, preserve_policy_sources=True,
+    )
+
+    assert len(result) == 2
+    assert any((item.metadata or {}).get("topic") == "returns" for item in result)
+
+
+def test_policy_topic_detection_supports_english_queries():
+    query = "What is your return and warranty policy?"
+    assert infer_query_topic(query) == "returns"
+    assert _should_preserve_policy_sources(query, infer_query_topic(query))
+
+
+def test_vat_alias_does_not_misclassify_vietnamese_material_questions():
+    query = "Vật liệu sản phẩm này là gì?"
+    assert infer_query_topic(query) == "products"
+    assert not _should_preserve_policy_sources(query, infer_query_topic(query))
+
+
+def test_short_payment_terms_match_words_not_substrings():
+    query = "Is this cashmere SKU available?"
+    assert infer_query_topic(query) == "products"
+    assert not _should_preserve_policy_sources(query, infer_query_topic(query))
+
+
+def test_single_word_policy_terms_do_not_match_inside_product_descriptions():
+    query = "Are these supportive shoes SKU-A available?"
+    assert infer_query_topic(query) == "products"
+    assert not _should_preserve_policy_sources(query, infer_query_topic(query))
+
+
+def test_hard_filter_contract_rejects_non_scalar_or_unbounded_values():
+    import pytest
+
+    with pytest.raises(ValueError, match="scalar"):
+        validate_hard_filters({"required_attributes": {"duration": [30, 60]}})
+    with pytest.raises(ValueError, match="unsupported hard filters"):
+        validate_hard_filters({"tenant_id": 999})
+
+
+def test_caller_filters_win_over_inferred_constraints_and_report_conflicts():
+    effective, conflicts = _merge_hard_filters(
+        {"required_attributes": {"size": "M"}},
+        validate_hard_filters({"sku": "CALLER-2", "required_attributes": {"size": "L"}}),
+        ["QUERY-1"],
+    )
+    assert effective["sku"] == ["CALLER-2"]
+    assert effective["required_attributes"] == {"size": "L"}
+    assert conflicts == ["attribute:size", "sku"]
+
+
+def test_lexical_sku_matching_respects_caller_filter_over_conflicting_query_code():
+    assert _lexical_sku_identifiers(
+        "Tìm mã PRODUCT-QUERY-9",
+        {"sku": ["PRODUCT-CALLER-1"]},
+    ) == ["product-caller-1"]
+
+
+def test_mixed_product_and_policy_question_keeps_policy_evidence_eligible():
+    query = "Tìm sản phẩm màu sắc xanh lá, còn tồn kho không, có đổi trả không?"
+    assert infer_query_topic(query) == "products"
+    assert _should_preserve_policy_sources(query, "products")
+    sql, _ = catalog_hard_filter_sql(
+        {"required_attributes": {"color": "green"}},
+        chunk_id_expression="dc.id",
+        chunk_content_expression="dc.content",
+        chunk_metadata_expression="dc.metadata",
+        preserve_policy_sources=_should_preserve_policy_sources(query, "products"),
+    )
+    assert "returns" in sql and "payments" in sql
+    assert not _should_preserve_policy_sources("Serum Vitamin C giá bao nhiêu?", "products")
+
+
+def test_corrective_retry_keeps_the_initial_retrieval_score_scale():
+    assert _retry_retrieval_mode("auto", {"retrieval_mode": "hybrid"}) == "hybrid"
+    assert _retry_retrieval_mode("auto", {"retrieval_mode": "lexical"}) == "bm25"
+    assert _retry_retrieval_mode("hybrid", {}) == "hybrid"
+    assert _retry_retrieval_mode("auto", {}) == "bm25"
+
+
+def test_auto_retrieval_keeps_exact_filters_on_bm25_and_uses_hybrid_only_for_weak_lexical():
+    weak = [RetrievedChunk(1, 1, "weak", 0.3, {})]
+    strong = [RetrievedChunk(2, 1, "strong", 0.8, {})]
+    assert _select_retrieval_mode("auto", {"sku": "ABC-1"}, [], weak) == (
+        "bm25", "exact_identifier_or_hard_filter",
+    )
+    assert _select_retrieval_mode("auto", {}, [], []) == (
+        "hybrid", "weak_lexical_candidates",
+    )
+    assert _select_retrieval_mode("auto", {}, [], strong) == (
+        "bm25", "lexical_candidates_sufficient",
+    )
+
+
+def test_structure_chunker_keeps_pdf_page_provenance():
+    chunks = chunk_document(
+        "[Trang 1]\nĐổi trả trong 7 ngày.\n\n[Trang 2]\nKhông áp dụng bảo hành.",
+        "policy.pdf",
+        source_metadata={"source_content_hash": "a" * 64, "source_revision": 2},
+    )
+    assert len(chunks) == 2
+    assert (chunks[0].metadata["page_start"], chunks[0].metadata["page_end"]) == (1, 1)
+    assert (chunks[1].metadata["page_start"], chunks[1].metadata["page_end"]) == (2, 2)
+    assert all(chunk.metadata["source_content_hash"] == "a" * 64 for chunk in chunks)
+    assert all(chunk.metadata["source_revision"] == 2 for chunk in chunks)
+
+
+def test_parent_expansion_updates_page_span_for_combined_evidence():
+    from types import SimpleNamespace
+
+    lead_metadata = {
+        "parent_id": 3, "parent_start": 0, "parent_end": 1,
+        "page_start": 1, "page_end": 1,
+    }
+    lead = RetrievedChunk(11, 7, "Đổi trả trong 7 ngày.", .9, lead_metadata, chunk_index=0)
+    rows = [
+        SimpleNamespace(_mapping={
+            "id": 11, "document_id": 7, "content": "Đổi trả trong 7 ngày.",
+            "chunk_metadata": lead_metadata, "source_filename": "policy.pdf", "chunk_index": 0,
+        }),
+        SimpleNamespace(_mapping={
+            "id": 12, "document_id": 7, "content": "Không áp dụng cho sản phẩm đã dùng.",
+            "chunk_metadata": {
+                "parent_id": 3, "page_start": 2, "page_end": 2,
+            }, "source_filename": "policy.pdf", "chunk_index": 1,
+        }),
+    ]
+
+    class _Result:
+        def fetchall(self):
+            return rows
+
+    class _DB:
+        def execute(self, *_args, **_kwargs):
+            return _Result()
+
+    result = _expand_parent_neighbors([lead], _DB(), business_id=4, top_k=1)[0]
+
+    assert "Không áp dụng" in result.content
+    assert (result.metadata["page_start"], result.metadata["page_end"]) == (1, 2)
 
 
 def test_product_specification_is_not_mistaken_for_sku():
@@ -570,7 +1044,8 @@ def test_prompt_requests_direct_catalog_and_separate_citations_for_mixed_claims(
     prompt = build_prompt("Có sản phẩm nào màu hồng còn hàng không?", [])
     rules = prompt[0]["content"]
     assert "kiểm tra từng dòng về màu và tồn kho" in rules
-    assert "nguồn chứa đúng tên/mã sản phẩm" in rules
+    assert "nguồn chứa đúng tên sản phẩm" in rules
+    assert "không hiển thị SKU/mã kho" in rules
 
 
 def test_citation_guard_allows_customer_numbers_but_checks_new_policy_facts():

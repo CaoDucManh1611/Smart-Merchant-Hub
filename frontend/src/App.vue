@@ -591,6 +591,7 @@ let tenantProvisioningPollingTimer = null;
 let platformRequestRefreshInFlight = false;
 let workspaceRefreshInFlight = false;
 let conversationsLoadVersion = 0;
+const conversationReadVersions = new Map();
 const conversationTimeNow = ref(Date.now());
 let conversationTimeTimer = null;
 let loadedConversationsCustomerScope = null;
@@ -855,7 +856,7 @@ const signupError = ref("");
 const signupNotice = ref("");
 const signupForm = ref({ owner_name: "", email: "", shop_name: "", password: "", otp: "" });
 const quotaSnapshot = ref(null);
-const workspaceConfig = ref({ business_type: "retail", enabled_modules: ["retail"], modules: [] });
+const workspaceConfig = ref({ business_type: "retail", enabled_modules: ["retail"], recommendation_industry: "general_retail", rfm_model: null, modules: [] });
 const workspaceConfigLoading = ref(false);
 const workspaceConfigSaving = ref(false);
 const workspaceConfigError = ref("");
@@ -1149,6 +1150,16 @@ function workspaceModuleEnabled(module) {
   return workspaceConfig.value.enabled_modules.includes(module);
 }
 
+function normalizeWorkspaceRfmIndustry() {
+  if (workspaceConfig.value.business_type === "retail") {
+    if (!["general_retail", "fashion", "grocery", "ecommerce"].includes(workspaceConfig.value.recommendation_industry)) {
+      workspaceConfig.value.recommendation_industry = "general_retail";
+    }
+    return;
+  }
+  workspaceConfig.value.recommendation_industry = workspaceConfig.value.business_type;
+}
+
 async function fetchWorkspaceConfig() {
   if (!authUser.value || !tenantReady.value) return;
   workspaceConfigLoading.value = true;
@@ -1160,6 +1171,8 @@ async function fetchWorkspaceConfig() {
     workspaceConfig.value = {
       business_type: detail.business_type || "retail",
       enabled_modules: Array.isArray(detail.enabled_modules) ? detail.enabled_modules : ["retail"],
+      recommendation_industry: detail.recommendation_industry || "general_retail",
+      rfm_model: detail.rfm_model || null,
       modules: Array.isArray(detail.modules) ? detail.modules : [],
     };
   } catch (err) {
@@ -1181,6 +1194,7 @@ async function saveWorkspaceConfig() {
       body: JSON.stringify({
         business_type: workspaceConfig.value.business_type,
         enabled_modules: workspaceConfig.value.enabled_modules,
+        recommendation_industry: workspaceConfig.value.recommendation_industry,
       }),
     });
     const detail = await response.json().catch(() => ({}));
@@ -4649,6 +4663,9 @@ function handleRealtimeEvent(event) {
   const eventConversationId = Number(event.conversation_id);
   syncConversationPreview(eventConversationId, event.message);
   if (eventConversationId > 0 && eventConversationId === Number(selectedId.value)) {
+    if (currentTab.value === "inbox" && event.message.direction === "inbound") {
+      void markConversationRead(eventConversationId);
+    }
     const scrollPosition = captureMessageScrollPosition(messagesScrollContainer.value);
     upsertMessage(
       event.message
@@ -5460,7 +5477,14 @@ async function loadConversations(showLoading = true, {
       throw apiResponseError(response, data, `HTTP ${response.status}`);
     }
 
-    const page = Array.isArray(data) ? data : data.items || [];
+    const receivedPage = Array.isArray(data) ? data : data.items || [];
+    const page = receivedPage.map((item) => {
+      const conversationId = Number(item.conversation_id);
+      const readThroughVersion = conversationReadVersions.get(conversationId);
+      if (readThroughVersion > requestVersion) return { ...item, unread_count: 0 };
+      if (readThroughVersion) conversationReadVersions.delete(conversationId);
+      return item;
+    });
     const supportsServerPaging = !Array.isArray(data)
       && Object.prototype.hasOwnProperty.call(data, "has_more");
     if (!supportsServerPaging) {
@@ -5761,21 +5785,32 @@ async function loadOutboundDeliveryAttempts(conversationId) {
 
 
 async function markConversationRead(conversationId) {
-  if (!conversationId) return;
+  const normalizedId = Number(conversationId);
+  if (!Number.isFinite(normalizedId) || normalizedId <= 0) return;
+  const previousReadVersion = conversationReadVersions.get(normalizedId);
+  conversationReadVersions.set(normalizedId, conversationsLoadVersion + 1);
+  conversations.value = conversations.value.map((conversation) => (
+    Number(conversation.conversation_id) === normalizedId
+      ? { ...conversation, unread_count: 0 }
+      : conversation
+  ));
   try {
     const response = await apiFetch(
-      `${API_BASE}/conversations/${conversationId}/mark-read`,
+      `${API_BASE}/conversations/${normalizedId}/mark-read`,
       { method: "POST" },
     );
-    if (!response.ok) return;
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    conversationReadVersions.set(normalizedId, conversationsLoadVersion + 1);
     conversations.value = conversations.value.map((conversation) => (
-      conversation.conversation_id === conversationId
+      Number(conversation.conversation_id) === normalizedId
         ? { ...conversation, unread_count: 0 }
         : conversation
     ));
   } catch (err) {
-    // Reading a conversation must never prevent the operator from viewing it.
+    if (previousReadVersion) conversationReadVersions.set(normalizedId, previousReadVersion);
+    else conversationReadVersions.delete(normalizedId);
     console.warn("Không thể đánh dấu hội thoại đã đọc.", err);
+    void loadConversations(false);
   }
 }
 
@@ -10018,8 +10053,11 @@ async function setCustomerFactCollection(optOut, deleteExisting = false) {
 async function selectConversation(id) {
 
   const compactNavigation = window.matchMedia?.("(max-width: 860px)")?.matches;
+  const conversationId = Number(id);
+  if (!Number.isFinite(conversationId) || conversationId <= 0) return;
   discardVoiceRecording();
-  selectedId.value = id;
+  selectedId.value = conversationId;
+  void markConversationRead(conversationId);
   deliveryAttempts.value = [];
   mobileInboxOpen.value = false;
   mobileCustomerOpen.value = false;
@@ -10032,12 +10070,10 @@ async function selectConversation(id) {
 
 
   await loadMessages(
-    id,
+    conversationId,
     true,
     true
   );
-
-  await markConversationRead(id);
 
   await loadCustomer360(selected.value?.customer_id);
 
@@ -10194,8 +10230,9 @@ async function sendReply() {
 
 async function sendUnifiedReply(retryClientId = null) {
 
+  const conversationId = selectedId.value;
   if (
-    !selectedId.value
+    !conversationId
     ||
     sending.value
   ) {
@@ -10219,7 +10256,7 @@ async function sendUnifiedReply(retryClientId = null) {
     upsertMessage({
       client_id: mediaClientId,
       message_id: mediaClientId,
-      conversation_id: selectedId.value,
+      conversation_id: conversationId,
       direction: "outbound",
       content: media.mediaType === "image" && index === 0 ? null : index === 0 ? text : null,
       media_type: media.mediaType,
@@ -10239,7 +10276,7 @@ async function sendUnifiedReply(retryClientId = null) {
     upsertMessage({
       client_id: textClientId,
       message_id: textClientId,
-      conversation_id: selectedId.value,
+      conversation_id: conversationId,
       direction: "outbound",
       content: text,
       media_type: null,
@@ -10250,11 +10287,10 @@ async function sendUnifiedReply(retryClientId = null) {
     });
   }
 
-  await scrollToBottom();
-
   sending.value = true;
 
   try {
+    await scrollToBottom();
     error.value = "";
 
     const removeOptimistic = (id) => {
@@ -10264,6 +10300,7 @@ async function sendUnifiedReply(retryClientId = null) {
     };
 
     const applyResponse = (data) => {
+      if (selectedId.value !== conversationId) return;
       (data.messages || (data.message ? [data.message] : [])).forEach(upsertMessage);
     };
 
@@ -10296,8 +10333,8 @@ async function sendUnifiedReply(retryClientId = null) {
       }
 
       const sendPath = hasGenericMedia
-        ? `${API_BASE}/conversations/${selectedId.value}/media/upload-generic`
-        : `${API_BASE}/conversations/${selectedId.value}/send`;
+        ? `${API_BASE}/conversations/${conversationId}/media/upload-generic`
+        : `${API_BASE}/conversations/${conversationId}/send`;
       const response = await apiFetch(sendPath, { method: "POST", body: formData });
 
       if (!response.ok) {
@@ -10316,7 +10353,7 @@ async function sendUnifiedReply(retryClientId = null) {
       removeOptimistic(mediaClientId);
       if (index === 0 && hasText && !hasGenericMedia) removeOptimistic(textClientId);
       applyResponse(data);
-      removePendingMedia(media.id);
+      if (selectedId.value === conversationId) removePendingMedia(media.id);
     };
 
     if (hasMedia) {
@@ -10327,7 +10364,7 @@ async function sendUnifiedReply(retryClientId = null) {
       const formData = new FormData();
       formData.append("client_id", textClientId);
       formData.append("text", text);
-      const response = await apiFetch(`${API_BASE}/conversations/${selectedId.value}/send`, {
+      const response = await apiFetch(`${API_BASE}/conversations/${conversationId}/send`, {
         method: "POST",
         body: formData,
       });
@@ -10346,18 +10383,22 @@ async function sendUnifiedReply(retryClientId = null) {
       applyResponse(await response.json());
     }
 
-    draft.value = "";
-    clearImage();
-
-    await loadConversations(
-      false
-    );
-    await loadOutboundDeliveryAttempts(selectedId.value);
+    if (selectedId.value === conversationId) {
+      draft.value = "";
+      clearImage();
+    }
+    sending.value = false;
+    void Promise.all([
+      loadConversations(false),
+      loadOutboundDeliveryAttempts(conversationId),
+    ]).catch((refreshError) => console.warn("Message sent; inbox refresh will retry on next load", refreshError));
 
   } catch (err) {
     console.error(err);
 
-    error.value = friendlyErrorMessage(err, "Chưa thể gửi tin nhắn. Vui lòng thử lại sau.");
+    if (selectedId.value === conversationId) {
+      error.value = friendlyErrorMessage(err, "Chưa thể gửi tin nhắn. Vui lòng thử lại sau.");
+    }
 
     optimisticIds.forEach(
       (id) =>
@@ -10366,7 +10407,7 @@ async function sendUnifiedReply(retryClientId = null) {
           "failed"
         )
     );
-    await loadOutboundDeliveryAttempts(selectedId.value);
+    void loadOutboundDeliveryAttempts(conversationId).catch(() => {});
 
   } finally {
     sending.value = false;
@@ -10560,6 +10601,8 @@ async function sendComposerContent() {
     await sendUnifiedReply();
     return;
   }
+
+  if (sending.value) return;
 
   const customerId = selected.value?.customer_id;
   const content = draft.value.trim();
@@ -12568,15 +12611,6 @@ function followupRecommendationLabel(item) {
                       ✓✓
                     </b>
 
-                    <b
-                      v-if="
-                        message.status
-                        === 'sending'
-                      "
-                    >
-                      đang gửi
-                    </b>
-
                     <button
                       v-if="
                         message.status
@@ -12880,22 +12914,8 @@ function followupRecommendationLabel(item) {
                     class="
                       send
                     "
-
-                    :disabled="
-                      composerMode === 'internal'
-                      ? !draft.trim()
-                      : (
-                          !draft.trim()
-                          &&
-                          !pendingMedia.length
-                        )
-                      ||
-                      sending
-                      ||
-                      sendingImage
-                      ||
-                      (composerMode === 'reply' && !canReplyToSelectedConversation)
-                    "
+                    :disabled="sending || sendingImage || (composerMode === 'internal' ? !draft.trim() : ((!draft.trim() && !pendingMedia.length) || !canReplyToSelectedConversation))"
+                    :aria-busy="sending || sendingImage"
 
                     @click="
                       sendComposerContent
@@ -12903,9 +12923,7 @@ function followupRecommendationLabel(item) {
                   >
 
                     {{
-                      sending
-                      ? "Đang gửi..."
-                      : composerMode === 'internal'
+                      composerMode === 'internal'
                       ? "Lưu ghi chú"
                       : pendingMedia.length
                       ? `➤ Gửi ${pendingMedia.length} tệp`
@@ -15688,9 +15706,24 @@ function followupRecommendationLabel(item) {
               { id: 'b2b', name: 'Dự án / Khách doanh nghiệp', desc: 'Doanh nghiệp, khách tiềm năng và quy trình bán hàng.' },
               { id: 'mixed', name: 'Đa dịch vụ', desc: 'Kết hợp nhiều mô hình trong cùng shop.' },
             ]" :key="profile.id" class="workspace-profile-option" :class="{ selected: workspaceConfig.business_type === profile.id }">
-              <input v-model="workspaceConfig.business_type" type="radio" name="workspace-business-type" :value="profile.id" :disabled="!canManageWorkspace" />
+              <input v-model="workspaceConfig.business_type" type="radio" name="workspace-business-type" :value="profile.id" :disabled="!canManageWorkspace" @change="normalizeWorkspaceRfmIndustry" />
               <span><strong>{{ $t(profile.name) }}</strong><small>{{ $t(profile.desc) }}</small></span>
             </label>
+          </div>
+          <div class="workspace-rfm-prior">
+            <label for="workspace-rfm-industry">{{ $t('Ngành tham chiếu cho model RFM') }}</label>
+            <select id="workspace-rfm-industry" v-model="workspaceConfig.recommendation_industry" :disabled="!canManageWorkspace || workspaceConfigSaving">
+              <option v-if="workspaceConfig.business_type === 'retail'" value="general_retail">{{ $t('Bán lẻ tổng hợp') }}</option>
+              <option v-if="workspaceConfig.business_type === 'retail'" value="fashion">{{ $t('Thời trang') }}</option>
+              <option v-if="workspaceConfig.business_type === 'retail'" value="grocery">{{ $t('Thực phẩm & hàng tiêu dùng') }}</option>
+              <option v-if="workspaceConfig.business_type === 'retail'" value="ecommerce">{{ $t('Thương mại điện tử') }}</option>
+              <option v-if="workspaceConfig.business_type !== 'retail'" :value="workspaceConfig.business_type">{{ $t(workspaceConfig.business_type === 'services' ? 'Dịch vụ' : workspaceConfig.business_type === 'b2b' ? 'B2B / dự án' : 'Đa ngành') }}</option>
+            </select>
+            <small v-if="workspaceConfig.rfm_model?.available !== false">
+              {{ $t('Shop mới dùng model tham chiếu ngay; sau khi có') }} {{ workspaceConfig.rfm_model?.shop_model_minimum_consented_buyers || 20 }} {{ $t('khách mua đồng ý cá nhân hóa, hệ thống mới có thể huấn luyện model riêng từ dữ liệu shop.') }}
+              <template v-if="workspaceConfig.business_type !== 'retail'">{{ $t('Dịch vụ, B2B và đa ngành hiện dùng model RFM tổng hợp vì chưa có bộ giao dịch công khai phù hợp.') }}</template>
+            </small>
+            <small v-else role="alert">{{ $t('Model tham chiếu chưa được cài trên máy chủ; hiện RFM vẫn dùng nhãn quy tắc.') }}</small>
           </div>
           <div class="workspace-module-row">
             <div><strong>Chức năng chính <span class="connection-badge connected">LUÔN BẬT</span></strong><small>Khách hàng, doanh nghiệp, cuộc trò chuyện, công việc, quy trình bán hàng, phân quyền, tự động hóa và báo cáo.</small></div>
@@ -18207,6 +18240,10 @@ a.import-choice { display: inline-flex; align-items: center; justify-content: ce
 .error-retry-btn { border: 1px solid #d78b92; border-radius: 8px; padding: 7px 12px; color: #8e2f3c; background: #fff; cursor: pointer; font-weight: 700; }
 .business-hours-grid, .sla-rules-grid, .business-profile-grid, .service-plan-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
 .workspace-profile-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.workspace-rfm-prior { display: grid; gap: 7px; max-width: 620px; padding: 14px; margin: 4px 0 16px; border: 1px solid var(--owly-border); border-radius: 12px; background: var(--owly-surface); }
+.workspace-rfm-prior label { font-weight: 700; }
+.workspace-rfm-prior select { width: 100%; border: 1px solid var(--owly-border); border-radius: 9px; padding: 10px 12px; background: var(--owly-surface); color: var(--owly-ink); }
+.workspace-rfm-prior small { color: var(--owly-muted); font-size: .84rem; line-height: 1.45; }
 .crm-config-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 14px 0; }
 .crm-config-editor-grid section { min-width: 0; padding: 14px; border: 1px solid var(--owly-border); border-radius: 12px; }
 .crm-config-editor-grid h3 { margin: 0 0 12px; }
@@ -18412,6 +18449,10 @@ a.import-choice { display: inline-flex; align-items: center; justify-content: ce
 .crm-dark .sla-rules-grid label,
 .crm-dark .business-profile-grid label { color: #f3f5f6; }
 .crm-dark .workspace-profile-option, .crm-dark .workspace-module-row { border-color: #414c50; background: #20272a; }
+.crm-dark .workspace-rfm-prior { border-color: #414c50; background: #20272a; }
+.crm-dark .workspace-rfm-prior label { color: #f3f5f6; }
+.crm-dark .workspace-rfm-prior select { border-color: #414c50; background: #192023; color: #f3f5f6; }
+.crm-dark .workspace-rfm-prior small { color: #b6c0c5; }
 .crm-dark .workspace-profile-option.selected { border-color: #37b4af; background: #173e41; }
 .crm-dark .workspace-profile-option small, .crm-dark .workspace-module-row small { color: #b6c0c5; }
 .crm-dark .top p,

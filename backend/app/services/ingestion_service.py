@@ -168,6 +168,9 @@ def ingest_document(
                 semantic_boundary_detector=detect_boundaries if gemini_enabled else None,
                 source_metadata={
                     "source": filename,
+                    "document_id": int(doc.id),
+                    "source_content_hash": hashlib.sha256(file_bytes).hexdigest(),
+                    "source_revision": int(doc.reindex_count or 0),
                     "topic": infer_document_topic(filename, raw_text),
                 },
             )

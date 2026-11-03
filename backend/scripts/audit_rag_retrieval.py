@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import math
+import random
 import re
 import sys
 import time
@@ -38,8 +39,10 @@ from app.rag.catalog_filters import (
 from app.rag.retriever import (
     RetrievedChunk,
     _diverse_candidates,
+    _lexical_mmr_candidates,
     _personalized_pagerank_rerank,
     _retrieve_lexical,
+    _select_retrieval_mode,
 )
 from app.rag.embedder import _embed_with_gemini
 from app.rag import retriever as retriever_module
@@ -48,6 +51,8 @@ from app.tenancy.schema import schema_name_for, validate_schema_name
 
 
 TOP_K = 5
+MMR_DIVERSITY_WEIGHT = 0.4
+MMR_CANDIDATE_MULTIPLIER = 4
 ACTIVE_STATES = {"active", "ready", "disabled"}
 INDUSTRY_LABELS = {
     "beauty_personal_care": "Mỹ phẩm và chăm sóc cá nhân",
@@ -122,6 +127,60 @@ def aggregate(rows: list[dict]) -> dict:
     }
 
 
+def paired_cluster_bootstrap_delta(
+    rows: list[dict],
+    *,
+    baseline_key: str,
+    candidate_key: str,
+    metric: str,
+    cluster_key: str = "query_family",
+    replicates: int = 5000,
+    seed: int = 20261103,
+) -> dict:
+    """Estimate paired metric uncertainty by resampling whole query families."""
+    grouped: dict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        baseline = row.get(baseline_key)
+        candidate = row.get(candidate_key)
+        if not isinstance(baseline, dict) or not isinstance(candidate, dict):
+            continue
+        if metric not in baseline or metric not in candidate:
+            continue
+        group = str(row.get(cluster_key) or row.get("case_id") or "")
+        if not group:
+            continue
+        grouped[group].append(float(candidate[metric]) - float(baseline[metric]))
+    if not grouped:
+        return {"case_count": 0, "cluster_count": 0, "mean_delta": None, "ci_95": None}
+
+    families = sorted(grouped)
+    observed = [delta for family in families for delta in grouped[family]]
+    observed_mean = sum(observed) / len(observed)
+    rng = random.Random(seed)
+    samples = []
+    for _ in range(max(1, replicates)):
+        chosen = [families[rng.randrange(len(families))] for _ in families]
+        deltas = [delta for family in chosen for delta in grouped[family]]
+        samples.append(sum(deltas) / len(deltas))
+    samples.sort()
+    low = samples[int(0.025 * len(samples))]
+    high = samples[max(0, int(0.975 * len(samples)) - 1)]
+    return {
+        "case_count": len(observed),
+        "cluster_count": len(families),
+        "baseline_method": baseline_key,
+        "candidate_method": candidate_key,
+        "metric": metric,
+        "replicates": max(1, replicates),
+        "seed": seed,
+        "mean_delta": round(observed_mean, 6),
+        "ci_95": [round(low, 6), round(high, 6)],
+        "fraction_positive": round(sum(value > 0 for value in samples) / len(samples), 6),
+        "fraction_negative": round(sum(value < 0 for value in samples) / len(samples), 6),
+        "resampling": "sample query_family clusters with replacement; preserve all paired case deltas within each sampled family; average over cases",
+    }
+
+
 def entry_attributes(entry: RecommendationCatalogEntry) -> dict[str, list[str]]:
     values: dict[str, list[str]] = defaultdict(list)
     for attr in entry.attributes:
@@ -142,11 +201,73 @@ def matches_filters(entry: RecommendationCatalogEntry, filters: dict | None) -> 
             return False
     attrs = entry_attributes(entry)
     for key, value in (filters.get("required_attributes") or {}).items():
-        keys = set(attribute_key_aliases(key))
+        keys = set(attribute_key_aliases(key, value))
         values = set(attribute_value_aliases(key, value))
         if not any(attr_key in keys and attr_value in values for attr_key, attr_values in attrs.items() for attr_value in attr_values):
             return False
     return True
+
+
+def _audit_entry_matches_generated_filter(
+    entry: RecommendationCatalogEntry,
+    case_type: str,
+    filters: dict | None,
+) -> bool:
+    """Independently validate benchmark SKU/size/volume/color results."""
+    if not filters:
+        return True
+    object_type = filters.get("object_type")
+    if object_type and entry.object_type != object_type:
+        return False
+    sku = filters.get("sku")
+    if sku:
+        sku_values = sku if isinstance(sku, (list, tuple, set)) else [sku]
+        if fold(entry.sku_norm) not in {fold(value) for value in sku_values}:
+            return False
+
+    required = filters.get("required_attributes") or {}
+    attrs = entry_attributes(entry)
+    if case_type == "hard_attribute_size":
+        expected = required.get("size")
+        key_names = {"size", "sizes", "kich_thuoc"}
+        accepted_values = {fold(expected)}
+    elif case_type == "hard_attribute_volume":
+        expected = required.get("volume")
+        if not re.search(
+            r"\b\d+(?:[.,]\d+)?\s*(?:millilit(?:er|re)s?|ml|cl|dl|lit|liters?|litres?)\b",
+            fold(expected),
+        ):
+            return False
+        key_names = {"volume", "capacity", "dung_tich", "the_tich"}
+        key_names.update({"size", "sizes", "kich_thuoc"})
+        accepted_values = {fold(expected)}
+    elif case_type == "hard_attribute_color":
+        expected = required.get("color")
+        key_names = {"color", "colors", "colour", "colours", "mau", "mau_sac"}
+        accepted_values = {fold(value) for value in attribute_value_aliases("color", expected)}
+    else:
+        return matches_filters(entry, filters)
+
+    if not expected:
+        return False
+    return any(
+        fold(key).replace(" ", "_") in key_names
+        and fold(actual) in accepted_values
+        for key, values in attrs.items()
+        for actual in values
+    )
+
+
+def _audit_chunk_matches_generated_filter(
+    entries: list[RecommendationCatalogEntry],
+    case_type: str,
+    filters: dict | None,
+) -> bool:
+    """Reject unmapped or mixed-scope chunks in the independent audit oracle."""
+    return bool(entries) and all(
+        _audit_entry_matches_generated_filter(entry, case_type, filters)
+        for entry in entries
+    )
 
 
 def build_cases() -> tuple[list[dict], dict[int, dict], dict[int, dict[int, list[RecommendationCatalogEntry]]], list[dict]]:
@@ -279,22 +400,34 @@ def build_cases() -> tuple[list[dict], dict[int, dict], dict[int, dict[int, list
                     })
 
                 attributes = entry_attributes(entry)
-                for size_value in attributes.get("sizes", []) + attributes.get("size", []):
-                    value = normalized_value(size_value)
-                    match = SKU_SIZE_RE.fullmatch(fold(size_value))
-                    if not match:
+                attribute_values = {
+                    normalized_value(value)
+                    for key in ("sizes", "size", "volume", "capacity")
+                    for value in attributes.get(key, [])
+                    if normalized_value(value)
+                }
+                for value in sorted(attribute_values):
+                    if not SKU_SIZE_RE.fullmatch(fold(value)):
                         continue
                     query = f"Có {product.name} kích thước {value} không?"
                     extracted = extract_query_hard_filters(query)
-                    if (extracted.get("required_attributes") or {}).get("size") != value:
+                    required_attributes = extracted.get("required_attributes") or {}
+                    attribute_key = next(
+                        (key for key in ("size", "volume") if required_attributes.get(key) == value),
+                        None,
+                    )
+                    if attribute_key is None:
                         continue
+                    case_suffix = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
                     shop_cases.append({
                         **base,
-                        "case_id": f"{audit['case_id']}-size-{re.sub(r'[^a-z0-9]+', '-', value).strip('-')}",
-                        "case_type": "hard_attribute_size",
+                        "case_id": f"{audit['case_id']}-{attribute_key}-{case_suffix}",
+                        "case_type": f"hard_attribute_{attribute_key}",
                         "query": query,
                         "hard_filters": extracted,
-                        "expected_behavior": f"Match exact normalized size value {value} before candidate LIMIT.",
+                        "expected_behavior": (
+                            f"Match exact normalized {attribute_key} value {value} before candidate LIMIT."
+                        ),
                     })
                 for color in attributes.get("colors", []) + attributes.get("color", []):
                     query = f"Có {product.name} màu {color} không?"
@@ -524,9 +657,29 @@ def constrained_ppr(candidates: list[RetrievedChunk], chunk_entries: dict[int, l
     return sorted(candidates, key=lambda item: (-combined[item.chunk_id], base_rank[item.chunk_id]))
 
 
-def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_embeddings: bool = False) -> dict:
+def evaluate(
+    output_dir: Path,
+    prior_cases_path: Path | None,
+    *,
+    with_gemini_embeddings: bool = False,
+    require_embedding_cache: bool = False,
+) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     cases, shops, chunk_entries_by_shop, source_audits = build_cases()
+    unique_cases = {}
+    for case in cases:
+        case_key = (int(case["business_id"]), str(case["case_id"]))
+        existing = unique_cases.get(case_key)
+        if existing is not None and existing != case:
+            raise ValueError(f"Conflicting duplicate evaluation case {case_key!r}")
+        unique_cases.setdefault(case_key, case)
+    duplicate_case_rows_removed = len(cases) - len(unique_cases)
+    cases = list(unique_cases.values())
+    unique_case_counts = defaultdict(int)
+    for case in cases:
+        unique_case_counts[int(case["business_id"])] += 1
+    for business_id, shop in shops.items():
+        shop["case_count"] = unique_case_counts[int(business_id)]
     results = []
     by_method: dict[str, list[dict]] = defaultdict(list)
     by_shop_type: dict[str, dict[str, dict[str, list[dict]]]] = defaultdict(
@@ -537,19 +690,23 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
     ppr_diagnostics = []
     dense_retrieval_modes: dict[str, int] = defaultdict(int)
     dense_fallback_stages: dict[str, int] = defaultdict(int)
+    auto_route_counts: dict[str, int] = defaultdict(int)
     embedding_query_count = 0
     embedding_api_calls = 0
     embedding_cache_hit = False
     hard_filter_violations = CounterLike()
+    hard_filter_leakage_by_method = defaultdict(
+        lambda: {"filtered_case_count": 0, "returned_chunk_count": 0, "leakage_chunk_count": 0}
+    )
     hard_filter_audit = defaultdict(lambda: {"case_count": 0, "gold_hit_cases": 0, "gold_miss_cases": 0, "leakage_chunk_count": 0})
     abstention = defaultdict(lambda: {"probe_count": 0, "false_positive_count": 0, "returned_ids": []})
 
     old_cases = {}
     if prior_cases_path and prior_cases_path.exists():
-        old_cases = {
-            row["id"]: row
-            for row in (json.loads(line) for line in prior_cases_path.read_text(encoding="utf-8").splitlines() if line.strip())
-        }
+        for row in (json.loads(line) for line in prior_cases_path.read_text(encoding="utf-8").splitlines() if line.strip()):
+            case_key = row.get("id") or row.get("case_id")
+            if case_key:
+                old_cases[str(case_key)] = row
 
     query_embeddings: dict[str, list[float]] = {}
     if with_gemini_embeddings:
@@ -583,6 +740,10 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
         }
         embedding_cache_hit = bool(query_embeddings)
         missing_queries = [query for query in unique_queries if query not in query_embeddings]
+        if missing_queries and require_embedding_cache:
+            raise ValueError(
+                f"Embedding cache is missing {len(missing_queries)} unique queries; API calls are disabled."
+            )
         if missing_queries:
             vectors = []
             batch_size = 80
@@ -625,6 +786,16 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
                 )
                 base_ids = [int(item.chunk_id) for item in lexical]
                 base_top = base_ids[:TOP_K]
+                bm25_best_score = max((float(item.similarity or 0.0) for item in lexical), default=0.0)
+                mmr_candidate_ids = [
+                    int(item.chunk_id)
+                    for item in lexical[:max(TOP_K, TOP_K * MMR_CANDIDATE_MULTIPLIER)]
+                ]
+                mmr_top = _lexical_mmr_candidates(
+                    lexical, TOP_K, diversity_weight=MMR_DIVERSITY_WEIGHT,
+                    max_per_document=4 if query_topic == "products" else 2,
+                )
+                mmr_ids = [int(item.chunk_id) for item in mmr_top]
                 current = _diverse_candidates(
                     _personalized_pagerank_rerank(copy.deepcopy(lexical), [
                         item.ranking_score if item.ranking_score is not None else item.similarity
@@ -638,6 +809,12 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
                     max_per_document=4 if query_topic == "products" else 2,
                 )
                 constrained_ids = [int(item.chunk_id) for item in constrained[:TOP_K]]
+                filter_result_ids = {
+                    "bm25_candidates": base_ids,
+                    "bm25_mmr_top5": mmr_ids,
+                    "bm25_current_ppr_top5": current_ids,
+                    "bm25_exact_entity_ppr_85_15_top5": constrained_ids,
+                }
                 expected = {int(value) for value in case.get("expected_chunk_ids", [])}
                 eligible = bool(case.get("metric_eligible") and expected)
                 row = {
@@ -646,6 +823,9 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
                     "query_family": case.get("query_family", case["case_id"]),
                     "query": case["query"], "expected_chunk_ids": sorted(expected),
                     "bm25_top_chunk_ids": base_top,
+                    "bm25_best_candidate_score": bm25_best_score,
+                    "bm25_mmr_candidate_chunk_ids": mmr_candidate_ids,
+                    "bm25_mmr_top_chunk_ids": mmr_ids,
                     "bm25_current_ppr_top_chunk_ids": current_ids,
                     "bm25_exact_entity_ppr_85_15_top_chunk_ids": constrained_ids,
                     "hard_filters": filters,
@@ -654,9 +834,10 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
                 }
                 if eligible:
                     row["bm25"] = rank_metrics(expected, base_top)
+                    row["bm25_mmr"] = rank_metrics(expected, mmr_ids)
                     row["bm25_current_ppr"] = rank_metrics(expected, current_ids)
                     row["bm25_exact_entity_ppr_85_15"] = rank_metrics(expected, constrained_ids)
-                    for method in ("bm25", "bm25_current_ppr", "bm25_exact_entity_ppr_85_15"):
+                    for method in ("bm25", "bm25_mmr", "bm25_current_ppr", "bm25_exact_entity_ppr_85_15"):
                         by_method[method].append(row[method])
                         by_shop_type[str(business_id)][case["case_type"]][method].append(row[method])
                         by_shop_type[f"type:{case['case_type']}"][str(business_id)][method].append(row[method])
@@ -668,16 +849,6 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
                     if base_top:
                         bucket["returned_ids"].append({"case_id": case["case_id"], "ids": base_top})
 
-                if filters and base_top:
-                    violations = []
-                    for chunk_id in base_ids:
-                        entries = chunk_entries.get(chunk_id, [])
-                        if not entries or not any(matches_filters(entry, filters) for entry in entries):
-                            violations.append(chunk_id)
-                    hard_filter_violations.add(case["case_type"], len(violations))
-                    audit = hard_filter_audit[case["case_type"]]
-                    audit["leakage_chunk_count"] += len(violations)
-                    row["hard_filter_violation_chunk_ids"] = violations
                 if filters and case.get("metric_eligible"):
                     audit = hard_filter_audit[case["case_type"]]
                     audit["case_count"] += 1
@@ -835,6 +1006,25 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
                         dense_no_ppr_ids = [int(item.chunk_id) for item in dense_no_ppr]
                         row["gemini_bm25_rrf_no_ppr_top_chunk_ids"] = dense_no_ppr_ids
 
+                        # Offline replay of the production auto router using
+                        # this exact case's lexical candidates and filter set.
+                        auto_mode, auto_reason = _select_retrieval_mode(
+                            "auto",
+                            filters or {},
+                            retriever_module._query_sku_identifiers(case["query"], filters),
+                            lexical,
+                        )
+                        auto_ids = base_top if auto_mode == "bm25" else dense_no_ppr_ids
+                        row["auto_routed_mode"] = auto_mode
+                        row["auto_routing_reason"] = auto_reason
+                        row["auto_top_chunk_ids"] = auto_ids
+                        filter_result_ids["auto_no_ppr_top5"] = auto_ids
+                        auto_route_counts[auto_reason] += 1
+                        row["auto_no_ppr"] = rank_metrics(expected, auto_ids)
+                        by_method["auto_no_ppr"].append(row["auto_no_ppr"])
+                        by_shop_type[str(business_id)][case["case_type"]]["auto_no_ppr"].append(row["auto_no_ppr"])
+                        by_shop_type[f"type:{case['case_type']}"][str(business_id)]["auto_no_ppr"].append(row["auto_no_ppr"])
+
                         retriever_module._retrieve_lexical = lambda *args, **kwargs: []
                         dense_vector = retriever_module.retrieve(
                             case["query"], db, business_id=business_id,
@@ -846,6 +1036,11 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
                         row["gemini_vector_only_top_chunk_ids"] = dense_vector_ids
                     finally:
                         retriever_module._retrieve_lexical = original_lexical
+                    filter_result_ids.update({
+                        "gemini_hybrid_ppr_top5": dense_hybrid_ids,
+                        "gemini_hybrid_no_ppr_top5": dense_no_ppr_ids,
+                        "gemini_vector_top5": dense_vector_ids,
+                    })
 
                     if eligible:
                         for method, ids, output_key in (
@@ -898,6 +1093,25 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
                                 "ppr_top5": ppr_ids,
                                 "promoted_chunks_and_visible_edges": promoted,
                             })
+                if filters:
+                    method_leaks = {}
+                    for method, result_ids in filter_result_ids.items():
+                        violations = []
+                        for chunk_id in result_ids:
+                            entries = chunk_entries.get(chunk_id, [])
+                            if not _audit_chunk_matches_generated_filter(
+                                entries, case["case_type"], filters,
+                            ):
+                                violations.append(chunk_id)
+                        method_leaks[method] = violations
+                        stats = hard_filter_leakage_by_method[method]
+                        stats["filtered_case_count"] += 1
+                        stats["returned_chunk_count"] += len(result_ids)
+                        stats["leakage_chunk_count"] += len(violations)
+                        if method == "bm25_candidates":
+                            hard_filter_violations.add(case["case_type"], len(violations))
+                            hard_filter_audit[case["case_type"]]["leakage_chunk_count"] += len(violations)
+                    row["hard_filter_leakage_chunk_ids_by_method"] = method_leaks
                 results.append(row)
                 source_rows.append({
                     "case_id": case["case_id"], "business_id": business_id,
@@ -1002,10 +1216,36 @@ def evaluate(output_dir: Path, prior_cases_path: Path | None, *, with_gemini_emb
             "human_answer_review_status": "still_pending",
         },
         "expanded_case_counts": dict(sorted(CounterLike.counts_for(cases).items())),
+        "duplicate_case_rows_removed": duplicate_case_rows_removed,
         "methods": methods,
+        "paired_uncertainty": {
+            "bm25_mmr_ndcg_at_5_delta_vs_bm25": paired_cluster_bootstrap_delta(
+                results,
+                baseline_key="bm25",
+                candidate_key="bm25_mmr",
+                metric="ndcg_at_5",
+            ),
+        },
+        "mmr_ablation": {
+            "enabled_in_serving": False,
+            "diversity_weight": MMR_DIVERSITY_WEIGHT,
+            "candidate_window": max(TOP_K, TOP_K * MMR_CANDIDATE_MULTIPLIER),
+            "candidate_pool_per_case_saved": True,
+            "max_per_document_by_topic": {"products": 4, "other": 2},
+            "overlap_metric": "Jaccard over normalized lexical tokens",
+        },
+        "auto_routing_ablation": {
+            "status": "same_run_offline_replay" if with_gemini_embeddings else "not_run",
+            "routes": dict(auto_route_counts),
+            "method": methods.get("auto_no_ppr"),
+            "router": "Production _select_retrieval_mode('auto') replayed on the same BM25 candidates; exact hard-filter/SKU queries stay lexical; weak lexical queries select same-run hybrid RRF without PPR.",
+            "latency_or_provider_cost_measured": False,
+        },
         "by_shop_and_case_type": by_group,
         "abstention_probes": dict(abstention),
         "hard_filter_violation_counts": hard_filter_violations.counts,
+        "hard_filter_violation_counts_scope": "Independent audit oracle on BM25 candidate lists; all returned/reranked methods are summarized separately in hard_filter_leakage_by_method.",
+        "hard_filter_leakage_by_method": dict(hard_filter_leakage_by_method),
         "hard_filter_audit": dict(hard_filter_audit),
         "ppr_diagnosis": {
             "current_graph_edges": {"same_product_or_sku": 3.0, "same_document_parent": 2.0, "adjacent_chunk": 0.35},
@@ -1077,10 +1317,16 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--prior-cases", type=Path)
     parser.add_argument("--with-gemini-embeddings", action="store_true")
+    parser.add_argument(
+        "--require-embedding-cache",
+        action="store_true",
+        help="Fail if any query embedding is missing from the output directory cache; do not call Gemini.",
+    )
     args = parser.parse_args()
     print(json.dumps(evaluate(
         args.output_dir, args.prior_cases,
         with_gemini_embeddings=args.with_gemini_embeddings,
+        require_embedding_cache=args.require_embedding_cache,
     ), ensure_ascii=False, indent=2))
 
 

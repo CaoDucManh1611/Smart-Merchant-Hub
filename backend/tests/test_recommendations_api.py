@@ -53,6 +53,7 @@ from app.services.recommendation_service import (
 )
 from app.services.recommendation_interaction_service import (
     record_explicit_chat_recommendation_decline,
+    record_chat_recommendation_cart,
     record_order_refund_interactions,
 )
 
@@ -142,7 +143,7 @@ class RecommendationApiTests(unittest.TestCase):
     def headers(self, business_id=None):
         return {"X-Business-Id": str(business_id or self.business_id)}
 
-    def test_serves_tenant_scoped_recommendations_and_records_idempotent_feedback(self):
+    def test_serves_tenant_scoped_recommendations_and_rejects_unsigned_feedback(self):
         response = self.client.post(
             "/api/recommendations",
             headers=self.headers(),
@@ -162,13 +163,20 @@ class RecommendationApiTests(unittest.TestCase):
         self.assertNotIn(self.product_ids[3], served_ids)
 
         product_id = payload["items"][0]["product_id"]
-        feedback = {"product_id": product_id, "event_type": "purchase", "idempotency_key": "purchase-1"}
-        first = self.client.post(f"/api/recommendations/{payload['request_id']}/feedback", headers=self.headers(), json=feedback)
-        second = self.client.post(f"/api/recommendations/{payload['request_id']}/feedback", headers=self.headers(), json=feedback)
-        self.assertEqual(201, first.status_code, first.text)
-        self.assertEqual(201, second.status_code, second.text)
-        self.assertEqual(first.json()["id"], second.json()["id"])
-        self.assertEqual(1.0, first.json()["reward"])
+        unsigned_click = self.client.post(
+            f"/api/recommendations/{payload['request_id']}/feedback",
+            headers=self.headers(),
+            json={"product_id": product_id, "event_type": "click", "idempotency_key": "unsigned-click-1"},
+        )
+        self.assertEqual(410, unsigned_click.status_code, unsigned_click.text)
+
+        for event_type in ("impression", "cart", "purchase", "skip", "refund"):
+            rejected = self.client.post(
+                f"/api/recommendations/{payload['request_id']}/feedback",
+                headers=self.headers(),
+                json={"product_id": product_id, "event_type": event_type, "idempotency_key": f"forged-{event_type}"},
+            )
+            self.assertEqual(422, rejected.status_code, f"{event_type}: {rejected.text}")
 
     def test_staff_recorded_product_interest_boosts_customer_360_suggestion(self):
         with Session(self.engine) as db:
@@ -552,17 +560,31 @@ class RecommendationApiTests(unittest.TestCase):
             db.commit()
 
     def test_tracks_behavioral_events_and_auto_records_recommendation_impressions(self):
-        click = {
+        view = {
             "customer_id": self.customer_id,
             "product_id": self.product_ids[2],
-            "event_type": "click",
+            "event_type": "view",
             "source": "web",
-            "idempotency_key": "interaction-click-1",
+            "idempotency_key": "interaction-view-1",
         }
-        first = self.client.post("/api/recommendations/interactions", headers=self.headers(), json=click)
-        second = self.client.post("/api/recommendations/interactions", headers=self.headers(), json=click)
+        first = self.client.post("/api/recommendations/interactions", headers=self.headers(), json=view)
+        second = self.client.post("/api/recommendations/interactions", headers=self.headers(), json=view)
         self.assertEqual(201, first.status_code, first.text)
         self.assertEqual(first.json()["id"], second.json()["id"])
+
+        for event_type in ("impression", "click", "cart", "purchase", "skip", "refund"):
+            rejected = self.client.post(
+                "/api/recommendations/interactions",
+                headers=self.headers(),
+                json={
+                    "customer_id": self.customer_id,
+                    "product_id": self.product_ids[2],
+                    "event_type": event_type,
+                    "source": "web",
+                    "idempotency_key": f"forged-interaction-{event_type}",
+                },
+            )
+            self.assertEqual(422, rejected.status_code, f"{event_type}: {rejected.text}")
 
         asked = self.client.post(
             "/api/recommendations/interactions",
@@ -588,7 +610,7 @@ class RecommendationApiTests(unittest.TestCase):
             headers=self.headers(),
         )
         self.assertEqual(200, summary.status_code, summary.text)
-        self.assertGreaterEqual(summary.json()["event_counts"].get("click", 0), 1)
+        self.assertGreaterEqual(summary.json()["event_counts"].get("view", 0), 1)
         self.assertGreaterEqual(summary.json()["event_counts"].get("ask", 0), 1)
         self.assertGreaterEqual(summary.json()["event_counts"].get("impression", 0), 1)
 
@@ -725,22 +747,145 @@ class RecommendationApiTests(unittest.TestCase):
                 json={"customer_id": self.customer_id, "limit": 3},
             )
         self.assertEqual(201, served.status_code, served.text)
+        with Session(self.engine) as db:
+            tracked_request_id = db.query(RecommendationRequest.id).filter_by(
+                business_id=self.business_id,
+                request_id=served.json()["request_id"],
+            ).scalar()
         item = next(item for item in served.json()["items"] if item["product_id"] == self.product_ids[2])
         self.assertTrue(item["click_url"])
         link = urlsplit(item["click_url"])
-        clicked = self.client.get(link.path + "?" + link.query, follow_redirects=False)
-        self.assertEqual(307, clicked.status_code)
-        self.assertEqual("https://shop.example/products/product-three", clicked.headers["location"])
+        click_url = link.path + "?" + link.query
+        preview = self.client.get(
+            click_url,
+            headers={"user-agent": "facebookexternalhit/1.1"},
+            follow_redirects=False,
+        )
+        self.assertEqual(307, preview.status_code)
+        self.assertEqual("https://shop.example/products/product-three", preview.headers["location"])
+        speculative = self.client.get(
+            click_url,
+            headers={"sec-purpose": "prefetch"},
+            follow_redirects=False,
+        )
+        self.assertEqual(307, speculative.status_code)
+        inactive_navigation = self.client.get(
+            click_url,
+            headers={"sec-fetch-user": "?0"},
+            follow_redirects=False,
+        )
+        self.assertEqual(307, inactive_navigation.status_code)
         with Session(self.engine) as db:
-            self.assertEqual(1, db.query(RecommendationFeedback).filter_by(
+            self.assertEqual(0, db.query(RecommendationFeedback).filter_by(
                 business_id=self.business_id,
-                recommendation_request_id=db.query(RecommendationRequest.id).filter_by(
-                    business_id=self.business_id,
-                    request_id=served.json()["request_id"],
-                ).scalar(),
+                recommendation_request_id=tracked_request_id,
                 product_id=self.product_ids[2],
                 event_type="click",
             ).count())
+
+        # Some mobile browsers/webviews omit Fetch Metadata; a human navigation
+        # from them should still produce a useful training signal.
+        webview_click = self.client.get(
+            click_url,
+            headers={"user-agent": "Mozilla/5.0 (Linux; Android 14; Pixel) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"},
+            follow_redirects=False,
+        )
+        self.assertEqual(307, webview_click.status_code)
+        with Session(self.engine) as db:
+            self.assertEqual(1, db.query(RecommendationFeedback).filter_by(
+                business_id=self.business_id,
+                recommendation_request_id=tracked_request_id,
+                product_id=self.product_ids[2],
+                event_type="click",
+            ).count())
+        clicked = self.client.get(
+            click_url,
+            headers={"sec-fetch-user": "?1"},
+            follow_redirects=False,
+        )
+        self.assertEqual(307, clicked.status_code)
+        self.assertEqual("https://shop.example/products/product-three", clicked.headers["location"])
+        repeated_click = self.client.get(
+            click_url,
+            headers={"sec-fetch-user": "?1"},
+            follow_redirects=False,
+        )
+        self.assertEqual(307, repeated_click.status_code)
+        with Session(self.engine) as db:
+            self.assertEqual(1, db.query(RecommendationFeedback).filter_by(
+                business_id=self.business_id,
+                recommendation_request_id=tracked_request_id,
+                product_id=self.product_ids[2],
+                event_type="click",
+            ).count())
+
+    def test_chat_order_quote_records_checkout_intent_not_cart(self):
+        product_id = self.product_ids[2]
+        now = datetime.utcnow()
+        with Session(self.engine) as db:
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                channel="telegram",
+            )
+            db.add(conversation)
+            db.flush()
+            request = RecommendationRequest(
+                business_id=self.business_id,
+                request_id="chat-checkout-intent-test",
+                customer_id=self.customer_id,
+                strategy="rag",
+                model_version="test",
+                context={"surface": "chatbot"},
+                served_items=[{"product_id": product_id, "position": 1}],
+                created_at=now,
+            )
+            db.add(request)
+            db.flush()
+            db.add(CustomerProductInteraction(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                product_id=product_id,
+                recommendation_request_id=request.id,
+                event_type="impression",
+                source="chatbot",
+                idempotency_key="chat-checkout-impression-test",
+                event_metadata={"conversation_id": conversation.id},
+                occurred_at=now,
+            ))
+            db.flush()
+
+            recorded = record_chat_recommendation_cart(
+                db,
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                conversation_id=conversation.id,
+                collection_session_id=987654,
+                product_ids={product_id},
+            )
+            db.commit()
+
+            self.assertEqual(1, recorded)
+            outcome = db.query(CustomerProductInteraction).filter_by(
+                business_id=self.business_id,
+                recommendation_request_id=request.id,
+                product_id=product_id,
+                event_type="checkout_intent",
+            ).one()
+            self.assertEqual("chat_checkout", outcome.source)
+            self.assertEqual(0, db.query(CustomerProductInteraction).filter_by(
+                business_id=self.business_id,
+                recommendation_request_id=request.id,
+                product_id=product_id,
+                event_type="cart",
+            ).count())
+            feedback = db.query(RecommendationFeedback).filter_by(
+                business_id=self.business_id,
+                recommendation_request_id=request.id,
+                product_id=product_id,
+                event_type="checkout_intent",
+            ).one()
+            self.assertEqual(Decimal("0.2"), feedback.reward)
 
     def test_explicit_customer_decline_is_a_deduplicated_negative_signal(self):
         with Session(self.engine) as db:
@@ -759,7 +904,6 @@ class RecommendationApiTests(unittest.TestCase):
         )
         self.assertEqual(201, served.status_code, served.text)
         request_id = served.json()["request_id"]
-        product_id = served.json()["items"][0]["product_id"]
         with Session(self.engine) as db:
             request = db.query(RecommendationRequest).filter_by(
                 business_id=self.business_id, request_id=request_id,
@@ -791,24 +935,30 @@ class RecommendationApiTests(unittest.TestCase):
                 text="Mẫu này mình không thích, không hợp.",
             ))
             db.commit()
-            self.assertEqual(1, db.query(RecommendationFeedback).filter_by(
+            self.assertEqual(0, db.query(RecommendationFeedback).filter_by(
                 business_id=self.business_id,
                 recommendation_request_id=request.id,
-                product_id=product_id,
                 event_type="skip",
             ).count())
             signal = db.query(CustomerProductInteraction).filter_by(
                 business_id=self.business_id,
                 recommendation_request_id=request.id,
-                product_id=product_id,
-                event_type="skip",
+                product_id=None,
+                event_type="slate_skip",
             ).one()
-            self.assertEqual("explicit_decline", signal.event_metadata["signal"])
+            self.assertEqual("explicit_slate_decline", signal.event_metadata["signal"])
+            self.assertEqual(len(served.json()["items"]), signal.event_metadata["served_item_count"])
+            self.assertFalse(record_explicit_chat_recommendation_decline(
+                db,
+                business_id=self.business_id,
+                conversation_id=conversation_id,
+                text="Mình không thích màu đỏ, có màu xanh không?",
+            ))
 
     @patch("app.api.chat.call_llm", return_value="catalog answer")
     @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
     @patch("app.api.chat.retrieve", return_value=[])
-    def test_rag_question_without_sources_uses_safe_fallback_and_records_minimal_signal(
+    def test_rag_question_without_retrieval_chunks_rejects_uncited_catalog_answer(
         self, retrieve, reserve_budget, call_llm
     ):
         response = self.client.post(
@@ -822,8 +972,10 @@ class RecommendationApiTests(unittest.TestCase):
         self.assertEqual([], response.json()["sources"])
         self.assertIn("reliable source", response.json()["answer"].lower())
         retrieve.assert_called_once()
-        reserve_budget.assert_not_called()
-        call_llm.assert_not_called()
+        # The route still supplies live catalog evidence, so it may call the
+        # model; the uncited result must be discarded in favor of safe fallback.
+        reserve_budget.assert_called_once()
+        call_llm.assert_called_once()
         with Session(self.engine) as db:
             event = db.query(CustomerProductInteraction).filter(
                 CustomerProductInteraction.business_id == self.business_id,

@@ -161,9 +161,10 @@ class Settings(BaseSettings):
     RAG_CHUNK_OVERLAP: int = 100
     RAG_TOP_K: int = 5
     RAG_SIMILARITY_THRESHOLD: float = 0.3
-    # BM25 remains the production baseline until the semantic branch passes
-    # per-shop evaluation. Hybrid retrieval is opt-in for controlled trials.
+    # BM25 is the serving baseline. Experimental per-shop retrieval/controller
+    # overrides require a separate explicit environment gate.
     RAG_RETRIEVAL_MODE: str = "bm25"
+    RAG_EXPERIMENTAL_SERVING_ENABLED: bool = False
     RAG_AGENTIC_ENABLED: bool = False
     RAG_AGENTIC_MODE: str = "off"
     RAG_AGENTIC_MAX_TOOL_CALLS: int = 4

@@ -1,0 +1,451 @@
+﻿industry_id,sample_sku,group,suggested_product_type,fields_to_complete,synthetic,source_filename
+industry_01,DEMO-01-001,Chăm sóc da (Skincare),sữa rửa mặt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-002,Chăm sóc tóc (Hair Care),nước tẩy trang,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-003,Trang điểm (Makeup),toner,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-004,Chăm sóc cơ thể (Body Care),serum,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-005,Chăm sóc da (Skincare),kem dưỡng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-006,Chăm sóc tóc (Hair Care),kem chống nắng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-007,Trang điểm (Makeup),dầu gội,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-008,Chăm sóc cơ thể (Body Care),dầu xả,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-009,Chăm sóc da (Skincare),mặt nạ tóc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-010,Chăm sóc tóc (Hair Care),son,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-011,Trang điểm (Makeup),kem nền,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-012,Chăm sóc cơ thể (Body Care),phấn phủ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-013,Chăm sóc da (Skincare),má hồng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-014,Chăm sóc tóc (Hair Care),sữa tắm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-015,Trang điểm (Makeup),dưỡng thể,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-016,Chăm sóc cơ thể (Body Care),tẩy tế bào chết body,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-017,Chăm sóc da (Skincare),dầu dưỡng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-018,Chăm sóc tóc (Hair Care),lăn khử mùi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-019,Trang điểm (Makeup),nước hoa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-020,Chăm sóc cơ thể (Body Care),kem tay,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-021,Chăm sóc da (Skincare),kem chân,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-022,Chăm sóc tóc (Hair Care),tẩy trang mắt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-023,Trang điểm (Makeup),xịt khoáng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-024,Chăm sóc cơ thể (Body Care),tinh chất,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-025,Chăm sóc da (Skincare),kem mắt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-026,Chăm sóc tóc (Hair Care),mặt nạ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-027,Trang điểm (Makeup),sản phẩm chăm sóc môi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-028,Chăm sóc cơ thể (Body Care),sản phẩm chăm sóc móng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-029,Chăm sóc da (Skincare),phụ kiện làm đẹp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,DEMO-01-030,Chăm sóc tóc (Hair Care),dụng cụ chăm sóc cá nhân,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_02,DEMO-02-001,Quần áo,áo thun,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-002,Giày dép,sơ mi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-003,"Túi, trang sức và phụ kiện",quần dài,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-004,Quần áo,jeans,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-005,Giày dép,váy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-006,"Túi, trang sức và phụ kiện",áo khoác,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-007,Quần áo,đồ mặc nhà,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-008,Giày dép,đồ thể thao,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-009,"Túi, trang sức và phụ kiện",đồ lót (nếu shop bán),"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-010,Quần áo,đầm dự tiệc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-011,Giày dép,áo len,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-012,"Túi, trang sức và phụ kiện",shorts,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-013,Quần áo,sneaker,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-014,Giày dép,sandal,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-015,"Túi, trang sức và phụ kiện",giày công sở,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-016,Quần áo,dép,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-017,Giày dép,túi tote,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-018,"Túi, trang sức và phụ kiện",túi đeo chéo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-019,Quần áo,ba lô thời trang,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-020,Giày dép,ví,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-021,"Túi, trang sức và phụ kiện",thắt lưng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-022,Quần áo,khăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-023,Giày dép,mũ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-024,"Túi, trang sức và phụ kiện",kính thời trang,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-025,Quần áo,bông tai,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-026,Giày dép,dây chuyền,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-027,"Túi, trang sức và phụ kiện",vòng tay,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-028,Quần áo,kẹp tóc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-029,Giày dép,tất,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_02,DEMO-02-030,"Túi, trang sức và phụ kiện",phụ kiện phối đồ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,02-Thoi-trang-va-phu-kien.docx
+industry_03,DEMO-03-001,Thiết bị điện tử,sạc điện thoại,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-002,Điện gia dụng,tai nghe,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-003,Thiết bị mạng/âm thanh,loa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-004,Thiết bị điện tử,bàn phím,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-005,Điện gia dụng,chuột,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-006,Thiết bị mạng/âm thanh,màn hình,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-007,Thiết bị điện tử,router,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-008,Điện gia dụng,camera,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-009,Thiết bị mạng/âm thanh,ổ cứng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-010,Thiết bị điện tử,máy lọc không khí,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-011,Điện gia dụng,quạt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-012,Thiết bị mạng/âm thanh,nồi cơm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-013,Thiết bị điện tử,ấm đun,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-014,Điện gia dụng,máy xay,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-015,Thiết bị mạng/âm thanh,máy hút bụi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-016,Thiết bị điện tử,máy sấy tóc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-017,Điện gia dụng,bàn ủi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-018,Thiết bị mạng/âm thanh,máy lọc nước,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-019,Thiết bị điện tử,đèn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-020,Điện gia dụng,ổ cắm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-021,Thiết bị mạng/âm thanh,cáp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-022,Thiết bị điện tử,adapter,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-023,Điện gia dụng,máy in,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-024,Thiết bị mạng/âm thanh,máy chiếu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-025,Thiết bị điện tử,tủ lạnh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-026,Điện gia dụng,lò vi sóng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-027,Thiết bị mạng/âm thanh,máy giặt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-028,Thiết bị điện tử,máy pha cà phê,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-029,Điện gia dụng,pin dự phòng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,DEMO-03-030,Thiết bị mạng/âm thanh,bộ phát Wi-Fi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,03-Dien-tu-va-dien-gia-dung.docx
+industry_04,DEMO-04-001,Nội thất,bàn ăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-002,Đồ bếp và dụng cụ,ghế,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-003,Trang trí và lưu trữ,kệ sách,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-004,Nội thất,tủ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-005,Đồ bếp và dụng cụ,giường,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-006,Trang trí và lưu trữ,nệm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-007,Nội thất,đèn bàn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-008,Đồ bếp và dụng cụ,đèn trần,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-009,Trang trí và lưu trữ,rèm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-010,Nội thất,thảm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-011,Đồ bếp và dụng cụ,gương,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-012,Trang trí và lưu trữ,tranh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-013,Nội thất,khay,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-014,Đồ bếp và dụng cụ,nồi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-015,Trang trí và lưu trữ,chảo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-016,Nội thất,dao bếp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-017,Đồ bếp và dụng cụ,thớt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-018,Trang trí và lưu trữ,hộp đựng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-019,Nội thất,bình nước,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-020,Đồ bếp và dụng cụ,giá treo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-021,Trang trí và lưu trữ,móc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-022,Nội thất,giỏ lưu trữ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-023,Đồ bếp và dụng cụ,kệ nhà tắm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-024,Trang trí và lưu trữ,dụng cụ vệ sinh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-025,Nội thất,gối,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-026,Đồ bếp và dụng cụ,chăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-027,Trang trí và lưu trữ,ga giường,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-028,Nội thất,đồng hồ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-029,Đồ bếp và dụng cụ,lọ hoa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_04,DEMO-04-030,Trang trí và lưu trữ,đồ trang trí,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,04-Nha-cua-va-doi-song.docx
+industry_05,DEMO-05-001,Thực phẩm đóng gói/đồ uống,gạo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-002,Hàng tươi/đông lạnh,mì,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-003,Hàng tiêu dùng gia đình,ngũ cốc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-004,Thực phẩm đóng gói/đồ uống,dầu ăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-005,Hàng tươi/đông lạnh,gia vị,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-006,Hàng tiêu dùng gia đình,đồ hộp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-007,Thực phẩm đóng gói/đồ uống,sữa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-008,Hàng tươi/đông lạnh,đồ uống,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-009,Hàng tiêu dùng gia đình,bánh quy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-010,Thực phẩm đóng gói/đồ uống,đồ ăn nhẹ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-011,Hàng tươi/đông lạnh,thực phẩm đông lạnh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-012,Hàng tiêu dùng gia đình,thịt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-013,Thực phẩm đóng gói/đồ uống,hải sản,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-014,Hàng tươi/đông lạnh,rau củ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-015,Hàng tiêu dùng gia đình,trái cây,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-016,Thực phẩm đóng gói/đồ uống,trứng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-017,Hàng tươi/đông lạnh,nước chấm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-018,Hàng tiêu dùng gia đình,cà phê,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-019,Thực phẩm đóng gói/đồ uống,trà,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-020,Hàng tươi/đông lạnh,đường,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-021,Hàng tiêu dùng gia đình,muối,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-022,Thực phẩm đóng gói/đồ uống,nước đóng chai,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-023,Hàng tươi/đông lạnh,giấy ăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-024,Hàng tiêu dùng gia đình,nước rửa chén,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-025,Thực phẩm đóng gói/đồ uống,nước giặt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-026,Hàng tươi/đông lạnh,chất tẩy rửa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-027,Hàng tiêu dùng gia đình,túi rác,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-028,Thực phẩm đóng gói/đồ uống,khăn giấy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-029,Hàng tươi/đông lạnh,đồ vệ sinh cá nhân,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_05,DEMO-05-030,Hàng tiêu dùng gia đình,sản phẩm vệ sinh nhà cửa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,05-Bach-hoa-Thuc-pham.docx
+industry_06,DEMO-06-001,Đồ dùng và thiết bị trẻ em,áo sơ sinh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-002,Quần áo/tã và đồ dệt,bodysuit,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-003,Chăm sóc và dinh dưỡng,tất trẻ em,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-004,Đồ dùng và thiết bị trẻ em,chăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-005,Quần áo/tã và đồ dệt,khăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-006,Chăm sóc và dinh dưỡng,yếm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-007,Đồ dùng và thiết bị trẻ em,tã/bỉm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-008,Quần áo/tã và đồ dệt,khăn ướt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-009,Chăm sóc và dinh dưỡng,sữa tắm trẻ em,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-010,Đồ dùng và thiết bị trẻ em,dầu gội trẻ em,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-011,Quần áo/tã và đồ dệt,kem dưỡng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-012,Chăm sóc và dinh dưỡng,bình sữa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-013,Đồ dùng và thiết bị trẻ em,núm ti,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-014,Quần áo/tã và đồ dệt,máy tiệt trùng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-015,Chăm sóc và dinh dưỡng,máy hút sữa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-016,Đồ dùng và thiết bị trẻ em,địu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-017,Quần áo/tã và đồ dệt,xe đẩy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-018,Chăm sóc và dinh dưỡng,ghế ăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-019,Đồ dùng và thiết bị trẻ em,nôi/cũi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-020,Quần áo/tã và đồ dệt,chặn cửa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-021,Chăm sóc và dinh dưỡng,ghế ô tô trẻ em,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-022,Đồ dùng và thiết bị trẻ em,đồ chơi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-023,Quần áo/tã và đồ dệt,nhiệt kế,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-024,Chăm sóc và dinh dưỡng,máy hâm sữa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-025,Đồ dùng và thiết bị trẻ em,hộp trữ sữa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-026,Quần áo/tã và đồ dệt,đồ dùng ăn dặm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-027,Chăm sóc và dinh dưỡng,chén thìa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-028,Đồ dùng và thiết bị trẻ em,túi trữ đồ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-029,Quần áo/tã và đồ dệt,miếng lót,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_06,DEMO-06-030,Chăm sóc và dinh dưỡng,đồ chăm sóc mẹ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,06-Me-va-be.docx
+industry_07,DEMO-07-001,"Cáp, sạc và nguồn",ốp iPhone,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-002,"Ốp, kính và phụ kiện ngoại hình",ốp Android,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-003,"Lưu trữ, nhập liệu và kết nối",kính cường lực,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-004,"Cáp, sạc và nguồn",miếng dán laptop,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-005,"Ốp, kính và phụ kiện ngoại hình",cáp USB-C,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-006,"Lưu trữ, nhập liệu và kết nối",cáp Lightning,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-007,"Cáp, sạc và nguồn",sạc tường,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-008,"Ốp, kính và phụ kiện ngoại hình",sạc không dây,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-009,"Lưu trữ, nhập liệu và kết nối",pin dự phòng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-010,"Cáp, sạc và nguồn",hub USB,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-011,"Ốp, kính và phụ kiện ngoại hình",adapter HDMI,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-012,"Lưu trữ, nhập liệu và kết nối",dock,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-013,"Cáp, sạc và nguồn",chuột,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-014,"Ốp, kính và phụ kiện ngoại hình",bàn phím,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-015,"Lưu trữ, nhập liệu và kết nối",lót chuột,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-016,"Cáp, sạc và nguồn",tai nghe,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-017,"Ốp, kính và phụ kiện ngoại hình",webcam,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-018,"Lưu trữ, nhập liệu và kết nối",micro,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-019,"Cáp, sạc và nguồn",USB flash,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-020,"Ốp, kính và phụ kiện ngoại hình",SSD ngoài,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-021,"Lưu trữ, nhập liệu và kết nối",thẻ nhớ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-022,"Cáp, sạc và nguồn",đầu đọc thẻ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-023,"Ốp, kính và phụ kiện ngoại hình",giá đỡ điện thoại,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-024,"Lưu trữ, nhập liệu và kết nối",giá laptop,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-025,"Cáp, sạc và nguồn",đế tản nhiệt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-026,"Ốp, kính và phụ kiện ngoại hình",bút cảm ứng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-027,"Lưu trữ, nhập liệu và kết nối",bao laptop,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-028,"Cáp, sạc và nguồn",bộ chuyển đổi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-029,"Ốp, kính và phụ kiện ngoại hình",cáp mạng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DEMO-07-030,"Lưu trữ, nhập liệu và kết nối",loa máy tính,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_08,DEMO-08-001,Trang phục và giày thể thao,áo chạy bộ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-002,Dụng cụ tập luyện,quần tập,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-003,Cắm trại và dã ngoại,áo khoác chống mưa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-004,Trang phục và giày thể thao,giày chạy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-005,Dụng cụ tập luyện,giày trekking,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-006,Cắm trại và dã ngoại,vớ thể thao,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-007,Trang phục và giày thể thao,găng tập,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-008,Dụng cụ tập luyện,thảm yoga,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-009,Cắm trại và dã ngoại,dây kháng lực,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-010,Trang phục và giày thể thao,tạ tay,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-011,Dụng cụ tập luyện,con lăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-012,Cắm trại và dã ngoại,bóng tập,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-013,Trang phục và giày thể thao,bình nước,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-014,Dụng cụ tập luyện,túi nước,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-015,Cắm trại và dã ngoại,ba lô trekking,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-016,Trang phục và giày thể thao,lều,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-017,Dụng cụ tập luyện,túi ngủ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-018,Cắm trại và dã ngoại,đệm ngủ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-019,Trang phục và giày thể thao,đèn pin,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-020,Dụng cụ tập luyện,đèn đội đầu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-021,Cắm trại và dã ngoại,bếp dã ngoại,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-022,Trang phục và giày thể thao,bình nhiên liệu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-023,Dụng cụ tập luyện,ghế xếp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-024,Cắm trại và dã ngoại,gậy trekking,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-025,Trang phục và giày thể thao,kính bơi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-026,Dụng cụ tập luyện,mũ bảo hiểm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-027,Cắm trại và dã ngoại,áo phao,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-028,Trang phục và giày thể thao,dây leo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-029,Dụng cụ tập luyện,móc carabiner,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_08,DEMO-08-030,Cắm trại và dã ngoại,bộ sơ cứu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,08-The-thao-va-da-ngoai.docx
+industry_09,DEMO-09-001,Sách,sách văn học,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-002,Văn phòng phẩm,sách kỹ năng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-003,Dụng cụ học tập/sáng tạo,sách thiếu nhi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-004,Sách,sách học ngoại ngữ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-005,Văn phòng phẩm,sách giáo khoa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-006,Dụng cụ học tập/sáng tạo,sách tham khảo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-007,Sách,sách chuyên ngành,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-008,Văn phòng phẩm,truyện tranh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-009,Dụng cụ học tập/sáng tạo,sách ảnh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-010,Sách,sách nói,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-011,Văn phòng phẩm,ebook,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-012,Dụng cụ học tập/sáng tạo,sổ tay,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-013,Sách,vở,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-014,Văn phòng phẩm,giấy A4,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-015,Dụng cụ học tập/sáng tạo,giấy màu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-016,Sách,bút bi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-017,Văn phòng phẩm,bút chì,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-018,Dụng cụ học tập/sáng tạo,bút máy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-019,Sách,bút dạ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-020,Văn phòng phẩm,mực,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-021,Dụng cụ học tập/sáng tạo,ruột bút,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-022,Sách,tẩy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-023,Văn phòng phẩm,thước,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-024,Dụng cụ học tập/sáng tạo,compa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-025,Sách,kéo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-026,Văn phòng phẩm,keo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-027,Dụng cụ học tập/sáng tạo,bìa hồ sơ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-028,Sách,kẹp giấy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-029,Văn phòng phẩm,màu vẽ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_09,DEMO-09-030,Dụng cụ học tập/sáng tạo,bảng viết,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,09-Sach-va-van-phong-pham.docx
+industry_10,DEMO-10-001,Thức ăn và dinh dưỡng,thức ăn chó,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-002,Phụ kiện và vận chuyển,thức ăn mèo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-003,Vệ sinh và chăm sóc,thức ăn cá,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-004,Thức ăn và dinh dưỡng,đồ ăn thưởng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-005,Phụ kiện và vận chuyển,sữa tắm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-006,Vệ sinh và chăm sóc,lược,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-007,Thức ăn và dinh dưỡng,dây dắt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-008,Phụ kiện và vận chuyển,vòng cổ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-009,Vệ sinh và chăm sóc,đai yếm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-010,Thức ăn và dinh dưỡng,chuồng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-011,Phụ kiện và vận chuyển,lồng vận chuyển,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-012,Vệ sinh và chăm sóc,khay vệ sinh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-013,Thức ăn và dinh dưỡng,cát mèo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-014,Phụ kiện và vận chuyển,bát ăn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-015,Vệ sinh và chăm sóc,bình nước,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-016,Thức ăn và dinh dưỡng,đồ chơi nhai,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-017,Phụ kiện và vận chuyển,bóng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-018,Vệ sinh và chăm sóc,trụ cào,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-019,Thức ăn và dinh dưỡng,ổ nằm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-020,Phụ kiện và vận chuyển,tã thú cưng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-021,Vệ sinh và chăm sóc,túi vệ sinh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-022,Thức ăn và dinh dưỡng,dung dịch vệ sinh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-023,Phụ kiện và vận chuyển,bàn chải,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-024,Vệ sinh và chăm sóc,kéo tỉa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-025,Thức ăn và dinh dưỡng,máy sấy thú cưng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-026,Phụ kiện và vận chuyển,bộ lọc bể cá,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-027,Vệ sinh và chăm sóc,đèn bể,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-028,Thức ăn và dinh dưỡng,đồ chơi chim,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-029,Phụ kiện và vận chuyển,balo thú cưng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_10,DEMO-10-030,Vệ sinh và chăm sóc,thảm lót,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,10-Thu-cung.docx
+industry_11,DEMO-11-001,Phụ tùng thay thế,lọc dầu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-002,Dầu nhớt và vật tư bảo dưỡng,lọc gió,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-003,Phụ kiện điện/ngoại thất,lọc nhiên liệu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-004,Phụ tùng thay thế,bugi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-005,Dầu nhớt và vật tư bảo dưỡng,má phanh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-006,Phụ kiện điện/ngoại thất,đĩa phanh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-007,Phụ tùng thay thế,ắc quy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-008,Dầu nhớt và vật tư bảo dưỡng,đèn pha,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-009,Phụ kiện điện/ngoại thất,gương,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-010,Phụ tùng thay thế,lốp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-011,Dầu nhớt và vật tư bảo dưỡng,ruột xe,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-012,Phụ kiện điện/ngoại thất,dầu động cơ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-013,Phụ tùng thay thế,dầu hộp số,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-014,Dầu nhớt và vật tư bảo dưỡng,nước làm mát,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-015,Phụ kiện điện/ngoại thất,dây curoa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-016,Phụ tùng thay thế,xích xe,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-017,Dầu nhớt và vật tư bảo dưỡng,nhông,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-018,Phụ kiện điện/ngoại thất,bố nồi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-019,Phụ tùng thay thế,giảm xóc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-020,Dầu nhớt và vật tư bảo dưỡng,bạc đạn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-021,Phụ kiện điện/ngoại thất,cần gạt mưa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-022,Phụ tùng thay thế,camera hành trình,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-023,Dầu nhớt và vật tư bảo dưỡng,giá nóc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-024,Phụ kiện điện/ngoại thất,thảm sàn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-025,Phụ tùng thay thế,ốp xe,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-026,Dầu nhớt và vật tư bảo dưỡng,sạc xe,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-027,Phụ kiện điện/ngoại thất,bóng đèn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-028,Phụ tùng thay thế,còi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-029,Dầu nhớt và vật tư bảo dưỡng,lọc cabin,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_11,DEMO-11-030,Phụ kiện điện/ngoại thất,phụ kiện xe máy,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,11-Phu-tung-o-to-xe-may.docx
+industry_12,DEMO-12-001,Thực phẩm bổ sung,vitamin tổng hợp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-002,Thiết bị chăm sóc sức khỏe,vitamin C,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-003,Chăm sóc cá nhân liên quan sức khỏe,vitamin D,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-004,Thực phẩm bổ sung,khoáng chất,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-005,Thiết bị chăm sóc sức khỏe,omega-3,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-006,Chăm sóc cá nhân liên quan sức khỏe,men vi sinh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-007,Thực phẩm bổ sung,chất xơ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-008,Thiết bị chăm sóc sức khỏe,sản phẩm protein,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-009,Chăm sóc cá nhân liên quan sức khỏe,thức uống bổ sung,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-010,Thực phẩm bổ sung,dụng cụ đo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-011,Thiết bị chăm sóc sức khỏe,nhiệt kế,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-012,Chăm sóc cá nhân liên quan sức khỏe,máy đo huyết áp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-013,Thực phẩm bổ sung,máy xông,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-014,Thiết bị chăm sóc sức khỏe,máy đo đường huyết,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-015,Chăm sóc cá nhân liên quan sức khỏe,que thử,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-016,Thực phẩm bổ sung,đai hỗ trợ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-017,Thiết bị chăm sóc sức khỏe,dụng cụ chăm sóc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-018,Chăm sóc cá nhân liên quan sức khỏe,băng gạc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-019,Thực phẩm bổ sung,khẩu trang,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-020,Thiết bị chăm sóc sức khỏe,dung dịch vệ sinh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-021,Chăm sóc cá nhân liên quan sức khỏe,kem chống nắng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-022,Thực phẩm bổ sung,máy massage,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-023,Thiết bị chăm sóc sức khỏe,miếng dán,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-024,Chăm sóc cá nhân liên quan sức khỏe,bình chia liều,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-025,Thực phẩm bổ sung,hộp bảo quản,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-026,Thiết bị chăm sóc sức khỏe,thiết bị theo dõi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-027,Chăm sóc cá nhân liên quan sức khỏe,phụ kiện máy đo,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-028,Thực phẩm bổ sung,vật tư tiêu hao,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-029,Thiết bị chăm sóc sức khỏe,sản phẩm chăm sóc cá nhân,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,DEMO-12-030,Chăm sóc cá nhân liên quan sức khỏe,sản phẩm theo nhãn được phép,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_13,DEMO-13-001,Dịch vụ/liệu trình,chăm sóc da mặt,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-002,Gói/khuyến mãi dịch vụ,massage thư giãn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-003,Lịch hẹn,chăm sóc cơ thể,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-004,Dịch vụ/liệu trình,chăm sóc da đầu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-005,Gói/khuyến mãi dịch vụ,gội dưỡng sinh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-006,Lịch hẹn,chăm sóc móng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-007,Dịch vụ/liệu trình,chăm sóc tóc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-008,Gói/khuyến mãi dịch vụ,tẩy lông,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-009,Lịch hẹn,chăm sóc sau nắng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-010,Dịch vụ/liệu trình,chăm sóc da cơ bản,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-011,Gói/khuyến mãi dịch vụ,liệu trình theo tư vấn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-012,Lịch hẹn,gói nhiều buổi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-013,Dịch vụ/liệu trình,dịch vụ theo giờ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-014,Gói/khuyến mãi dịch vụ,dịch vụ theo nhân sự,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-015,Lịch hẹn,tư vấn da,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-016,Dịch vụ/liệu trình,chăm sóc trước sự kiện,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-017,Gói/khuyến mãi dịch vụ,dịch vụ nhóm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-018,Lịch hẹn,dịch vụ tại nhà nếu có,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-019,Dịch vụ/liệu trình,thẻ quà tặng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-020,Gói/khuyến mãi dịch vụ,đặt cọc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-021,Lịch hẹn,đổi lịch,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-022,Dịch vụ/liệu trình,hủy lịch,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-023,Gói/khuyến mãi dịch vụ,chăm sóc sau dịch vụ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-024,Lịch hẹn,chăm sóc thư giãn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-025,Dịch vụ/liệu trình,dịch vụ tại chi nhánh,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-026,Gói/khuyến mãi dịch vụ,combo dịch vụ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-027,Lịch hẹn,buổi trải nghiệm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-028,Dịch vụ/liệu trình,dịch vụ bổ sung,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-029,Gói/khuyến mãi dịch vụ,dịch vụ theo mùa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_13,DEMO-13-030,Lịch hẹn,tái khám/tái đánh giá nếu cơ sở có,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,13-Spa-va-tham-my.docx
+industry_14,DEMO-14-001,Dịch vụ khám và thủ thuật,khám tổng quát,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-002,Dịch vụ nha khoa,khám chuyên khoa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-003,Lịch khám và hồ sơ hành chính,tư vấn nha khoa,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-004,Dịch vụ khám và thủ thuật,khám răng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-005,Dịch vụ nha khoa,lấy cao răng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-006,Lịch khám và hồ sơ hành chính,chụp phim theo chỉ định,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-007,Dịch vụ khám và thủ thuật,kiểm tra răng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-008,Dịch vụ nha khoa,dịch vụ nha chu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-009,Lịch khám và hồ sơ hành chính,phục hình theo khám,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-010,Dịch vụ khám và thủ thuật,dịch vụ chỉnh nha theo tư vấn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-011,Dịch vụ nha khoa,tái khám,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-012,Lịch khám và hồ sơ hành chính,xét nghiệm theo chỉ định,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-013,Dịch vụ khám và thủ thuật,khám theo lịch,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-014,Dịch vụ nha khoa,tư vấn hồ sơ bảo hiểm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-015,Lịch khám và hồ sơ hành chính,dịch vụ tại cơ sở A,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-016,Dịch vụ khám và thủ thuật,dịch vụ tại cơ sở B,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-017,Dịch vụ nha khoa,khám trẻ em nếu có,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-018,Lịch khám và hồ sơ hành chính,dịch vụ ngoài giờ nếu có,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-019,Dịch vụ khám và thủ thuật,tư vấn quy trình,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-020,Dịch vụ nha khoa,hướng dẫn giấy tờ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-021,Lịch khám và hồ sơ hành chính,đặt lịch bác sĩ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-022,Dịch vụ khám và thủ thuật,đổi lịch,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-023,Dịch vụ nha khoa,hủy lịch,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-024,Lịch khám và hồ sơ hành chính,hỏi phí khám,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-025,Dịch vụ khám và thủ thuật,hỏi thời gian,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-026,Dịch vụ nha khoa,hỏi địa điểm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-027,Lịch khám và hồ sơ hành chính,hỗ trợ hồ sơ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-028,Dịch vụ khám và thủ thuật,liên hệ nhân viên,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-029,Dịch vụ nha khoa,quy trình sau khám,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_14,DEMO-14-030,Lịch khám và hồ sơ hành chính,hỗ trợ người nhà,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,14-Phong-kham-va-nha-khoa.docx
+industry_15,DEMO-15-001,Khóa học/chương trình,tiếng Anh giao tiếp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-002,Lớp học và lịch,tiếng Anh thiếu nhi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-003,Học phí và ghi danh,luyện thi,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-004,Khóa học/chương trình,toán,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-005,Lớp học và lịch,khoa học,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-006,Học phí và ghi danh,lập trình cơ bản,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-007,Khóa học/chương trình,thiết kế,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-008,Lớp học và lịch,kỹ năng văn phòng,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-009,Học phí và ghi danh,kỹ năng mềm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-010,Khóa học/chương trình,khóa trực tuyến,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-011,Lớp học và lịch,khóa trực tiếp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-012,Học phí và ghi danh,lớp nhóm,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-013,Khóa học/chương trình,lớp cá nhân,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-014,Lớp học và lịch,gia sư,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-015,Học phí và ghi danh,lớp cuối tuần,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-016,Khóa học/chương trình,khóa cấp tốc,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-017,Lớp học và lịch,khóa dài hạn,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-018,Học phí và ghi danh,bài giảng ghi hình,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-019,Khóa học/chương trình,tài liệu học,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-020,Lớp học và lịch,bộ đề,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-021,Học phí và ghi danh,lớp theo trình độ,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-022,Khóa học/chương trình,lớp theo mục tiêu,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-023,Lớp học và lịch,lớp doanh nghiệp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-024,Học phí và ghi danh,workshop,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-025,Khóa học/chương trình,tư vấn đầu vào,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-026,Lớp học và lịch,kiểm tra xếp lớp,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-027,Học phí và ghi danh,lớp bù,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-028,Khóa học/chương trình,lớp thử nếu có,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-029,Lớp học và lịch,chứng chỉ nếu có,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx
+industry_15,DEMO-15-030,Học phí và ghi danh,dịch vụ hỗ trợ học viên,"[""SKU, giá/tồn fixture; thuộc tính nhóm; đơn vị/biến thể; nguồn""]",True,15-Giao-duc-va-dao-tao.docx

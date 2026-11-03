@@ -11,6 +11,7 @@ from app.services.auto_reply_service import (
     _deterministic_customer_reply,
     _extract_vietqr_photo,
     _is_product_catalog_listing_request,
+    _record_rag_handoff,
     _send_channel_reply,
     format_product_catalog_reply,
     process_rag_auto_reply,
@@ -93,6 +94,21 @@ def test_shopee_bridge_auth_error_does_not_force_human_takeover():
     handoff.assert_not_called()
 
 
+def test_rag_skips_auto_reply_while_conversation_waits_for_staff():
+    conversation = Mock(bot_mode="auto", resolution_outcome="needs_human")
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = conversation
+    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+         patch("app.services.auto_reply_service._latest_inbound_image_url", return_value=None), \
+         patch("app.services.auto_reply_service.send_text_reply") as send, \
+         patch("app.services.auto_reply_service.retrieve") as retrieve:
+        result = process_rag_auto_reply(db, 7, "facebook", "What is the return policy?", 4)
+    assert result is False
+    assert conversation.bot_mode == "auto"
+    send.assert_not_called()
+    retrieve.assert_not_called()
+
+
 def test_delivery_unknown_keeps_bot_enabled_and_notifies_staff_without_retry():
     from app.services.auto_reply_service import _notify_rag_handoff_required
 
@@ -119,6 +135,127 @@ def test_delivery_unknown_keeps_bot_enabled_and_notifies_staff_without_retry():
     assert conversation.bot_mode == "auto"
     assert conversation.resolution_outcome == "needs_human"
     notify.assert_called_once()
+
+
+def test_policy_disclosure_uses_idempotent_staff_handoff_recording():
+    conversation = Mock(id=7, customer_id=8)
+    db = Mock()
+    with patch("app.services.auto_reply_service._notify_rag_handoff_required") as notify:
+        recorded = _record_rag_handoff(
+            db,
+            conversation=conversation,
+            business_id=4,
+            query_text="đổi trả và bảo hành thế nào?",
+            reason="missing_warranty_policy_source",
+            idempotency_key="turn-1:missing-warranty-policy",
+        )
+
+    assert recorded
+    notify.assert_called_once_with(
+        db,
+        conversation=conversation,
+        business_id=4,
+        query_text="đổi trả và bảo hành thế nào?",
+        reason="missing_warranty_policy_source",
+        idempotency_key="turn-1:missing-warranty-policy",
+    )
+
+
+def test_rag_handoff_notification_persists_database_idempotency_key():
+    from app.services.auto_reply_service import _notify_rag_handoff_required
+
+    conversation = Mock(id=7, customer_id=8, assigned_user_id=None)
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    with patch("app.services.auto_reply_service.manager.is_user_connected", return_value=False), \
+         patch("app.services.auto_reply_service.create_notification") as create:
+        _notify_rag_handoff_required(
+            db,
+            conversation=conversation,
+            business_id=4,
+            query_text="Đổi trả thế nào?",
+            reason="no_matching_policy_source",
+            idempotency_key="turn-1:handoff:no_matching_policy_source",
+        )
+
+    assert create.call_args.kwargs["idempotency_key"] == "turn-1:handoff:no_matching_policy_source"
+    db.commit.assert_called_once()
+
+
+def test_rag_handoff_retry_updates_reason_without_creating_another_notification():
+    from types import SimpleNamespace
+    from app.services.auto_reply_service import _notify_rag_handoff_required
+
+    existing = SimpleNamespace(
+        metadata_={"reason": "no_rag_context", "reasons": ["no_rag_context"]},
+        idempotency_key="rag-handoff:turn-1",
+    )
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = existing
+    conversation = Mock(id=7, customer_id=8, assigned_user_id=None)
+    with patch("app.services.auto_reply_service.create_notification") as create:
+        _notify_rag_handoff_required(
+            db, conversation=conversation, business_id=4, query_text="Question",
+            reason="missing_warranty_policy_source", idempotency_key="rag-handoff:turn-1",
+        )
+    create.assert_not_called()
+    assert existing.metadata_["reason"] == "missing_warranty_policy_source"
+    assert existing.metadata_["reasons"] == ["no_rag_context", "missing_warranty_policy_source"]
+    assert conversation.resolution_outcome == "needs_human"
+    db.commit.assert_called_once()
+
+
+def test_rag_handoff_idempotency_is_stable_across_reason_changes():
+    from app.services.auto_reply_service import _rag_handoff_idempotency_key
+
+    assert _rag_handoff_idempotency_key("inbound:42") == "rag-handoff:inbound:42"
+    assert _rag_handoff_idempotency_key(None) is None
+
+
+def test_failed_handoff_recording_is_reported_as_not_queued():
+    from app.services.auto_reply_service import _handoff_recording_failed_reply
+
+    reply = _handoff_recording_failed_reply("Tôi muốn hỏi chính sách đổi trả")
+    assert "liên hệ trực tiếp" in reply
+    assert "nhân viên sẽ kiểm tra" not in reply
+
+
+def test_handoff_persistence_failure_is_not_reported_as_success():
+    conversation = Mock(id=7, customer_id=8)
+    db = Mock()
+    with patch(
+        "app.services.auto_reply_service._notify_rag_handoff_required",
+        side_effect=RuntimeError("notification store unavailable"),
+    ):
+        assert not _record_rag_handoff(
+            db,
+            conversation=conversation,
+            business_id=4,
+            query_text="Đổi trả thế nào?",
+            reason="no_matching_policy_source",
+        )
+    db.rollback.assert_called_once()
+
+
+def test_rag_handoff_duplicate_insert_race_is_treated_as_persisted():
+    from sqlalchemy.exc import IntegrityError
+
+    conversation = Mock(id=7, customer_id=8)
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = Mock()
+    with patch(
+        "app.services.auto_reply_service._notify_rag_handoff_required",
+        side_effect=IntegrityError("INSERT", {}, RuntimeError("duplicate key")),
+    ):
+        assert _record_rag_handoff(
+            db,
+            conversation=conversation,
+            business_id=4,
+            query_text="Đổi trả thế nào?",
+            reason="no_matching_policy_source",
+            idempotency_key="turn-1:handoff:no_matching_policy_source",
+        )
+    db.rollback.assert_called_once()
 
 
 def test_provider_echo_proves_delivery_even_if_bridge_response_was_uncertain():
@@ -171,6 +308,7 @@ def test_product_attributes_use_same_current_crm_context_on_all_channels(channel
         mock("_latest_inbound_image_url", return_value=None)
         mock("customer_order_reply", return_value=None)
         mock("_find_exact_product", return_value=(product, "DM-APP-001"))
+        mock("find_ambiguous_product_matches", return_value=[])
         mock("retrieve", return_value=[evidence])
         mock("build_agent_memory", return_value={
             "history": [],
@@ -231,6 +369,40 @@ def test_unknown_shopee_delivery_is_not_automatically_sent_again():
     assert error.value.status_code == 409
     assert error.value.detail["code"] == "delivery_unknown"
     send.assert_not_called()
+
+
+def test_delivery_unknown_copy_is_channel_neutral():
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = Mock(status="delivery_unknown")
+    with patch("app.services.auto_reply_service._get_conversation_recipient", return_value=("facebook", "customer-1")), \
+         patch("app.services.auto_reply_service._claim_auto_reply", return_value=False), \
+         patch("app.services.auto_reply_service._send_channel_reply") as send:
+        with pytest.raises(HTTPException) as error:
+            send_text_reply(db=db, conversation_id=24, channel="facebook", text="Xin chào",
+                            business_id=3, auto_reply_key="turn:3:24:1:2")
+    assert error.value.detail["code"] == "delivery_unknown"
+    assert "kênh này" in error.value.detail["detail"]
+    assert "Shopee" not in error.value.detail["detail"]
+    send.assert_not_called()
+
+
+def test_provider_accepted_but_crm_save_failed_is_not_reported_as_send_failure():
+    db = Mock()
+    with patch("app.services.auto_reply_service._get_conversation_recipient", return_value=("telegram", "user-1")), \
+         patch("app.services.auto_reply_service._claim_auto_reply", return_value=True), \
+         patch("app.services.auto_reply_service._send_channel_reply", return_value={"message_id": "accepted-1"}) as send, \
+         patch("app.services.auto_reply_service._save_auto_reply_outbound", side_effect=RuntimeError("db commit failed")), \
+         patch("app.services.auto_reply_service._mark_auto_reply_failed") as mark:
+        with pytest.raises(HTTPException) as error:
+            send_text_reply(
+                db=db, conversation_id=24, channel="telegram", text="Xin chào",
+                business_id=3, auto_reply_key="turn:3:24:1:2",
+            )
+    assert send.call_count == 1
+    assert error.value.detail["code"] == "delivery_unknown"
+    assert "đã được gửi tới kênh" in error.value.detail["detail"]
+    assert mark.call_count == 1
+    assert mark.call_args.args[2].detail["code"] == "delivery_unknown"
 
 
 def test_auto_reply_dispatches_telegram_through_tenant_channel():
@@ -996,6 +1168,7 @@ def test_agentic_rag_modes_log_and_preserve_original_hard_filters(
         patch("app.services.auto_reply_service.call_llm", return_value="Đơn nội thành thường giao trong 1 đến 2 ngày [Nguồn 1]."), \
         patch("app.services.auto_reply_service._get_conversation_recipient", return_value=("telegram", "recipient")), \
         patch("app.services.auto_reply_service._send_channel_reply", return_value={"message_id": "agentic-1"}) as send, \
+        patch("app.services.auto_reply_service._save_auto_reply_outbound"), \
         patch("app.services.auto_reply_service.record_explicit_chat_recommendation_decline"), \
         patch("app.services.auto_reply_service._notify_rag_handoff_required") as handoff, \
         patch("app.rag.run_logger.settings.RAG_LOG_FILE", str(tmp_path / "rag.jsonl")):

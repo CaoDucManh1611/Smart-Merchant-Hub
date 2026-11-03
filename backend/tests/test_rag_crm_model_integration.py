@@ -195,7 +195,7 @@ def test_occupation_is_ignored_when_the_customer_asks_about_a_product():
     terms = query_terms("I'm a police officer. Do you have the pink basic shirt?")
 
     assert ("pink", "hong") in terms
-    assert ("shirt", "shirts", "ao thun") in terms
+    assert ("shirt", "shirts", "ao thun", "ao phong") in terms
     assert not any("police" in aliases or "officer" in aliases for aliases in terms)
 
 

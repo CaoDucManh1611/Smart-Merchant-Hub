@@ -8,6 +8,7 @@ from app.services.auto_reply_service import (
     NO_DELIVERY_POLICY_REPLY,
     NO_RECOMMENDATION_REPLY,
     NO_RETURN_POLICY_REPLY,
+    NO_WARRANTY_POLICY_REPLY,
     PRODUCT_NOT_FOUND_REPLY,
     _chunk_supports_policy,
     _contextual_retrieval_query,
@@ -16,7 +17,10 @@ from app.services.auto_reply_service import (
     _is_delivery_unknown_error,
     _is_product_attribute_question,
     _is_product_catalog_listing_request,
+    _missing_warranty_disclosure,
+    _policy_kind,
     _recommendation_reply,
+    _tire_fitment_clarification,
     _product_hint,
 )
 import app.services.auto_reply_service as auto_reply_service
@@ -34,6 +38,9 @@ class _Query:
 
     def all(self):
         return self.rows
+
+    def limit(self, *_args, **_kwargs):
+        return self
 
 
 class _DB:
@@ -161,6 +168,225 @@ def test_named_serum_price_question_is_not_routed_to_recommendations():
     assert reply == ("Dạ, Serum đang có giá 200.000 đồng ạ.", "product_fact")
 
 
+def test_ambiguous_product_name_asks_before_giving_product_facts():
+    products = _DB([
+        SimpleNamespace(
+            id=9, name="Serum", sku="SERUM-02", price=200000,
+            stock_quantity=0, reserved_quantity=0, status="active", metadata_={},
+        ),
+        SimpleNamespace(
+            id=10, name="Serum Vitamin C Lunari", sku="SERUM-01", price=420000,
+            stock_quantity=10, reserved_quantity=0, status="active", metadata_={},
+        ),
+    ])
+
+    ambiguous_reply = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=1,
+        query_text="Serum hiện còn hàng để đặt không?",
+    )
+    assert ambiguous_reply is not None
+    assert ambiguous_reply[1] == "product_identity_clarification"
+    assert "Serum" in ambiguous_reply[0]
+    assert "Serum Vitamin C Lunari" in ambiguous_reply[0]
+    assert "SKU" not in ambiguous_reply[0]
+    assert "Bạn muốn hỏi mẫu nào?" in ambiguous_reply[0]
+    assert "200.000" not in ambiguous_reply[0]
+    assert "420.000" not in ambiguous_reply[0]
+    assert "còn 10" not in ambiguous_reply[0]
+
+    policy_reply = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=1,
+        query_text="Giá Serum bao nhiêu và nếu lỗi thì shop xử lý thế nào?",
+    )
+    assert policy_reply is not None
+    assert policy_reply[1] == "product_identity_clarification"
+    assert "Bạn muốn hỏi mẫu nào?" in policy_reply[0]
+    assert "200.000" not in policy_reply[0]
+    assert "420.000" not in policy_reply[0]
+
+    exact_reply = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=1,
+        query_text="Serum Vitamin C Lunari giá bao nhiêu?",
+    )
+    assert exact_reply == (
+        "Dạ, Serum Vitamin C Lunari đang có giá 420.000 đồng ạ.",
+        "product_fact",
+    )
+
+    sku_reply = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=1,
+        query_text="SKU SERUM-01 giá bao nhiêu?",
+    )
+    assert sku_reply == (
+        "Dạ, Serum Vitamin C Lunari đang có giá 420.000 đồng ạ.",
+        "product_fact",
+    )
+
+
+def test_ambiguous_variant_requires_all_requested_attributes_to_resolve():
+    products = _DB([
+        SimpleNamespace(
+            id=1, name="Áo khoác Lona", sku="LONA", price=500000,
+            stock_quantity=99, reserved_quantity=0, status="active", metadata_={},
+        ),
+        SimpleNamespace(
+            id=2, name="Áo khoác Lona màu đen size M", sku="LONA-BLK-M", price=500000,
+            stock_quantity=12, reserved_quantity=0, status="active",
+            metadata_={"aliases": ["Lona jacket black size M"]},
+        ),
+        SimpleNamespace(
+            id=3, name="Áo khoác Lona màu đen size L", sku="LONA-BLK-L", price=500000,
+            stock_quantity=7, reserved_quantity=0, status="active",
+            metadata_={"aliases": ["Lona jacket black size L"]},
+        ),
+    ])
+
+    partial_variant = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=1,
+        query_text="Áo khoác Lona màu đen còn hàng không?",
+    )
+    assert partial_variant is not None
+    assert partial_variant[1] == "product_identity_clarification"
+    assert "size M" in partial_variant[0]
+    assert "size L" in partial_variant[0]
+    assert "SKU" not in partial_variant[0]
+    assert "còn 12" not in partial_variant[0]
+
+    exact_variant = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=1,
+        query_text="Is the Lona jacket in black, size M, available?",
+    )
+    assert exact_variant is not None and exact_variant[1] == "product_fact"
+    assert "12 units" in exact_variant[0]
+
+
+def test_numbered_rental_availability_bypasses_product_ambiguity_guard():
+    rooms = _DB([
+        SimpleNamespace(
+            id=12, name="Phòng trọ 05", sku="TRO-P05", price=2000000,
+            stock_quantity=1, reserved_quantity=0, status="active",
+            metadata_={"attributes": {"category": ["Phòng trọ"]}},
+        ),
+        SimpleNamespace(
+            id=13, name="Phòng trọ 06", sku="TRO-P06", price=2200000,
+            stock_quantity=1, reserved_quantity=1, status="active",
+            metadata_={"attributes": {"category": ["Phòng trọ"]}},
+        ),
+    ])
+
+    reply = _deterministic_customer_reply(
+        rooms, business_id=2, conversation_id=1,
+        query_text="Phòng 5 còn trống không?",
+    )
+    assert reply is not None
+    assert reply[1] != "product_identity_clarification"
+    assert "Phòng trọ 05" in reply[0]
+
+    spelled_number = _deterministic_customer_reply(
+        rooms, business_id=2, conversation_id=1,
+        query_text="Phòng trọ số 5 còn trống không?",
+    )
+    assert spelled_number is not None
+    assert spelled_number[1] != "product_identity_clarification"
+    assert "Phòng trọ 05" in spelled_number[0]
+
+    general_availability = _deterministic_customer_reply(
+        rooms, business_id=2, conversation_id=1,
+        query_text="Phòng trọ còn trống không?",
+    )
+    assert general_availability is not None
+    assert general_availability[1] == "rental_availability_current"
+    assert "2 phòng trọ" in general_availability[0]
+
+    question_form = _deterministic_customer_reply(
+        rooms, business_id=2, conversation_id=1,
+        query_text="Phòng nào còn trống không?",
+    )
+    assert question_form is not None
+    assert question_form[1] == "rental_availability_current"
+    assert "2 phòng trọ" in question_form[0]
+
+
+def test_multitoken_color_variant_resolves_exact_current_stock():
+    product = SimpleNamespace(
+        id=7, name="Áo khoác Lona màu xanh đen size M", sku="LONA-NVY-M",
+        price=500000, stock_quantity=4, reserved_quantity=0,
+        status="active", metadata_={},
+    )
+    reply = _deterministic_customer_reply(
+        _DB([product]), business_id=1, conversation_id=1,
+        query_text="Áo khoác Lona màu xanh đen size M còn hàng không?",
+    )
+    assert reply is not None and reply[1] == "product_fact"
+    assert "4 sản phẩm" in reply[0]
+
+
+def test_ambiguous_product_followup_uses_prior_explicit_customer_selection():
+    from app.models.message import Message
+    from app.models.sales import Product
+
+    serum = SimpleNamespace(
+        id=9, name="Serum", sku="SERUM-02", price=200000,
+        stock_quantity=0, reserved_quantity=0, status="active", metadata_={},
+    )
+    vitamin_c = SimpleNamespace(
+        id=10, name="Serum Vitamin C Lunari", sku="SERUM-01", price=420000,
+        stock_quantity=10, reserved_quantity=0, status="active", metadata_={},
+    )
+    messages = [
+        SimpleNamespace(id=12, content="Serum đó còn hàng không?"),
+        SimpleNamespace(id=11, content="Mình chọn SKU SERUM-01"),
+    ]
+
+    class _HistoryDB(_DB):
+        def query(self, model):
+            return _Query([serum, vitamin_c] if model is Product else messages)
+
+    reply = _deterministic_customer_reply(
+        _HistoryDB([serum, vitamin_c]), business_id=1, conversation_id=77,
+        query_text="Serum đó còn hàng không?",
+    )
+    assert reply == (
+        "Dạ, Serum Vitamin C Lunari hiện còn 10 sản phẩm ạ.",
+        "product_fact",
+    )
+
+
+def test_ambiguous_product_match_query_is_tenant_and_status_scoped():
+    from app.models.sales import Product
+    from app.services.product_resolver import find_ambiguous_product_matches
+
+    class _RecordingQuery(_Query):
+        def filter(self, *criteria, **kwargs):
+            self.criteria = criteria
+            return self
+
+    query = _RecordingQuery([
+        SimpleNamespace(id=1, name="Serum", sku="S-1", status="active", metadata_={}),
+        SimpleNamespace(id=2, name="Serum Vitamin C", sku="S-2", status="active", metadata_={}),
+    ])
+
+    class _RecordingDB:
+        def query(self, model):
+            assert model is Product
+            return query
+
+    matches = find_ambiguous_product_matches(
+        _RecordingDB(), business_id=73, text="Serum còn hàng không?",
+    )
+    assert len(matches) == 2
+    assert any(
+        getattr(getattr(condition, "left", None), "key", None) == "business_id"
+        and getattr(getattr(condition, "right", None), "value", None) == 73
+        for condition in query.criteria
+    )
+    assert any(
+        getattr(getattr(condition, "left", None), "key", None) == "status"
+        and getattr(getattr(condition, "right", None), "value", None) == "active"
+        for condition in query.criteria
+    )
+
+
 def test_sku_sale_status_distinguishes_active_listing_from_zero_stock():
     product = SimpleNamespace(
         id=9, name="Serum", sku="SERUM-02", price=200000,
@@ -173,7 +399,7 @@ def test_sku_sale_status_distinguishes_active_listing_from_zero_stock():
     )
 
     assert reply == (
-        "Serum (SKU SERUM-02) vẫn đang được niêm yết nhưng hiện đã hết hàng.",
+        "Serum vẫn đang được niêm yết nhưng hiện đã hết hàng.",
         "product_sale_status",
     )
 
@@ -312,7 +538,7 @@ def test_generic_category_stock_question_does_not_claim_product_is_missing():
         query_text="What products are available?",
     )
     assert english_reply == (
-        "Which product do you mean? Send its name or SKU, and I’ll check the exact stock.",
+        "Which product do you mean? Share its name and I’ll check the current stock.",
         "product_stock_clarification",
     )
 
@@ -329,6 +555,59 @@ def test_policy_and_recommendation_routes_are_explicit_when_context_is_missing()
         [SimpleNamespace(content="Shop giao hàng toàn quốc, phí ship tính theo khu vực")],
         "delivery",
     )
+
+
+def test_return_and_warranty_evidence_are_checked_separately():
+    return_chunk = SimpleNamespace(content="Đổi trả trong vòng 7 ngày nếu hàng giao sai hoặc bị hư hỏng.")
+    query = "Shop áp dụng chính sách đổi trả hoặc bảo hành như thế nào?"
+
+    assert _policy_kind(query) == "return"
+    assert _policy_kind("Sản phẩm có bảo hành không?") == "warranty"
+    assert _policy_kind("What is the returns and warranty policy?") == "return"
+    assert _chunk_supports_policy([return_chunk], "return")
+    assert not _chunk_supports_policy([return_chunk], "warranty")
+    disclosure = _missing_warranty_disclosure(
+        query, [return_chunk], "Shop hỗ trợ đổi trả trong 7 ngày [Nguồn 1].",
+    )
+    assert disclosure and "chưa có thông tin bảo hành" in disclosure
+    failed_handoff_disclosure = _missing_warranty_disclosure(
+        query,
+        [return_chunk],
+        "Shop hỗ trợ đổi trả trong 7 ngày [Nguồn 1].",
+        staff_followup=False,
+    )
+    assert failed_handoff_disclosure and "liên hệ trực tiếp" in failed_handoff_disclosure
+    assert "nhân viên sẽ kiểm tra" not in failed_handoff_disclosure
+    assert _missing_warranty_disclosure(
+        query, [return_chunk], "Nguồn hiện có chưa có thông tin bảo hành.",
+    ) is None
+    assert "only covers returns" in (_missing_warranty_disclosure(
+        "What is the return and warranty policy?", [return_chunk], "Returns are available within seven days [Source 1].",
+    ) or "")
+    assert NO_WARRANTY_POLICY_REPLY
+
+
+def test_tire_recommendation_asks_for_size_and_wheel_position_before_listing():
+    query = "Mình cần lốp xe máy không săm, loại nào phù hợp?"
+    reply = _deterministic_customer_reply(
+        _db(), business_id=1, conversation_id=1, query_text=query,
+    )
+
+    assert reply is not None
+    assert reply[1] == "product_recommendation_clarification"
+    assert "cỡ lốp hiện tại" in reply[0]
+    assert "bánh trước hay bánh sau" in reply[0]
+    assert "phù hợp" not in reply[0]
+    assert "vị trí cần thay" in (_tire_fitment_clarification(
+        "Lốp xe máy 70/90-17 loại nào phù hợp?"
+    ) or "")
+    assert "cỡ lốp hiện tại" in (_tire_fitment_clarification(
+        "Lốp xe máy bánh sau loại nào phù hợp?"
+    ) or "")
+    assert _tire_fitment_clarification(
+        "Lốp xe máy 70/90-17 bánh sau loại nào phù hợp?"
+    ) is None
+    assert _tire_fitment_clarification("Serum nào phù hợp với da nhạy cảm?") is None
 
 
 def test_recommendation_uses_explicit_product_attributes():
@@ -412,6 +691,35 @@ def test_need_recommendation_filters_wrong_category_and_budget_first():
     assert "Bình giữ nhiệt 1 lít" not in reply
 
 
+def test_catalog_fallback_enforces_required_attributes_before_rfm_ranking():
+    products = [
+        SimpleNamespace(
+            id=1, name="Áo thun size L", description="Áo cotton", sku="SHIRT-L",
+            price=200000, stock_quantity=4, reserved_quantity=0, status="active",
+            metadata_={"attributes": {"size": "L"}},
+        ),
+        SimpleNamespace(
+            id=2, name="Áo thun size M", description="Áo cotton", sku="SHIRT-M",
+            price=180000, stock_quantity=8, reserved_quantity=0, status="active",
+            metadata_={"attributes": {"size": "M"}},
+        ),
+    ]
+    captured = {}
+    response = SimpleNamespace(served_items=[{
+        "product_id": 1, "name": "Áo thun size L", "price": 200000,
+        "available": 4, "reason": "catalog_attribute_match",
+    }])
+    with patch("app.services.auto_reply_service.retrieve", side_effect=RuntimeError("retrieval unavailable")), \
+         patch("app.services.auto_reply_service.serve_recommendations", side_effect=RuntimeError("ranker unavailable")), \
+         patch("app.services.auto_reply_service.record_catalog_match_recommendation", side_effect=lambda _db, **kwargs: captured.update(kwargs) or response):
+        reply = _recommendation_reply(
+            _DB(products), business_id=1, query_text="Tìm áo thun size L",
+        )
+
+    assert reply is not None
+    assert [product.id for _, product in captured["products"]] == [1]
+
+
 def test_live_recommendation_uses_customer_ranking_and_keeps_request_trace():
     recommendation = SimpleNamespace(
         request_id="rec-request-1",
@@ -427,7 +735,10 @@ def test_live_recommendation_uses_customer_ranking_and_keeps_request_trace():
         ],
     )
     reply_metadata = {}
-    db = _DB([])
+    db = _DB([SimpleNamespace(
+        id=17, name="Túi hồng", description="", sku="BAG-PINK", price=129000,
+        stock_quantity=4, reserved_quantity=0, status="active", metadata_={"attributes": {"color": "pink"}},
+    )])
     with patch("app.services.auto_reply_service.active_recommendation_experiment_id", return_value=8) as experiment, \
          patch("app.services.auto_reply_service.serve_recommendations", return_value=recommendation) as serve:
         reply = _recommendation_reply(
@@ -711,3 +1022,132 @@ def test_rental_booking_followup_keeps_latest_customer_room_and_live_stock():
     assert chunk.metadata["product_id"] == 11
     assert chunk.metadata["available"] == 1
     assert chunk.metadata["price"] == 2000000
+
+
+def _motorcycle_catalog_db():
+    return _DB([
+        SimpleNamespace(id=1, name="Bugi NGK CR7HSA", sku="XM-BUGI-CR7HSA", price=78000, stock_quantity=25, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=2, name="Bugi NGK CPR8EA-9", sku="XM-BUGI-CPR8EA9", price=92000, stock_quantity=19, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=3, name="Lốp xe số 70/90-17 không săm", sku="XM-LOP-7090-17", price=385000, stock_quantity=14, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=4, name="Lốp xe số 80/90-17 không săm", sku="XM-LOP-8090-17", price=435000, stock_quantity=11, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=5, name="Nhớt hộp số xe tay ga 80W-90 tuýp 120 ml", sku="XM-NHOT-LAP-120", price=48000, stock_quantity=44, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=6, name="Săm xe máy 2.25/2.50-17 van thẳng", sku="XM-SAM-225-17", price=78000, stock_quantity=22, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=7, name="Lọc gió giấy dòng Wave Alpha 110", sku="XM-LOC-GIO-WA110", price=98000, stock_quantity=23, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=8, name="Lọc gió giấy dòng Vision 110", sku="XM-LOC-GIO-VIS110", price=125000, stock_quantity=5, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=9, name="Lọc gió giấy dòng Sirius FI", sku="XM-LOC-GIO-SIRFI", price=105000, stock_quantity=8, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=10, name="Bộ nhông sên dĩa dòng Wave Alpha 110", sku="XM-NSD-WA110", price=465000, stock_quantity=9, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=11, name="Chai xịt dưỡng sên xe máy 150 ml", sku="XM-XIT-SEN-150", price=85000, stock_quantity=8, reserved_quantity=0, status="active", description="", metadata_={}),
+        SimpleNamespace(id=12, name="Gương chiếu hậu ren M10 bên trái", sku="XM-GUONG-M10-L", price=115000, stock_quantity=21, reserved_quantity=0, status="active", description="", metadata_={"attributes": {"side": "trái", "thread": "M10"}}),
+        SimpleNamespace(id=13, name="Gương chiếu hậu ren M10 bên phải", sku="XM-GUONG-M10-R", price=115000, stock_quantity=18, reserved_quantity=0, status="active", description="", metadata_={"attributes": {"side": "phải", "thread": "M10"}}),
+    ])
+
+
+def test_live_catalog_comparisons_answer_the_requested_difference_without_codes():
+    db = _motorcycle_catalog_db()
+    cheaper = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Trong hai loại bugi đang bán, loại nào rẻ hơn? Cho tôi mã và giá.",
+    )
+    tire_difference = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Lốp 70/90-17 với 80/90-17 chênh nhau bao nhiêu tiền?",
+    )
+
+    assert cheaper is not None and "Bugi NGK CR7HSA" in cheaper[0]
+    assert "78.000 đồng" in cheaper[0] and "92.000 đồng" in cheaper[0]
+    assert "14.000 đồng" in cheaper[0] and "giá thấp nhất" not in cheaper[0].casefold()
+    assert tire_difference is not None
+    assert "385.000 đồng" in tire_difference[0] and "435.000 đồng" in tire_difference[0]
+    assert "50.000 đồng" in tire_difference[0]
+    for reply in (cheaper[0], tire_difference[0]):
+        assert "SKU" not in reply and "XM-" not in reply
+
+
+def test_grouped_vnd_budgets_filter_catalog_and_ranker_without_truncation():
+    from app.services.recommendation_artifacts import stated_budget
+
+    db = _motorcycle_catalog_db()
+    within_budget = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Tôi có ngân sách 200.000đ, có thể mua những món nào trong danh mục?",
+    )
+    under_budget = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Có sản phẩm nào dưới 100.000đ không? Cho tôi tên, mã và giá.",
+    )
+
+    assert stated_budget("dưới 100.000đ") == 100000
+    assert auto_reply_service._parse_vnd_budget("ngân sách 200.000đ") == 200000
+    assert within_budget is not None and "48.000 đồng" in within_budget[0]
+    assert "200 đồng" not in within_budget[0]
+    assert under_budget is not None and "98.000 đồng" in under_budget[0]
+    assert "105.000 đồng" not in under_budget[0]
+    for reply in (within_budget[0], under_budget[0]):
+        assert "SKU" not in reply and "XM-" not in reply
+
+
+def test_vehicle_bundle_with_multiple_variants_asks_for_vehicle_before_total():
+    reply = _deterministic_customer_reply(
+        _motorcycle_catalog_db(), business_id=1, conversation_id=1,
+        query_text="Tôi cần thay lọc gió và bugi, có thể gợi ý các sản phẩm và tổng tiền theo giá niêm yết không?",
+    )
+
+    assert reply is not None
+    assert reply[1] == "product_bundle_needs_vehicle"
+    assert "mẫu xe và đời xe" in reply[0]
+    assert "SKU" not in reply[0] and "XM-" not in reply[0]
+
+
+def test_requested_mirror_sides_and_chain_bundle_return_names_stock_and_total_only():
+    db = _motorcycle_catalog_db()
+    mirrors = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Tôi muốn mua gương M10 trái và phải. Tổng tiền là bao nhiêu, mỗi bên còn hàng không?",
+    )
+    chain_bundle = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Mua chai xịt sên cùng bộ nhông sên dĩa thì tổng giá bao nhiêu?",
+    )
+
+    assert mirrors is not None and "115.000 đồng" in mirrors[0]
+    assert "còn 21" in mirrors[0] and "còn 18" in mirrors[0]
+    assert "230.000 đồng" in mirrors[0]
+    assert chain_bundle is not None and "550.000 đồng" in chain_bundle[0]
+    for reply in (mirrors[0], chain_bundle[0]):
+        assert "SKU" not in reply and "XM-" not in reply
+
+
+def test_catalog_rank_answers_are_concise_and_tire_clarification_asks_for_fitment_details():
+    db = _motorcycle_catalog_db()
+    most_stock = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Sản phẩm nào trong danh mục có tồn kho nhiều nhất?",
+    )
+    cheapest = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Cho tôi ba sản phẩm đang bán có giá thấp nhất.",
+    )
+    tire_details = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Tôi chỉ biết xe là xe số, muốn mua lốp. Shop cần hỏi thêm thông tin gì trước khi chọn?",
+    )
+
+    assert most_stock is not None and "Nhớt hộp số xe tay ga" in most_stock[0]
+    assert "còn 44" in most_stock[0]
+    assert cheapest is not None and "Bugi NGK CR7HSA" in cheapest[0]
+    assert "48.000 đồng" in cheapest[0] and "78.000 đồng" in cheapest[0]
+    assert tire_details is not None
+    assert "mẫu xe/đời xe" in tire_details[0] and "cỡ ghi trên lốp" in tire_details[0]
+    for reply in (most_stock[0], cheapest[0], tire_details[0]):
+        assert "SKU" not in reply and "XM-" not in reply
+
+
+def test_customer_reply_hides_labeled_catalog_codes_without_removing_product_specs():
+    reply = auto_reply_service._hide_catalog_code_labels(
+        "Bugi NGK CPR8EA-9 (SKU: XM-BUGI-CPR8EA9), mã sản phẩm XM-BUGI-CPR8EA9 "
+        "dùng cùng lốp 70/90-17 và nhớt 10W-40."
+    )
+
+    assert "SKU" not in reply and "mã sản phẩm" not in reply and "XM-BUGI" not in reply
+    assert "Bugi NGK CPR8EA-9" in reply
+    assert "70/90-17" in reply and "10W-40" in reply

@@ -1,0 +1,163 @@
+﻿industry_id,canonical_term,vietnamese_name,aliases,abbreviation,scope,source_filename
+industry_01,Cleanser,Sữa rửa mặt,"[""face wash, cleanser gel, srm""]",SRM,"Sản phẩm làm sạch da, giúp loại bỏ dầu, bụi, makeup và bã nhờn.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Toner,Nước hoa hồng,"[""nước cân bằng, toner dưỡng""]",—,"Dòng hỗ trợ làm cân bằng độ pH, bổ sung độ ẩm và chuẩn bị da cho bước dưỡng tiếp theo.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Serum,Tinh chất,"[""essence, serum dưỡng""]",—,"Sản phẩm tập trung theo mục tiêu như dưỡng ẩm, trị mụn, làm sáng hoặc cấp nước.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Moisturizer,Kem dưỡng,"[""cream, lotion, kem dưỡng ẩm""]",KCN,"Sản phẩm cung cấp độ ẩm, khóa nước và hỗ trợ hàng rào da.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Sunscreen,Kem chống nắng,"[""spf, kcn""]",KCN,"Sản phẩm bảo vệ da khỏi tia UV, cần dùng đều đặn để hỗ trợ chống lão hóa và chống sạm.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Retinol,Retinol,"[""retinoid""]",—,Hoạt chất phổ biến trong chăm sóc da nhằm hỗ trợ tái tạo và cải thiện bề mặt da.,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Niacinamide,Niacinamide,"[""vitamin B3, B3""]",B3,"Vitamin B3 used in skincare to support oil balance, barrier and brightening support.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,AHA,AHA,"[""acid alpha hydroxy""]",AHA,"Loại acid giúp hỗ trợ bong da và cải thiện bề mặt da, thường phù hợp với da dầu hoặc thô sần.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,BHA,BHA,"[""salicylic acid, acid salicylic""]",BHA,Hoạt chất thâm nhập lỗ chân lông để hỗ trợ làm sạch và kiểm soát mụn.,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,PHA,PHA,"[""poly hydroxy acid""]",PHA,"Mặt acid nhẹ hơn, thường phù hợp cho da nhạy cảm cần tẩy tế bào chết dịu hơn.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Hyaluronic Acid,Axit Hyaluronic,"[""HA, hyaluronic""]",HA,"Thành phần giữ ẩm mạnh, giúp da mềm mại và đầy bóng.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Vitamin C,Vitamin C,"[""ascorbic acid, VC""]",VC,Hoạt chất hỗ trợ làm sáng và bảo vệ da khỏi stress môi trường.,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Ceramide,Ceramide,"[""ceramide complex""]",—,"Thành phần hỗ trợ hàng rào da, giữ ẩm và giảm kích ứng.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Double Cleansing,Rửa mặt 2 bước,"[""double cleanse""]",—,Quy trình làm sạch da bằng tẩy trang hoặc dầu + sữa rửa mặt để loại bỏ makeup và bụi bẩn hiệu quả.,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,Exfoliation,Tẩy tế bào chết,"[""exfoliant, peeling""]",—,"Quy trình hoặc sản phẩm hỗ trợ loại bỏ tế bào chết, thường cần dùng đúng tần suất để tránh kích ứng.",01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,TDC,Tẩy da chết,"[""—""]",TDC,Tẩy da chết,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,B5,Panthenol,"[""—""]",B5,Panthenol,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,sp,sản phẩm,"[""—""]",sp,sản phẩm,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,mk,makeup / trang điểm,"[""—""]",mk,makeup / trang điểm,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,ko/k,không / không biết,"[""—""]",ko/k,không / không biết,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,ib,inbox / nhắn tin,"[""—""]",ib,inbox / nhắn tin,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_01,rep,representative / nhân viên hỗ trợ,"[""—""]",rep,representative / nhân viên hỗ trợ,01-Lam-dep-va-cham-soc-ca-nhan.docx
+industry_02,size chart,bảng size,"[""size guide""]",—,Bảng đối chiếu size và số đo được công bố cho đúng mẫu; không thay thế việc thử.,02-Thoi-trang-va-phu-kien.docx
+industry_02,fit,form dáng,"[""silhouette""]",—,"Cách trang phục ôm/rộng theo thiết kế, không bảo đảm phù hợp mọi vóc dáng.",02-Thoi-trang-va-phu-kien.docx
+industry_02,oversized,dáng rộng,"[""loose fit""]",—,Dáng rộng chủ ý; cần đọc bảng số đo thay vì tự tăng size.,02-Thoi-trang-va-phu-kien.docx
+industry_02,inseam,đường dài ống trong,"[""inner leg length""]",—,Số đo quần hữu ích khi chọn chiều dài.,02-Thoi-trang-va-phu-kien.docx
+industry_02,upper,thân giày,"[""shoe upper""]",—,Phần bao phủ phía trên của giày.,02-Thoi-trang-va-phu-kien.docx
+industry_02,outsole,đế ngoài,"[""outsole""]",—,Phần đế tiếp xúc mặt đất.,02-Thoi-trang-va-phu-kien.docx
+industry_02,lining,lớp lót,"[""inner lining""]",—,Lớp vật liệu bên trong sản phẩm.,02-Thoi-trang-va-phu-kien.docx
+industry_02,hardware,phụ kiện kim loại,"[""metal trims""]",—,"Khóa, khoen hoặc chi tiết kim loại trên phụ kiện.",02-Thoi-trang-va-phu-kien.docx
+industry_02,colorway,phối màu,"[""color variant""]",—,Tên/mã một phối màu được quản lý như biến thể.,02-Thoi-trang-va-phu-kien.docx
+industry_02,genuine leather,da thật,"[""leather""]",—,Chỉ dùng khi nguồn sản phẩm xác nhận chính xác vật liệu.,02-Thoi-trang-va-phu-kien.docx
+industry_03,model,mã model,"[""model number""]",—,Định danh chính xác để tra cấu hình và phụ kiện.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,rated power,công suất định mức,"[""wattage""]",W,Thông số trên nhãn; không dùng như lời hứa về chi phí điện.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,voltage,điện áp,"[""input voltage""]",V,Điều kiện nguồn điện phải phù hợp nhãn máy.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,compatibility,tương thích,"[""supported devices""]",—,Chỉ xác nhận các model/hệ thống nằm trong danh sách nguồn.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,firmware,phần mềm điều khiển,"[""firmware""]",—,Phiên bản phần mềm thiết bị; cập nhật theo chỉ dẫn hãng.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,port,cổng kết nối,"[""connector""]",USB-C/HDMI…,Hình dạng/chuẩn cổng; không suy ra tính năng chỉ từ hình dạng.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,capacity,dung tích/công suất chứa,"[""capacity""]",L/GB…,Giá trị và đơn vị theo model.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,IP rating,cấp bảo vệ vỏ,"[""ingress protection""]",mã hãng công bố,Chỉ giải thích khi chứng nhận/mã được xác minh.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,accessory,phụ kiện đi kèm,"[""in-box item""]",—,Danh sách đóng hộp chính xác.,03-Dien-tu-va-dien-gia-dung.docx
+industry_03,warranty,bảo hành,"[""manufacturer warranty""]",—,Không thay Shop Policy hoặc điều kiện nhà sản xuất.,03-Dien-tu-va-dien-gia-dung.docx
+industry_04,footprint,diện tích chiếm chỗ,"[""floor footprint""]",cm,Khoảng không gian cần dành cho món đồ.,04-Nha-cua-va-doi-song.docx
+industry_04,load capacity,tải trọng tối đa công bố,"[""weight limit""]",kg,Chỉ dùng mức do nhà sản xuất xác nhận.,04-Nha-cua-va-doi-song.docx
+industry_04,flat-pack,hàng đóng gói phẳng,"[""knock-down furniture""]",—,Hàng cần lắp ráp sau khi nhận.,04-Nha-cua-va-doi-song.docx
+industry_04,finish,lớp hoàn thiện,"[""surface finish""]",—,Bề mặt được xử lý; không tự suy ra khả năng chống nước.,04-Nha-cua-va-doi-song.docx
+industry_04,food-contact,tiếp xúc thực phẩm,"[""food contact""]",—,Cần căn cứ hồ sơ/nhãn; không khẳng định an toàn nếu thiếu.,04-Nha-cua-va-doi-song.docx
+industry_04,mounting,cách cố định/lắp,"[""installation""]",—,Cần tuân thủ hướng dẫn và vật liệu tường/bề mặt.,04-Nha-cua-va-doi-song.docx
+industry_04,modular,cấu hình mô-đun,"[""modular""]",—,Các phần ghép nối theo cấu hình tương thích.,04-Nha-cua-va-doi-song.docx
+industry_04,capacity,dung tích,"[""volume""]",L/ml,Dung tích theo thông tin sản phẩm.,04-Nha-cua-va-doi-song.docx
+industry_04,care label,nhãn hướng dẫn bảo quản,"[""care instructions""]",—,Hướng dẫn vệ sinh do nhà cung cấp đưa ra.,04-Nha-cua-va-doi-song.docx
+industry_04,assembly,lắp ráp,"[""assembly""]",—,Quy trình/điều kiện lắp ráp.,04-Nha-cua-va-doi-song.docx
+industry_05,allergen,dị nguyên,"[""food allergen""]",—,Chỉ báo dị nguyên từ nhãn/hồ sơ; không suy luận an toàn từ danh sách rút gọn.,05-Bach-hoa-Thuc-pham.docx
+industry_05,cross-contact,nguy cơ nhiễm chéo,"[""may contain""]",—,Cảnh báo theo cơ sở/nhãn; không diễn giải là bảo đảm không có.,05-Bach-hoa-Thuc-pham.docx
+industry_05,net weight,khối lượng tịnh,"[""net content""]",g/ml,Lượng thực phẩm theo nhãn.,05-Bach-hoa-Thuc-pham.docx
+industry_05,best before,sử dụng tốt nhất trước,"[""best before""]",—,Không đồng nhất với hướng dẫn HSD; dùng nội dung nhãn.,05-Bach-hoa-Thuc-pham.docx
+industry_05,batch/lot,mã lô,"[""batch number""]",—,Định danh lô cần cho truy xuất/thu hồi.,05-Bach-hoa-Thuc-pham.docx
+industry_05,cold chain,chuỗi lạnh,"[""temperature-controlled supply""]",—,Yêu cầu nhiệt độ trong lưu trữ/vận chuyển.,05-Bach-hoa-Thuc-pham.docx
+industry_05,thawing,rã đông,"[""defrosting""]",—,Làm theo hướng dẫn an toàn thực phẩm.,05-Bach-hoa-Thuc-pham.docx
+industry_05,serving size,khẩu phần,"[""serving size""]",g/ml,Cơ sở hiểu bảng dinh dưỡng; không phải lượng khuyến nghị y tế.,05-Bach-hoa-Thuc-pham.docx
+industry_05,traceability,truy xuất nguồn gốc,"[""traceability""]",—,Tra cứu theo hồ sơ lô/nhà cung cấp.,05-Bach-hoa-Thuc-pham.docx
+industry_05,use-by date,hạn sử dụng,"[""expiry date""]",ngày,Thông tin có thể khác theo từng lô.,05-Bach-hoa-Thuc-pham.docx
+industry_06,age grade,độ tuổi phù hợp,"[""age recommendation""]",tháng/năm,Dùng đúng chỉ định nhà sản xuất; không suy ra chỉ từ ảnh.,06-Me-va-be.docx
+industry_06,supervision,cần người lớn giám sát,"[""adult supervision""]",—,Cảnh báo an toàn theo hướng dẫn sản phẩm.,06-Me-va-be.docx
+industry_06,choking hazard,nguy cơ hóc nghẹn,"[""small-parts warning""]",—,Tuân thủ cảnh báo chi tiết và không thay bằng lời đảm bảo.,06-Me-va-be.docx
+industry_06,sleep safety,an toàn giấc ngủ,"[""safe sleep""]",—,Chỉ cung cấp thông tin từ nguồn y tế/chính thức được shop duyệt.,06-Me-va-be.docx
+industry_06,size chart,bảng cỡ,"[""sizing guide""]",cm/kg,Bảng của hãng; độ tuổi không bảo đảm vừa.,06-Me-va-be.docx
+industry_06,sterilization,tiệt trùng,"[""sterilizing""]",—,Thực hiện theo hướng dẫn thiết bị/sản phẩm.,06-Me-va-be.docx
+industry_06,feeding stage,giai đoạn ăn,"[""feeding stage""]",—,Theo nhãn và hướng dẫn chuyên môn phù hợp.,06-Me-va-be.docx
+industry_06,batch code,mã lô,"[""lot number""]",—,"Dùng khi tra hạn, nguồn gốc hoặc thông báo thu hồi.",06-Me-va-be.docx
+industry_06,skin sensitivity,nhạy cảm da,"[""skin sensitivity""]",—,Không chẩn đoán dị ứng; kiểm tra thành phần/hướng dẫn.,06-Me-va-be.docx
+industry_06,parental consent,sự đồng ý của người giám hộ,"[""guardian consent""]",—,Đặc biệt với thông tin và tương tác của trẻ.,06-Me-va-be.docx
+industry_07,USB-C,cổng USB Type-C,"[""USB Type-C""]",USB-C,Kiểu đầu nối; không mặc định hỗ trợ mọi tốc độ/chế độ.,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,PD,sạc Power Delivery,"[""USB Power Delivery""]",PD,"Chuẩn cần hỗ trợ cả bộ sạc, cáp và thiết bị.",07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,QC,sạc nhanh Quick Charge,"[""Quick Charge""]",QC,Chỉ xác nhận phiên bản tương thích theo nguồn.,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,MagSafe,phụ kiện/chuẩn từ tính,"[""MagSafe""]",—,Tên chuẩn/nhãn hệ sinh thái; không suy rộng sang phụ kiện tương tự.,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,OTG,kết nối thiết bị ngoại vi,"[""USB On-The-Go""]",OTG,Phụ thuộc hỗ trợ của thiết bị/cáp/ứng dụng.,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,MFi,chứng nhận phụ kiện,"[""Made for iPhone/iPad""]",MFi,Không khẳng định chứng nhận nếu thiếu hồ sơ.,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,DPI,độ nhạy chuột,"[""dots per inch""]",DPI,"Thông số cấu hình/nhãn, không nhất thiết đo chất lượng.",07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,layout,bố cục bàn phím,"[""keyboard layout""]",ANSI/ISO…,Bố trí phím và ngôn ngữ.,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,form factor,kiểu kích thước,"[""form factor""]",—,Dạng vật lý của linh kiện/phụ kiện.,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_07,data rate,tốc độ truyền dữ liệu,"[""transfer rate""]",theo spec,Tốc độ chuẩn không đảm bảo tốc độ thực tế trên mọi thiết bị.,07-Phu-kien-dien-thoai-va-may-tinh.docx
+industry_08,drop,độ chênh,"[""heel-to-toe drop""]",mm,Chênh cao gót-mũi theo thông số giày.,08-The-thao-va-da-ngoai.docx
+industry_08,grip,độ bám,"[""traction""]",—,Mô tả/đặc tính đế; không bảo đảm chống trượt mọi điều kiện.,08-The-thao-va-da-ngoai.docx
+industry_08,load rating,tải trọng công bố,"[""weight capacity""]",kg,Giới hạn sản phẩm theo hãng và cách lắp.,08-The-thao-va-da-ngoai.docx
+industry_08,waterproof rating,mức chống nước công bố,"[""waterproof rating""]",mã/đơn vị hãng,Không đồng nhất với chống nước trong mọi thời gian/độ sâu.,08-The-thao-va-da-ngoai.docx
+industry_08,R-value,chỉ số cách nhiệt,"[""thermal resistance""]",R-value,Chỉ giải thích khi sản phẩm có thông số.,08-The-thao-va-da-ngoai.docx
+industry_08,taper,độ thuôn,"[""taper""]",—,Hình dạng lều/túi ngủ hoặc dụng cụ theo thiết kế.,08-The-thao-va-da-ngoai.docx
+industry_08,carabiner,móc khóa leo núi,"[""carabiner""]",—,Thiết bị chịu lực phải kiểm tra chứng nhận và tải trọng.,08-The-thao-va-da-ngoai.docx
+industry_08,hydration bladder,túi nước,"[""hydration reservoir""]",L,Dung tích theo thông số nhà sản xuất.,08-The-thao-va-da-ngoai.docx
+industry_08,layering,mặc nhiều lớp,"[""layering system""]",—,Nguyên tắc trang phục; điều chỉnh theo điều kiện thực tế.,08-The-thao-va-da-ngoai.docx
+industry_08,maintenance,bảo trì,"[""gear care""]",—,"Theo hướng dẫn, đặc biệt thiết bị bảo hộ/chịu lực.",08-The-thao-va-da-ngoai.docx
+industry_09,ISBN,mã số sách quốc tế,"[""International Standard Book Number""]",ISBN,Định danh một ấn bản; không dùng chung cho mọi bản.,09-Sach-va-van-phong-pham.docx
+industry_09,edition,ấn bản,"[""edition""]",—,"Phiên bản xuất bản, có thể khác nội dung/trình bày.",09-Sach-va-van-phong-pham.docx
+industry_09,paperback,bìa mềm,"[""softcover""]",—,Dạng đóng sách; thông tin theo sản phẩm.,09-Sach-va-van-phong-pham.docx
+industry_09,hardcover,bìa cứng,"[""hardback""]",—,Dạng bìa; không mặc định có áo bìa.,09-Sach-va-van-phong-pham.docx
+industry_09,grammage,định lượng giấy,"[""paper weight""]",gsm,"Khối lượng giấy trên diện tích, theo thông số.",09-Sach-va-van-phong-pham.docx
+industry_09,nib,ngòi bút,"[""pen nib""]",mm,Kích cỡ/kiểu ngòi theo mẫu.,09-Sach-va-van-phong-pham.docx
+industry_09,refill,ruột thay thế,"[""replacement refill""]",mã hàng,Chỉ tương thích với dòng được xác nhận.,09-Sach-va-van-phong-pham.docx
+industry_09,ISBN-13,mã 13 chữ số,"[""ISBN-13""]",13 chữ số,Mã nhận diện ấn bản sách.,09-Sach-va-van-phong-pham.docx
+industry_09,format,định dạng,"[""book format""]",in/ebook/audio,"Định dạng được bán, khác quyền sử dụng.",09-Sach-va-van-phong-pham.docx
+industry_09,condition grade,mức tình trạng,"[""condition""]",mới/đã dùng,"Mô tả tình trạng thực tế, không dùng một quy tắc chung.",09-Sach-va-van-phong-pham.docx
+industry_10,life stage,giai đoạn sống,"[""life stage""]",—,Phân loại trên nhãn thức ăn/phụ kiện.,10-Thu-cung.docx
+industry_10,feeding guide,hướng dẫn cho ăn,"[""feeding instructions""]",g/ngày theo nhãn,Không thay thế đánh giá dinh dưỡng của bác sĩ thú y.,10-Thu-cung.docx
+industry_10,complete feed,thức ăn hoàn chỉnh,"[""complete pet food""]",—,Chỉ dùng nếu nhà sản xuất/nhãn ghi rõ.,10-Thu-cung.docx
+industry_10,species-specific,dành riêng cho loài,"[""species-specific""]",—,Không tự mở rộng dùng chéo giữa loài.,10-Thu-cung.docx
+industry_10,harness,đai yếm,"[""pet harness""]",cm,Đối chiếu vòng ngực/cổ với bảng hãng.,10-Thu-cung.docx
+industry_10,enrichment,làm giàu môi trường,"[""enrichment""]",—,Đồ chơi/hoạt động kích thích hành vi; có giám sát phù hợp.,10-Thu-cung.docx
+industry_10,topical,dùng ngoài da,"[""topical""]",—,"Tuân thủ nhãn, tránh liếm/tiếp xúc ngoài hướng dẫn.",10-Thu-cung.docx
+industry_10,litter,cát vệ sinh,"[""cat litter""]",kg/L,Vật liệu/quy cách theo sản phẩm.,10-Thu-cung.docx
+industry_10,microchip,vi mạch định danh,"[""microchip""]",—,Thiết bị định danh; việc cấy cần chuyên môn phù hợp.,10-Thu-cung.docx
+industry_10,veterinary diet,chế độ ăn thú y,"[""therapeutic diet""]",—,Cần chỉ định/hướng dẫn của bác sĩ thú y.,10-Thu-cung.docx
+industry_11,OEM,mã phụ tùng hãng,"[""Original Equipment Manufacturer number""]",OEM,Mã định danh linh kiện gốc.,11-Phu-tung-o-to-xe-may.docx
+industry_11,VIN,số khung nhận dạng xe,"[""Vehicle Identification Number""]",VIN,Dùng tra cấu hình chính xác; hạn chế thu thập và bảo vệ dữ liệu.,11-Phu-tung-o-to-xe-may.docx
+industry_11,fitment,khả năng lắp tương thích,"[""vehicle fitment""]",—,Phải theo fitment list cho phiên bản xe.,11-Phu-tung-o-to-xe-may.docx
+industry_11,cross-reference,mã thay thế đối chiếu,"[""cross reference""]",—,Chỉ dùng khi nguồn catalog xác nhận tương đương.,11-Phu-tung-o-to-xe-may.docx
+industry_11,viscosity,độ nhớt,"[""viscosity grade""]",SAE…,Chọn theo sổ tay xe và tiêu chuẩn yêu cầu.,11-Phu-tung-o-to-xe-may.docx
+industry_11,brake pad,má phanh,"[""brake pad""]",—,Bộ phận an toàn; cần lắp/kiểm tra đúng kỹ thuật.,11-Phu-tung-o-to-xe-may.docx
+industry_11,left/right-hand,bên trái/phải,"[""LH/RH""]",LH/RH,Quy ước theo hướng nhìn được tài liệu định nghĩa.,11-Phu-tung-o-to-xe-may.docx
+industry_11,front/rear,trước/sau,"[""front/rear""]",F/R,Vị trí lắp trên xe.,11-Phu-tung-o-to-xe-may.docx
+industry_11,aftermarket,phụ tùng ngoài hãng,"[""aftermarket part""]",—,Không tự khẳng định chất lượng/tương đương OEM.,11-Phu-tung-o-to-xe-may.docx
+industry_11,torque spec,mô-men siết,"[""torque specification""]",N·m,Chỉ dùng giá trị từ manual kỹ thuật đúng xe.,11-Phu-tung-o-to-xe-may.docx
+industry_12,dietary supplement,thực phẩm bổ sung,"[""food supplement""]",—,Không đồng nghĩa thuốc hoặc được phép điều trị bệnh.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,serving,khẩu phần,"[""serving size""]",theo nhãn,Lượng dùng trên nhãn; không phải tư vấn liều cá nhân.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,active ingredient,thành phần hoạt tính,"[""active ingredient""]",mg/µg…,Chỉ ghi hàm lượng và tác dụng được phép công bố.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,contraindication,chống chỉ định/cảnh báo,"[""contraindication""]",—,Nguồn nhãn/chuyên môn; chuyển chuyên gia khi cá nhân hóa.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,interaction,tương tác,"[""interaction""]",—,Không dự đoán từ kiến thức chung; yêu cầu nhân viên y tế.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,batch/lot,mã lô,"[""batch number""]",—,Truy xuất từng đơn vị/lô.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,registration number,số hồ sơ/đăng ký,"[""registration ID""]",—,Xác minh trên giấy tờ có thẩm quyền.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,adverse event,biến cố bất lợi,"[""adverse event""]",—,Quy trình tiếp nhận/chuyển chuyên môn.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,intended use,mục đích sử dụng,"[""intended purpose""]",—,Phạm vi do nhà sản xuất/hồ sơ xác lập.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_12,claim substantiation,căn cứ tuyên bố,"[""claim evidence""]",—,Tuyên bố marketing phải có hồ sơ hợp lệ và được duyệt.,12-Suc-khoe-va-thuc-pham-chuc-nang.docx
+industry_13,consultation,buổi tư vấn,"[""consult""]",—,Không đồng nghĩa chẩn đoán hay cam kết có thể thực hiện.,13-Spa-va-tham-my.docx
+industry_13,contraindication,điều kiện cần sàng lọc,"[""contraindication""]",—,Cần hỏi theo quy trình cơ sở/chuyên môn.,13-Spa-va-tham-my.docx
+industry_13,aftercare,chăm sóc sau dịch vụ,"[""post-care""]",—,Chỉ đưa hướng dẫn được cơ sở duyệt.,13-Spa-va-tham-my.docx
+industry_13,patch test,thử phản ứng tại vùng nhỏ,"[""patch test""]",—,Chỉ nêu nếu quy trình dịch vụ chính thức quy định.,13-Spa-va-tham-my.docx
+industry_13,treatment plan,kế hoạch liệu trình,"[""service plan""]",—,Do người đủ chuyên môn xác định; không ép mua gói.,13-Spa-va-tham-my.docx
+industry_13,booking slot,khung lịch hẹn,"[""appointment slot""]",—,Trạng thái phải lấy từ lịch CRM trực tiếp.,13-Spa-va-tham-my.docx
+industry_13,no-show,không đến hẹn,"[""no-show""]",—,Áp dụng theo quy định cơ sở đã cấu hình.,13-Spa-va-tham-my.docx
+industry_13,deposit,tiền đặt cọc,"[""booking deposit""]",—,Chỉ báo mức/điều kiện từ CRM/Shop Policy.,13-Spa-va-tham-my.docx
+industry_13,licensed service,dịch vụ có phạm vi cấp phép,"[""licensed scope""]",—,Không quảng bá dịch vụ ngoài phạm vi được xác nhận.,13-Spa-va-tham-my.docx
+industry_13,handoff,chuyển nhân viên,"[""human handoff""]",—,Dùng khi cần đánh giá chuyên môn/ngoại lệ.,13-Spa-va-tham-my.docx
+industry_14,triage,phân loại mức độ ưu tiên,"[""clinical triage""]",—,Do nhân viên y tế/đường dây được phê duyệt thực hiện.,14-Phong-kham-va-nha-khoa.docx
+industry_14,appointment,lịch hẹn khám,"[""appointment""]",—,"Xác nhận qua lịch CRM, không từ tin nhắn dự kiến.",14-Phong-kham-va-nha-khoa.docx
+industry_14,referral,chuyển tuyến,"[""referral""]",—,Quyết định chuyên môn.,14-Phong-kham-va-nha-khoa.docx
+industry_14,informed consent,đồng ý sau khi được giải thích,"[""informed consent""]",—,"Quy trình của cơ sở, không thay bằng chatbot.",14-Phong-kham-va-nha-khoa.docx
+industry_14,medical record,hồ sơ bệnh án,"[""medical record""]",—,"Dữ liệu nhạy cảm, truy cập theo quyền và mục đích.",14-Phong-kham-va-nha-khoa.docx
+industry_14,copay,khoản cùng chi trả,"[""co-payment""]",—,Chỉ thông tin theo quyền lợi và xác nhận của cơ sở/bảo hiểm.,14-Phong-kham-va-nha-khoa.docx
+industry_14,follow-up,tái khám/theo dõi,"[""follow-up""]",—,Theo chỉ định của nhân viên y tế.,14-Phong-kham-va-nha-khoa.docx
+industry_14,specialty,chuyên khoa,"[""medical specialty""]",—,Danh mục chuyên khoa được cơ sở công bố.,14-Phong-kham-va-nha-khoa.docx
+industry_14,dental cleaning,làm sạch răng chuyên môn,"[""professional cleaning""]",—,Mô tả dịch vụ không thay chẩn đoán.,14-Phong-kham-va-nha-khoa.docx
+industry_14,emergency,cấp cứu,"[""emergency care""]",—,Hướng dẫn liên hệ dịch vụ khẩn cấp phù hợp.,14-Phong-kham-va-nha-khoa.docx
+industry_15,prerequisite,điều kiện đầu vào,"[""prerequisite""]",—,Nền tảng cần có theo đề cương.,15-Giao-duc-va-dao-tao.docx
+industry_15,learning outcome,chuẩn/mục tiêu đầu ra,"[""learning outcome""]",—,Mục tiêu đào tạo; không đảm bảo kết quả cá nhân.,15-Giao-duc-va-dao-tao.docx
+industry_15,cohort,khóa/lớp tuyển sinh,"[""cohort""]",—,Nhóm học viên theo kỳ/lịch cụ thể.,15-Giao-duc-va-dao-tao.docx
+industry_15,synchronous,học đồng bộ,"[""live learning""]",—,Học theo lịch trực tiếp.,15-Giao-duc-va-dao-tao.docx
+industry_15,asynchronous,học không đồng bộ,"[""self-paced""]",—,Học theo nội dung tự học được cấp.,15-Giao-duc-va-dao-tao.docx
+industry_15,syllabus,đề cương học phần,"[""course outline""]",—,"Nội dung, đánh giá và tài liệu khóa.",15-Giao-duc-va-dao-tao.docx
+industry_15,credit,tín chỉ,"[""credit""]",—,Chỉ dùng theo đơn vị đào tạo được công nhận.,15-Giao-duc-va-dao-tao.docx
+industry_15,make-up class,buổi học bù,"[""make-up class""]",—,Áp dụng theo chính sách trung tâm.,15-Giao-duc-va-dao-tao.docx
+industry_15,certificate,chứng chỉ,"[""certificate""]",—,Nêu rõ đơn vị cấp và điều kiện xác minh.,15-Giao-duc-va-dao-tao.docx
+industry_15,assessment,đánh giá kết quả học,"[""assessment""]",—,Hình thức đánh giá theo chương trình.,15-Giao-duc-va-dao-tao.docx

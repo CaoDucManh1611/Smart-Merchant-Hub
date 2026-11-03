@@ -25,7 +25,7 @@ from app.models.sales import Order, OrderItem, Product
 from app.services.recommendation_learning import LIGHTFM_ALGORITHM, LIVE_RERANKER_ALGORITHM
 
 
-PRODUCT_REQUIRED_EVENTS = {"view", "impression", "click", "cart", "purchase", "skip", "refund"}
+PRODUCT_REQUIRED_EVENTS = {"view", "impression", "click", "cart", "checkout_intent", "purchase", "skip", "refund"}
 _PERSONALIZED_FEATURE_KEYS = (
     "affinity_score", "co_purchase_score", "interaction_score", "purchase_facet_score",
     "historic_query_overlap_score", "purchase_facet_affinity", "stated_preference_score",
@@ -57,6 +57,7 @@ _FEEDBACK_REWARDS = {
     "impression": Decimal("0"),
     "click": Decimal("0.2"),
     "cart": Decimal("0.5"),
+    "checkout_intent": Decimal("0.2"),
     "purchase": Decimal("1"),
     "skip": Decimal("-0.35"),
     "refund": Decimal("-1"),
@@ -603,7 +604,7 @@ def record_chat_recommendation_cart(
             customer_id=customer_id,
             product_id=product_id,
             request_id=request.request_id,
-            event_type="cart",
+            event_type="checkout_intent",
             source="chat_checkout",
             query=None,
             idempotency_key=idempotency_key,
@@ -617,7 +618,7 @@ def record_chat_recommendation_cart(
             db,
             request=request,
             product_id=product_id,
-            event_type="cart",
+            event_type="checkout_intent",
             idempotency_key=f"{idempotency_key}:feedback",
             metadata={"source": "chat_checkout", "collection_session_id": collection_session_id},
         )
@@ -691,8 +692,11 @@ def record_explicit_chat_recommendation_decline(
     source_message_id: int | None = None,
 ) -> bool:
     """Record a high-confidence refusal only when it directly follows a sent recommendation."""
+    raw_text = str(text or "").strip()
+    if "?" in raw_text or "？" in raw_text:
+        return False
     folded = "".join(
-        char for char in unicodedata.normalize("NFKD", str(text or "").lower())
+        char for char in unicodedata.normalize("NFKD", raw_text.lower())
         if not unicodedata.combining(char)
     )
     folded = folded.replace("’", "'").replace("'", "")
@@ -702,7 +706,13 @@ def record_explicit_chat_recommendation_decline(
         "khong mua", "khong ung", "thoi khong", "bo qua", "not interested", "not a fit",
         "not for me", "do not want", "dont want", "dont like", "no thanks", "ill pass", "i will pass",
     )
-    if not any(phrase in folded for phrase in decline_phrases):
+    follow_up_markers = (
+        "nhung", "co mau", "mau khac", "mau xanh", "doi sang", "tim mau", "goi y", "cho toi xem",
+    )
+    if (
+        not any(phrase in folded for phrase in decline_phrases)
+        or any(marker in folded for marker in follow_up_markers)
+    ):
         return False
 
     conversation = db.query(Conversation).filter(
@@ -772,29 +782,23 @@ def record_explicit_chat_recommendation_decline(
         ]
         if not items:
             return False
-        chosen = items[0]
-        product_id = int(chosen["product_id"])
         source_message_id = int(latest_inbound_id)
         record_interaction(
             db,
             business_id=business_id,
             customer_id=int(conversation.customer_id),
-            product_id=product_id,
+            product_id=None,
             request_id=request.request_id,
-            event_type="skip",
+            event_type="slate_skip",
             source="chatbot",
             query=None,
-            idempotency_key=f"chat-decline:{request.request_id}:{source_message_id}:{product_id}",
-            metadata={"source_message_id": source_message_id, "signal": "explicit_decline"},
+            idempotency_key=f"chat-decline:{request.request_id}:{source_message_id}:slate",
+            metadata={
+                "source_message_id": source_message_id,
+                "signal": "explicit_slate_decline",
+                "served_item_count": len(items),
+            },
             occurred_at=None,
-        )
-        apply_recommendation_outcome(
-            db,
-            request=request,
-            product_id=product_id,
-            event_type="skip",
-            idempotency_key=f"chat-decline:{request.request_id}:{source_message_id}:{product_id}",
-            metadata={"source_message_id": source_message_id, "signal": "explicit_decline"},
         )
         db.commit()
         return True

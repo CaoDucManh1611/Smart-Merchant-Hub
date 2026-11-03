@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -38,6 +39,104 @@ ANSWER_MAX_COMPLETION_TOKENS = 1024
 def _hash(value: object) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _json_cell(row: dict[str, str], key: str, default):
+    raw = (row.get(key) or "").strip()
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"CSV field {key} must contain valid JSON") from error
+
+
+def _load_cases(path: Path) -> list[dict]:
+    """Read evaluator cases from the existing JSONL format or a review CSV."""
+    if path.suffix.casefold() != ".csv":
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    with path.open(encoding="utf-8-sig", newline="") as source:
+        rows = list(csv.DictReader(source))
+    cases = []
+    for line_number, row in enumerate(rows, start=2):
+        try:
+            expected_facts = _json_cell(row, "expected_facts", {})
+            product_refs = _json_cell(row, "gold_catalog_product_refs", [])
+            product_ids = _json_cell(
+                row, "gold_catalog_product_ids",
+                [item["product_id"] for item in product_refs],
+            )
+            source_refs = _json_cell(row, "suggested_source_refs", [])
+            business_id = int(row["business_id"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"Invalid evaluator case CSV row {line_number}: {error}") from error
+        answer_action = row.get("answer_expected_action") or row.get("expected_action")
+        if not row.get("case_id") or not row.get("query") or not answer_action:
+            raise ValueError(f"Evaluator case CSV row {line_number} is missing case_id, query, or answer_expected_action")
+        if not isinstance(expected_facts, dict) or not isinstance(product_refs, list):
+            raise ValueError(f"Evaluator case CSV row {line_number} has invalid facts or catalog refs")
+        if not isinstance(product_ids, list) or not isinstance(source_refs, list):
+            raise ValueError(f"Evaluator case CSV row {line_number} has invalid product IDs or source refs")
+        case = {
+            "case_id": row["case_id"].strip(),
+            "business_id": business_id,
+            "case_type": (row.get("case_type") or "rag_llm").strip(),
+            "query": row["query"].strip(),
+            "expected_action": answer_action.strip(),
+            "answer_contract": (row.get("answer_contract") or "").strip(),
+            "expected_facts": expected_facts,
+            "must_not": [value.strip() for value in (row.get("must_not") or "").split(";") if value.strip()],
+            "source_basis": (row.get("source_basis") or "").strip(),
+            "catalog_snapshot_id": (row.get("catalog_snapshot_id") or "").strip(),
+            "suggested_source_refs": source_refs,
+            "gold_catalog_product_refs": product_refs,
+            "gold_catalog_product_ids": product_ids,
+            "expected_response_mode": (row.get("expected_response_mode") or "").strip(),
+            "review_rubric": (row.get("review_rubric") or "").strip(),
+            "answer_label_status": (row.get("answer_label_status") or row.get("review_status") or "pending").strip(),
+            "controller_rewrite_if_retrieval_weak": (row.get("controller_rewrite_if_retrieval_weak") or "").strip().casefold() in {"true", "1", "yes"},
+            "controller_rewrite_rule": (row.get("controller_rewrite_rule") or "").strip(),
+            "controller_runtime_gate_note": (row.get("controller_runtime_gate_note") or "").strip(),
+            "source_gaps": (row.get("source_gaps") or "").strip(),
+        }
+        sku = expected_facts.get("sku")
+        if sku:
+            case["sku"] = sku
+        cases.append(case)
+    return cases
+
+
+def _validate_case_snapshot_refs(snapshot: dict, cases: list[dict]) -> None:
+    """Fail closed when a review case points at another shop or stale source IDs."""
+    for case in cases:
+        shop = snapshot.get("shops", {}).get(str(case["business_id"]))
+        if not shop:
+            raise ValueError(f"No frozen snapshot for shop {case['business_id']} ({case['case_id']})")
+        snapshot_id = case.get("catalog_snapshot_id")
+        if snapshot_id and snapshot_id != shop.get("snapshot_id"):
+            raise ValueError(f"Catalog snapshot mismatch for {case['case_id']}")
+        available_refs = {
+            chunk.get("source_ref")
+            for document in shop.get("documents", [])
+            for chunk in document.get("chunks", [])
+        }
+        missing_refs = set(case.get("suggested_source_refs") or []) - available_refs
+        if missing_refs:
+            raise ValueError(f"Unknown source refs for {case['case_id']}: {sorted(missing_refs)}")
+        products = {int(product["product_id"]): product for product in shop.get("products", [])}
+        requested_ids = case.get("gold_catalog_product_ids") or case.get("catalog_product_ids") or []
+        missing_products = [int(product_id) for product_id in requested_ids if int(product_id) not in products]
+        if missing_products:
+            raise ValueError(f"Unknown catalog product IDs for {case['case_id']}: {missing_products}")
+        for ref in case.get("gold_catalog_product_refs") or case.get("catalog_product_refs") or []:
+            product = products.get(int(ref["product_id"]))
+            if not product or product.get("sku") != ref.get("sku"):
+                raise ValueError(f"Catalog product reference mismatch for {case['case_id']}")
+            if ref.get("business_id") is not None and int(ref["business_id"]) != int(case["business_id"]):
+                raise ValueError(f"Gold catalog reference belongs to another shop for {case['case_id']}")
+            if ref.get("snapshot_id") and ref["snapshot_id"] != shop.get("snapshot_id"):
+                raise ValueError(f"Gold catalog reference snapshot mismatch for {case['case_id']}")
 
 
 def _schemas() -> dict[int, str]:
@@ -299,11 +398,14 @@ def _verify_snapshot_chunks(db, shop: dict, chunks: list[RetrievedChunk]) -> Non
 def prepare_retrieval(snapshot_path: Path, cases_path: Path, output_path: Path) -> dict:
     """Freeze one tenant-scoped retrieval result per case for a fair A/B/C replay."""
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    cases = [json.loads(line) for line in cases_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    cases = _load_cases(cases_path)
+    _validate_case_snapshot_refs(snapshot, cases)
     schemas = _schemas()
     retrieval_config = {
         "mode": settings.RAG_RETRIEVAL_MODE, "top_k": 5, "ppr_enabled": False,
         "controller_threshold": settings.RAG_AGENTIC_RETRY_THRESHOLD,
+        "harness_version": 5,
+        "catalog_context": "production_live_product_context_chunk_v1",
     }
     cases_hash = _hash(cases)
     snapshot_hash = _hash(snapshot)
@@ -346,6 +448,17 @@ def prepare_retrieval(snapshot_path: Path, cases_path: Path, output_path: Path) 
                 hard_filters=filters, diagnostics=diagnostics,
             )
             base_ms = round((time.perf_counter() - started) * 1000, 2)
+            from app.services.auto_reply_service import _live_product_context_chunk
+            live_catalog = _live_product_context_chunk(
+                db, business_id=case["business_id"], query=case["query"], conversation_id=0,
+            )
+            current_catalog_chunk = _chunk_json(live_catalog) if live_catalog is not None else None
+            if current_catalog_chunk is not None:
+                current_catalog_chunk["metadata"] = {
+                    **(current_catalog_chunk.get("metadata") or {}),
+                    "business_id": case["business_id"],
+                    "snapshot_id": shop["snapshot_id"],
+                }
             retry_query = corrective_query(case["query"]) if retrieval_is_weak(
                 base, settings.RAG_AGENTIC_RETRY_THRESHOLD,
             ) else case["query"]
@@ -365,6 +478,11 @@ def prepare_retrieval(snapshot_path: Path, cases_path: Path, output_path: Path) 
             if case["case_type"] in {"price", "stock", "availability", "sku_exact", "unknown_sku"}:
                 from app.services.auto_reply_service import _deterministic_customer_reply
                 route_started = time.perf_counter()
+                db.info["recommendation_offline_eval"] = {
+                    "run_id": f"rag-snapshot:{shop['snapshot_id']}:{case['case_id']}",
+                }
+                from app.services.recommendation_service import _require_clean_read_only_session
+                _require_clean_read_only_session(db, persist=False)
                 route = _deterministic_customer_reply(
                     db, business_id=case["business_id"], conversation_id=0,
                     query_text=case["query"], reply_metadata={},
@@ -386,6 +504,10 @@ def prepare_retrieval(snapshot_path: Path, cases_path: Path, output_path: Path) 
             "retry_evidence_hash": _hash([_chunk_json(c) for c in retry]),
             "retry_retrieval_latency_ms": retry_ms, "retry_diagnostics": retry_diagnostics,
             "serving_route": serving_route,
+            "current_catalog_lookup_status": "matched" if current_catalog_chunk is not None else "no_match",
+            "current_catalog_context_source": "production_live_product_context_chunk",
+            "current_catalog_snapshot_id": shop["snapshot_id"],
+            "current_catalog_chunk": current_catalog_chunk,
             "tenant_schema": schemas[case["business_id"]],
         }
         rows.append(row)
@@ -397,62 +519,24 @@ def prepare_retrieval(snapshot_path: Path, cases_path: Path, output_path: Path) 
     payload["cases"] = rows
     payload["retrieval_hash"] = _hash([
         {"case_id": row["case_id"], "base_evidence_hash": row["base_evidence_hash"],
-         "retry_evidence_hash": row["retry_evidence_hash"]}
+         "retry_evidence_hash": row["retry_evidence_hash"],
+         "current_catalog_chunk": row.get("current_catalog_chunk")}
         for row in rows
     ])
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return payload
 
 
-def _catalog_chunk(case: dict, shop: dict) -> RetrievedChunk:
-    product_id = case.get("catalog_product_id")
-    product = next((p for p in shop["products"] if p["product_id"] == product_id), None)
-    if product:
-        price = f"{int(Decimal(str(product['price']))):,}".replace(",", ".")
-        status = str(product["status"]).strip().casefold()
-        sale_status = "Đang bán" if status == "active" else f"Không đang bán (trạng thái: {status})"
-        text = (
-            "CURRENT_CRM_PRODUCT\n"
-            f"SKU: {product['sku']}\nTên sản phẩm: {product['name']}\n"
-            f"Trạng thái bán hiện hành: {sale_status}\nGiá hiện hành: {price} VND\n"
-            f"Tồn khả dụng: {product['available_quantity']}\n"
-            f"Mô tả catalog: {product.get('description') or ''}\n"
-            f"Snapshot: {shop['snapshot_id']}\nFetched at: {shop['fetched_at']}"
-        )
-        meta = {"source": "Danh mục sản phẩm hiện hành", "source_kind": "crm_product",
-                "type": "crm_product", "product_id": product["product_id"], "sku": product["sku"],
-                "price": float(Decimal(str(product["price"]))),
-                "available": product["available_quantity"], "status": status,
-                "fetched_at": shop["fetched_at"], "availability_scope": "shop_catalog",
-                "business_id": case["business_id"], "snapshot_id": shop["snapshot_id"]}
-    elif case.get("catalog_product_ids"):
-        wanted = set(case["catalog_product_ids"])
-        candidates = [p for p in shop["products"] if p["product_id"] in wanted]
-        lines = [f"Candidate products from shop snapshot {shop['snapshot_id']}:"]
-        for candidate in candidates:
-            attrs = candidate.get("metadata", {}).get("attributes", {})
-            fit = "; ".join(str(value) for value in attrs.get("suitable_for", []))
-            variants = "; ".join(str(value) for key, values in attrs.items()
-                                  if key in {"sizes", "size", "colors", "color"}
-                                  for value in (values if isinstance(values, list) else [values]))
-            lines.append(
-                f"- {candidate['name']} | SKU {candidate['sku']} | phù hợp: {fit or 'chưa khai báo'}"
-                f" | biến thể: {variants or 'chưa khai báo'} | giá: {candidate['price']} VND"
-                f" | còn: {candidate['available_quantity']} | trạng thái: {candidate['status']}"
-            )
-        lines.append("If required vehicle/model/size details are missing, ask the customer before recommending a candidate.")
-        text = "\n".join(lines)
-        meta = {"source": "tenant_product_catalog_snapshot", "product_ids": [p["product_id"] for p in candidates],
-                "business_id": case["business_id"], "snapshot_id": shop["snapshot_id"]}
-        return RetrievedChunk(0, 0, text, 1.0, meta, filename="catalog snapshot", chunk_index=0)
-    elif case.get("case_type") == "unknown_sku":
-        text = f"No product with exact SKU {case['sku']} exists in shop snapshot {shop['snapshot_id']}. Do not infer price or stock."
-        meta = {"source": "tenant_catalog_exact_lookup", "sku": case["sku"],
-                "business_id": case["business_id"], "snapshot_id": shop["snapshot_id"]}
-    else:
-        text = "No catalog evidence is attached to this policy-only case."
-        meta = {"source": "catalog_snapshot", "business_id": case["business_id"], "snapshot_id": shop["snapshot_id"]}
-    return RetrievedChunk(0, 0, text, 1.0, meta, filename="catalog snapshot", chunk_index=0)
+def _wrong_shop_check(case: dict, frozen: dict, chunks: list[RetrievedChunk]) -> bool:
+    if int(frozen.get("business_id", -1)) != int(case["business_id"]):
+        return True
+    if frozen.get("tenant_schema") != schema_name_for(int(case["business_id"])):
+        return True
+    return any(
+        (metadata := (chunk.metadata or {})).get("business_id") is not None
+        and int(metadata["business_id"]) != int(case["business_id"])
+        for chunk in chunks
+    )
 
 
 def _normalized_price(value: object) -> str | None:
@@ -465,16 +549,31 @@ def _normalized_price(value: object) -> str | None:
 def _automatic_fact_checks(case: dict, answer: str) -> dict:
     expected = case.get("expected_facts", {})
     claim_text = re.sub(r"\[(?:Nguồn|Source)\s+\d+\]", "", answer, flags=re.I)
-    expected_price = _normalized_price(expected["price"]) if expected.get("price") is not None else None
+    money_keys = {"price", "unit_price", "subtotal", "total", "list_price", "combo_price", "saving", "discount"}
+    expected_prices: set[str] = set()
+    for key, value in expected.items():
+        if key not in money_keys and not re.fullmatch(r"(?:[A-Z]{2,}[A-Z0-9-]*|SERUM-[A-Z0-9-]+)", str(key)):
+            continue
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, bool) or item is None:
+                continue
+            normalized = _normalized_price(item)
+            if normalized is not None:
+                expected_prices.add(normalized)
     mentioned_prices = [re.sub(r"\D", "", value) for value in re.findall(
         r"(?<!\w)(\d[\d.,\s]*\d|\d)\s*(?:đ(?:ồng)?|vnd|₫)", claim_text, re.I,
     )]
-    price_match = (
-        None if expected_price is None or not mentioned_prices
-        else expected_price in mentioned_prices
+    unexpected_prices = sorted(set(mentioned_prices) - expected_prices) if expected_prices else []
+    missing_prices = sorted(expected_prices - set(mentioned_prices)) if expected_prices else []
+    price_status = (
+        "not_applicable" if not expected_prices else
+        "not_mentioned" if not mentioned_prices else
+        "contradiction" if unexpected_prices else
+        "match" if not missing_prices else "partial"
     )
+    price_match = price_status == "match" if expected_prices else None
 
-    expected_stock = expected.get("available_quantity")
+    expected_stock = expected.get("available_quantity", expected.get("stock_quantity"))
     stock_mentions = bool(re.search(
         r"(?:tồn kho|còn hàng|còn lại|số lượng|có sẵn|hiện có|hết hàng|không còn hàng|đã hết)",
         claim_text, re.I,
@@ -484,6 +583,7 @@ def _automatic_fact_checks(case: dict, answer: str) -> dict:
         claim_text, re.I,
     )]
     stock_match = None
+    stock_status = "not_applicable" if expected_stock is None else "not_mentioned"
     if expected_stock is not None and stock_mentions:
         stock_match = (int(expected_stock) in stock_claims) if stock_claims else None
         negative_availability = bool(re.search(
@@ -499,10 +599,16 @@ def _automatic_fact_checks(case: dict, answer: str) -> dict:
             stock_match = False
         if int(expected_stock) > 0 and negative_availability:
             stock_match = False
+        stock_status = "contradiction" if stock_match is False else "match" if stock_match is True else "unquantified"
     return {
-        "wrong_price_or_stock": price_match is False or stock_match is False,
+        "wrong_price_or_stock": price_status == "contradiction" or stock_match is False,
         "price_match": price_match,
+        "price_check_status": price_status,
+        "expected_prices_not_mentioned": missing_prices,
+        "unexpected_prices": unexpected_prices,
         "stock_match": stock_match,
+        "stock_check_status": stock_status,
+        "numeric_hard_error_checkable": bool(expected_prices or expected_stock is not None),
     }
 
 
@@ -650,9 +756,11 @@ def run_answers(
     *,
     llm_provider: str | None = None,
     llm_model: str | None = None,
+    independent_generation: bool = True,
 ) -> dict:
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    cases = [json.loads(line) for line in cases_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    cases = _load_cases(cases_path)
+    _validate_case_snapshot_refs(snapshot, cases)
     retrieval_cache = json.loads(retrieval_path.read_text(encoding="utf-8"))
     if retrieval_cache.get("status") != "completed":
         raise RuntimeError("Retrieval snapshot is incomplete; run prepare-retrieval first")
@@ -661,9 +769,21 @@ def run_answers(
     retrieval_rows = {row["case_id"]: row for row in retrieval_cache.get("cases", [])}
     if set(retrieval_rows) != {case["case_id"] for case in cases}:
         raise RuntimeError("Retrieval snapshot case IDs do not match the case set")
+    for case in cases:
+        frozen = retrieval_rows[case["case_id"]]
+        if frozen.get("current_catalog_lookup_status") not in {"matched", "no_match"}:
+            raise RuntimeError(f"Case {case['case_id']} has no verified live catalog lookup; rebuild retrieval snapshot")
+        if frozen.get("current_catalog_snapshot_id") != case.get("catalog_snapshot_id"):
+            raise RuntimeError(f"Case {case['case_id']} live catalog context has a different snapshot")
+        catalog_chunk = frozen.get("current_catalog_chunk")
+        if catalog_chunk is not None:
+            metadata = catalog_chunk.get("metadata") or {}
+            if int(metadata.get("business_id", -1)) != case["business_id"]:
+                raise RuntimeError(f"Case {case['case_id']} live catalog context is not tenant scoped")
     retrieval_hash = retrieval_cache.get("retrieval_hash") or _hash([
         {"case_id": row["case_id"], "base_evidence_hash": row["base_evidence_hash"],
-         "retry_evidence_hash": row["retry_evidence_hash"]}
+         "retry_evidence_hash": row["retry_evidence_hash"],
+         "current_catalog_chunk": row.get("current_catalog_chunk")}
         for row in retrieval_cache.get("cases", [])
     ])
     llm_provider = (llm_provider or settings.LLM_PROVIDER).strip().casefold()
@@ -680,7 +800,8 @@ def run_answers(
         "max_completion_tokens": ANSWER_MAX_COMPLETION_TOKENS if llm_provider == "groq" else None,
         "retrieval_snapshot_hash": retrieval_hash,
         "current_catalog_source": "CURRENT_CRM_PRODUCT_v1",
-        "answer_harness_version": 3,
+        "answer_harness_version": 5,
+        "independent_generation_per_arm": independent_generation,
     }
     if output_path.exists():
         try:
@@ -707,7 +828,6 @@ def run_answers(
     fact_types = {"price", "stock", "availability", "sku_exact", "unknown_sku"}
     provider_error = None
     for case_index, case in enumerate(cases):
-        shop = snapshot["shops"][str(case["business_id"])]
         frozen = retrieval_rows[case["case_id"]]
         base_chunks = _chunks_from_json(frozen["base_chunks"])
         old_arms = prior.get(case["case_id"], {}).get("arms", {})
@@ -725,7 +845,7 @@ def run_answers(
                 arms[arm] = {
                     "answer": "", "answer_empty": True, "status": "skipped_provider_limit",
                     "generation_config": generation_config, "usage": {"provider": llm_provider, "model": llm_model},
-                    "automatic_checks": {"wrong_shop": None, **_automatic_fact_checks(case, "")},
+                    "automatic_checks": {"wrong_shop": _wrong_shop_check(case, frozen, []), **_automatic_fact_checks(case, "")},
                 }
                 partial["arms"] = arms
                 checkpoint([*rows, partial, *({**remaining, "arms": {}} for remaining in cases[case_index + 1:])],
@@ -738,7 +858,8 @@ def run_answers(
                 generation_ms = 0.0
                 usage = {"provider": "none", "model": None, "prompt_tokens": 0,
                          "completion_tokens": 0, "total_tokens": 0}
-                chunks = [_catalog_chunk(case, shop)]
+                live_catalog = frozen.get("current_catalog_chunk")
+                chunks = _chunks_from_json([live_catalog]) if live_catalog else []
                 retrieval_ms = 0.0
                 controller_ms = 0.0
                 retry_used = False
@@ -755,10 +876,11 @@ def run_answers(
                     controller_ms = float(frozen.get("retry_retrieval_latency_ms") or 0)
                     if evidence_quality(candidate) > evidence_quality(chunks):
                         chunks = candidate
-                if arm != "A_no_catalog" and case["case_type"] != "policy":
-                    chunks = [_catalog_chunk(case, shop), *chunks]
+                live_catalog = frozen.get("current_catalog_chunk")
+                if arm != "A_no_catalog" and live_catalog:
+                    chunks = [*_chunks_from_json([live_catalog]), *chunks]
                 messages = build_prompt(case["query"], chunks)
-                reusable = _find_reusable_answer(
+                reusable = None if independent_generation else _find_reusable_answer(
                     arms, list(arm_order[:arm_index]), messages, generation_config
                 )
                 generation_reused_from = reusable[0] if reusable else None
@@ -792,7 +914,7 @@ def run_answers(
                             "answer_generation_reused_from": None,
                             "retry_used": retry_used, "end_to_end_latency_ms": 0.0, "usage": usage,
                             "citation_references": [], "citation_ids_in_range": True,
-                            "automatic_checks": {"wrong_shop": None, **_automatic_fact_checks(case, "")},
+                            "automatic_checks": {"wrong_shop": _wrong_shop_check(case, frozen, chunks), **_automatic_fact_checks(case, "")},
                         }
                         partial["arms"] = arms
                         checkpoint([*rows, partial], "in_progress", provider_error)
@@ -816,7 +938,7 @@ def run_answers(
                 "citation_references": citations,
                 "citation_ids_in_range": all(1 <= c <= valid_source_ids for c in citations),
                 "citation_check_applicable": route_name == "rag_llm",
-                "automatic_checks": {"wrong_shop": None, **_automatic_fact_checks(case, answer),
+                "automatic_checks": {"wrong_shop": _wrong_shop_check(case, frozen, chunks), **_automatic_fact_checks(case, answer),
                                      "answer_correct": None, "citation_supported": None,
                                      "unsupported_attribute": None, "helpful_resolution": None,
                                      "clarified_when_needed": None},
@@ -830,7 +952,8 @@ def run_answers(
         arm_order = (("B_catalog", "C_catalog_controller", "A_no_catalog")
                      if frozen.get("serving_route") else
                      ("A_no_catalog", "B_catalog", "C_catalog_controller"))
-        _pair_identical_arm_outputs(case, arm_order)
+        if not independent_generation:
+            _pair_identical_arm_outputs(case, arm_order)
         for arm_result in case["arms"].values():
             arm_result.setdefault("automatic_checks", {}).update(
                 _automatic_fact_checks(case, arm_result.get("answer", ""))
@@ -861,6 +984,21 @@ def run_answers(
             "numeric_price_stock_contradictions": sum(
                 run["automatic_checks"]["wrong_price_or_stock"] is True for run in runs
             ),
+            "numeric_hard_error_checkable_cases": sum(
+                run["automatic_checks"].get("numeric_hard_error_checkable") is True for run in runs
+            ),
+            "numeric_hard_error_uncheckable_cases": sum(
+                run["automatic_checks"].get("numeric_hard_error_checkable") is not True for run in runs
+            ),
+            "price_cases_checkable": sum(
+                run["automatic_checks"].get("price_check_status") not in {None, "not_applicable"} for run in runs
+            ),
+            "stock_cases_checkable": sum(
+                run["automatic_checks"].get("stock_check_status") not in {None, "not_applicable"} for run in runs
+            ),
+            "missing_expected_price_claims": sum(
+                run["automatic_checks"].get("price_check_status") == "not_mentioned" for run in runs
+            ),
             "citation_refs_in_range_rate": round(sum(run["citation_ids_in_range"] for run in cited_runs) / len(cited_runs), 4) if cited_runs else None,
         }
     output = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -871,6 +1009,7 @@ def run_answers(
               "retrieval_mode": retrieval_cache["retrieval_config"]["mode"],
               "evaluation_llm": {"provider": llm_provider, "model": llm_model},
               "ppr_enabled": False, "temperature": generation_config["temperature"],
+              "answer_generation_mode": "independent_per_arm" if independent_generation else "paired_identical_prompts",
               "controller_retry_threshold": settings.RAG_AGENTIC_RETRY_THRESHOLD,
               "controller_metrics": {
                   "cases_with_retry_candidate": sum(
@@ -890,7 +1029,10 @@ def run_answers(
               "arm_summary": arm_summary,
               "cases": rows,
               "limitations": ["Generated answers require human review for correctness and citation entailment.",
-                              "The hard-error checks detect explicit numeric contradictions for price/stock; they do not certify semantic truth.",
+                              "Gold catalog product references are validation labels only and are never inserted into a prompt.",
+                              "B/C use the production live product resolver; queries that resolve no single product have no injected catalog chunk.",
+                              "The numeric checker catches explicit currency contradictions and reports omitted/uncheckable claims; it does not certify semantic truth.",
+                              "Controller retry is offline corrective retrieval and does not reproduce every production eligibility gate.",
                               "A uses the same current retrieval and prompt with catalog evidence omitted; it is a controlled no-catalog arm, not a historical binary replay."]}
     if provider_error:
         output["provider_limit"] = {"provider": llm_provider, "model": llm_model, "error": provider_error}
@@ -911,6 +1053,9 @@ def main() -> None:
     retrieve_parser.add_argument("--snapshot", type=Path, required=True)
     retrieve_parser.add_argument("--cases", type=Path, required=True)
     retrieve_parser.add_argument("--output", type=Path, required=True)
+    validate = sub.add_parser("validate-cases")
+    validate.add_argument("--snapshot", type=Path, required=True)
+    validate.add_argument("--cases", type=Path, required=True)
     run = sub.add_parser("run")
     run.add_argument("--snapshot", type=Path, required=True)
     run.add_argument("--cases", type=Path, required=True)
@@ -918,6 +1063,8 @@ def main() -> None:
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--llm-provider", choices=("groq", "gemini"), default=None)
     run.add_argument("--llm-model", default=None)
+    run.add_argument("--pair-identical-prompts", action="store_true",
+                     help="Opt into legacy answer reuse for identical prompts; default generates every arm independently")
     args = parser.parse_args()
     if args.command == "prepare":
         snapshot, cases = prepare(args.out_dir)
@@ -925,10 +1072,20 @@ def main() -> None:
     elif args.command == "prepare-retrieval":
         report = prepare_retrieval(args.snapshot, args.cases, args.output)
         print(json.dumps({"retrieval_snapshot": str(args.output), "cases": len(report["cases"]), "status": report["status"]}))
+    elif args.command == "validate-cases":
+        snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
+        cases = _load_cases(args.cases)
+        _validate_case_snapshot_refs(snapshot, cases)
+        print(json.dumps({"cases": len(cases), "shops": sorted({case["business_id"] for case in cases}),
+                          "source_refs": sum(len(case.get("suggested_source_refs") or []) for case in cases),
+                          "catalog_products": sum(len(case.get("gold_catalog_product_ids") or case.get("catalog_product_ids") or []) for case in cases),
+                          "pending_labels": sum(case.get("answer_label_status") == "pending" for case in cases),
+                          "snapshot_validation": "passed"}))
     else:
         report = run_answers(
             args.snapshot, args.cases, args.retrieval, args.output,
             llm_provider=args.llm_provider, llm_model=args.llm_model,
+            independent_generation=not args.pair_identical_prompts,
         )
         print(json.dumps({"output": str(args.output), "cases": len(report["cases"]),
                           "status": report["status"], "arms": report.get("arm_summary", {})}))

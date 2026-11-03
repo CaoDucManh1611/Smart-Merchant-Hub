@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 import pytest
 from test_business_request import setup
@@ -57,14 +58,24 @@ def test_ranker_observes_current_stock_price_and_deleted_catalog(setup):
 def test_recommendation_tool_uses_ranker_memory_catalog_and_persists_trace(setup):
     db,conv,goods,*_=setup
     responses=[json.dumps({'mode':'answer','tools':['recommendations'],'recommendation_query':'TEST-GOODS'}),json.dumps({'answer':'Mình gợi ý Hàng thử, giá 200.000 đồng.','sources':[1,3]})]
-    with patch('app.services.conversation_graph.call_llm',side_effect=responses) as model,patch('app.services.quota_service.record_quota_usage'),patch('app.rag.answer_guard.has_valid_citations',return_value=True):
+    retrieved_chunk=SimpleNamespace(
+        chunk_id=101,
+        document_id=201,
+        content='Hàng thử là sản phẩm thử nghiệm của shop.',
+        metadata={'product_id':goods.id},
+        retrieval_scores={'bm25_score':0.8,'bm25_rank':1},
+    )
+    with patch('app.services.conversation_graph.call_llm',side_effect=responses) as model,patch('app.services.quota_service.record_quota_usage'),patch('app.rag.answer_guard.has_valid_citations',return_value=True),patch('app.rag.retriever.retrieve',return_value=[retrieved_chunk]):
         result=graph_reply(db,business_id=1,conversation=conv,query='Tư vấn cho mình',job_key='context-test')
     assert result.metadata['recommendation']['request_id']
-    prompt=model.call_args.args[0][-1]['content']
-    assert 'CURRENT_RECOMMENDATIONS' in prompt and 'CURRENT_CRM_CATALOG' in prompt and 'CURRENT_CUSTOMER_MEMORY' in prompt
-    assert 'PRIVATE' not in prompt
+    # Product advice is rendered deterministically from the ranked, live
+    # catalog candidates; the graph should not make a second LLM call that
+    # could rewrite current price or availability.
+    assert 'Hàng thử' in result.prompt and '200.000' in result.prompt
+    assert model.call_count==1
     request=db.query(RecommendationRequest).filter_by(request_id=result.metadata['recommendation']['request_id']).one()
     assert request.context['surface']=='conversation_graph'
+    assert request.context['retrieval_trace']
 
 
 def test_manifest_records_changes_without_customer_content():

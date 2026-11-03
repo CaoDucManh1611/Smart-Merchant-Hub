@@ -89,7 +89,13 @@ from app.services.customer_fact_extractor import (
     get_customer_fact_extraction_enabled,
     schedule_weekly_customer_fact_scan,
 )
-from app.services.rfm_segments import RFM_GROUPS, RFM_RULES_VERSION, customer_rfm_profiles
+from app.services.rfm_segments import (
+    RFM_CLUSTER_ALGORITHM,
+    RFM_CLUSTER_MODEL_VERSION,
+    RFM_GROUPS,
+    RFM_RULES_VERSION,
+    customer_rfm_profiles,
+)
 from app.services.customer_merge_service import (
     duplicate_evidence,
     find_duplicate_suggestions,
@@ -1164,10 +1170,10 @@ def classify_customers_rfm(
     )
     training_run = RecommendationTrainingRun(
         business_id=tenant.business_id,
-        algorithm="deterministic_rfm_kmeans",
+        algorithm=RFM_CLUSTER_ALGORITHM,
         status="queued",
         metrics={},
-        artifact={"model_version": "rfm_kmeans_v2", "purpose": "customer_label_learning"},
+        artifact={"model_version": RFM_CLUSTER_MODEL_VERSION, "purpose": "customer_label_learning"},
     )
     db.add(training_run)
     db.flush()
