@@ -1,1 +1,2 @@
 *.sh text eol=lf
+backend/artifacts/industry_rfm/*.json text eol=lf
