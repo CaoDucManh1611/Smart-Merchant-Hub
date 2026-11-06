@@ -20,6 +20,10 @@ from app.services.rfm_segments import RFM_SEGMENT_KEYS, rfm_group
 INDUSTRY_RFM_PRIOR_VERSION = "industry_rfm_cold_start_v1"
 INDUSTRY_RFM_PRIOR_ALGORITHM = "balanced_public_rfm_centroid_prior"
 INDUSTRY_PRIOR_PATH = Path("industry_rfm") / "prior_model.json"
+# Resolve this while the backend package is imported. Test runners and worker
+# jobs may change CWD later, and some import configurations keep __file__
+# relative; resolving it inside _artifact_path() would then point at that CWD.
+BACKEND_PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 INDUSTRY_MODEL_KEYS = {
     "cross_industry", "general_retail", "fashion", "grocery", "ecommerce",
     "services", "b2b", "mixed",
@@ -36,7 +40,7 @@ def _artifact_path() -> Path:
     if not root.is_absolute():
         # Relative artifact configuration is rooted at the backend package,
         # never at the process CWD (which differs between CLI, workers, and tests).
-        root = Path(__file__).resolve().parents[2] / root
+        root = BACKEND_PACKAGE_ROOT / root
     return (root / INDUSTRY_PRIOR_PATH).resolve()
 
 
