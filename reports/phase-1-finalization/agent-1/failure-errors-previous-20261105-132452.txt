@@ -1,0 +1,141 @@
+E   AssertionError: Lists differ: ['20261020_0061'] != ['20261103_0062']
+E   
+E   First differing element 0:
+E   '20261020_0061'
+E   '20261103_0062'
+E   
+E   - ['20261020_0061']
+E   ?         ^^    ^
+E   
+E   + ['20261103_0062']
+E   ?        + ^    ^
+E   StopIteration
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 'order_confirmation' != None
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: unexpectedly None
+E   AssertionError: assert 'previous-row-signature' == 'Buyer\nnew message'
+E     
+E     + previous-row-signature
+E     - Buyer
+E     - new message
+E   AssertionError: assert 'previous-row-signature' == 'Buyer\nnew message'
+E     
+E     + previous-row-signature
+E     - Buyer
+E     - new message
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   KeyError: 'multipart/alternative'
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   KeyError: 'id'
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 409 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   KeyError: 'id'
+E   assert 3 == 1
+E   KeyError: 'id'
+E   KeyError: 'business_id'
+E   AssertionError: 503 != 201 : {"detail":"support_requests_unavailable"}
+E   AssertionError: IntegrityError not raised
+E   KeyError: 'total'
+E   KeyError: 'id'
+E   AssertionError: 503 != 404
+E   AssertionError: 503 != 201 : {"detail":"support_requests_unavailable"}
+E   KeyError: 'id'
+E   KeyError: 'total'
+E   KeyError: 'business_id'
+E   KeyError: 'description'
+E   AssertionError: 404 != 403
+E   AssertionError: 404 != 403
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403
+E   AssertionError: 201 != 403
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403
+E   AssertionError: 200 != 403
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403
+E   AssertionError: 409 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403
+E   AssertionError: 404 != 403
+E   KeyError: 'id'
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: assert 'industry_rfm_cold_start_v1' == 'rfm_percentile_v1'
+E     
+E     - rfm_percentile_v1
+E     + industry_rfm_cold_start_v1
+E   AssertionError: assert 'pending' == 'completed'
+E     
+E     - completed
+E     + pending
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 1 != 3
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: assert <JourneyStage.OBJECTION_HANDLING: 'OBJECTION_HANDLING'> is <JourneyStage.QUALIFICATION: 'QUALIFICATION'>
+E    +  where <JourneyStage.OBJECTION_HANDLING: 'OBJECTION_HANDLING'> = SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, active_goal_id='goal:28db3...ason=None, state_version=2, updated_at=datetime.datetime(2026, 11, 5, 6, 26, 29, 867556, tzinfo=datetime.timezone.utc)).stage
+E    +    where SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, active_goal_id='goal:28db3...ason=None, state_version=2, updated_at=datetime.datetime(2026, 11, 5, 6, 26, 29, 867556, tzinfo=datetime.timezone.utc)) = JourneyDecision(state=SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, acti...b\u1ea3o h\xe0nh, t\u01b0\u01a1ng th\xedch ho\u1eb7c t\xecnh tr\u1ea1ng t\u1ed3n.'], llm_calls=0, network_calls=0, side_effects=[], transaction_created=False).state
+E    +  and   <JourneyStage.QUALIFICATION: 'QUALIFICATION'> = JourneyStage.QUALIFICATION
+E   TypeError: app.services.sales_journey_engine.SalesJourneyEngine.evaluate() got multiple values for keyword argument 'capability_config'
+E   AssertionError: assert <JourneyStage.QUALIFICATION: 'QUALIFICATION'> is <JourneyStage.DISCOVERY: 'DISCOVERY'>
+E    +  where <JourneyStage.QUALIFICATION: 'QUALIFICATION'> = SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, active_goal_id='goal:44267...ason=None, state_version=1, updated_at=datetime.datetime(2026, 11, 5, 6, 26, 29, 883248, tzinfo=datetime.timezone.utc)).stage
+E    +    where SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, active_goal_id='goal:44267...ason=None, state_version=1, updated_at=datetime.datetime(2026, 11, 5, 6, 26, 29, 883248, tzinfo=datetime.timezone.utc)) = JourneyDecision(state=SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, acti...b\u1ea3o h\xe0nh, t\u01b0\u01a1ng th\xedch ho\u1eb7c t\xecnh tr\u1ea1ng t\u1ed3n.'], llm_calls=0, network_calls=0, side_effects=[], transaction_created=False).state
+E    +  and   <JourneyStage.DISCOVERY: 'DISCOVERY'> = JourneyStage.DISCOVERY
+E   AssertionError: assert 'goal:6b9b929163423356' != 'goal:6b9b929163423356'
+E    +  where 'goal:6b9b929163423356' = SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, active_goal_id='goal:6b9b9...ason=None, state_version=2, updated_at=datetime.datetime(2026, 11, 5, 6, 26, 29, 888677, tzinfo=datetime.timezone.utc)).active_goal_id
+E    +    where SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, active_goal_id='goal:6b9b9...ason=None, state_version=2, updated_at=datetime.datetime(2026, 11, 5, 6, 26, 29, 888677, tzinfo=datetime.timezone.utc)) = JourneyDecision(state=SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, acti...b\u1ea3o h\xe0nh, t\u01b0\u01a1ng th\xedch ho\u1eb7c t\xecnh tr\u1ea1ng t\u1ed3n.'], llm_calls=0, network_calls=0, side_effects=[], transaction_created=False).state
+E    +  and   'goal:6b9b929163423356' = SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, active_goal_id='goal:6b9b9...ason=None, state_version=1, updated_at=datetime.datetime(2026, 11, 5, 6, 26, 29, 887473, tzinfo=datetime.timezone.utc)).active_goal_id
+E    +    where SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, active_goal_id='goal:6b9b9...ason=None, state_version=1, updated_at=datetime.datetime(2026, 11, 5, 6, 26, 29, 887473, tzinfo=datetime.timezone.utc)) = JourneyDecision(state=SalesJourneyState(tenant_id='tenant-a', conversation_id='conversation-a', customer_id=None, acti...b\u1ea3o h\xe0nh, t\u01b0\u01a1ng th\xedch ho\u1eb7c t\xecnh tr\u1ea1ng t\u1ed3n.'], llm_calls=0, network_calls=0, side_effects=[], transaction_created=False).state
+E   assert None is not None
+E   AssertionError: assert 'follow_up_requires_explicit_authorization' in []
+E   AssertionError: assert 'Smart Merchant Hub' == 'Shop H\u1ed3ng'
+E     
+E     - Shop H\u1ed3ng
+E     + Smart Merchant Hub
+E   KeyError: 'id'
+E   AssertionError: 201 != 403
+E   AssertionError: 404 != 403
+E   KeyError: 'id'
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+E   AssertionError: 201 != 403
+E   AssertionError: unexpectedly None
+E   TypeError: fromisoformat: argument must be str
+E   AssertionError: assert False
+E    +  where False = <built-in method issubset of set object at 0x000001DC79EC9B60>(({'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} | {'channel_outbound_attempts', 'recommendation_catalog_attributes', 'recommendation_catalog_chunk_mappings', 'recommendation_catalog_entries', 'recommendation_shop_model_states'}))
+E    +    where <built-in method issubset of set object at 0x000001DC79EC9B60> = {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...}.issubset
+E    +      where {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} = set(FacadeDict({'customers': Table('customers', MetaData(), Column('id', Integer(), table=<customers>, primary_key=True, n..., server_default=DefaultClause(<sqlalchemy.sql.functions.now at 0x1dc6bcf9dc0; now>, for_update=False)), schema=None)}))
+E    +        where FacadeDict({'customers': Table('customers', MetaData(), Column('id', Integer(), table=<customers>, primary_key=True, n..., server_default=DefaultClause(<sqlalchemy.sql.functions.now at 0x1dc6bcf9dc0; now>, for_update=False)), schema=None)}) = MetaData().tables
+E    +          where MetaData() = TenantBase.metadata
+E    +    and   {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} = set(('customers', 'customer_identities', 'customer_contacts', 'customer_addresses', 'customer_facts', 'customer_notes', ...))
+E    +    and   {'channel_outbound_attempts', 'recommendation_catalog_attributes', 'recommendation_catalog_chunk_mappings', 'recommendation_catalog_entries', 'recommendation_shop_model_states'} = set(('channel_outbound_attempts', 'recommendation_catalog_entries', 'recommendation_catalog_attributes', 'recommendation_catalog_chunk_mappings', 'recommendation_shop_model_states'))
+E   sqlite3.OperationalError: near "SHOW": syntax error
+E   sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) near "SHOW": syntax error
+E   [SQL: SHOW search_path]
+E   (Background on this error at: https://sqlalche.me/e/20/e3q8)
+E   TypeError: fromisoformat: argument must be str

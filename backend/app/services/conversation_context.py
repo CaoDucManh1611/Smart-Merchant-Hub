@@ -132,9 +132,22 @@ def customer_memory(db, business_id, customer_id):
     return result
 
 
+def _recommendation_persistence_allowed(db):
+    """Keep evaluation sessions read-only while retaining the same ranker path."""
+    bind = db.get_bind()
+    if bind.dialect.name != "sqlite":
+        return True
+    try:
+        return not bool(db.connection().exec_driver_sql("PRAGMA query_only").scalar())
+    except SQLAlchemyError:
+        # A SQLite session whose write mode cannot be established must not be
+        # probed by attempting a recommendation insert.
+        return False
+
+
 def recommendation_evidence(db, business_id, conversation, query):
     from app.schemas.recommendation import RecommendationRequestCreate
-    from app.rag.retriever import retrieve
+    from app.rag.serving import retrieve_shop_knowledge as retrieve
     from app.rag.catalog_filters import extract_query_hard_filters
     from app.services.recommendation_service import (
         active_recommendation_experiment_id,
@@ -159,6 +172,7 @@ def recommendation_evidence(db, business_id, conversation, query):
     rag_candidates, retrieval_trace = rag_candidates_from_chunks(
         db, business_id=business_id, chunks=chunks,
     )
+    persist = _recommendation_persistence_allowed(db)
     request = serve_recommendations(db, business_id=business_id, payload=RecommendationRequestCreate(
         customer_id=conversation.customer_id, query=query[:1000], limit=5,
         experiment_id=active_recommendation_experiment_id(db, business_id=business_id),
@@ -171,7 +185,7 @@ def recommendation_evidence(db, business_id, conversation, query):
             "retrieval_diagnostics": retrieval_diagnostics,
             "hard_filters": hard_filters,
         },
-    ), record_impressions=False)
+    ), record_impressions=False, persist=persist)
     request_context = request.context or {}
     rfm_ranking = {
         "applied": bool(request_context.get("rfm_model_applied")),
@@ -182,8 +196,9 @@ def recommendation_evidence(db, business_id, conversation, query):
         "industry": request_context.get("rfm_model_industry"),
         "segment": request_context.get("rfm_segment"),
     }
-    request.context = {**request_context, "surface":"conversation_graph", "conversation_id":conversation.id}
-    db.flush()
+    if persist:
+        request.context = {**request_context, "surface":"conversation_graph", "conversation_id":conversation.id}
+        db.flush()
     return {"request_id": request.request_id, "strategy": request.strategy,
         "model_version": request.model_version, "items": request.served_items or [],
         "personalization_applied": bool(request_context.get("personalization_applied")),

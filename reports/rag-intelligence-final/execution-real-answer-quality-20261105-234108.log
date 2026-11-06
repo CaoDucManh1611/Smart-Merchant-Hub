@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\evaluate_rag_answer_generation.py", line 402, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\evaluate_rag_answer_generation.py", line 391, in main
+    report = run_evaluation(
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\evaluate_rag_answer_generation.py", line 257, in run_evaluation
+    validate_context(context)
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\evaluate_rag_answer_generation.py", line 81, in validate_context
+    raise ValueError("evaluation_context_must_be_explicitly_synthetic")
+ValueError: evaluation_context_must_be_explicitly_synthetic

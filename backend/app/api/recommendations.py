@@ -41,6 +41,7 @@ from app.services.recommendation_interaction_service import (
 )
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
+from app.tenancy.workspace_modules import require_module_enabled
 
 
 router = APIRouter(prefix="/recommendations")
@@ -98,6 +99,22 @@ def track_recommendation_click(
         raise HTTPException(status_code=404, detail="Liên kết sản phẩm không hợp lệ hoặc đã hết hạn.")
 
     with tenant_session(schema_name_for(business_id)) as db:
+        from app.services.capability_registry import resolve_capability_request
+        from app.tenancy.workspace_modules import get_workspace_config
+
+        permission = resolve_capability_request(
+            get_workspace_config(db, business_id), tools=("recommendations",),
+        )
+        if not permission.allowed:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "workspace_capability_disabled",
+                    "module": "recommendations",
+                    "required_capabilities": list(permission.required_capabilities),
+                    "message": "Gợi ý sản phẩm đang tắt trong Cài đặt của shop.",
+                },
+            )
         request = db.query(RecommendationRequest).filter(
             RecommendationRequest.business_id == business_id,
             RecommendationRequest.request_id == request_id,
@@ -182,7 +199,10 @@ def preview_data_rag(payload: RecommendationDemoPreviewRequest):
     "/interactions",
     response_model=RecommendationInteractionOut,
     status_code=201,
-    dependencies=[Depends(require_write_access)],
+    dependencies=[
+        Depends(require_write_access),
+        Depends(require_module_enabled("recommendations")),
+    ],
 )
 def track_interaction(
     payload: RecommendationInteractionCreate,
@@ -225,7 +245,11 @@ def track_interaction(
     )
 
 
-@router.get("/interactions/summary", response_model=RecommendationInteractionSummaryOut)
+@router.get(
+    "/interactions/summary",
+    response_model=RecommendationInteractionSummaryOut,
+    dependencies=[Depends(require_module_enabled("recommendations"))],
+)
 def interaction_summary(
     customer_id: int | None = Query(default=None, ge=1),
     days: int = Query(default=30, ge=1, le=365),
@@ -243,7 +267,10 @@ def interaction_summary(
         _raise_interaction_error(exc)
 
 
-@router.post("", response_model=RecommendationResponse, status_code=201)
+@router.post(
+    "", response_model=RecommendationResponse, status_code=201,
+    dependencies=[Depends(require_module_enabled("recommendations"))],
+)
 def recommend(
     payload: RecommendationRequestCreate,
     db: Session = Depends(get_tenant_db),
@@ -287,7 +314,14 @@ def feedback(
     )
 
 
-@router.post("/training/segments", response_model=RecommendationTrainingScheduleOut, status_code=202, dependencies=[Depends(require_write_access)])
+@router.post(
+    "/training/segments", response_model=RecommendationTrainingScheduleOut,
+    status_code=202,
+    dependencies=[
+        Depends(require_write_access),
+        Depends(require_module_enabled("recommendations")),
+    ],
+)
 def schedule_segment_training(
     db: Session = Depends(get_tenant_db),
     tenant: TenantContext = Depends(get_tenant_context),

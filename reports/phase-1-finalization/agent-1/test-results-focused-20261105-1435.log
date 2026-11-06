@@ -1,0 +1,22 @@
+.....FF.........s..............                          [100%]
+================================== FAILURES ===================================
+________ test_training_precomputes_cache_using_same_tenant_population _________
+tests\test_personalized_rag_pipeline.py:313: in test_training_precomputes_cache_using_same_tenant_population
+    assert profile.features["rfm_model_source"] == "industry_prior"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'rfm_model_source'
+_______ test_rfm_excludes_pending_cancelled_refunded_and_future_orders ________
+tests\test_rag_crm_model_integration.py:552: in test_rfm_excludes_pending_cancelled_refunded_and_future_orders
+    assert buyer.features["rfm_scores"] == {"recency": 3, "frequency": 3, "monetary": 3}
+E   AssertionError: assert {'frequency':... 'recency': 5} == {'frequency':... 'recency': 3}
+E     
+E     Omitting 1 identical items, use -vv to show
+E     Differing items:
+E     {'frequency': 1} != {'frequency': 3}
+E     {'recency': 5} != {'recency': 3}
+E     Use -v to get more diff
+=========================== short test summary info ===========================
+FAILED tests/test_personalized_rag_pipeline.py::test_training_precomputes_cache_using_same_tenant_population
+FAILED tests/test_rag_crm_model_integration.py::test_rfm_excludes_pending_cancelled_refunded_and_future_orders
+2 failed, 28 passed, 1 skipped, 16 subtests passed in 10.16s
+EXIT_CODE=1

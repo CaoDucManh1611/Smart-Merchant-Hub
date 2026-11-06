@@ -14,6 +14,8 @@ from app.models.customer_collection import CustomerConsent
 from app.models.message import Message
 from app.models.sales import Order
 from app.services.channel_retry import is_retryable_provider_error
+from app.services.capability_registry import resolve_capability_request
+from app.tenancy.workspace_modules import get_workspace_config
 
 
 ABANDONED_CHECKOUT_MESSAGE = "Shop nhắc bạn: sản phẩm bạn vừa hỏi vẫn còn sẵn. Nếu muốn đặt, bạn xác nhận để shop hỗ trợ lên đơn nhé."
@@ -27,6 +29,31 @@ STALE_SEND_AFTER = timedelta(minutes=5)
 
 class FollowupDeliveryUnknown(RuntimeError):
     """The provider may have accepted the message; never auto-resend."""
+
+
+class FollowupCapabilityDisabled(PermissionError):
+    """Raised when a customer follow-up workflow is not enabled for a shop."""
+
+
+def customer_followup_capability_enabled(db: Session, business_id: int) -> bool:
+    """Resolve follow-up permission from this tenant's saved capability config.
+
+    A config lookup failure must never enable a customer-facing follow-up.
+    """
+    try:
+        config = get_workspace_config(db, business_id)
+    except Exception:
+        config = {"configuration_rejected": True}
+    return resolve_capability_request(
+        config,
+        tools=("customer",),
+        requested_workflow="customer_follow_up",
+    ).allowed
+
+
+def require_customer_followup_capability(db: Session, business_id: int) -> None:
+    if not customer_followup_capability_enabled(db, business_id):
+        raise FollowupCapabilityDisabled("workspace_capability_disabled")
 
 
 def _now() -> datetime:
@@ -277,6 +304,7 @@ def schedule_segment_followups(
     run_at: datetime,
 ) -> dict:
     """Schedule one consent-aware, repeat-safe campaign for segment members."""
+    require_customer_followup_capability(db, business_id)
     normalized_customer_ids = list(dict.fromkeys(int(value) for value in customer_ids))
     followup_ids: list[int] = []
     consent_required = 0
@@ -406,6 +434,14 @@ def _send_followup(db: Session, row: ChatbotFollowUp) -> dict:
 
 
 def dispatch_due_followups(db: Session, business_id: int, *, limit: int = 50, now: datetime | None = None, followup_id: int | None = None) -> dict:
+    if not customer_followup_capability_enabled(db, business_id):
+        return {
+            "sent": 0,
+            "failed": 0,
+            "skipped": 0,
+            "total": 0,
+            "blocked": "workspace_capability_disabled",
+        }
     current = now or _now()
     stale = db.query(ChatbotFollowUp).filter(
         ChatbotFollowUp.business_id == business_id,

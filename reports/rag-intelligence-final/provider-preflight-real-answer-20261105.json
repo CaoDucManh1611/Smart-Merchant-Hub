@@ -1,0 +1,16 @@
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "case_count": 20,
+  "execution_path": "app.services.conversation_graph.graph_reply",
+  "preflight_exit_code": 0,
+  "preflight_status": "PASS",
+  "answer_quality": "NOT_MEASURED",
+  "provider_calls": 0,
+  "provider_evaluation": "NOT_RUN; explicit owner approval required",
+  "configured_primary_provider": "groq",
+  "configured_primary_model": "openai/gpt-oss-20b",
+  "configured_embedding_provider": "gemini",
+  "configured_embedding_model": "gemini-embedding-001",
+  "sales_journey_engine_enabled": false,
+  "secrets_included": false
+}

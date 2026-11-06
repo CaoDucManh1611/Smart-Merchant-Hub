@@ -1,0 +1,16 @@
+Started=2026-11-05T11:55:00.1657395+07:00
+Command=python -m pytest -q --tb=short tests/test_workspace_modules.py tests/test_capability_registry.py tests/test_conversation_graph.py tests/test_crm_workspace_config.py tests/test_industry_modules.py tests/test_recommendation_artifacts.py tests/test_recommendations_api.py tests/test_rfm_segments.py tests/test_universal_sales_brain.py tests/test_auto_reply_channels.py tests/test_inbound_image_product_match.py tests/test_catalog_search_contract.py tests/test_booking_merge_payment.py
+DatabaseMode=RUN_POSTGRES_TESTS=0 (isolated SQLite files under backend/.pytest_tmp; no production database)
+...................................................................... [ 25%]
+.................................................................... [ 50%]
+........................................................................ [ 77%]
+.............................................................            [100%]
+============================== warnings summary ===============================
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:856: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+271 passed, 1 warning, 6 subtests passed in 12.77s
+EXIT_CODE=0
+Finished=2026-11-05T11:55:16.4669029+07:00

@@ -1,0 +1,11 @@
+COMMAND=python -m pytest tests/test_rag_components.py tests/test_rag_smartness_primitives.py tests/test_conversation_graph.py tests/test_rag_answer_generation_eval.py tests/test_rag_serving_contract.py tests/test_chatbot_answer_routing.py tests/test_llm_turn_budget.py tests/test_api_key_pool.py tests/test_provider_circuit_breaker.py -q
+STARTED=2026-11-06T02:49:11.5378985+07:00
+........................................................................ [ 24%]
+........................................................................ [ 48%]
+........................................................................ [ 72%]
+........................................................................ [ 96%]
+...........                                                              [100%]
+299 passed in 6.28s
+EXIT_CODE=0
+FINISHED=2026-11-06T02:49:20.1576217+07:00
+ELAPSED_SECONDS=8.62

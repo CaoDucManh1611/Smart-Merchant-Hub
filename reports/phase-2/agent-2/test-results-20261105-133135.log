@@ -1,0 +1,45 @@
+Phase 2 Agent 2 offline test results
+Timestamp: 2026-11-05 13:31:35 Asia/Bangkok
+
+Environment:
+- Bundled Python: C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe
+- Python: 3.12.14
+- Pydantic: 2.14.1
+- pytest: unavailable in bundled runtime
+
+Commands:
+
+1. `python -m pytest tests/test_sales_journey_engine.py tests/test_sales_journey_policy.py tests/test_sales_journey_integration_contract.py -q`
+   exit=1; blocked because `python` was not found on PATH.
+
+2. `py -3 -m pytest tests/test_sales_journey_engine.py tests/test_sales_journey_policy.py tests/test_sales_journey_integration_contract.py -q`
+   exit=1; blocked because no Python installation was registered with `py`.
+
+3. `bundled-python -m pytest ...`
+   exit=1; blocked because the bundled runtime has no `pytest` module.
+
+4. `bundled-python -m compileall -q app/services/sales_journey_contracts.py app/services/sales_journey_policy.py app/services/sales_journey_adapter.py app/services/sales_journey_engine.py tests/test_sales_journey_engine.py tests/test_sales_journey_policy.py tests/test_sales_journey_integration_contract.py`
+   exit=0; PASS.
+
+5. Manual offline runner importing the three Phase 2 test modules with a no-op pytest parameterization shim.
+   exit=0; PASS, 24 assertions/test cases.
+   Covered: transitions, price-first routing, objections, closing/follow-up/after-sales, capability denial, state/memory isolation, topic change, healthcare handoff, serialization, multi-industry and service booking.
+
+6. Unicode contract smoke using the bundled runtime.
+   exit=0; PASS.
+
+7. `git diff --check`
+   exit=0; PASS.
+
+8. provider/side-effect scan over Phase 2 files.
+   exit=0; PASS; no network/provider/database/transaction call sites.
+
+Totals:
+- Pytest suite: NOT EXECUTED because pytest is unavailable.
+- Offline manual coverage: 24 PASS, 0 FAIL.
+- Compile checks: 7 files PASS.
+- Provider/network calls: 0.
+- LLM calls from engine: 0 by contract.
+- Transactions created by engine: 0 by contract.
+
+No real customer data, production database, provider, migration or reindex was used.

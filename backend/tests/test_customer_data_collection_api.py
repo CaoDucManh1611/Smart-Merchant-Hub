@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -213,11 +214,103 @@ class CustomerDataCollectionApiTests(unittest.TestCase):
         self.assertEqual(201, accepted.status_code, accepted.text)
         self.assertEqual("personalization", accepted.json()["purpose"])
         self.assertEqual(incoming_id, accepted.json()["evidence_message_id"])
+
+    def test_revoking_journey_context_consent_purges_outbound_and_retry_job_state(self):
+        with Session(self.engine) as db:
+            conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=self.customer_id,
+                channel="telegram",
+            )
+            db.add(conversation)
+            db.flush()
+            message = Message(
+                conversation_id=conversation.id,
+                channel="telegram",
+                direction="outbound",
+                sender_type="bot",
+                content="Synthetic outbound",
+                metadata_={
+                    "reply_memory": {"active_product_ids": [1]},
+                    "sales_journey_state": {"state": "synthetic"},
+                    "provider_delivery_id": "safe-delivery-ref",
+                },
+            )
+            job = CrmJob(
+                business_id=self.business_id,
+                kind="chatbot.reply_turn",
+                idempotency_key=f"chatbot-turn:{conversation.id}:9901",
+                payload={
+                    "conversation_id": conversation.id,
+                    "message_id": 9901,
+                    "collection_metadata": {
+                        "reply_memory": {"active_product_ids": [1]},
+                        "sales_journey_state": {"state": "synthetic"},
+                        "trace": "safe-trace",
+                    },
+                },
+            )
+            db.add_all([message, job])
+            db.commit()
+            message_id, job_id = message.id, job.id
+
+        with patch("app.core.config.settings.SALES_JOURNEY_PERSISTENCE_PURPOSE", "sales_journey_context"):
+            response = self.client.post(
+                f"/api/customers/{self.customer_id}/consents",
+                headers=self.headers(),
+                json={"purpose": "sales_journey_context", "status": "revoked"},
+            )
+
+        self.assertEqual(201, response.status_code, response.text)
+        with Session(self.engine) as db:
+            self.assertEqual(
+                {
+                    "reply_memory": {"active_product_ids": [1]},
+                    "provider_delivery_id": "safe-delivery-ref",
+                },
+                db.get(Message, message_id).metadata_,
+            )
+            self.assertEqual(
+                {"reply_memory": {"active_product_ids": [1]}, "trace": "safe-trace"},
+                db.get(CrmJob, job_id).payload["collection_metadata"],
+            )
         with Session(self.engine) as db:
             self.assertEqual(1, db.query(CrmJob).filter(
                 CrmJob.business_id == self.business_id,
                 CrmJob.kind == "customer.facts.weekly_scan",
             ).count())
+
+    def test_faq_reuse_consent_requires_customer_message_evidence(self):
+        url = f"/api/customers/{self.customer_id}/consents"
+        without_evidence = self.client.post(
+            url, headers=self.headers(), json={"purpose": "faq_reuse", "status": "granted"},
+        )
+        self.assertEqual(422, without_evidence.status_code)
+
+        with Session(self.engine) as db:
+            conversation = Conversation(
+                business_id=self.business_id, customer_id=self.customer_id, channel="facebook",
+            )
+            db.add(conversation)
+            db.flush()
+            incoming = Message(
+                conversation_id=conversation.id, channel="facebook", direction="inbound",
+                sender_type="customer",
+                content="Tôi đồng ý cho shop dùng hội thoại này để cải thiện câu hỏi thường gặp.",
+            )
+            db.add(incoming)
+            db.commit()
+            incoming_id = incoming.id
+
+        accepted = self.client.post(
+            url, headers=self.headers(), json={
+                "purpose": "faq_reuse", "status": "granted",
+                "evidence_message_id": incoming_id,
+            },
+        )
+        self.assertEqual(201, accepted.status_code, accepted.text)
+        self.assertEqual("faq_reuse", accepted.json()["purpose"])
+        self.assertEqual(incoming_id, accepted.json()["evidence_message_id"])
 
     def test_verification_challenge_stores_only_hash_and_can_verify(self):
         contact = self.client.post(

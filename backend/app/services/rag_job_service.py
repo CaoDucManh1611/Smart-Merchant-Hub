@@ -14,11 +14,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models.document import Document, DocumentChunk
+from app.models.document import Document
 from app.models.rag_run import RagRun
 from app.rag.run_logger import safe_error_message
 from app.services.ingestion_service import ingest_document
-from app.services.quota_service import QuotaExceededError, prime_quota, release_quota, reserve_quota
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ def dispatch_rag_job(
     payload: dict[str, Any],
     business_id: int,
     *,
-    ingest_fn: Callable[..., None] = ingest_document,
+    ingest_fn: Callable[..., bool | None] = ingest_document,
 ) -> None:
     """Process one queued RAG run and persist durable progress.
 
@@ -47,18 +46,15 @@ def dispatch_rag_job(
     run = db.query(RagRun).filter(
         RagRun.id == int(payload["run_id"]),
         RagRun.business_id == business_id,
+        RagRun.document_id == int(payload["document_id"]),
     ).first()
     doc = db.query(Document).filter(
         Document.id == int(payload["document_id"]),
         Document.business_id == business_id,
     ).first()
-    if run is None or doc is None:
+    if run is None or doc is None or run.status == "completed":
         return
 
-    prior_chunk_count = int(doc.chunk_count or 0)
-    # Seed the current total before ingestion replaces chunks. This keeps a
-    # reindex from counting the old chunks twice.
-    prime_quota(db, business_id, "rag_chunks")
     run.status = "processing"
     run.phase = "load"
     run.attempts = (run.attempts or 0) + 1
@@ -90,13 +86,17 @@ def dispatch_rag_job(
         db.commit()
 
     try:
-        ingest_fn(
+        # Explicit mode survives retries; initial-ingest test/integration seams
+        # keep their existing keyword contract.
+        mode = {"reindex_only": True} if run.kind == "reindex" or payload.get("reindex_only") else {}
+        succeeded = ingest_fn(
             doc.id,
             bytes(doc.source_bytes or b""),
             doc.filename,
             db,
             business_id=business_id,
             progress_callback=report_progress,
+            **mode,
         )
     except Exception as exc:
         # Keep the run visible as failed, then re-raise so the durable queue can
@@ -114,55 +114,14 @@ def dispatch_rag_job(
 
     db.refresh(doc)
     db.refresh(run)
-    if doc.status == "ready":
-        delta_chunks = max(0, int(doc.chunk_count or 0) - prior_chunk_count)
-        if int(doc.chunk_count or 0) < prior_chunk_count:
-            release_quota(
-                db,
-                business_id,
-                "rag_chunks",
-                amount=prior_chunk_count - int(doc.chunk_count or 0),
-            )
-        if delta_chunks:
-            try:
-                reserve_quota(
-                    db,
-                    business_id,
-                    "rag_chunks",
-                    requested=delta_chunks,
-                    idempotency_key=f"rag-run:{run.id}",
-                )
-            except QuotaExceededError as exc:
-                db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete(synchronize_session=False)
-                doc.status = "error"
-                doc.embedding_status = "error"
-                doc.error_code = "chunk_quota_exceeded"
-                doc.chunk_count = 0
-                doc.error_message = "Đã vượt quota chunks RAG của gói dịch vụ."
-                if prior_chunk_count:
-                    release_quota(db, business_id, "rag_chunks", prior_chunk_count)
-                run.status = "failed"
-                run.phase = "complete"
-                run.chunk_count = 0
-                run.completed_chunks = 0
-                run.progress_percent = 100
-                run.error_message = doc.error_message
-                run.error_code = doc.error_code
-                run.completed_at = _utcnow()
-                db.commit()
-                logger.warning(
-                    "RAG chunk quota exhausted for business %d, document %d: %s",
-                    business_id,
-                    doc.id,
-                    exc.detail,
-                )
-                return
-
-    run.status = "completed" if doc.status == "ready" else "failed"
+    # A failed replacement deliberately leaves doc.status ready. Use the
+    # attempt result, not serving availability, to finish this run.
+    succeeded = doc.status == "ready" and succeeded is not False
+    run.status = "completed" if succeeded else "failed"
     run.phase = "complete"
     run.chunk_count = int(doc.chunk_count or 0)
     run.total_chunks = max(int(run.total_chunks or 0), int(doc.chunk_count or 0))
-    run.completed_chunks = int(doc.chunk_count or 0) if doc.status == "ready" else int(run.completed_chunks or 0)
+    run.completed_chunks = int(doc.chunk_count or 0) if succeeded else int(run.completed_chunks or 0)
     # A terminal rejection (for example a package quota limit) is also a
     # completed background attempt; the UI can show the persisted error next
     # to the 100% terminal progress instead of looking stuck.

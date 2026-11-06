@@ -1,0 +1,38 @@
+Post-fix RAG answer-quality validation test log | 2026-11-06 Asia/Bangkok
+
+COMMAND: python -m pytest --noconftest -p no:cacheprovider tests/test_recorded_rag_answer_grader.py tests/test_rag_answer_generation_eval.py -q
+...........................                                              [100%]
+27 passed in 1.81s
+EXIT_CODE=0
+
+COMMAND: python -m pytest --noconftest -p no:cacheprovider tests/test_chatbot_answer_routing.py tests/test_conversation_graph.py -k explicit_unknown_sku or ambiguous_same_name_variants or stock_followup_uses_unambiguous or price_and_return_window or explicit_catalog_comparison_bypasses -q
+.....                                                                    [100%]
+============================== warnings summary ===============================
+app\core\config.py:268
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\core\config.py:268: RuntimeWarning: PLATFORM_DATABASE_URL is falling back to legacy DATABASE_URL; configure the explicit URL before production
+    return self._database_url(self.PLATFORM_DATABASE_URL, "PLATFORM_DATABASE_URL")
+
+app\core\config.py:272
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\core\config.py:272: RuntimeWarning: TENANT_DATABASE_URL is falling back to legacy DATABASE_URL; configure the explicit URL before production
+    return self._database_url(self.TENANT_DATABASE_URL, "TENANT_DATABASE_URL")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+5 passed, 107 deselected, 2 warnings in 2.69s
+EXIT_CODE=0
+
+COMMAND: git diff --check
+warning: in the working copy of 'backend/app/api/workspace.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/rag/lexical.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/tenancy/workspace_modules.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/scripts/export_rag_faq_candidates.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_customer_collection_flow.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_p1_02_operations_hardening.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_personalized_rag_pipeline.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_rag_crm_model_integration.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_rag_smartness_primitives.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_recommendations_api.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_shop_otp_email.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_vision_llm.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_workspace_modules.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/tests/crm-theme.test.mjs', LF will be replaced by CRLF the next time Git touches it
+EXIT_CODE=0

@@ -1,0 +1,362 @@
+Recommendation ranking unavailable: OperationalError
+Direct use of automatic function calling (AFC) in Models.generate_content is not recommended. Instead, we recommend to use AFC in Chat.send_message. Similarly, direct use of AFC in Models.generate_content_stream is not recommended. Instead, we recommend to use AFC in Chat.send_message_stream.
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "execution_path": "app.services.conversation_graph.graph_reply",
+  "case_count": 20,
+  "provider_calls_authorized": true,
+  "synthetic_only": true,
+  "answer_correctness": "NOT_MEASURED; no human labels/approved judge supplied",
+  "answer_groundedness": "NOT_MEASURED; no citation review supplied",
+  "hallucination_rate": "NOT_MEASURED; no claim annotations supplied",
+  "run_limits": {
+    "max_cases": 20,
+    "max_model_calls": 80,
+    "max_physical_provider_attempts": 120,
+    "timeout_seconds": 1800
+  },
+  "run_budget": {
+    "deadline": 45573.265,
+    "remaining_seconds": 1722.4219999999987,
+    "elapsed_seconds": 77.57800000000134,
+    "calls": 19,
+    "max_calls": 80,
+    "attempts": 24,
+    "max_attempts": 120,
+    "provider_switches": 2,
+    "max_provider_switches": 40,
+    "last_provider": "groq",
+    "attempt_records": [
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43775.953,
+        "latency_ms": 4421.999999998661,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 2162,
+          "completion_tokens": 385,
+          "total_tokens": 2547,
+          "thoughts_tokens": 312
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43780.39,
+        "latency_ms": 1735.000000000582,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 228,
+          "completion_tokens": 247,
+          "total_tokens": 475,
+          "thoughts_tokens": 237
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43782.125,
+        "latency_ms": 1078.0000000013388,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 2235,
+          "completion_tokens": 292,
+          "total_tokens": 2527,
+          "thoughts_tokens": 263
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43783.625,
+        "latency_ms": 1186.9999999980791,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1707,
+          "completion_tokens": 278,
+          "total_tokens": 1985,
+          "thoughts_tokens": 249
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43784.828,
+        "latency_ms": 280.9999999954016,
+        "outcome": "error",
+        "error_type": "RateLimitError",
+        "status_code": 429,
+        "usage": null
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43785.109,
+        "latency_ms": 2922.000000005937,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1506,
+          "completion_tokens": 80,
+          "total_tokens": 1586,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43788.296,
+        "latency_ms": 2515.9999999959837,
+        "outcome": "error",
+        "error_type": "ServerError",
+        "status_code": 503,
+        "usage": null
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43790.812,
+        "latency_ms": 2344.0000000045984,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1722,
+          "completion_tokens": 79,
+          "total_tokens": 1801,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43793.234,
+        "latency_ms": 2281.0000000026776,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1725,
+          "completion_tokens": 52,
+          "total_tokens": 1777,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43795.64,
+        "latency_ms": 2563.000000001921,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1528,
+          "completion_tokens": 34,
+          "total_tokens": 1562,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43798.218,
+        "latency_ms": 11453.000000001339,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1444,
+          "completion_tokens": 90,
+          "total_tokens": 1534,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43809.671,
+        "latency_ms": 7640.999999995984,
+        "outcome": "error",
+        "error_type": "ServerError",
+        "status_code": 503,
+        "usage": null
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43817.312,
+        "latency_ms": 1031.0000000026776,
+        "outcome": "error",
+        "error_type": "ClientError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43818.421,
+        "latency_ms": 4453.9999999979045,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1722,
+          "completion_tokens": 75,
+          "total_tokens": 1797,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43822.937,
+        "latency_ms": 2313.000000001921,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1534,
+          "completion_tokens": 34,
+          "total_tokens": 1568,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43825.265,
+        "latency_ms": 2266.0000000032596,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1510,
+          "completion_tokens": 165,
+          "total_tokens": 1675,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43827.531,
+        "latency_ms": 2155.9999999954016,
+        "outcome": "error",
+        "error_type": "ServerError",
+        "status_code": 503,
+        "usage": null
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43829.687,
+        "latency_ms": 2344.0000000045984,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1576,
+          "completion_tokens": 164,
+          "total_tokens": 1740,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43832.156,
+        "latency_ms": 5780.999999995402,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1547,
+          "completion_tokens": 18,
+          "total_tokens": 1565,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43837.968,
+        "latency_ms": 2171.999999998661,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1817,
+          "completion_tokens": 84,
+          "total_tokens": 1901,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43840.14,
+        "latency_ms": 1860.000000000582,
+        "outcome": "error",
+        "error_type": "ServerError",
+        "status_code": 503,
+        "usage": null
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "started_at": 43842.0,
+        "latency_ms": 5796.0000000020955,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1883,
+          "completion_tokens": 89,
+          "total_tokens": 1972,
+          "thoughts_tokens": null
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43847.937,
+        "latency_ms": 2250.0,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1751,
+          "completion_tokens": 145,
+          "total_tokens": 1896,
+          "thoughts_tokens": 116
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43850.203,
+        "latency_ms": 578.0000000013388,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1859,
+          "completion_tokens": 179,
+          "total_tokens": 2038,
+          "thoughts_tokens": 133
+        }
+      }
+    ]
+  }
+}

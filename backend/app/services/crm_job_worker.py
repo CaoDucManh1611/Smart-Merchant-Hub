@@ -16,7 +16,7 @@ from app.models.crm_job import CrmJob
 from app.models.industry_modules import Appointment, AppointmentService
 from app.models.platform_control import TenantRegistry
 from app.models.recommendation import RecommendationTrainingRun
-from app.services.job_service import dispatch_due_jobs, enqueue_job
+from app.services.job_service import JobBlocked, dispatch_due_jobs, enqueue_job
 from app.services.notification_service import create_notification, create_sla_notification, create_sla_warning_notification, deliver_notification_email
 from app.services.customer_collection import customer_email_for_delivery
 from app.services.workflow_engine import execute_workflow
@@ -193,6 +193,8 @@ def _dispatch_workflow_run_job(db: Session, business_id: int, payload: dict, *, 
 
 def _dispatch_chatbot_followup_job(db: Session, business_id: int, payload: dict) -> None:
     result = dispatch_due_followups(db, business_id, limit=1, followup_id=int(payload.get("followup_id") or 0))
+    if result.get("blocked"):
+        raise JobBlocked(str(result["blocked"]))
     if result.get("failed"):
         raise RuntimeError("Chatbot follow-up delivery failed")
 

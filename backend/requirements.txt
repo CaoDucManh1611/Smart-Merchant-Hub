@@ -29,3 +29,4 @@ beautifulsoup4>=4.12.0
 
 # Bounded conversation orchestration
 langgraph==1.2.16
+jsonschema>=4.20,<5

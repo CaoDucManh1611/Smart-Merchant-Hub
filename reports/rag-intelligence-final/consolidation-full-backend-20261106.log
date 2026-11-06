@@ -1,0 +1,97 @@
+COMMAND: python -m pytest -q "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests"
+STARTED: 2026-11-06T13:00:21.1975200+07:00
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+.................................................................... [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 25%]
+...................................................................... [ 28%]
+........................................................................ [ 31%]
+...............................................s..................... [ 34%]
+........................................................................ [ 37%]
+........................................................................ [ 40%]
+........................................................................ [ 43%]
+.............................................................s.... [ 46%]
+........................ss.............................................. [ 49%]
+........................................................................ [ 53%]
+........................................................................ [ 56%]
+........................................................ [ 58%]
+........................................................................ [ 61%]
+........................................................................ [ 64%]
+........................................................................ [ 68%]
+........................................................................ [ 71%]
+...................................................................... [ 74%]
+.................................................................... [ 77%]
+........................................................................ [ 80%]
+........................................................................ [ 83%]
+........................................................................ [ 86%]
+........................................................................ [ 89%]
+........................................................s............... [ 93%]
+...s.................................................................... [ 96%]
+........................................................................ [ 99%]
+..............                                                           [100%]
+============================== warnings summary ===============================
+tests/test_history_import.py: 7 warnings
+tests/test_unified_inbox_webhooks.py: 5 warnings
+tests/test_zalo_webhook.py: 8 warnings
+  C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_impression_record_contains_blend_version_and_weights
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:352: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    created_at=datetime.utcnow(),
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:162: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    consent_at = datetime.utcnow() - timedelta(hours=2)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:123: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\train_live_recommendation_reranker.py:184: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff = datetime.utcnow() - timedelta(days=max(1, lookback_days))
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:277: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    consent_at = datetime.utcnow() - timedelta(days=1)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:287: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:206: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Lib\site-packages\sklearn\linear_model\_logistic.py:451: DeprecationWarning: scipy.optimize: The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1.18.0.
+    opt_res = optimize.minimize(
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\train_live_recommendation_reranker.py:884: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "trained_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:1052: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2275 passed, 6 skipped, 40 warnings, 37 subtests passed in 131.53s (0:02:11)
+EXIT_CODE=0
+ENDED: 2026-11-06T13:02:39.0155444+07:00
+DURATION_SECONDS=137.82

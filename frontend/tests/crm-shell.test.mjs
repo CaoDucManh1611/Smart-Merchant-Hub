@@ -1177,7 +1177,7 @@ test("embedded conversation keeps its controls while compacting the header and c
 test("opening a conversation marks its inbound messages as read through the Inbox API", () => {
   assert.match(appSource, /function markConversationRead/);
   assert.match(appSource, /\/mark-read/);
-  assert.match(appSource, /await markConversationRead\(id\)/);
+  assert.match(appSource, /void markConversationRead\(conversationId\)/);
   assert.match(appSource, /unread_count:\s*0/);
 });
 

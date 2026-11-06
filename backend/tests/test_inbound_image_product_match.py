@@ -15,6 +15,24 @@ from app.services.auto_reply_service import (
 )
 from app.services.inbound_image_service import _image_url_for_message, download_inbound_image_url
 from app.services.product_image_match import parse_product_match, product_image_url, rank_product_image_candidates
+from app.services.image_observation_cache import clear_image_observation_cache
+
+
+def _catalog_enabled_workspace_config():
+    return {
+        "business_model": "RETAIL",
+        "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS"],
+        "available_dependencies": [
+            "tenant_crm", "conversation_service", "product_catalog", "pricing",
+        ],
+    }
+
+
+@pytest.fixture(autouse=True)
+def isolated_image_cache():
+    clear_image_observation_cache()
+    yield
+    clear_image_observation_cache()
 
 
 @pytest.mark.parametrize("channel", ["facebook", "instagram", "telegram", "zalo", "tiktok", "shopee"])
@@ -163,9 +181,12 @@ def test_image_product_match_route_is_shared_by_all_supported_channels(channel):
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service._latest_inbound_image_url", return_value="https://cdn.example/photo.jpg"), \
         patch("app.services.auto_reply_service._download_meta_image", return_value=(b"photo", "image/jpeg")), \
+        patch("app.services.auto_reply_service.settings.RAG_IMAGE_CATALOG_MATCH_ENABLED", True), \
+        patch("app.tenancy.workspace_modules.get_workspace_config", return_value=_catalog_enabled_workspace_config()), \
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
         patch("app.services.auto_reply_service.record_quota_usage"), \
+        patch("app.services.auto_reply_service.call_llm_with_image", return_value='{"visible_sku": null}'), \
         patch("app.services.auto_reply_service._match_customer_image_to_product", return_value=(product, [product], "Áo sơ mi hồng")), \
         patch("app.services.auto_reply_service.send_text_reply") as send:
         assert process_rag_auto_reply(
@@ -177,7 +198,7 @@ def test_image_product_match_route_is_shared_by_all_supported_channels(channel):
         ) is True
 
     reply = send.call_args.kwargs["text"]
-    assert "SHIRT-PINK-01" in reply
+    assert "Áo sơ mi cotton hồng" in reply
     assert "199.000" in reply
     assert "còn 4" in reply
 
@@ -193,11 +214,13 @@ def test_graph_enabled_product_photo_uses_catalog_match_even_if_vision_classifie
          patch("app.services.auto_reply_service.is_business_open", return_value=True), \
          patch("app.services.auto_reply_service._latest_inbound_image_url", return_value="https://cdn.example/photo.jpg"), \
          patch("app.services.auto_reply_service._download_meta_image", return_value=(b"photo", "image/jpeg")), \
+         patch("app.services.auto_reply_service.settings.RAG_IMAGE_CATALOG_MATCH_ENABLED", True), \
+         patch("app.tenancy.workspace_modules.get_workspace_config", return_value=_catalog_enabled_workspace_config()), \
          patch("app.services.privacy_service.customer_memory_opt_out_reply", return_value=None), \
          patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
          patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
          patch("app.services.auto_reply_service.record_quota_usage"), \
-         patch("app.services.auto_reply_service.call_llm_with_image", return_value='{"task":"read_information","description":"Áo hồng"}') as initial_vision, \
+         patch("app.services.auto_reply_service.call_llm_with_image", return_value='{"visible_sku": null}') as initial_vision, \
          patch("app.services.auto_reply_service._match_customer_image_to_product", return_value=(product, [product], "Áo hồng")) as matcher, \
          patch("app.services.conversation_graph.graph_reply") as graph, \
          patch("app.services.auto_reply_service.send_text_reply") as send:
@@ -205,8 +228,8 @@ def test_graph_enabled_product_photo_uses_catalog_match_even_if_vision_classifie
                                       query_text="Shop có cái trong ảnh này không?", business_id=7)
     matcher.assert_called_once()
     graph.assert_not_called()
-    assert "SHIRT-PINK-01" in send.call_args.kwargs["text"]
-    initial_vision.assert_not_called()
+    assert "Áo sơ mi hồng" in send.call_args.kwargs["text"]
+    initial_vision.assert_called_once()
 
 
 def test_zalo_personal_accepts_image_only_and_rejects_empty_message():

@@ -1,0 +1,14 @@
+........................................................................ [ 62%]
+.....................................F.....                              [100%]
+================================== FAILURES ===================================
+___ test_recommendation_tool_uses_ranker_memory_catalog_and_persists_trace ____
+tests\test_conversation_context.py:70: in test_recommendation_tool_uses_ranker_memory_catalog_and_persists_trace
+    assert result.metadata['recommendation']['request_id']
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not subscriptable
+=========================== short test summary info ===========================
+FAILED tests/test_conversation_context.py::test_recommendation_tool_uses_ranker_memory_catalog_and_persists_trace
+1 failed, 114 passed in 11.52s
+
+EXIT_CODE=1
+ELAPSED_SECONDS=14.4

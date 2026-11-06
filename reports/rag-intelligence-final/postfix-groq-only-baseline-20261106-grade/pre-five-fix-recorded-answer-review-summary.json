@@ -1,0 +1,46 @@
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "source_case_count": 20,
+  "repeated_recorded_runs": 1,
+  "executions": 20,
+  "independent_case_count": 20,
+  "post_fix_provider_run": "NOT_RUN; separate owner approval required",
+  "per_run": [
+    {
+      "run_id": "recorded-run-1",
+      "source": "postfix-groq-only-baseline-20261106.json",
+      "case_count": 20,
+      "nonempty_text_count": 9,
+      "outcome_counts": {
+        "PASS_AUTOMATED": 7,
+        "PROVIDER_ERROR": 2,
+        "INFRASTRUCTURE_ERROR": 9,
+        "FAIL_AUTOMATED": 1,
+        "NEEDS_HUMAN_REVIEW": 1
+      },
+      "automated_claim_pass_rate_all_cases": "7/20",
+      "automated_claim_pass_rate_nonempty_answers": "7/9",
+      "provider_case_errors": 2,
+      "infrastructure_case_errors": 9,
+      "failed_provider_attempts": 2,
+      "provider_attempt_record_count": 5,
+      "logical_calls": 14,
+      "physical_attempts": 5,
+      "elapsed_seconds": 15.343999999997322,
+      "provider_switches": 0,
+      "answer_correctness": "NOT_MEASURED",
+      "groundedness": "NOT_MEASURED",
+      "hallucination_rate": "NOT_MEASURED"
+    }
+  ],
+  "quality_metrics": {
+    "answer_correctness": "NOT_MEASURED",
+    "groundedness": "NOT_MEASURED",
+    "hallucination_rate": "NOT_MEASURED",
+    "human_review_required": true
+  },
+  "artifacts": [
+    "pre-five-fix-recorded-answer-review-traces-sanitized.jsonl",
+    "pre-five-fix-recorded-answer-case-review.csv"
+  ]
+}

@@ -8,7 +8,9 @@ const styleSource = fs.readFileSync(new URL("../src/style.css", import.meta.url)
 test("CRM keeps the current neutral Smart Merchant Hub branding", () => {
   assert.match(appSource, /data-testid="crm-brand-mark"[\s\S]*?<svg/);
   assert.match(appSource, /Smart Merchant Hub/);
-  assert.doesNotMatch(appSource, /Lunari|Food|food|món ăn|đồ ăn/i);
+  const brandMark = appSource.match(/<div class="crm-brand-mark" data-testid="crm-brand-mark"[^>]*>([\s\S]*?)<\/div>/)?.[1] || "";
+  assert.ok(brandMark, "The neutral brand mark should exist");
+  assert.doesNotMatch(brandMark, /Lunari|Food|food|món ăn|đồ ăn/i);
 });
 
 test("CRM uses the Owly-inspired dark rail with a polished salon accent", () => {

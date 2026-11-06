@@ -11,6 +11,7 @@ from app.main import app
 from app.database.session import Base
 from app.models.business import Business
 from app.models.sales import Product
+from capability_fixtures import enable_workspace_capabilities
 
 
 class SupplierApiTests(unittest.TestCase):
@@ -27,6 +28,9 @@ class SupplierApiTests(unittest.TestCase):
             two = Business(name="Supplier Two", slug="supplier-two")
             db.add_all([one, two])
             db.flush()
+            test_capabilities = ("RETAIL_TOOLS", "INVENTORY_TOOLS")
+            enable_workspace_capabilities(db, one.id, *test_capabilities)
+            enable_workspace_capabilities(db, two.id, *test_capabilities)
             product = Product(business_id=one.id, sku="SUP-PROD", name="Product", price=Decimal("10"))
             db.add(product)
             db.commit()

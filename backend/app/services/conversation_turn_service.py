@@ -174,6 +174,15 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
                     CrmJob.idempotency_key == f"chatbot-turn:{conversation_id}:{message_id}",
                 ).first()
                 if job is not None:
+                    if reply_metadata is not None:
+                        from app.services.sales_journey_privacy import filter_journey_metadata_for_persistence
+                        reply_metadata = filter_journey_metadata_for_persistence(
+                            db,
+                            reply_metadata,
+                            business_id=business_id,
+                            conversation_id=conversation_id,
+                            customer_id=conversation.customer_id,
+                        )
                     job.payload = {**(job.payload or {}), "collection_reply": reply_text, "collection_metadata":reply_metadata}
                     db.commit()
         if reply_text is not None:

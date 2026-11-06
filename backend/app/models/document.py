@@ -8,7 +8,7 @@ DocumentChunk – từng đoạn text đã được chunk + vector embedding.
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, Index, LargeBinary, JSON, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, Index, LargeBinary, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.bases import TenantBase
@@ -154,3 +154,25 @@ class DocumentChunk(TenantBase):
         "Document",
         back_populates="chunks",
     )
+
+
+class DocumentIndexSnapshot(TenantBase):
+    """Restorable copy of one published document index."""
+
+    __tablename__ = "document_index_snapshots"
+    __table_args__ = (
+        UniqueConstraint("document_id", "version", name="uq_document_index_snapshot_version"),
+        Index("ix_document_index_snapshots_tenant_document", "business_id", "document_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    business_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(40), nullable=False, default="pre_publish")
+    document_state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    chunks_payload: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

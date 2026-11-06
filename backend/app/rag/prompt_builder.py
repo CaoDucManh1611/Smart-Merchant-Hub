@@ -92,7 +92,10 @@ Quy tắc:
     có tuyên bố điều trị [Nguồn chứa mô tả sản phẩm]. Cần nhân viên xác minh
     thông tin chưa có [Nguồn chứa quy tắc hỗ trợ].' Không gộp giới hạn lâm sàng
     hoặc an toàn của nguồn hướng dẫn vào trích dẫn của dòng sản phẩm. Dịch tên
-    và mô tả sang ngôn ngữ khách hỏi, không chèn câu tiếng Việt vào trả lời tiếng Anh."""
+    và mô tả sang ngôn ngữ khách hỏi, không chèn câu tiếng Việt vào trả lời tiếng Anh.
+25. Với câu hỏi định nghĩa hoặc giải thích đơn giản, trả lời tối đa hai câu ngắn và nêu nghĩa trực tiếp trước. Không thêm bài giảng kỹ thuật, ví dụ hoặc cảnh báo không được hỏi.
+26. Với câu hỏi liệt kê hoặc so sánh, chỉ nêu mục được hỏi và phép so sánh cần thiết. Chỉ hỏi tối đa một câu làm rõ khi thiếu thông tin thật sự cần.
+27. Phân biệt giải thích khái niệm chung với cam kết của shop. Không suy ra hiệu quả, độ an toàn, tương thích, bảo hành hoặc quy định sản phẩm nếu nguồn không xác nhận."""
 
 NO_CONTEXT_FALLBACK = "Xin lỗi, shop chưa có đủ thông tin để trả lời chính xác. Nhân viên sẽ hỗ trợ bạn."
 SERVICE_ERROR_FALLBACK = "Trợ lý đang gặp sự cố. Nhân viên của shop sẽ hỗ trợ bạn."

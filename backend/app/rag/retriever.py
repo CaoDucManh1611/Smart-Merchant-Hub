@@ -29,7 +29,10 @@ from app.rag.lexical import STOP_WORDS, contains, identifiers, query_terms
 
 logger = logging.getLogger(__name__)
 
-
+_SKU_VARIANT_LABELS = {
+    "basic", "compact", "full", "large", "left", "lite", "max", "mini",
+    "premium", "pro", "plus", "right", "small", "standard", "trai", "phai", "xl", "xxl",
+}
 def _catalog_filter_sql(
     db,
     hard_filters: Mapping[str, object] | None,
@@ -122,10 +125,163 @@ def _query_sku_identifiers(
     }
     return [
         identifier for identifier in identifiers(query)
-        if identifier in labelled_skus or identifier.count("-") + identifier.count("_") >= 2
+        if (
+            identifier in labelled_skus
+            or identifier.count("-") + identifier.count("_") >= 2
+            # Recognize compact model codes such as T-900 without treating
+            # specifications like 10W-40 as exact product identifiers.
+            or re.fullmatch(r"[a-z]{1,5}[-_]\d{2,}[a-z0-9]*", identifier, re.IGNORECASE)
+        )
         if re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKC", identifier).casefold())
         not in constrained_values
     ]
+
+
+def _sku_variant_companion_query(query: str, sku_codes: list[str]) -> str | None:
+    """Return a bounded same-tenant comparison query for an explicit SKU question.
+
+    The exact-SKU retrieval remains the primary result. This companion query is
+    only used when the customer also asks about a variant/comparison, and SKU
+    tokens such as ``MINI`` are removed so they do not become accidental AND
+    requirements for the comparison product.
+    """
+    if len(sku_codes) != 1:
+        return None
+    dash_map = str.maketrans({"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"})
+    companion = unicodedata.normalize("NFKC", str(query or "")).translate(dash_map)
+    sku_variant_terms: set[str] = set()
+    for sku in sku_codes:
+        normalized_sku = unicodedata.normalize("NFKC", str(sku)).translate(dash_map).casefold()
+        for part in re.split(r"[-_]", normalized_sku):
+            if part in _SKU_VARIANT_LABELS:
+                sku_variant_terms.add(part)
+        companion = re.sub(
+            r"(?<![\w])" + re.escape(normalized_sku) + r"(?![\w])",
+            " ", companion, flags=re.IGNORECASE,
+        )
+    companion = re.sub(
+        r"\b(?:sku|code|product\s+id|item\s+id|mã(?:\s+(?:sản phẩm|hàng))?)\b\s*[:#]?",
+        " ", companion, flags=re.IGNORECASE,
+    )
+    # A variant embedded in the exact identifier is already represented by
+    # that primary hit; it must not hide its counterpart from this query.
+    for label in sku_variant_terms:
+        companion = re.sub(r"\b" + re.escape(label) + r"\b", " ", companion, flags=re.IGNORECASE)
+    companion = " ".join(companion.split())
+    folded = fold_topic_text(companion)
+    variant_terms = set(folded.split()) & _SKU_VARIANT_LABELS
+    mentions_counterpart = bool(variant_terms - sku_variant_terms)
+    if not companion or not mentions_counterpart:
+        return None
+    return companion
+
+
+def _has_exact_sku_evidence(chunks: list["RetrievedChunk"], sku_codes: list[str]) -> bool:
+    """Avoid broadening an unknown SKU into a plausible but incorrect item."""
+    for chunk in chunks:
+        metadata = chunk.metadata if isinstance(chunk.metadata, Mapping) else {}
+        metadata_sku = str(metadata.get("sku") or "").strip().casefold()
+        if metadata_sku and any(metadata_sku == sku.casefold() for sku in sku_codes):
+            return True
+        content = unicodedata.normalize("NFKC", str(chunk.content or "")).translate(
+            str.maketrans({"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"})
+        ).casefold()
+        if any(
+            re.search(r"(?<![\w-])" + re.escape(sku.casefold()) + r"(?![\w-])", content)
+            for sku in sku_codes
+        ):
+            return True
+    return False
+
+
+def _retrieve_sku_variant_companions(
+    *,
+    query: str,
+    sku_codes: list[str],
+    primary_chunks: list["RetrievedChunk"],
+    supplied_hard_filters: Mapping[str, object],
+    effective_hard_filters: Mapping[str, object],
+    db: Session,
+    business_id: int,
+    query_topic: str | None,
+    top_k: int,
+    similarity_threshold: float | None,
+    preserve_policy_sources: bool,
+) -> list["RetrievedChunk"]:
+    """Fetch same-tenant comparison evidence without weakening caller filters."""
+    if supplied_hard_filters.get("sku") is not None:
+        return []
+    companion_query = _sku_variant_companion_query(query, sku_codes)
+    if not companion_query or not _has_exact_sku_evidence(primary_chunks, sku_codes):
+        return []
+
+    companion_filters = dict(effective_hard_filters)
+    # This inferred SKU constraint selected the primary item. Remove only that
+    # inferred constraint for the explicit comparison lookup; preserve caller
+    # constraints, required attributes, object type, and business scope.
+    companion_filters.pop("sku", None)
+    candidates = _retrieve_lexical(
+        companion_query,
+        db,
+        max(top_k * 2, top_k),
+        business_id=business_id,
+        query_topic=query_topic,
+        hard_filters=companion_filters,
+        preserve_policy_sources=preserve_policy_sources,
+        similarity_threshold=similarity_threshold,
+    )
+    primary_ids = {item.chunk_id for item in primary_chunks}
+    sku_variant_terms = {
+        part
+        for part in re.split(r"[-_]", unicodedata.normalize("NFKC", sku_codes[0]).casefold())
+        if part in _SKU_VARIANT_LABELS
+    }
+    requested_variants = set(fold_topic_text(companion_query).split()) & _SKU_VARIANT_LABELS
+    requested_variants -= sku_variant_terms
+    matching_candidates = []
+    for item in candidates:
+        if item.chunk_id in primary_ids:
+            continue
+        content_terms = set(fold_topic_text(item.content).split())
+        if requested_variants and not content_terms.intersection(requested_variants):
+            continue
+        matching_candidates.append(item)
+    return matching_candidates[:max(top_k, 1)]
+
+
+def _append_comparison_evidence(
+    results: list["RetrievedChunk"],
+    companions: list["RetrievedChunk"],
+    sku_codes: list[str],
+    top_k: int,
+) -> list["RetrievedChunk"]:
+    """Keep the exact SKU first, then add a bounded comparison candidate."""
+    if not companions:
+        return results
+    combined = list(results)
+    seen = {item.chunk_id for item in combined}
+    for companion in companions:
+        if companion.chunk_id in seen:
+            continue
+        if len(combined) >= max(top_k, 1):
+            # Preserve an exact SKU hit even when the original retrieval filled
+            # top-k with nearby chunks.
+            exact_index = next(
+                (index for index, item in enumerate(combined)
+                 if _has_exact_sku_evidence([item], sku_codes)),
+                None,
+            )
+            removable = next(
+                (index for index in range(len(combined) - 1, -1, -1)
+                 if index != exact_index),
+                None,
+            )
+            if removable is None:
+                break
+            combined.pop(removable)
+        combined.append(companion)
+        seen.add(companion.chunk_id)
+    return combined
 
 
 def _lexical_sku_identifiers(
@@ -415,10 +571,28 @@ def _retrieve_impl(
             if similarity_threshold is not None else None
         ),
     )
+    lexical_threshold = (
+        min(similarity_threshold, _LEXICAL_MINIMUM_SIMILARITY)
+        if similarity_threshold is not None else None
+    )
+    comparison_chunks = _retrieve_sku_variant_companions(
+        query=query,
+        sku_codes=query_skus,
+        primary_chunks=lexical_results,
+        supplied_hard_filters=supplied_hard_filters,
+        effective_hard_filters=effective_hard_filters,
+        db=db,
+        business_id=business_id,
+        query_topic=query_topic,
+        top_k=top_k,
+        similarity_threshold=lexical_threshold,
+        preserve_policy_sources=preserve_policy_sources,
+    )
     if diagnostics is not None:
         diagnostics.update(
             retrieval_lexical_hits=len(lexical_results),
             retrieval_bm25_hits=len(lexical_results),
+            retrieval_sku_companion_hits=len(comparison_chunks),
         )
 
     selected_mode, routing_reason = _select_retrieval_mode(
@@ -457,6 +631,7 @@ def _retrieve_impl(
             db, business_id, top_k, hard_filters=effective_hard_filters,
             preserve_policy_sources=preserve_policy_sources,
         )
+        results = _append_comparison_evidence(results, comparison_chunks, query_skus, top_k)
         if diagnostics is not None:
             diagnostics.update(retrieval_vector_hits=0, retrieval_returned=len(results))
         logger.info(
@@ -512,7 +687,7 @@ def _retrieve_impl(
             _personalized_pagerank_rerank(lexical_results, lexical_scores)
             if ppr_enabled else lexical_results
         )
-        return _expand_parent_neighbors(
+        results = _expand_parent_neighbors(
             _select_candidates(
                 ranked_lexical, top_k, topic=query_topic, enable_mmr=enable_mmr,
                 preserve_policy_sources=preserve_policy_sources,
@@ -520,6 +695,7 @@ def _retrieve_impl(
             db, business_id, top_k, hard_filters=effective_hard_filters,
             preserve_policy_sources=preserve_policy_sources,
         )
+        return _append_comparison_evidence(results, comparison_chunks, query_skus, top_k)
 
     # Search pgvector using a bound parameter.  Do not interpolate the vector
     # into SQL even though it currently comes from a trusted provider.
@@ -605,7 +781,7 @@ def _retrieve_impl(
             _personalized_pagerank_rerank(lexical_results, lexical_scores)
             if ppr_enabled else lexical_results
         )
-        return _expand_parent_neighbors(
+        results = _expand_parent_neighbors(
             _select_candidates(
                 ranked_lexical, top_k, topic=query_topic, enable_mmr=enable_mmr,
                 preserve_policy_sources=preserve_policy_sources,
@@ -613,6 +789,7 @@ def _retrieve_impl(
             db, business_id, top_k, hard_filters=effective_hard_filters,
             preserve_policy_sources=preserve_policy_sources,
         )
+        return _append_comparison_evidence(results, comparison_chunks, query_skus, top_k)
 
     vector_results = []
     for row in rows:
@@ -653,11 +830,12 @@ def _retrieve_impl(
         (time.perf_counter() - started) * 1000,
     )
 
-    return _expand_parent_neighbors(
+    results = _expand_parent_neighbors(
         results, db, business_id, top_k,
         hard_filters=effective_hard_filters,
         preserve_policy_sources=preserve_policy_sources,
     )
+    return _append_comparison_evidence(results, comparison_chunks, query_skus, top_k)
 
 
 @contextmanager

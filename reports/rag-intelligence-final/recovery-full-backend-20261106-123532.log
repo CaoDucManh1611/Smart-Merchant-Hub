@@ -1,0 +1,174 @@
+COMMAND: C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Scripts\python.exe -m pytest -q --durations=10 -c C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\pytest.ini --basetemp C:\Users\Administrator\AppData\Local\Temp\smh-rag-full-20261106-123532\pytest-tmp C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+.................................................................... [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 25%]
+...................................................................... [ 28%]
+........................................................................ [ 31%]
+...........................................s......................... [ 34%]
+........................................................................ [ 37%]
+........................................................................ [ 40%]
+........................................................................ [ 43%]
+.........................................................s........ [ 46%]
+....................ss.................................................. [ 50%]
+........................................................................ [ 53%]
+.........................F.............................................. [ 56%]
+........................................................ [ 58%]
+........................................................................ [ 61%]
+........................................................................ [ 65%]
+...........................................................F............ [ 68%]
+........................................................................ [ 71%]
+...................................................................... [ 74%]
+.................................................................... [ 77%]
+........................................................................ [ 80%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+................................................s..................s.... [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+......                                                                   [100%]
+================================== FAILURES ===================================
+________ test_training_precomputes_cache_using_same_tenant_population _________
+
+shop = (<sqlalchemy.orm.session.Session object at 0x00000269AD445190>, <app.models.business.Business object at 0x00000269BF21...<app.models.sales.Product object at 0x00000269BEC9DA00>, <app.models.sales.Product object at 0x00000269BEC9D760>], ...)
+
+    def test_training_precomputes_cache_using_same_tenant_population(shop):
+        db, business, customer, peer, _, _, now = shop
+        db.autoflush = False
+        add_order(db, customer, now, total=100)
+        add_order(db, peer, now, total=1000)
+        db.add(CustomerConsent(
+            business_id=business.id,
+            customer_id=peer.id,
+            purpose="personalization",
+            status="granted",
+        ))
+        run = RecommendationTrainingRun(business_id=business.id, algorithm="deterministic_rfm_kmeans", status="queued")
+        db.add(run)
+        db.commit()
+        recommender.train_customer_segments(db, business_id=business.id, training_run_id=run.id)
+        profile = db.query(RecommendationCustomerProfile).filter_by(customer_id=customer.id).one()
+        assert profile.features["rfm_percentile_scores"]["monetary"] == 1
+>       assert profile.features["cluster_model_source"] == "industry_prior"
+E       AssertionError: assert 'rules_artifact_unavailable' == 'industry_prior'
+E         
+E         - industry_prior
+E         + rules_artifact_unavailable
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_personalized_rag_pipeline.py:313: AssertionError
+_______ test_rfm_excludes_pending_cancelled_refunded_and_future_orders ________
+
+database = <sqlalchemy.orm.session.Session object at 0x00000269C63B8260>
+model_registry = <app.services.recommendation_artifacts.RecommendationArtifactRegistry object at 0x00000269C63ECB00>
+
+    def test_rfm_excludes_pending_cancelled_refunded_and_future_orders(database, model_registry):
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        database.add_all([
+            CustomerConsent(business_id=1, customer_id=1, purpose="personalization", status="granted"),
+            CustomerConsent(business_id=1, customer_id=2, purpose="personalization", status="granted"),
+            BusinessSetting(business_id=1, key="customer_fact_extraction_enabled", value="true"),
+        ])
+        for i, (status, total, refund, future) in enumerate([
+            ("completed", 200000, 50000, False), ("confirmed", 1000000, 0, False),
+            ("cancelled", 1000000, 0, False), ("refunded", 1000000, 0, False),
+            ("completed", 1000000, 0, True),
+        ], 1):
+            database.add(Order(business_id=1, customer_id=1, order_number=f"TEST-{i}", status=status,
+                total_amount=total, refunded_amount=refund, created_at=now + timedelta(days=1) if future else now - timedelta(days=2)))
+        run = RecommendationTrainingRun(business_id=1, algorithm="test", status="queued")
+        database.add(run)
+        database.commit()
+        service.train_customer_segments(database, business_id=1, training_run_id=run.id)
+        buyer = database.query(RecommendationCustomerProfile).filter_by(customer_id=1).one()
+        new = database.query(RecommendationCustomerProfile).filter_by(customer_id=2).one()
+        assert buyer.features["frequency"] == 1
+        assert buyer.features["monetary"] == 150000
+        assert buyer.model_version == "rfm_percentile_v1"
+>       assert buyer.features["cluster_model_version"] == "industry_rfm_cold_start_v1"
+E       AssertionError: assert 'rfm_percentile_v1' == 'industry_rfm_cold_start_v1'
+E         
+E         - industry_rfm_cold_start_v1
+E         + rfm_percentile_v1
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:547: AssertionError
+============================== warnings summary ===============================
+tests/test_history_import.py: 7 warnings
+tests/test_unified_inbox_webhooks.py: 5 warnings
+tests/test_zalo_webhook.py: 8 warnings
+  C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Lib\site-packages\sqlalchemy\engine\default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_impression_record_contains_blend_version_and_weights
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:352: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    created_at=datetime.utcnow(),
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:162: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    consent_at = datetime.utcnow() - timedelta(hours=2)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:123: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\train_live_recommendation_reranker.py:184: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff = datetime.utcnow() - timedelta(days=max(1, lookback_days))
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:277: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    consent_at = datetime.utcnow() - timedelta(days=1)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:287: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:206: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Lib\site-packages\sklearn\linear_model\_logistic.py:451: DeprecationWarning: scipy.optimize: The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1.18.0.
+    opt_res = optimize.minimize(
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\train_live_recommendation_reranker.py:884: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "trained_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:1052: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 10 durations =============================
+1.43s setup    tests/test_subscription_payments.py::test_lost_create_response_recovers_without_claiming_paid
+1.27s setup    tests/test_subscription_payments.py::test_callback_rejects_mismatch[changes0]
+1.27s setup    tests/test_subscription_payments.py::test_manual_receipt_and_webhook_do_not_double_revenue[payos:bank-ref]
+1.27s setup    tests/test_monapay_webhook.py::test_webhook_deduplicates_transaction_code
+1.27s setup    tests/test_monapay_webhook.py::test_webhook_verifies_raw_bytes_and_persists_without_account_number
+1.26s setup    tests/test_subscription_payments.py::test_legacy_zero_or_foreign_receipt_does_not_block_checkout[0-VND]
+1.24s setup    tests/test_subscription_payments.py::test_expired_checkout_hides_qr_and_late_callback_accounts_money
+1.24s setup    tests/test_subscription_payments.py::test_create_is_durable_idempotent_and_frozen
+1.22s setup    tests/test_subscription_payments.py::test_refunded_manual_receipt_is_terminal_without_creating_checkout
+1.22s setup    tests/test_subscription_payments.py::test_legacy_reference_collision_does_not_establish_paid_status[0-VND]
+=========================== short test summary info ===========================
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_personalized_rag_pipeline.py::test_training_precomputes_cache_using_same_tenant_population
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py::test_rfm_excludes_pending_cancelled_refunded_and_future_orders
+2 failed, 2265 passed, 6 skipped, 40 warnings, 37 subtests passed in 134.82s (0:02:14)
+EXIT_CODE=1
+TEST_CWD=C:\Users\Administrator\AppData\Local\Temp\smh-rag-full-20261106-123532
+BASE_TEMP=C:\Users\Administrator\AppData\Local\Temp\smh-rag-full-20261106-123532\pytest-tmp

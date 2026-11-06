@@ -8,6 +8,8 @@ from fastapi import HTTPException
 from app.services.auto_reply_service import (
     _social_reply,
     _claim_auto_reply,
+    _catalog_image_matching_allowed,
+    _combo_price_comparison_reply_if_allowed,
     _deterministic_customer_reply,
     _extract_vietqr_photo,
     _is_product_catalog_listing_request,
@@ -17,6 +19,18 @@ from app.services.auto_reply_service import (
     process_rag_auto_reply,
     send_text_reply,
 )
+
+
+def _catalog_enabled_workspace_config():
+    return {
+        "business_model": "RETAIL",
+        "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS", "RECOMMENDATION_TOOLS", "RENTAL_TOOLS"],
+        "available_dependencies": [
+            "tenant_crm", "conversation_service", "product_catalog", "pricing",
+            "recommendation_service", "personalization_consent", "rental_offerings",
+            "rental_availability", "rental_workflow",
+        ],
+    }
 
 
 @pytest.mark.parametrize("label", ["Mã QR", "• Mã QR", "🧾 Mã QR"])
@@ -47,6 +61,81 @@ def test_social_turn_does_not_inherit_old_product(message, expected):
 
 def test_product_question_is_not_routed_as_social_turn():
     assert _social_reply("Bình giữ nhiệt inox 600 ml còn hàng không?") is None
+
+
+@pytest.mark.parametrize("query", [
+    "Giá của XM-NSD-WA110 bao nhiêu?",
+    "Gợi ý sản phẩm phù hợp cho tôi",
+])
+def test_direct_auto_reply_catalog_and_recommendation_paths_fail_closed_when_capability_disabled(query):
+    db = Mock()
+    reply = _deterministic_customer_reply(
+        db,
+        business_id=7,
+        conversation_id=11,
+        query_text=query,
+        workspace_config={"enabled_capabilities": ["CORE_CRM"]},
+    )
+    assert reply is None
+    db.query.assert_not_called()
+
+
+def test_catalog_selection_does_not_query_product_identity_before_capability_check():
+    db = Mock()
+    with patch("app.services.auto_reply_service._catalog_request_has_identity_overlap") as identity_lookup:
+        reply = _deterministic_customer_reply(
+            db,
+            business_id=7,
+            conversation_id=11,
+            query_text="I need a product for oily skin",
+            workspace_config={"enabled_capabilities": ["CORE_CRM"]},
+        )
+
+    assert reply is None
+    identity_lookup.assert_not_called()
+    db.query.assert_not_called()
+
+
+def test_coolant_instruction_does_not_read_catalog_when_retail_capability_is_disabled():
+    db = Mock()
+    reply = _deterministic_customer_reply(
+        db, business_id=7, conversation_id=11,
+        query_text="Nước làm mát pha sẵn có cần pha thêm nước không?",
+        workspace_config={"enabled_capabilities": ["CORE_CRM"]},
+    )
+
+    assert reply is None
+    db.query.assert_not_called()
+
+
+def test_combo_price_shortcut_does_not_query_catalog_when_retail_capability_is_disabled():
+    from app.services.product_pricing import combo_price_comparison_reply
+
+    with patch(
+        "app.services.product_pricing.combo_price_comparison_reply",
+        wraps=combo_price_comparison_reply,
+    ) as catalog_lookup:
+        reply = _combo_price_comparison_reply_if_allowed(
+            Mock(), business_id=7, conversation_id=11,
+            text="Tính giá hai sản phẩm này",
+            workspace_config={"enabled_capabilities": ["CORE_CRM"]},
+        )
+
+    assert reply is None
+    catalog_lookup.assert_not_called()
+
+
+def test_product_image_catalog_paths_require_enabled_retail_capability():
+    with patch("app.services.auto_reply_service.settings.RAG_IMAGE_CATALOG_MATCH_ENABLED", True), \
+         patch("app.services.auto_reply_service._should_match_image_to_product", return_value=True):
+        assert not _catalog_image_matching_allowed(
+            {"enabled_capabilities": ["CORE_CRM"]},
+            image_bytes=b"image", image_mime_type="image/jpeg", query_text="tìm món trong ảnh",
+        )
+        assert _catalog_image_matching_allowed(
+            _catalog_enabled_workspace_config(),
+            image_bytes=b"image", image_mime_type="image/jpeg", query_text="tìm món trong ảnh",
+        )
 
 
 def test_short_greeting_does_not_reuse_product_context():
@@ -305,8 +394,14 @@ def test_product_attributes_use_same_current_crm_context_on_all_channels(channel
             return stack.enter_context(patch("app.services.auto_reply_service." + name, **kwargs))
         mock("get_auto_reply_enabled", return_value=True)
         mock("is_business_open", return_value=True)
+        stack.enter_context(patch(
+            "app.tenancy.workspace_modules.get_workspace_config",
+            return_value=_catalog_enabled_workspace_config(),
+        ))
         mock("_latest_inbound_image_url", return_value=None)
         mock("customer_order_reply", return_value=None)
+        # Exercise the RAG prompt path; the exact-catalog shortcut has its own tests.
+        mock("_deterministic_customer_reply", return_value=None)
         mock("_find_exact_product", return_value=(product, "DM-APP-001"))
         mock("find_ambiguous_product_matches", return_value=[])
         mock("retrieve", return_value=[evidence])
@@ -330,6 +425,34 @@ def test_product_attributes_use_same_current_crm_context_on_all_channels(channel
         assert "100000 VND" in send.call_args.kwargs["text"]
         assert "999000" not in send.call_args.kwargs["text"]
         assert save.call_args.kwargs["source_document_ids"] == [7]
+
+
+@pytest.mark.parametrize("query", [
+    "Giá của XM-NSD-WA110 bao nhiêu?",
+    "Gợi ý sản phẩm phù hợp cho tôi",
+])
+def test_legacy_auto_reply_denies_catalog_and_recommendations_before_retrieval_when_disabled(query):
+    db = Mock()
+    with patch("app.tenancy.workspace_modules.get_workspace_config", return_value={
+        "business_model": "RETAIL",
+        "enabled_capabilities": ["CORE_CRM"],
+        "available_dependencies": [],
+    }), patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+         patch("app.services.auto_reply_service._latest_inbound_image_url", return_value=None), \
+         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
+         patch("app.services.privacy_service.customer_memory_opt_out_reply", return_value=None), \
+         patch("app.services.auto_reply_service.retrieve") as retrieve, \
+         patch("app.services.auto_reply_service._live_product_context_chunk") as live_catalog, \
+         patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "denied"}) as send:
+        handled = process_rag_auto_reply(
+            db, 91, "telegram", query, 7,
+        )
+
+    assert handled is True
+    retrieve.assert_not_called()
+    live_catalog.assert_not_called()
+    assert "chưa bật quyền" in send.call_args.kwargs["text"].casefold()
 
 
 def test_shopee_suppresses_same_auto_reply_within_short_cooldown():
@@ -687,7 +810,7 @@ def test_static_reply_uses_conversation_channel_and_persists_message():
 
 def test_product_question_falls_back_to_tenant_catalog_when_rag_has_no_chunks():
     db = Mock()
-    with patch(
+    with patch("app.tenancy.workspace_modules.get_workspace_config", return_value=_catalog_enabled_workspace_config()), patch(
         "app.services.auto_reply_service.get_auto_reply_enabled",
         return_value=True,
     ), patch(
@@ -723,7 +846,8 @@ def test_product_question_falls_back_to_tenant_catalog_when_rag_has_no_chunks():
 
 def test_english_product_discovery_uses_live_catalog_in_english_before_rag():
     db = Mock()
-    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+    with patch("app.tenancy.workspace_modules.get_workspace_config", return_value=_catalog_enabled_workspace_config()), \
+        patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
@@ -759,6 +883,7 @@ def test_rag_without_context_sends_safe_handoff_without_calling_llm():
     db = Mock()
     db.query().filter().first.side_effect = [None, conversation]
     with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.tenancy.workspace_modules.get_workspace_config", return_value={}), \
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
@@ -790,6 +915,7 @@ def test_instagram_image_is_passed_to_vision_model_and_gets_a_reply():
     conversation = Mock(bot_mode="auto", customer_id=8, resolution_outcome=None)
     db.query.return_value.filter.return_value.first.side_effect = [None, conversation]
     with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.tenancy.workspace_modules.get_workspace_config", return_value={}), \
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service._latest_inbound_image_url", return_value="https://scontent.cdninstagram.com/test.jpg"), \
         patch("app.services.auto_reply_service._download_meta_image", return_value=(b"image-bytes", "image/jpeg")), \
@@ -839,6 +965,7 @@ def test_image_reading_reaches_guarded_graph_instead_of_legacy_product_routing(v
     conversation=SimpleNamespace(id=4,bot_mode="auto",customer_id=8,resolution_outcome=None)
     db.query.return_value.filter.return_value.first.side_effect=[None,conversation]
     with patch("app.services.auto_reply_service.settings.CHATBOT_GRAPH_ENABLED",True), \
+         patch("app.tenancy.workspace_modules.get_workspace_config",return_value={}), \
          patch("app.services.auto_reply_service.get_auto_reply_enabled",return_value=True), \
          patch("app.services.auto_reply_service.is_business_open",return_value=True), \
          patch("app.services.auto_reply_service._latest_inbound_image_url",return_value="https://scontent.fbcdn.net/test.png"), \
@@ -892,7 +1019,8 @@ def test_order_status_reply_bypasses_rag_and_uses_customer_scoped_flow():
 def test_product_discovery_bypasses_rag_even_when_knowledge_chunks_exist():
     db = Mock()
     chunk = Mock(document_id=9, similarity=0.95)
-    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+    with patch("app.tenancy.workspace_modules.get_workspace_config", return_value=_catalog_enabled_workspace_config()), \
+        patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=True), \
         patch("app.services.auto_reply_service.retrieve", return_value=[chunk]) as retrieve, \
@@ -976,7 +1104,8 @@ def test_room_catalog_with_price_bypasses_exact_product_lookup():
     assert not _is_product_catalog_listing_request("Phòng trọ 05 giá bao nhiêu?")
 
     db = Mock()
-    with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+    with patch("app.tenancy.workspace_modules.get_workspace_config", return_value=_catalog_enabled_workspace_config()), \
+        patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
@@ -1006,6 +1135,8 @@ def test_rag_auto_reply_checks_ai_quota_before_calling_llm():
     )
     chunk = Mock(document_id=3, similarity=0.9)
     with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+        patch("app.tenancy.workspace_modules.get_workspace_config", return_value=_catalog_enabled_workspace_config()), \
+        patch("app.services.auto_reply_service.is_business_open", return_value=True), \
         patch("app.services.auto_reply_service.retrieve", return_value=[chunk]), \
         patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
         patch("app.services.auto_reply_service.build_prompt", return_value=[{"role": "user", "content": "q"}]), \
@@ -1034,6 +1165,10 @@ def test_rag_auto_reply_reserves_ai_cost_before_calling_llm():
 
     with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.tenancy.workspace_modules.get_workspace_config", return_value={
+            "business_model": "RETAIL", "enabled_capabilities": ["CORE_CRM"],
+            "available_dependencies": [],
+        }), \
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
         patch("app.services.auto_reply_service.retrieve", return_value=[chunk]), \
@@ -1158,7 +1293,7 @@ def test_agentic_rag_modes_log_and_preserve_original_hard_filters(
         patch("app.services.auto_reply_service.is_browsing_request", return_value=False), \
         patch("app.services.auto_reply_service._latest_inbound_image_url", return_value=None), \
         patch("app.services.auto_reply_service._contextual_retrieval_query", return_value="Chính sách giao hàng nội thành?"), \
-        patch("app.services.auto_reply_service._live_product_context_chunk", return_value=None), \
+        patch("app.services.auto_reply_service._live_product_context_chunk", return_value=None) as live_catalog, \
         patch("app.services.auto_reply_service.load_rag_runtime_options", return_value=RagRuntimeOptions("bm25", agentic_mode, 4, 0.3, 8)), \
         patch("app.services.auto_reply_service.retrieve", side_effect=[[weak_chunk], [chunk]]) as retrieve, \
         patch("app.services.auto_reply_service.build_agent_memory", return_value={"history": []}), \
@@ -1179,6 +1314,7 @@ def test_agentic_rag_modes_log_and_preserve_original_hard_filters(
 
     assert result is True
     assert retrieve.call_count == expected_retrieval_calls
+    live_catalog.assert_not_called()
     first_filters = retrieve.call_args_list[0].kwargs["hard_filters"]
     if expected_retrieval_calls == 2:
         retry_filters = retrieve.call_args_list[1].kwargs["hard_filters"]
@@ -1193,7 +1329,10 @@ def test_agentic_rag_modes_log_and_preserve_original_hard_filters(
     handoff.assert_not_called()
     prompt_chunk_ids = [chunk.chunk_id for chunk in build_prompt.call_args.kwargs["chunks"]]
     assert prompt_chunk_ids == expected_prompt_chunk_ids
-    log_record = json.loads((tmp_path / "rag.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    log_record = next(
+        row for row in map(json.loads, (tmp_path / "rag.jsonl").read_text(encoding="utf-8").splitlines())
+        if row.get("operation") == "auto_reply"
+    )
     assert log_record["agentic_mode"] == agentic_mode
     assert log_record["agentic_retry_would_run"] is expected_retry_would_run
     assert log_record["agentic_retry_attempted"] is (agentic_mode in {"active", "execute_shadow"})

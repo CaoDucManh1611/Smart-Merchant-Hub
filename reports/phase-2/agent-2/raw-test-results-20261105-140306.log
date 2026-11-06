@@ -1,0 +1,58 @@
+PHASE 2.2 RAW TEST RESULTS
+Timestamp: 2026-11-05 14:03:06 +07:00
+Workspace: C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub
+
+ENVIRONMENT
+- PATH python: NOT_FOUND
+- PATH python3: NOT_FOUND
+- PATH pytest: NOT_FOUND
+- py.exe: present, but `py -0p` reported: No installed Pythons found!
+- Bundled Python used: C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe
+- Offline package path used: backend/.migrationdeps
+- RUN_POSTGRES_TESTS=0; tests did not target PostgreSQL or production DB.
+- No package installation and no network access.
+
+STATIC CHECK
+Command: bundled Python -m compileall -q backend/app backend/tests
+Result: compileall_exit=0
+Python: 3.12.14
+Pydantic: 2.13.5
+SQLAlchemy: 2.0.52
+
+PHASE 2 / PHASE 2.1 / PHASE 2.2 OFFLINE PYTEST
+Command:
+  python -m pytest -q \
+    backend/tests/test_sales_journey_engine.py \
+    backend/tests/test_sales_journey_policy.py \
+    backend/tests/test_sales_journey_integration_contract.py \
+    backend/tests/test_sales_journey_graph_bridge.py
+Result:
+  ........................................... [100%]
+  43 passed in 1.28s
+
+BROADER REGRESSION ATTEMPT
+Selected Capability Registry, Universal Sales Brain, Conversation Graph,
+business workflow, chatbot tools/follow-up, and RAG contract/component/
+tenant-isolation tests.
+
+Result: 142 passed, 6 failed, 2 errors, 4 subtests passed.
+Important blockers/failures:
+- `test_conversation_graph.py` and two Graph-related Universal Sales Brain
+  tests cannot import the Graph because `langgraph` is not installed.
+- `test_workflow_api.py`, `test_chatbot_answer_routing.py`, and one RAG
+  serving path cannot import the payment dependency because `payos` is not
+  installed.
+- Two RAG/component setup cases reported Windows permission cleanup warnings
+  for an interrupted `.pytest_tmp/cases` directory.
+- Three chatbot-follow-up cases failed in the combined no-PostgreSQL run;
+  two were unable to resolve the `auto_reply_service` patch target after the
+  dependency-blocked collection, and one observed two due rows instead of
+  the test's isolated one-row expectation.
+
+These broader results are not treated as a Phase 2.2 PASS. They are retained
+as environment/baseline blockers pending the supported backend environment.
+The earlier manual runner is not counted as pytest.
+
+DIFF CHECK
+Command: git diff --check
+Result: exit 0 (line-ending warnings only).

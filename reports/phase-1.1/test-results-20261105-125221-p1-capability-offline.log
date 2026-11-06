@@ -1,0 +1,123 @@
+COMMAND: $env:RUN_POSTGRES_TESTS=0; python -m pytest tests/test_recommendations_api.py tests/test_chatbot_answer_routing.py tests/test_conversation_graph.py tests/test_workspace_modules.py tests/test_capability_registry.py tests/test_rag_serving_contract.py -q
+....................F............................................. [ 36%]
+................................................F....................... [ 77%]
+.........................................                                [100%]
+================================== FAILURES ===================================
+_ RecommendationApiTests.test_rag_question_without_retrieval_chunks_rejects_uncited_catalog_answer _
+
+self = <test_recommendations_api.RecommendationApiTests testMethod=test_rag_question_without_retrieval_chunks_rejects_uncited_catalog_answer>
+retrieve = <MagicMock name='retrieve' id='2591092842352'>
+reserve_budget = <MagicMock name='reserve_ai_budget' id='2591093356928'>
+call_llm = <MagicMock name='call_llm' id='2591093361216'>
+
+    @patch("app.api.chat.call_llm", return_value="catalog answer")
+    @patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0})
+    @patch("app.api.chat.retrieve", return_value=[])
+    def test_rag_question_without_retrieval_chunks_rejects_uncited_catalog_answer(
+        self, retrieve, reserve_budget, call_llm
+    ):
+        response = self.client.post(
+            "/api/chat",
+            headers={**self.headers(), "X-Idempotency-Key": "rag-question-test-1"},
+            json={"customer_id": self.customer_id, "query": "product three gift"},
+        )
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual("no_context", response.json()["answer_status"])
+        self.assertTrue(response.json()["handoff_required"])
+        self.assertEqual([], response.json()["sources"])
+        self.assertIn("reliable source", response.json()["answer"].lower())
+        retrieve.assert_called_once()
+        # The route still supplies live catalog evidence, so it may call the
+        # model; the uncited result must be discarded in favor of safe fallback.
+>       reserve_budget.assert_called_once()
+
+tests\test_recommendations_api.py:1163: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <MagicMock name='reserve_ai_budget' id='2591093356928'>
+
+    def assert_called_once(self):
+        """assert that the mock was called only once.
+        """
+        if not self.call_count == 1:
+            msg = ("Expected '%s' to have been called once. Called %s times.%s"
+                   % (self._mock_name or 'mock',
+                      self.call_count,
+                      self._calls_repr()))
+>           raise AssertionError(msg)
+E           AssertionError: Expected 'reserve_ai_budget' to have been called once. Called 0 times.
+
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py:926: AssertionError
+__________ test_appointment_only_plan_skips_product_identity_queries __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000025B493301D0>
+
+    def test_appointment_only_plan_skips_product_identity_queries(monkeypatch):
+        monkeypatch.setattr(
+            "app.tenancy.workspace_modules.get_workspace_config",
+            lambda _db, _business_id: {
+                "business_model": "APPOINTMENT_SERVICE", "industry_ids": [],
+                "enabled_capabilities": ["CORE_CRM", "APPOINTMENT_TOOLS"],
+                "configuration_rejected": False, "config_version": 1,
+            },
+        )
+        with patch("app.services.auto_reply_service._is_catalog_selection_request") as selection_probe, \
+             patch("app.services.auto_reply_service._catalog_request_has_identity_overlap") as identity_probe, \
+             patch("app.services.business_request.current_offerings", return_value=[]), \
+             patch("app.services.quota_service.record_quota_usage"):
+>           result = graph_reply(
+                DB(), business_id=17, conversation=SimpleNamespace(id=21, customer_id=31),
+                query="Shop c\xf3 d\u1ecbch v\u1ee5 b\u1ea3o d\u01b0\u1ee1ng xe m\xe1y kh\xf4ng?", job_key="service-catalog-no-product-probe",
+            )
+
+tests\test_conversation_graph.py:118: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\rag\serving.py:30: in wrapped
+    result = function(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\conversation_graph.py:1313: in graph_reply
+    _notify_rag_handoff_required(db,conversation=conversation,business_id=business_id,
+app\services\auto_reply_service.py:596: in _notify_rag_handoff_required
+    create_notification(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = <test_conversation_graph.DB object at 0x0000025B4947AEA0>
+
+    def create_notification(
+        db: Session,
+        *,
+        business_id: int,
+        kind: str,
+        title: str,
+        body: str | None = None,
+        user_id: int | None = None,
+        metadata: dict | None = None,
+        idempotency_key: str | None = None,
+    ) -> Notification:
+        """Store a notification before any optional delivery integration runs."""
+        notification = Notification(
+            business_id=business_id,
+            user_id=user_id,
+            kind=kind.strip()[:40],
+            title=title.strip()[:255],
+            body=body,
+            metadata_=metadata or {},
+            idempotency_key=idempotency_key,
+        )
+>       db.add(notification)
+        ^^^^^^
+E       AttributeError: 'DB' object has no attribute 'add'
+
+app\services\notification_service.py:37: AttributeError
+============================== warnings summary ===============================
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:1010: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_recommendations_api.py::RecommendationApiTests::test_rag_question_without_retrieval_chunks_rejects_uncited_catalog_answer
+FAILED tests/test_conversation_graph.py::test_appointment_only_plan_skips_product_identity_queries
+2 failed, 177 passed, 1 warning, 6 subtests passed in 9.54s
+EXIT_CODE=1
+ELAPSED_SECONDS=12.67

@@ -1,6 +1,6 @@
 import warnings
 
-from pydantic import PrivateAttr
+from pydantic import Field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.secret_manager import load_runtime_secrets
@@ -142,6 +142,14 @@ class Settings(BaseSettings):
     GEMINI_FALLBACK_MODEL: str = "gemini-3.5-flash-lite"
     GEMINI_FALLBACK_MODELS: str = "gemini-3.1-flash-lite,gemini-3.6-flash"
     CHATBOT_GRAPH_ENABLED: bool = True
+    SALES_JOURNEY_ENGINE_ENABLED: bool = False
+    SALES_JOURNEY_PERSISTENCE_PURPOSE: str = Field(default="", max_length=60)
+    SALES_JOURNEY_PERSISTENCE_POLICY_VERSION: str = Field(default="", max_length=40)
+    SALES_JOURNEY_PERSISTENCE_REQUIRES_CONSENT: bool = True
+    RAG_IMAGE_CATALOG_MATCH_ENABLED: bool = False
+    RAG_IMAGE_OBSERVATION_CACHE_TTL_SECONDS: int = 300
+    RAG_IMAGE_OBSERVATION_CACHE_MAX_ENTRIES: int = 512
+    RAG_INDEX_SNAPSHOT_RETENTION: int = 5
     CONVERSATION_TURN_WAIT_SECONDS: int = 5
     CONVERSATION_GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     # openai/gpt-oss-20b | gemini-3.6-flash | gpt-4o-mini

@@ -1,0 +1,116 @@
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "dataset_sha256": "340e70c14bcd7f954650570a6ada9b7c9539d37cb149467017577ea5e97bb386",
+  "evidence_snapshot_id": "smh-rag-answer-quality-synthetic-v1-evidence:a2667f4debf8e5ca",
+  "evidence_snapshot_sha256": "a2667f4debf8e5cafa56cc4d41b38e28771744c5685df33eb962175f31beb0c2",
+  "implementation_snapshot_sha256_at_run": "0bcbc2c15b57a02451b796b9b71220f18d6f801bda1a5e2c66909e2f173902ac",
+  "branch": "codex/rag-rfm-all-updates-20261104",
+  "head": "92ae7e34c532d3d5b331e3c7343dcd9a20375f61",
+  "provider": "Groq",
+  "model": "openai/gpt-oss-20b",
+  "provider_fallback": "disabled",
+  "retrieval_mode": "bm25",
+  "limits": {
+    "case_executions": 20,
+    "physical_attempts": 40,
+    "input_tokens": 100000,
+    "output_tokens": 15000
+  },
+  "consumed": {
+    "case_executions": 20,
+    "physical_attempts": 5,
+    "input_tokens": 28393,
+    "output_tokens": 1396
+  },
+  "reported_usage": {
+    "input_tokens": 6655,
+    "output_tokens": 884
+  },
+  "physical_attempts": 5,
+  "successful_attempts": 4,
+  "failed_attempts": 1,
+  "attempt_records": [
+    {
+      "provider": "groq",
+      "model": "openai/gpt-oss-20b",
+      "outcome": "success",
+      "error_type": null,
+      "http_status": null,
+      "provider_error_code": null,
+      "latency_ms": 1500.0,
+      "usage": {
+        "prompt_tokens": 2301,
+        "completion_tokens": 319,
+        "total_tokens": 2620,
+        "thoughts_tokens": 257
+      },
+      "stage": "structured_output",
+      "schema_name": "shop_answer"
+    },
+    {
+      "provider": "groq",
+      "model": "openai/gpt-oss-20b",
+      "outcome": "success",
+      "error_type": null,
+      "http_status": null,
+      "provider_error_code": null,
+      "latency_ms": 531.0,
+      "usage": {
+        "prompt_tokens": 218,
+        "completion_tokens": 159,
+        "total_tokens": 377,
+        "thoughts_tokens": 149
+      },
+      "stage": null,
+      "schema_name": null
+    },
+    {
+      "provider": "groq",
+      "model": "openai/gpt-oss-20b",
+      "outcome": "success",
+      "error_type": null,
+      "http_status": null,
+      "provider_error_code": null,
+      "latency_ms": 656.0,
+      "usage": {
+        "prompt_tokens": 2429,
+        "completion_tokens": 191,
+        "total_tokens": 2620,
+        "thoughts_tokens": 162
+      },
+      "stage": "structured_output",
+      "schema_name": "shop_answer"
+    },
+    {
+      "provider": "groq",
+      "model": "openai/gpt-oss-20b",
+      "outcome": "success",
+      "error_type": null,
+      "http_status": null,
+      "provider_error_code": null,
+      "latency_ms": 735.0,
+      "usage": {
+        "prompt_tokens": 1707,
+        "completion_tokens": 215,
+        "total_tokens": 1922,
+        "thoughts_tokens": 184
+      },
+      "stage": "structured_output",
+      "schema_name": "turn_plan"
+    },
+    {
+      "provider": "groq",
+      "model": "openai/gpt-oss-20b",
+      "outcome": "error",
+      "error_type": "RateLimitError",
+      "http_status": 429,
+      "provider_error_code": "rate_limit_exceeded",
+      "latency_ms": 204.0,
+      "usage": null,
+      "stage": "structured_output",
+      "schema_name": "shop_answer"
+    }
+  ],
+  "cost": "NOT_MEASURED; provider pricing is not configured",
+  "secret_material_included": false
+}

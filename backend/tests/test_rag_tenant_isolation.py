@@ -110,7 +110,10 @@ class RagTenantIsolationTests(unittest.TestCase):
         db = _RecordingSession()
         with patch.object(settings, "EMBEDDING_DIMENSION", 3), patch(
             "app.rag.retriever._retrieve_lexical", return_value=[]
-        ), patch("app.rag.retriever.embed_query", return_value=[0.1, 0.2, 0.3]):
+        ), patch("app.rag.retriever.embed_query", return_value=[0.1, 0.2, 0.3]), patch(
+            "app.rag.retriever.sa_inspect"
+        ) as inspect:
+            inspect.return_value.has_table.return_value = True
             retrieve("SKU-123", db, business_id=73, top_k=3,
                      hard_filters={"sku": "SKU-123"}, retrieval_mode="hybrid")
 
@@ -131,11 +134,12 @@ class RagTenantIsolationTests(unittest.TestCase):
 
     def test_lexical_exact_attribute_filter_is_scoped_and_applied_before_limit(self):
         db = _RecordingSession()
-
-        _retrieve_lexical(
-            "áo size L", db, 5, business_id=42,
-            hard_filters={"required_attributes": {"size": "L"}},
-        )
+        with patch("app.rag.retriever.sa_inspect") as inspect:
+            inspect.return_value.has_table.return_value = True
+            _retrieve_lexical(
+                "áo size L", db, 5, business_id=42,
+                hard_filters={"required_attributes": {"size": "L"}},
+            )
 
         statement, params = db.calls[0]
         self.assertLess(statement.index("EXISTS"), statement.index("LIMIT"))
@@ -143,6 +147,16 @@ class RagTenantIsolationTests(unittest.TestCase):
         self.assertIn("rca.key_norm", statement)
         self.assertIn("rca.normalized_value", statement)
         self.assertEqual("l", params["hard_filter_attr_value_0_0"])
+        self.assertEqual(42, params["business_id"])
+
+    def test_missing_catalog_mapping_fails_closed_for_structured_attribute(self):
+        db = _RecordingSession()
+        with patch("app.rag.retriever.sa_inspect") as inspect:
+            inspect.return_value.has_table.return_value = False
+            _retrieve_lexical("áo size L", db, 5, business_id=42,
+                              hard_filters={"required_attributes": {"size": "L"}})
+        statement, params = db.calls[0]
+        self.assertIn("AND FALSE", statement)
         self.assertEqual(42, params["business_id"])
 
     def test_vector_sql_keeps_business_filter_even_in_schema_bound_session(self):

@@ -7,13 +7,15 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc';
 import { renderToString } from '@vue/server-renderer';
 const saved = { enabled: true, bank_bin: '970436', account_number: '000123', account_name: 'TEST ONLY', bank_name: 'Test bank', bank_options: [{ bin: '970436', name: 'Test bank' }] };
 const reply = (body, ok = true) => ({ ok, json: async () => body });
-function fixture(fetch) {
+function fixture(fetch, { canWrite = true } = {}) {
   const { descriptor, errors } = parse(readFileSync(new URL('../src/PlatformPaymentSettings.vue', import.meta.url), 'utf8'));
-  assert.deepEqual(errors, []); compileScript(descriptor, { id: 'payment-test' });
-  const context = vm.createContext({ ref: Vue.ref, onMounted: () => {}, defineProps: () => ({ apiBase: '/api' }), apiFetch: fetch });
+  assert.deepEqual(errors, []);
+  const script = compileScript(descriptor, { id: 'payment-test' });
+  const context = vm.createContext({ ref: Vue.ref, onMounted: () => {}, defineProps: () => ({ apiBase: '/api', canWrite }), apiFetch: fetch });
   vm.runInContext(descriptor.scriptSetup.content.replace(/^import .*;\s*$/gm, '') + '\nglobalThis.state={config,busy,loaded,error,notice,load,save,checkConfiguration};', context);
-  const compiled = compileTemplate({ source: descriptor.template.content, filename: 'PlatformPaymentSettings.vue', id: 'payment-test', compilerOptions: { mode: 'function' } });
+  const compiled = compileTemplate({ source: descriptor.template.content, filename: 'PlatformPaymentSettings.vue', id: 'payment-test', compilerOptions: { mode: 'function', bindingMetadata: script.bindings } });
   assert.deepEqual(compiled.errors, []);
+  assert.doesNotMatch(compiled.code, /_ctx\.canWrite/);
   const render = vm.runInNewContext(`(function(){${compiled.code}\n})()`, { Vue });
   return { state: context.state, html: () => renderToString(Vue.createSSRApp({ setup: () => context.state, render })) };
 }
@@ -40,6 +42,29 @@ test('local configuration check sends no bank/provider request payload and makes
   f.state.loaded.value=true;f.state.config.value={...saved};await f.state.checkConfiguration();
   assert.equal(calls[0].method,'POST');assert.equal(calls[0].url,'/api/platform/payment-settings/test');assert.deepEqual(JSON.parse(calls[0].body),{});
   assert.match(await f.html(),/VietQR/);assert.ok(f.state.notice.value.includes('không xác minh'));
+});
+test('read-only platform admin renders write controls disabled without unresolved canWrite access', async () => {
+  const f = fixture(async () => reply(saved), { canWrite: false });
+  await f.state.load();
+  const html = await f.html();
+  assert.match(html, /<fieldset disabled/);
+  assert.match(html, /Kiểm tra cấu hình<\/button>/);
+  assert.match(html, /class="settings-refresh" disabled>Kiểm tra cấu hình/);
+});
+test('platform admin canWrite templates compile through declared setup props', () => {
+  for (const name of ['PlatformPaymentSettings.vue', 'PlatformKnowledge.vue', 'PlatformSupport.vue']) {
+    const { descriptor, errors } = parse(readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8'));
+    assert.deepEqual(errors, [], name);
+    const script = compileScript(descriptor, { id: `can-write-${name}` });
+    const compiled = compileTemplate({
+      source: descriptor.template.content,
+      filename: name,
+      id: `can-write-${name}`,
+      compilerOptions: { bindingMetadata: script.bindings },
+    });
+    assert.deepEqual(compiled.errors, [], name);
+    assert.doesNotMatch(compiled.code, /_ctx\.canWrite/, name);
+  }
 });
 test('checkout uses server QR payload and frozen amount; manual confirmation only, historical payOS retained',()=>{
   const source=readFileSync(new URL('../src/ServiceCheckout.vue',import.meta.url),'utf8');

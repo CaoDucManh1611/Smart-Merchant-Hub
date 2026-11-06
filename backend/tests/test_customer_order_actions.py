@@ -1,4 +1,5 @@
 import unittest
+import json
 from decimal import Decimal
 
 from sqlalchemy import create_engine
@@ -7,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database.session import Base
 from app.models.business import Business
+from app.models.business_setting import BusinessSetting
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.message import Message
@@ -42,6 +44,17 @@ class CustomerOrderActionTests(unittest.TestCase):
             business = Business(name="Customer Order Actions", slug="customer-order-actions")
             db.add(business)
             db.flush()
+            db.add(BusinessSetting(
+                business_id=business.id,
+                key="workspace_modules",
+                value=json.dumps({
+                    "business_model": "RETAIL",
+                    "business_type": "retail",
+                    "enabled_modules": ["retail"],
+                    "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS", "ORDER_TOOLS"],
+                    "industry_ids": [],
+                }),
+            ))
             customer = Customer(
                 business_id=business.id,
                 channel="telegram",

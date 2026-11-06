@@ -29,6 +29,7 @@ from app.models.message import Message
 from app.models.sales import Order, OrderItem, Product
 from app.models.ticket import Ticket, TicketEvent
 from app.services.audit_service import record_audit
+from app.services.capability_registry import authorize_chatbot_tool
 from app.services.customer_order_service import (
     CustomerOrderActionError,
     get_customer_order_status,
@@ -524,6 +525,11 @@ def execute_chatbot_tool(
     if tool_name not in AGENT_TOOLS:
         raise ValueError("tool_not_allowed")
     _conversation(db, business_id, conversation_id)
+    permission = authorize_chatbot_tool(db, business_id, tool_name)
+    if permission is None:
+        raise ValueError("workspace_tool_unmapped")
+    if not permission.allowed:
+        raise ValueError("workspace_capability_disabled")
     args = arguments or {}
     if tool_name == "tim_san_pham":
         products = _search_products(db, business_id, args.get("query"))

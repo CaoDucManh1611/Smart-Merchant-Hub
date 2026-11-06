@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -19,6 +20,7 @@ from app.models.customer_collection import CustomerConsent
 from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.message import Message
 from app.models.sales import Order
+from app.services.chatbot_followup import FollowupCapabilityDisabled
 from app.services.customer_merge_service import duplicate_evidence
 
 
@@ -639,21 +641,28 @@ class Customer360FinalApiTests(unittest.TestCase):
             "message": "Ưu đãi dành cho khách VIP",
             "run_at": "2030-01-01T09:00:00+07:00",
         }
-        first = self.client.post(
-            f"/api/customers/segments/{segment['id']}/followups",
-            headers=self.headers(),
-            json=payload,
-        )
-        second = self.client.post(
-            f"/api/customers/segments/{segment['id']}/followups",
-            headers=self.headers(),
-            json=payload,
-        )
-        hidden = self.client.post(
-            f"/api/customers/segments/{segment['id']}/followups",
-            headers=self.headers(self.other_business_id),
-            json=payload,
-        )
+        with patch(
+            "app.services.chatbot_followup.get_workspace_config",
+            return_value={
+                "enabled_capabilities": ["CORE_CRM", "CUSTOMER_TOOLS"],
+                "available_dependencies": ["customer_records"],
+            },
+        ):
+            first = self.client.post(
+                f"/api/customers/segments/{segment['id']}/followups",
+                headers=self.headers(),
+                json=payload,
+            )
+            second = self.client.post(
+                f"/api/customers/segments/{segment['id']}/followups",
+                headers=self.headers(),
+                json=payload,
+            )
+            hidden = self.client.post(
+                f"/api/customers/segments/{segment['id']}/followups",
+                headers=self.headers(self.other_business_id),
+                json=payload,
+            )
 
         self.assertEqual(200, first.status_code, first.text)
         self.assertEqual(first.json()["followup_ids"], second.json()["followup_ids"])
@@ -664,6 +673,34 @@ class Customer360FinalApiTests(unittest.TestCase):
                 ChatbotFollowUp.kind == "segment_campaign",
             ).all()
             self.assertEqual(1, len(rows))
+
+    def test_segment_followup_endpoint_denies_before_reading_segment_or_scheduling(self):
+        segment = self.client.post(
+            "/api/customers/segments",
+            headers=self.headers(),
+            json={"name": "Capability blocked", "tag_ids": [self.vip_id]},
+        )
+        self.assertEqual(201, segment.status_code, segment.text)
+
+        with patch(
+            "app.api.customers.require_customer_followup_capability",
+            side_effect=FollowupCapabilityDisabled("workspace_capability_disabled"),
+        ), patch("app.api.customers._get_segment") as get_segment, patch(
+            "app.api.customers.schedule_segment_followups"
+        ) as schedule:
+            response = self.client.post(
+                f"/api/customers/segments/{segment.json()['id']}/followups",
+                headers=self.headers(),
+                json={
+                    "message": "Không được tạo lịch khi capability tắt",
+                    "run_at": "2030-01-01T09:00:00+07:00",
+                },
+            )
+
+        self.assertEqual(403, response.status_code, response.text)
+        self.assertEqual("workspace_capability_disabled", response.json()["detail"]["code"])
+        get_segment.assert_not_called()
+        schedule.assert_not_called()
 
     def test_customer_fact_and_segment_writes_are_audited_without_sensitive_values(self):
         fact = self.client.post(

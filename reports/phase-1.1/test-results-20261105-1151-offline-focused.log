@@ -1,0 +1,338 @@
+Started=2026-11-05T11:50:44.9194674+07:00
+Environment=RUN_POSTGRES_TESTS=0 (SQLite/offline fixture mode)
+Command=python -m pytest -q --tb=short tests/test_workspace_modules.py tests/test_capability_registry.py tests/test_conversation_graph.py tests/test_crm_workspace_config.py tests/test_industry_modules.py tests/test_recommendation_artifacts.py tests/test_recommendations_api.py tests/test_rfm_segments.py tests/test_universal_sales_brain.py tests/test_auto_reply_channels.py tests/test_inbound_image_product_match.py tests/test_catalog_search_contract.py tests/test_booking_merge_payment.py
+...................................................................... [ 25%]
+.................................................................... [ 50%]
+................................................................FFFFFFF. [ 77%]
+.......F........F...F............F.................F.........            [100%]
+================================== FAILURES ===================================
+_ test_image_product_match_route_is_shared_by_all_supported_channels[facebook] _
+tests\test_inbound_image_product_match.py:191: in test_image_product_match_route_is_shared_by_all_supported_channels
+    assert "\xc1o s\u01a1 mi cotton h\u1ed3ng" in reply
+E   AssertionError: assert '\xc1o s\u01a1 mi cotton h\u1ed3ng' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4661 RAG retrieval failed safely: TypeError
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4871 Chatbot bandit selection failed; using the default reply path
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4858, in process_rag_auto_reply
+    bandit_choice = select_chatbot_reply_choice(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_bandit_service.py", line 125, in select_chatbot_reply_choice
+    for policy, experiment in candidates:
+                              ^^^^^^^^^^
+TypeError: 'Mock' object is not iterable
+
+ERROR    app.services.auto_reply_service:auto_reply_service.py:5078 RAG auto-reply failed: error_type=StopIteration
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4885, in process_rag_auto_reply
+    memory = build_agent_memory(db, business_id, conversation_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 213, in build_agent_memory
+    conversation = _conversation(db, business_id, conversation_id)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 206, in _conversation
+    ).first()
+      ^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1137, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1141, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1198, in _execute_mock_call
+    result = next(effect)
+             ^^^^^^^^^^^^
+StopIteration
+
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=AttributeError
+_ test_image_product_match_route_is_shared_by_all_supported_channels[instagram] _
+tests\test_inbound_image_product_match.py:191: in test_image_product_match_route_is_shared_by_all_supported_channels
+    assert "\xc1o s\u01a1 mi cotton h\u1ed3ng" in reply
+E   AssertionError: assert '\xc1o s\u01a1 mi cotton h\u1ed3ng' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4661 RAG retrieval failed safely: TypeError
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4871 Chatbot bandit selection failed; using the default reply path
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4858, in process_rag_auto_reply
+    bandit_choice = select_chatbot_reply_choice(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_bandit_service.py", line 125, in select_chatbot_reply_choice
+    for policy, experiment in candidates:
+                              ^^^^^^^^^^
+TypeError: 'Mock' object is not iterable
+
+ERROR    app.services.auto_reply_service:auto_reply_service.py:5078 RAG auto-reply failed: error_type=StopIteration
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4885, in process_rag_auto_reply
+    memory = build_agent_memory(db, business_id, conversation_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 213, in build_agent_memory
+    conversation = _conversation(db, business_id, conversation_id)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 206, in _conversation
+    ).first()
+      ^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1137, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1141, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1198, in _execute_mock_call
+    result = next(effect)
+             ^^^^^^^^^^^^
+StopIteration
+
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=AttributeError
+_ test_image_product_match_route_is_shared_by_all_supported_channels[telegram] _
+tests\test_inbound_image_product_match.py:191: in test_image_product_match_route_is_shared_by_all_supported_channels
+    assert "\xc1o s\u01a1 mi cotton h\u1ed3ng" in reply
+E   AssertionError: assert '\xc1o s\u01a1 mi cotton h\u1ed3ng' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4661 RAG retrieval failed safely: TypeError
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4871 Chatbot bandit selection failed; using the default reply path
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4858, in process_rag_auto_reply
+    bandit_choice = select_chatbot_reply_choice(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_bandit_service.py", line 125, in select_chatbot_reply_choice
+    for policy, experiment in candidates:
+                              ^^^^^^^^^^
+TypeError: 'Mock' object is not iterable
+
+ERROR    app.services.auto_reply_service:auto_reply_service.py:5078 RAG auto-reply failed: error_type=StopIteration
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4885, in process_rag_auto_reply
+    memory = build_agent_memory(db, business_id, conversation_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 213, in build_agent_memory
+    conversation = _conversation(db, business_id, conversation_id)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 206, in _conversation
+    ).first()
+      ^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1137, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1141, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1198, in _execute_mock_call
+    result = next(effect)
+             ^^^^^^^^^^^^
+StopIteration
+
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=AttributeError
+__ test_image_product_match_route_is_shared_by_all_supported_channels[zalo] ___
+tests\test_inbound_image_product_match.py:191: in test_image_product_match_route_is_shared_by_all_supported_channels
+    assert "\xc1o s\u01a1 mi cotton h\u1ed3ng" in reply
+E   AssertionError: assert '\xc1o s\u01a1 mi cotton h\u1ed3ng' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4661 RAG retrieval failed safely: TypeError
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4871 Chatbot bandit selection failed; using the default reply path
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4858, in process_rag_auto_reply
+    bandit_choice = select_chatbot_reply_choice(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_bandit_service.py", line 125, in select_chatbot_reply_choice
+    for policy, experiment in candidates:
+                              ^^^^^^^^^^
+TypeError: 'Mock' object is not iterable
+
+ERROR    app.services.auto_reply_service:auto_reply_service.py:5078 RAG auto-reply failed: error_type=StopIteration
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4885, in process_rag_auto_reply
+    memory = build_agent_memory(db, business_id, conversation_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 213, in build_agent_memory
+    conversation = _conversation(db, business_id, conversation_id)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 206, in _conversation
+    ).first()
+      ^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1137, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1141, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1198, in _execute_mock_call
+    result = next(effect)
+             ^^^^^^^^^^^^
+StopIteration
+
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=AttributeError
+_ test_image_product_match_route_is_shared_by_all_supported_channels[tiktok] __
+tests\test_inbound_image_product_match.py:191: in test_image_product_match_route_is_shared_by_all_supported_channels
+    assert "\xc1o s\u01a1 mi cotton h\u1ed3ng" in reply
+E   AssertionError: assert '\xc1o s\u01a1 mi cotton h\u1ed3ng' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4661 RAG retrieval failed safely: TypeError
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4871 Chatbot bandit selection failed; using the default reply path
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4858, in process_rag_auto_reply
+    bandit_choice = select_chatbot_reply_choice(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_bandit_service.py", line 125, in select_chatbot_reply_choice
+    for policy, experiment in candidates:
+                              ^^^^^^^^^^
+TypeError: 'Mock' object is not iterable
+
+ERROR    app.services.auto_reply_service:auto_reply_service.py:5078 RAG auto-reply failed: error_type=StopIteration
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4885, in process_rag_auto_reply
+    memory = build_agent_memory(db, business_id, conversation_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 213, in build_agent_memory
+    conversation = _conversation(db, business_id, conversation_id)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 206, in _conversation
+    ).first()
+      ^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1137, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1141, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1198, in _execute_mock_call
+    result = next(effect)
+             ^^^^^^^^^^^^
+StopIteration
+
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=AttributeError
+_ test_image_product_match_route_is_shared_by_all_supported_channels[shopee] __
+tests\test_inbound_image_product_match.py:191: in test_image_product_match_route_is_shared_by_all_supported_channels
+    assert "\xc1o s\u01a1 mi cotton h\u1ed3ng" in reply
+E   AssertionError: assert '\xc1o s\u01a1 mi cotton h\u1ed3ng' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4661 RAG retrieval failed safely: TypeError
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4871 Chatbot bandit selection failed; using the default reply path
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4858, in process_rag_auto_reply
+    bandit_choice = select_chatbot_reply_choice(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_bandit_service.py", line 125, in select_chatbot_reply_choice
+    for policy, experiment in candidates:
+                              ^^^^^^^^^^
+TypeError: 'Mock' object is not iterable
+
+ERROR    app.services.auto_reply_service:auto_reply_service.py:5078 RAG auto-reply failed: error_type=StopIteration
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4885, in process_rag_auto_reply
+    memory = build_agent_memory(db, business_id, conversation_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 213, in build_agent_memory
+    conversation = _conversation(db, business_id, conversation_id)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 206, in _conversation
+    ).first()
+      ^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1137, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1141, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1198, in _execute_mock_call
+    result = next(effect)
+             ^^^^^^^^^^^^
+StopIteration
+
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=AttributeError
+_ test_graph_enabled_product_photo_uses_catalog_match_even_if_vision_classifies_it_as_reading _
+tests\test_inbound_image_product_match.py:219: in test_graph_enabled_product_photo_uses_catalog_match_even_if_vision_classifies_it_as_reading
+    matcher.assert_called_once()
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py:926: in assert_called_once
+    raise AssertionError(msg)
+E   AssertionError: Expected '_match_customer_image_to_product' to have been called once. Called 0 times.
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4661 RAG retrieval failed safely: TypeError
+WARNING  app.services.auto_reply_service:auto_reply_service.py:4871 Chatbot bandit selection failed; using the default reply path
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4858, in process_rag_auto_reply
+    bandit_choice = select_chatbot_reply_choice(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_bandit_service.py", line 125, in select_chatbot_reply_choice
+    for policy, experiment in candidates:
+                              ^^^^^^^^^^
+TypeError: 'Mock' object is not iterable
+
+ERROR    app.services.auto_reply_service:auto_reply_service.py:5078 RAG auto-reply failed: error_type=StopIteration
+Traceback (most recent call last):
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\auto_reply_service.py", line 4885, in process_rag_auto_reply
+    memory = build_agent_memory(db, business_id, conversation_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 213, in build_agent_memory
+    conversation = _conversation(db, business_id, conversation_id)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\services\chatbot_agent.py", line 206, in _conversation
+    ).first()
+      ^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1137, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1141, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1198, in _execute_mock_call
+    result = next(effect)
+             ^^^^^^^^^^^^
+StopIteration
+
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=AttributeError
+_ test_search_finds_late_identity_before_limit[Ch\u0103m s\xf3c chuy\xean s\xe2u-options5-service:501] _
+tests\test_catalog_search_contract.py:101: in test_search_finds_late_identity_before_limit
+    assert refs(search_current_offerings(db, 1, query, limit=1, **options)) == [expected]
+E   AssertionError: assert [] == ['service:501']
+E     
+E     Right contains one more item: 'service:501'
+E     Use -v to get more diff
+________________ test_tenant_active_total_limit_and_pagination ________________
+tests\test_catalog_search_contract.py:157: in test_tenant_active_total_limit_and_pagination
+    assert len(page) == 100  # One shared limit, not 100 per source.
+    ^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: assert 8 == 100
+E    +  where 8 = len([{'availability_basis': 'current unreserved inventory', 'available': 10, 'billing_unit': None, 'description': '', ...}...vailability_basis': 'current unreserved inventory', 'available': 7, 'billing_unit': None, 'description': '', ...}, ...])
+_ test_exact_ref_independent_of_page_budget_and_current_stock[service:501-service] _
+tests\test_catalog_search_contract.py:168: in test_exact_ref_independent_of_page_budget_and_current_stock
+    assert item["ref"] == ref and item["kind"] == kind
+           ^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not subscriptable
+_________________ test_appointment_module_and_duration_filter _________________
+tests\test_catalog_search_contract.py:188: in test_appointment_module_and_duration_filter
+    assert refs(search_current_offerings(db, 1, "", limit=1, hard_filters={"object_type": "service", "required_attributes": {"duration": "90 minutes"}})) == ["service:501"]
+E   AssertionError: assert [] == ['service:501']
+E     
+E     Right contains one more item: 'service:501'
+E     Use -v to get more diff
+_ test_late_workflow_ref_collect_review_submit_with_bounded_prompt[service:501-service] _
+tests\test_catalog_search_contract.py:290: in test_late_workflow_ref_collect_review_submit_with_bounded_prompt
+    assert result["state"] == "review" and not result["order_created"]
+E   AssertionError: assert ('clarify_offering' == 'review'
+E     
+E     - review
+E     + clarify_offering)
+============================== warnings summary ===============================
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:856: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_inbound_image_product_match.py::test_image_product_match_route_is_shared_by_all_supported_channels[facebook]
+FAILED tests/test_inbound_image_product_match.py::test_image_product_match_route_is_shared_by_all_supported_channels[instagram]
+FAILED tests/test_inbound_image_product_match.py::test_image_product_match_route_is_shared_by_all_supported_channels[telegram]
+FAILED tests/test_inbound_image_product_match.py::test_image_product_match_route_is_shared_by_all_supported_channels[zalo]
+FAILED tests/test_inbound_image_product_match.py::test_image_product_match_route_is_shared_by_all_supported_channels[tiktok]
+FAILED tests/test_inbound_image_product_match.py::test_image_product_match_route_is_shared_by_all_supported_channels[shopee]
+FAILED tests/test_inbound_image_product_match.py::test_graph_enabled_product_photo_uses_catalog_match_even_if_vision_classifies_it_as_reading
+FAILED tests/test_catalog_search_contract.py::test_search_finds_late_identity_before_limit[Ch\u0103m s\xf3c chuy\xean s\xe2u-options5-service:501]
+FAILED tests/test_catalog_search_contract.py::test_tenant_active_total_limit_and_pagination
+FAILED tests/test_catalog_search_contract.py::test_exact_ref_independent_of_page_budget_and_current_stock[service:501-service]
+FAILED tests/test_catalog_search_contract.py::test_appointment_module_and_duration_filter
+FAILED tests/test_catalog_search_contract.py::test_late_workflow_ref_collect_review_submit_with_bounded_prompt[service:501-service]
+12 failed, 259 passed, 1 warning, 6 subtests passed in 16.94s
+
+EXIT_CODE=1
+Finished=2026-11-05T11:51:05.8366437+07:00

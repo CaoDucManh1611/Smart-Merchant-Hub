@@ -60,6 +60,24 @@ def test_customer_facing_answer_hides_rag_markup():
     assert customer_facing_answer("Dạ, **bình 600 ml** giá 189.000 đồng. [Nguồn 1]") == (
         "Dạ, bình 600 ml giá 189.000 đồng."
     )
+
+
+def test_customer_formatter_changes_presentation_not_verified_facts():
+    source = "### **Motul 10W-40**\n\n\nGiá 189.000 đồng, còn 7 chai, mã `XM-NHOT-4T-1L` [Nguồn 2]."
+    rendered = customer_facing_answer(source)
+    for fact in ("Motul 10W-40", "189.000", "7", "XM-NHOT-4T-1L"):
+        assert fact in rendered
+    assert "**" not in rendered
+    assert "[Nguồn" not in rendered
+    assert "###" not in rendered
+    assert "\n\n\n" not in rendered
+
+
+def test_customer_facing_answer_repairs_observed_incomplete_vietnamese_request():
+    answer = "Bạn vui lòng cho mình xin tên hoặc ụ thể để mình hỗ trợ bạn nhé."
+    assert customer_facing_answer(answer) == "Bạn vui lòng cho mình xin tên hoặc mô tả cụ thể hơn để mình hỗ trợ bạn nhé."
+    assert customer_facing_answer("Cho mình tên hoặc cụ thể nhé.") == "Cho mình tên hoặc mô tả cụ thể hơn nhé."
+    assert customer_facing_answer("Giá 909.000 đồng, còn 15 sản phẩm.") == "Giá 909.000 đồng, còn 15 sản phẩm."
 from app.rag.loader import DocumentValidationError, load_document, validate_document_bytes
 import io
 from app.rag.prompt_builder import build_prompt
@@ -776,6 +794,10 @@ def test_product_specification_is_not_mistaken_for_sku():
     assert _query_sku_identifiers("Tìm SKU XM-NHOT-4T-MA2-1L") == ["xm-nhot-4t-ma2-1l"]
 
 
+def test_single_hyphen_model_code_is_an_exact_identifier_without_sku_label():
+    assert _query_sku_identifiers("How many T-900 batteries are in stock?") == ["t-900"]
+
+
 def test_hybrid_retrieval_limits_one_document_from_filling_the_entire_context():
     ranked = [
         RetrievedChunk(chunk_id=index, document_id=10, content=f"chunk {index}",
@@ -1054,6 +1076,57 @@ def test_citation_guard_allows_customer_numbers_but_checks_new_policy_facts():
         "For 12 units, the 8% discount applies [Source 1]",
         [policy],
         query="I want 12 units",
+    )
+
+
+def test_citation_guard_rejects_definitive_policy_denial_from_unknown_evidence():
+    evidence = ["Chính sách hiện có không đề cập thời hạn bảo hành."]
+
+    assert not has_valid_citations(
+        "Chúng tôi không cung cấp bảo hành trọn đời cho sản phẩm [Source 1]",
+        evidence,
+    )
+    assert not has_valid_citations(
+        "Chính sách hiện có không đề cập thời hạn bảo hành, vì vậy không có bảo hành trọn đời. [Source 1]",
+        evidence,
+    )
+    assert has_valid_citations(
+        "Chính sách chưa đề cập thời hạn bảo hành; shop cần xác minh thêm. [Source 1]",
+        evidence,
+    )
+    assert not has_valid_citations(
+        "The policy does not mention warranty duration; therefore there is no lifetime warranty. [Source 1]",
+        ["The current policy does not mention warranty duration."],
+    )
+    assert has_valid_citations(
+        "Sản phẩm không được bảo hành trọn đời [Source 1]",
+        ["Sản phẩm không được bảo hành trọn đời."],
+    )
+
+
+def test_citation_guard_preserves_explicit_policy_eligibility_conditions():
+    evidence = ["Sản phẩm đủ điều kiện được yêu cầu đổi trong 7 ngày kể từ khi nhận hàng."]
+
+    assert not has_valid_citations(
+        "Bạn có thể đổi hàng trong vòng 7 ngày kể từ khi nhận hàng. [Source 1]",
+        evidence,
+    )
+    assert has_valid_citations(
+        "Sản phẩm đủ điều kiện có thể được yêu cầu đổi trong 7 ngày kể từ khi nhận hàng. [Source 1]",
+        evidence,
+    )
+    english_evidence = ["Eligible products may be requested for return within 7 days after receipt."]
+    assert not has_valid_citations(
+        "You may return the product within 7 days after receipt. [Source 1]",
+        english_evidence,
+    )
+    assert has_valid_citations(
+        "Eligible products may be returned within 7 days after receipt. [Source 1]",
+        english_evidence,
+    )
+    assert not has_valid_citations(
+        "Returns are available within 7 days. Other eligible products follow the policy. [Source 1]",
+        english_evidence,
     )
 
 

@@ -1,0 +1,139 @@
+FFFF..F.......................                                           [100%]
+================================== FAILURES ===================================
+__________ test_rotation_and_all_fallback_models_share_attempt_limit __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000017710A52CC0>
+
+    def test_rotation_and_all_fallback_models_share_attempt_limit(monkeypatch):
+        seen = []
+        def fail(**kwargs):
+            seen.append(kwargs["model"])
+            raise RuntimeError("HTTP 429 quota")
+        openai_fake(monkeypatch, fail)
+        gemini_fake(monkeypatch, fail)
+        with tb.turn_budget(max_attempts=4) as budget:
+            with pytest.raises(RuntimeError, match="429 quota"):
+                llm.call_llm(MESSAGES)
+            snap = budget.snapshot()
+        assert len(seen) == snap["attempts"] == 4
+        assert seen == ["openai/gpt-oss-20b", "gemini-test-a", "gemini-test-b", "gemini-test-c"]
+        assert snap["calls"] == 1 and snap["provider_switches"] == 1
+>       assert llm._model_breaker.state("gemini:gemini-test-a") == "closed"
+E       AssertionError: assert 'open' == 'closed'
+E         
+E         - closed
+E         + open
+
+tests\test_llm_turn_budget.py:151: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model groq:openai/gpt-oss-20b unavailable (RuntimeError); trying next route
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model gemini:gemini-test-a unavailable (RuntimeError); trying next route
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model gemini:gemini-test-b unavailable (RuntimeError); trying next route
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model gemini:gemini-test-c unavailable (RuntimeError); trying next route
+________________ test_switch_limit_preserves_keys_and_circuits ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000017711BC4A10>
+
+    def test_switch_limit_preserves_keys_and_circuits(monkeypatch):
+        openai_fake(monkeypatch, lambda **kwargs: (_ for _ in ()).throw(RuntimeError("429 quota")))
+        _, gemini = gemini_fake(monkeypatch, lambda **kwargs: NS(text="ok"))
+        with tb.turn_budget(max_provider_switches=0) as budget:
+            with pytest.raises(tb.TurnBudgetExceeded, match="max_provider_switches"):
+                llm.call_llm(MESSAGES)
+>           assert budget.snapshot()["attempts"] == 3
+E           assert 1 == 3
+
+tests\test_llm_turn_budget.py:161: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model groq:openai/gpt-oss-20b unavailable (RuntimeError); trying next route
+___________ test_structured_fallback_keeps_native_schema_on_gemini ____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000017713CDB830>
+
+    def test_structured_fallback_keeps_native_schema_on_gemini(monkeypatch):
+        openai_fake(monkeypatch, lambda **kwargs: (_ for _ in ()).throw(RuntimeError("429 quota")))
+        constructor, gemini = gemini_fake(monkeypatch, lambda **kwargs: NS(text='{"mode":"chat"}'))
+        with tb.turn_budget() as budget:
+            assert llm.call_structured(MESSAGES, SCHEMA) == {"mode": "chat"}
+            snap = budget.snapshot()
+        config = gemini.call_args.kwargs["config"]
+        assert config.response_json_schema == SCHEMA
+        assert config.response_mime_type == "application/json"
+        assert config.system_instruction == MESSAGES[0]["content"]
+        assert constructor.call_args.kwargs["http_options"]["retry_options"]["attempts"] == 1
+>       assert [r["model"] for r in snap["attempt_records"]] == ["openai/gpt-oss-20b"] * 3 + ["gemini-test-a"]
+E       AssertionError: assert ['openai/gpt-...emini-test-a'] == ['openai/gpt-...emini-test-a']
+E         
+E         At index 1 diff: 'gemini-test-a' != 'openai/gpt-oss-20b'
+E         Right contains 2 more items, first extra item: 'openai/gpt-oss-20b'
+E         Use -v to get more diff
+
+tests\test_llm_turn_budget.py:284: AssertionError
+_ test_pipeline_outcome_taxonomy_is_explicit[result0-None-model_invocations0-attempts0-DETERMINISTIC_ANSWER] _
+
+result = {'answer': 'price', 'status': 'product_fact'}, error_type = None
+model_invocations = [], attempts = [], expected = 'DETERMINISTIC_ANSWER'
+
+    @pytest.mark.parametrize(
+        ("result", "error_type", "model_invocations", "attempts", "expected"),
+        [
+            ({"status": "product_fact", "answer": "price"}, None, [], [], "DETERMINISTIC_ANSWER"),
+            ({"status": "graph_answer", "answer": "answer"}, None,
+             [{"response_text": "structured", "validation_status": "passed", "route_kind": "primary"}], [],
+             "LLM_GENERATED_ANSWER"),
+            ({"status": "graph_answer", "answer": "answer"}, None,
+             [{"response_text": "structured", "validation_status": "passed", "route_kind": "fallback"}], [],
+             "VALIDATED_FALLBACK"),
+            ({"status": "product_identity_clarification", "answer": "Which one?"}, None, [], [], "CLARIFICATION"),
+            (None, "BadRequestError", [], [{"status_code": 400}], "PROVIDER_HTTP_400"),
+            (None, "RateLimitError", [], [{"status_code": 429}], "PROVIDER_RATE_LIMIT_429"),
+            (None, "ProviderCircuitOpen", [], [], "CIRCUIT_OPEN"),
+            (None, "OperationalError", [], [], "INFRASTRUCTURE_ERROR"),
+        ],
+    )
+    def test_pipeline_outcome_taxonomy_is_explicit(result, error_type, model_invocations, attempts, expected):
+>       assert classify_pipeline_outcome(result, error_type, model_invocations, attempts) == expected
+E       AssertionError: assert 'INFRASTRUCTURE_ERROR' == 'DETERMINISTIC_ANSWER'
+E         
+E         - DETERMINISTIC_ANSWER
+E         + INFRASTRUCTURE_ERROR
+
+tests\test_rag_answer_generation_eval.py:47: AssertionError
+_ test_pipeline_outcome_taxonomy_is_explicit[result3-None-model_invocations3-attempts3-CLARIFICATION] _
+
+result = {'answer': 'Which one?', 'status': 'product_identity_clarification'}
+error_type = None, model_invocations = [], attempts = []
+expected = 'CLARIFICATION'
+
+    @pytest.mark.parametrize(
+        ("result", "error_type", "model_invocations", "attempts", "expected"),
+        [
+            ({"status": "product_fact", "answer": "price"}, None, [], [], "DETERMINISTIC_ANSWER"),
+            ({"status": "graph_answer", "answer": "answer"}, None,
+             [{"response_text": "structured", "validation_status": "passed", "route_kind": "primary"}], [],
+             "LLM_GENERATED_ANSWER"),
+            ({"status": "graph_answer", "answer": "answer"}, None,
+             [{"response_text": "structured", "validation_status": "passed", "route_kind": "fallback"}], [],
+             "VALIDATED_FALLBACK"),
+            ({"status": "product_identity_clarification", "answer": "Which one?"}, None, [], [], "CLARIFICATION"),
+            (None, "BadRequestError", [], [{"status_code": 400}], "PROVIDER_HTTP_400"),
+            (None, "RateLimitError", [], [{"status_code": 429}], "PROVIDER_RATE_LIMIT_429"),
+            (None, "ProviderCircuitOpen", [], [], "CIRCUIT_OPEN"),
+            (None, "OperationalError", [], [], "INFRASTRUCTURE_ERROR"),
+        ],
+    )
+    def test_pipeline_outcome_taxonomy_is_explicit(result, error_type, model_invocations, attempts, expected):
+>       assert classify_pipeline_outcome(result, error_type, model_invocations, attempts) == expected
+E       AssertionError: assert 'INFRASTRUCTURE_ERROR' == 'CLARIFICATION'
+E         
+E         - CLARIFICATION
+E         + INFRASTRUCTURE_ERROR
+
+tests\test_rag_answer_generation_eval.py:47: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_llm_turn_budget.py::test_rotation_and_all_fallback_models_share_attempt_limit
+FAILED tests/test_llm_turn_budget.py::test_switch_limit_preserves_keys_and_circuits
+FAILED tests/test_llm_turn_budget.py::test_structured_fallback_keeps_native_schema_on_gemini
+FAILED tests/test_rag_answer_generation_eval.py::test_pipeline_outcome_taxonomy_is_explicit[result0-None-model_invocations0-attempts0-DETERMINISTIC_ANSWER]
+FAILED tests/test_rag_answer_generation_eval.py::test_pipeline_outcome_taxonomy_is_explicit[result3-None-model_invocations3-attempts3-CLARIFICATION]
+5 failed, 25 passed in 2.45s

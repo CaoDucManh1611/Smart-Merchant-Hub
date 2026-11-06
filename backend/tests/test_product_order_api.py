@@ -14,6 +14,7 @@ from app.models.business import Business
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.sales import Order, OrderItem, Product
+from capability_fixtures import enable_workspace_capabilities
 
 
 class ProductOrderApiTests(unittest.TestCase):
@@ -31,6 +32,9 @@ class ProductOrderApiTests(unittest.TestCase):
             two = Business(name="Sales Two", slug="sales-two")
             db.add_all([one, two])
             db.flush()
+            test_capabilities = ("RETAIL_TOOLS", "ORDER_TOOLS", "INVENTORY_TOOLS", "PAYMENT_TOOLS")
+            enable_workspace_capabilities(db, one.id, *test_capabilities)
+            enable_workspace_capabilities(db, two.id, *test_capabilities)
             customer = Customer(
                 business_id=one.id,
                 channel="telegram",

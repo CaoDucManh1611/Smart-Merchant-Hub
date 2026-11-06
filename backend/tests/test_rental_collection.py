@@ -1,4 +1,5 @@
 import pytest
+from datetime import date, timedelta
 
 @pytest.fixture(autouse=True)
 def offline_interpretation():
@@ -41,7 +42,8 @@ def test_rental_enquiry_collects_contact_and_notifies_without_creating_order():
         assert session.current_field == 'move_in'
         assert '0901234567' not in str(session.collected_fields)
         contact.assert_called_once()
-        reply = advance_rental_request(db, **args, text='01/11/2026', session=session)
+        move_in_date = (date.today() + timedelta(days=7)).strftime('%d/%m/%Y')
+        reply = advance_rental_request(db, **args, text=move_in_date, session=session)
         assert session.status == 'completed'
         assert 'CHAT-9' in reply.prompt
         notify.assert_called_once()

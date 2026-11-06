@@ -66,6 +66,14 @@ def test_natural_order_tracking_phrase_is_recognized():
     assert detect_customer_order_intent("Đơn ORD-120 giao tới đâu rồi?") == "status"
 
 
+def test_return_eligibility_questions_are_policy_not_order_refund_actions():
+    assert detect_customer_order_intent("Hàng đã mở nắp có được đổi trả không?") is None
+    assert detect_customer_order_intent(
+        "Có thể đổi trả nếu sản phẩm bị hư trong lúc vận chuyển không?"
+    ) is None
+    assert detect_customer_order_intent("Đổi trả đơn ORD-120") == "refund"
+
+
 def test_english_commerce_intents_and_safe_clarification_are_detected():
     assert _is_underspecified_purchase_request("Tôi muốn mua hàng")
     assert _is_underspecified_purchase_request("Lấy giúp mình 2 cái")

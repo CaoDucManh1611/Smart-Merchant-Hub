@@ -1,4 +1,5 @@
 import unittest
+import json
 from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
@@ -39,6 +40,20 @@ class ChatbotAgentToolTests(unittest.TestCase):
             db.add(conversation)
             db.flush()
             db.add_all([
+                BusinessSetting(
+                    business_id=business.id,
+                    key="workspace_modules",
+                    value=json.dumps({
+                        "business_model": "RETAIL",
+                        "business_type": "retail",
+                        "enabled_modules": ["retail"],
+                        "enabled_capabilities": [
+                            "CORE_CRM", "RETAIL_TOOLS", "INVENTORY_TOOLS",
+                            "ORDER_TOOLS", "CUSTOMER_TOOLS",
+                        ],
+                        "industry_ids": [],
+                    }),
+                ),
                 BusinessSetting(business_id=business.id, key="customer_fact_extraction_enabled", value="true"),
                 CustomerConsent(business_id=business.id, customer_id=customer.id, purpose="personalization", status="granted"),
                 Message(conversation_id=conversation.id, channel="telegram", direction="inbound", sender_type="customer", content="Tôi cần serum"),
@@ -91,6 +106,38 @@ class ChatbotAgentToolTests(unittest.TestCase):
             draft = execute_chatbot_tool(db, self.business_id, self.conversation_id, "tao_don_nhap", {"product_id": 1, "quantity": 2})
             self.assertTrue(draft["created"])
             self.assertTrue(draft["requires_confirmation"])
+
+    def test_tool_execution_rejects_conversation_from_another_tenant_before_data_access(self):
+        from unittest.mock import patch
+
+        with Session(self.engine) as db:
+            other_business = Business(name="Other tools shop", slug="other-tools-shop")
+            db.add(other_business)
+            db.flush()
+            other_customer = Customer(
+                business_id=other_business.id,
+                channel="telegram",
+                external_user_id="other-tools-customer",
+            )
+            db.add(other_customer)
+            db.flush()
+            foreign_conversation = Conversation(
+                business_id=other_business.id,
+                customer_id=other_customer.id,
+                channel="telegram",
+            )
+            db.add(foreign_conversation)
+            db.flush()
+            with patch("app.services.chatbot_agent._search_products") as search:
+                with self.assertRaisesRegex(ValueError, "conversation_not_found"):
+                    execute_chatbot_tool(
+                        db,
+                        self.business_id,
+                        foreign_conversation.id,
+                        "tim_san_pham",
+                        {"query": "serum"},
+                    )
+                search.assert_not_called()
 
     def test_business_hours_and_escalation(self):
         with Session(self.engine) as db:

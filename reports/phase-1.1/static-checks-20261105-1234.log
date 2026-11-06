@@ -1,0 +1,13 @@
+Command=python -m py_compile app/services/auto_reply_service.py app/services/conversation_graph.py app/api/recommendations.py tests/test_auto_reply_channels.py tests/test_conversation_graph.py tests/test_recommendations_api.py tests/test_conversation_context.py tests/test_conversation_turn_service.py
+PY_COMPILE_EXIT_CODE=0
+warning: in the working copy of 'backend/app/api/workspace.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/rag/lexical.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/tenancy/workspace_modules.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/scripts/export_rag_faq_candidates.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_rag_smartness_primitives.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_recommendations_api.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_vision_llm.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/tests/test_workspace_modules.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/tests/crm-theme.test.mjs', LF will be replaced by CRLF the next time Git touches it
+DIFF_CHECK_EXIT_CODE=0
+ELAPSED_SECONDS=0.41

@@ -1,0 +1,10 @@
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "case_count": 20,
+  "execution_path": "app.services.conversation_graph.graph_reply",
+  "answer_quality": "NOT_MEASURED",
+  "provider_calls": 0,
+  "preflight": "PASS; no context factory imported and no app/provider/database call made",
+  "next_requirement": "separate owner approval, then --allow-provider-calls and a synthetic in-memory SQLite context factory"
+}
+EXIT_CODE=0

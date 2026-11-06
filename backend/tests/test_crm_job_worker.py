@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -7,8 +8,10 @@ from sqlalchemy.pool import StaticPool
 from app.database.bases import TenantBase
 
 from app.models import Business, Conversation, CrmJob, Customer, Notification, Ticket, Workflow, WorkflowRun
+from app.models.chatbot_followup import ChatbotFollowUp
 from app.services.crm_job_worker import dispatch_all_crm_jobs
 from app.services.job_service import enqueue_job
+from app.services.chatbot_followup import schedule_followup
 from app.api.tickets import _enqueue_sla_job
 
 
@@ -167,6 +170,60 @@ class CrmJobWorkerTests(unittest.TestCase):
             self.assertIsNotNone(job.last_error)
             self.assertIsNotNone(run)
             self.assertEqual("failed", run.status)
+
+    def test_disabled_followup_capability_blocks_job_without_auto_retry_or_send(self):
+        due_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+        with Session(self.engine) as db:
+            followup = schedule_followup(
+                db,
+                self.primary_id,
+                self.conversation_id,
+                "Synthetic follow-up must remain unsent while capability is disabled",
+                due_at,
+                kind="csat",
+            )
+            job = db.scalar(
+                select(CrmJob).where(
+                    CrmJob.business_id == self.primary_id,
+                    CrmJob.kind == "chatbot.followup",
+                    CrmJob.payload["followup_id"].as_integer() == followup.id,
+                )
+            )
+            self.assertIsNotNone(job)
+            followup_id, job_id = followup.id, job.id
+            db.commit()
+
+        with patch(
+            "app.services.chatbot_followup.get_workspace_config",
+            return_value={"enabled_capabilities": ["CORE_CRM"]},
+        ), patch("app.services.chatbot_followup._send_followup") as send:
+            with Session(self.engine) as db:
+                self.assertEqual(1, dispatch_all_crm_jobs(db))
+                blocked = db.get(CrmJob, job_id)
+                row = db.get(ChatbotFollowUp, followup_id)
+                self.assertEqual("blocked", blocked.status)
+                self.assertEqual("workspace_capability_disabled", blocked.last_error)
+                self.assertEqual(1, blocked.attempts)
+                self.assertIsNone(blocked.locked_at)
+                self.assertEqual("scheduled", row.status)
+                send.assert_not_called()
+
+                # A blocked job is terminal for polling: restoring capability
+                # alone cannot cause an unbounded retry or a duplicate send.
+                with patch(
+                    "app.services.chatbot_followup.get_workspace_config",
+                    return_value={
+                        "enabled_capabilities": ["CORE_CRM", "CUSTOMER_TOOLS"],
+                        "available_dependencies": ["customer_records"],
+                    },
+                ):
+                    self.assertEqual(0, dispatch_all_crm_jobs(db))
+                db.refresh(blocked)
+                db.refresh(row)
+                self.assertEqual("blocked", blocked.status)
+                self.assertEqual(1, blocked.attempts)
+                self.assertEqual("scheduled", row.status)
+                send.assert_not_called()
 
     def test_worker_warns_before_sla_and_stale_rescheduled_job_is_a_noop(self):
         with Session(self.engine) as db:

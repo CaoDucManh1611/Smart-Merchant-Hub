@@ -1,0 +1,9 @@
+Started: 2026-11-05 13:02:44 +07:00
+Command: RUN_POSTGRES_TESTS=0; python -m pytest tests/test_workspace_modules.py tests/test_capability_registry.py tests/test_shop_bank_transfer.py tests/test_recommendations_api.py tests/test_chatbot_answer_routing.py tests/test_conversation_graph.py -q
+ERROR: file or directory not found: tests/test_workspace_modules.py
+
+no tests ran in 0.00s
+
+Ended: 2026-11-05 13:02:45 +07:00
+Elapsed: 1.67 seconds
+Exit code: 4

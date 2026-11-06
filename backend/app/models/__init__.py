@@ -31,7 +31,7 @@ from app.models.channel_migration import ChannelMigrationAudit
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.message_attachment import MessageAttachment
-from app.models.document import Document, DocumentChunk
+from app.models.document import Document, DocumentChunk, DocumentIndexSnapshot
 from app.models.setting import AppSetting
 from app.models.business import Business, Payment, ServicePlan, Subscription, User
 from app.models.subscription_payment_attempt import SubscriptionPaymentAttempt
@@ -103,6 +103,7 @@ __all__ = [
     "MessageAttachment",
     "Document",
     "DocumentChunk",
+    "DocumentIndexSnapshot",
     "AppSetting",
     "Business",
     "User",

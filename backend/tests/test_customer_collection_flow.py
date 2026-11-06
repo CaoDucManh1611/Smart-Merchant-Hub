@@ -1855,7 +1855,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             product = Product(
                 business_id=self.business_id,
                 sku="APPLIANCE-01",
-                name="Điện gia dụng mẫu 01",
+                name="Thiết bị kiểm thử số lượng Alpha 01",
                 price=Decimal("349000"),
                 stock_quantity=219,
                 reserved_quantity=0,
@@ -1863,17 +1863,25 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             )
             db.add(product)
             db.flush()
+            customer = Customer(
+                business_id=self.business_id,
+                channel="facebook",
+                external_user_id="quantity-followup-isolated-user",
+                name=None,
+            )
+            db.add(customer)
+            db.flush()
             conversation = Conversation(
                 business_id=self.business_id,
-                customer_id=self.customer_id,
+                customer_id=customer.id,
                 channel="facebook",
             )
             db.add(conversation)
             db.flush()
             for content in (
-                "Tôi muốn mua điện gia dụng mẫu 01 nhưng muốn xem chi tiết trước",
+                "Tôi muốn mua thiết bị kiểm thử số lượng Alpha 01 nhưng muốn xem chi tiết trước",
                 "alo",
-                "Tôi muốn mua điện gia dụng mẫu 01 nhưng muốn xem chi tiết trước",
+                "Tôi muốn mua thiết bị kiểm thử số lượng Alpha 01 nhưng muốn xem chi tiết trước",
                 "Cho tôi 2 cái",
             ):
                 db.add(Message(
@@ -1888,14 +1896,14 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             result = advance_customer_collection(
                 db,
                 business_id=self.business_id,
-                customer_id=self.customer_id,
+                customer_id=customer.id,
                 conversation_id=conversation.id,
                 source_channel="facebook",
                 text="Cho tôi 2 cái",
             )
 
             self.assertEqual("order_confirmation", result.current_field)
-            self.assertIn("2 Điện gia dụng mẫu 01", result.prompt)
+            self.assertIn("2 Thiết bị kiểm thử số lượng Alpha 01", result.prompt)
             self.assertIn("698.000 đồng", result.prompt)
             self.assertIn("Bạn xác nhận đặt hàng chứ?", result.prompt)
             self.assertEqual(orders_before, db.query(Order).filter(Order.business_id == self.business_id).count())

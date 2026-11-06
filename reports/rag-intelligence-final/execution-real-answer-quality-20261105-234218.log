@@ -1,0 +1,196 @@
+Recommendation ranking unavailable: OperationalError
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "execution_path": "app.services.conversation_graph.graph_reply",
+  "case_count": 20,
+  "provider_calls_authorized": true,
+  "synthetic_only": true,
+  "answer_correctness": "NOT_MEASURED; no human labels/approved judge supplied",
+  "answer_groundedness": "NOT_MEASURED; no citation review supplied",
+  "hallucination_rate": "NOT_MEASURED; no claim annotations supplied",
+  "run_limits": {
+    "max_cases": 20,
+    "max_model_calls": 80,
+    "max_physical_provider_attempts": 120,
+    "timeout_seconds": 1800
+  },
+  "run_budget": {
+    "deadline": 45300.062,
+    "remaining_seconds": 1782.0469999999987,
+    "elapsed_seconds": 17.95300000000134,
+    "calls": 14,
+    "max_calls": 80,
+    "attempts": 14,
+    "max_attempts": 120,
+    "provider_switches": 0,
+    "max_provider_switches": 40,
+    "last_provider": "groq",
+    "attempt_records": [
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43503.906,
+        "latency_ms": 2936.999999998079,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43507.25,
+        "latency_ms": 1796.0000000020955,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1707,
+          "completion_tokens": 220,
+          "total_tokens": 1927,
+          "thoughts_tokens": 191
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43509.078,
+        "latency_ms": 218.0000000007567,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43509.625,
+        "latency_ms": 218.0000000007567,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43509.953,
+        "latency_ms": 311.99999999807915,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43510.64,
+        "latency_ms": 1141.0000000032596,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1714,
+          "completion_tokens": 113,
+          "total_tokens": 1827,
+          "thoughts_tokens": 84
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43511.796,
+        "latency_ms": 187.9999999946449,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43512.078,
+        "latency_ms": 203.00000000133878,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43512.359,
+        "latency_ms": 1297.0000000059372,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1720,
+          "completion_tokens": 190,
+          "total_tokens": 1910,
+          "thoughts_tokens": 159
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43513.671,
+        "latency_ms": 296.9999999986612,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43514.109,
+        "latency_ms": 859.0000000040163,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1729,
+          "completion_tokens": 437,
+          "total_tokens": 2166,
+          "thoughts_tokens": 406
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43515.0,
+        "latency_ms": 296.0000000020955,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43515.421,
+        "latency_ms": 1796.9999999986612,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "usage": {
+          "prompt_tokens": 1751,
+          "completion_tokens": 202,
+          "total_tokens": 1953,
+          "thoughts_tokens": 173
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 43517.234,
+        "latency_ms": 719.0000000045984,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "usage": null
+      }
+    ]
+  }
+}

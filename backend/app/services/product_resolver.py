@@ -32,7 +32,10 @@ def normalize_product_text(value: str | None) -> str:
     normalized = normalized.replace("đ", "d")
     normalized = "".join(char for char in normalized if not unicodedata.combining(char))
     normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
-    return " ".join(normalized.split())
+    normalized = " ".join(normalized.split())
+    # Common customer typos should resolve consistently in exact lookup,
+    # fitment filtering, and recommendation matching.
+    return re.sub(r"\bwave\s+an(?:f|ph)a\b", "wave alpha", normalized)
 
 
 def _dimension_tokens(value: object) -> set[str]:
@@ -321,6 +324,11 @@ def resolve_prior_product_mention(
         Product.status == "active",
     ).order_by(Product.id.asc()).all()
     current_normalized = normalize_product_text(current_text)
+    products_by_id = {
+        int(product.id): product
+        for product in products
+        if getattr(product, "id", None) is not None
+    }
     messages = db.query(Message).filter(
         Message.conversation_id == conversation_id,
         Message.content.isnot(None),
@@ -332,6 +340,17 @@ def resolve_prior_product_mention(
         direction = getattr(message, "direction", "inbound")
         sender_type = getattr(message, "sender_type", "customer")
         if direction == "outbound" and sender_type in {"bot", "staff"}:
+            # Image matching and catalog replies persist the exact tenant-owned
+            # product ID. Prefer that provenance over re-parsing a display name.
+            metadata = getattr(message, "metadata_", None)
+            crm_product = metadata.get("crm_product") if isinstance(metadata, dict) else None
+            product_id = crm_product.get("id") if isinstance(crm_product, dict) else None
+            try:
+                exact_product = products_by_id.get(int(product_id)) if product_id is not None else None
+            except (TypeError, ValueError):
+                exact_product = None
+            if exact_product is not None:
+                return exact_product
             folded_text = f" {normalize_product_text(previous_text)} "
             exact_matches = {
                 int(product.id): product
@@ -354,9 +373,39 @@ def resolve_prior_product_mention(
                 return None
             if matches:
                 return matches[0]
+            if _is_unidentified_product_detail_followup(previous_text):
+                # A detail/confirmation follow-up without a new item name is
+                # still about the last uniquely proposed product. Don't let a
+                # prior generic fallback reply sever that short context chain.
+                continue
             # Do not reuse an entity from before the customer's latest other topic.
             return None
     return None
+
+
+def _is_unidentified_product_detail_followup(text: str) -> bool:
+    normalized = normalize_product_text(text)
+    if not normalized:
+        return False
+    cues = (
+        "xac nhan dung mau roi", "xac nhan dung mau", "dung mau roi", "dung mau",
+        "xac nhan dung roi", "xac nhan", "dung roi", "chinh xac",
+        "chi tiet san pham", "chi tiet", "mo ta san pham", "mo ta",
+        "thong tin san pham", "product details", "product description", "details",
+    )
+    remaining = normalized
+    matched = False
+    for cue in sorted(cues, key=len, reverse=True):
+        if cue in remaining:
+            remaining = remaining.replace(cue, " ")
+            matched = True
+    if not matched:
+        return False
+    conversational_fillers = {
+        "a", "ban", "cho", "do", "i", "la", "me", "minh", "nhe", "please",
+        "muon", "roi", "san", "pham", "toi", "want", "xem", "yeah", "yes", "you",
+    }
+    return not [token for token in remaining.split() if token not in conversational_fillers]
 
 
 def product_display_name(product: Product, language: str = "vi") -> str:

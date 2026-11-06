@@ -33,6 +33,10 @@ class IndustryRfmPriorUnavailable(RuntimeError):
 
 def _artifact_path() -> Path:
     root = Path(settings.RECOMMENDATION_ARTIFACT_DIR)
+    if not root.is_absolute():
+        # Relative artifact configuration is rooted at the backend package,
+        # never at the process CWD (which differs between CLI, workers, and tests).
+        root = Path(__file__).resolve().parents[2] / root
     return (root / INDUSTRY_PRIOR_PATH).resolve()
 
 

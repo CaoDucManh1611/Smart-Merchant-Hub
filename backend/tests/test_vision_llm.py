@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from app.core.config import settings
 from app.rag import llm_caller
+from app.services.provider_circuit_breaker import ProviderCircuitBreaker
 
 
 def test_groq_image_turn_uses_vision_model_and_inline_image():
@@ -21,6 +22,7 @@ def test_groq_image_turn_uses_vision_model_and_inline_image():
     ]
     with patch.object(settings, "LLM_PROVIDER", "groq"), \
          patch.object(settings, "GROQ_VISION_MODEL", "qwen/qwen3.8-27b"), \
+         patch.object(llm_caller, "_model_breaker", ProviderCircuitBreaker(failure_threshold=1, recovery_timeout=60)), \
          patch.object(llm_caller, "_groq_client", return_value=client), \
          patch.object(llm_caller, "_call_with_key_rotation", side_effect=lambda _pool, call, **_kwargs: call("test-key")):
         answer = llm_caller.call_llm_with_image(messages, b"image-bytes", "image/jpeg")

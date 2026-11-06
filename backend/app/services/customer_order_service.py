@@ -87,10 +87,19 @@ def detect_customer_order_intent(text: str | None) -> str | None:
     """Detect only deterministic, high-confidence customer order intents."""
     normalized = str(text or "").casefold()
     folded = _fold_order_text(normalized)
+    has_order_reference = bool(re.search(r"\b(?:ord(?:er)?|don)\s+[a-z0-9][a-z0-9-]*\b", folded))
+    asks_return_eligibility = any(term in folded for term in (
+        "co duoc", "duoc khong", "co the", "co duoc phep", "eligible",
+        "can i return", "can i exchange", "is it possible",
+    ))
     # “Chính sách đổi trả/hoàn tiền” is a read-only policy question.  It is
     # not a refund request for a specific order and must continue to the
     # knowledge-base/policy router.
-    if "chinh sach" in folded and any(term in folded for term in ("doi tra", "hoan tien", "bao hanh")):
+    if (
+        not has_order_reference
+        and any(term in folded for term in ("doi tra", "doi hang", "tra hang", "hoan tien", "hang loi", "hang bi loi"))
+        and ("chinh sach" in folded or asks_return_eligibility)
+    ):
         return None
     if any(term in normalized for term in REFUND_TERMS):
         return "refund"

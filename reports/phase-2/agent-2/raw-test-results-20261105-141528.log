@@ -1,0 +1,64 @@
+PHASE 2.3 RAW TEST RESULTS
+Timestamp: 2026-11-05 14:15:28 +07:00
+Workspace: C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub
+
+ENVIRONMENT PROBE
+PATH python: NOT_FOUND
+PATH python3: NOT_FOUND
+PATH pytest: NOT_FOUND
+py -0p: No installed Pythons found!
+Bundled Python: C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe
+Package path: backend/.migrationdeps
+Module probe: pytest=True, langgraph=False, payos=False, sqlalchemy=True, pydantic=True
+No install/network.
+
+STATIC CHECK
+Command: bundled Python -m compileall -q backend/app backend/tests
+Result: compileall_exit=0
+
+PHASE 2 / 2.1 / 2.2 / 2.3 CONTRACT TESTS
+Command:
+  python -m pytest -q --basetemp backend/.pytest_tmp/phase23-final \
+    backend/tests/test_sales_journey_engine.py \
+    backend/tests/test_sales_journey_policy.py \
+    backend/tests/test_sales_journey_integration_contract.py \
+    backend/tests/test_sales_journey_graph_bridge.py
+Result:
+  51 passed in 1.01s
+  pytest_exit=0
+
+CAPABILITY AND BRAIN REGRESSION
+Command:
+  python -m pytest -q --basetemp C:\tmp\smh-phase23-cap \
+    backend/tests/test_capability_registry.py \
+    backend/tests/test_universal_sales_brain.py -k "not graph"
+Result:
+  21 passed, 2 deselected in 0.73s
+
+BASELINE 6-FAILURE / 2-ERROR TRIAGE
+
+1. `test_universal_sales_brain.py` Graph tests: 2 failed. Import stops at
+   `ModuleNotFoundError: No module named 'langgraph'`.
+2. `test_chatbot_followup.py` ambiguous-provider and consent tests: 2 failed.
+   Their patch target imports `auto_reply_service`, which stops at
+   `ModuleNotFoundError: No module named 'payos'`.
+3. `test_chatbot_followup.py` schedule/idempotency test: 1 failed in the
+   combined class run because the shared class-level StaticPool fixture saw
+   two due rows. The same test passed alone: `1 passed in 0.85s`.
+4. `test_rag_serving_contract.py` catalog-price test: 1 failed because its
+   claim renderer imports `auto_reply_service`, which stops at missing
+   `payos`.
+5. Two RAG/component errors were pytest temporary-directory cleanup errors
+   (`WinError 5`). The affected RAG entry-trace and component tests passed when
+   rerun with dedicated writable basetemp directories.
+
+Additional collection probes also confirmed missing `langgraph` for
+`test_conversation_graph.py` and missing `payos` for `test_workflow_api.py` and
+`test_chatbot_answer_routing.py`. These are environment blockers, not claimed
+as Phase 2.3 passes.
+
+No Phase 2 integration regression was reproduced in the available runtime.
+
+FINAL CHECK
+Command: git diff --check
+Result: exit 0; existing line-ending warnings only.

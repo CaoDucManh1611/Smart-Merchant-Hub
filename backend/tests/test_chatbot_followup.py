@@ -13,6 +13,7 @@ from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.customer_collection import CustomerConsent
 from app.services.chatbot_followup import (
+    FollowupCapabilityDisabled,
     dispatch_due_followups,
     schedule_abandoned_checkout_followup,
     schedule_post_delivery_followup,
@@ -39,6 +40,17 @@ class ChatbotFollowUpTests(unittest.TestCase):
             db.commit()
             cls.business_id, cls.conversation_id, cls.customer_id = business.id, conversation.id, customer.id
 
+    def setUp(self):
+        self._workspace_config = patch(
+            "app.services.chatbot_followup.get_workspace_config",
+            return_value={
+                "enabled_capabilities": ["CORE_CRM", "CUSTOMER_TOOLS"],
+                "available_dependencies": ["customer_records"],
+            },
+        )
+        self._workspace_config.start()
+        self.addCleanup(self._workspace_config.stop)
+
     def test_schedule_and_dispatch_is_idempotent(self):
         with Session(self.engine) as db:
             row = schedule_followup(
@@ -57,6 +69,60 @@ class ChatbotFollowUpTests(unittest.TestCase):
                 self.assertEqual(1, send.call_count)
                 result_again = dispatch_due_followups(db, self.business_id, limit=10)
                 self.assertEqual(0, result_again["sent"])
+
+    def test_dispatch_execution_boundary_blocks_pending_messages_when_capability_is_disabled(self):
+        with Session(self.engine) as db:
+            row = schedule_followup(
+                db,
+                self.business_id,
+                self.conversation_id,
+                "Tin follow-up không được gửi khi tắt quyền",
+                datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1),
+                kind="csat",
+            )
+            db.commit()
+            with patch(
+                "app.services.chatbot_followup.get_workspace_config",
+                return_value={"enabled_capabilities": ["CORE_CRM"]},
+            ), patch("app.services.chatbot_followup._send_followup") as send:
+                result = dispatch_due_followups(db, self.business_id, limit=10)
+            self.assertEqual("workspace_capability_disabled", result["blocked"])
+            self.assertEqual(0, result["sent"])
+            db.refresh(row)
+            self.assertEqual("scheduled", row.status)
+            send.assert_not_called()
+
+    def test_dispatch_execution_boundary_fails_closed_when_workspace_config_read_fails(self):
+        with Session(self.engine) as db:
+            with patch(
+                "app.services.chatbot_followup.get_workspace_config",
+                side_effect=RuntimeError("configuration store unavailable"),
+            ), patch("app.services.chatbot_followup._send_followup") as send:
+                result = dispatch_due_followups(db, self.business_id, limit=10)
+            self.assertEqual("workspace_capability_disabled", result["blocked"])
+            self.assertEqual(0, result["total"])
+            send.assert_not_called()
+
+    def test_segment_followup_service_fails_closed_when_customer_capability_is_disabled(self):
+        with Session(self.engine) as db:
+            with patch(
+                "app.services.chatbot_followup.get_workspace_config",
+                return_value={"enabled_capabilities": ["CORE_CRM"]},
+            ):
+                with self.assertRaises(FollowupCapabilityDisabled):
+                    schedule_segment_followups(
+                        db,
+                        business_id=self.business_id,
+                        segment_id=77,
+                        customer_ids=[self.customer_id],
+                        message="Không được lên lịch khi tắt capability",
+                        run_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                    )
+            rows = db.query(ChatbotFollowUp).filter(
+                ChatbotFollowUp.business_id == self.business_id,
+                ChatbotFollowUp.kind == "segment_campaign",
+            ).all()
+            self.assertEqual([], rows)
 
     def test_special_followups_are_idempotent_by_business_event(self):
         with Session(self.engine) as db:

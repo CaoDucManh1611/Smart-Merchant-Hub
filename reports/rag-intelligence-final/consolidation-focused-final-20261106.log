@@ -1,0 +1,8 @@
+COMMAND: C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Scripts\python.exe -m pytest -q C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_personalized_rag_pipeline.py::test_training_precomputes_cache_using_same_tenant_population C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py::test_rfm_excludes_pending_cancelled_refunded_and_future_orders C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_answer_generation_eval.py C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_compare_rag_runs.py C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_prepare_rag_human_review.py
+TEST_CWD: C:\Users\Administrator\AppData\Local\Temp\smh-rag-consolidation-final-focused-cwd
+RUN_POSTGRES_TESTS=0
+Provider credentials cleared
+........................................................................ [ 77%]
+.....................                                                    [100%]
+93 passed in 4.04s
+EXIT_CODE=0

@@ -13,6 +13,7 @@ from app.models.customer import Customer
 from app.models.document import Document, DocumentChunk
 from app.models.sales import Product
 from app.rag.retriever import _retrieve_lexical
+from capability_fixtures import enable_workspace_capabilities
 
 
 class CrmTwoShopEndToEndTests(unittest.TestCase):
@@ -29,6 +30,9 @@ class CrmTwoShopEndToEndTests(unittest.TestCase):
             shop_b = Business(name="E2E Shop B", slug="e2e-shop-b")
             db.add_all([shop_a, shop_b])
             db.flush()
+            test_capabilities = ("RETAIL_TOOLS", "ORDER_TOOLS", "PAYMENT_TOOLS")
+            enable_workspace_capabilities(db, shop_a.id, *test_capabilities)
+            enable_workspace_capabilities(db, shop_b.id, *test_capabilities)
 
             customer_a = Customer(
                 business_id=shop_a.id,

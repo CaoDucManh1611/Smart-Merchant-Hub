@@ -40,15 +40,41 @@ from app.schemas.chatbot import (
     FollowUpOut,
 )
 from app.services.chatbot_agent import AGENT_TOOLS, build_agent_memory, execute_chatbot_tool
-from app.services.chatbot_followup import dispatch_due_followups, schedule_followup, schedule_inactive_customer_followups
+from app.services.capability_registry import (
+    CHATBOT_TOOL_CAPABILITY_REQUESTS,
+    resolve_capability_request,
+)
+from app.services.chatbot_followup import (
+    customer_followup_capability_enabled,
+    dispatch_due_followups,
+    schedule_followup,
+    schedule_inactive_customer_followups,
+)
 from app.services.csat_service import summarize_csat
 from app.services.audit_service import record_audit
 from app.services.topic_discovery_service import tenant_topic_suggestions
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
+from app.tenancy.workspace_modules import get_workspace_config
 
 
 router = APIRouter()
+
+
+_CHATBOT_TOOL_CAPABILITIES = CHATBOT_TOOL_CAPABILITY_REQUESTS
+
+
+def _require_customer_followup_capability(db: Session, business_id: int) -> None:
+    if customer_followup_capability_enabled(db, business_id):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "workspace_capability_disabled",
+            "required_capabilities": ["CUSTOMER_TOOLS"],
+            "message": "Shop chưa bật capability cần thiết cho chăm sóc khách hàng.",
+        },
+    )
 
 
 _LEARNING_TOPICS = (
@@ -281,6 +307,28 @@ def execute_tool(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
+    capability_request = _CHATBOT_TOOL_CAPABILITIES.get(payload.tool)
+    if payload.tool in AGENT_TOOLS and capability_request is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "workspace_tool_unmapped", "tool": payload.tool},
+        )
+    if capability_request is not None:
+        try:
+            workspace = get_workspace_config(db, tenant.business_id)
+        except Exception:
+            workspace = {"configuration_rejected": True, "enabled_capabilities": ["CORE_CRM"]}
+        permission = resolve_capability_request(workspace, **capability_request)
+        if not permission.allowed:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "workspace_capability_disabled",
+                    "tool": payload.tool,
+                    "required_capabilities": list(permission.required_capabilities),
+                    "message": "Shop chưa bật capability cần thiết cho công cụ này.",
+                },
+            )
     try:
         result = execute_chatbot_tool(
             db,
@@ -295,6 +343,8 @@ def execute_tool(
             raise HTTPException(status_code=422, detail="Tool chưa được cho phép.") from exc
         if str(exc) == "conversation_not_found":
             raise HTTPException(status_code=404, detail="Cuộc hội thoại không tồn tại.") from exc
+        if str(exc) in {"workspace_capability_disabled", "workspace_tool_unmapped"}:
+            raise HTTPException(status_code=403, detail={"code": str(exc), "tool": payload.tool}) from exc
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     record_audit(
         db,
@@ -335,6 +385,7 @@ def schedule_inactive_customers(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
+    _require_customer_followup_capability(db, tenant.business_id)
     result = schedule_inactive_customer_followups(
         db,
         business_id=tenant.business_id,
@@ -541,6 +592,7 @@ def create_followup(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
+    _require_customer_followup_capability(db, tenant.business_id)
     try:
         row = schedule_followup(
             db,
@@ -566,6 +618,7 @@ def dispatch_followups(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
+    _require_customer_followup_capability(db, tenant.business_id)
     result = dispatch_due_followups(db, tenant.business_id, limit=limit)
     record_audit(db, business_id=tenant.business_id, user_id=actor.id if actor else None, action="followups_dispatched", resource_type="chatbot_followup", metadata=result)
     db.commit()

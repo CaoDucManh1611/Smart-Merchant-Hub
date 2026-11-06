@@ -1,0 +1,42 @@
+Command=python -m pytest -q --tb=short tests/test_auto_reply_channels.py tests/test_conversation_graph.py tests/test_recommendations_api.py
+DatabaseMode=RUN_POSTGRES_TESTS=0; offline isolated fixtures only
+..........................................................F............F [ 50%]
+.................................................................. [ 96%]
+.....                                                                    [100%]
+================================== FAILURES ===================================
+_______ test_instagram_image_is_passed_to_vision_model_and_gets_a_reply _______
+tests\test_auto_reply_channels.py:947: in test_instagram_image_is_passed_to_vision_model_and_gets_a_reply
+    vision_model.assert_called_once_with(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py:958: in assert_called_once_with
+    raise AssertionError(msg)
+E   AssertionError: Expected 'call_llm_with_image' to be called once. Called 0 times.
+___________ test_rag_auto_reply_checks_ai_quota_before_calling_llm ____________
+tests\test_auto_reply_channels.py:1143: in test_rag_auto_reply_checks_ai_quota_before_calling_llm
+    result = process_rag_auto_reply(
+app\rag\serving.py:30: in wrapped
+    result = function(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\auto_reply_service.py:4271: in process_rag_auto_reply
+    send_reply(reply_text)
+app\services\auto_reply_service.py:4186: in send_reply
+    result = send_text_reply(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\auto_reply_service.py:4014: in send_text_reply
+    response = _send_channel_reply(
+app\services\auto_reply_service.py:903: in _send_channel_reply
+    raise ValueError(f"Unsupported auto-reply channel: {channel}")
+E   ValueError: Unsupported auto-reply channel: <Mock name='mock.scalar().channel' id='1569092858560'>
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:3987 Conversation channel mismatch: event=telegram, database=<Mock name='mock.scalar().channel' id='1569092858560'>
+============================== warnings summary ===============================
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:926: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_auto_reply_channels.py::test_instagram_image_is_passed_to_vision_model_and_gets_a_reply
+FAILED tests/test_auto_reply_channels.py::test_rag_auto_reply_checks_ai_quota_before_calling_llm
+2 failed, 141 passed, 1 warning, 6 subtests passed in 9.30s
+EXIT_CODE=1
+ELAPSED_SECONDS=12.78

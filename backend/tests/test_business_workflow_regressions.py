@@ -11,6 +11,7 @@ from app.api.commercial import ProjectUpdate, QuoteLine, QuoteUpdate, update_pro
 from app.database.bases import TenantBase
 from app.models.customer import Customer
 from app.models.industry_modules import Appointment, AppointmentService, CommercialProject, CommercialQuote
+from app.tenancy.workspace_modules import save_workspace_config
 from app.tenancy.context import TenantContext
 
 
@@ -30,6 +31,11 @@ def business_db(monkeypatch):
             CommercialProject(business_id=1, customer_id=customer.id, title="Project", budget=Decimal("100"), starts_on=date(2030, 1, 10), due_on=date(2030, 1, 20)),
             Appointment(business_id=1, customer_id=customer.id, service_id=service.id, assigned_user_id=44, starts_at=datetime(2030, 1, 10, 2), ends_at=datetime(2030, 1, 10, 3), status="scheduled", reminder_minutes_before=0),
         ])
+        db.commit()
+        save_workspace_config(db, 1, {
+            "business_model": "MULTI_SERVICE",
+            "enabled_capabilities": ["CORE_CRM", "APPOINTMENT_TOOLS", "PROJECT_QUOTATION_TOOLS"],
+        })
         db.commit()
         yield db, TenantContext(1, "test")
     engine.dispose()

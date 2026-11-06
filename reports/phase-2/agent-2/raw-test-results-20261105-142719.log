@@ -1,0 +1,79 @@
+PHASE 2.4 RAW TEST RESULTS
+Timestamp: 2026-11-05 14:27:19 +07:00
+Workspace: C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub
+Interpreter: C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe
+PYTHONPATH: backend\.migrationdeps;backend
+RUN_POSTGRES_TESTS=0
+
+1) PHASE 2 CORE + GRAPH BRIDGE
+Command:
+  python -m pytest -q --basetemp C:\tmp\smh-phase24-core-rerun
+    backend/tests/test_sales_journey_engine.py
+    backend/tests/test_sales_journey_policy.py
+    backend/tests/test_sales_journey_integration_contract.py
+    backend/tests/test_sales_journey_graph_bridge.py
+Result:
+  52 passed in 1.09s
+PYTEST_EXIT=0
+
+2) CAPABILITY REGISTRY + UNIVERSAL SALES BRAIN NON-GRAPH
+Command:
+  python -m pytest -q --basetemp C:\tmp\smh-phase24-capability
+    backend/tests/test_capability_registry.py
+    backend/tests/test_universal_sales_brain.py -k "not graph"
+Result:
+  21 passed, 2 deselected in 0.74s
+PYTEST_EXIT=0
+
+3) CONVERSATION GRAPH COLLECTION
+Command:
+  python -m pytest -q --basetemp C:\tmp\smh-phase24-graph backend/tests/test_conversation_graph.py
+Result:
+  Collection error at backend/app/services/conversation_graph.py:13:
+  ModuleNotFoundError: No module named 'langgraph'
+PYTEST_EXIT=2
+Classification: BLOCKED / dependency unavailable; no test body ran.
+
+4) WORKFLOW + CHATBOT ROUTING COLLECTION
+Command:
+  python -m pytest -q --basetemp C:\tmp\smh-phase24-workflow
+    backend/tests/test_workflow_api.py backend/tests/test_chatbot_answer_routing.py
+Result:
+  Collection errors in subscription_payment_service.py:8:
+  ModuleNotFoundError: No module named 'payos'
+PYTEST_EXIT=2
+Classification: BLOCKED / dependency unavailable; no test body ran.
+
+5) ISOLATED REAL SQLITE ROUND TRIP
+Method: in-memory SQLAlchemy schema containing only synthetic customer/channel/
+conversation/message rows; no repository test.db and no production DB.
+Result:
+  first_load empty version 1
+  second_load loaded previous DISCOVERY version 2
+  tenant_mismatch empty
+  customer_mismatch empty
+  delivery_unknown empty
+  corrupt_version invalid_or_expired
+  db_round_trip=PASS
+Exit: 0
+
+6) DUPLICATE/RETRY DELIVERY CHECK
+Result:
+  unknown_retry_does_not_hide_sent loaded 4
+  duplicate_same_state_preserved loaded 4
+  duplicate_delivery=PASS
+Exit: 0
+
+7) STATIC CHECKS
+Command: python -m compileall -q backend/app backend/tests
+Result: COMPILEALL_EXIT=0
+Command: git diff --check
+Result: DIFF_CHECK_EXIT=0; existing LF/CRLF advisories only.
+
+8) PHASE 1/1.1 BASELINE REFERENCE
+The latest Agent 1 report records 2,043 passed, 85 failed, 2 skipped. That
+full run is not rerun or reclassified as a Phase 2.4 pass. Agent 1 acceptance
+remains open.
+
+No providers, real customer data, customer messages, production DB, migration,
+reindex, install or network access were used.

@@ -1,0 +1,17 @@
+COMMAND: C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Scripts\python.exe -m pytest -q --durations=10 tests/test_conversation_graph.py tests/test_rag_answer_generation_eval.py tests/test_rag_components.py tests/test_rag_tenant_isolation.py tests/test_capability_registry.py tests/test_workspace_modules.py
+........................................................................ [ 34%]
+........................................................................ [ 69%]
+................................................................         [100%]
+============================ slowest 10 durations =============================
+1.50s call     tests/test_rag_answer_generation_eval.py::test_all_20_synthetic_contexts_are_ephemeral_and_read_only
+0.91s call     tests/test_conversation_graph.py::test_enabled_sales_journey_runs_once_without_extra_llm_and_fails_closed_without_policy
+0.34s call     tests/test_rag_answer_generation_eval.py::test_case_011_graph_fallback_is_captured_by_read_only_notification_spy
+0.15s call     tests/test_rag_components.py::test_docx_loader_keeps_table_cells_in_document_order
+0.10s call     tests/test_rag_tenant_isolation.py::RagTenantIsolationTests::test_catalog_upsert_is_idempotent_for_repeated_attributes_and_chunk_links
+0.08s call     tests/test_rag_tenant_isolation.py::RagTenantIsolationTests::test_product_recommendation_keeps_multiple_catalog_rows_ahead_of_generic_guides
+0.08s call     tests/test_rag_tenant_isolation.py::RagTenantIsolationTests::test_lexical_retrieval_ranks_relevant_late_chunks_before_candidate_limit
+0.07s call     tests/test_rag_tenant_isolation.py::RagTenantIsolationTests::test_lexical_retrieval_drops_weak_single_token_overlap
+0.07s call     tests/test_rag_tenant_isolation.py::RagTenantIsolationTests::test_lexical_retrieval_uses_section_heading_for_headingless_chunks
+0.06s call     tests/test_rag_tenant_isolation.py::RagTenantIsolationTests::test_retriever_normalizes_sqlite_json_metadata_before_parent_expansion
+208 passed in 6.13s
+EXIT_CODE=0

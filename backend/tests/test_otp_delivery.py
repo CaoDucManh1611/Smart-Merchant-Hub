@@ -36,7 +36,7 @@ def test_smtp_delivery_sends_message_without_logging_or_returning_code():
     assert result.provider == "smtp"
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
     assert message["To"] == "customer@example.test"
-    assert "123456" in message.get_content()
+    assert "123456" in message.get_body(preferencelist=("plain",)).get_content()
 
 
 def test_smtp_probe_contains_no_otp_and_means_provider_acceptance():

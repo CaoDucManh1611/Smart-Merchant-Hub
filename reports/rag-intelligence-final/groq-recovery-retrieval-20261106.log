@@ -1,0 +1,25 @@
+COMMAND=python scripts/evaluate_synthetic_rag_benchmark.py --results ..\reports\rag-intelligence-final\groq-recovery-retrieval-benchmark-20261106.json
+STARTED=2026-11-06T02:44:00.1335797+07:00
+{
+  "version": "rag-intelligence-synthetic-v1",
+  "scope": "actual retrieve() BM25 serving path against in-memory SQLite with synthetic rows; no vector provider or answer-generation path",
+  "case_count": 51,
+  "document_count": 30,
+  "tenant_count": 3,
+  "top_k": 5,
+  "retrieval_relevant_case_rate_at_k": 1.0,
+  "mean_evidence_recall_at_k": 1.0,
+  "mrr_at_k": 1.0,
+  "empty_result_accuracy": 1.0,
+  "forbidden_evidence_hit_count": 0,
+  "tenant_isolation_violation_count": 0,
+  "prompt_injection_fixture_count": 3,
+  "provider_calls": 0,
+  "answer_grounding": "NOT_MEASURED; no model/provider invoked",
+  "answer_correctness": "NOT_MEASURED; no generated answers or human labels",
+  "unsupported_answer_claims": "NOT_MEASURED; no generated answers",
+  "live_model_calls_per_answer": "NOT_MEASURED; runner exercises retrieval only"
+}
+EXIT_CODE=0
+FINISHED=2026-11-06T02:44:01.4447754+07:00
+ELAPSED_SECONDS=1.31

@@ -856,7 +856,33 @@ const signupError = ref("");
 const signupNotice = ref("");
 const signupForm = ref({ owner_name: "", email: "", shop_name: "", password: "", otp: "" });
 const quotaSnapshot = ref(null);
-const workspaceConfig = ref({ business_type: "retail", enabled_modules: ["retail"], recommendation_industry: "general_retail", rfm_model: null, modules: [] });
+const workspaceConfig = ref({ business_type: "retail", business_model: "RETAIL", enabled_modules: [], enabled_capabilities: ["CORE_CRM"], industry_ids: [], recommendation_industry: "general_retail", rfm_model: null, purchase_propensity_model: null, capabilities: [], modules: [] });
+const workspaceBusinessModels = [
+  { id: "RETAIL", name: "Bán lẻ", desc: "Bán sản phẩm, quản lý đơn và tồn kho." },
+  { id: "APPOINTMENT_SERVICE", name: "Dịch vụ theo lịch", desc: "Tư vấn dịch vụ, lịch hẹn và nhân viên phụ trách." },
+  { id: "PROJECT_B2B", name: "Dự án / Khách doanh nghiệp", desc: "Quản lý khách doanh nghiệp, báo giá và dự án." },
+  { id: "MULTI_SERVICE", name: "Đa dịch vụ", desc: "Kết hợp nhiều mô hình trong cùng một shop." },
+];
+const workspaceIndustryOptions = [
+  ["fashion_apparel", "Thời trang"], ["beauty_cosmetics", "Làm đẹp & mỹ phẩm"],
+  ["electronics", "Điện tử"], ["automotive_motorbike", "Ô tô & xe máy"],
+  ["furniture_home_living", "Nội thất & gia dụng"], ["food_beverage", "Thực phẩm & đồ uống"],
+  ["real_estate", "Bất động sản"], ["education", "Giáo dục"],
+  ["travel_hospitality", "Du lịch & lưu trú"], ["healthcare_wellness", "Y tế & chăm sóc sức khỏe"],
+  ["b2b_wholesale", "B2B & bán sỉ"], ["services_repair", "Dịch vụ & sửa chữa"],
+  ["rental_business", "Cho thuê"], ["professional_services", "Dịch vụ chuyên môn"],
+];
+const workspaceCapabilityOptions = [
+  ["RETAIL_TOOLS", "Bán lẻ", "Danh mục hàng hóa, giá và quản lý sản phẩm."],
+  ["APPOINTMENT_TOOLS", "Dịch vụ theo lịch", "Danh mục dịch vụ và quy trình lịch hẹn."],
+  ["PROJECT_QUOTATION_TOOLS", "Báo giá & dự án", "Phân hệ quản lý báo giá và dự án."],
+  ["INVENTORY_TOOLS", "Kho & tồn", "Tồn kho, nhập hàng và nhà cung cấp; cần bật Bán lẻ."],
+  ["ORDER_TOOLS", "Đơn hàng", "Tra cứu và tiếp nhận đơn; cần bật Bán lẻ."],
+  ["CUSTOMER_TOOLS", "Thông tin khách hàng", "Tra cứu hồ sơ khách hiện tại."],
+  ["RENTAL_TOOLS", "Cho thuê", "Tra cứu sản phẩm thuê và yêu cầu thuê."],
+  ["PAYMENT_TOOLS", "Thanh toán", "Thông tin và trạng thái thanh toán được cấu hình."],
+  ["RECOMMENDATION_TOOLS", "Gợi ý sản phẩm", "Xếp hạng gợi ý; cần bật Bán lẻ và có consent phù hợp."],
+];
 const workspaceConfigLoading = ref(false);
 const workspaceConfigSaving = ref(false);
 const workspaceConfigError = ref("");
@@ -1150,16 +1176,6 @@ function workspaceModuleEnabled(module) {
   return workspaceConfig.value.enabled_modules.includes(module);
 }
 
-function normalizeWorkspaceRfmIndustry() {
-  if (workspaceConfig.value.business_type === "retail") {
-    if (!["general_retail", "fashion", "grocery", "ecommerce"].includes(workspaceConfig.value.recommendation_industry)) {
-      workspaceConfig.value.recommendation_industry = "general_retail";
-    }
-    return;
-  }
-  workspaceConfig.value.recommendation_industry = workspaceConfig.value.business_type;
-}
-
 async function fetchWorkspaceConfig() {
   if (!authUser.value || !tenantReady.value) return;
   workspaceConfigLoading.value = true;
@@ -1170,9 +1186,14 @@ async function fetchWorkspaceConfig() {
     if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
     workspaceConfig.value = {
       business_type: detail.business_type || "retail",
+      business_model: detail.business_model || "RETAIL",
       enabled_modules: Array.isArray(detail.enabled_modules) ? detail.enabled_modules : ["retail"],
+      enabled_capabilities: Array.isArray(detail.enabled_capabilities) ? detail.enabled_capabilities : ["CORE_CRM", "RETAIL_TOOLS"],
+      industry_ids: Array.isArray(detail.industry_ids) ? detail.industry_ids : [],
       recommendation_industry: detail.recommendation_industry || "general_retail",
       rfm_model: detail.rfm_model || null,
+      purchase_propensity_model: detail.purchase_propensity_model || null,
+      capabilities: Array.isArray(detail.capabilities) ? detail.capabilities : [],
       modules: Array.isArray(detail.modules) ? detail.modules : [],
     };
   } catch (err) {
@@ -1192,15 +1213,16 @@ async function saveWorkspaceConfig() {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        business_type: workspaceConfig.value.business_type,
-        enabled_modules: workspaceConfig.value.enabled_modules,
-        recommendation_industry: workspaceConfig.value.recommendation_industry,
+        business_model: workspaceConfig.value.business_model,
+        industry_ids: workspaceConfig.value.industry_ids,
+        enabled_capabilities: workspaceConfig.value.enabled_capabilities,
+        purchase_model_reference_industry: workspaceConfig.value.recommendation_industry,
       }),
     });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(detail.detail?.message || detail.detail || `HTTP ${response.status}`);
     workspaceConfig.value = { ...workspaceConfig.value, ...detail };
-    workspaceConfigNotice.value = "Đã lưu mô hình và module cho shop. Dữ liệu cũ vẫn được giữ nguyên.";
+    workspaceConfigNotice.value = "Đã lưu mô hình, ngành, công cụ và cấu hình tham chiếu cho shop. Dữ liệu cũ vẫn được giữ nguyên.";
     if ((["appointments"].includes(currentTab.value) && !workspaceModuleEnabled("appointments"))
       || (["commercial"].includes(currentTab.value) && !workspaceModuleEnabled("projects"))
       || (!workspaceModuleEnabled("retail") && ["products", "orders", "purchase-orders"].includes(currentTab.value))) {
@@ -15700,51 +15722,49 @@ function followupRecommendationLabel(item) {
           </div>
           <div v-if="workspaceConfigError" class="settings-notice team-error" role="alert">{{ $t(workspaceConfigError) }}</div>
           <div class="workspace-profile-grid" role="radiogroup" aria-label="Mô hình kinh doanh">
-            <label v-for="profile in [
-              { id: 'retail', name: 'Bán lẻ', desc: 'Sản phẩm, đơn bán và tồn kho.' },
-              { id: 'services', name: 'Dịch vụ theo lịch', desc: 'Khách hàng, cuộc trò chuyện, công việc và chăm sóc.' },
-              { id: 'b2b', name: 'Dự án / Khách doanh nghiệp', desc: 'Doanh nghiệp, khách tiềm năng và quy trình bán hàng.' },
-              { id: 'mixed', name: 'Đa dịch vụ', desc: 'Kết hợp nhiều mô hình trong cùng shop.' },
-            ]" :key="profile.id" class="workspace-profile-option" :class="{ selected: workspaceConfig.business_type === profile.id }">
-              <input v-model="workspaceConfig.business_type" type="radio" name="workspace-business-type" :value="profile.id" :disabled="!canManageWorkspace" @change="normalizeWorkspaceRfmIndustry" />
+            <label v-for="profile in workspaceBusinessModels" :key="profile.id" class="workspace-profile-option" :class="{ selected: workspaceConfig.business_model === profile.id }">
+              <input v-model="workspaceConfig.business_model" type="radio" name="workspace-business-model" :value="profile.id" :disabled="!canManageWorkspace || workspaceConfigSaving" />
               <span><strong>{{ $t(profile.name) }}</strong><small>{{ $t(profile.desc) }}</small></span>
             </label>
           </div>
+          <section class="workspace-config-subsection" aria-labelledby="workspace-industries-heading">
+            <div class="workspace-config-subsection-heading"><div><h3 id="workspace-industries-heading">{{ $t('Ngành nghề của shop') }}</h3><p>{{ $t('Có thể chọn nhiều ngành. Ngành chỉ định hướng cách tư vấn, không thay đổi mô hình kinh doanh hoặc quyền công cụ.') }}</p></div><span class="connection-badge">{{ workspaceConfig.industry_ids.length }} {{ $t('ngành') }}</span></div>
+            <div class="workspace-option-grid">
+              <label v-for="([industryId, industryName]) in workspaceIndustryOptions" :key="industryId" class="workspace-choice-option">
+                <input v-model="workspaceConfig.industry_ids" type="checkbox" :value="industryId" :disabled="!canManageWorkspace || workspaceConfigSaving" />
+                <span>{{ $t(industryName) }}</span>
+              </label>
+            </div>
+            <p v-if="!workspaceConfig.industry_ids.length" class="settings-muted">{{ $t('Chưa chọn ngành; chatbot dùng hướng dẫn tổng quát.') }}</p>
+          </section>
           <div class="workspace-rfm-prior">
-            <label for="workspace-rfm-industry">{{ $t('Ngành tham chiếu cho model RFM') }}</label>
+            <label for="workspace-rfm-industry">{{ $t('Profile tham chiếu để phân nhóm RFM') }}</label>
             <select id="workspace-rfm-industry" v-model="workspaceConfig.recommendation_industry" :disabled="!canManageWorkspace || workspaceConfigSaving">
-              <option v-if="workspaceConfig.business_type === 'retail'" value="general_retail">{{ $t('Bán lẻ tổng hợp') }}</option>
-              <option v-if="workspaceConfig.business_type === 'retail'" value="fashion">{{ $t('Thời trang') }}</option>
-              <option v-if="workspaceConfig.business_type === 'retail'" value="grocery">{{ $t('Thực phẩm & hàng tiêu dùng') }}</option>
-              <option v-if="workspaceConfig.business_type === 'retail'" value="ecommerce">{{ $t('Thương mại điện tử') }}</option>
-              <option v-if="workspaceConfig.business_type !== 'retail'" :value="workspaceConfig.business_type">{{ $t(workspaceConfig.business_type === 'services' ? 'Dịch vụ' : workspaceConfig.business_type === 'b2b' ? 'B2B / dự án' : 'Đa ngành') }}</option>
+              <option value="general_retail">{{ $t('Bán lẻ tổng hợp') }}</option>
+              <option value="fashion">{{ $t('Thời trang') }}</option>
+              <option value="grocery">{{ $t('Thực phẩm & hàng tiêu dùng') }}</option>
+              <option value="ecommerce">{{ $t('Thương mại điện tử') }}</option>
+              <option value="services">{{ $t('Dịch vụ (profile tổng hợp)') }}</option>
+              <option value="b2b">{{ $t('B2B (profile tổng hợp)') }}</option>
+              <option value="mixed">{{ $t('Đa dịch vụ (profile tổng hợp)') }}</option>
             </select>
-            <small v-if="workspaceConfig.rfm_model?.available !== false">
-              {{ $t('Shop mới dùng model tham chiếu ngay; sau khi có') }} {{ workspaceConfig.rfm_model?.shop_model_minimum_consented_buyers || 20 }} {{ $t('khách mua đồng ý cá nhân hóa, hệ thống mới có thể huấn luyện model riêng từ dữ liệu shop.') }}
-              <template v-if="workspaceConfig.business_type !== 'retail'">{{ $t('Dịch vụ, B2B và đa ngành hiện dùng model RFM tổng hợp vì chưa có bộ giao dịch công khai phù hợp.') }}</template>
-            </small>
-            <small v-else role="alert">{{ $t('Model tham chiếu chưa được cài trên máy chủ; hiện RFM vẫn dùng nhãn quy tắc.') }}</small>
+            <small>{{ $t('Đây là cấu hình profile tham chiếu cho RFM, độc lập với mô hình kinh doanh và ngành tư vấn. Nó không phải mô hình dự đoán xác suất mua.') }}</small>
+            <small v-if="workspaceConfig.rfm_model?.available !== false">{{ $t('Phân nhóm RFM riêng của shop dùng MiniBatchKMeans khi có tối thiểu') }} {{ workspaceConfig.rfm_model?.shop_segment_minimum_consented_buyers || 20 }} {{ $t('khách mua có consent. Ngưỡng này không bảo đảm chất lượng và không áp dụng cho propensity.') }}</small>
+            <small v-else role="alert">{{ $t('Profile tham chiếu chưa sẵn sàng trên máy chủ; RFM hiện dùng nhãn quy tắc.') }}</small>
+            <small v-if="workspaceConfig.purchase_propensity_model?.available === false" class="settings-muted">{{ $t('Chưa có mô hình propensity mua hàng riêng được xác nhận trong hệ thống.') }}</small>
           </div>
-          <div class="workspace-module-row">
-            <div><strong>Chức năng chính <span class="connection-badge connected">LUÔN BẬT</span></strong><small>Khách hàng, doanh nghiệp, cuộc trò chuyện, công việc, quy trình bán hàng, phân quyền, tự động hóa và báo cáo.</small></div>
-          </div>
-          <label class="workspace-module-row workspace-module-toggle" :class="{ disabled: !canManageWorkspace }">
-            <input v-model="workspaceConfig.enabled_modules" type="checkbox" value="retail" :disabled="!canManageWorkspace" />
-            <span><strong>Bộ bán lẻ</strong><small>Sản phẩm, đơn bán, nhà cung cấp, nhập hàng và tồn kho.</small></span>
-            <span class="connection-badge" :class="{ connected: workspaceModuleEnabled('retail') }">{{ workspaceModuleEnabled('retail') ? 'ĐANG BẬT' : 'ĐANG TẮT' }}</span>
-          </label>
-          <label class="workspace-module-row workspace-module-toggle" :class="{ disabled: !canManageWorkspace }">
-            <input v-model="workspaceConfig.enabled_modules" type="checkbox" value="appointments" :disabled="!canManageWorkspace" />
-            <span><strong>Dịch vụ theo lịch</strong><small>Danh mục dịch vụ, lịch hẹn, nhân viên phụ trách và nhắc lịch gắn với hồ sơ khách hàng.</small></span>
-            <span class="connection-badge" :class="{ connected: workspaceModuleEnabled('appointments') }">{{ workspaceModuleEnabled('appointments') ? 'ĐANG BẬT' : 'ĐANG TẮT' }}</span>
-          </label>
-          <label class="workspace-module-row workspace-module-toggle" :class="{ disabled: !canManageWorkspace }">
-            <input v-model="workspaceConfig.enabled_modules" type="checkbox" value="projects" :disabled="!canManageWorkspace" />
-            <span><strong>Báo giá &amp; dự án</strong><small>Báo giá có tính thuế, theo dõi dự án, hóa đơn và thanh toán một phần/toàn phần.</small></span>
-            <span class="connection-badge" :class="{ connected: workspaceModuleEnabled('projects') }">{{ workspaceModuleEnabled('projects') ? 'ĐANG BẬT' : 'ĐANG TẮT' }}</span>
-          </label>
+          <section class="workspace-config-subsection" aria-labelledby="workspace-capabilities-heading">
+            <div class="workspace-config-subsection-heading"><div><h3 id="workspace-capabilities-heading">{{ $t('Công cụ nghiệp vụ') }}</h3><p>{{ $t('Có thể bật nhiều nhóm. Lõi CRM luôn hoạt động; công cụ bị tắt sẽ từ chối luồng mới nhưng không xóa dữ liệu lịch sử.') }}</p></div><span class="connection-badge connected">{{ $t('Lõi CRM luôn bật') }}</span></div>
+            <div class="workspace-option-grid workspace-capability-grid">
+              <label class="workspace-choice-option workspace-choice-fixed"><input type="checkbox" checked disabled /><span><strong>{{ $t('Lõi CRM') }}</strong><small>{{ $t('Hồ sơ khách hàng, cuộc trò chuyện và chuyển nhân viên.') }}</small></span></label>
+              <label v-for="([capabilityId, capabilityName, description]) in workspaceCapabilityOptions" :key="capabilityId" class="workspace-choice-option">
+                <input v-model="workspaceConfig.enabled_capabilities" type="checkbox" :value="capabilityId" :disabled="!canManageWorkspace || workspaceConfigSaving" />
+                <span><strong>{{ $t(capabilityName) }}</strong><small>{{ $t(description) }}</small><small v-if="workspaceConfig.capabilities.find(item => item.capability_id === capabilityId)?.dependency_status === 'blocked'" class="workspace-dependency-warning">{{ $t('Bị khóa do thiếu capability phụ thuộc.') }}</small></span>
+              </label>
+            </div>
+          </section>
           <div v-if="workspaceConfigNotice" class="settings-notice" role="status">{{ $t(workspaceConfigNotice) }}</div>
-          <button v-if="canManageWorkspace" type="button" class="primary-btn" :disabled="workspaceConfigSaving || workspaceConfigLoading" @click="saveWorkspaceConfig">{{ workspaceConfigSaving ? 'Đang lưu...' : 'Lưu mô hình' }}</button>
+          <button v-if="canManageWorkspace" type="button" class="primary-btn" :disabled="workspaceConfigSaving || workspaceConfigLoading" @click="saveWorkspaceConfig">{{ workspaceConfigSaving ? 'Đang lưu...' : 'Lưu cấu hình shop' }}</button>
           <p v-else class="settings-muted">Chỉ chủ shop hoặc quản trị viên được thay đổi cấu hình này.</p>
         </div>
 
@@ -18264,6 +18284,28 @@ a.import-choice { display: inline-flex; align-items: center; justify-content: ce
 .workspace-profile-option input, .workspace-module-toggle input { flex: 0 0 auto; margin-top: 3px; accent-color: var(--salon-accent); }
 .workspace-profile-option span, .workspace-module-row > div, .workspace-module-toggle > span:nth-child(2) { display: grid; gap: 4px; min-width: 0; }
 .workspace-profile-option small, .workspace-module-row small { color: var(--owly-muted); font-size: .84rem; line-height: 1.4; }
+.workspace-config-subsection { display: grid; gap: 12px; margin: 18px 0; padding: 16px; border: 1px solid var(--owly-border); border-radius: 14px; background: color-mix(in srgb, var(--owly-surface) 94%, var(--workspace-primary) 6%); }
+.workspace-config-subsection-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.workspace-config-subsection-heading > div { display: grid; gap: 4px; min-width: 0; }
+.workspace-config-subsection-heading h3 { margin: 0; color: var(--owly-ink); font-size: 1rem; }
+.workspace-config-subsection-heading p { margin: 0; color: var(--owly-muted); line-height: 1.45; }
+.workspace-option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr)); gap: 10px; }
+.workspace-choice-option { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--owly-border); border-radius: 11px; background: var(--owly-surface); cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.workspace-choice-option:hover { border-color: var(--salon-accent); transform: translateY(-1px); }
+.workspace-choice-option:has(input:checked) { border-color: var(--salon-accent); background: var(--salon-accent-soft); }
+.workspace-choice-option input { flex: 0 0 auto; margin: 3px 0 0; accent-color: var(--salon-accent); }
+.workspace-choice-option > span { display: grid; gap: 4px; min-width: 0; }
+.workspace-choice-option strong { color: var(--owly-ink); line-height: 1.3; }
+.workspace-choice-option small { color: var(--owly-muted); font-size: .82rem; line-height: 1.4; }
+.workspace-choice-fixed { cursor: default; }
+.workspace-choice-fixed:hover { border-color: var(--owly-border); transform: none; }
+.workspace-choice-fixed:has(input:checked) { background: var(--salon-accent-soft); }
+.workspace-dependency-warning { color: #a65b00 !important; font-weight: 700; }
+.crm-dark .workspace-config-subsection { border-color: #394145; background: #1b2225; }
+.crm-dark .workspace-choice-option { border-color: #394145; background: #20272a; }
+.crm-dark .workspace-choice-option:has(input:checked), .crm-dark .workspace-choice-fixed:has(input:checked) { border-color: var(--salon-accent); background: color-mix(in srgb, #20272a 76%, var(--salon-accent) 24%); }
+.crm-dark .workspace-choice-option:hover { border-color: var(--salon-accent); }
+.crm-dark .workspace-dependency-warning { color: #ffc46b !important; }
 .workspace-module-row { align-items: center; justify-content: space-between; margin: 8px 0; }
 .workspace-module-toggle { cursor: pointer; }
 .workspace-module-row .connection-badge { flex: 0 0 auto; margin-left: auto; }
@@ -19204,6 +19246,7 @@ body.crm-dark .customer-import-card input:focus-visible { outline-color: #8bd8d7
   .channel-summary-grid, .business-hours-grid, .sla-rules-grid, .business-profile-grid, .service-plan-grid { grid-template-columns: 1fr; }
   .crm-config-editor-grid { grid-template-columns: 1fr; }
   .crm-config-row, .crm-config-add-row { align-items: stretch; flex-direction: column; }
+  .workspace-config-subsection-heading { align-items: stretch; flex-direction: column; }
   .workspace-profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .business-profile-wide { grid-column: auto; }
   .team-form-grid,

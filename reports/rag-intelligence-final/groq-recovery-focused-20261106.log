@@ -1,0 +1,31 @@
+COMMAND=python -m pytest tests/test_rag_components.py -k 'citation_guard' -q
+STARTED=2026-11-06T02:42:57.2376142+07:00
+...F                                                                     [100%]
+================================== FAILURES ===================================
+____ test_citation_guard_preserves_explicit_policy_eligibility_conditions _____
+
+    def test_citation_guard_preserves_explicit_policy_eligibility_conditions():
+        evidence = ["S\u1ea3n ph\u1ea9m \u0111\u1ee7 \u0111i\u1ec1u ki\u1ec7n \u0111\u01b0\u1ee3c y\xeau c\u1ea7u \u0111\u1ed5i trong 7 ng\xe0y k\u1ec3 t\u1eeb khi nh\u1eadn h\xe0ng."]
+    
+>       assert not has_valid_citations(
+            "B\u1ea1n c\xf3 th\u1ec3 \u0111\u1ed5i h\xe0ng trong v\xf2ng 7 ng\xe0y k\u1ec3 t\u1eeb khi nh\u1eadn h\xe0ng. [Source 1]",
+            evidence,
+        )
+E       AssertionError: assert not True
+E        +  where True = has_valid_citations('B\u1ea1n c\xf3 th\u1ec3 \u0111\u1ed5i h\xe0ng trong v\xf2ng 7 ng\xe0y k\u1ec3 t\u1eeb khi nh\u1eadn h\xe0ng. [Source 1]', ['S\u1ea3n ph\u1ea9m \u0111\u1ee7 \u0111i\u1ec1u ki\u1ec7n \u0111\u01b0\u1ee3c y\xeau c\u1ea7u \u0111\u1ed5i trong 7 ng\xe0y k\u1ec3 t\u1eeb khi nh\u1eadn h\xe0ng.'])
+
+tests\test_rag_components.py:1091: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_rag_components.py::test_citation_guard_preserves_explicit_policy_eligibility_conditions
+1 failed, 3 passed, 75 deselected in 0.78s
+EXIT_CODE=1
+FINISHED=2026-11-06T02:42:59.5246768+07:00
+ELAPSED_SECONDS=2.29
+
+RETRY_COMMAND=python -m pytest tests/test_rag_components.py -k 'citation_guard' -q
+RETRY_STARTED=2026-11-06T02:43:31.7053069+07:00
+....                                                                     [100%]
+4 passed, 75 deselected in 0.48s
+RETRY_EXIT_CODE=0
+RETRY_FINISHED=2026-11-06T02:43:33.6511518+07:00
+RETRY_ELAPSED_SECONDS=1.95

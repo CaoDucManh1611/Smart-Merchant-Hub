@@ -9,11 +9,13 @@ import hashlib
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.document import Document, DocumentChunk
 from app.models.sales import Product
+from app.models.recommendation_catalog import RecommendationCatalogChunkMapping, RecommendationCatalogEntry
 from app.rag.loader import DocumentValidationError, load_document, detect_file_type
 from app.rag.semantic_chunker import chunk_document, contextual_embedding_text
 from app.rag.semantic_chunker import _parse_model_boundaries
@@ -22,8 +24,11 @@ from app.rag.embedder import embed_texts, embedding_retry_delay
 from app.rag.run_logger import RagRunLog, safe_error_message
 from app.rag.topics import infer_document_topic
 from app.services.product_catalog_service import sync_catalog_products
+from app.services.document_index_snapshot_service import capture_index_snapshot
 from app.services.recommendation_catalog_service import sync_product_catalog_entry
-from app.services.quota_service import QuotaExceededError, check_quota, reserve_ai_budget
+from app.services.quota_service import (
+    QuotaExceededError, check_quota, prime_quota, release_quota, reserve_ai_budget, reserve_quota,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +75,9 @@ def ingest_document(
     use_embeddings: bool = True,
     business_id: int | None = None,
     progress_callback: Callable[[int, str, int | None, int | None], None] | None = None,
-) -> None:
+    *,
+    reindex_only: bool = False,
+) -> bool:
     """
     Pipeline xử lý tài liệu:
     1. Load file → raw text
@@ -78,7 +85,8 @@ def ingest_document(
     3. Embed chunks thành vectors
     4. Lưu chunks + vectors vào DB
 
-    Được gọi từ background task.
+    Được gọi từ background task. Reindex chỉ thay index/mappings, không nhập
+    lại dữ liệu catalog. Trả về kết quả attempt, độc lập trạng thái phục vụ.
     """
     with RagRunLog(
         "ingestion",
@@ -93,7 +101,27 @@ def ingest_document(
         if doc is None:
             logger.error("Document %d not found", document_id)
             run.finish("error", phase="complete", error="document_not_found")
-            return
+            return False
+        if doc.status in {"disabled", "superseded"}:
+            run.finish("error", phase="complete", error_code="document_not_active")
+            return False
+
+        prior_chunk_count = db.query(DocumentChunk).filter_by(document_id=doc.id).count()
+        # Direct service callers rebuilding an existing index are reindex-only too.
+        reindex_only = reindex_only or prior_chunk_count > 0
+        keep_ready = doc.status == "ready" and prior_chunk_count > 0
+        old_embedding_status, old_retry_after = doc.embedding_status, doc.retry_after
+        reserved_chunks = 0
+        external_chunk_quota = bool(db.info.get("tenant_schema") and not db.info.get("_quota_bridge"))
+        published = False
+        new_retry_after = None
+
+        def mark_failed(code: str, message: str) -> None:
+            doc.status = "ready" if keep_ready else "error"
+            doc.embedding_status = old_embedding_status if keep_ready else "error"
+            doc.retry_after = old_retry_after if keep_ready else None
+            doc.error_code = code
+            doc.error_message = message
 
         try:
             def report(
@@ -106,8 +134,11 @@ def ingest_document(
                     progress_callback(percent, phase, total_chunks, completed_chunks)
 
             # Cập nhật trạng thái
-            doc.status = "processing"
-            doc.embedding_status = "processing"
+            if doc.business_id is not None:
+                prime_quota(db, int(doc.business_id), "rag_chunks")
+            if not keep_ready:
+                doc.status = "processing"
+                doc.embedding_status = "processing"
             doc.error_code = None
             doc.reindex_count = (doc.reindex_count or 0) + 1
             db.commit()
@@ -178,24 +209,21 @@ def ingest_document(
             report(20, "chunk", len(chunks), 0)
 
             if not chunks:
-                doc.status = "error"
-                doc.embedding_status = "error"
-                doc.error_code = "empty_document"
-                doc.error_message = "Không tạo được chunks từ tài liệu."
+                mark_failed("empty_document", "Không tạo được chunks từ tài liệu.")
                 db.commit()
                 run.finish(
                     "error",
                     phase="complete",
                     error="Không tạo được chunks từ tài liệu.",
                 )
-                return
+                return False
 
             # Check the RAG chunk allowance before remote embedding.
             # A large upload on a small plan should fail fast
             # with an actionable upgrade message instead of doing expensive
             # work only to be discarded by the final quota reservation.
             if doc.business_id is not None:
-                additional_chunks = max(0, len(chunks) - int(doc.chunk_count or 0))
+                additional_chunks = max(0, len(chunks) - prior_chunk_count)
                 if additional_chunks:
                     chunk_quota = check_quota(
                         db,
@@ -208,16 +236,12 @@ def ingest_document(
                         limit = int(chunk_quota.limit) if chunk_quota.limit is not None else 0
                         remaining = max(0, limit - used)
                         format_number = lambda value: f"{int(value):,}".replace(",", ".")
-                        doc.status = "error"
-                        doc.embedding_status = "error"
-                        doc.error_code = "chunk_quota_exceeded"
-                        doc.retry_after = None
-                        doc.error_message = (
+                        mark_failed("chunk_quota_exceeded", (
                             f"Tài liệu tạo ra {format_number(len(chunks))} đoạn, "
                             f"gói hiện tại chỉ còn {format_number(remaining)} đoạn "
                             f"(giới hạn {format_number(limit)}). Hãy nâng cấp gói dịch vụ "
                             "hoặc chia nhỏ tài liệu."
-                        )
+                        ))
                         db.commit()
                         run.finish("quota_exceeded", phase="complete", quota={
                             "resource": "rag_chunks",
@@ -231,7 +255,7 @@ def ingest_document(
                             doc.id,
                             doc.error_message,
                         )
-                        return
+                        return False
 
             run.update(phase="embed", chunks_found=len(chunks))
             report(20, "embed", len(chunks), 0)
@@ -254,11 +278,8 @@ def ingest_document(
                         db.commit()
                         run.update(estimated_ai_cost=float(budget["cost"]))
                     except QuotaExceededError as exc:
-                        doc.status = "error"
-                        doc.embedding_status = "error"
-                        doc.error_code = "ai_quota_exceeded"
-                        doc.error_message = "Đã vượt quota AI của gói dịch vụ."
-                        doc.retry_after = None
+                        db.rollback()
+                        mark_failed("ai_quota_exceeded", "Đã vượt quota AI của gói dịch vụ.")
                         db.commit()
                         run.finish("quota_exceeded", phase="complete", quota=exc.detail)
                         logger.warning(
@@ -267,7 +288,7 @@ def ingest_document(
                             doc.id,
                             exc.resource,
                         )
-                        return
+                        return False
                 embedding_error = None
 
                 def capture_embedding_error(error: Exception) -> None:
@@ -284,17 +305,21 @@ def ingest_document(
                         min(len(chunks), int(max(0.0, min(1.0, fraction)) * len(chunks))),
                     ),
                 )
+                if not embeddings_used and keep_ready:
+                    # Initial uploads may fall back to lexical search; an existing
+                    # serving index must survive provider failures unchanged.
+                    raise embedding_error or RuntimeError("Embedding unavailable")
                 if embeddings_used:
                     logger.info("Embedded %d chunks", len(embeddings))
-                    doc.embedding_status = "ready"
+                    new_embedding_status = "ready"
                 else:
-                    doc.embedding_status = "lexical_only"
+                    new_embedding_status = "lexical_only"
                     retry_delay = (
                         embedding_retry_delay(embedding_error)
                         if embedding_error is not None
                         else None
                     )
-                    doc.retry_after = (
+                    new_retry_after = (
                         _utcnow() + timedelta(seconds=retry_delay)
                         if retry_delay is not None
                         else None
@@ -302,7 +327,7 @@ def ingest_document(
             else:
                 embeddings = [None] * len(chunks)
                 embeddings_used = False
-                doc.embedding_status = "lexical_only"
+                new_embedding_status = "lexical_only"
                 logger.info(
                     "Fast ingestion enabled for document id=%d: storing %d chunks without remote embeddings",
                     document_id,
@@ -324,6 +349,18 @@ def ingest_document(
             # This delete happens in the same transaction as the inserts, so
             # a failed embedding/store rolls back and leaves the old index
             # available for inspection.
+            if doc.business_id is not None:
+                delta = len(chunks) - prior_chunk_count
+                if delta > 0:
+                    reserve_quota(db, int(doc.business_id), "rag_chunks", requested=delta)
+                    reserved_chunks = delta
+            if prior_chunk_count and doc.business_id is not None:
+                capture_index_snapshot(db, doc, reason="pre_publish")
+            # Explicit cleanup also works on SQLite fixtures without FK cascades.
+            old_ids = select(DocumentChunk.id).where(DocumentChunk.document_id == doc.id)
+            db.query(RecommendationCatalogChunkMapping).filter(
+                RecommendationCatalogChunkMapping.document_chunk_id.in_(old_ids),
+            ).delete(synchronize_session=False)
             db.query(DocumentChunk).filter(
                 DocumentChunk.document_id == document_id,
             ).delete(synchronize_session=False)
@@ -339,6 +376,8 @@ def ingest_document(
                 db.add(db_chunk)
 
             doc.status = "ready"
+            doc.embedding_status = new_embedding_status
+            doc.retry_after = new_retry_after
             doc.chunk_count = len(chunks)
             doc.processed_at = _utcnow()
             doc.error_message = None
@@ -349,37 +388,54 @@ def ingest_document(
             # A failed quota check or embedding must not publish products
             # from a document that cannot be searched.
             if doc.business_id is not None:
-                synced_products = sync_catalog_products(
-                    db,
-                    business_id=doc.business_id,
-                    source_document_id=doc.id,
-                    text=raw_text,
-                )
+                synced_products = []
+                if not reindex_only:
+                    synced_products = sync_catalog_products(
+                        db,
+                        business_id=doc.business_id,
+                        source_document_id=doc.id,
+                        text=raw_text,
+                    )
                 db.flush()
                 stored_chunks = db.query(DocumentChunk).filter(
                     DocumentChunk.document_id == doc.id,
                 ).all()
                 catalog_products = db.query(Product).filter(
                     Product.business_id == doc.business_id,
-                ).all()
+                ).order_by(Product.id).populate_existing().with_for_update().all()
                 mapped_products = 0
                 import re
                 for product in catalog_products:
                     sku = str(product.sku or "").strip()
                     if not sku:
                         continue
-                    sku_pattern = re.compile(rf"(?<![\w]){re.escape(sku)}(?![\w])", re.IGNORECASE)
+                    sku_pattern = re.compile(rf"(?<![\w-]){re.escape(sku)}(?![\w-])", re.IGNORECASE)
                     mapped_chunk_ids = [
                         chunk.id for chunk in stored_chunks
                         if sku_pattern.search(chunk.content or "")
                     ]
                     if not mapped_chunk_ids:
                         continue
+                    # The shared sync replaces all links for an entry. Retain
+                    # evidence belonging to other documents in this same shop.
+                    other_chunk_ids = db.scalars(
+                        select(RecommendationCatalogChunkMapping.document_chunk_id)
+                        .join(RecommendationCatalogEntry)
+                        .join(DocumentChunk, DocumentChunk.id == RecommendationCatalogChunkMapping.document_chunk_id)
+                        .join(Document, Document.id == DocumentChunk.document_id)
+                        .where(
+                            RecommendationCatalogEntry.business_id == doc.business_id,
+                            RecommendationCatalogEntry.object_type == "product",
+                            RecommendationCatalogEntry.external_id == str(product.id),
+                            Document.business_id == doc.business_id,
+                            Document.id != doc.id,
+                        )
+                    ).all()
                     sync_product_catalog_entry(
                         db,
                         product,
                         source="knowledge_document",
-                        document_chunk_ids=mapped_chunk_ids,
+                        document_chunk_ids=[*other_chunk_ids, *mapped_chunk_ids],
                     )
                     mapped_products += 1
                 logger.info(
@@ -388,7 +444,15 @@ def ingest_document(
                     mapped_products,
                     document_id,
                 )
+            # Legacy single-DB quotas share this transaction. Tenant-schema
+            # quotas use the existing control-plane bridge and are compensated
+            # below if publishing fails.
+            if doc.business_id is not None and len(chunks) < prior_chunk_count and not external_chunk_quota:
+                release_quota(db, int(doc.business_id), "rag_chunks", prior_chunk_count - len(chunks))
             db.commit()
+            published = True
+            if doc.business_id is not None and len(chunks) < prior_chunk_count and external_chunk_quota:
+                release_quota(db, int(doc.business_id), "rag_chunks", prior_chunk_count - len(chunks))
             report(100, "complete", len(chunks), len(chunks))
 
             logger.info(
@@ -397,6 +461,7 @@ def ingest_document(
                 len(chunks),
             )
             run.finish("success", phase="complete", chunks_stored=len(chunks))
+            return True
 
         except Exception as e:
             logger.warning(
@@ -409,29 +474,28 @@ def ingest_document(
             if business_id is not None:
                 failed_query = failed_query.filter(Document.business_id == business_id)
             failed_doc = failed_query.first()
-            if failed_doc is not None:
-                failed_doc.status = "error"
-                failed_doc.error_code = (
-                    e.code
-                    if isinstance(e, DocumentValidationError)
-                    else "document_processing_failed"
-                )
-                failed_doc.error_message = (
-                    safe_error_message(e)
-                    if isinstance(e, DocumentValidationError)
-                    else "Không thể xử lý tài liệu; vui lòng thử lại hoặc liên hệ quản trị viên."
-                )
-                failed_doc.embedding_status = "error"
-                db.commit()
-            run.finish(
-                "error",
-                phase="complete",
-                error_type=type(e).__name__,
-                error_code=(
-                    e.code if isinstance(e, DocumentValidationError)
-                    else "document_processing_failed"
-                ),
+            if published:
+                # An observability/progress error after commit cannot unpublish
+                # the successfully stored index or refund its capacity.
+                logger.exception("Post-publish RAG bookkeeping failed for document %d", document_id)
+                return True
+            if reserved_chunks and external_chunk_quota:
+                # The existing quota bridge commits on the platform connection.
+                release_quota(db, int(doc.business_id), "rag_chunks", reserved_chunks)
+            code = (
+                "chunk_quota_exceeded" if isinstance(e, QuotaExceededError)
+                else e.code if isinstance(e, DocumentValidationError)
+                else "document_processing_failed"
             )
+            if failed_doc is not None:
+                mark_failed(code, (
+                    "Đã vượt quota chunks RAG của gói dịch vụ." if isinstance(e, QuotaExceededError)
+                    else safe_error_message(e) if isinstance(e, DocumentValidationError)
+                    else "Không thể xử lý tài liệu; vui lòng thử lại hoặc liên hệ quản trị viên."
+                ))
+                db.commit()
+            run.finish("error", phase="complete", error_type=type(e).__name__, error_code=code)
+            return False
 
 
 def delete_document(document_id: int, db: Session, business_id: int | None = None) -> bool:

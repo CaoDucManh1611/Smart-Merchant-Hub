@@ -192,6 +192,10 @@ if _RUN_POSTGRES_TESTS:
             _TEST_ENGINES.append(engine)
         return engine
 
+    # Synthetic evaluation contexts intentionally use in-memory SQLite so
+    # they can enforce PRAGMA query_only without touching the disposable
+    # PostgreSQL schemas used by legacy integration fixtures.
+    _test_create_engine._smh_original_create_engine = _ORIGINAL_CREATE_ENGINE
     sqlalchemy.create_engine = _test_create_engine
     sqlalchemy.engine.create.create_engine = _test_create_engine
 else:

@@ -1,0 +1,45 @@
+{
+  "benchmark_id": "rag_multimodal_v1",
+  "status": "draft_pending_human_review",
+  "feature_flag_required": "RAG_IMAGE_CATALOG_MATCH_ENABLED",
+  "minimum_cases_per_group": 5,
+  "acceptance_thresholds_locked_before_run": {
+    "image_recognition_accuracy_min": 0.90,
+    "catalog_matching_accuracy_min": 0.95,
+    "exact_sku_variant_accuracy_min": 1.0,
+    "grounded_answer_correctness_min": 0.95,
+    "conversation_naturalness_mean_min": 4.0,
+    "context_retention_accuracy_min": 0.90,
+    "appropriate_clarification_rate_min": 0.90,
+    "hard_error_rate_max": 0.0,
+    "end_to_end_latency_p95_ms_max": 8000,
+    "llm_calls_mean_max": 2.0,
+    "cost_usd_mean_max": 0.01
+  },
+  "cases": [
+    {"case_id":"mm01","group":"catalog_exact_image","question":"Shop còn sản phẩm trong ảnh này không?","expected_behavior":"match_exact_or_clarify","must_not":"cross_tenant_or_guess_sku"},
+    {"case_id":"mm02","group":"catalog_missing_image","question":"Shop có bán sản phẩm trong ảnh này không?","expected_behavior":"report_no_verified_match","must_not":"claim_shop_never_sells_it"},
+    {"case_id":"mm03","group":"near_duplicate_sku","question":"Đây có đúng mẫu đang bán không?","expected_behavior":"distinguish_variant_or_clarify","must_not":"merge_nearby_variants"},
+    {"case_id":"mm04","group":"multiple_products_image","question":"Hai món trong ảnh là gì?","expected_behavior":"identify_multiple_or_clarify","must_not":"silently_pick_one"},
+    {"case_id":"mm05","group":"blurred_or_cropped_image","question":"Đọc giúp mình sản phẩm này.","expected_behavior":"ask_for_clearer_image","must_not":"guess_label_or_sku"},
+    {"case_id":"mm06","group":"image_price_stock","question":"Cái này giá bao nhiêu và còn hàng không?","expected_behavior":"match_then_read_live_catalog","must_not":"use_cached_price_or_stock"},
+    {"case_id":"mm07","group":"image_followup_cheaper","question":"Có loại rẻ hơn không?","expected_behavior":"retain_verified_offering_then_search_live_catalog","must_not":"reuse_old_price_as_truth"},
+    {"case_id":"mm08","group":"topic_switch_new_image","question":"Còn ảnh mới này thì sao?","expected_behavior":"replace_old_image_context","must_not":"carry_old_variant"},
+    {"case_id":"mm09","group":"same_image_two_tenants","question":"Shop có mẫu này không?","expected_behavior":"isolate_catalog_by_tenant","must_not":"return_other_shop_product"},
+    {"case_id":"mm10","group":"compatibility_without_evidence","question":"Mẫu này chắc chắn dùng cho xe của mình chứ?","expected_behavior":"clarify_or_decline_certainty","must_not":"invent_compatibility"},
+    {"case_id":"mm11","group":"vision_provider_failure","question":"Kiểm tra ảnh này giúp mình.","expected_behavior":"safe_fallback_without_duplicate_send","must_not":"expose_provider_error_or_guess"},
+    {"case_id":"mm12","group":"cross_channel_media","question":"Shop còn mẫu trong ảnh không?","expected_behavior":"consistent_supported_channel_behavior","must_not":"silently_drop_media"},
+    {"case_id":"mm13","group":"mechanical_wording","question":"Trả lời ngắn gọn về sản phẩm trong ảnh.","expected_behavior":"natural_concise_grounded_answer","must_not":"change_verified_facts"},
+    {"case_id":"mm14","group":"natural_but_factually_wrong","question":"Mẫu này giá và mã nào?","expected_behavior":"preserve_exact_catalog_identity","must_not":"trade_accuracy_for_fluency"},
+    {"case_id":"mm15","group":"unnecessary_clarification","question":"Ảnh và câu hỏi đã cung cấp đủ tên, biến thể và nhu cầu.","expected_behavior":"answer_without_reasking_known_fields","must_not":"ask_redundant_questions"}
+  ],
+  "runtime_fields_required_per_case": [
+    "business_id", "catalog_snapshot_id", "image_sha256", "source_refs",
+    "baseline_answer", "candidate_answer", "latency_ms", "llm_calls", "cost_usd"
+  ],
+  "human_review_fields_required_per_case": [
+    "reviewer", "reviewed_at", "image_recognition", "catalog_match", "exact_variant",
+    "grounded_correctness", "naturalness_1_to_5", "context_retained",
+    "clarification_appropriate", "hard_error", "notes"
+  ]
+}

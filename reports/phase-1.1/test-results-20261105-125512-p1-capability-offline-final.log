@@ -1,0 +1,13 @@
+COMMAND: $env:RUN_POSTGRES_TESTS=0; python -m pytest tests/test_recommendations_api.py tests/test_chatbot_answer_routing.py tests/test_conversation_graph.py tests/test_workspace_modules.py tests/test_capability_registry.py tests/test_rag_serving_contract.py -q
+.................................................................. [ 36%]
+........................................................................ [ 77%]
+.........................................                                [100%]
+============================== warnings summary ===============================
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:1010: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+179 passed, 1 warning, 6 subtests passed in 8.17s
+EXIT_CODE=0
+ELAPSED_SECONDS=11.02

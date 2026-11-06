@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "limits": {
+    "case_executions": 3,
+    "physical_attempts": 6,
+    "input_tokens": 60000,
+    "output_tokens": 10000
+  },
+  "consumed": {
+    "case_executions": 3,
+    "physical_attempts": 5,
+    "input_tokens": 29407,
+    "output_tokens": 1658
+  },
+  "reported_usage": {
+    "input_tokens": 8637,
+    "output_tokens": 1146
+  },
+  "runs": [
+    {
+      "phase": "post-fix",
+      "case_ids": [
+        "answer-010-no-evidence",
+        "answer-011-policy-grounded",
+        "answer-012-multi-source"
+      ],
+      "max_physical_attempts_per_case": 2
+    },
+    {
+      "phase": "post-fix-revalidation",
+      "case_ids": [
+        "answer-012-multi-source"
+      ],
+      "max_additional_attempts_per_case": 1
+    }
+  ]
+}

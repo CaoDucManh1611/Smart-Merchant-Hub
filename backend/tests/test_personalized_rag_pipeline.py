@@ -293,17 +293,31 @@ def test_rag_ppr_weights_use_saved_rfm_and_product_signals_only_with_consent(sho
     ) is None
 
 
-def test_training_precomputes_cache_using_same_tenant_population(shop):
+@pytest.mark.parametrize("working_directory", ["cwd-a", "cwd-b"])
+def test_training_precomputes_cache_using_same_tenant_population(shop, tmp_path, monkeypatch, working_directory):
+    cwd = tmp_path / working_directory
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    from app.services import industry_rfm_prior
+    industry_rfm_prior.load_industry_rfm_prior.cache_clear()
+
     db, business, customer, peer, _, _, now = shop
     db.autoflush = False
     add_order(db, customer, now, total=100)
     add_order(db, peer, now, total=1000)
+    db.add(CustomerConsent(
+        business_id=business.id,
+        customer_id=peer.id,
+        purpose="personalization",
+        status="granted",
+    ))
     run = RecommendationTrainingRun(business_id=business.id, algorithm="deterministic_rfm_kmeans", status="queued")
     db.add(run)
     db.commit()
     recommender.train_customer_segments(db, business_id=business.id, training_run_id=run.id)
     profile = db.query(RecommendationCustomerProfile).filter_by(customer_id=customer.id).one()
-    assert profile.features["rfm_scores"]["monetary"] == 1
+    assert profile.features["rfm_percentile_scores"]["monetary"] == 1
+    assert profile.features["cluster_model_source"] == "industry_prior"
     assert profile.features["product_signal_cache"]["version"] == recommender.PERSONALIZATION_CACHE_VERSION
     assert suggest(db, business, customer).context["profile_cache_hit"] is True
 

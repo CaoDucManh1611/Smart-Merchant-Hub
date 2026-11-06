@@ -1,0 +1,15 @@
+........................................................................ [ 30%]
+........................................................................ [ 61%]
+........................................................................ [ 92%]
+.................                                                        [100%]
+============================== warnings summary ===============================
+app\core\config.py:268
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\core\config.py:268: RuntimeWarning: PLATFORM_DATABASE_URL is falling back to legacy DATABASE_URL; configure the explicit URL before production
+    return self._database_url(self.PLATFORM_DATABASE_URL, "PLATFORM_DATABASE_URL")
+
+app\core\config.py:272
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\core\config.py:272: RuntimeWarning: TENANT_DATABASE_URL is falling back to legacy DATABASE_URL; configure the explicit URL before production
+    return self._database_url(self.TENANT_DATABASE_URL, "TENANT_DATABASE_URL")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+233 passed, 2 warnings in 7.44s

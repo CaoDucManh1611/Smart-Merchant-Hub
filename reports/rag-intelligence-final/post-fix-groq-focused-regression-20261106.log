@@ -1,0 +1,5 @@
+COMMAND=python -m pytest -q tests/test_conversation_graph.py::test_policy_guard_rejection_gets_one_graph_retry_and_repairs_unsafe_claim tests/test_conversation_graph.py::test_repeated_policy_guard_rejection_uses_safe_fallback_and_notifies_staff tests/test_rag_components.py::test_citation_guard_preserves_explicit_policy_eligibility_conditions tests/test_rag_components.py::test_citation_guard_rejects_definitive_policy_denial_from_unknown_evidence
+......                                                                   [100%]
+6 passed in 6.08s
+EXIT_CODE=0
+ELAPSED_SECONDS=8.36

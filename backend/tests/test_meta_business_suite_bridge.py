@@ -1078,7 +1078,8 @@ def test_changed_meta_conversation_retries_after_transient_thread_id_error(monke
     monkeypatch.setattr(bridge, "_open_meta_conversation", open_thread)
     monkeypatch.setattr(bridge, "_import_history", import_history)
 
-    observed = {"3": "previous-row-signature"}
+    row_key = bridge._conversation_row_key(row)
+    observed = {row_key: "previous-row-signature"}
     profile_cache = {}
     checkpoint_path = tmp_path / "checkpoint.json"
 
@@ -1086,14 +1087,14 @@ def test_changed_meta_conversation_retries_after_transient_thread_id_error(monke
         object(), "facebook", "http://localhost:8000", "connector-token",
         checkpoint_path, observed, [row], profile_cache,
     ))
-    assert observed["3"] == "previous-row-signature"
+    assert observed[row_key] == "previous-row-signature"
     assert imports == []
 
     asyncio.run(bridge._sync_changed_conversations(
         object(), "facebook", "http://localhost:8000", "connector-token",
         checkpoint_path, observed, [row], profile_cache,
     ))
-    assert observed["3"] == row["label"]
+    assert observed[row_key] == row["label"]
     assert imports == [True]
 
     asyncio.run(bridge._sync_changed_conversations(

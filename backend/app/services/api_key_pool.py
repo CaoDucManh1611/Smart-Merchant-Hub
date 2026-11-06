@@ -5,8 +5,11 @@ from __future__ import annotations
 import re
 import threading
 import time
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import Callable
 
 from app.services.provider_circuit_breaker import ProviderCircuitBreaker, ProviderCircuitOpen
@@ -59,6 +62,40 @@ def is_retryable_provider_error(error: Exception) -> bool:
     return any(marker in message for marker in _TRANSIENT_MARKERS)
 
 
+def is_rate_limited_provider_error(error: Exception) -> bool:
+    """Identify provider throttling so the same request is not replayed on sibling keys."""
+    status = getattr(error, "status_code", None)
+    try:
+        if int(status) == 429:
+            return True
+    except (TypeError, ValueError):
+        pass
+    message = str(error).lower()
+    return any(marker in message for marker in ("429", "rate limit", "rate_limit", "too many requests"))
+
+
+def _retry_after_seconds(error: Exception, default: int) -> int:
+    candidates = [getattr(error, "retry_after", None)]
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        candidates.append(headers.get("retry-after"))
+    for value in candidates:
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            try:
+                retry_at = parsedate_to_datetime(str(value))
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                seconds = retry_at.timestamp() - time.time()
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if math.isfinite(seconds) and seconds > 0:
+            return max(default, min(3600, math.ceil(seconds)))
+    return default
+
+
 @dataclass
 class _KeyState:
     key: str
@@ -105,7 +142,8 @@ class ApiKeyPool:
             for state in self._keys:
                 if state.key == key:
                     state.failures += 1
-                    state.cooldown_until = self._clock() + self._cooldown_seconds
+                    cooldown = _retry_after_seconds(error, self._cooldown_seconds) if is_rate_limited_provider_error(error) else self._cooldown_seconds
+                    state.cooldown_until = self._clock() + cooldown
                     return
 
     def snapshot(self) -> dict:
@@ -218,6 +256,11 @@ def call_with_key_rotation(
                 pool.report_failure(key, error)
                 if is_retryable_provider_error(error):
                     breaker.record_failure(scope)
+                # A 429 applies to the provider quota/rate window, not merely
+                # to one credential. Do not immediately replay the request on
+                # sibling keys; let the caller use its configured fallback.
+                if is_rate_limited_provider_error(error):
+                    raise
                 if not is_retryable_provider_error(error) or len(attempted) >= attempt_limit:
                     raise
     raise last_error or ApiKeyPoolUnavailable("Không có API key cho provider đang chọn.")

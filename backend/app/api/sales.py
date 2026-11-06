@@ -398,7 +398,8 @@ async def import_products(
     A new SKU creates a product.  A SKU that already exists is treated as a
     stock receipt: the imported quantity is added to the existing stock and
     recorded in the inventory ledger. Replaying the same file is skipped unless
-    the operator explicitly confirms a second receipt with allow_repeat.
+    the operator explicitly confirms a second receipt with allow_repeat. If all
+    SKUs from a prior import have since been deleted, replay recreates them.
     """
     filename = (file.filename or "").strip()
     if not filename:
@@ -413,6 +414,7 @@ async def import_products(
     if len(file_bytes) > 20 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Tệp quá lớn. Giới hạn là 20MB.")
     import_key = "csv:" + hashlib.sha256(file_bytes).hexdigest()
+    existing_import = None
     if not preview:
         # Serialize same-shop imports before checking the committed audit key,
         # so two workers cannot both add stock for the same CSV.
@@ -428,12 +430,6 @@ async def import_products(
             AuditLog.action == "import",
             AuditLog.correlation_id == import_key,
         ).first()
-        if existing_import is not None and not allow_repeat:
-            return {
-                "filename": filename, "imported": 0, "restocked": 0,
-                "restocked_quantity": 0, "updated": 0, "skipped": 0,
-                "errors": [], "already_imported": True,
-            }
     try:
         content = file_bytes.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -458,10 +454,33 @@ async def import_products(
         }
         if "sku" not in mapped_headers.values() or "name" not in mapped_headers.values():
             raise HTTPException(status_code=400, detail="Tệp cần có ít nhất hai cột Mã sản phẩm (SKU) và Tên sản phẩm.")
+        rows = list(reader)
     except HTTPException:
         raise
     except csv.Error as exc:
         raise HTTPException(status_code=400, detail="Định dạng tệp không hợp lệ. Hãy dùng CSV có hàng tiêu đề.") from exc
+
+    if existing_import is not None and not allow_repeat:
+        sku_header = next(header for header, target in mapped_headers.items() if target == "sku")
+        file_skus = {
+            str(row.get(sku_header) or "").strip()
+            for row in rows
+            if str(row.get(sku_header) or "").strip()
+        }
+        sku_values = list(file_skus)
+        product_still_exists = any(
+            db.query(Product.id).filter(
+                Product.business_id == tenant.business_id,
+                Product.sku.in_(sku_values[offset:offset + 500]),
+            ).first() is not None
+            for offset in range(0, len(sku_values), 500)
+        )
+        if not file_skus or product_still_exists:
+            return {
+                "filename": filename, "imported": 0, "restocked": 0,
+                "restocked_quantity": 0, "updated": 0, "skipped": 0,
+                "errors": [], "already_imported": True,
+            }
 
     imported = 0
     # ``updated`` is kept as a backwards-compatible response alias.  The UI
@@ -472,7 +491,7 @@ async def import_products(
     skipped = 0
     errors: list[str] = []
     seen_skus: set[str] = set()
-    for row_number, row in enumerate(reader, start=2):
+    for row_number, row in enumerate(rows, start=2):
         values: dict[str, str] = {}
         for source_key, target_key in mapped_headers.items():
             if target_key and target_key not in values:

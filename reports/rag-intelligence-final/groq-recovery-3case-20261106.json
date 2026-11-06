@@ -1,0 +1,535 @@
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "execution_path": "app.services.conversation_graph.graph_reply",
+  "case_count": 3,
+  "provider_calls_authorized": true,
+  "synthetic_only": true,
+  "answer_correctness": "NOT_MEASURED; no human labels/approved judge supplied",
+  "answer_groundedness": "NOT_MEASURED; no citation review supplied",
+  "hallucination_rate": "NOT_MEASURED; no claim annotations supplied",
+  "run_limits": {
+    "max_cases": 3,
+    "max_model_calls": 6,
+    "max_physical_provider_attempts": 6,
+    "task_total_case_executions": 3,
+    "task_total_input_tokens": 30000,
+    "task_total_output_tokens": 5000,
+    "model": "openai/gpt-oss-20b",
+    "timeout_seconds": 1800
+  },
+  "run_budget": {
+    "deadline": 55622.406,
+    "remaining_seconds": 1792.188000000002,
+    "elapsed_seconds": 7.811999999998079,
+    "calls": 3,
+    "max_calls": 6,
+    "attempts": 3,
+    "max_attempts": 6,
+    "provider_switches": 0,
+    "max_provider_switches": 0,
+    "last_provider": "groq",
+    "attempt_records": [
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 53824.812,
+        "latency_ms": 2875.0,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "provider_error_code": null,
+        "provider_error_param": null,
+        "usage": {
+          "prompt_tokens": 2067,
+          "completion_tokens": 162,
+          "total_tokens": 2229,
+          "thoughts_tokens": 98
+        },
+        "llm_stage": "structured_output",
+        "schema_name": "shop_answer",
+        "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 53827.765,
+        "latency_ms": 1235.000000000582,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "provider_error_code": null,
+        "provider_error_param": null,
+        "usage": {
+          "prompt_tokens": 2070,
+          "completion_tokens": 201,
+          "total_tokens": 2271,
+          "thoughts_tokens": 144
+        },
+        "llm_stage": "structured_output",
+        "schema_name": "shop_answer",
+        "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 53829.062,
+        "latency_ms": 1156.0000000026776,
+        "outcome": "error",
+        "error_type": "BadRequestError",
+        "status_code": 400,
+        "provider_error_code": "json_validate_failed",
+        "provider_error_param": null,
+        "usage": null,
+        "llm_stage": "structured_output",
+        "schema_name": "shop_answer",
+        "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+      }
+    ]
+  },
+  "provider_budget": {
+    "phase": "baseline",
+    "limits": {
+      "case_executions": 3,
+      "physical_attempts": 6,
+      "input_tokens": 30000,
+      "output_tokens": 5000
+    },
+    "consumed_total": {
+      "case_executions": 3,
+      "physical_attempts": 3,
+      "input_tokens": 23941,
+      "output_tokens": 875
+    },
+    "reported_total": {
+      "input_tokens": 4137,
+      "output_tokens": 363
+    },
+    "unreported_usage_attempts_current_run": 0,
+    "current_run_reported_usage": {
+      "input_tokens": 4137,
+      "output_tokens": 363
+    }
+  },
+  "suppressed_non_groq_provider_attempts": [],
+  "pipeline_outcome_counts": {
+    "DETERMINISTIC_ANSWER": 0,
+    "LLM_GENERATED_ANSWER": 2,
+    "VALIDATED_FALLBACK": 0,
+    "CLARIFICATION": 0,
+    "PROVIDER_HTTP_400": 1,
+    "PROVIDER_RATE_LIMIT_429": 0,
+    "CIRCUIT_OPEN": 0,
+    "INFRASTRUCTURE_ERROR": 0
+  },
+  "results": [
+    {
+      "case_id": "answer-010-no-evidence",
+      "tenant": "synthetic-shop-a",
+      "input_conversation": [
+        {
+          "role": "user",
+          "content": "Sản phẩm có bảo hành trọn đời không?"
+        }
+      ],
+      "effective_query": "Sản phẩm có bảo hành trọn đời không?",
+      "tenant_business_id": 910010,
+      "retrieved_evidence": [
+        {
+          "chunk_id": 1,
+          "document_id": 1,
+          "content": "Chính sách hiện có không đề cập thời hạn bảo hành.",
+          "filename": "synthetic-1.txt",
+          "similarity": 0.25,
+          "metadata": {
+            "synthetic_evidence_id": "policy:available",
+            "synthetic": true
+          }
+        }
+      ],
+      "evidence_ids_used": [
+        {
+          "source": "KNOWLEDGE",
+          "sha256": "1018a1e1328505f94fe98e781bf001dffb3ae5cbb20a48848682b2f1b32a888d"
+        },
+        {
+          "source": "CURRENT_REQUEST_REQUIREMENTS",
+          "sha256": "1558f2c3cb69604be71787aa70124c5eb26322c544c3b1c9bb923f99005b17c3"
+        }
+      ],
+      "selected_tools": [
+        "knowledge"
+      ],
+      "tool_status": "completed",
+      "pipeline_outcome": "LLM_GENERATED_ANSWER",
+      "model_invocations": [
+        {
+          "kind": "structured",
+          "schema_name": "shop_answer",
+          "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77",
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
+          "route_kind": "primary",
+          "routes": [
+            {
+              "provider": "groq",
+              "model": "openai/gpt-oss-20b",
+              "route_kind": "primary",
+              "circuit_state_before": "closed",
+              "circuit_state_after": "closed",
+              "error_type": null,
+              "status_code": null
+            }
+          ],
+          "response_text": "{\"claims\":[{\"text\":\"Chính sách hiện có không đề cập thời hạn bảo hành, vì vậy không có bảo hành trọn đời.\",\"sources\":[1],\"offering_refs\":[] }],\"calculation\":null,\"needs_staff_decision\":false}",
+          "response_truncated": false,
+          "parse_status": "passed",
+          "validation_status": "passed",
+          "error_type": null
+        }
+      ],
+      "model_text": [
+        "{\"claims\":[{\"text\":\"Chính sách hiện có không đề cập thời hạn bảo hành, vì vậy không có bảo hành trọn đời.\",\"sources\":[1],\"offering_refs\":[] }],\"calculation\":null,\"needs_staff_decision\":false}"
+      ],
+      "generated_response": "Chính sách hiện có không đề cập thời hạn bảo hành, vì vậy không có bảo hành trọn đời.",
+      "citations": [],
+      "expected_claims": [
+        "Nguồn không xác nhận bảo hành trọn đời",
+        "Đề nghị nhân viên xác minh"
+      ],
+      "expected_evidence_ids": [
+        "policy:available"
+      ],
+      "expected_action": "decline_or_handoff",
+      "correctness": "NOT_MEASURED; requires human/approved judge review",
+      "groundedness": "NOT_MEASURED; requires citation-to-evidence review",
+      "unsupported_claims": "NOT_MEASURED; requires answer claim annotation",
+      "context_retention": "NOT_MEASURED; label only multi-turn cases",
+      "safe_tool_behavior": null,
+      "execution_safety": {
+        "synthetic_context": true,
+        "in_memory_sqlite": true,
+        "database_query_only": true,
+        "platform_database_unavailable": true,
+        "external_customer_channel_invoked": false
+      },
+      "application_status": "graph_answer",
+      "error_type": null,
+      "provider_attempt_records": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
+          "started_at": 53824.812,
+          "latency_ms": 2875.0,
+          "outcome": "success",
+          "error_type": null,
+          "status_code": null,
+          "provider_error_code": null,
+          "provider_error_param": null,
+          "usage": {
+            "prompt_tokens": 2067,
+            "completion_tokens": 162,
+            "total_tokens": 2229,
+            "thoughts_tokens": 98
+          },
+          "llm_stage": "structured_output",
+          "schema_name": "shop_answer",
+          "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+        }
+      ],
+      "retry_circuit_transitions": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
+          "route_kind": "primary",
+          "error_type": null,
+          "status_code": null,
+          "circuit_state_before": "closed",
+          "circuit_state_after": "closed"
+        }
+      ],
+      "side_effects": {
+        "attempted_database_models": [],
+        "flushed_database_models": [],
+        "external_customer_channel_attempted": false,
+        "external_customer_channel_executed": false
+      },
+      "latency_ms": 5136.64,
+      "model_logical_calls": 1,
+      "model_physical_attempts": 1,
+      "token_usage": {
+        "prompt_tokens": 2067,
+        "completion_tokens": 162,
+        "total_tokens": 2229
+      },
+      "cost": "NOT_MEASURED; provider pricing not configured in evaluator",
+      "provider_calls_authorized": true,
+      "synthetic_only": true
+    },
+    {
+      "case_id": "answer-011-policy-grounded",
+      "tenant": "synthetic-shop-a",
+      "input_conversation": [
+        {
+          "role": "user",
+          "content": "Tôi có thể đổi hàng trong bao lâu?"
+        }
+      ],
+      "effective_query": "Tôi có thể đổi hàng trong bao lâu?",
+      "tenant_business_id": 910011,
+      "retrieved_evidence": [
+        {
+          "chunk_id": 1,
+          "document_id": 1,
+          "content": "Sản phẩm đủ điều kiện được yêu cầu đổi trong 7 ngày kể từ khi nhận hàng.",
+          "filename": "synthetic-1.txt",
+          "similarity": 0.5,
+          "metadata": {
+            "synthetic_evidence_id": "policy:return-v1",
+            "synthetic": true
+          }
+        }
+      ],
+      "evidence_ids_used": [
+        {
+          "source": "KNOWLEDGE",
+          "sha256": "f99855b118285c508c82369da9958172b3792fb8ffa9d8818921a90c932f376b"
+        },
+        {
+          "source": "CURRENT_REQUEST_REQUIREMENTS",
+          "sha256": "1558f2c3cb69604be71787aa70124c5eb26322c544c3b1c9bb923f99005b17c3"
+        }
+      ],
+      "selected_tools": [
+        "knowledge"
+      ],
+      "tool_status": "completed",
+      "pipeline_outcome": "LLM_GENERATED_ANSWER",
+      "model_invocations": [
+        {
+          "kind": "structured",
+          "schema_name": "shop_answer",
+          "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77",
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
+          "route_kind": "primary",
+          "routes": [
+            {
+              "provider": "groq",
+              "model": "openai/gpt-oss-20b",
+              "route_kind": "primary",
+              "circuit_state_before": "closed",
+              "circuit_state_after": "closed",
+              "error_type": null,
+              "status_code": null
+            }
+          ],
+          "response_text": "{\"claims\":[{\"text\":\"Bạn có thể đổi hàng trong vòng 7 ngày kể từ khi nhận hàng.\",\"sources\":[1],\"offering_refs\":[]}],\"calculation\":null,\"needs_staff_decision\":false}",
+          "response_truncated": false,
+          "parse_status": "passed",
+          "validation_status": "passed",
+          "error_type": null
+        }
+      ],
+      "model_text": [
+        "{\"claims\":[{\"text\":\"Bạn có thể đổi hàng trong vòng 7 ngày kể từ khi nhận hàng.\",\"sources\":[1],\"offering_refs\":[]}],\"calculation\":null,\"needs_staff_decision\":false}"
+      ],
+      "generated_response": "Bạn có thể đổi hàng trong vòng 7 ngày kể từ khi nhận hàng.",
+      "citations": [],
+      "expected_claims": [
+        "7 ngày từ khi nhận hàng",
+        "Áp dụng khi đủ điều kiện"
+      ],
+      "expected_evidence_ids": [
+        "policy:return-v1"
+      ],
+      "expected_action": "answer",
+      "correctness": "NOT_MEASURED; requires human/approved judge review",
+      "groundedness": "NOT_MEASURED; requires citation-to-evidence review",
+      "unsupported_claims": "NOT_MEASURED; requires answer claim annotation",
+      "context_retention": "NOT_MEASURED; label only multi-turn cases",
+      "safe_tool_behavior": null,
+      "execution_safety": {
+        "synthetic_context": true,
+        "in_memory_sqlite": true,
+        "database_query_only": true,
+        "platform_database_unavailable": true,
+        "external_customer_channel_invoked": false
+      },
+      "application_status": "graph_answer",
+      "error_type": null,
+      "provider_attempt_records": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
+          "started_at": 53827.765,
+          "latency_ms": 1235.000000000582,
+          "outcome": "success",
+          "error_type": null,
+          "status_code": null,
+          "provider_error_code": null,
+          "provider_error_param": null,
+          "usage": {
+            "prompt_tokens": 2070,
+            "completion_tokens": 201,
+            "total_tokens": 2271,
+            "thoughts_tokens": 144
+          },
+          "llm_stage": "structured_output",
+          "schema_name": "shop_answer",
+          "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+        }
+      ],
+      "retry_circuit_transitions": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
+          "route_kind": "primary",
+          "error_type": null,
+          "status_code": null,
+          "circuit_state_before": "closed",
+          "circuit_state_after": "closed"
+        }
+      ],
+      "side_effects": {
+        "attempted_database_models": [],
+        "flushed_database_models": [],
+        "external_customer_channel_attempted": false,
+        "external_customer_channel_executed": false
+      },
+      "latency_ms": 1258.51,
+      "model_logical_calls": 1,
+      "model_physical_attempts": 1,
+      "token_usage": {
+        "prompt_tokens": 2070,
+        "completion_tokens": 201,
+        "total_tokens": 2271
+      },
+      "cost": "NOT_MEASURED; provider pricing not configured in evaluator",
+      "provider_calls_authorized": true,
+      "synthetic_only": true
+    },
+    {
+      "case_id": "answer-012-multi-source",
+      "tenant": "synthetic-shop-a",
+      "input_conversation": [
+        {
+          "role": "user",
+          "content": "Alpha giá bao nhiêu và có áp dụng đổi trong 7 ngày không?"
+        }
+      ],
+      "effective_query": "Alpha giá bao nhiêu và có áp dụng đổi trong 7 ngày không?",
+      "tenant_business_id": 910012,
+      "retrieved_evidence": [
+        {
+          "chunk_id": 1,
+          "document_id": 1,
+          "content": "Đổi trong 7 ngày nếu đủ điều kiện.",
+          "filename": "synthetic-1.txt",
+          "similarity": 0.3214285714285714,
+          "metadata": {
+            "synthetic_evidence_id": "policy:return-v1",
+            "synthetic": true
+          }
+        }
+      ],
+      "evidence_ids_used": [],
+      "selected_tools": null,
+      "tool_status": null,
+      "pipeline_outcome": "PROVIDER_HTTP_400",
+      "model_invocations": [
+        {
+          "kind": "structured",
+          "schema_name": "shop_answer",
+          "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77",
+          "provider": null,
+          "model": null,
+          "route_kind": null,
+          "routes": [
+            {
+              "provider": "groq",
+              "model": "openai/gpt-oss-20b",
+              "route_kind": "primary",
+              "circuit_state_before": "closed",
+              "circuit_state_after": "closed",
+              "error_type": "BadRequestError",
+              "status_code": 400
+            }
+          ],
+          "response_text": null,
+          "response_truncated": false,
+          "parse_status": "not_run",
+          "validation_status": "not_run",
+          "error_type": "BadRequestError",
+          "status_code": 400
+        }
+      ],
+      "model_text": [],
+      "generated_response": "",
+      "citations": [],
+      "expected_claims": [
+        "Alpha 180.000 đồng",
+        "Đổi trong 7 ngày nếu đủ điều kiện"
+      ],
+      "expected_evidence_ids": [
+        "catalog:alpha",
+        "policy:return-v1"
+      ],
+      "expected_action": "answer",
+      "correctness": "NOT_MEASURED; requires human/approved judge review",
+      "groundedness": "NOT_MEASURED; requires citation-to-evidence review",
+      "unsupported_claims": "NOT_MEASURED; requires answer claim annotation",
+      "context_retention": "NOT_MEASURED; label only multi-turn cases",
+      "safe_tool_behavior": "NOT_CAPTURED",
+      "execution_safety": {
+        "synthetic_context": true,
+        "in_memory_sqlite": true,
+        "database_query_only": true,
+        "platform_database_unavailable": true,
+        "external_customer_channel_invoked": false
+      },
+      "application_status": null,
+      "error_type": "BadRequestError",
+      "provider_attempt_records": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
+          "started_at": 53829.062,
+          "latency_ms": 1156.0000000026776,
+          "outcome": "error",
+          "error_type": "BadRequestError",
+          "status_code": 400,
+          "provider_error_code": "json_validate_failed",
+          "provider_error_param": null,
+          "usage": null,
+          "llm_stage": "structured_output",
+          "schema_name": "shop_answer",
+          "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+        }
+      ],
+      "retry_circuit_transitions": [
+        {
+          "provider": "groq",
+          "model": "openai/gpt-oss-20b",
+          "route_kind": "primary",
+          "error_type": "BadRequestError",
+          "status_code": 400,
+          "circuit_state_before": "closed",
+          "circuit_state_after": "closed"
+        }
+      ],
+      "side_effects": {
+        "attempted_database_models": [],
+        "flushed_database_models": [],
+        "external_customer_channel_attempted": false,
+        "external_customer_channel_executed": false
+      },
+      "latency_ms": 1172.55,
+      "model_logical_calls": 1,
+      "model_physical_attempts": 1,
+      "token_usage": "NOT_REPORTED_BY_PROVIDER",
+      "cost": "NOT_MEASURED; provider pricing not configured in evaluator",
+      "provider_calls_authorized": true,
+      "synthetic_only": true
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+TASK=FINAL_POST_FIX_GROQ_VERIFICATION
+DATE=2026-11-06
+BRANCH=codex/rag-rfm-all-updates-20261104
+MODEL=groq/openai/gpt-oss-20b
+
+PREFLIGHT=PASS
+- 3 synthetic case IDs selected: answer-010-no-evidence, answer-011-policy-grounded, answer-012-multi-source.
+- Provider/model pinned to Groq; non-Groq fallback disabled; hard task budget enforced by a persistent ledger.
+- DATABASE_URL, TENANT_DATABASE_URL, PLATFORM_DATABASE_URL set to sqlite:// before app import. Synthetic factory uses fresh in-memory SQLite/StaticPool. No backend/test.db or production DB read.
+- SALES_JOURNEY_ENGINE_ENABLED source default verified False.
+
+LIVE_RUN_1=COMPLETED_PROVIDER_CALLS; WRAPPER_SUMMARY_EXIT=2
+- Groq attempts: case 010=1, case 011=2, case 012=1; total 4.
+- The evaluation outputs were persisted. Console summary serialization then failed with UnicodeEncodeError; no secret was printed.
+- Case 011: two valid structured drafts omitted eligibility. Guard rejected and selected safe fallback; notifier insert against query-only SQLite raised OperationalError before final text capture. No model flush; no external send.
+- Case 012: initial Groq response HTTP 429 rate_limit_exceeded. Safe fallback path then hit the same query-only notification persistence error. No model flush; no external send.
+- Initial run artifacts: post-fix-groq-verification-20261106.json and .rag-runs.jsonl.
+
+BOUNDED_REVALIDATION_CASE_012=PASS
+- One remaining authorized attempt used; case 012 total attempts=2, global total=5/6. No provider switch.
+- Synthetic-only graph run used a no-op handoff notifier scoped to that temporary runner to capture the answer without attempting a notification write. Application source was not changed.
+- Result: “Alpha có giá 180.000 đồng và có thể đổi trong 7 ngày nếu đủ điều kiện.” Structured response valid; catalog and knowledge selected and represented in evidence manifest.
+- The revalidation artifact reports database_query_only=false; do not interpret it as a query-only verified run. It used the synthetic in-memory context; recorded side effects show no database models attempted/flushed and no external channel execution.
+
+FOCUSED_REGRESSION=PASS
+COMMAND=python -m pytest -q tests/test_conversation_graph.py::test_policy_guard_rejection_gets_one_graph_retry_and_repairs_unsafe_claim tests/test_conversation_graph.py::test_repeated_policy_guard_rejection_uses_safe_fallback_and_notifies_staff tests/test_rag_components.py::test_citation_guard_preserves_explicit_policy_eligibility_conditions tests/test_rag_components.py::test_citation_guard_rejects_definitive_policy_denial_from_unknown_evidence
+RESULT=6 passed; 0 failed; EXIT_CODE=0; ELAPSED_SECONDS=8.36
+- An earlier log-capture attempt used a wrong relative destination; pytest itself returned 0. The same tests were rerun with a correct destination and this captured log.
+
+FINAL_CHECKS
+- git diff --check: exit 0; Git printed only existing LF/CRLF conversion warnings.
+- No serving source changed by this verification. No commit, push, migration, reindex, deploy, provider switch, customer message, order, payment, or booking was performed.
+- Persistent provider ledger: 3 unique cases; 5 physical attempts; reserved 29,407 input / 1,658 output tokens; provider-reported 8,637 input / 1,146 output tokens.
+- HTTP 400 not observed; historical cause remains unknown. Consent race P2 remains OPEN.

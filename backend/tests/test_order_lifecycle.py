@@ -12,6 +12,7 @@ from app.models.chatbot_followup import ChatbotFollowUp
 from app.models.customer import Customer
 from app.models.conversation import Conversation
 from app.models.sales import Order, OrderItem, Product
+from capability_fixtures import enable_workspace_capabilities
 
 
 class OrderLifecycleTests(unittest.TestCase):
@@ -27,6 +28,7 @@ class OrderLifecycleTests(unittest.TestCase):
             business = Business(name="Order Life", slug="order-life")
             db.add(business)
             db.flush()
+            enable_workspace_capabilities(db, business.id, "RETAIL_TOOLS", "ORDER_TOOLS")
             customer = Customer(business_id=business.id, channel="telegram", external_user_id="life-user")
             product = Product(business_id=business.id, sku="LIFE", name="Life", price=10, stock_quantity=1)
             db.add_all([customer, product])

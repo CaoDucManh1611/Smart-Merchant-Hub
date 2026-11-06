@@ -108,11 +108,12 @@ def test_shop_smtp_sends_order_confirmation_with_shop_display_name():
 
     assert result.provider == "smtp"
     message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
-    assert message["From"].addresses[0].display_name == "Shop Hồng"
+    assert message["From"].addresses[0].display_name == "Smart Merchant Hub"
     assert message["From"].addresses[0].addr_spec == "info@gmail.com"
     assert message["To"] == "customer@example.com"
     assert message["Subject"] == "Mã OTP xác nhận đơn hàng Smart Merchant Hub"
-    assert "Mã OTP xác nhận đơn hàng Smart Merchant Hub của bạn là 123456" in message.get_content()
+    plain_body = message.get_body(preferencelist=("plain",)).get_content()
+    assert "Mã OTP xác nhận đơn hàng Smart Merchant Hub của bạn là 123456" in plain_body
     smtp.return_value.__enter__.return_value.login.assert_called_once_with("info@gmail.com", "google-app-password")
 
 

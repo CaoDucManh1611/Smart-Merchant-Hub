@@ -1,0 +1,59 @@
+........................................................................ [ 21%]
+............................FFFFFF...................................... [ 43%]
+........................................................................ [ 65%]
+...................................................................... [ 86%]
+..............................................                       [100%]
+================================== FAILURES ===================================
+_ test_product_attributes_use_same_current_crm_context_on_all_channels[facebook] _
+tests\test_auto_reply_channels.py:421: in test_product_attributes_use_same_current_crm_context_on_all_channels
+    assert "100000 VND" in send.call_args.kwargs["text"]
+E   AssertionError: assert '100000 VND' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=TypeError
+_ test_product_attributes_use_same_current_crm_context_on_all_channels[instagram] _
+tests\test_auto_reply_channels.py:421: in test_product_attributes_use_same_current_crm_context_on_all_channels
+    assert "100000 VND" in send.call_args.kwargs["text"]
+E   AssertionError: assert '100000 VND' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=TypeError
+_ test_product_attributes_use_same_current_crm_context_on_all_channels[telegram] _
+tests\test_auto_reply_channels.py:421: in test_product_attributes_use_same_current_crm_context_on_all_channels
+    assert "100000 VND" in send.call_args.kwargs["text"]
+E   AssertionError: assert '100000 VND' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=TypeError
+_ test_product_attributes_use_same_current_crm_context_on_all_channels[zalo] __
+tests\test_auto_reply_channels.py:421: in test_product_attributes_use_same_current_crm_context_on_all_channels
+    assert "100000 VND" in send.call_args.kwargs["text"]
+E   AssertionError: assert '100000 VND' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=TypeError
+_ test_product_attributes_use_same_current_crm_context_on_all_channels[tiktok] _
+tests\test_auto_reply_channels.py:421: in test_product_attributes_use_same_current_crm_context_on_all_channels
+    assert "100000 VND" in send.call_args.kwargs["text"]
+E   AssertionError: assert '100000 VND' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=TypeError
+_ test_product_attributes_use_same_current_crm_context_on_all_channels[shopee] _
+tests\test_auto_reply_channels.py:421: in test_product_attributes_use_same_current_crm_context_on_all_channels
+    assert "100000 VND" in send.call_args.kwargs["text"]
+E   AssertionError: assert '100000 VND' in 'Hi\u1ec7n ch\u01b0a th\u1ec3 t\u1ea1o y\xeau c\u1ea7u chuy\u1ec3n nh\xe2n vi\xean t\u1ef1 \u0111\u1ed9ng. B\u1ea1n vui l\xf2ng li\xean h\u1ec7 tr\u1ef1c ti\u1ebfp v\u1edbi shop \u0111\u1ec3 \u0111\u01b0\u1ee3c h\u1ed7 tr\u1ee3 nh\xe9.'
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.auto_reply_service:auto_reply_service.py:667 Could not persist RAG handoff: error_type=TypeError
+============================== warnings summary ===============================
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:926: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_auto_reply_channels.py::test_product_attributes_use_same_current_crm_context_on_all_channels[facebook]
+FAILED tests/test_auto_reply_channels.py::test_product_attributes_use_same_current_crm_context_on_all_channels[instagram]
+FAILED tests/test_auto_reply_channels.py::test_product_attributes_use_same_current_crm_context_on_all_channels[telegram]
+FAILED tests/test_auto_reply_channels.py::test_product_attributes_use_same_current_crm_context_on_all_channels[zalo]
+FAILED tests/test_auto_reply_channels.py::test_product_attributes_use_same_current_crm_context_on_all_channels[tiktok]
+FAILED tests/test_auto_reply_channels.py::test_product_attributes_use_same_current_crm_context_on_all_channels[shopee]
+6 failed, 326 passed, 1 warning, 6 subtests passed in 21.52s
+
+EXIT_CODE=1
+ELAPSED_SECONDS=25.49

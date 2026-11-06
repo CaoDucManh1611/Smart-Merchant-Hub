@@ -1,0 +1,14 @@
+Command=python -m pytest -q --tb=short tests/test_auto_reply_channels.py tests/test_conversation_graph.py tests/test_recommendations_api.py
+DatabaseMode=RUN_POSTGRES_TESTS=0; offline isolated fixtures only
+........................................................................ [ 50%]
+.................................................................. [ 96%]
+.....                                                                    [100%]
+============================== warnings summary ===============================
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:926: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+143 passed, 1 warning, 6 subtests passed in 8.92s
+EXIT_CODE=0
+ELAPSED_SECONDS=12.71

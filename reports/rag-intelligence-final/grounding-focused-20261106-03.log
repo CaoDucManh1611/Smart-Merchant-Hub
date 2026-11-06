@@ -1,0 +1,42 @@
+........F............................................................... [ 22%]
+........................................................................ [ 45%]
+........................................................................ [ 67%]
+........................................................................ [ 90%]
+................................                                         [100%]
+================================== FAILURES ===================================
+_ test_product_price_lookup_forces_current_catalog_and_rejects_stale_kb_price _
+
+    def test_product_price_lookup_forces_current_catalog_and_rejects_stale_kb_price():
+        current_item = {
+            "ref":"product:1", "name":"M\u1eabu th\u1eed", "sku":"ABC-123", "kind":"goods",
+            "price":"100000", "billing_unit":None, "available":3, "description":"H\xe0ng m\u1eabu",
+        }
+        other_item = {
+            "ref":"product:2", "name":"M\u1eabu kh\xe1c", "sku":"OTHER-999", "kind":"goods",
+            "price":"999000", "billing_unit":None, "available":8, "description":"M\u1eabu kh\xe1c",
+        }
+        stale_knowledge = SimpleNamespace(content="SKU ABC-123 c\xf3 gi\xe1 999.000 \u0111\u1ed3ng.", document_id=7)
+        with patch('app.services.conversation_graph.call_llm',side_effect=[
+            '{"mode":"answer","tools":["knowledge"]}',
+            '{"answer":"S\u1ea3n ph\u1ea9m hi\u1ec7n c\xf3 gi\xe1 999.000 \u0111\u1ed3ng.","sources":[1,2]}',
+            '{"answer":"S\u1ea3n ph\u1ea9m hi\u1ec7n c\xf3 gi\xe1 999.000 \u0111\u1ed3ng.","sources":[1,2]}',
+        ]) as model, \
+             patch('app.services.quota_service.record_quota_usage'), \
+             patch('app.services.business_request.current_offerings',return_value=[current_item,other_item]), \
+             patch('app.rag.retriever.retrieve',return_value=[stale_knowledge]), \
+             patch('app.services.conversation_context.approved_reply_style',return_value=None), \
+             patch('app.services.auto_reply_service._notify_rag_handoff_required'):
+            result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+                query='Gi� SKU ABC-123 l� bao nhi�u?',job_key='stale-catalog-price')
+        assert '999.000' not in result.prompt
+        assert '100.000' not in result.prompt
+>       assert any(message in result.prompt for message in (
+            'ch\u01b0a x\xe1c minh \u0111\u01b0\u1ee3c ngu\u1ed3n', 'ch\u01b0a c\xf3 \u0111\u1ee7 c\u0103n c\u1ee9',
+        ))
+E       assert False
+E        +  where False = any(<generator object test_product_price_lookup_forces_current_catalog_and_rejects_stale_kb_price.<locals>.<genexpr> at 0x000002AF301A6810>)
+
+tests\test_conversation_graph.py:221: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_conversation_graph.py::test_product_price_lookup_forces_current_catalog_and_rejects_stale_kb_price
+1 failed, 319 passed in 7.46s

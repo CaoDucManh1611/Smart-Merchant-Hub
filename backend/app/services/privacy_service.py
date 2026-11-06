@@ -175,6 +175,9 @@ def _invalidate_consent_derived_models(db: Session, business_id: int) -> None:
 
 def stop_customer_personalization(db: Session, business_id: int, customer_id: int) -> None:
     """Erase derived profile, RFM labels, and retained query text after opt-out."""
+    from app.services.conversation_memory import purge_reply_memory_for_customer
+
+    purge_reply_memory_for_customer(db, business_id, customer_id)
     for fact in db.scalars(select(CustomerFact).where(
         CustomerFact.business_id == business_id,
         CustomerFact.customer_id == customer_id,

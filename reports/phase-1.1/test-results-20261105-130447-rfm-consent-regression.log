@@ -1,0 +1,7 @@
+Started: 2026-11-05 13:04:47 +07:00
+Command: RUN_POSTGRES_TESTS=0; python -m pytest tests/test_rfm_segments.py tests/test_rag_feedback_consent.py tests/test_rag_feedback_artifacts_isolated.py -q
+......................................................                   [100%]
+54 passed in 1.79s
+Ended: 2026-11-05 13:04:51 +07:00
+Elapsed: 3.99 seconds
+Exit code: 0

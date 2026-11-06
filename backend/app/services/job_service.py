@@ -17,6 +17,10 @@ MAX_ERROR_LENGTH = 500
 STALE_LOCK_AFTER = timedelta(minutes=5)
 
 
+class JobBlocked(RuntimeError):
+    """A terminal, operator-retryable job rejection with no automatic retry."""
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -114,6 +118,18 @@ def dispatch_due_jobs(
             if handler is None:
                 raise RuntimeError(f"No handler registered for {job.kind}")
             handler(job.payload or {})
+        except JobBlocked as exc:
+            # A policy/capability denial is not transient. Keep it visible as
+            # blocked and require the existing explicit support retry after
+            # the underlying configuration is corrected.
+            db.rollback()
+            job = db.get(CrmJob, job_id)
+            if job is None:
+                processed += 1
+                continue
+            job.status = "blocked"
+            job.last_error = safe_error_message(exc, limit=MAX_ERROR_LENGTH)
+            job.locked_at = None
         except Exception as exc:  # noqa: BLE001 - persist bounded retry state
             db.rollback()
             job = db.get(CrmJob, job_id)

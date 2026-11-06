@@ -1,11 +1,12 @@
 import unittest
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
-from fastapi import Header
+from fastapi import Header, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -36,6 +37,7 @@ from app.models.sales import Order, OrderItem, Product
 from app.tenancy.crm_session import get_tenant_db
 from app.tenancy.context import TenantContext
 from app.tenancy.dependencies import get_tenant_context
+from app.tenancy.workspace_modules import save_workspace_config
 from app.services.crm_job_worker import _dispatch_weekly_customer_learning, dispatch_business_crm_jobs
 from app.services.order_service import transition_sales_order
 from app.services.recommendation_interaction_service import record_order_purchase_interactions
@@ -85,6 +87,11 @@ class RecommendationApiTests(unittest.TestCase):
                 BusinessSetting(business_id=business.id,
                                 key="customer_fact_extraction_enabled", value="true"),
             ])
+            for configured_business in (business, other_business):
+                save_workspace_config(db, configured_business.id, {
+                    "business_model": "RETAIL",
+                    "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS", "RECOMMENDATION_TOOLS"],
+                })
 
             products = [
                 Product(business_id=business.id, sku="P-ONE", name="Product one", price=Decimal("10"), stock_quantity=5),
@@ -142,6 +149,227 @@ class RecommendationApiTests(unittest.TestCase):
 
     def headers(self, business_id=None):
         return {"X-Business-Id": str(business_id or self.business_id)}
+
+    def test_recommendation_serving_api_is_blocked_when_shop_disables_capability(self):
+        with Session(self.engine) as db:
+            save_workspace_config(db, self.business_id, {
+                "business_model": "RETAIL",
+                "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS"],
+            })
+            db.commit()
+
+        try:
+            with patch("app.api.recommendations.serve_recommendations") as serve:
+                response = self.client.post(
+                    "/api/recommendations",
+                    headers=self.headers(),
+                    json={"customer_id": self.customer_id, "limit": 3},
+                )
+            self.assertEqual(403, response.status_code, response.text)
+            self.assertEqual("workspace_capability_disabled", response.json()["detail"]["code"])
+            serve.assert_not_called()
+        finally:
+            with Session(self.engine) as db:
+                save_workspace_config(db, self.business_id, {
+                    "business_model": "RETAIL",
+                    "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS", "RECOMMENDATION_TOOLS"],
+                })
+                db.commit()
+
+    def test_interaction_and_training_apis_are_blocked_when_recommendations_are_disabled(self):
+        with Session(self.engine) as db:
+            save_workspace_config(db, self.business_id, {
+                "business_model": "RETAIL",
+                "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS"],
+            })
+            db.commit()
+
+        try:
+            with patch("app.api.recommendations.record_interaction") as record, \
+                 patch("app.api.recommendations.summarize_interactions") as summarize, \
+                 patch("app.api.recommendations.enqueue_job") as enqueue:
+                interaction = self.client.post(
+                    "/api/recommendations/interactions", headers=self.headers(),
+                    json={"event_type": "search", "idempotency_key": "disabled-recommendations"},
+                )
+                summary = self.client.get(
+                    "/api/recommendations/interactions/summary", headers=self.headers(),
+                )
+                training = self.client.post(
+                    "/api/recommendations/training/segments", headers=self.headers(),
+                )
+
+            for response in (interaction, summary, training):
+                self.assertEqual(403, response.status_code, response.text)
+                self.assertEqual("workspace_capability_disabled", response.json()["detail"]["code"])
+            record.assert_not_called()
+            summarize.assert_not_called()
+            enqueue.assert_not_called()
+            with Session(self.engine) as db:
+                self.assertEqual(0, db.query(RecommendationTrainingRun).filter_by(
+                    business_id=self.business_id, status="queued",
+                ).count())
+        finally:
+            with Session(self.engine) as db:
+                save_workspace_config(db, self.business_id, {
+                    "business_model": "RETAIL",
+                    "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS", "RECOMMENDATION_TOOLS"],
+                })
+                db.commit()
+
+    def test_signed_recommendation_click_does_not_read_catalog_when_disabled(self):
+        from app.api.recommendations import track_recommendation_click
+        from app.services.recommendation_service import recommendation_click_signature
+
+        db = Mock()
+
+        @contextmanager
+        def isolated_tenant_session(_schema):
+            yield db
+
+        expires = int(datetime.now(timezone.utc).timestamp()) + 60
+        signature = recommendation_click_signature(
+            business_id=self.business_id, request_id="signed-request", product_id=12,
+            expires=expires,
+        )
+        with patch("app.api.recommendations.tenant_session", side_effect=isolated_tenant_session), \
+             patch("app.tenancy.workspace_modules.get_workspace_config", return_value={
+                 "business_model": "RETAIL", "enabled_capabilities": ["CORE_CRM"],
+             }):
+            with self.assertRaises(HTTPException) as error:
+                track_recommendation_click(
+                    None, business_id=self.business_id, request_id="signed-request",
+                    product_id=12, expires=expires, signature=signature,
+                )
+
+        self.assertEqual(403, error.exception.status_code)
+        db.query.assert_not_called()
+
+    def test_direct_chat_catalog_questions_are_denied_before_retrieval_when_disabled(self):
+        with Session(self.engine) as db:
+            save_workspace_config(db, self.business_id, {
+                "business_model": "RETAIL",
+                "enabled_capabilities": ["CORE_CRM"],
+            })
+            db.commit()
+
+        try:
+            with patch("app.api.chat.answer_from_crm", return_value=None) as crm_answer, \
+                 patch("app.api.chat.retrieve") as retrieve, \
+                 patch("app.api.chat._live_product_context_chunk") as live_catalog:
+                responses = {
+                    path: self.client.post(
+                        path,
+                        headers=self.headers(),
+                        json={"query": "Giá sản phẩm P-ONE bao nhiêu?"},
+                    )
+                    for path in ("/api/chat", "/api/chat/stream")
+                }
+
+            non_stream = responses["/api/chat"]
+            self.assertEqual(200, non_stream.status_code, non_stream.text)
+            self.assertEqual("handoff_required", non_stream.json()["answer_status"])
+            self.assertEqual("workspace_capability_disabled", non_stream.json()["action"])
+            self.assertEqual([], non_stream.json()["sources"])
+
+            stream = responses["/api/chat/stream"]
+            self.assertEqual(200, stream.status_code, stream.text)
+            self.assertIn('"answer_status": "handoff_required"', stream.text)
+            self.assertIn('"action": "workspace_capability_disabled"', stream.text)
+            crm_answer.assert_not_called()
+            retrieve.assert_not_called()
+            live_catalog.assert_not_called()
+        finally:
+            with Session(self.engine) as db:
+                save_workspace_config(db, self.business_id, {
+                    "business_model": "RETAIL",
+                    "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS", "RECOMMENDATION_TOOLS"],
+                })
+                db.commit()
+
+    def test_direct_chat_sales_lookup_is_denied_before_crm_query_when_orders_disabled(self):
+        with Session(self.engine) as db:
+            save_workspace_config(db, self.business_id, {
+                "business_model": "RETAIL",
+                "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS"],
+            })
+            db.commit()
+
+        try:
+            with patch("app.api.chat.answer_from_crm") as crm_answer, \
+                 patch("app.api.chat.retrieve") as retrieve, \
+                 patch("app.api.chat._live_product_context_chunk") as live_catalog:
+                responses = {
+                    path: self.client.post(
+                        path,
+                        headers=self.headers(),
+                        json={"query": "Sản phẩm bán chạy tháng này là gì?"},
+                    )
+                    for path in ("/api/chat", "/api/chat/stream")
+                }
+
+            non_stream = responses["/api/chat"]
+            self.assertEqual(200, non_stream.status_code, non_stream.text)
+            self.assertEqual("handoff_required", non_stream.json()["answer_status"])
+            self.assertEqual("workspace_capability_disabled", non_stream.json()["action"])
+            self.assertIn("đơn hàng", non_stream.json()["answer"])
+
+            stream = responses["/api/chat/stream"]
+            self.assertEqual(200, stream.status_code, stream.text)
+            self.assertIn('"action": "workspace_capability_disabled"', stream.text)
+            self.assertIn("đơn hàng", stream.text)
+            crm_answer.assert_not_called()
+            retrieve.assert_not_called()
+            live_catalog.assert_not_called()
+        finally:
+            with Session(self.engine) as db:
+                save_workspace_config(db, self.business_id, {
+                    "business_model": "RETAIL",
+                    "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS", "RECOMMENDATION_TOOLS"],
+                })
+                db.commit()
+
+    def test_direct_chat_knowledge_questions_still_retrieve_when_catalog_disabled(self):
+        from types import SimpleNamespace
+
+        with Session(self.engine) as db:
+            save_workspace_config(db, self.business_id, {
+                "business_model": "RETAIL",
+                "enabled_capabilities": ["CORE_CRM"],
+            })
+            db.commit()
+
+        source = SimpleNamespace(
+            chunk_id=91, document_id=14, content="Chính sách đổi trả trong 7 ngày.",
+            similarity=.9, metadata={}, filename="policy.md", chunk_index=0,
+        )
+        async def stream_answer(_messages):
+            yield "Shop hỗ trợ đổi trả trong 7 ngày. [Nguồn 1]"
+
+        try:
+            with patch("app.api.chat.answer_from_crm", return_value=None), \
+                 patch("app.api.chat.retrieve", return_value=[source]) as retrieve, \
+                 patch("app.api.chat._live_product_context_chunk") as live_catalog, \
+                 patch("app.api.chat.reserve_ai_budget", return_value={"cost": 0}), \
+                 patch("app.api.chat.call_llm", return_value="Shop hỗ trợ đổi trả trong 7 ngày. [Nguồn 1]"), \
+                 patch("app.api.chat.stream_llm", side_effect=stream_answer):
+                for path in ("/api/chat", "/api/chat/stream"):
+                    response = self.client.post(
+                        path,
+                        headers=self.headers(),
+                        json={"query": "Chính sách đổi trả thế nào?"},
+                    )
+                    self.assertEqual(200, response.status_code, response.text)
+                    retrieve.assert_called()
+                self.assertEqual(2, retrieve.call_count)
+                live_catalog.assert_not_called()
+        finally:
+            with Session(self.engine) as db:
+                save_workspace_config(db, self.business_id, {
+                    "business_model": "RETAIL",
+                    "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS", "RECOMMENDATION_TOOLS"],
+                })
+                db.commit()
 
     def test_serves_tenant_scoped_recommendations_and_rejects_unsigned_feedback(self):
         response = self.client.post(
@@ -961,21 +1189,23 @@ class RecommendationApiTests(unittest.TestCase):
     def test_rag_question_without_retrieval_chunks_rejects_uncited_catalog_answer(
         self, retrieve, reserve_budget, call_llm
     ):
-        response = self.client.post(
-            "/api/chat",
-            headers={**self.headers(), "X-Idempotency-Key": "rag-question-test-1"},
-            json={"customer_id": self.customer_id, "query": "product three gift"},
-        )
+        with patch("app.api.chat.answer_from_crm", return_value=None), \
+             patch("app.api.chat._live_product_context_chunk", return_value=None):
+            response = self.client.post(
+                "/api/chat",
+                headers={**self.headers(), "X-Idempotency-Key": "rag-question-test-1"},
+                json={"customer_id": self.customer_id, "query": "What is the price of Product three?"},
+            )
         self.assertEqual(200, response.status_code, response.text)
         self.assertEqual("no_context", response.json()["answer_status"])
         self.assertTrue(response.json()["handoff_required"])
         self.assertEqual([], response.json()["sources"])
         self.assertIn("reliable source", response.json()["answer"].lower())
         retrieve.assert_called_once()
-        # The route still supplies live catalog evidence, so it may call the
-        # model; the uncited result must be discarded in favor of safe fallback.
-        reserve_budget.assert_called_once()
-        call_llm.assert_called_once()
+        # With no retrieval or live catalog evidence, the API must not ask a
+        # model to invent product facts.
+        reserve_budget.assert_not_called()
+        call_llm.assert_not_called()
         with Session(self.engine) as db:
             event = db.query(CustomerProductInteraction).filter(
                 CustomerProductInteraction.business_id == self.business_id,
@@ -984,7 +1214,7 @@ class RecommendationApiTests(unittest.TestCase):
             self.assertEqual("ask", event.event_type)
             self.assertEqual("rag", event.source)
             self.assertIsNone(event.query_text)
-            self.assertEqual(len("product three gift"), event.event_metadata["query_chars"])
+            self.assertEqual(len("What is the price of Product three?"), event.event_metadata["query_chars"])
             self.assertNotIn("query_hash", event.event_metadata)
 
     @patch("app.api.chat.call_llm")
@@ -1372,7 +1602,12 @@ class RecommendationApiTests(unittest.TestCase):
             profile = db.query(RecommendationCustomerProfile).filter_by(
                 business_id=self.business_id, customer_id=self.customer_id
             ).one()
-            self.assertEqual(profile.segment_label, decision.context["rfm_segment"])
+            serving_segment = (
+                profile.features.get("recommendation_segment_label")
+                or profile.segment_label
+            )
+            self.assertEqual(serving_segment, decision.context["rfm_segment"])
+            self.assertNotIn("purchase_propensity", decision.context)
             self.assertEqual("telegram", decision.context["source_channel"])
             self.assertEqual("warmup_default", decision.selection_reason)
             db.add(BanditArmStat(

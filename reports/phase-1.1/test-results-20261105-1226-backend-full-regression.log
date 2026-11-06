@@ -1,0 +1,872 @@
+Command=python -m pytest -q --tb=short
+DatabaseMode=RUN_POSTGRES_TESTS=0; isolated test fixtures only; no production DB
+..............F......................................................... [  3%]
+........................................................................ [  6%]
+........................................................................ [ 10%]
+........................................................................ [ 13%]
+.................................................................... [ 16%]
+............F........................................................... [ 20%]
+...................................................................F.... [ 23%]
+..........................................F............................. [ 27%]
+.................................................................F.... [ 30%]
+..................................................................... [ 33%]
+..s..................................................................... [ 37%]
+..............FFFF...................................................... [ 40%]
+........................................................................ [ 44%]
+..........................................................................F......................................................FF....... [ 50%]
+..............................................FF...................FFFFF [ 54%]
+..F...............FFFFFFFFF...F.F...............F....................... [ 57%]
+....................................................FFFFFFFFF.FFF........FFFFFFFFFFFFFFFFFFFF..............FFFF................. [ 63%]
+........................................................................ [ 67%]
+..........................................F............................. [ 70%]
+........................................................................ [ 74%]
+.................................................................. [ 77%]
+...............F........FF............................................FF [ 80%]
+FFF..................................................................... [ 84%]
+...F.................................................................... [ 87%]
+......................FFFFFF..........................F.F............... [ 91%]
+.F............s..................F...................................... [ 94%]
+.................F...................................................... [ 97%]
+............................................                             [100%]
+================================== FAILURES ===================================
+_ AlembicChainTests.test_baseline_and_default_business_migrations_form_single_head _
+tests\test_alembic_chain.py:114: in test_baseline_and_default_business_migrations_form_single_head
+    self.assertEqual(["20261020_0061"], scripts.get_heads())
+E   AssertionError: Lists differ: ['20261020_0061'] != ['20261103_0062']
+E   
+E   First differing element 0:
+E   '20261020_0061'
+E   '20261103_0062'
+E   
+E   - ['20261020_0061']
+E   ?         ^^    ^
+E   
+E   + ['20261103_0062']
+E   ?        + ^    ^
+______ test_rag_reply_applies_only_bounded_arm_and_saves_decision_trace _______
+tests\test_chatbot_bandit_runtime.py:274: in test_rag_reply_applies_only_bounded_arm_and_saves_decision_trace
+    result = process_rag_auto_reply(
+app\rag\serving.py:30: in wrapped
+    result = function(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\auto_reply_service.py:4219: in process_rag_auto_reply
+    workspace_config = get_workspace_config(db, business_id)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app\tenancy\workspace_modules.py:219: in get_workspace_config
+    ).first()
+      ^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py:1137: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py:1141: in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py:1198: in _execute_mock_call
+    result = next(effect)
+             ^^^^^^^^^^^^
+E   StopIteration
+_ ConversationTurnTests.test_latest_inbound_guard_accepts_multiple_prior_messages _
+tests\test_conversation_turn_service.py:316: in test_latest_inbound_guard_accepts_multiple_prior_messages
+    self.assertFalse(process_rag_auto_reply(
+app\rag\serving.py:30: in wrapped
+    result = function(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+app\services\auto_reply_service.py:4280: in process_rag_auto_reply
+    send_reply(reply_text)
+app\services\auto_reply_service.py:4168: in send_reply
+    raise _SupersededTurn()
+E   app.services.auto_reply_service._SupersededTurn
+_ CrmTwoShopEndToEndTests.test_two_shop_crm_commerce_reporting_and_rag_remain_isolated _
+tests\test_crm_two_shop_e2e.py:134: in test_two_shop_crm_commerce_reporting_and_rag_remain_isolated
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ CustomerCollectionFlowTests.test_quantity_purchase_followup_uses_last_product_and_waits_for_confirmation _
+tests\test_customer_collection_flow.py:1897: in test_quantity_purchase_followup_uses_last_product_and_waits_for_confirmation
+    self.assertEqual("order_confirmation", result.current_field)
+E   AssertionError: 'order_confirmation' != None
+_ InventoryReceivingTests.test_partial_receipt_increases_stock_and_updates_po _
+tests\test_inventory_receiving.py:75: in test_partial_receipt_increases_stock_and_updates_po
+    order = self.create_submitted_po("PO-RECEIVE-1")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_inventory_receiving.py:64: in create_submitted_po
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_____ InventoryReceivingTests.test_receipt_cannot_exceed_ordered_quantity _____
+tests\test_inventory_receiving.py:98: in test_receipt_cannot_exceed_ordered_quantity
+    order = self.create_submitted_po("PO-RECEIVE-OVER", quantity=3)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_inventory_receiving.py:64: in create_submitted_po
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+__ InventoryReceivingTests.test_receipt_idempotency_does_not_duplicate_stock __
+tests\test_inventory_receiving.py:110: in test_receipt_idempotency_does_not_duplicate_stock
+    order = self.create_submitted_po("PO-RECEIVE-IDEMP", quantity=3)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_inventory_receiving.py:64: in create_submitted_po
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ InventoryReceivingTests.test_receipt_idempotency_key_cannot_be_reused_for_another_purchase_order _
+tests\test_inventory_receiving.py:130: in test_receipt_idempotency_key_cannot_be_reused_for_another_purchase_order
+    first_order = self.create_submitted_po("PO-RECEIPT-KEY-ONE", quantity=3)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_inventory_receiving.py:64: in create_submitted_po
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ MediaUploadApiTests.test_upload_audio_uses_generic_media_route_and_persists_attachment _
+tests\test_media_upload_api.py:169: in test_upload_audio_uses_generic_media_route_and_persists_attachment
+    self.assertIsNotNone(attachment)
+E   AssertionError: unexpectedly None
+_ test_changed_meta_conversation_retries_after_transient_thread_id_error[open] _
+tests\test_meta_business_suite_bridge.py:1096: in test_changed_meta_conversation_retries_after_transient_thread_id_error
+    assert observed["3"] == row["label"]
+E   AssertionError: assert 'previous-row-signature' == 'Buyer\nnew message'
+E     
+E     + previous-row-signature
+E     - Buyer
+E     - new message
+---------------------------- Captured stdout call -----------------------------
+\u26a0\ufe0f Ch\u01b0a \u0111\u1ed3ng b\u1ed9 \u0111\u01b0\u1ee3c ho\u1ea1t \u0111\u1ed9ng chat Meta m\u1edbi (RuntimeError); th\u1eed l\u1ea1i sau 2 gi\xe2y.\n\U0001f514 \u0110\xe3 c\u1eadp nh\u1eadt h\u1ed9i tho\u1ea1i Messenger (1 tin \u0111ang hi\u1ec3n th\u1ecb).
+_ test_changed_meta_conversation_retries_after_transient_thread_id_error[backend] _
+tests\test_meta_business_suite_bridge.py:1096: in test_changed_meta_conversation_retries_after_transient_thread_id_error
+    assert observed["3"] == row["label"]
+E   AssertionError: assert 'previous-row-signature' == 'Buyer\nnew message'
+E     
+E     + previous-row-signature
+E     - Buyer
+E     - new message
+---------------------------- Captured stdout call -----------------------------
+\u26a0\ufe0f Ch\u01b0a \u0111\u1ed3ng b\u1ed9 \u0111\u01b0\u1ee3c ho\u1ea1t \u0111\u1ed9ng chat Meta m\u1edbi (RuntimeError); th\u1eed l\u1ea1i sau 2 gi\xe2y.\n\U0001f514 \u0110\xe3 c\u1eadp nh\u1eadt h\u1ed9i tho\u1ea1i Messenger (1 tin \u0111ang hi\u1ec3n th\u1ecb).
+___ OrderLifecycleTests.test_delivery_schedules_one_post_delivery_followup ____
+tests\test_order_lifecycle.py:121: in test_delivery_schedules_one_post_delivery_followup
+    self.assertEqual(200, response.status_code, response.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+____________ OrderLifecycleTests.test_sales_order_transition_graph ____________
+tests\test_order_lifecycle.py:66: in test_sales_order_transition_graph
+    self.assertEqual(200, response.status_code)
+E   AssertionError: 200 != 403
+_ OrderPaymentApiTests.test_full_refund_after_completed_order_reopens_stock_and_updates_status _
+tests\test_order_payments.py:208: in test_full_refund_after_completed_order_reopens_stock_and_updates_status
+    order = self.create_order("SO-PAY-COMPLETED-REFUND")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_order_payments.py:71: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+______ OrderPaymentApiTests.test_order_cannot_complete_until_fully_paid _______
+tests\test_order_payments.py:171: in test_order_cannot_complete_until_fully_paid
+    order = self.create_order("SO-PAY-COMPLETE")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_order_payments.py:71: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+______ OrderPaymentApiTests.test_order_events_include_payment_and_refund ______
+tests\test_order_payments.py:153: in test_order_events_include_payment_and_refund
+    order = self.create_order("SO-PAY-EVENTS")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_order_payments.py:71: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ OrderPaymentApiTests.test_partial_payment_updates_summary_and_is_idempotent _
+tests\test_order_payments.py:75: in test_partial_payment_updates_summary_and_is_idempotent
+    order = self.create_order("SO-PAY-PARTIAL")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_order_payments.py:71: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+___ OrderPaymentApiTests.test_payment_cannot_overpay_and_refund_is_bounded ____
+tests\test_order_payments.py:101: in test_payment_cannot_overpay_and_refund_is_bounded
+    order = self.create_order("SO-PAY-REFUND")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_order_payments.py:71: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_____ test_smtp_delivery_sends_message_without_logging_or_returning_code ______
+tests\test_otp_delivery.py:39: in test_smtp_delivery_sends_message_without_logging_or_returning_code
+    assert "123456" in message.get_content()
+                       ^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\email\message.py:1128: in get_content
+    return content_manager.get_content(self, *args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\email\contentmanager.py:25: in get_content
+    raise KeyError(content_type)
+E   KeyError: 'multipart/alternative'
+_ P102OperationsHardeningTests.test_archived_supplier_cannot_be_used_for_new_purchase _
+tests\test_p1_02_operations_hardening.py:131: in test_archived_supplier_cannot_be_used_for_new_purchase
+    self.assertEqual(201, supplier.status_code, supplier.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102OperationsHardeningTests.test_full_refund_endpoint_after_delivery_restores_stock_and_marks_order_refunded _
+tests\test_p1_02_operations_hardening.py:233: in test_full_refund_endpoint_after_delivery_restores_stock_and_marks_order_refunded
+    f"/api/orders/{order['id']}/transition",
+                   ^^^^^^^^^^^
+E   KeyError: 'id'
+__ P102OperationsHardeningTests.test_order_creation_rejects_non_draft_status __
+tests\test_p1_02_operations_hardening.py:92: in test_order_creation_rejects_non_draft_status
+    self.assertEqual(422, response.status_code, response.text)
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102OperationsHardeningTests.test_product_opening_stock_is_recorded_in_ledger _
+tests\test_p1_02_operations_hardening.py:206: in test_product_opening_stock_is_recorded_in_ledger
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102OperationsHardeningTests.test_purchase_creation_rejects_non_draft_status _
+tests\test_p1_02_operations_hardening.py:106: in test_purchase_creation_rejects_non_draft_status
+    self.assertEqual(422, response.status_code, response.text)
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102OperationsHardeningTests.test_purchase_payment_is_partial_idempotent_and_bounded _
+tests\test_p1_02_operations_hardening.py:264: in test_purchase_payment_is_partial_idempotent_and_bounded
+    order = self.create_purchase("PO-PAYMENT", product_id)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_p1_02_operations_hardening.py:78: in create_purchase
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102OperationsHardeningTests.test_purchase_update_is_locked_after_submission _
+tests\test_p1_02_operations_hardening.py:110: in test_purchase_update_is_locked_after_submission
+    order = self.create_purchase("PO-LOCK", product_id)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_p1_02_operations_hardening.py:78: in create_purchase
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102OperationsHardeningTests.test_receipt_idempotency_key_cannot_be_reused_for_another_purchase _
+tests\test_p1_02_operations_hardening.py:149: in test_receipt_idempotency_key_cannot_be_reused_for_another_purchase
+    first = self.create_purchase("PO-RECEIPT-KEY-1", product_one)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_p1_02_operations_hardening.py:78: in create_purchase
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102OperationsHardeningTests.test_stock_change_uses_adjustment_endpoint_and_records_ledger _
+tests\test_p1_02_operations_hardening.py:185: in test_stock_change_uses_adjustment_endpoint_and_records_ledger
+    self.assertEqual(409, direct.status_code, direct.text)
+E   AssertionError: 409 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102TimelineReportsTests.test_purchase_cost_date_range_includes_the_entire_end_date _
+tests\test_p1_02_timeline_reports.py:120: in test_purchase_cost_date_range_includes_the_entire_end_date
+    self.assertEqual(201, purchase.status_code, purchase.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ P102TimelineReportsTests.test_timeline_includes_sales_payment_event_but_not_unlinked_purchase _
+tests\test_p1_02_timeline_reports.py:72: in test_timeline_includes_sales_payment_event_but_not_unlinked_purchase
+    f"/api/orders/{order['id']}/payments",
+                   ^^^^^^^^^^^
+E   KeyError: 'id'
+________ test_training_precomputes_cache_using_same_tenant_population _________
+tests\test_personalized_rag_pipeline.py:306: in test_training_precomputes_cache_using_same_tenant_population
+    assert profile.features["rfm_scores"]["monetary"] == 1
+E   assert 3 == 1
+___ SupportRequestTests.test_admin_auth_assignment_transitions_and_history ____
+tests\test_platform_support_requests.py:130: in test_admin_auth_assignment_transitions_and_history
+    ticket_id = self.create().json()['id']
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'id'
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CBB82A890>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 14360 and this is thread id 23856.
+_ SupportRequestTests.test_auth_failure_and_cross_shop_header_cannot_override_identity _
+tests\test_platform_support_requests.py:225: in test_auth_failure_and_cross_shop_header_cannot_override_identity
+    self.assertEqual(result.json()['business_id'], 1)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'business_id'
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCFFDE110>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 21004 and this is thread id 23856.
+_____ SupportRequestTests.test_create_replay_conflict_and_durable_history _____
+tests\test_platform_support_requests.py:56: in test_create_replay_conflict_and_durable_history
+    self.assertEqual(first.status_code, 201, first.text)
+E   AssertionError: 503 != 201 : {"detail":"support_requests_unavailable"}
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCFFDC8B0>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 1388 and this is thread id 23856.
+____ SupportRequestTests.test_database_constraints_and_migration_in_memory ____
+tests\test_platform_support_requests.py:184: in test_database_constraints_and_migration_in_memory
+    with self.assertRaises(IntegrityError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: IntegrityError not raised
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCFFDF970>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 22884 and this is thread id 23856.
+____ SupportRequestTests.test_database_failure_rolls_back_with_safe_error _____
+tests\test_platform_support_requests.py:157: in test_database_failure_rolls_back_with_safe_error
+    self.assertEqual(self.client.get('/api/support/requests').json()['total'], 0)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'total'
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCFFDC9A0>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 22976 and this is thread id 23856.
+
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CD0232110>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 18140 and this is thread id 23856.
+_____________ SupportRequestTests.test_legacy_ticket_and_no_plan ______________
+tests\test_platform_support_requests.py:85: in test_legacy_ticket_and_no_plan
+    row = self.db.get(PlatformSupportRequest, ticket['id'])
+                                              ^^^^^^^^^^^^
+E   KeyError: 'id'
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCFFDD300>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 24336 and this is thread id 23856.
+___________ SupportRequestTests.test_missing_shop_and_sync_failure ____________
+tests\test_platform_support_requests.py:118: in test_missing_shop_and_sync_failure
+    self.assertEqual(self.create().status_code, 404)
+E   AssertionError: 503 != 404
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CD1EF5B70>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 4724 and this is thread id 23856.
+___ SupportRequestTests.test_multiple_channels_are_one_ticket_with_plan_cap ___
+tests\test_platform_support_requests.py:71: in test_multiple_channels_are_one_ticket_with_plan_cap
+    self.assertEqual(first.status_code, 201, first.text)
+E   AssertionError: 503 != 201 : {"detail":"support_requests_unavailable"}
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCFBFDC60>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 19260 and this is thread id 23856.
+____ SupportRequestTests.test_normalization_cannot_reconstruct_credentials ____
+tests\test_platform_support_requests.py:170: in test_normalization_cannot_reconstruct_credentials
+    ticket_id = self.create().json()['id']
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'id'
+---------------------------- Captured stdout call -----------------------------
+uuu
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCFFDD300>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 22748 and this is thread id 23856.
+_________ SupportRequestTests.test_own_shop_isolation_and_pagination __________
+tests\test_platform_support_requests.py:95: in test_own_shop_isolation_and_pagination
+    self.assertEqual(self.client.get('/api/support/requests').json()['total'], 0)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'total'
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCD805F30>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 22892 and this is thread id 23856.
+
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCD8074C0>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 21824 and this is thread id 23856.
+__________ SupportRequestTests.test_sync_uses_authenticated_identity __________
+tests\test_platform_support_requests.py:127: in test_sync_uses_authenticated_identity
+    self.assertEqual(self.create().json()['business_id'], 3)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'business_id'
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCD807C40>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 23964 and this is thread id 23856.
+____ SupportRequestTests.test_validation_prevents_diagnostics_and_secrets _____
+tests\test_platform_support_requests.py:111: in test_validation_prevents_diagnostics_and_secrets
+    self.assertEqual(result['description'], 'K\u1ebft n\u1ed1i th\u1ea5t b\u1ea1i')
+                     ^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'description'
+---------------------------- Captured stdout call -----------------------------
+uu [ 60%]
+
+uuuuuuuu
+------------------------------ Captured log call ------------------------------
+ERROR    sqlalchemy.pool.impl.SingletonThreadPool:base.py:376 Exception closing connection <sqlite3.Connection object at 0x0000017CCD806E30>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\pool\base.py", line 374, in _close_connection
+    self._dialect.do_close(connection)
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py", line 721, in do_close
+    dbapi_connection.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 2736 and this is thread id 23856.
+___ ProductOrderApiTests.test_order_cannot_reference_other_tenant_customer ____
+tests\test_product_order_api.py:386: in test_order_cannot_reference_other_tenant_customer
+    self.assertEqual(404, response.status_code)
+E   AssertionError: 404 != 403
+____ ProductOrderApiTests.test_order_cannot_reference_other_tenant_product ____
+tests\test_product_order_api.py:374: in test_order_cannot_reference_other_tenant_product
+    self.assertEqual(404, response.status_code)
+E   AssertionError: 404 != 403
+_ ProductOrderApiTests.test_order_import_preview_is_tenant_scoped_atomic_and_idempotent _
+tests\test_product_order_api.py:242: in test_order_import_preview_is_tenant_scoped_atomic_and_idempotent
+    self.assertEqual(200, preview.status_code, preview.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_order_import_preview_reports_cross_tenant_rows_before_any_write _
+tests\test_product_order_api.py:267: in test_order_import_preview_reports_cross_tenant_rows_before_any_write
+    self.assertEqual(200, preview.status_code, preview.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_____________ ProductOrderApiTests.test_order_must_start_as_draft _____________
+tests\test_product_order_api.py:399: in test_order_must_start_as_draft
+    self.assertEqual(422, response.status_code, response.text)
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+______ ProductOrderApiTests.test_order_number_is_generated_when_omitted _______
+tests\test_product_order_api.py:361: in test_order_number_is_generated_when_omitted
+    self.assertEqual(201, response.status_code)
+E   AssertionError: 201 != 403
+_ ProductOrderApiTests.test_order_uses_database_product_price_and_calculates_total _
+tests\test_product_order_api.py:346: in test_order_uses_database_product_price_and_calculates_total
+    self.assertEqual(201, response.status_code)
+E   AssertionError: 201 != 403
+_ ProductOrderApiTests.test_product_creation_records_opening_stock_in_inventory_ledger _
+tests\test_product_order_api.py:443: in test_product_creation_records_opening_stock_in_inventory_ledger
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_product_import_duplicate_sku_is_a_preview_error_and_never_writes _
+tests\test_product_order_api.py:174: in test_product_import_duplicate_sku_is_a_preview_error_and_never_writes
+    self.assertEqual(200, preview.status_code, preview.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_product_import_preview_and_replay_do_not_double_stock _
+tests\test_product_order_api.py:304: in test_product_import_preview_and_replay_do_not_double_stock
+    self.assertEqual(200, preview.status_code, preview.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_product_import_rejects_partial_file_without_writing_valid_rows _
+tests\test_product_order_api.py:331: in test_product_import_rejects_partial_file_without_writing_valid_rows
+    self.assertEqual(422, response.status_code, response.text)
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_product_import_restocks_existing_sku_and_creates_new_sku _
+tests\test_product_order_api.py:154: in test_product_import_restocks_existing_sku_and_creates_new_sku
+    self.assertEqual(200, response.status_code, response.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_product_import_saves_english_display_name_without_changing_canonical_name _
+tests\test_product_order_api.py:288: in test_product_import_saves_english_display_name_without_changing_canonical_name
+    self.assertEqual(200, response.status_code, response.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_product_import_saves_optional_product_url_and_rejects_unsafe_url _
+tests\test_product_order_api.py:196: in test_product_import_saves_optional_product_url_and_rejects_unsafe_url
+    self.assertEqual(200, valid.status_code, valid.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_product_inventory_export_is_tenant_scoped_and_not_a_receipt_template _
+tests\test_product_order_api.py:216: in test_product_inventory_export_is_tenant_scoped_and_not_a_receipt_template
+    self.assertEqual(200, response.status_code)
+E   AssertionError: 200 != 403
+___________ ProductOrderApiTests.test_product_list_is_tenant_scoped ___________
+tests\test_product_order_api.py:93: in test_product_list_is_tenant_scoped
+    self.assertEqual(200, response.status_code)
+E   AssertionError: 200 != 403
+__ ProductOrderApiTests.test_product_url_crud_is_validated_and_tenant_scoped __
+tests\test_product_order_api.py:104: in test_product_url_crud_is_validated_and_tenant_scoped
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+________ ProductOrderApiTests.test_revenue_by_channel_excludes_shopee _________
+tests\test_product_order_api.py:520: in test_revenue_by_channel_excludes_shopee
+    self.assertEqual(200, response.status_code, response.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ ProductOrderApiTests.test_revenue_report_is_grouped_by_conversation_channel_and_tenant_scoped _
+tests\test_product_order_api.py:481: in test_revenue_report_is_grouped_by_conversation_channel_and_tenant_scoped
+    self.assertEqual(201, create.status_code)
+E   AssertionError: 201 != 403
+_ ProductOrderApiTests.test_stock_adjustment_is_ledgered_and_product_patch_cannot_bypass_it _
+tests\test_product_order_api.py:407: in test_stock_adjustment_is_ledgered_and_product_patch_cannot_bypass_it
+    self.assertEqual(409, bypass.status_code, bypass.text)
+E   AssertionError: 409 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ PurchaseOrderApiTests.test_create_purchase_order_calculates_total_and_lists _
+tests\test_purchase_order_api.py:65: in test_create_purchase_order_calculates_total_and_lists
+    self.assertEqual(201, response.status_code)
+E   AssertionError: 201 != 403
+___________ PurchaseOrderApiTests.test_foreign_product_is_rejected ____________
+tests\test_purchase_order_api.py:84: in test_foreign_product_is_rejected
+    self.assertEqual(404, response.status_code)
+E   AssertionError: 404 != 403
+__ PurchaseOrderApiTests.test_purchase_order_lifecycle_rejects_invalid_jump ___
+tests\test_purchase_order_api.py:96: in test_purchase_order_lifecycle_rejects_invalid_jump
+    po_id = created.json()["id"]
+            ^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'id'
+________ PurchaseOrderApiTests.test_purchase_order_must_start_as_draft ________
+tests\test_purchase_order_api.py:122: in test_purchase_order_must_start_as_draft
+    self.assertEqual(422, response.status_code, response.text)
+E   AssertionError: 422 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_______ test_rfm_excludes_pending_cancelled_refunded_and_future_orders ________
+tests\test_rag_crm_model_integration.py:547: in test_rfm_excludes_pending_cancelled_refunded_and_future_orders
+    assert buyer.features["cluster_model_version"] == buyer.model_version
+E   AssertionError: assert 'industry_rfm_cold_start_v1' == 'rfm_percentile_v1'
+E     
+E     - rfm_percentile_v1
+E     + industry_rfm_cold_start_v1
+__ test_rental_enquiry_collects_contact_and_notifies_without_creating_order ___
+tests\test_rental_collection.py:45: in test_rental_enquiry_collects_contact_and_notifies_without_creating_order
+    assert session.status == 'completed'
+E   AssertionError: assert 'pending' == 'completed'
+E     
+E     - completed
+E     + pending
+_ ReportsApiTests.test_draft_and_cancelled_orders_do_not_inflate_recognized_revenue _
+tests\test_reports_api.py:177: in test_draft_and_cancelled_orders_do_not_inflate_recognized_revenue
+    self.assertEqual(200, by_channel.status_code, by_channel.text)
+E   AssertionError: 200 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+__ ReportsApiTests.test_overview_reports_tenant_counts_and_conversion_rates ___
+tests\test_reports_api.py:134: in test_overview_reports_tenant_counts_and_conversion_rates
+    self.assertEqual(1, body["order_count"])
+E   AssertionError: 1 != 3
+________ SalesInventoryLifecycleTests.test_cancel_releases_reservation ________
+tests\test_sales_inventory_lifecycle.py:153: in test_cancel_releases_reservation
+    order = self.create_order("SO-INVENTORY-CANCEL", 1)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_sales_inventory_lifecycle.py:82: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ SalesInventoryLifecycleTests.test_confirm_aggregates_duplicate_product_lines_before_reserving _
+tests\test_sales_inventory_lifecycle.py:139: in test_confirm_aggregates_duplicate_product_lines_before_reserving
+    self.assertEqual(201, created.status_code, created.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ SalesInventoryLifecycleTests.test_confirm_rejects_when_available_stock_is_insufficient _
+tests\test_sales_inventory_lifecycle.py:118: in test_confirm_rejects_when_available_stock_is_insufficient
+    order = self.create_order("SO-INVENTORY-OVER", 6)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_sales_inventory_lifecycle.py:82: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ SalesInventoryLifecycleTests.test_confirm_reserves_and_ship_decrements_stock _
+tests\test_sales_inventory_lifecycle.py:86: in test_confirm_reserves_and_ship_decrements_stock
+    order = self.create_order("SO-INVENTORY-1", 2)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_sales_inventory_lifecycle.py:82: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_ SalesInventoryLifecycleTests.test_refund_after_delivery_records_money_then_restores_stock _
+tests\test_sales_inventory_lifecycle.py:169: in test_refund_after_delivery_records_money_then_restores_stock
+    order = self.create_order("SO-INVENTORY-REFUND", 1)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_sales_inventory_lifecycle.py:82: in create_order
+    self.assertEqual(201, response.status_code, response.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["RETAIL_TOOLS","ORDER_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+_______ test_shop_smtp_sends_order_confirmation_with_shop_display_name ________
+tests\test_shop_otp_email.py:111: in test_shop_smtp_sends_order_confirmation_with_shop_display_name
+    assert message["From"].addresses[0].display_name == "Shop H\u1ed3ng"
+E   AssertionError: assert 'Smart Merchant Hub' == 'Shop H\u1ed3ng'
+E     
+E     - Shop H\u1ed3ng
+E     + Smart Merchant Hub
+_ SupplierApiTests.test_archived_supplier_cannot_be_used_for_new_or_updated_purchase_order _
+tests\test_supplier_api.py:115: in test_archived_supplier_cannot_be_used_for_new_or_updated_purchase_order
+    self.client.delete(f"/api/suppliers/{supplier['id']}", headers=self.headers()).status_code,
+                                         ^^^^^^^^^^^^^^
+E   KeyError: 'id'
+__________ SupplierApiTests.test_duplicate_supplier_code_is_rejected __________
+tests\test_supplier_api.py:71: in test_duplicate_supplier_code_is_rejected
+    self.assertEqual(201, self.client.post("/api/suppliers", headers=self.headers(), json=payload).status_code)
+E   AssertionError: 201 != 403
+_____________ SupplierApiTests.test_foreign_supplier_is_rejected ______________
+tests\test_supplier_api.py:105: in test_foreign_supplier_is_rejected
+    self.assertEqual(404, response.status_code)
+E   AssertionError: 404 != 403
+_ SupplierApiTests.test_purchase_order_persists_supplier_and_product_snapshots _
+tests\test_supplier_api.py:85: in test_purchase_order_persists_supplier_and_product_snapshots
+    "supplier_id": supplier["id"],
+                   ^^^^^^^^^^^^^^
+E   KeyError: 'id'
+__ SupplierApiTests.test_purchase_order_supplier_is_frozen_after_submission ___
+tests\test_supplier_api.py:161: in test_purchase_order_supplier_is_frozen_after_submission
+    self.assertEqual(201, purchase.status_code, purchase.text)
+E   AssertionError: 201 != 403 : {"detail":{"code":"workspace_capability_disabled","module":"retail","required_capabilities":["INVENTORY_TOOLS"],"message":"C\xf4ng c\u1ee5 n\xe0y \u0111ang t\u1eaft trong C\xe0i \u0111\u1eb7t c\u1ee7a shop. D\u1eef li\u1ec7u l\u1ecbch s\u1eed v\u1eabn \u0111\u01b0\u1ee3c gi\u1eef."}}
+____________ SupplierApiTests.test_supplier_crud_is_tenant_scoped _____________
+tests\test_supplier_api.py:57: in test_supplier_crud_is_tenant_scoped
+    self.assertEqual(201, created.status_code)
+E   AssertionError: 201 != 403
+_ TelegramOutboundApiTests.test_send_media_uses_tenant_channel_and_persists_attachment _
+tests\test_telegram_outbound.py:248: in test_send_media_uses_tenant_channel_and_persists_attachment
+    self.assertIsNotNone(saved)
+E   AssertionError: unexpectedly None
+_ TelegramOutboundApiTests.test_send_text_uses_tenant_channel_and_persists_outbound_message _
+tests\test_telegram_outbound.py:109: in test_send_text_uses_tenant_channel_and_persists_outbound_message
+    saved = db.scalar(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py:2399: in scalar
+    return self._execute_internal(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py:2263: in _execute_internal
+    return result.scalar()
+           ^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\result.py:1561: in scalar
+    return self._only_one_row(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\result.py:769: in _only_one_row
+    row: Optional[_InterimRowType[Any]] = onerow(hard_close=True)
+                                          ^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\result.py:2276: in _fetchone_impl
+    row = next(self.iterator, _NO_ROW)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\loading.py:220: in chunks
+    fetch = cursor._raw_all_rows()
+            ^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\result.py:553: in _raw_all_rows
+    return [make_row(row) for row in rows]
+            ^^^^^^^^^^^^^
+lib/sqlalchemy/cyextension/resultproxy.pyx:22: in sqlalchemy.cyextension.resultproxy.BaseRow.__init__
+    ???
+lib/sqlalchemy/cyextension/resultproxy.pyx:79: in sqlalchemy.cyextension.resultproxy._apply_processors
+    ???
+lib/sqlalchemy/cyextension/processors.pyx:40: in sqlalchemy.cyextension.processors.str_to_datetime
+    ???
+E   TypeError: fromisoformat: argument must be str
+---------------------------- Captured stdout call -----------------------------
+[UI MEDIA ROUTE END] conversation_id=1 | messages=1 | success=True
+_______________ test_migration_order_covers_every_tenant_table ________________
+tests\test_tenant_data_migration.py:91: in test_migration_order_covers_every_tenant_table
+    assert set(TenantBase.metadata.tables).issubset(set(DEFAULT_TABLE_ORDER) | set(TENANT_LOCAL_ONLY_TABLES))
+E   AssertionError: assert False
+E    +  where False = <built-in method issubset of set object at 0x0000017CC808C580>(({'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} | {'channel_outbound_attempts', 'recommendation_catalog_attributes', 'recommendation_catalog_chunk_mappings', 'recommendation_catalog_entries', 'recommendation_shop_model_states'}))
+E    +    where <built-in method issubset of set object at 0x0000017CC808C580> = {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...}.issubset
+E    +      where {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} = set(FacadeDict({'customers': Table('customers', MetaData(), Column('id', Integer(), table=<customers>, primary_key=True, n..., server_default=DefaultClause(<sqlalchemy.sql.functions.now at 0x17cb759cec0; now>, for_update=False)), schema=None)}))
+E    +        where FacadeDict({'customers': Table('customers', MetaData(), Column('id', Integer(), table=<customers>, primary_key=True, n..., server_default=DefaultClause(<sqlalchemy.sql.functions.now at 0x17cb759cec0; now>, for_update=False)), schema=None)}) = MetaData().tables
+E    +          where MetaData() = TenantBase.metadata
+E    +    and   {'app_settings', 'appointment_services', 'appointments', 'audit_logs', 'bandit_arm_stats', 'bandit_decisions', ...} = set(('customers', 'customer_identities', 'customer_contacts', 'customer_addresses', 'customer_facts', 'customer_notes', ...))
+E    +    and   {'channel_outbound_attempts', 'recommendation_catalog_attributes', 'recommendation_catalog_chunk_mappings', 'recommendation_catalog_entries', 'recommendation_shop_model_states'} = set(('channel_outbound_attempts', 'recommendation_catalog_entries', 'recommendation_catalog_attributes', 'recommendation_catalog_chunk_mappings', 'recommendation_shop_model_states'))
+_ TenantScopedQueryTests.test_schema_routing_is_reapplied_after_service_commits _
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlite3.OperationalError: near "SHOW": syntax error
+
+The above exception was the direct cause of the following exception:
+tests\test_tenant_scoped_queries.py:65: in test_schema_routing_is_reapplied_after_service_commits
+    self.assertTrue(db.execute(text("SHOW search_path")).scalar_one().startswith('"shop_1"'))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py:2351: in execute
+    return self._execute_internal(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py:2258: in _execute_internal
+    result = conn.execute(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py:1419: in execute
+    return meth(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\sql\elements.py:527: in _execute_on_connection
+    return connection._execute_clauseelement(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py:1641: in _execute_clauseelement
+    ret = self._execute_context(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py:1846: in _execute_context
+    return self._exec_single_context(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) near "SHOW": syntax error
+E   [SQL: SHOW search_path]
+E   (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_ UnifiedInboxActionTests.test_unified_send_dispatches_zalo_text_and_persists_outbound_message _
+tests\test_unified_inbox_actions.py:240: in test_unified_send_dispatches_zalo_text_and_persists_outbound_message
+    saved = db.scalar(select(Message).where(Message.external_message_id == "zalo:zalo-inbox-1:outbound-2"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py:2399: in scalar
+    return self._execute_internal(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\session.py:2263: in _execute_internal
+    return result.scalar()
+           ^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\result.py:1561: in scalar
+    return self._only_one_row(
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\result.py:769: in _only_one_row
+    row: Optional[_InterimRowType[Any]] = onerow(hard_close=True)
+                                          ^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\result.py:2276: in _fetchone_impl
+    row = next(self.iterator, _NO_ROW)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\orm\loading.py:220: in chunks
+    fetch = cursor._raw_all_rows()
+            ^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\result.py:553: in _raw_all_rows
+    return [make_row(row) for row in rows]
+            ^^^^^^^^^^^^^
+lib/sqlalchemy/cyextension/resultproxy.pyx:22: in sqlalchemy.cyextension.resultproxy.BaseRow.__init__
+    ???
+lib/sqlalchemy/cyextension/resultproxy.pyx:79: in sqlalchemy.cyextension.resultproxy._apply_processors
+    ???
+lib/sqlalchemy/cyextension/processors.pyx:40: in sqlalchemy.cyextension.processors.str_to_datetime
+    ???
+E   TypeError: fromisoformat: argument must be str
+---------------------------- Captured stdout call -----------------------------
+[UI MEDIA ROUTE END] conversation_id=1 | messages=1 | success=True
+============================== warnings summary ===============================
+tests/test_history_import.py: 7 warnings
+tests/test_instagram_outbound.py: 5 warnings
+tests/test_media_upload_api.py: 65 warnings
+tests/test_telegram_outbound.py: 20 warnings
+tests/test_unified_inbox_actions.py: 10 warnings
+tests/test_unified_inbox_webhooks.py: 5 warnings
+tests/test_zalo_webhook.py: 8 warnings
+  C:\Users\Administrator\AppData\Local\Programs\Python\Python312\Lib\site-packages\sqlalchemy\engine\default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_impression_record_contains_blend_version_and_weights
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:352: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    created_at=datetime.utcnow(),
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:162: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    consent_at = datetime.utcnow() - timedelta(hours=2)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:123: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_filters_consent_opt_out_and_shop_setting_before_features
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\train_live_recommendation_reranker.py:184: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff = datetime.utcnow() - timedelta(days=max(1, lookback_days))
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:277: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    consent_at = datetime.utcnow() - timedelta(days=1)
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_split_timestamp_uses_latest_event_not_request_created_at
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:287: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::RerankerDatabaseTests::test_training_uses_only_requests_and_events_after_latest_consent_grant
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_live_reranker_blend.py:206: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_live_reranker_blend.py::TemporalBlendEvaluationTests::test_train_uses_chronological_holdout_and_reports_blend_version
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\train_live_recommendation_reranker.py:884: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "trained_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+
+tests/test_recommendations_api.py::RecommendationApiTests::test_chat_order_quote_records_checkout_intent_not_cart
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_recommendations_api.py:926: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_alembic_chain.py::AlembicChainTests::test_baseline_and_default_business_migrations_form_single_head
+FAILED tests/test_chatbot_bandit_runtime.py::test_rag_reply_applies_only_bounded_arm_and_saves_decision_trace
+FAILED tests/test_conversation_turn_service.py::ConversationTurnTests::test_latest_inbound_guard_accepts_multiple_prior_messages
+FAILED tests/test_crm_two_shop_e2e.py::CrmTwoShopEndToEndTests::test_two_shop_crm_commerce_reporting_and_rag_remain_isolated
+FAILED tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_quantity_purchase_followup_uses_last_product_and_waits_for_confirmation
+FAILED tests/test_inventory_receiving.py::InventoryReceivingTests::test_partial_receipt_increases_stock_and_updates_po
+FAILED tests/test_inventory_receiving.py::InventoryReceivingTests::test_receipt_cannot_exceed_ordered_quantity
+FAILED tests/test_inventory_receiving.py::InventoryReceivingTests::test_receipt_idempotency_does_not_duplicate_stock
+FAILED tests/test_inventory_receiving.py::InventoryReceivingTests::test_receipt_idempotency_key_cannot_be_reused_for_another_purchase_order
+FAILED tests/test_media_upload_api.py::MediaUploadApiTests::test_upload_audio_uses_generic_media_route_and_persists_attachment
+FAILED tests/test_meta_business_suite_bridge.py::test_changed_meta_conversation_retries_after_transient_thread_id_error[open]
+FAILED tests/test_meta_business_suite_bridge.py::test_changed_meta_conversation_retries_after_transient_thread_id_error[backend]
+FAILED tests/test_order_lifecycle.py::OrderLifecycleTests::test_delivery_schedules_one_post_delivery_followup
+FAILED tests/test_order_lifecycle.py::OrderLifecycleTests::test_sales_order_transition_graph
+FAILED tests/test_order_payments.py::OrderPaymentApiTests::test_full_refund_after_completed_order_reopens_stock_and_updates_status
+FAILED tests/test_order_payments.py::OrderPaymentApiTests::test_order_cannot_complete_until_fully_paid
+FAILED tests/test_order_payments.py::OrderPaymentApiTests::test_order_events_include_payment_and_refund
+FAILED tests/test_order_payments.py::OrderPaymentApiTests::test_partial_payment_updates_summary_and_is_idempotent
+FAILED tests/test_order_payments.py::OrderPaymentApiTests::test_payment_cannot_overpay_and_refund_is_bounded
+FAILED tests/test_otp_delivery.py::test_smtp_delivery_sends_message_without_logging_or_returning_code
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_archived_supplier_cannot_be_used_for_new_purchase
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_full_refund_endpoint_after_delivery_restores_stock_and_marks_order_refunded
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_order_creation_rejects_non_draft_status
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_product_opening_stock_is_recorded_in_ledger
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_purchase_creation_rejects_non_draft_status
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_purchase_payment_is_partial_idempotent_and_bounded
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_purchase_update_is_locked_after_submission
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_receipt_idempotency_key_cannot_be_reused_for_another_purchase
+FAILED tests/test_p1_02_operations_hardening.py::P102OperationsHardeningTests::test_stock_change_uses_adjustment_endpoint_and_records_ledger
+FAILED tests/test_p1_02_timeline_reports.py::P102TimelineReportsTests::test_purchase_cost_date_range_includes_the_entire_end_date
+FAILED tests/test_p1_02_timeline_reports.py::P102TimelineReportsTests::test_timeline_includes_sales_payment_event_but_not_unlinked_purchase
+FAILED tests/test_personalized_rag_pipeline.py::test_training_precomputes_cache_using_same_tenant_population
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_admin_auth_assignment_transitions_and_history
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_auth_failure_and_cross_shop_header_cannot_override_identity
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_create_replay_conflict_and_durable_history
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_database_constraints_and_migration_in_memory
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_database_failure_rolls_back_with_safe_error
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_legacy_ticket_and_no_plan
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_missing_shop_and_sync_failure
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_multiple_channels_are_one_ticket_with_plan_cap
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_normalization_cannot_reconstruct_credentials
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_own_shop_isolation_and_pagination
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_sync_uses_authenticated_identity
+FAILED tests/test_platform_support_requests.py::SupportRequestTests::test_validation_prevents_diagnostics_and_secrets
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_order_cannot_reference_other_tenant_customer
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_order_cannot_reference_other_tenant_product
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_order_import_preview_is_tenant_scoped_atomic_and_idempotent
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_order_import_preview_reports_cross_tenant_rows_before_any_write
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_order_must_start_as_draft
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_order_number_is_generated_when_omitted
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_order_uses_database_product_price_and_calculates_total
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_creation_records_opening_stock_in_inventory_ledger
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_import_duplicate_sku_is_a_preview_error_and_never_writes
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_import_preview_and_replay_do_not_double_stock
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_import_rejects_partial_file_without_writing_valid_rows
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_import_restocks_existing_sku_and_creates_new_sku
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_import_saves_english_display_name_without_changing_canonical_name
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_import_saves_optional_product_url_and_rejects_unsafe_url
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_inventory_export_is_tenant_scoped_and_not_a_receipt_template
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_list_is_tenant_scoped
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_product_url_crud_is_validated_and_tenant_scoped
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_revenue_by_channel_excludes_shopee
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_revenue_report_is_grouped_by_conversation_channel_and_tenant_scoped
+FAILED tests/test_product_order_api.py::ProductOrderApiTests::test_stock_adjustment_is_ledgered_and_product_patch_cannot_bypass_it
+FAILED tests/test_purchase_order_api.py::PurchaseOrderApiTests::test_create_purchase_order_calculates_total_and_lists
+FAILED tests/test_purchase_order_api.py::PurchaseOrderApiTests::test_foreign_product_is_rejected
+FAILED tests/test_purchase_order_api.py::PurchaseOrderApiTests::test_purchase_order_lifecycle_rejects_invalid_jump
+FAILED tests/test_purchase_order_api.py::PurchaseOrderApiTests::test_purchase_order_must_start_as_draft
+FAILED tests/test_rag_crm_model_integration.py::test_rfm_excludes_pending_cancelled_refunded_and_future_orders
+FAILED tests/test_rental_collection.py::test_rental_enquiry_collects_contact_and_notifies_without_creating_order
+FAILED tests/test_reports_api.py::ReportsApiTests::test_draft_and_cancelled_orders_do_not_inflate_recognized_revenue
+FAILED tests/test_reports_api.py::ReportsApiTests::test_overview_reports_tenant_counts_and_conversion_rates
+FAILED tests/test_sales_inventory_lifecycle.py::SalesInventoryLifecycleTests::test_cancel_releases_reservation
+FAILED tests/test_sales_inventory_lifecycle.py::SalesInventoryLifecycleTests::test_confirm_aggregates_duplicate_product_lines_before_reserving
+FAILED tests/test_sales_inventory_lifecycle.py::SalesInventoryLifecycleTests::test_confirm_rejects_when_available_stock_is_insufficient
+FAILED tests/test_sales_inventory_lifecycle.py::SalesInventoryLifecycleTests::test_confirm_reserves_and_ship_decrements_stock
+FAILED tests/test_sales_inventory_lifecycle.py::SalesInventoryLifecycleTests::test_refund_after_delivery_records_money_then_restores_stock
+FAILED tests/test_shop_otp_email.py::test_shop_smtp_sends_order_confirmation_with_shop_display_name
+FAILED tests/test_supplier_api.py::SupplierApiTests::test_archived_supplier_cannot_be_used_for_new_or_updated_purchase_order
+FAILED tests/test_supplier_api.py::SupplierApiTests::test_duplicate_supplier_code_is_rejected
+FAILED tests/test_supplier_api.py::SupplierApiTests::test_foreign_supplier_is_rejected
+FAILED tests/test_supplier_api.py::SupplierApiTests::test_purchase_order_persists_supplier_and_product_snapshots
+FAILED tests/test_supplier_api.py::SupplierApiTests::test_purchase_order_supplier_is_frozen_after_submission
+FAILED tests/test_supplier_api.py::SupplierApiTests::test_supplier_crud_is_tenant_scoped
+FAILED tests/test_telegram_outbound.py::TelegramOutboundApiTests::test_send_media_uses_tenant_channel_and_persists_attachment
+FAILED tests/test_telegram_outbound.py::TelegramOutboundApiTests::test_send_text_uses_tenant_channel_and_persists_outbound_message
+FAILED tests/test_tenant_data_migration.py::test_migration_order_covers_every_tenant_table
+FAILED tests/test_tenant_scoped_queries.py::TenantScopedQueryTests::test_schema_routing_is_reapplied_after_service_commits
+FAILED tests/test_unified_inbox_actions.py::UnifiedInboxActionTests::test_unified_send_dispatches_zalo_text_and_persists_outbound_message
+89 failed, 2004 passed, 2 skipped, 139 warnings, 37 subtests passed in 211.81s (0:03:31)
+EXIT_CODE=1
+ELAPSED_SECONDS=219.76

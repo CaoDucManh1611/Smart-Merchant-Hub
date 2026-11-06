@@ -365,8 +365,22 @@ def create_consent(
     actor: User | None = Depends(require_write_access),
 ):
     _customer(db, customer_id, tenant)
+    from app.core.config import settings
+
+    journey_purpose = str(settings.SALES_JOURNEY_PERSISTENCE_PURPOSE or "").strip()
+    revokes_persisted_context = payload.status == "revoked" and (
+        payload.purpose == "personalization"
+        or (journey_purpose and payload.purpose == journey_purpose)
+    )
+    if revokes_persisted_context:
+        # Serialize both memory and journey-state writes on the customer row.
+        # Journey writers acquire this lock before checking their consent row.
+        db.query(Customer).filter(
+            Customer.id == customer_id,
+            Customer.business_id == tenant.business_id,
+        ).populate_existing().with_for_update().first()
     needs_evidence = payload.status == "granted" and payload.purpose in {
-        "marketing", "proactive_messages", "personalization",
+        "marketing", "proactive_messages", "personalization", "faq_reuse",
     }
     if needs_evidence and payload.evidence_message_id is None:
         raise HTTPException(status_code=422, detail="Cần tin nhắn thể hiện khách đồng ý rõ ràng trước khi bật chức năng này.")
@@ -397,6 +411,16 @@ def create_consent(
         from app.services.privacy_service import stop_customer_personalization
 
         stop_customer_personalization(db, tenant.business_id, customer_id)
+    elif revokes_persisted_context:
+        from app.services.conversation_memory import purge_reply_memory_for_customer
+        from app.services.sales_journey_adapter import JOURNEY_STATE_METADATA_KEY
+
+        purge_reply_memory_for_customer(
+            db,
+            tenant.business_id,
+            customer_id,
+            keys=(JOURNEY_STATE_METADATA_KEY,),
+        )
     elif payload.purpose == "personalization" and payload.status == "granted":
         from app.services.customer_fact_extractor import (
             get_customer_fact_extraction_enabled,

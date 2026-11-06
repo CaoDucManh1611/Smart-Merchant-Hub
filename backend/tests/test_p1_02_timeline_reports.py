@@ -10,6 +10,7 @@ from app.main import app
 from app.models.business import Business
 from app.models.customer import Customer
 from app.models.sales import Product
+from capability_fixtures import enable_workspace_capabilities
 
 
 class P102TimelineReportsTests(unittest.TestCase):
@@ -25,6 +26,9 @@ class P102TimelineReportsTests(unittest.TestCase):
             business = Business(name="Timeline Reports", slug="timeline-reports")
             db.add(business)
             db.flush()
+            enable_workspace_capabilities(
+                db, business.id, "RETAIL_TOOLS", "ORDER_TOOLS", "INVENTORY_TOOLS", "PAYMENT_TOOLS"
+            )
             customer = Customer(
                 business_id=business.id,
                 channel="telegram",

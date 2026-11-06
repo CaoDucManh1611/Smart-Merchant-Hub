@@ -1,0 +1,48 @@
+Smart Merchant Hub — Phase 2.1 raw pytest results
+Timestamp: 2026-11-05 13:43:04 +07:00
+Backend cwd: C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend
+
+Requested test files:
+- tests/test_sales_journey_engine.py
+- tests/test_sales_journey_policy.py
+- tests/test_sales_journey_integration_contract.py
+
+1) Standard command
+Command: python -m pytest tests/test_sales_journey_engine.py tests/test_sales_journey_policy.py tests/test_sales_journey_integration_contract.py -q
+Exit: BLOCKED (PowerShell: `python` is not recognized / no Python on PATH)
+
+2) Python launcher
+Command: py -3 -m pytest tests/test_sales_journey_engine.py tests/test_sales_journey_policy.py tests/test_sales_journey_integration_contract.py -q
+Exit: 112
+Output: No installed Python found!
+
+3) Bundled workspace runtime
+Command: C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m pytest tests/test_sales_journey_engine.py tests/test_sales_journey_policy.py tests/test_sales_journey_integration_contract.py -q
+Exit: 1
+Output: No module named pytest
+
+Runtime inventory:
+- `py.exe`: C:\Windows\py.exe, but no registered Python installation.
+- Bundled Python: C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe
+- Bundled Python version: 3.12.14
+- Bundled Pydantic: 2.14.1
+- No project `.venv`, `venv`, `backend/.venv`, `backend/venv`, `pyvenv.cfg`,
+  `pytest.exe` or other usable pytest environment was found in the project,
+  Codex runtimes, or the checked local Python locations.
+- `backend/requirements.txt` declares `pytest==9.0.2`, but it is not installed.
+- No package installation or network access was attempted.
+
+4) Syntax check (not pytest)
+Command: C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m compileall -q app/services/sales_journey_contracts.py app/services/sales_journey_policy.py app/services/sales_journey_adapter.py app/services/sales_journey_engine.py tests/test_sales_journey_engine.py tests/test_sales_journey_policy.py tests/test_sales_journey_integration_contract.py
+Exit: 0
+Result: PASS
+
+5) Manual offline harness (not pytest)
+The three test modules were imported with a no-op local parameterization shim
+and each test function was invoked directly. This does not provide pytest
+collection, fixtures, reporting or plugin behavior.
+Result: 30 passed, 0 failed; exit 0.
+Coverage included the original 24 cases plus the six new contract cases.
+
+Final pytest status: BLOCKED.  
+Manual offline status: PASS, 30/30; not a pytest result.

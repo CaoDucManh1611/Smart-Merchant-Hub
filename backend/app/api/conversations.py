@@ -1618,8 +1618,20 @@ def save_outbound_message(
     """
 
     sent_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        raw_payload_expression = "CAST(:raw_payload AS JSONB)"
+        sent_at_expression = "CAST(:sent_at AS TIMESTAMP)"
+    else:
+        # Keep offline SQLite tests on the same ISO timestamp contract as the
+        # ORM. SQLite's CAST(... AS TIMESTAMP) returns a numeric value, which
+        # SQLAlchemy cannot deserialize as DateTime and also breaks attachment
+        # lookups that load the just-inserted message.
+        raw_payload_expression = ":raw_payload"
+        sent_at_expression = ":sent_at"
+        sent_at = sent_at.isoformat(sep=" ")
     result = db.execute(
-        text("""
+        text(f"""
             INSERT INTO messages (
                 conversation_id,
                 channel,
@@ -1647,12 +1659,9 @@ def save_outbound_message(
                 :content,
                 :media_type,
                 :media_url,
-                CAST(
-                    :raw_payload
-                    AS JSONB
-                ),
-                CAST(:sent_at AS TIMESTAMP),
-                CAST(:sent_at AS TIMESTAMP)
+                {raw_payload_expression},
+                {sent_at_expression},
+                {sent_at_expression}
             )
 
             ON CONFLICT (

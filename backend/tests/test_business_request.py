@@ -30,7 +30,15 @@ def setup():
         service=AppointmentService(business_id=1,name='Dịch vụ thử',price=150000,duration_minutes=30)
         db.add_all([goods,rental,foreign,service]);db.commit()
         from app.tenancy.workspace_modules import save_workspace_config
-        save_workspace_config(db,1,{'business_type':'mixed','enabled_modules':['retail','appointments']});db.commit()
+        save_workspace_config(db, 1, {
+            'business_type': 'mixed',
+            'enabled_modules': ['retail', 'appointments'],
+            'enabled_capabilities': [
+                'CORE_CRM', 'RETAIL_TOOLS', 'APPOINTMENT_TOOLS',
+                'RENTAL_TOOLS', 'ORDER_TOOLS', 'INVENTORY_TOOLS', 'CUSTOMER_TOOLS',
+                'RECOMMENDATION_TOOLS',
+            ],
+        });db.commit()
         with patch('app.services.business_request.record_quota_usage'):
             yield db,conversation,goods,rental,service,foreign
     engine.dispose()
@@ -189,7 +197,13 @@ def test_staff_can_accept_or_decline_pending_service_request():
 def test_disabled_appointment_module_cannot_accept_hidden_services(setup):
     db,_,_,_,service,_=setup
     from app.tenancy.workspace_modules import save_workspace_config
-    save_workspace_config(db,1,{'business_type':'retail','enabled_modules':['retail']});db.commit()
+    save_workspace_config(db, 1, {
+        'business_type': 'retail',
+        'enabled_modules': ['retail'],
+        'enabled_capabilities': [
+            'CORE_CRM', 'RETAIL_TOOLS', 'ORDER_TOOLS', 'INVENTORY_TOOLS', 'CUSTOMER_TOOLS',
+        ],
+    });db.commit()
     assert f'service:{service.id}' not in [o['ref'] for o in current_offerings(db,1)]
     assert run(setup,'collect',f'service:{service.id}','Đặt dịch vụ này')['state']=='clarify_offering'
 
@@ -212,13 +226,13 @@ def test_current_transfer_configuration_is_available_to_policy_answers(setup):
     from app.services.conversation_graph import graph_reply
     db.add(BusinessSetting(business_id=1,key='shop.bank_transfer.enabled',value='true'));db.commit()
     with patch('app.services.conversation_graph.call_llm',side_effect=[
-        '{"mode":"answer","tools":["knowledge"]}',
         '{"answer":"Shop có hỗ trợ chuyển khoản ngân hàng.","sources":[1]}']) as model, \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.rag.retriever.retrieve',return_value=[]):
         result=graph_reply(db,business_id=1,conversation=conversation,query='Shop có hỗ trợ chuyển khoản không?',job_key='payment-method')
     assert 'chuyển khoản ngân hàng' in result.prompt
     assert 'Shop đã bật chuyển khoản ngân hàng' in model.call_args.args[0][-1]['content']
+    assert model.call_count == 1
 
 
 def test_customer_details_then_payment_choice_then_explicit_confirmation(setup):

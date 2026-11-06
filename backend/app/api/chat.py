@@ -19,7 +19,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.tenancy.crm_session import get_tenant_db
-from app.rag.retriever import retrieve
+from app.rag.serving import retrieve_shop_knowledge as retrieve
+from app.rag.turn_budget import turn_budget
 from app.rag.answer_guard import has_valid_citations
 from app.rag.topics import infer_query_topic
 from app.tenancy.context import TenantContext
@@ -37,6 +38,10 @@ from app.services.quota_service import QuotaExceededError, reserve_ai_budget
 from app.services.chatbot_agent import deterministic_escalation_reply, deterministic_transaction_safety_reply
 from app.services.crm_knowledge import answer_from_crm
 from app.services.auto_reply_service import _contextual_retrieval_query, _live_product_context_chunk
+from app.services.auto_reply_service import _is_recommendation_question
+from app.rag.intent_router import route_customer_message
+from app.services.capability_registry import resolve_capability_request
+from app.tenancy.workspace_modules import get_workspace_config
 from app.services.recommendation_interaction_service import (
     RecommendationInteractionError,
     record_interaction,
@@ -46,6 +51,40 @@ from app.rag.catalog_filters import extract_query_hard_filters
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _chat_catalog_authorization(db: Session, business_id: int, query: str):
+    """Authorize structured CRM tools before catalog or sales reads."""
+    is_recommendation = _is_recommendation_question(query)
+    decision = route_customer_message(query, catalog_required=is_recommendation)
+    is_sales_lookup = decision.intent == "lookup_sales"
+    if not decision.needs_catalog and not is_sales_lookup:
+        return None
+    try:
+        config = get_workspace_config(db, business_id)
+    except Exception:
+        config = {"configuration_rejected": True, "enabled_capabilities": ["CORE_CRM"]}
+    return resolve_capability_request(
+        config,
+        tools=(
+            ("recommendations",) if is_recommendation else
+            ("orders",) if is_sales_lookup else
+            ("catalog",)
+        ),
+        catalog_kind="product",
+    )
+
+
+def _chat_capability_denial(resolution) -> str:
+    if resolution.reason == "dependency_unavailable":
+        return "Chức năng này chưa sẵn sàng vì thiếu tích hợp cần thiết. Cấu hình shop và thử lại sau nhé."
+    labels = {
+        "RETAIL_TOOLS": "bán lẻ",
+        "RECOMMENDATION_TOOLS": "gợi ý sản phẩm",
+        "ORDER_TOOLS": "đơn hàng",
+    }
+    named = ", ".join(labels.get(item, item) for item in resolution.missing_capabilities) or "công cụ liên quan"
+    return f"Shop hiện chưa bật quyền dùng {named}. Yêu cầu đang có vẫn được giữ; shop có thể bật chức năng trong Cài đặt để tiếp tục."
 
 
 def _record_customer_question(
@@ -103,7 +142,7 @@ async def chat(
     Returns:
         Câu trả lời + danh sách sources tham khảo.
     """
-    with RagRunLog(
+    with turn_budget() as budget, RagRunLog(
         "chat",
         business_id=tenant.business_id,
         query_preview=request.query[:500],
@@ -127,6 +166,33 @@ async def chat(
                 answer=handoff_reply,
                 sources=[],
                 chunks_found=0,
+                answer_status="handoff_required",
+                handoff_required=True,
+            )
+        catalog_authorization = _chat_catalog_authorization(
+            db, tenant.business_id, request.query,
+        )
+        if catalog_authorization is not None and not catalog_authorization.allowed:
+            fallback = _chat_capability_denial(catalog_authorization)
+            run.finish(
+                "capability_denied",
+                phase="authorization",
+                tools=list(catalog_authorization.requested_tools),
+                tool_status="blocked",
+                capability_authorization={
+                    "allowed": False,
+                    "reason": catalog_authorization.reason,
+                    "missing_capabilities": list(catalog_authorization.missing_capabilities),
+                    "missing_dependencies": list(catalog_authorization.missing_dependencies),
+                },
+                answer_chars=len(fallback),
+                handoff_required=True,
+            )
+            return ChatResponse(
+                answer=fallback,
+                sources=[],
+                chunks_found=0,
+                action="workspace_capability_disabled",
                 answer_status="handoff_required",
                 handoff_required=True,
             )
@@ -157,8 +223,12 @@ async def chat(
             diagnostics=retrieval_diagnostics,
             hard_filters=extract_query_hard_filters(request.query),
         )
-        current_product = _live_product_context_chunk(db, tenant.business_id, retrieval_query,
-                                                     request.conversation_id or 0)
+        current_product = (
+            _live_product_context_chunk(db, tenant.business_id, retrieval_query,
+                                        request.conversation_id or 0)
+            if catalog_authorization is not None and catalog_authorization.allowed
+            else None
+        )
         if current_product is not None:
             chunks = [current_product, *chunks]
 
@@ -307,7 +377,7 @@ async def chat_stream(
     """
 
     async def event_generator():
-        with RagRunLog(
+        with turn_budget() as budget, RagRunLog(
             "chat_stream",
             business_id=tenant.business_id,
             query_preview=request.query[:500],
@@ -333,6 +403,29 @@ async def chat_stream(
                 yield f"data: {json.dumps({'type': 'sources', 'sources': [], 'chunks_found': 0}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'type': 'chunk', 'content': handoff_reply}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'answer_status': 'handoff_required', 'handoff_required': True})}\n\n"
+                return
+            catalog_authorization = _chat_catalog_authorization(
+                db, tenant.business_id, request.query,
+            )
+            if catalog_authorization is not None and not catalog_authorization.allowed:
+                fallback = _chat_capability_denial(catalog_authorization)
+                run.finish(
+                    "capability_denied",
+                    phase="authorization",
+                    tools=list(catalog_authorization.requested_tools),
+                    tool_status="blocked",
+                    capability_authorization={
+                        "allowed": False,
+                        "reason": catalog_authorization.reason,
+                        "missing_capabilities": list(catalog_authorization.missing_capabilities),
+                        "missing_dependencies": list(catalog_authorization.missing_dependencies),
+                    },
+                    answer_chars=len(fallback),
+                    handoff_required=True,
+                )
+                yield f"data: {json.dumps({'type': 'sources', 'sources': [], 'chunks_found': 0}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'chunk', 'content': fallback}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'answer_status': 'handoff_required', 'handoff_required': True, 'action': 'workspace_capability_disabled'}, ensure_ascii=False)}\n\n"
                 return
             crm_answer = answer_from_crm(db, tenant.business_id, request, user=user, permission_db=db, user_db=permission_db)
             if crm_answer is not None:
@@ -365,8 +458,12 @@ async def chat_stream(
                 diagnostics=retrieval_diagnostics,
                 hard_filters=extract_query_hard_filters(request.query),
             )
-            current_product = _live_product_context_chunk(
-                db, tenant.business_id, retrieval_query, request.conversation_id or 0,
+            current_product = (
+                _live_product_context_chunk(
+                    db, tenant.business_id, retrieval_query, request.conversation_id or 0,
+                )
+                if catalog_authorization is not None and catalog_authorization.allowed
+                else None
             )
             if current_product is not None:
                 chunks = [current_product, *chunks]

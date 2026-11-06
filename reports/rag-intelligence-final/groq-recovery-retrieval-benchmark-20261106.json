@@ -1,0 +1,1167 @@
+{
+  "version": "rag-intelligence-synthetic-v1",
+  "scope": "actual retrieve() BM25 serving path against in-memory SQLite with synthetic rows; no vector provider or answer-generation path",
+  "case_count": 51,
+  "document_count": 30,
+  "tenant_count": 3,
+  "top_k": 5,
+  "retrieval_relevant_case_rate_at_k": 1.0,
+  "mean_evidence_recall_at_k": 1.0,
+  "mrr_at_k": 1.0,
+  "empty_result_accuracy": 1.0,
+  "forbidden_evidence_hit_count": 0,
+  "tenant_isolation_violation_count": 0,
+  "prompt_injection_fixture_count": 3,
+  "provider_calls": 0,
+  "answer_grounding": "NOT_MEASURED; no model/provider invoked",
+  "answer_correctness": "NOT_MEASURED; no generated answers or human labels",
+  "unsupported_answer_claims": "NOT_MEASURED; no generated answers",
+  "live_model_calls_per_answer": "NOT_MEASURED; runner exercises retrieval only",
+  "by_category": {
+    "ambiguous_query": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 0.0,
+      "mrr_at_k": null,
+      "empty_result_accuracy": 1.0
+    },
+    "anti_hallucination_unknown_item": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 0.0,
+      "mrr_at_k": null,
+      "empty_result_accuracy": 1.0
+    },
+    "budget_filter": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "changed_customer_need": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "cross_tenant_isolation": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 0.0,
+      "mrr_at_k": null,
+      "empty_result_accuracy": 1.0
+    },
+    "current_price_and_stock": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "exact_sku_and_variant": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "knowledge_base_prompt_injection": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "multi_turn_followup": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "no_order_or_payment_side_effect": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "out_of_stock_not_recommended": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "product_comparison": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "product_need": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "recommendation_respects_live_stock": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "similar_product_disambiguation": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "typo_and_unaccented_query": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "empty_result_accuracy": null
+    },
+    "unsupported_policy_question": {
+      "case_count": 3,
+      "relevant_case_rate_at_k": 0.0,
+      "mrr_at_k": null,
+      "empty_result_accuracy": 1.0
+    }
+  },
+  "cases": [
+    {
+      "id": "aster-01-product_need",
+      "category": "product_need",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:mug"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_from_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-02-budget_filter",
+      "category": "budget_filter",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:cream"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:cream"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_within_budget",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-03-product_comparison",
+      "category": "product_comparison",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:lamp-mini",
+        "aster:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:lamp-mini",
+        "aster:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "compare_products",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-04-current_price_and_stock",
+      "category": "current_price_and_stock",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:aloe",
+        "aster:stand",
+        "aster:projector",
+        "aster:cream",
+        "aster:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_from_current_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-05-multi_turn_followup",
+      "category": "multi_turn_followup",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:mug"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_followup",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-06-typo_and_unaccented_query",
+      "category": "typo_and_unaccented_query",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:cream"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:cream"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_from_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-07-similar_product_disambiguation",
+      "category": "similar_product_disambiguation",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:lamp-mini",
+        "aster:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:lamp-mini",
+        "aster:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "compare_products",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-08-ambiguous_query",
+      "category": "ambiguous_query",
+      "business_key": "aster",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "ask_clarifying_question",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-09-changed_customer_need",
+      "category": "changed_customer_need",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:stand"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:stand"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "use_latest_customer_need",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-10-unsupported_policy_question",
+      "category": "unsupported_policy_question",
+      "business_key": "aster",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "abstain_or_handoff",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-11-anti_hallucination_unknown_item",
+      "category": "anti_hallucination_unknown_item",
+      "business_key": "aster",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "state_not_found",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-12-cross_tenant_isolation",
+      "category": "cross_tenant_isolation",
+      "business_key": "aster",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "deny_cross_tenant_data",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-13-knowledge_base_prompt_injection",
+      "category": "knowledge_base_prompt_injection",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:returns"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:returns",
+        "aster:injection"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_from_approved_policy_only",
+      "prompt_injection_fixture": true
+    },
+    {
+      "id": "aster-14-no_order_or_payment_side_effect",
+      "category": "no_order_or_payment_side_effect",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:aloe",
+        "aster:stand",
+        "aster:projector",
+        "aster:cream",
+        "aster:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "require_explicit_confirmation",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-15-recommendation_respects_live_stock",
+      "category": "recommendation_respects_live_stock",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:aloe",
+        "aster:stand",
+        "aster:projector",
+        "aster:cream",
+        "aster:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_only_available_items",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-16-out_of_stock_not_recommended",
+      "category": "out_of_stock_not_recommended",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:projector"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:projector",
+        "aster:aloe",
+        "aster:stand",
+        "aster:cream",
+        "aster:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "report_unavailable_not_recommend",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "aster-17-exact_sku_and_variant",
+      "category": "exact_sku_and_variant",
+      "business_key": "aster",
+      "expected_evidence_ids": [
+        "aster:lamp-mini",
+        "aster:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "aster:lamp-mini",
+        "aster:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "distinguish_exact_variant",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-01-product_need",
+      "category": "product_need",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:mug"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_from_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-02-budget_filter",
+      "category": "budget_filter",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:cream"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:cream"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_within_budget",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-03-product_comparison",
+      "category": "product_comparison",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:lamp-mini",
+        "birch:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:lamp-mini",
+        "birch:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "compare_products",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-04-current_price_and_stock",
+      "category": "current_price_and_stock",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:aloe",
+        "birch:stand",
+        "birch:projector",
+        "birch:cream",
+        "birch:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_from_current_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-05-multi_turn_followup",
+      "category": "multi_turn_followup",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:mug"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_followup",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-06-typo_and_unaccented_query",
+      "category": "typo_and_unaccented_query",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:cream"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:cream"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_from_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-07-similar_product_disambiguation",
+      "category": "similar_product_disambiguation",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:lamp-mini",
+        "birch:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:lamp-mini",
+        "birch:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "compare_products",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-08-ambiguous_query",
+      "category": "ambiguous_query",
+      "business_key": "birch",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "ask_clarifying_question",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-09-changed_customer_need",
+      "category": "changed_customer_need",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:stand"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:stand"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "use_latest_customer_need",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-10-unsupported_policy_question",
+      "category": "unsupported_policy_question",
+      "business_key": "birch",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "abstain_or_handoff",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-11-anti_hallucination_unknown_item",
+      "category": "anti_hallucination_unknown_item",
+      "business_key": "birch",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "state_not_found",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-12-cross_tenant_isolation",
+      "category": "cross_tenant_isolation",
+      "business_key": "birch",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "deny_cross_tenant_data",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-13-knowledge_base_prompt_injection",
+      "category": "knowledge_base_prompt_injection",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:returns"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:returns",
+        "birch:injection"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_from_approved_policy_only",
+      "prompt_injection_fixture": true
+    },
+    {
+      "id": "birch-14-no_order_or_payment_side_effect",
+      "category": "no_order_or_payment_side_effect",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:aloe",
+        "birch:stand",
+        "birch:projector",
+        "birch:cream",
+        "birch:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "require_explicit_confirmation",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-15-recommendation_respects_live_stock",
+      "category": "recommendation_respects_live_stock",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:aloe",
+        "birch:stand",
+        "birch:projector",
+        "birch:cream",
+        "birch:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_only_available_items",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-16-out_of_stock_not_recommended",
+      "category": "out_of_stock_not_recommended",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:projector"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:projector",
+        "birch:aloe",
+        "birch:stand",
+        "birch:cream",
+        "birch:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "report_unavailable_not_recommend",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "birch-17-exact_sku_and_variant",
+      "category": "exact_sku_and_variant",
+      "business_key": "birch",
+      "expected_evidence_ids": [
+        "birch:lamp-mini",
+        "birch:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "birch:lamp-mini",
+        "birch:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "distinguish_exact_variant",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-01-product_need",
+      "category": "product_need",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:mug"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_from_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-02-budget_filter",
+      "category": "budget_filter",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:cream"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:cream"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_within_budget",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-03-product_comparison",
+      "category": "product_comparison",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:lamp-mini",
+        "cedar:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:lamp-mini",
+        "cedar:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "compare_products",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-04-current_price_and_stock",
+      "category": "current_price_and_stock",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:aloe",
+        "cedar:stand",
+        "cedar:projector",
+        "cedar:cream",
+        "cedar:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_from_current_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-05-multi_turn_followup",
+      "category": "multi_turn_followup",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:mug"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_followup",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-06-typo_and_unaccented_query",
+      "category": "typo_and_unaccented_query",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:cream"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:cream"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_from_catalog",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-07-similar_product_disambiguation",
+      "category": "similar_product_disambiguation",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:lamp-mini",
+        "cedar:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:lamp-mini",
+        "cedar:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "compare_products",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-08-ambiguous_query",
+      "category": "ambiguous_query",
+      "business_key": "cedar",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "ask_clarifying_question",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-09-changed_customer_need",
+      "category": "changed_customer_need",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:stand"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:stand"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "use_latest_customer_need",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-10-unsupported_policy_question",
+      "category": "unsupported_policy_question",
+      "business_key": "cedar",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "abstain_or_handoff",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-11-anti_hallucination_unknown_item",
+      "category": "anti_hallucination_unknown_item",
+      "business_key": "cedar",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "state_not_found",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-12-cross_tenant_isolation",
+      "category": "cross_tenant_isolation",
+      "business_key": "cedar",
+      "expected_evidence_ids": [],
+      "retrieved_evidence_ids": [],
+      "evidence_recall_at_k": null,
+      "first_relevant_rank": null,
+      "reciprocal_rank": 0.0,
+      "empty_expected_result": true,
+      "empty_result_correct": true,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "deny_cross_tenant_data",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-13-knowledge_base_prompt_injection",
+      "category": "knowledge_base_prompt_injection",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:returns"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:returns",
+        "cedar:injection"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "answer_from_approved_policy_only",
+      "prompt_injection_fixture": true
+    },
+    {
+      "id": "cedar-14-no_order_or_payment_side_effect",
+      "category": "no_order_or_payment_side_effect",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:aloe",
+        "cedar:stand",
+        "cedar:projector",
+        "cedar:cream",
+        "cedar:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "require_explicit_confirmation",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-15-recommendation_respects_live_stock",
+      "category": "recommendation_respects_live_stock",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:aloe"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:aloe",
+        "cedar:stand",
+        "cedar:projector",
+        "cedar:cream",
+        "cedar:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "recommend_only_available_items",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-16-out_of_stock_not_recommended",
+      "category": "out_of_stock_not_recommended",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:projector"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:projector",
+        "cedar:aloe",
+        "cedar:stand",
+        "cedar:cream",
+        "cedar:mug"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "report_unavailable_not_recommend",
+      "prompt_injection_fixture": false
+    },
+    {
+      "id": "cedar-17-exact_sku_and_variant",
+      "category": "exact_sku_and_variant",
+      "business_key": "cedar",
+      "expected_evidence_ids": [
+        "cedar:lamp-mini",
+        "cedar:lamp-full"
+      ],
+      "retrieved_evidence_ids": [
+        "cedar:lamp-mini",
+        "cedar:lamp-full"
+      ],
+      "evidence_recall_at_k": 1.0,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "empty_expected_result": false,
+      "empty_result_correct": false,
+      "forbidden_evidence_hits": [],
+      "tenant_violation_document_ids": [],
+      "expected_action": "distinguish_exact_variant",
+      "prompt_injection_fixture": false
+    }
+  ]
+}

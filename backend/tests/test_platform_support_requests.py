@@ -5,8 +5,9 @@ from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from app.auth.dependencies import get_current_user
 from app.auth.platform import require_platform_admin
@@ -17,9 +18,26 @@ from app.models.platform_support_request import PlatformSupportRequest, Platform
 from app.api.platform_support_requests import router
 
 
+def _create_sqlite_engine(*args, **kwargs):
+    """Keep SQLite-only contract tests on SQLite under the PG suite harness."""
+    engine_factory = getattr(create_engine, "_smh_original_create_engine", create_engine)
+    return engine_factory(*args, **kwargs)
+
+
+def _enable_sqlite_foreign_keys(connection, _record):
+    cursor = connection.cursor()
+    cursor.execute('PRAGMA foreign_keys=ON')
+    cursor.close()
+
+
 class SupportRequestTests(unittest.TestCase):
     def setUp(self):
-        self.engine = create_engine('sqlite://')
+        self.engine = _create_sqlite_engine(
+            'sqlite://',
+            connect_args={'check_same_thread': False},
+            poolclass=StaticPool,
+        )
+        event.listen(self.engine, 'connect', _enable_sqlite_foreign_keys)
         for table in (PlatformBusiness.__table__, PlatformSupportRequest.__table__, PlatformSupportRequestHistory.__table__):
             table.create(self.engine)
         self.db = Session(self.engine)
@@ -200,7 +218,8 @@ class SupportRequestTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('support_migration', path)
         migration = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
-        engine = create_engine('sqlite://')
+        engine = _create_sqlite_engine('sqlite://')
+        event.listen(engine, 'connect', _enable_sqlite_foreign_keys)
         with engine.begin() as connection:
             PlatformBusiness.__table__.create(connection)
             with patch.object(migration, 'op', Operations(MigrationContext.configure(connection))):

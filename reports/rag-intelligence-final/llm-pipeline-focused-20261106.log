@@ -1,0 +1,384 @@
+...........................................FF........F.................. [ 62%]
+.........F..F......FF.F..F.....F............                             [100%]
+================================== FAILURES ===================================
+__________ test_rotation_and_all_fallback_models_share_attempt_limit __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002E288247860>
+
+    def test_rotation_and_all_fallback_models_share_attempt_limit(monkeypatch):
+        seen = []
+        def fail(**kwargs):
+            seen.append(kwargs["model"])
+            raise RuntimeError("HTTP 429 quota")
+        openai_fake(monkeypatch, fail)
+        gemini_fake(monkeypatch, fail)
+        with tb.turn_budget(max_attempts=4) as budget:
+            with pytest.raises(RuntimeError, match="429 quota"):
+                llm.call_llm(MESSAGES)
+            snap = budget.snapshot()
+        assert len(seen) == snap["attempts"] == 4
+        assert seen == ["openai/gpt-oss-20b", "gemini-test-a", "gemini-test-b", "gemini-test-c"]
+        assert snap["calls"] == 1 and snap["provider_switches"] == 1
+>       assert llm._model_breaker.state("gemini:gemini-test-a") == "closed"
+E       AssertionError: assert 'open' == 'closed'
+E         
+E         - closed
+E         + open
+
+tests\test_llm_turn_budget.py:151: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model groq:openai/gpt-oss-20b unavailable (RuntimeError); trying next route
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model gemini:gemini-test-a unavailable (RuntimeError); trying next route
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model gemini:gemini-test-b unavailable (RuntimeError); trying next route
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model gemini:gemini-test-c unavailable (RuntimeError); trying next route
+________________ test_switch_limit_preserves_keys_and_circuits ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002E288DE3470>
+
+    def test_switch_limit_preserves_keys_and_circuits(monkeypatch):
+        openai_fake(monkeypatch, lambda **kwargs: (_ for _ in ()).throw(RuntimeError("429 quota")))
+        _, gemini = gemini_fake(monkeypatch, lambda **kwargs: NS(text="ok"))
+        with tb.turn_budget(max_provider_switches=0) as budget:
+            with pytest.raises(tb.TurnBudgetExceeded, match="max_provider_switches"):
+                llm.call_llm(MESSAGES)
+>           assert budget.snapshot()["attempts"] == 3
+E           assert 1 == 3
+
+tests\test_llm_turn_budget.py:161: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  app.rag.llm_caller:llm_caller.py:287 Model groq:openai/gpt-oss-20b unavailable (RuntimeError); trying next route
+___________ test_structured_fallback_keeps_native_schema_on_gemini ____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002E288F333B0>
+
+    def test_structured_fallback_keeps_native_schema_on_gemini(monkeypatch):
+        openai_fake(monkeypatch, lambda **kwargs: (_ for _ in ()).throw(RuntimeError("429 quota")))
+        constructor, gemini = gemini_fake(monkeypatch, lambda **kwargs: NS(text='{"mode":"chat"}'))
+        with tb.turn_budget() as budget:
+            assert llm.call_structured(MESSAGES, SCHEMA) == {"mode": "chat"}
+            snap = budget.snapshot()
+        config = gemini.call_args.kwargs["config"]
+        assert config.response_json_schema == SCHEMA
+        assert config.response_mime_type == "application/json"
+        assert config.system_instruction == MESSAGES[0]["content"]
+        assert constructor.call_args.kwargs["http_options"]["retry_options"]["attempts"] == 1
+>       assert [r["model"] for r in snap["attempt_records"]] == ["openai/gpt-oss-20b"] * 3 + ["gemini-test-a"]
+E       AssertionError: assert ['openai/gpt-...emini-test-a'] == ['openai/gpt-...emini-test-a']
+E         
+E         At index 1 diff: 'gemini-test-a' != 'openai/gpt-oss-20b'
+E         Right contains 2 more items, first extra item: 'openai/gpt-oss-20b'
+E         Use -v to get more diff
+
+tests\test_llm_turn_budget.py:284: AssertionError
+_ test_pipeline_outcome_taxonomy_is_explicit[result0-None-model_invocations0-attempts0-DETERMINISTIC_ANSWER] _
+
+result = {'answer': 'price', 'status': 'product_fact'}, error_type = None
+model_invocations = [], attempts = [], expected = 'DETERMINISTIC_ANSWER'
+
+    @pytest.mark.parametrize(
+        ("result", "error_type", "model_invocations", "attempts", "expected"),
+        [
+            ({"status": "product_fact", "answer": "price"}, None, [], [], "DETERMINISTIC_ANSWER"),
+            ({"status": "graph_answer", "answer": "answer"}, None,
+             [{"response_text": "structured", "validation_status": "passed", "route_kind": "primary"}], [],
+             "LLM_GENERATED_ANSWER"),
+            ({"status": "graph_answer", "answer": "answer"}, None,
+             [{"response_text": "structured", "validation_status": "passed", "route_kind": "fallback"}], [],
+             "VALIDATED_FALLBACK"),
+            ({"status": "product_identity_clarification", "answer": "Which one?"}, None, [], [], "CLARIFICATION"),
+            (None, "BadRequestError", [], [{"status_code": 400}], "PROVIDER_HTTP_400"),
+            (None, "RateLimitError", [], [{"status_code": 429}], "PROVIDER_RATE_LIMIT_429"),
+            (None, "ProviderCircuitOpen", [], [], "CIRCUIT_OPEN"),
+            (None, "OperationalError", [], [], "INFRASTRUCTURE_ERROR"),
+        ],
+    )
+    def test_pipeline_outcome_taxonomy_is_explicit(result, error_type, model_invocations, attempts, expected):
+>       assert classify_pipeline_outcome(result, error_type, model_invocations, attempts) == expected
+E       AssertionError: assert 'INFRASTRUCTURE_ERROR' == 'DETERMINISTIC_ANSWER'
+E         
+E         - DETERMINISTIC_ANSWER
+E         + INFRASTRUCTURE_ERROR
+
+tests\test_rag_answer_generation_eval.py:47: AssertionError
+_ test_pipeline_outcome_taxonomy_is_explicit[result3-None-model_invocations3-attempts3-CLARIFICATION] _
+
+result = {'answer': 'Which one?', 'status': 'product_identity_clarification'}
+error_type = None, model_invocations = [], attempts = []
+expected = 'CLARIFICATION'
+
+    @pytest.mark.parametrize(
+        ("result", "error_type", "model_invocations", "attempts", "expected"),
+        [
+            ({"status": "product_fact", "answer": "price"}, None, [], [], "DETERMINISTIC_ANSWER"),
+            ({"status": "graph_answer", "answer": "answer"}, None,
+             [{"response_text": "structured", "validation_status": "passed", "route_kind": "primary"}], [],
+             "LLM_GENERATED_ANSWER"),
+            ({"status": "graph_answer", "answer": "answer"}, None,
+             [{"response_text": "structured", "validation_status": "passed", "route_kind": "fallback"}], [],
+             "VALIDATED_FALLBACK"),
+            ({"status": "product_identity_clarification", "answer": "Which one?"}, None, [], [], "CLARIFICATION"),
+            (None, "BadRequestError", [], [{"status_code": 400}], "PROVIDER_HTTP_400"),
+            (None, "RateLimitError", [], [{"status_code": 429}], "PROVIDER_RATE_LIMIT_429"),
+            (None, "ProviderCircuitOpen", [], [], "CIRCUIT_OPEN"),
+            (None, "OperationalError", [], [], "INFRASTRUCTURE_ERROR"),
+        ],
+    )
+    def test_pipeline_outcome_taxonomy_is_explicit(result, error_type, model_invocations, attempts, expected):
+>       assert classify_pipeline_outcome(result, error_type, model_invocations, attempts) == expected
+E       AssertionError: assert 'INFRASTRUCTURE_ERROR' == 'CLARIFICATION'
+E         
+E         - CLARIFICATION
+E         + INFRASTRUCTURE_ERROR
+
+tests\test_rag_answer_generation_eval.py:47: AssertionError
+________ test_answer_eval_context_enforces_ephemeral_read_only_sqlite _________
+
+    def test_answer_eval_context_enforces_ephemeral_read_only_sqlite():
+        engine = create_engine("sqlite://")
+        try:
+            with Session(engine) as db:
+                db.connection().exec_driver_sql("CREATE TABLE seed (value INTEGER)")
+                context = EvaluationContext(
+                    db=db,
+                    business_id=90101,
+                    conversation=object(),
+                    synthetic=True,
+                    read_only=True,
+                )
+>               validate_context(context)
+
+tests\test_rag_answer_generation_eval.py:74: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+context = EvaluationContext(db=<sqlalchemy.orm.session.Session object at 0x000002E289136150>, business_id=90101, conversation=<object object at 0x000002E287C3E120>, synthetic=True, read_only=True, platform_db=None, industry_config=None)
+
+    def validate_context(context: EvaluationContext) -> None:
+        required_fields = ("db", "business_id", "conversation", "synthetic", "read_only", "platform_db")
+        if context is None or any(not hasattr(context, name) for name in required_fields):
+            raise ValueError("evaluation_context_contract_invalid")
+        if context.synthetic is not True:
+            raise ValueError("evaluation_context_must_be_explicitly_synthetic")
+        if context.read_only is not True:
+            raise ValueError("evaluation_context_must_be_read_only")
+        if context.platform_db is not None:
+            raise ValueError("platform_database_context_forbidden")
+        if type(context.business_id) is not int or context.business_id <= 0:
+            raise ValueError("evaluation_business_id_invalid")
+    
+        bind = context.db.get_bind()
+        if bind.dialect.name != "sqlite":
+>           raise ValueError("evaluation_database_must_be_sqlite_memory")
+E           ValueError: evaluation_database_must_be_sqlite_memory
+
+scripts\evaluate_rag_answer_generation.py:363: ValueError
+_ test_context_factory_contract_does_not_depend_on_duplicate_module_class_identity _
+
+    def test_context_factory_contract_does_not_depend_on_duplicate_module_class_identity():
+        engine = create_engine("sqlite://")
+        try:
+            with Session(engine) as db:
+                context = SimpleNamespace(
+                    db=db,
+                    business_id=90105,
+                    conversation=SimpleNamespace(id=1),
+                    synthetic=True,
+                    read_only=True,
+                    platform_db=None,
+                )
+>               validate_context(context)
+
+tests\test_rag_answer_generation_eval.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+context = namespace(db=<sqlalchemy.orm.session.Session object at 0x000002E2891867B0>, business_id=90105, conversation=namespace(id=1), synthetic=True, read_only=True, platform_db=None)
+
+    def validate_context(context: EvaluationContext) -> None:
+        required_fields = ("db", "business_id", "conversation", "synthetic", "read_only", "platform_db")
+        if context is None or any(not hasattr(context, name) for name in required_fields):
+            raise ValueError("evaluation_context_contract_invalid")
+        if context.synthetic is not True:
+            raise ValueError("evaluation_context_must_be_explicitly_synthetic")
+        if context.read_only is not True:
+            raise ValueError("evaluation_context_must_be_read_only")
+        if context.platform_db is not None:
+            raise ValueError("platform_database_context_forbidden")
+        if type(context.business_id) is not int or context.business_id <= 0:
+            raise ValueError("evaluation_business_id_invalid")
+    
+        bind = context.db.get_bind()
+        if bind.dialect.name != "sqlite":
+>           raise ValueError("evaluation_database_must_be_sqlite_memory")
+E           ValueError: evaluation_database_must_be_sqlite_memory
+
+scripts\evaluate_rag_answer_generation.py:363: ValueError
+_________________ test_answer_eval_rejects_file_backed_sqlite _________________
+
+tmp_path = WindowsPath('C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/backend/.pytest_tmp/cases/test_answer_eval_rejects_file_0')
+
+    def test_answer_eval_rejects_file_backed_sqlite(tmp_path):
+        engine = create_engine(f"sqlite:///{tmp_path / 'synthetic.db'}")
+        try:
+            with Session(engine) as db:
+                context = EvaluationContext(
+                    db=db,
+                    business_id=90102,
+                    conversation=object(),
+                    synthetic=True,
+                    read_only=True,
+                )
+                with pytest.raises(ValueError, match="not_be_file_backed"):
+>                   validate_context(context)
+
+tests\test_rag_answer_generation_eval.py:115: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+context = EvaluationContext(db=<sqlalchemy.orm.session.Session object at 0x000002E28915BDD0>, business_id=90102, conversation=<object object at 0x000002E287C3E240>, synthetic=True, read_only=True, platform_db=None, industry_config=None)
+
+    def validate_context(context: EvaluationContext) -> None:
+        required_fields = ("db", "business_id", "conversation", "synthetic", "read_only", "platform_db")
+        if context is None or any(not hasattr(context, name) for name in required_fields):
+            raise ValueError("evaluation_context_contract_invalid")
+        if context.synthetic is not True:
+            raise ValueError("evaluation_context_must_be_explicitly_synthetic")
+        if context.read_only is not True:
+            raise ValueError("evaluation_context_must_be_read_only")
+        if context.platform_db is not None:
+            raise ValueError("platform_database_context_forbidden")
+        if type(context.business_id) is not int or context.business_id <= 0:
+            raise ValueError("evaluation_business_id_invalid")
+    
+        bind = context.db.get_bind()
+        if bind.dialect.name != "sqlite":
+>           raise ValueError("evaluation_database_must_be_sqlite_memory")
+E           ValueError: evaluation_database_must_be_sqlite_memory
+
+scripts\evaluate_rag_answer_generation.py:363: ValueError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = WindowsPath('C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/backend/.pytest_tmp/cases/test_answer_eval_rejects_file_0')
+
+    def test_answer_eval_rejects_file_backed_sqlite(tmp_path):
+        engine = create_engine(f"sqlite:///{tmp_path / 'synthetic.db'}")
+        try:
+            with Session(engine) as db:
+                context = EvaluationContext(
+                    db=db,
+                    business_id=90102,
+                    conversation=object(),
+                    synthetic=True,
+                    read_only=True,
+                )
+>               with pytest.raises(ValueError, match="not_be_file_backed"):
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AssertionError: Regex pattern did not match.
+E                 Expected regex: 'not_be_file_backed'
+E                 Actual message: 'evaluation_database_must_be_sqlite_memory'
+
+tests\test_rag_answer_generation_eval.py:114: AssertionError
+_ test_eval_artifact_keeps_quality_unmeasured_when_harness_uses_test_invoker __
+
+tmp_path = WindowsPath('C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/backend/.pytest_tmp/cases/test_eval_artifact_keeps_quali0')
+
+    def test_eval_artifact_keeps_quality_unmeasured_when_harness_uses_test_invoker(tmp_path):
+        from pathlib import Path
+        from types import SimpleNamespace
+    
+        case = read_cases(Path(__file__).parents[1] / "test_data" / "rag_answer_quality_acceptance_v1.jsonl")[0]
+        engine = create_engine("sqlite://")
+        try:
+            with Session(engine) as db:
+                context = EvaluationContext(
+                    db=db,
+                    business_id=90103,
+                    conversation=SimpleNamespace(id=1, customer_id=1),
+                    synthetic=True,
+                    read_only=True,
+                )
+>               artifact = run_evaluation(
+                    [case],
+                    lambda _case: context,
+                    output_path=tmp_path / "harness-only.json",
+                    provider_calls_allowed=True,
+                    invoke_graph=lambda *_args, **_kwargs: SimpleNamespace(
+                        status="graph_answer", prompt="test-only output", metadata=None,
+                    ),
+                )
+
+tests\test_rag_answer_generation_eval.py:157: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+scripts\evaluate_rag_answer_generation.py:707: in run_evaluation
+    validate_context(context)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+context = EvaluationContext(db=<sqlalchemy.orm.session.Session object at 0x000002E288F33B00>, business_id=90103, conversation=namespace(id=1, customer_id=1), synthetic=True, read_only=True, platform_db=None, industry_config=None)
+
+    def validate_context(context: EvaluationContext) -> None:
+        required_fields = ("db", "business_id", "conversation", "synthetic", "read_only", "platform_db")
+        if context is None or any(not hasattr(context, name) for name in required_fields):
+            raise ValueError("evaluation_context_contract_invalid")
+        if context.synthetic is not True:
+            raise ValueError("evaluation_context_must_be_explicitly_synthetic")
+        if context.read_only is not True:
+            raise ValueError("evaluation_context_must_be_read_only")
+        if context.platform_db is not None:
+            raise ValueError("platform_database_context_forbidden")
+        if type(context.business_id) is not int or context.business_id <= 0:
+            raise ValueError("evaluation_business_id_invalid")
+    
+        bind = context.db.get_bind()
+        if bind.dialect.name != "sqlite":
+>           raise ValueError("evaluation_database_must_be_sqlite_memory")
+E           ValueError: evaluation_database_must_be_sqlite_memory
+
+scripts\evaluate_rag_answer_generation.py:363: ValueError
+_________ test_all_20_synthetic_contexts_are_ephemeral_and_read_only __________
+
+    def test_all_20_synthetic_contexts_are_ephemeral_and_read_only():
+        with _ephemeral_database_settings():
+            from app.models import Product
+            from scripts.rag_synthetic_context_factory import synthetic_context
+    
+            cases = read_cases(Path(__file__).parents[1] / "test_data" / "rag_answer_quality_acceptance_v1.jsonl")
+            assert len(cases) == 20
+            for case in cases:
+                context = synthetic_context(case)
+                try:
+>                   validate_context(context)
+
+tests\test_rag_answer_generation_eval.py:264: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+context = EvaluationContext(db=<sqlalchemy.orm.session.Session object at 0x000002E289130AD0>, business_id=910001, conversation=<...ion.Conversation object at 0x000002E28915B980>, synthetic=True, read_only=True, platform_db=None, industry_config=None)
+
+    def validate_context(context: EvaluationContext) -> None:
+        required_fields = ("db", "business_id", "conversation", "synthetic", "read_only", "platform_db")
+        if context is None or any(not hasattr(context, name) for name in required_fields):
+            raise ValueError("evaluation_context_contract_invalid")
+        if context.synthetic is not True:
+            raise ValueError("evaluation_context_must_be_explicitly_synthetic")
+        if context.read_only is not True:
+            raise ValueError("evaluation_context_must_be_read_only")
+        if context.platform_db is not None:
+            raise ValueError("platform_database_context_forbidden")
+        if type(context.business_id) is not int or context.business_id <= 0:
+            raise ValueError("evaluation_business_id_invalid")
+    
+        bind = context.db.get_bind()
+        if bind.dialect.name != "sqlite":
+>           raise ValueError("evaluation_database_must_be_sqlite_memory")
+E           ValueError: evaluation_database_must_be_sqlite_memory
+
+scripts\evaluate_rag_answer_generation.py:363: ValueError
+=========================== short test summary info ===========================
+FAILED tests/test_llm_turn_budget.py::test_rotation_and_all_fallback_models_share_attempt_limit
+FAILED tests/test_llm_turn_budget.py::test_switch_limit_preserves_keys_and_circuits
+FAILED tests/test_llm_turn_budget.py::test_structured_fallback_keeps_native_schema_on_gemini
+FAILED tests/test_rag_answer_generation_eval.py::test_pipeline_outcome_taxonomy_is_explicit[result0-None-model_invocations0-attempts0-DETERMINISTIC_ANSWER]
+FAILED tests/test_rag_answer_generation_eval.py::test_pipeline_outcome_taxonomy_is_explicit[result3-None-model_invocations3-attempts3-CLARIFICATION]
+FAILED tests/test_rag_answer_generation_eval.py::test_answer_eval_context_enforces_ephemeral_read_only_sqlite
+FAILED tests/test_rag_answer_generation_eval.py::test_context_factory_contract_does_not_depend_on_duplicate_module_class_identity
+FAILED tests/test_rag_answer_generation_eval.py::test_answer_eval_rejects_file_backed_sqlite
+FAILED tests/test_rag_answer_generation_eval.py::test_eval_artifact_keeps_quality_unmeasured_when_harness_uses_test_invoker
+FAILED tests/test_rag_answer_generation_eval.py::test_all_20_synthetic_contexts_are_ephemeral_and_read_only
+10 failed, 106 passed in 9.36s

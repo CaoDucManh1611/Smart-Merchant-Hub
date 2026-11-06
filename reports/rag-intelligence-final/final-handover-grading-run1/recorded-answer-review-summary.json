@@ -1,0 +1,50 @@
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "source_case_count": 20,
+  "repeated_recorded_runs": 1,
+  "executions": 20,
+  "independent_case_count": 20,
+  "provider_run_status": "RUNS_SUPPLIED_AND_GRADED",
+  "source_runs": [
+    "final-handover-20case-20261106-run1.json"
+  ],
+  "per_run": [
+    {
+      "run_id": "recorded-run-1",
+      "source": "final-handover-20case-20261106-run1.json",
+      "phase": "NOT_RECORDED_IN_RUN_ARTIFACT",
+      "case_count": 20,
+      "nonempty_text_count": 7,
+      "outcome_counts": {
+        "PASS_AUTOMATED": 6,
+        "FAIL_AUTOMATED": 13,
+        "PROVIDER_ERROR": 1
+      },
+      "automated_claim_pass_rate_all_cases": "6/20",
+      "automated_claim_pass_rate_nonempty_answers": "6/7",
+      "provider_case_errors": 1,
+      "infrastructure_case_errors": 0,
+      "provider_case_error_rate": "1/20",
+      "failed_provider_attempts": 2,
+      "provider_attempt_record_count": 4,
+      "provider_attempt_error_rate": "2/4",
+      "logical_calls": 4,
+      "physical_attempts": 4,
+      "elapsed_seconds": 5.985000000000582,
+      "provider_switches": 0,
+      "answer_correctness": "NOT_MEASURED",
+      "groundedness": "NOT_MEASURED",
+      "hallucination_rate": "NOT_MEASURED"
+    }
+  ],
+  "quality_metrics": {
+    "answer_correctness": "NOT_MEASURED",
+    "groundedness": "NOT_MEASURED",
+    "hallucination_rate": "NOT_MEASURED",
+    "human_review_required": true
+  },
+  "artifacts": [
+    "recorded-answer-review-traces-sanitized.jsonl",
+    "recorded-answer-case-review.csv"
+  ]
+}

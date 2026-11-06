@@ -1,5 +1,8 @@
 import unittest
+from datetime import datetime, timezone
 from contextlib import ExitStack
+from email.utils import format_datetime
+from unittest.mock import patch
 
 from app.services.api_key_pool import ApiKeyPool, ApiKeyPoolUnavailable, provider_request_slot
 from app.services.provider_circuit_breaker import ProviderCircuitBreaker
@@ -33,6 +36,37 @@ class ApiKeyPoolTests(unittest.TestCase):
 
         now[0] = 131.0
         self.assertEqual("key-c", pool.next_key())
+        self.assertEqual("key-a", pool.next_key())
+
+    def test_rate_limit_retry_after_extends_key_cooldown(self):
+        now = [100.0]
+        pool = ApiKeyPool(["key-a"], cooldown_seconds=30, clock=lambda: now[0])
+        error = RuntimeError("rate limited")
+        error.status_code = 429
+        error.retry_after = 120
+        pool.report_failure("key-a", error)
+
+        now[0] = 219.0
+        with self.assertRaises(ApiKeyPoolUnavailable):
+            pool.next_key()
+        now[0] = 220.0
+        self.assertEqual("key-a", pool.next_key())
+
+    def test_rate_limit_http_date_retry_after_extends_key_cooldown(self):
+        now = [100.0]
+        pool = ApiKeyPool(["key-a"], cooldown_seconds=30, clock=lambda: now[0])
+        error = RuntimeError("rate limited")
+        error.status_code = 429
+        retry_at = datetime.fromtimestamp(1_700_000_120, timezone.utc)
+        error.response = type("Response", (), {"headers": {"retry-after": format_datetime(retry_at, usegmt=True)}})()
+
+        with patch("app.services.api_key_pool.time.time", return_value=1_700_000_000):
+            pool.report_failure("key-a", error)
+
+        now[0] = 219.0
+        with self.assertRaises(ApiKeyPoolUnavailable):
+            pool.next_key()
+        now[0] = 220.0
         self.assertEqual("key-a", pool.next_key())
 
     def test_non_transient_failure_does_not_cool_key(self):

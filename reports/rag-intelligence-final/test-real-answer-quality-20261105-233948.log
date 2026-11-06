@@ -1,0 +1,142 @@
+...................................................F.F.F..................................
+================================== FAILURES ===================================
+_ test_eval_artifact_keeps_quality_unmeasured_when_harness_uses_test_invoker __
+
+tmp_path = WindowsPath('C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/backend/.pytest_tmp/cases/test_eval_artifact_keeps_quali0')
+
+    def test_eval_artifact_keeps_quality_unmeasured_when_harness_uses_test_invoker(tmp_path):
+        from pathlib import Path
+        from types import SimpleNamespace
+    
+        case = read_cases(Path(__file__).parents[1] / "test_data" / "rag_answer_quality_acceptance_v1.jsonl")[0]
+        engine = create_engine("sqlite://")
+        try:
+            with Session(engine) as db:
+                context = EvaluationContext(
+                    db=db,
+                    business_id=90103,
+                    conversation=SimpleNamespace(id=1, customer_id=1),
+                    synthetic=True,
+                    read_only=True,
+                )
+>               artifact = run_evaluation(
+                    [case],
+                    lambda _case: context,
+                    output_path=tmp_path / "harness-only.json",
+                    provider_calls_allowed=True,
+                    invoke_graph=lambda *_args, **_kwargs: SimpleNamespace(
+                        status="graph_answer", prompt="test-only output", metadata=None,
+                    ),
+                )
+
+tests\test_rag_answer_generation_eval.py:110: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+scripts\evaluate_rag_answer_generation.py:237: in run_evaluation
+    _assert_imported_engines_are_ephemeral()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _assert_imported_engines_are_ephemeral() -> None:
+        """Fail before case execution if an already-imported app engine targets a real DB."""
+        for module_name in ("app.database.session", "app.database.tenant_session", "app.database.platform_session"):
+            module = sys.modules.get(module_name)
+            if module is None:
+                continue
+            for attribute in ("engine", "tenant_engine", "platform_engine"):
+                engine = getattr(module, attribute, None)
+                if engine is None:
+                    continue
+                url = getattr(engine, "url", None)
+                if (
+                    getattr(getattr(engine, "dialect", None), "name", None) != "sqlite"
+                    or getattr(url, "database", None) not in (None, "", ":memory:")
+                ):
+>                   raise PermissionError("application_database_engine_is_not_ephemeral_sqlite")
+E                   PermissionError: application_database_engine_is_not_ephemeral_sqlite
+
+scripts\evaluate_rag_answer_generation.py:338: PermissionError
+______ test_eval_closes_disposable_session_when_context_validation_fails ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002562A525280>
+tmp_path = WindowsPath('C:/Users/Administrator/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/work/smart-merchant-hub/backend/.pytest_tmp/cases/test_eval_closes_disposable_se0')
+
+    def test_eval_closes_disposable_session_when_context_validation_fails(monkeypatch, tmp_path):
+        cases = read_cases(Path(__file__).parents[1] / "test_data" / "rag_answer_quality_acceptance_v1.jsonl")[:1]
+        engine = create_engine("sqlite://")
+        closed = []
+        try:
+            db = Session(engine)
+            original_close = db.close
+    
+            def tracked_close():
+                closed.append(True)
+                original_close()
+    
+            monkeypatch.setattr(db, "close", tracked_close)
+            context = EvaluationContext(
+                db=db,
+                business_id=90104,
+                conversation=object(),
+                synthetic=False,
+                read_only=True,
+            )
+            with pytest.raises(ValueError, match="explicitly_synthetic"):
+>               run_evaluation(
+                    cases,
+                    lambda _case: context,
+                    output_path=tmp_path / "invalid-context.json",
+                    provider_calls_allowed=True,
+                    invoke_graph=lambda *_args, **_kwargs: pytest.fail("graph must not run"),
+                )
+
+tests\test_rag_answer_generation_eval.py:164: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+scripts\evaluate_rag_answer_generation.py:237: in run_evaluation
+    _assert_imported_engines_are_ephemeral()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def _assert_imported_engines_are_ephemeral() -> None:
+        """Fail before case execution if an already-imported app engine targets a real DB."""
+        for module_name in ("app.database.session", "app.database.tenant_session", "app.database.platform_session"):
+            module = sys.modules.get(module_name)
+            if module is None:
+                continue
+            for attribute in ("engine", "tenant_engine", "platform_engine"):
+                engine = getattr(module, attribute, None)
+                if engine is None:
+                    continue
+                url = getattr(engine, "url", None)
+                if (
+                    getattr(getattr(engine, "dialect", None), "name", None) != "sqlite"
+                    or getattr(url, "database", None) not in (None, "", ":memory:")
+                ):
+>                   raise PermissionError("application_database_engine_is_not_ephemeral_sqlite")
+E                   PermissionError: application_database_engine_is_not_ephemeral_sqlite
+
+scripts\evaluate_rag_answer_generation.py:338: PermissionError
+_______ test_eval_requires_all_database_settings_to_be_in_memory_sqlite _______
+
+    def test_eval_requires_all_database_settings_to_be_in_memory_sqlite():
+>       settings = SimpleNamespace(
+                   ^^^^^^^^^^^^^^^
+            DATABASE_URL="sqlite://",
+            TENANT_DATABASE_URL="sqlite://",
+            PLATFORM_DATABASE_URL="postgresql://example.invalid/production",
+        )
+E       NameError: name 'SimpleNamespace' is not defined
+
+tests\test_rag_answer_generation_eval.py:190: NameError
+============================== warnings summary ===============================
+tests/test_conversation_graph.py::test_plan_tool_allowlist_and_bounded_work
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\core\config.py:272: RuntimeWarning: TENANT_DATABASE_URL is falling back to legacy DATABASE_URL; configure the explicit URL before production
+    return self._database_url(self.TENANT_DATABASE_URL, "TENANT_DATABASE_URL")
+
+tests/test_conversation_graph.py::test_plan_tool_allowlist_and_bounded_work
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\core\config.py:268: RuntimeWarning: PLATFORM_DATABASE_URL is falling back to legacy DATABASE_URL; configure the explicit URL before production
+    return self._database_url(self.PLATFORM_DATABASE_URL, "PLATFORM_DATABASE_URL")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_rag_answer_generation_eval.py::test_eval_artifact_keeps_quality_unmeasured_when_harness_uses_test_invoker
+FAILED tests/test_rag_answer_generation_eval.py::test_eval_closes_disposable_session_when_context_validation_fails
+FAILED tests/test_rag_answer_generation_eval.py::test_eval_requires_all_database_settings_to_be_in_memory_sqlite
+3 failed, 87 passed, 2 warnings in 7.08s

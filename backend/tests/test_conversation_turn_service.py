@@ -17,6 +17,7 @@ from app.services.customer_collection_flow import CollectionFlowResult
 from app.services.customer_fact_extractor import dispatch_customer_fact_extraction
 from app.services.recommendation_service import _preferred_color
 from app.services.privacy_service import stop_customer_personalization
+from app.services.sales_journey_adapter import JOURNEY_STATE_METADATA_KEY
 
 
 class ConversationTurnTests(unittest.TestCase):
@@ -306,6 +307,10 @@ class ConversationTurnTests(unittest.TestCase):
         with Session(self.engine) as db:
             latest = db.query(Message.id).order_by(Message.id.desc()).first()[0]
             with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
+                 patch("app.tenancy.workspace_modules.get_workspace_config", side_effect=[
+                     {"business_model": "RETAIL", "enabled_capabilities": ["CORE_CRM", "RETAIL_TOOLS"]},
+                     {"business_model": "RETAIL", "enabled_capabilities": ["CORE_CRM"]},
+                 ]), \
                  patch("app.services.auto_reply_service.is_business_open", return_value=True), \
                  patch("app.services.auto_reply_service.customer_order_reply", return_value="Còn hàng."), \
                  patch("app.services.auto_reply_service.send_text_reply", return_value={"message_id": "test"}) as send:
@@ -447,6 +452,85 @@ class ConversationTurnTests(unittest.TestCase):
             db.commit()
             self.assertEqual(0, db.query(CustomerFact).filter(CustomerFact.id == fact.id).count())
             self.assertEqual(0, db.query(CustomerProductInteraction).filter(CustomerProductInteraction.id == interaction.id).count())
+
+    def test_opt_out_purges_reply_and_sales_journey_metadata_but_preserves_delivery_metadata(self):
+        with Session(self.engine) as db:
+            message = Message(
+                conversation_id=self.conversation_id, channel="shopee", direction="outbound",
+                sender_type="bot", content="Đã ghi nhận nhu cầu.", metadata_={
+                    "reply_memory": {"active_product_ids": [4]},
+                    JOURNEY_STATE_METADATA_KEY: {"schema": "sales_journey_state", "schema_version": 2},
+                    "provider_delivery_id": "synthetic-message-1",
+                },
+            )
+            db.add(message)
+            db.commit()
+            stop_customer_personalization(db, self.business_id, self.customer_id)
+            db.commit()
+            db.refresh(message)
+            self.assertEqual({"provider_delivery_id": "synthetic-message-1"}, message.metadata_)
+
+    def test_opt_out_purges_personal_state_from_retry_jobs_without_touching_other_conversations(self):
+        with Session(self.engine) as db:
+            other_customer = Customer(
+                business_id=self.business_id,
+                channel="shopee",
+                external_user_id="other-synthetic-customer",
+            )
+            db.add(other_customer)
+            db.flush()
+            other_conversation = Conversation(
+                business_id=self.business_id,
+                customer_id=other_customer.id,
+                channel="shopee",
+            )
+            db.add(other_conversation)
+            db.flush()
+
+            own_job = CrmJob(
+                business_id=self.business_id,
+                kind="chatbot.reply_turn",
+                idempotency_key=f"chatbot-turn:{self.conversation_id}:901",
+                payload={
+                    "conversation_id": self.conversation_id,
+                    "message_id": 901,
+                    "collection_reply": "synthetic reply",
+                    "collection_metadata": {
+                        "reply_memory": {"active_product_ids": [4]},
+                        JOURNEY_STATE_METADATA_KEY: {"schema": "sales_journey_state", "schema_version": 2},
+                        "provider_delivery_id": "safe-delivery-ref",
+                    },
+                },
+            )
+            unrelated_job = CrmJob(
+                business_id=self.business_id,
+                kind="chatbot.reply_turn",
+                idempotency_key=f"chatbot-turn:{other_conversation.id}:902",
+                payload={
+                    "conversation_id": other_conversation.id,
+                    "message_id": 902,
+                    "collection_metadata": {
+                        JOURNEY_STATE_METADATA_KEY: {"schema": "sales_journey_state", "schema_version": 2},
+                    },
+                },
+            )
+            db.add_all([own_job, unrelated_job])
+            db.commit()
+            own_job_id, unrelated_job_id = own_job.id, unrelated_job.id
+
+            stop_customer_personalization(db, self.business_id, self.customer_id)
+            db.commit()
+
+            scrubbed = db.get(CrmJob, own_job_id)
+            untouched = db.get(CrmJob, unrelated_job_id)
+            self.assertEqual(
+                {"provider_delivery_id": "safe-delivery-ref"},
+                scrubbed.payload["collection_metadata"],
+            )
+            self.assertEqual(
+                JOURNEY_STATE_METADATA_KEY,
+                next(iter(untouched.payload["collection_metadata"])),
+            )
 
     def test_opt_out_scrubs_personal_recommendation_experiment_context(self):
         with Session(self.engine) as db:

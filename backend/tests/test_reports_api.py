@@ -14,6 +14,7 @@ from app.models.customer import Customer
 from app.models.lead import Lead
 from app.models.sales import Order
 from app.models.ticket import Ticket
+from capability_fixtures import enable_workspace_capabilities
 
 
 class ReportsApiTests(unittest.TestCase):
@@ -30,6 +31,9 @@ class ReportsApiTests(unittest.TestCase):
             two = Business(name="Reports Two", slug="reports-two")
             db.add_all([one, two])
             db.flush()
+            test_capabilities = ("RETAIL_TOOLS", "ORDER_TOOLS")
+            enable_workspace_capabilities(db, one.id, *test_capabilities)
+            enable_workspace_capabilities(db, two.id, *test_capabilities)
             agent = User(
                 business_id=one.id,
                 full_name="Agent One",

@@ -1,0 +1,31 @@
+{
+  "budget_id": "smh-rag-answer-quality-provider-budget-20case-v1",
+  "dataset_sha256": "340e70c14bcd7f954650570a6ada9b7c9539d37cb149467017577ea5e97bb386",
+  "evidence_snapshot_id": "smh-rag-answer-quality-synthetic-v1-evidence:a2667f4debf8e5ca",
+  "model": "openai/gpt-oss-20b",
+  "provider": "Groq only; no provider fallback",
+  "paired_runs": [
+    "baseline",
+    "post-fix"
+  ],
+  "cases_per_run": 20,
+  "maximum_calls": {
+    "paired_case_executions_max": 40,
+    "maximum_cases_per_run": 20,
+    "max_model_calls_per_run": 80,
+    "total_physical_provider_attempts_max": 80,
+    "total_input_tokens_hard_cap": 200000,
+    "total_output_tokens_hard_cap": 30000,
+    "completion_tokens_per_request_max": 512,
+    "timeout_seconds_per_run": 1800
+  },
+  "cost_estimate_usd": "UNAVAILABLE; evaluator has no configured price table; obtain current rate and owner cost approval before provider run",
+  "actual_provider_calls_in_preparation": 0,
+  "current_run_authorized": false,
+  "requires_separate_owner_approval": true,
+  "token_usage_expectation": "NOT_ESTIMATED; actual prompt sizes and model usage must be measured; hard caps enforced by evaluator",
+  "notes": [
+    "The 30,000 output-token task cap is stricter than 80 attempts times 512 completion tokens.",
+    "If a hard token/call cap is reached, report incomplete cases and do not infer a quality result."
+  ]
+}

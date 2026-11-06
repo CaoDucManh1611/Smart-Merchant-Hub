@@ -10,6 +10,7 @@ from app.db.dependencies import get_db
 from app.main import app
 from app.models.business import Business
 from app.models.sales import Product
+from capability_fixtures import enable_workspace_capabilities
 
 
 class InventoryReceivingTests(unittest.TestCase):
@@ -25,6 +26,7 @@ class InventoryReceivingTests(unittest.TestCase):
             business = Business(name="Inventory One", slug="inventory-one")
             db.add(business)
             db.flush()
+            enable_workspace_capabilities(db, business.id, "RETAIL_TOOLS", "INVENTORY_TOOLS")
             product = Product(
                 business_id=business.id,
                 sku="INV-01",

@@ -43,6 +43,12 @@ def test_live_router_recognizes_unlabelled_multisegment_sku():
     assert decision.needs_catalog is True
 
 
+def test_price_and_stock_route_requires_live_catalog_not_docs_only():
+    decision = route_customer_message("Vision 110 giá bao nhiêu và còn hàng không?")
+    assert decision.intent == "lookup_product"
+    assert decision.needs_catalog is True
+
+
 def test_vietnamese_synonyms_are_scored_as_alternatives_not_extra_constraints():
     terms = query_terms("shop có kcn, áo phông sz M SKU-ABC-123")
     assert ("sunscreen", "sunblock", "kem chong nang", "kcn") in terms

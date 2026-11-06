@@ -136,6 +136,11 @@ jobs:
             frontend:
               image: ${FRONTEND_IMAGE}
               pull_policy: always
+              # The published frontend is the Nginx production image (port 80),
+              # while the base compose file targets Vite's dev port 5173.
+              # Replace that mapping for this release smoke stack.
+              ports: !override
+                - "5173:80"
               healthcheck:
                 test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
           EOF
@@ -169,7 +174,12 @@ jobs:
             fi
             sleep 5
           done
-          curl --fail --silent --show-error http://localhost:8000/health
+          backend_http_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' http://localhost:8000/health)
+          if [ "$backend_http_status" != "307" ]; then
+            echo "Expected the production HTTP endpoint to redirect to HTTPS; got HTTP ${backend_http_status}."
+            exit 1
+          fi
+          docker exec crm_chatbot_backend python -c "import urllib.request; request=urllib.request.Request('http://127.0.0.1:8000/health', headers={'Host': 'localhost', 'X-Forwarded-Proto': 'https'}); response=urllib.request.urlopen(request, timeout=5); raise SystemExit(0 if response.status == 200 else 1)"
           curl --fail --silent --show-error http://localhost:5173/
           docker compose -f docker-compose.yml -f docker-compose.release.yml ps
 

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "limits": {
+    "case_executions": 20,
+    "physical_attempts": 40,
+    "input_tokens": 100000,
+    "output_tokens": 15000
+  },
+  "consumed": {
+    "case_executions": 20,
+    "physical_attempts": 4,
+    "input_tokens": 41747,
+    "output_tokens": 1474
+  },
+  "reported_usage": {
+    "input_tokens": 3693,
+    "output_tokens": 450
+  },
+  "runs": [
+    {
+      "phase": "baseline",
+      "case_ids": [
+        "answer-001-price-stock",
+        "answer-002-budget",
+        "answer-003-compare",
+        "answer-004-followup-stock",
+        "answer-005-context-switch",
+        "answer-006-vietnamese-typo",
+        "answer-007-sku-exact",
+        "answer-008-unknown-sku",
+        "answer-009-ambiguous-variant",
+        "answer-010-no-evidence",
+        "answer-011-policy-grounded",
+        "answer-012-multi-source",
+        "answer-013-cross-tenant",
+        "answer-014-kb-prompt-injection",
+        "answer-015-no-order-side-effect",
+        "answer-016-out-of-stock",
+        "answer-017-compatibility-unknown",
+        "answer-018-current-price-over-stale-kb",
+        "answer-019-image-observation",
+        "answer-020-service-read-only-availability"
+      ]
+    }
+  ]
+}

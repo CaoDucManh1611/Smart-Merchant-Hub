@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from app.core.config import settings
 from app.services.api_key_pool import ApiKeyPool, ApiKeyPoolUnavailable, call_with_key_rotation
+from app.rag.turn_budget import current_budget, physical_attempt, remaining_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -115,15 +116,23 @@ def _embed_with_gemini(
 
 
 def _gemini_embed_batch_once(genai, types, api_key: str, batch: list[str], model: str, *, task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
-    with genai.Client(api_key=api_key) as client:
-        response = client.models.embed_content(
-            model=model.removeprefix("models/"),
-            contents=batch,
-            config=types.EmbedContentConfig(
-                task_type=task_type,
-                output_dimensionality=settings.EMBEDDING_DIMENSION,
-            ),
-        )
+    options = {}
+    if current_budget():
+        options["http_options"] = {
+            "timeout": max(1, int(remaining_seconds(30.0) * 1000)),
+            "retry_options": {"attempts": 1},
+        }
+    with physical_attempt("gemini", model):
+        with genai.Client(api_key=api_key, **options) as client:
+            response = client.models.embed_content(
+                model=model.removeprefix("models/"),
+                contents=batch,
+                config=types.EmbedContentConfig(
+                    task_type=task_type,
+                    output_dimensionality=settings.EMBEDDING_DIMENSION,
+                ),
+            )
+        _record_embedding_usage(response, "gemini", model)
     return [list(item.values) for item in response.embeddings or []]
 
 
@@ -154,17 +163,23 @@ def _gemini_embed_query_once(
     timeout_seconds: float | None = None,
 ) -> list[float]:
     options = None
-    if timeout_seconds is not None:
-        options = types.HttpOptions(timeout=max(1, int(timeout_seconds * 1000)))
-    with genai.Client(api_key=api_key, http_options=options) as client:
-        response = client.models.embed_content(
-            model=model.removeprefix("models/"),
-            contents=text,
-            config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_QUERY",
-                output_dimensionality=settings.EMBEDDING_DIMENSION,
-            ),
+    if timeout_seconds is not None or current_budget():
+        bounded_timeout = timeout_seconds or remaining_seconds(30.0)
+        options = types.HttpOptions(
+            timeout=max(1, int(bounded_timeout * 1000)),
+            retry_options={"attempts": 1},
         )
+    with physical_attempt("gemini", model):
+        with genai.Client(api_key=api_key, http_options=options) as client:
+            response = client.models.embed_content(
+                model=model.removeprefix("models/"),
+                contents=text,
+                config=types.EmbedContentConfig(
+                    task_type="RETRIEVAL_QUERY",
+                    output_dimensionality=settings.EMBEDDING_DIMENSION,
+                ),
+            )
+        _record_embedding_usage(response, "gemini", model)
     if not response.embeddings:
         raise ValueError("Gemini embedding provider returned no query vector.")
     return list(response.embeddings[0].values)
@@ -225,10 +240,7 @@ def _embed_with_openai(
         batch = texts[i : i + batch_size]
         response = call_with_key_rotation(
             _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
-            lambda key: OpenAI(api_key=key).embeddings.create(
-                model=model,
-                input=batch,
-            ),
+            lambda key: _openai_embed_batch_once(OpenAI, key, batch, model),
             provider="embedding",
         )
         for item in response.data:
@@ -237,6 +249,53 @@ def _embed_with_openai(
             progress_callback(min(1.0, (i + len(batch)) / len(texts)))
 
     return embeddings
+
+
+def _record_embedding_usage(response, provider: str, model: str) -> None:
+    budget = current_budget()
+    if budget is None:
+        return
+    usage = getattr(response, "usage_metadata" if provider == "gemini" else "usage", None)
+    if usage is None:
+        return
+    if provider == "gemini":
+        prompt = getattr(usage, "prompt_token_count", None)
+        total = getattr(usage, "total_token_count", None)
+    else:
+        prompt = getattr(usage, "prompt_tokens", None)
+        total = getattr(usage, "total_tokens", None)
+    budget.record_usage(provider, model, {
+        "prompt_tokens": prompt,
+        "completion_tokens": 0,
+        "total_tokens": total if total is not None else prompt,
+    })
+
+
+def _openai_embed_batch_once(OpenAI, api_key: str, batch: list[str], model: str):
+    options = {}
+    if current_budget():
+        options.update(max_retries=0, timeout=remaining_seconds(30.0))
+    with physical_attempt("openai", model):
+        response = OpenAI(api_key=api_key, **options).embeddings.create(
+            model=model,
+            input=batch,
+        )
+        _record_embedding_usage(response, "openai", model)
+        return response
+
+
+def _openai_embed_query_once(OpenAI, api_key: str, text: str, model: str, timeout_seconds: float):
+    options = {"timeout": timeout_seconds}
+    if current_budget():
+        options["max_retries"] = 0
+        options["timeout"] = remaining_seconds(timeout_seconds)
+    with physical_attempt("openai", model):
+        response = OpenAI(api_key=api_key, **options).embeddings.create(
+            model=model,
+            input=[text],
+        )
+        _record_embedding_usage(response, "openai", model)
+        return response
 
 
 # =========================================================
@@ -326,9 +385,7 @@ def _cached_query_embedding(
 
             response = call_with_key_rotation(
                 _embedding_pool(tuple(settings.embedding_api_keys), settings.API_KEY_COOLDOWN_SECONDS),
-                lambda key: OpenAI(api_key=key, timeout=timeout_ms / 1000).embeddings.create(
-                    model=model, input=[text],
-                ),
+                lambda key: _openai_embed_query_once(OpenAI, key, text, model, timeout_ms / 1000),
                 provider="embedding",
                 max_attempts=1,
                 slot_timeout_seconds=0,

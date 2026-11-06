@@ -1,0 +1,7 @@
+COMMAND: C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Scripts\python.exe -m pytest -q C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_answer_generation_eval.py
+CWD: C:\Users\Administrator\AppData\Local\Temp\smh-final20case-budget-guard-cwd
+RUN_POSTGRES_TESTS=0
+Provider credentials cleared
+...................................                                      [100%]
+35 passed in 2.85s
+EXIT_CODE=0

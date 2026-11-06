@@ -39,7 +39,7 @@ MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 router = APIRouter()
 
 
-def _queue_ingestion(db: Session, doc: Document, *, kind: str) -> RagRun:
+def _queue_ingestion(db: Session, doc: Document, *, kind: str, reindex_only: bool = False) -> RagRun:
     run = RagRun(
         business_id=doc.business_id,
         document_id=doc.id,
@@ -53,7 +53,7 @@ def _queue_ingestion(db: Session, doc: Document, *, kind: str) -> RagRun:
         db,
         business_id=doc.business_id,
         kind="rag.ingest",
-        payload={"run_id": run.id, "document_id": doc.id},
+        payload={"run_id": run.id, "document_id": doc.id, "reindex_only": reindex_only or kind == "reindex"},
         idempotency_key=f"rag:{kind}:{run.id}",
         max_attempts=5,
     )
@@ -289,7 +289,7 @@ async def reindex_document(
     doc = db.query(Document).filter(
         Document.id == document_id,
         Document.business_id == tenant.business_id,
-    ).first()
+    ).with_for_update().first()
     if doc is None:
         raise HTTPException(404, "Tài liệu không tồn tại.")
     if doc.status in {"disabled", "superseded"}:
@@ -298,8 +298,9 @@ async def reindex_document(
         raise HTTPException(409, "Tài liệu cũ không có bản gốc để reindex; hãy upload lại.")
     if _has_active_ingestion(db, business_id=tenant.business_id, document_id=doc.id):
         raise HTTPException(409, "Tài liệu đang được xử lý; không thể tạo thêm một lượt trùng.")
-    doc.status = "pending"
-    doc.embedding_status = "pending"
+    if doc.status != "ready":
+        doc.status = "pending"
+        doc.embedding_status = "pending"
     doc.error_message = None
     doc.error_code = None
     _queue_ingestion(db, doc, kind="reindex")
@@ -339,16 +340,27 @@ async def retry_failed_run(
     doc = db.query(Document).filter(
         Document.id == previous.document_id,
         Document.business_id == tenant.business_id,
-    ).first()
+    ).with_for_update().first()
     if doc is None or not doc.source_bytes:
         raise HTTPException(409, "Tài liệu không còn bản gốc để thử lại; hãy upload lại.")
+    if doc.status in {"disabled", "superseded"}:
+        raise HTTPException(409, "Bật lại hiệu lực tài liệu trước khi xử lý lại.")
     if _has_active_ingestion(db, business_id=tenant.business_id, document_id=doc.id):
         raise HTTPException(409, "Tài liệu đã có một lượt xử lý đang chờ hoặc đang chạy.")
-    doc.status = "pending"
-    doc.embedding_status = "pending"
+    if doc.status != "ready":
+        doc.status = "pending"
+        doc.embedding_status = "pending"
     doc.error_message = None
     doc.error_code = None
-    run = _queue_ingestion(db, doc, kind="retry")
+    previous_job = db.query(CrmJob).filter(
+        CrmJob.business_id == tenant.business_id,
+        CrmJob.kind == "rag.ingest",
+        CrmJob.payload["run_id"].as_integer() == previous.id,
+    ).first()
+    reindex_only = previous.kind == "reindex" or bool(
+        previous_job and previous_job.payload.get("reindex_only")
+    )
+    run = _queue_ingestion(db, doc, kind="retry", reindex_only=reindex_only)
     db.commit()
     db.refresh(run)
     return _run_out(run)

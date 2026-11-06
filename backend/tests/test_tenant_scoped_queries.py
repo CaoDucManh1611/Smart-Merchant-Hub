@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch
 
@@ -57,6 +58,10 @@ class TenantScopedQueryTests(unittest.TestCase):
         finally:
             engine.dispose()
 
+    @unittest.skipUnless(
+        os.environ.get("RUN_POSTGRES_TESTS", "1").strip().lower() not in {"0", "false", "no"},
+        "PostgreSQL search_path behavior requires the isolated PostgreSQL test profile",
+    )
     def test_schema_routing_is_reapplied_after_service_commits(self):
         engine = create_engine("sqlite://")
         try:

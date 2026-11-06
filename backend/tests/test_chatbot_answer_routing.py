@@ -1,6 +1,7 @@
 from types import SimpleNamespace
-from unittest.mock import patch
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import pytest
 
 from app.services.auto_reply_service import (
     AMBIGUOUS_PRICE_REPLY,
@@ -17,6 +18,7 @@ from app.services.auto_reply_service import (
     _is_delivery_unknown_error,
     _is_product_attribute_question,
     _is_product_catalog_listing_request,
+    _format_product_detail_reply,
     _missing_warranty_disclosure,
     _policy_kind,
     _recommendation_reply,
@@ -24,6 +26,24 @@ from app.services.auto_reply_service import (
     _product_hint,
 )
 import app.services.auto_reply_service as auto_reply_service
+
+
+@pytest.fixture(autouse=True)
+def _catalog_capabilities_enabled_for_shop_routing_tests(monkeypatch):
+    from app.services.capability_registry import SUPPORTED_DEPENDENCIES
+
+    config = {
+        "business_model": "MULTI_SERVICE",
+        "enabled_capabilities": [
+            "CORE_CRM", "RETAIL_TOOLS", "APPOINTMENT_TOOLS",
+            "RENTAL_TOOLS", "RECOMMENDATION_TOOLS",
+        ],
+        "available_dependencies": sorted(SUPPORTED_DEPENDENCIES),
+    }
+    monkeypatch.setattr(
+        "app.tenancy.workspace_modules.get_workspace_config",
+        lambda _db, _business_id: config,
+    )
 
 
 class _Query:
@@ -52,6 +72,17 @@ class _DB:
 
     def rollback(self):
         pass
+
+
+class _ConversationDB(_DB):
+    def __init__(self, rows, messages):
+        super().__init__(rows)
+        self.messages = messages
+
+    def query(self, model, *args, **kwargs):
+        if getattr(model, "__name__", "") == "Message":
+            return _Query(self.messages)
+        return _Query(self.rows)
 
 
 def _db():
@@ -350,6 +381,192 @@ def test_ambiguous_product_followup_uses_prior_explicit_customer_selection():
         "Dạ, Serum Vitamin C Lunari hiện còn 10 sản phẩm ạ.",
         "product_fact",
     )
+
+
+def test_generic_stock_followup_asks_which_of_multiple_recent_products(monkeypatch):
+    products = [
+        SimpleNamespace(id=1, name="Dầu tẩy trang dịu nhẹ", sku="OIL-1", price=100000,
+                        stock_quantity=8, reserved_quantity=0, status="active", metadata_={}),
+        SimpleNamespace(id=2, name="Sữa rửa mặt dịu nhẹ", sku="WASH-1", price=120000,
+                        stock_quantity=5, reserved_quantity=0, status="active", metadata_={}),
+    ]
+    monkeypatch.setattr(auto_reply_service, "resolve_prior_product_mention", lambda *_a, **_k: None)
+    monkeypatch.setattr(auto_reply_service, "_previous_explicit_product_list", lambda *_a, **_k: products)
+
+    reply = _deterministic_customer_reply(
+        _DB(products), business_id=1, conversation_id=9,
+        query_text="Sản phẩm này còn hàng không?",
+    )
+
+    assert reply == (
+        "Bạn đang hỏi sản phẩm nào trong các mẫu vừa nêu: Dầu tẩy trang dịu nhẹ, Sữa rửa mặt dịu nhẹ? Mình kiểm tra tồn kho cho đúng mẫu nhé.",
+        "product_fact_followup_clarification",
+    )
+
+
+def test_explicit_unknown_sku_does_not_fuzzy_match_shared_catalog_prefix():
+    products = _DB([
+        SimpleNamespace(id=1, name="Sản phẩm demo alpha", sku="DEMO-ALPHA",
+                        price=100000, stock_quantity=4, reserved_quantity=0,
+                        status="active", metadata_={}),
+        SimpleNamespace(id=2, name="Sản phẩm demo beta", sku="DEMO-BETA",
+                        price=120000, stock_quantity=6, reserved_quantity=0,
+                        status="active", metadata_={}),
+    ])
+
+    reply = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=7,
+        query_text="Mã SKU DEMO-NOT-REAL còn hàng không?",
+    )
+
+    assert reply == (PRODUCT_NOT_FOUND_REPLY, "product_not_found")
+
+
+def test_ambiguous_same_name_variants_show_structured_variant_without_sku():
+    products = _DB([
+        SimpleNamespace(id=1, name="Áo mẫu", sku="AO-MAU-S", price=100000,
+                        stock_quantity=3, reserved_quantity=0, status="active",
+                        metadata_={"attributes": {"size": "S"}}),
+        SimpleNamespace(id=2, name="Áo mẫu", sku="AO-MAU-M", price=110000,
+                        stock_quantity=5, reserved_quantity=0, status="active",
+                        metadata_={"attributes": {"size": "M"}}),
+    ])
+
+    reply = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=7,
+        query_text="Áo mẫu giá bao nhiêu?",
+    )
+
+    assert reply is not None and reply[1] == "product_identity_clarification"
+    assert "Áo mẫu (cỡ S)" in reply[0]
+    assert "Áo mẫu (cỡ M)" in reply[0]
+    assert "AO-MAU" not in reply[0] and "SKU" not in reply[0]
+
+
+def test_stock_followup_uses_unambiguous_recent_chat_product_when_profile_memory_is_opted_out(monkeypatch):
+    from app.models.message import Message
+    from app.models.sales import Product
+
+    product = SimpleNamespace(
+        id=31, name="Lọc gió giấy dòng Wave Alpha 110", sku="XM-LOC-GIO-WA110",
+        price=98000, stock_quantity=23, reserved_quantity=0,
+        status="active", metadata_={},
+    )
+    messages = [
+        SimpleNamespace(id=12, content="Còn hàng không?", direction="inbound", sender_type="customer"),
+        SimpleNamespace(
+            id=11,
+            content="Lọc gió giấy dòng Wave Alpha 110 hiện có giá 98.000 đồng.",
+            direction="outbound", sender_type="bot",
+        ),
+    ]
+
+    class _HistoryDB(_DB):
+        def query(self, model, *args, **kwargs):
+            return _Query(messages if model is Message else [product] if model is Product else [])
+
+    monkeypatch.setattr(
+        "app.services.conversation_memory.resolve_memory_products", lambda *_a, **_k: []
+    )
+    reply = _deterministic_customer_reply(
+        _HistoryDB([product]), business_id=1, conversation_id=77,
+        query_text="Còn hàng không?",
+    )
+
+    assert reply == (
+        "Dạ, Lọc gió giấy dòng Wave Alpha 110 hiện còn 23 sản phẩm ạ.",
+        "product_fact_followup",
+    )
+
+
+def test_price_and_return_window_question_is_not_shortcircuited_to_price_only():
+    query = "Alpha giá bao nhiêu và có áp dụng đổi trong 7 ngày không?"
+
+    assert _policy_kind(query) == "return"
+    assert _deterministic_customer_reply(
+        _db(), business_id=1, conversation_id=1, query_text=query,
+    ) is None
+
+
+def test_followup_does_not_treat_broad_customer_need_as_products_just_mentioned():
+    from app.models.message import Message
+
+    products = [
+        SimpleNamespace(id=1, name="Dầu tẩy trang dịu nhẹ", sku="OIL-1", status="active", metadata_={}),
+        SimpleNamespace(id=2, name="Dầu gội dịu nhẹ", sku="SHAMPOO-1", status="active", metadata_={}),
+    ]
+    messages = [
+        SimpleNamespace(id=4, content="Sản phẩm này còn hàng không?", direction="inbound", sender_type="customer"),
+        SimpleNamespace(id=3, content="Mình chưa tìm thấy sản phẩm phù hợp với da dầu.", direction="outbound", sender_type="bot"),
+        SimpleNamespace(id=2, content="Shop có sản phẩm nào phù hợp với da dầu không?", direction="inbound", sender_type="customer"),
+        SimpleNamespace(id=1, content="Dầu tẩy trang và dầu gội đang có sẵn.", direction="outbound", sender_type="bot"),
+    ]
+
+    class _HistoryDB(_DB):
+        def query(self, model):
+            return _Query(messages if model is Message else products)
+
+    found = auto_reply_service._previous_explicit_product_list(
+        _HistoryDB(products), business_id=1, conversation_id=9,
+        current_text="Sản phẩm này còn hàng không?",
+    )
+
+    assert found == []
+
+
+def test_placeholder_product_price_question_does_not_reuse_chat_history(monkeypatch):
+    products = [
+        SimpleNamespace(id=1, name="Dầu tẩy trang dịu nhẹ", sku="OIL-1", price=100000,
+                        stock_quantity=8, reserved_quantity=0, status="active", metadata_={}),
+    ]
+    monkeypatch.setattr(auto_reply_service, "resolve_prior_product_mention", lambda *_a, **_k: products[0])
+    monkeypatch.setattr(auto_reply_service, "_previous_explicit_product_list", lambda *_a, **_k: products)
+
+    reply = _deterministic_customer_reply(
+        _DB(products), business_id=1, conversation_id=9,
+        query_text="Giá của sản phẩm X là bao nhiêu?",
+    )
+
+    assert reply == (AMBIGUOUS_PRICE_REPLY, "product_price_clarification")
+
+
+def test_oily_skin_recommendation_requires_explicit_catalog_fit():
+    oil_cleanser = SimpleNamespace(
+        id=1, name="Dầu tẩy trang dịu nhẹ", sku="OIL-1", price=150000,
+        stock_quantity=8, reserved_quantity=0, status="active", metadata_={},
+        description="Dầu tẩy trang làm sạch lớp trang điểm.",
+    )
+
+    reply = _recommendation_reply(
+        _DB([oil_cleanser]), business_id=1,
+        query_text="Shop có sản phẩm nào phù hợp với da dầu không?",
+    )
+
+    assert reply == auto_reply_service.NO_RECOMMENDATION_REPLY
+    assert auto_reply_service._product_supports_skin_profile(
+        SimpleNamespace(metadata_={"attributes": {"suitable_for": ["da dầu"]}}, description=""),
+        ("da dau", "dau nhon", "oily skin", "oily"),
+    )
+
+
+def test_promotion_question_routes_to_policy_retrieval_not_recommendation():
+    from app.services.chatbot_router import classify_intent
+
+    query = "Có khuyến mãi nào cho combo dưỡng da không?"
+    assert not auto_reply_service._is_recommendation_question(query)
+    assert classify_intent(query) == "search_knowledge"
+
+
+def test_shipping_damage_return_asks_for_evidence_without_promising_refund():
+    reply = _deterministic_customer_reply(
+        _DB([]), business_id=1, conversation_id=1,
+        query_text="Có thể đổi trả nếu sản phẩm bị hư trong lúc vận chuyển không?",
+    )
+
+    assert reply is not None
+    assert reply[1] == "shipping_damage_return_clarification"
+    assert "ảnh" in reply[0] and "mã đơn" in reply[0]
+    assert "xác nhận đổi trả" in reply[0]
 
 
 def test_ambiguous_product_match_query_is_tenant_and_status_scoped():
@@ -868,7 +1085,7 @@ def test_product_detail_followup_uses_last_product_instead_of_listing_catalog(mo
     assert _is_product_attribute_question(query)
     assert not _is_product_catalog_listing_request(query)
     assert _product_hint(query) == ""
-    monkeypatch.setattr(auto_reply_service, "resolve_product", lambda *_args, **_kwargs: product)
+    monkeypatch.setattr(auto_reply_service, "resolve_prior_product_mention", lambda *_args, **_kwargs: product)
 
     retrieval_query = _contextual_retrieval_query(
         _DB([product]), business_id=1, text=query, conversation_id=55,
@@ -877,7 +1094,7 @@ def test_product_detail_followup_uses_last_product_instead_of_listing_catalog(mo
     assert retrieval_query == f"{product.name}\n{query}"
 
 
-def test_product_detail_request_uses_imported_description_and_attributes():
+def test_product_detail_request_uses_catalog_description_without_dumping_import_facets():
     product = SimpleNamespace(
         id=5,
         name="Điện gia dụng mẫu 05",
@@ -905,11 +1122,11 @@ def test_product_detail_request_uses_imported_description_and_attributes():
     text, route = reply
     assert route == "product_detail_catalog"
     assert "gồm máy xay và nồi chiên" in text
-    assert "màu shop ghi nhận: đen, trắng, xanh nhạt" in text
-    assert "kích thước: S, M, L" in text
     assert "389.000 đồng" in text and "150 sản phẩm" in text
-    assert "Bạn muốn lấy số lượng bao nhiêu và nhận hàng ở đâu?" in text
-    assert "hỗ trợ tạo đơn nháp" in text
+    assert "màu shop ghi nhận" not in text
+    assert "kích thước:" not in text
+    assert "Bạn muốn lấy số lượng" not in text
+    assert "hỗ trợ tạo đơn nháp" not in text
 
 
 def test_product_detail_does_not_invent_missing_catalog_specifications():
@@ -922,8 +1139,37 @@ def test_product_detail_does_not_invent_missing_catalog_specifications():
     text, route = reply
     assert route == "product_detail_catalog"
     assert "349.000 đồng" in text and "46 sản phẩm" in text
-    assert "Bạn muốn lấy số lượng bao nhiêu và nhận hàng ở đâu?" in text
+    assert "Bạn muốn lấy số lượng" not in text
     assert "công suất" not in text
+
+
+def test_product_detail_suppresses_imported_metadata_dump_and_keeps_catalog_facts():
+    product = SimpleNamespace(
+        id=6,
+        name="Dầu gội dịu nhẹ — Nâng cao",
+        sku="BEAUTY-06",
+        description=(
+            "Dầu gội dịu nhẹ dành cho tóc khô. Đơn vị giá: chai/tuýp. "
+            "Giá/tồn chỉ để thử luồng nhập và chatbot. Danh mục: Làm đẹp. "
+            "Màu shop ghi nhận: Nâng cao. Kích thước: Nâng cao."
+        ),
+        price=909000,
+        stock_quantity=15,
+        reserved_quantity=0,
+        status="active",
+        metadata_={"attributes": {"category": "Làm đẹp", "colors": ["Nâng cao"]}},
+    )
+
+    text = _format_product_detail_reply(product, include_order_prompt=False)
+
+    assert "Dầu gội dịu nhẹ dành cho tóc khô" in text
+    assert "909.000 đồng" in text and "còn 15 sản phẩm" in text
+    assert "Đơn vị giá" not in text
+    assert "Giá/tồn" not in text
+    assert "Danh mục:" not in text
+    assert "Màu shop ghi nhận" not in text
+    assert "Kích thước:" not in text
+    assert "tạo đơn nháp" not in text
 
 
 def test_uncertain_platform_delivery_is_not_retried_as_a_second_customer_reply():
@@ -960,6 +1206,66 @@ def test_multi_intent_and_handoff_precedence_are_shared_across_industries():
     assert classify_intent("Chính sách đổi trả của SKU ABC123 thế nào?") == "search_knowledge"
     assert classify_intent("Đặt lịch thế nào?") == "search_knowledge"
     assert classify_intent("Cách thanh toán gói dịch vụ?") == "search_knowledge"
+
+
+def test_skincare_how_to_questions_do_not_turn_into_product_variant_choices():
+    cases = {
+        "Mặt mình nhạy cảm thì nên tránh thành phần nào?": "Không có danh sách thành phần",
+        "Sữa rửa mặt phù hợp với da dầu là gì?": "Nếu bạn có mụn hoặc lỗ chân lông to",
+        "Dưỡng ẩm cho da khô nên chọn sản phẩm nào?": "hyaluronic acid, ceramide hay glycerin",
+        "Có bao nhiêu loại da cần biết khi chọn sản phẩm?": "tình trạng thiếu nước",
+        "Da khô có nên dùng toner không?": "toner cấp ẩm dịu nhẹ",
+        "Da hỗn hợp nên dùng kem dưỡng như thế nào?": "kết cấu nhẹ",
+        "Tôi bị dầu nhờn, có nên dùng AHA không?": "hỗ trợ làm mịn bề mặt da",
+        "Serum Vitamin C dùng buổi sáng hay tối?": "thường được dùng buổi sáng",
+        "Kem chống nắng nên thoa mấy lần một ngày?": "Thoa theo hướng dẫn",
+        "Cách dùng toner đúng là gì?": "sau bước làm sạch",
+        "Rửa mặt bằng sữa rửa mặt 2 lần/ngày có cần thiết không?": "Rửa mặt 2 lần mỗi ngày",
+        "Sau khi dùng retinol, cần tránh kết hợp gì?": "tránh dùng cùng lúc",
+        "Mình muốn so sánh 2 serum niacinamide, nên xem yếu tố nào?": "nồng độ, thành phần đi kèm",
+        "Serum nào phù hợp cho da nhạy cảm hơn?": "Bạn ưu tiên cấp ẩm",
+        "Sữa rửa mặt nào tốt cho da mụn?": "Danh mục chưa xác nhận công thức",
+        "Mình đang cân nhắc mua kem dưỡng vs serum, lựa chọn dựa vào gì?": "Kem dưỡng chủ yếu cấp ẩm",
+    }
+    for query, expected in cases.items():
+        reply = auto_reply_service._deterministic_customer_reply(
+            _DB([]), business_id=1, conversation_id=1, query_text=query,
+        )
+        assert reply is not None and reply[1] == "general_knowledge_glossary", (query, reply)
+        assert expected.casefold() in reply[0].casefold(), (query, reply)
+
+
+def test_acne_routine_asks_one_clarifying_question():
+    reply = auto_reply_service._general_industry_question_reply(
+        "Da tôi có mụn, nên dùng sản phẩm nào cho routine?"
+    )
+    assert reply is not None
+    assert "làm sạch dịu nhẹ" in reply[0]
+    assert "mụn đầu đen, mụn ẩn hay mụn viêm" in reply[0]
+
+
+def test_blackhead_question_uses_relevant_general_answer_without_unrelated_products():
+    products = _DB([
+        SimpleNamespace(
+            id=1, name="Nhớt hộp số xe tay ga", sku="OIL-01", price=48000,
+            stock_quantity=10, reserved_quantity=0, status="active", metadata_={},
+        ),
+        SimpleNamespace(
+            id=2, name="Kem dưỡng phục hồi", sku="CREAM-01", price=188000,
+            stock_quantity=10, reserved_quantity=0, status="active", metadata_={},
+        ),
+    ])
+
+    reply = _deterministic_customer_reply(
+        products, business_id=1, conversation_id=1,
+        query_text="Mụn đầu đen nên dùng sản phẩm nào?",
+    )
+
+    assert reply is not None
+    assert reply[1] == "general_knowledge_glossary"
+    assert "lỗ chân lông bít tắc" in reply[0]
+    assert "nhớt" not in reply[0].casefold()
+    assert "kem dưỡng phục hồi" not in reply[0].casefold()
 
 
 def test_specific_detail_inquiry_never_dumps_catalog():
@@ -1007,6 +1313,34 @@ def test_missing_target_and_generic_details_across_industries():
         assert classify_intent(query) == "lookup_product"
 
 
+def test_confirmed_catalog_match_routes_to_current_product_and_returns_detail():
+    from app.rag.intent_router import route_customer_message
+
+    product = SimpleNamespace(
+        id=31, name="Dầu gội dịu nhẹ — Nâng cao", sku="BEAUTY-31",
+        description="Dầu gội dịu nhẹ dành cho tóc khô.", price=909000,
+        stock_quantity=15, reserved_quantity=0, status="active", metadata_={},
+    )
+    messages = [
+        SimpleNamespace(content="xác nhận đúng mẫu rồi", direction="inbound", sender_type="customer", metadata_={}),
+        SimpleNamespace(content="Ảnh có vẻ giống Dầu gội dịu nhẹ — Nâng cao. Bạn xác nhận đúng mẫu này nhé?",
+                        direction="outbound", sender_type="bot", metadata_={"crm_product": {"id": 31}}),
+    ]
+    routed = route_customer_message("xác nhận đúng mẫu rồi")
+    assert routed.intent == "lookup_product"
+    assert routed.needs_catalog is True
+
+    reply = _deterministic_customer_reply(
+        _ConversationDB([product], messages), business_id=1, conversation_id=9,
+        query_text="xác nhận đúng mẫu rồi",
+    )
+    assert reply is not None
+    assert reply[1] == "product_detail_catalog"
+    assert "Dầu gội dịu nhẹ" in reply[0]
+    assert "909.000 đồng" in reply[0]
+    assert "tóc khô" in reply[0]
+
+
 def test_rental_booking_followup_keeps_latest_customer_room_and_live_stock():
     room = SimpleNamespace(id=11, name="Phòng trọ 11", sku="P11", price=2000000,
         stock_quantity=1, reserved_quantity=0, status="active", description="",
@@ -1052,6 +1386,10 @@ def test_live_catalog_comparisons_answer_the_requested_difference_without_codes(
         db, business_id=1, conversation_id=1,
         query_text="Lốp 70/90-17 với 80/90-17 chênh nhau bao nhiêu tiền?",
     )
+    tire_comparison = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="So sánh giúp tôi hai cỡ lốp 70/90-17 và 80/90-17.",
+    )
 
     assert cheaper is not None and "Bugi NGK CR7HSA" in cheaper[0]
     assert "78.000 đồng" in cheaper[0] and "92.000 đồng" in cheaper[0]
@@ -1059,6 +1397,10 @@ def test_live_catalog_comparisons_answer_the_requested_difference_without_codes(
     assert tire_difference is not None
     assert "385.000 đồng" in tire_difference[0] and "435.000 đồng" in tire_difference[0]
     assert "50.000 đồng" in tire_difference[0]
+    assert tire_comparison is not None
+    assert "385.000 đồng" in tire_comparison[0] and "435.000 đồng" in tire_comparison[0]
+    assert "50.000 đồng" in tire_comparison[0]
+    assert "còn 14" not in tire_comparison[0] and "kiểm tra cỡ vành" not in tire_comparison[0]
     for reply in (cheaper[0], tire_difference[0]):
         assert "SKU" not in reply and "XM-" not in reply
 
@@ -1086,6 +1428,30 @@ def test_grouped_vnd_budgets_filter_catalog_and_ranker_without_truncation():
         assert "SKU" not in reply and "XM-" not in reply
 
 
+def test_budget_list_discloses_when_only_the_first_ten_matches_are_shown():
+    db = _motorcycle_catalog_db()
+    for product_id in range(14, 18):
+        db.rows.append(SimpleNamespace(
+            id=product_id,
+            name=f"Phụ kiện giá thấp {product_id}",
+            sku=f"LOW-{product_id}",
+            price=50000 + product_id,
+            stock_quantity=1,
+            reserved_quantity=0,
+            status="active",
+            description="",
+            metadata_={},
+        ))
+    reply = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Tôi có ngân sách 200.000đ, có thể mua những món nào trong danh mục?",
+    )
+
+    assert reply is not None
+    assert "Có 14 món phù hợp; mình liệt kê 10 món giá thấp nhất trước." in reply[0]
+    assert "SKU" not in reply[0] and "LOW-" not in reply[0]
+
+
 def test_vehicle_bundle_with_multiple_variants_asks_for_vehicle_before_total():
     reply = _deterministic_customer_reply(
         _motorcycle_catalog_db(), business_id=1, conversation_id=1,
@@ -1095,6 +1461,33 @@ def test_vehicle_bundle_with_multiple_variants_asks_for_vehicle_before_total():
     assert reply is not None
     assert reply[1] == "product_bundle_needs_vehicle"
     assert "mẫu xe và đời xe" in reply[0]
+    assert "SKU" not in reply[0] and "XM-" not in reply[0]
+
+
+def test_bundle_with_ambiguous_vehicle_parts_shows_found_prices_before_asking_model():
+    db = _motorcycle_catalog_db()
+    db.rows.append(SimpleNamespace(
+        id=14,
+        name="Bộ nhông sên dĩa dòng Vision 110",
+        sku="XM-NSD-VIS110",
+        price=520000,
+        stock_quantity=4,
+        reserved_quantity=0,
+        status="active",
+        description="",
+        metadata_={},
+    ))
+    reply = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Mua chai xịt sên cùng bộ nhông sên dĩa thì tổng giá bao nhiêu?",
+    )
+
+    assert reply is not None and reply[1] == "product_bundle_needs_vehicle"
+    assert "Chai xịt dưỡng sên xe máy 150 ml" in reply[0]
+    assert "85.000 đồng" in reply[0] and "còn 8" in reply[0]
+    assert "Bộ nhông sên dĩa dòng Wave Alpha 110" in reply[0]
+    assert "Bộ nhông sên dĩa dòng Vision 110" in reply[0]
+    assert "chưa cộng tổng" in reply[0]
     assert "SKU" not in reply[0] and "XM-" not in reply[0]
 
 
@@ -1145,9 +1538,143 @@ def test_catalog_rank_answers_are_concise_and_tire_clarification_asks_for_fitmen
 def test_customer_reply_hides_labeled_catalog_codes_without_removing_product_specs():
     reply = auto_reply_service._hide_catalog_code_labels(
         "Bugi NGK CPR8EA-9 (SKU: XM-BUGI-CPR8EA9), mã sản phẩm XM-BUGI-CPR8EA9 "
-        "dùng cùng lốp 70/90-17 và nhớt 10W-40."
+        "dùng cùng lốp 70/90-17 và nhớt 10W-40. Cần đối chiếu đời xe và mã phụ tùng cũ."
     )
 
     assert "SKU" not in reply and "mã sản phẩm" not in reply and "XM-BUGI" not in reply
     assert "Bugi NGK CPR8EA-9" in reply
     assert "70/90-17" in reply and "10W-40" in reply
+    assert "mã phụ tùng cũ" in reply
+
+
+def test_catalog_code_redaction_does_not_query_product_rows_without_catalog_access():
+    db = Mock()
+    reply = auto_reply_service._hide_catalog_code_labels(
+        "Bugi XM-BUGI-CR7HSA cần đối chiếu mã cũ.",
+        db=db,
+        business_id=17,
+    )
+
+    assert "XM-BUGI-CR7HSA" in reply
+    db.query.assert_not_called()
+
+
+def test_incomplete_catalog_code_is_identified_as_incomplete_without_showing_sku():
+    db = _motorcycle_catalog_db()
+    db.rows.append(SimpleNamespace(
+        id=14,
+        name="Má phanh đĩa trước dòng Vision 110",
+        sku="XM-MA-PHANH-VIS110",
+        price=145000,
+        stock_quantity=5,
+        reserved_quantity=0,
+        status="active",
+        description="",
+        metadata_={},
+    ))
+    reply = _deterministic_customer_reply(
+        db, business_id=1, conversation_id=1,
+        query_text="Mã XM-MA-PHANH- còn bán không?",
+    )
+
+    assert reply is not None and reply[1] == "product_partial_code_match"
+    assert "chưa đầy đủ" in reply[0]
+    assert "Má phanh đĩa trước dòng Vision 110" in reply[0]
+    assert "còn 5" in reply[0]
+    assert "XM-MA-PHANH" not in reply[0]
+
+
+def test_single_catalog_match_does_not_ask_customer_to_choose_again():
+    product = _motorcycle_catalog_db().rows[6]
+    reply = auto_reply_service.format_product_catalog_reply([product])
+
+    assert "Lọc gió giấy dòng Wave Alpha 110" in reply
+    assert "Bạn muốn xem sản phẩm nào" not in reply
+    assert "Which product" not in reply
+
+
+def test_cheaper_item_followup_uses_the_previous_comparison_set(monkeypatch):
+    products = _motorcycle_catalog_db().rows
+    monkeypatch.setattr(
+        "app.services.conversation_memory.resolve_memory_products",
+        lambda *_args, **_kwargs: [product for product in products
+                                 if "70/90-17" in product.name or "80/90-17" in product.name],
+    )
+    messages = [
+        SimpleNamespace(
+            content="Loại rẻ hơn còn bao nhiêu cái?",
+            direction="inbound",
+            sender_type="customer",
+        ),
+        SimpleNamespace(
+            content=(
+                "Lốp xe số 70/90-17 giá 385.000 đồng và "
+                "lốp xe số 80/90-17 giá 435.000 đồng."
+            ),
+            direction="outbound",
+            sender_type="bot",
+        ),
+        SimpleNamespace(
+            content="Lốp 70/90-17 với 80/90-17 chênh nhau bao nhiêu tiền?",
+            direction="inbound",
+            sender_type="customer",
+        ),
+    ]
+    reply = _deterministic_customer_reply(
+        _ConversationDB(products, messages),
+        business_id=1,
+        conversation_id=7,
+        query_text="Loại rẻ hơn còn bao nhiêu cái?",
+    )
+
+    assert reply is not None and reply[1] == "product_comparison_followup"
+    assert "70/90-17" in reply[0] and "còn 14" in reply[0]
+    assert "80/90-17" not in reply[0]
+    assert "SKU" not in reply[0] and "XM-" not in reply[0]
+
+
+def test_vehicle_specific_multi_product_query_filters_other_models_before_clarifying():
+    db = _motorcycle_catalog_db()
+    db.rows.append(SimpleNamespace(
+        id=14,
+        name="Dây curoa truyền động dòng Vision 110",
+        sku="XM-DAY-CUROA-VIS110",
+        price=325000,
+        stock_quantity=7,
+        reserved_quantity=0,
+        status="active",
+        description="",
+        metadata_={},
+    ))
+    reply = _deterministic_customer_reply(
+        db,
+        business_id=1,
+        conversation_id=1,
+        query_text=(
+            "Tôi chạy Vision 110, cần lọc gió với dây curoa. "
+            "Cho tôi tên, giá, tồn kho và xác nhận cả hai món chắc chắn vừa xe tôi."
+        ),
+    )
+
+    assert reply is not None and reply[1] == "product_multi_fact_catalog"
+    assert "Lọc gió giấy dòng Vision 110" in reply[0]
+    assert "Dây curoa truyền động dòng Vision 110" in reply[0]
+    assert "Wave Alpha" not in reply[0] and "Sirius FI" not in reply[0]
+    assert "125.000 đồng" in reply[0] and "còn 5" in reply[0]
+    assert "325.000 đồng" in reply[0] and "còn 7" in reply[0]
+    assert "chưa đủ để bảo đảm lắp vừa" in reply[0]
+    assert "SKU" not in reply[0] and "XM-" not in reply[0]
+
+
+def test_generic_spark_plug_fitment_question_asks_vehicle_before_recommending():
+    reply = _deterministic_customer_reply(
+        _motorcycle_catalog_db(),
+        business_id=1,
+        conversation_id=1,
+        query_text="Tôi muốn thay bugi, cứ lấy loại nào cũng được chứ?",
+    )
+
+    assert reply is not None and reply[1] == "product_fitment_clarification"
+    assert "hãng xe, mẫu xe" in reply[0]
+    assert "Bugi NGK CR7HSA" not in reply[0]
+    assert "SKU" not in reply[0] and "XM-" not in reply[0]

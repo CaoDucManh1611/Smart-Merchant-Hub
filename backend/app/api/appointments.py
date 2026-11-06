@@ -28,6 +28,7 @@ from app.tenancy.context import TenantContext
 from app.tenancy.crm_session import get_tenant_db
 from app.tenancy.dependencies import get_tenant_context
 from app.tenancy.workspace_modules import require_module_enabled
+from app.services.capability_registry import enabled_capabilities
 
 
 router = APIRouter(prefix="/appointments", dependencies=[Depends(require_module_enabled("appointments"))])
@@ -74,6 +75,23 @@ class AppointmentUpdate(BaseModel):
     reminder_minutes_before: int | None = Field(default=None, ge=0, le=10080)
     send_customer_reminder: bool | None = None
     notes: str | None = Field(default=None, max_length=4000)
+
+
+def _validate_disabled_appointment_update(config: dict, changes: dict) -> None:
+    """When booking tools are off, permit only metadata edits on history."""
+    if "APPOINTMENT_TOOLS" in enabled_capabilities(config):
+        return
+    unsafe_fields = set(changes) - {"notes"}
+    if unsafe_fields:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "workspace_capability_disabled",
+                "module": "appointments",
+                "required_capabilities": ["APPOINTMENT_TOOLS"],
+                "message": "Dịch vụ theo lịch đang tắt. Chỉ được sửa ghi chú của lịch sử hiện có.",
+            },
+        )
 
 
 def _now() -> datetime:
@@ -309,12 +327,16 @@ def update_appointment(
     appointment_id: int, payload: AppointmentUpdate, db: Session = Depends(get_tenant_db),
     user_db: Session = Depends(get_db), tenant: TenantContext = Depends(get_tenant_context), platform_db: Session = Depends(get_platform_db),
 ):
+    changes = payload.model_dump(exclude_unset=True)
+    from app.tenancy.workspace_modules import get_workspace_config
+    _validate_disabled_appointment_update(
+        get_workspace_config(db, tenant.business_id), changes,
+    )
     linked=_linked_payment_order(db,appointment_id,tenant.business_id,lock=True)
     row = db.query(Appointment).filter(Appointment.id == appointment_id, Appointment.business_id == tenant.business_id).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Lịch hẹn không tồn tại.")
     previous_status = row.status
-    changes = payload.model_dump(exclude_unset=True)
     if linked and (linked.metadata_ or {}).get("payment_flow")=="prepay_then_confirm" and any(
         key in changes and changes[key]!=getattr(row,key) for key in ("customer_id","service_id")):
         raise HTTPException(409,"Lịch đã có khoản thu; hủy và tạo yêu cầu mới để đổi khách hoặc dịch vụ.")
@@ -365,7 +387,12 @@ def update_appointment(
             try:transition_sales_order(db,order_id=linked.id,to_status="cancelled",actor_id=None,business_id=tenant.business_id)
             except SalesOrderOperationError as error:raise HTTPException(error.status_code,error.detail) from error
     db.flush()
-    _enqueue_reminder(db, row)
+    reminder_fields = {
+        "status", "customer_id", "service_id", "starts_at",
+        "reminder_minutes_before", "send_customer_reminder",
+    }
+    if reminder_fields.intersection(changes):
+        _enqueue_reminder(db, row)
     if row.status == "completed" and previous_status != "completed":
         service = _service(db, row.service_id, tenant, active=False)
         sync_appointment_service_catalog_entry(db, service, source="completed_appointment")

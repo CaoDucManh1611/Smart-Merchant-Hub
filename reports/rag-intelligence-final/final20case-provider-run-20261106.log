@@ -1,0 +1,276 @@
+COMMAND: "C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Scripts\python.exe" -m scripts.evaluate_rag_answer_generation --cases test_data/rag_answer_quality_acceptance_v1.jsonl --output "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\reports\rag-intelligence-final\20-case-real-answer-quality-current-v2.json" --context-factory scripts.rag_synthetic_context_factory:synthetic_context --phase baseline --budget-ledger "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\reports\rag-intelligence-final\provider-budget-ledger-answer-quality-v2.json" --allow-provider-calls
+CWD: C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend
+Provider/model: Groq openai/gpt-oss-20b only; fallback disabled
+Limits: 20 cases, 40 physical attempts, 100000 input tokens, 15000 output tokens
+Dataset SHA256: 340e70c14bcd7f954650570a6ada9b7c9539d37cb149467017577ea5e97bb386
+Evidence SHA256: a2667f4debf8e5cafa56cc4d41b38e28771744c5685df33eb962175f31beb0c2
+Implementation SHA256: 0bcbc2c15b57a02451b796b9b71220f18d6f801bda1a5e2c66909e2f173902ac
+No customer data or production DB; ephemeral query-only in-memory SQLite contexts
+Recommendation ranking unavailable: OperationalError
+{
+  "dataset": "smh-rag-answer-quality-synthetic-v1",
+  "dataset_sha256": "340e70c14bcd7f954650570a6ada9b7c9539d37cb149467017577ea5e97bb386",
+  "snapshot_id": "smh-rag-answer-quality-synthetic-v1-evidence:a2667f4debf8e5ca",
+  "snapshot_sha256": "a2667f4debf8e5cafa56cc4d41b38e28771744c5685df33eb962175f31beb0c2",
+  "source_snapshot": {
+    "answer-001-price-stock": {
+      "catalog:alpha": "57a6e61131f21aa8e9defe98e13577f705b63bb36de2636479562d663810378e"
+    },
+    "answer-002-budget": {
+      "catalog:a": "d4be41277adc60a23be7d623236e545b671cbf4c50e1480c1b8595faecf82677",
+      "catalog:b": "120d7da5515d57de3ac2c7133adaa8aa03d03af0e5df173cdcfa351d6c1fcf50"
+    },
+    "answer-003-compare": {
+      "catalog:a": "f43c1073ff8a84d6e567c319d4eb7d146bc8a84002f2530437a2c37a4c1ce2ea",
+      "catalog:b": "b5ca9a0c1345a86c0f22325d4502ccec6407e79aff09093056d81e55c4f2aece"
+    },
+    "answer-004-followup-stock": {
+      "catalog:a": "7082ab11de64383bb9ffdc9024a51d1ce9abe3e08a383a312b6e2fefdc4eafac"
+    },
+    "answer-005-context-switch": {
+      "catalog:b": "3c7e39a864fceef1243db0f166e9cef79b65cf5c8405ddca81d445180a144b20"
+    },
+    "answer-006-vietnamese-typo": {
+      "catalog:a": "aed33e4398895e65dc6fcb0928d23bdf878fa692f9f5cca23b825638fd689368"
+    },
+    "answer-007-sku-exact": {
+      "catalog:a": "3eb52e78ff6841b20c07534ecc930930078eab517e4be4d476a79ae21e78f030"
+    },
+    "answer-008-unknown-sku": {
+      "catalog:shop-a-snapshot": "7be4a9a786098da639d00253d32463907dbf7ad1c7bb4c41813d78a2ce741a87"
+    },
+    "answer-009-ambiguous-variant": {
+      "catalog:alpha-s": "d68c123937e3a1476e6338f0e97a387e4f274adf8a7948000fe1ed1df3cf392e",
+      "catalog:alpha:m": "d809089833b3570b19ba01a2aa600a90cff17c8f0673074e043e86fb975c9719"
+    },
+    "answer-010-no-evidence": {
+      "policy:available": "78eccccf53a28bca7bde5189bc84af6a1abc02b71a340ececb8247ea8d0f8db6"
+    },
+    "answer-011-policy-grounded": {
+      "policy:return-v1": "f468888eb2b89c97addfbeb549317228ddb77a3888e33ebec05a9236c0322fcc"
+    },
+    "answer-012-multi-source": {
+      "catalog:alpha": "a4ea49922383d33d23e88fce716ee2a09ad0a32eabb5a69d2903a31d77cab275",
+      "policy:return-v1": "a29ee554d4be29de8dd88b6679b2214aebbe5f1ff5688ef68e15ad74607b6fa3"
+    },
+    "answer-013-cross-tenant": {
+      "catalog:tenant-a": "05fb293a77c0941909bdabc7bda55e208f0d861620e547594c5a2500aa42a579",
+      "catalog:tenant-b": "1a81bff04129042db038d55cf21e0193814d424e4f32f50f6210fe30ba9c2aa9"
+    },
+    "answer-014-kb-prompt-injection": {
+      "policy:doc": "db62b458b6f09e02253d612938ac418e787c8ffd7b7d92c0c18b513fff1bff11"
+    },
+    "answer-015-no-order-side-effect": {
+      "catalog:alpha": "9648ae0597ac6c45eb5025aa09d22185a14ec8585795c302258df00e24a2d512"
+    },
+    "answer-016-out-of-stock": {
+      "catalog:alpha": "6ba48323803b3702396e53e76ca9cbd6ba56236fdc12b9f6d70f6ca45beae4e0",
+      "catalog:beta": "797f44616c310d4b0a633ee8f50e22cfda215bf484eaf77719664a5fd28d3fa7"
+    },
+    "answer-017-compatibility-unknown": {
+      "catalog:belt": "018a16aea3569a79abfabd581090769c4b28f50ff49cf8f05c12e920e1b95e36"
+    },
+    "answer-018-current-price-over-stale-kb": {
+      "catalog:alpha": "996a8315fcff4ca8fe6b28ece1d8bb899696c5cd078574f87ce52a569e3aab4d",
+      "kb:stale": "74071c4a71cf58b3477c4e9b4b198abc6200879716ec44e5403b547b36a0f32d"
+    },
+    "answer-019-image-observation": {
+      "image-observation:synthetic-1": "9674f138976de9b554ad5df4a86bfc2d2a3b573c9a848c1ffb79d6671ad8b577"
+    },
+    "answer-020-service-read-only-availability": {
+      "calendar:synthetic": "686d915f651c166ed49f9ce0142c196899f2ec17381ba1cbc4166d894c4ac0ff"
+    }
+  },
+  "implementation_snapshot": {
+    "files": {
+      "app/services/conversation_graph.py": "ad8bb0850bb9dacee1d843e9c760aebda31b1a579d70056ed47e91b6c1d95a86",
+      "app/rag/serving.py": "ad0a6f50ce2806ffc04d0632a644090d5b9e47dbbebecc3ce12713b9b339d3f4",
+      "app/rag/retriever.py": "17e7d50077f4987425bbc6e7ed0a9c793c41b1a1bea3294195003ee7f39855c1",
+      "app/rag/answer_guard.py": "7e457bd1c6f6aa8c17ee23edbcc8707c29f8d8b9f7a121a3936089f404e389c1",
+      "app/rag/prompt_builder.py": "b60284a115cc82344170b9e5aaab45e377e4c1870c0e4e9119f9d3fee1636a0d",
+      "app/rag/llm_caller.py": "05920f08453ffe4a3bbe6d4686d35f1f06f2c103d3bd504c9ab5014c6ed5936c",
+      "scripts/rag_synthetic_context_factory.py": "c92cd3cece19f01d7462509a1e80e31da8ca6e574dd6087abefae820d94e078a",
+      "scripts/evaluate_rag_answer_generation.py": "886f2509327abd892b8bc7d5e7239df7167f526543223be30cbaec0addc95bb9"
+    },
+    "sha256": "0bcbc2c15b57a02451b796b9b71220f18d6f801bda1a5e2c66909e2f173902ac"
+  },
+  "execution_path": "app.services.conversation_graph.graph_reply",
+  "case_count": 20,
+  "cases_executed": 20,
+  "case_execution_status_counts": {
+    "EXECUTED": 20,
+    "NOT_EXECUTED": 0
+  },
+  "halt_reason": null,
+  "provider_calls_authorized": true,
+  "provider_calls_made": 2,
+  "model": "groq/openai/gpt-oss-20b",
+  "sampling_config": {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "temperature": 0.3,
+    "retrieval_mode": "bm25",
+    "provider_fallback": false,
+    "max_retries": 0,
+    "max_completion_tokens_per_request": 512,
+    "max_model_calls_per_run": 40,
+    "sales_journey_engine_enabled": false
+  },
+  "synthetic_only": true,
+  "answer_correctness": "NOT_MEASURED; no human labels/approved judge supplied",
+  "answer_groundedness": "NOT_MEASURED; no citation review supplied",
+  "hallucination_rate": "NOT_MEASURED; no claim annotations supplied",
+  "run_limits": {
+    "max_cases": 20,
+    "max_model_calls": 40,
+    "max_physical_provider_attempts": 40,
+    "task_total_case_executions": 20,
+    "task_total_input_tokens": 100000,
+    "task_total_output_tokens": 15000,
+    "model": "openai/gpt-oss-20b",
+    "timeout_seconds": 1800
+  },
+  "run_budget": {
+    "deadline": 6289.859,
+    "remaining_seconds": 1793.25,
+    "elapsed_seconds": 6.75,
+    "calls": 14,
+    "max_calls": 40,
+    "attempts": 5,
+    "max_attempts": 40,
+    "provider_switches": 0,
+    "max_provider_switches": 0,
+    "last_provider": "groq",
+    "attempt_records": [
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 4491.75,
+        "latency_ms": 1500.0,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "provider_error_code": null,
+        "provider_error_param": null,
+        "usage": {
+          "prompt_tokens": 2301,
+          "completion_tokens": 319,
+          "total_tokens": 2620,
+          "thoughts_tokens": 257
+        },
+        "llm_stage": "structured_output",
+        "schema_name": "shop_answer",
+        "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 4493.25,
+        "latency_ms": 530.9999999999491,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "provider_error_code": null,
+        "provider_error_param": null,
+        "usage": {
+          "prompt_tokens": 218,
+          "completion_tokens": 159,
+          "total_tokens": 377,
+          "thoughts_tokens": 149
+        }
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 4493.781,
+        "latency_ms": 655.9999999999491,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "provider_error_code": null,
+        "provider_error_param": null,
+        "usage": {
+          "prompt_tokens": 2429,
+          "completion_tokens": 191,
+          "total_tokens": 2620,
+          "thoughts_tokens": 162
+        },
+        "llm_stage": "structured_output",
+        "schema_name": "shop_answer",
+        "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 4494.671,
+        "latency_ms": 734.9999999996726,
+        "outcome": "success",
+        "error_type": null,
+        "status_code": null,
+        "provider_error_code": null,
+        "provider_error_param": null,
+        "usage": {
+          "prompt_tokens": 1707,
+          "completion_tokens": 215,
+          "total_tokens": 1922,
+          "thoughts_tokens": 184
+        },
+        "llm_stage": "structured_output",
+        "schema_name": "turn_plan",
+        "schema_fingerprint": "7d934d6b3c246eee42c710a0b8b31084ad817a6dec98467a41bd20009046d971"
+      },
+      {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "started_at": 4495.421,
+        "latency_ms": 203.9999999997235,
+        "outcome": "error",
+        "error_type": "RateLimitError",
+        "status_code": 429,
+        "provider_error_code": "rate_limit_exceeded",
+        "provider_error_param": null,
+        "usage": null,
+        "llm_stage": "structured_output",
+        "schema_name": "shop_answer",
+        "schema_fingerprint": "16dcdc5b5ee100dffa8f69508f083912a54728e4c4f8bc2c64cb8d6d3e476b77"
+      }
+    ]
+  },
+  "provider_budget": {
+    "phase": "baseline",
+    "limits": {
+      "case_executions": 20,
+      "physical_attempts": 40,
+      "input_tokens": 100000,
+      "output_tokens": 15000
+    },
+    "consumed_total": {
+      "case_executions": 20,
+      "physical_attempts": 5,
+      "input_tokens": 28393,
+      "output_tokens": 1396
+    },
+    "reported_total": {
+      "input_tokens": 6655,
+      "output_tokens": 884
+    },
+    "unreported_usage_attempts_current_run": 0,
+    "current_run_reported_usage": {
+      "input_tokens": 6655,
+      "output_tokens": 884
+    }
+  },
+  "suppressed_non_groq_provider_attempts": [],
+  "pipeline_outcome_counts": {
+    "DETERMINISTIC_ANSWER": 12,
+    "LLM_GENERATED_ANSWER": 1,
+    "VALIDATED_FALLBACK": 0,
+    "CLARIFICATION": 2,
+    "PROVIDER_HTTP_400": 0,
+    "PROVIDER_RATE_LIMIT_429": 0,
+    "CIRCUIT_OPEN": 5,
+    "INFRASTRUCTURE_ERROR": 0,
+    "NOT_EXECUTED_AFTER_PROVIDER_RATE_LIMIT": 0
+  }
+}
+EXIT_CODE=0

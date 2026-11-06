@@ -1,0 +1,168 @@
+.........................FFFF................................FF......... [ 83%]
+..............                                                           [100%]
+================================== FAILURES ===================================
+_ test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy[Ph\xed giao h\xe0ng v\xe0 th\u1eddi gian giao \u0111\u1ebfn nh\xe0 t\xf4i l\xe0 bao nhi\xeau?-ph\xed giao h\xe0ng ho\u1eb7c th\u1eddi gian giao] _
+
+query = 'Ph\xed giao h\xe0ng v\xe0 th\u1eddi gian giao \u0111\u1ebfn nh\xe0 t\xf4i l\xe0 bao nhi\xeau?'
+expected_topic = 'ph\xed giao h\xe0ng ho\u1eb7c th\u1eddi gian giao'
+
+    @pytest.mark.parametrize(
+        ("query", "expected_topic"),
+        [
+            ("Ph\xed giao h\xe0ng v\xe0 th\u1eddi gian giao \u0111\u1ebfn nh\xe0 t\xf4i l\xe0 bao nhi\xeau?", "ph\xed giao h\xe0ng ho\u1eb7c th\u1eddi gian giao"),
+            ("Shop cho \u0111\u1ed5i tr\u1ea3 trong tr\u01b0\u1eddng h\u1ee3p n\xe0o?", "\u0111i\u1ec1u ki\u1ec7n \u0111\u1ed5i tr\u1ea3 ho\u1eb7c ho\xe0n ti\u1ec1n"),
+            ("M\xe3 n\xe0y c\xf3 l\u1eafp v\u1eeba xe Vision 2023 kh\xf4ng?", "kh\u1ea3 n\u0103ng t\u01b0\u01a1ng th\xedch v\u1edbi xe ho\u1eb7c thi\u1ebft b\u1ecb c\u1ee7a b\u1ea1n"),
+            ("B\u1ea3o h\xe0nh s\u1ea3n ph\u1ea9m trong bao l\xe2u?", "th\u1eddi h\u1ea1n ho\u1eb7c \u0111i\u1ec1u ki\u1ec7n b\u1ea3o h\xe0nh"),
+        ],
+    )
+    def test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy(query, expected_topic):
+        answer = _missing_evidence_reply(query, reply_language="vi")
+    
+        assert expected_topic in answer
+>       assert "ngu\u1ed3n hi\u1ec7n c\xf3" in answer
+E       AssertionError: assert 'ngu\u1ed3n hi\u1ec7n c\xf3' in 'Ngu\u1ed3n hi\u1ec7n c\xf3 c\u1ee7a shop ch\u01b0a x\xe1c nh\u1eadn ph\xed giao h\xe0ng ho\u1eb7c th\u1eddi gian giao. B\u1ea1n c\xf3 th\u1ec3 nh\u1edd nh\xe2n vi\xean ki\u1ec3m tra th\xeam.'
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py:481: AssertionError
+_ test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy[Shop cho \u0111\u1ed5i tr\u1ea3 trong tr\u01b0\u1eddng h\u1ee3p n\xe0o?-\u0111i\u1ec1u ki\u1ec7n \u0111\u1ed5i tr\u1ea3 ho\u1eb7c ho\xe0n ti\u1ec1n] _
+
+query = 'Shop cho \u0111\u1ed5i tr\u1ea3 trong tr\u01b0\u1eddng h\u1ee3p n\xe0o?'
+expected_topic = '\u0111i\u1ec1u ki\u1ec7n \u0111\u1ed5i tr\u1ea3 ho\u1eb7c ho\xe0n ti\u1ec1n'
+
+    @pytest.mark.parametrize(
+        ("query", "expected_topic"),
+        [
+            ("Ph\xed giao h\xe0ng v\xe0 th\u1eddi gian giao \u0111\u1ebfn nh\xe0 t\xf4i l\xe0 bao nhi\xeau?", "ph\xed giao h\xe0ng ho\u1eb7c th\u1eddi gian giao"),
+            ("Shop cho \u0111\u1ed5i tr\u1ea3 trong tr\u01b0\u1eddng h\u1ee3p n\xe0o?", "\u0111i\u1ec1u ki\u1ec7n \u0111\u1ed5i tr\u1ea3 ho\u1eb7c ho\xe0n ti\u1ec1n"),
+            ("M\xe3 n\xe0y c\xf3 l\u1eafp v\u1eeba xe Vision 2023 kh\xf4ng?", "kh\u1ea3 n\u0103ng t\u01b0\u01a1ng th\xedch v\u1edbi xe ho\u1eb7c thi\u1ebft b\u1ecb c\u1ee7a b\u1ea1n"),
+            ("B\u1ea3o h\xe0nh s\u1ea3n ph\u1ea9m trong bao l\xe2u?", "th\u1eddi h\u1ea1n ho\u1eb7c \u0111i\u1ec1u ki\u1ec7n b\u1ea3o h\xe0nh"),
+        ],
+    )
+    def test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy(query, expected_topic):
+        answer = _missing_evidence_reply(query, reply_language="vi")
+    
+        assert expected_topic in answer
+>       assert "ngu\u1ed3n hi\u1ec7n c\xf3" in answer
+E       AssertionError: assert 'ngu\u1ed3n hi\u1ec7n c\xf3' in 'Ngu\u1ed3n hi\u1ec7n c\xf3 c\u1ee7a shop ch\u01b0a x\xe1c nh\u1eadn \u0111i\u1ec1u ki\u1ec7n \u0111\u1ed5i tr\u1ea3 ho\u1eb7c ho\xe0n ti\u1ec1n. B\u1ea1n c\xf3 th\u1ec3 nh\u1edd nh\xe2n vi\xean ki\u1ec3m tra th\xeam.'
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py:481: AssertionError
+_ test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy[M\xe3 n\xe0y c\xf3 l\u1eafp v\u1eeba xe Vision 2023 kh\xf4ng?-kh\u1ea3 n\u0103ng t\u01b0\u01a1ng th\xedch v\u1edbi xe ho\u1eb7c thi\u1ebft b\u1ecb c\u1ee7a b\u1ea1n] _
+
+query = 'M\xe3 n\xe0y c\xf3 l\u1eafp v\u1eeba xe Vision 2023 kh\xf4ng?'
+expected_topic = 'kh\u1ea3 n\u0103ng t\u01b0\u01a1ng th\xedch v\u1edbi xe ho\u1eb7c thi\u1ebft b\u1ecb c\u1ee7a b\u1ea1n'
+
+    @pytest.mark.parametrize(
+        ("query", "expected_topic"),
+        [
+            ("Ph\xed giao h\xe0ng v\xe0 th\u1eddi gian giao \u0111\u1ebfn nh\xe0 t\xf4i l\xe0 bao nhi\xeau?", "ph\xed giao h\xe0ng ho\u1eb7c th\u1eddi gian giao"),
+            ("Shop cho \u0111\u1ed5i tr\u1ea3 trong tr\u01b0\u1eddng h\u1ee3p n\xe0o?", "\u0111i\u1ec1u ki\u1ec7n \u0111\u1ed5i tr\u1ea3 ho\u1eb7c ho\xe0n ti\u1ec1n"),
+            ("M\xe3 n\xe0y c\xf3 l\u1eafp v\u1eeba xe Vision 2023 kh\xf4ng?", "kh\u1ea3 n\u0103ng t\u01b0\u01a1ng th\xedch v\u1edbi xe ho\u1eb7c thi\u1ebft b\u1ecb c\u1ee7a b\u1ea1n"),
+            ("B\u1ea3o h\xe0nh s\u1ea3n ph\u1ea9m trong bao l\xe2u?", "th\u1eddi h\u1ea1n ho\u1eb7c \u0111i\u1ec1u ki\u1ec7n b\u1ea3o h\xe0nh"),
+        ],
+    )
+    def test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy(query, expected_topic):
+        answer = _missing_evidence_reply(query, reply_language="vi")
+    
+        assert expected_topic in answer
+>       assert "ngu\u1ed3n hi\u1ec7n c\xf3" in answer
+E       AssertionError: assert 'ngu\u1ed3n hi\u1ec7n c\xf3' in 'Ngu\u1ed3n hi\u1ec7n c\xf3 c\u1ee7a shop ch\u01b0a x\xe1c nh\u1eadn kh\u1ea3 n\u0103ng t\u01b0\u01a1ng th\xedch v\u1edbi xe ho\u1eb7c thi\u1ebft b\u1ecb c\u1ee7a b\u1ea1n. B\u1ea1n c\xf3 th\u1ec3 nh\u1edd nh\xe2n vi\xean ki\u1ec3m tra th\xeam.'
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py:481: AssertionError
+_ test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy[B\u1ea3o h\xe0nh s\u1ea3n ph\u1ea9m trong bao l\xe2u?-th\u1eddi h\u1ea1n ho\u1eb7c \u0111i\u1ec1u ki\u1ec7n b\u1ea3o h\xe0nh] _
+
+query = 'B\u1ea3o h\xe0nh s\u1ea3n ph\u1ea9m trong bao l\xe2u?'
+expected_topic = 'th\u1eddi h\u1ea1n ho\u1eb7c \u0111i\u1ec1u ki\u1ec7n b\u1ea3o h\xe0nh'
+
+    @pytest.mark.parametrize(
+        ("query", "expected_topic"),
+        [
+            ("Ph\xed giao h\xe0ng v\xe0 th\u1eddi gian giao \u0111\u1ebfn nh\xe0 t\xf4i l\xe0 bao nhi\xeau?", "ph\xed giao h\xe0ng ho\u1eb7c th\u1eddi gian giao"),
+            ("Shop cho \u0111\u1ed5i tr\u1ea3 trong tr\u01b0\u1eddng h\u1ee3p n\xe0o?", "\u0111i\u1ec1u ki\u1ec7n \u0111\u1ed5i tr\u1ea3 ho\u1eb7c ho\xe0n ti\u1ec1n"),
+            ("M\xe3 n\xe0y c\xf3 l\u1eafp v\u1eeba xe Vision 2023 kh\xf4ng?", "kh\u1ea3 n\u0103ng t\u01b0\u01a1ng th\xedch v\u1edbi xe ho\u1eb7c thi\u1ebft b\u1ecb c\u1ee7a b\u1ea1n"),
+            ("B\u1ea3o h\xe0nh s\u1ea3n ph\u1ea9m trong bao l\xe2u?", "th\u1eddi h\u1ea1n ho\u1eb7c \u0111i\u1ec1u ki\u1ec7n b\u1ea3o h\xe0nh"),
+        ],
+    )
+    def test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy(query, expected_topic):
+        answer = _missing_evidence_reply(query, reply_language="vi")
+    
+        assert expected_topic in answer
+>       assert "ngu\u1ed3n hi\u1ec7n c\xf3" in answer
+E       AssertionError: assert 'ngu\u1ed3n hi\u1ec7n c\xf3' in 'Ngu\u1ed3n hi\u1ec7n c\xf3 c\u1ee7a shop ch\u01b0a x\xe1c nh\u1eadn th\u1eddi h\u1ea1n ho\u1eb7c \u0111i\u1ec1u ki\u1ec7n b\u1ea3o h\xe0nh. B\u1ea1n c\xf3 th\u1ec3 nh\u1edd nh\xe2n vi\xean ki\u1ec3m tra th\xeam.'
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py:481: AssertionError
+_________ test_answer_evaluation_reports_unexpected_graph_exceptions __________
+
+    def test_answer_evaluation_reports_unexpected_graph_exceptions():
+        engine = create_engine("sqlite://")
+        try:
+            with Session(engine) as db:
+                case = read_cases(Path(__file__).parents[1] / "test_data" / "rag_answer_quality_acceptance_v1.jsonl")[0]
+                context = EvaluationContext(
+                    db=db,
+                    business_id=90114,
+                    conversation=SimpleNamespace(id=74, business_id=90114),
+                    synthetic=True,
+                    read_only=True,
+                )
+                validate_context(context)
+>               result = _evaluate_case(
+                    case,
+                    context,
+                    lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("unexpected graph defect")),
+                    SimpleNamespace(retrieve_shop_knowledge=lambda **_kwargs: []),
+                    Path("unused-rag-trace.jsonl"),
+                )
+E               TypeError: _evaluate_case() missing 5 required keyword-only arguments: 'snapshot_id', 'snapshot_sha256', 'model', 'sampling_config', and 'provider_execution_enabled'
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_answer_generation_eval.py:211: TypeError
+___ test_case_011_graph_fallback_is_captured_by_read_only_notification_spy ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002A2DA67B380>
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/smh-rag-consolidation-tests-20261106/.pytest_tmp/cases/test_case_011_graph_fallback_i0')
+
+    def test_case_011_graph_fallback_is_captured_by_read_only_notification_spy(monkeypatch, tmp_path):
+        from app.rag import run_logger
+        from app.services.conversation_graph import graph_reply
+        from scripts.rag_synthetic_context_factory import synthetic_context
+        from unittest.mock import patch
+    
+        cases_path = Path(__file__).parents[1] / "test_data" / "rag_answer_quality_acceptance_v1.jsonl"
+        case = next(item for item in read_cases(cases_path) if item["case_id"] == "answer-011-policy-grounded")
+        trace_path = tmp_path / "case-011-graph.jsonl"
+        monkeypatch.setattr(run_logger, "_log_path", lambda: trace_path)
+        context = synthetic_context(case)
+        engine = context.db.get_bind()
+        try:
+            validate_context(context)
+            policy = SimpleNamespace(
+                content="S\u1ea3n ph\u1ea9m \u0111\u1ee7 \u0111i\u1ec1u ki\u1ec7n \u0111\u01b0\u1ee3c y\xeau c\u1ea7u \u0111\u1ed5i trong 7 ng\xe0y k\u1ec3 t\u1eeb khi nh\u1eadn h\xe0ng.",
+                document_id=11,
+                metadata={"synthetic_evidence_id": "policy:return-v1"},
+            )
+            bad_draft = json.dumps({
+                "answer": "B\u1ea1n c\xf3 th\u1ec3 \u0111\u1ed5i h\xe0ng trong v\xf2ng 7 ng\xe0y k\u1ec3 t\u1eeb khi nh\u1eadn h\xe0ng.",
+                "sources": [1],
+            }, ensure_ascii=False)
+            with patch("app.services.conversation_graph.call_llm", side_effect=[
+                '{"mode":"answer","tools":["knowledge"]}', bad_draft, bad_draft,
+            ]) as model, patch("app.services.quota_service.record_quota_usage"), patch(
+                "app.rag.serving.retrieve_shop_knowledge", return_value=[policy]
+            ):
+>               artifact = _evaluate_case(
+                    case,
+                    context,
+                    lambda db, **kwargs: graph_reply(db, **kwargs),
+                    __import__("app.rag.serving", fromlist=["retrieve_shop_knowledge"]),
+                    trace_path,
+                )
+E               TypeError: _evaluate_case() missing 5 required keyword-only arguments: 'snapshot_id', 'snapshot_sha256', 'model', 'sampling_config', and 'provider_execution_enabled'
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_answer_generation_eval.py:254: TypeError
+=========================== short test summary info ===========================
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py::test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy[Ph\xed giao h\xe0ng v\xe0 th\u1eddi gian giao \u0111\u1ebfn nh\xe0 t\xf4i l\xe0 bao nhi\xeau?-ph\xed giao h\xe0ng ho\u1eb7c th\u1eddi gian giao]
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py::test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy[Shop cho \u0111\u1ed5i tr\u1ea3 trong tr\u01b0\u1eddng h\u1ee3p n\xe0o?-\u0111i\u1ec1u ki\u1ec7n \u0111\u1ed5i tr\u1ea3 ho\u1eb7c ho\xe0n ti\u1ec1n]
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py::test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy[M\xe3 n\xe0y c\xf3 l\u1eafp v\u1eeba xe Vision 2023 kh\xf4ng?-kh\u1ea3 n\u0103ng t\u01b0\u01a1ng th\xedch v\u1edbi xe ho\u1eb7c thi\u1ebft b\u1ecb c\u1ee7a b\u1ea1n]
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_conversation_graph.py::test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_policy[B\u1ea3o h\xe0nh s\u1ea3n ph\u1ea9m trong bao l\xe2u?-th\u1eddi h\u1ea1n ho\u1eb7c \u0111i\u1ec1u ki\u1ec7n b\u1ea3o h\xe0nh]
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_answer_generation_eval.py::test_answer_evaluation_reports_unexpected_graph_exceptions
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_answer_generation_eval.py::test_case_011_graph_fallback_is_captured_by_read_only_notification_spy
+6 failed, 80 passed in 4.42s
+EXIT_CODE=1

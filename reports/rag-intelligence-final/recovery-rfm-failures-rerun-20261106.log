@@ -1,0 +1,4 @@
+COMMAND: C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Scripts\python.exe -m pytest -q tests/test_personalized_rag_pipeline.py::test_training_precomputes_cache_using_same_tenant_population tests/test_rag_crm_model_integration.py::test_rfm_excludes_pending_cancelled_refunded_and_future_orders (backend cwd; both fixtures are in-memory)
+..                                                                       [100%]
+2 passed in 1.94s
+EXIT_CODE=0

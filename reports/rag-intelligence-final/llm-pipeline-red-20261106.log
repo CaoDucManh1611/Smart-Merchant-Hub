@@ -1,0 +1,16 @@
+
+=================================== ERRORS ====================================
+__________ ERROR collecting tests/test_rag_answer_generation_eval.py __________
+ImportError while importing test module 'C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_answer_generation_eval.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_rag_answer_generation_eval.py:12: in <module>
+    from scripts.evaluate_rag_answer_generation import (
+E   ImportError: cannot import name 'classify_pipeline_outcome' from 'scripts.evaluate_rag_answer_generation' (C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\scripts\evaluate_rag_answer_generation.py)
+=========================== short test summary info ===========================
+ERROR tests/test_rag_answer_generation_eval.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.61s

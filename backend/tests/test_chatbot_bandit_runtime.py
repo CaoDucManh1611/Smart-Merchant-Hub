@@ -257,6 +257,10 @@ def test_rag_reply_applies_only_bounded_arm_and_saves_decision_trace():
 
     with patch("app.services.auto_reply_service.get_auto_reply_enabled", return_value=True), \
         patch("app.services.auto_reply_service.is_business_open", return_value=True), \
+        patch("app.tenancy.workspace_modules.get_workspace_config", return_value={
+            "recommendation_industry": None,
+            "enabled_capabilities": ["CORE_CRM"],
+        }), \
         patch("app.services.auto_reply_service.customer_order_reply", return_value=None), \
         patch("app.services.product_pricing.combo_price_comparison_reply", return_value=None), \
         patch("app.services.auto_reply_service._deterministic_customer_reply", return_value=None), \

@@ -1,0 +1,7 @@
+COMMAND: $env:RUN_POSTGRES_TESTS=0; "C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Scripts\python.exe" -m pytest -q "C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_answer_generation_eval.py::test_provider_rate_limit_stops_batch_and_marks_remaining_cases_unexecuted"
+CWD: C:\Users\Administrator\AppData\Local\Temp\smh-final20case-budget-guard-cwd
+Provider credentials: cleared
+Database: isolated SQLite test fixture only; RUN_POSTGRES_TESTS=0
+.                                                                        [100%]
+1 passed in 1.89s
+EXIT_CODE=0

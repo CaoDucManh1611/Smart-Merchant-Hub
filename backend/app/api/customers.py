@@ -111,7 +111,11 @@ from app.models.business import User
 from app.services.audit_service import record_audit
 from app.services.crm_workspace_config import get_crm_workspace_config, validate_customer_custom_fields
 from app.services.customer_profile import normalize_email, normalize_name, normalize_phone
-from app.services.chatbot_followup import schedule_segment_followups
+from app.services.chatbot_followup import (
+    FollowupCapabilityDisabled,
+    require_customer_followup_capability,
+    schedule_segment_followups,
+)
 from app.services.job_service import enqueue_job
 from app.services.order_metrics import completed_order_conditions, net_order_amount_expression, net_order_value
 from app.services.customer_next_actions import suggest_customer_next_actions
@@ -463,11 +467,14 @@ def _validate_fact_sources(
             raise HTTPException(status_code=422, detail="Order nguồn không thuộc customer/business này.")
 
 
-def _get_customer(db: Session, customer_id: int, tenant: TenantContext) -> Customer:
-    customer = db.query(Customer).filter(
+def _get_customer(db: Session, customer_id: int, tenant: TenantContext, *, lock: bool = False) -> Customer:
+    query = db.query(Customer).filter(
         Customer.id == customer_id,
         Customer.business_id == tenant.business_id,
-    ).first()
+    )
+    if lock:
+        query = query.populate_existing().with_for_update()
+    customer = query.first()
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer không tồn tại.")
     return customer
@@ -746,6 +753,17 @@ def create_segment_followups(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: User | None = Depends(require_write_access),
 ):
+    try:
+        require_customer_followup_capability(db, tenant.business_id)
+    except FollowupCapabilityDisabled:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "workspace_capability_disabled",
+                "required_capabilities": ["CUSTOMER_TOOLS"],
+                "message": "Shop chưa bật capability cần thiết cho chăm sóc khách hàng.",
+            },
+        ) from None
     segment = _get_segment(db, segment_id, tenant)
     customer_ids = [
         customer_id
@@ -1042,9 +1060,14 @@ def set_customer_fact_collection(
     actor: User | None = Depends(require_write_access),
 ):
     """Stop inferred preference collection for one customer and optionally erase old inferred facts."""
-    customer = _get_customer(db, customer_id, tenant)
+    # Serialize opt-out and reply-memory writes against the same customer row.
+    customer = _get_customer(db, customer_id, tenant, lock=payload.opt_out)
     customer.fact_extraction_opt_out = payload.opt_out
     deleted = 0
+    if payload.opt_out and not payload.delete_existing_extracted:
+        from app.services.conversation_memory import purge_reply_memory_for_customer
+
+        purge_reply_memory_for_customer(db, tenant.business_id, customer_id)
     if payload.opt_out and payload.delete_existing_extracted:
         deleted = db.query(CustomerFact).filter(
             CustomerFact.business_id == tenant.business_id,

@@ -1,0 +1,17 @@
+COMMAND: python scripts/evaluate_rag_answer_generation.py --output %TEMP%\smh-real-rag-answer-preflight-20261105.json
+EXIT_CODE: 0
+OUTPUT: 20 synthetic cases; answer_quality=NOT_MEASURED; provider_calls=0; preflight=PASS.
+
+COMMAND: python -m pytest tests/test_rag_answer_generation_eval.py tests/test_conversation_graph.py -q
+RESULT: INTERRUPTED before test collection completed. Stack was waiting in psycopg.connection.connect from tests/conftest.py::_prepare_postgres_test_database. Stopped with Ctrl+C; no test body or SQL statement observed.
+
+COMMAND: python -m pytest --noconftest tests/test_rag_answer_generation_eval.py -q -s
+EXIT_CODE: 0
+OUTPUT: 9 passed in 1.08s.
+
+COMMAND: python -m pytest --noconftest tests/test_rag_answer_generation_eval.py tests/test_conversation_graph.py -q -s
+EXIT_CODE: 0
+OUTPUT:
+.........................................
+41 passed, 2 warnings in 4.26s
+Warnings were legacy DATABASE_URL fallback setting warnings in test_plan_tool_allowlist_and_bounded_work. No project conftest/database bootstrap was loaded.

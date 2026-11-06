@@ -64,6 +64,7 @@ DEFAULT_TABLE_ORDER = (
     "stock_movements",
     "documents",
     "document_chunks",
+    "document_index_snapshots",
     "app_settings",
     "business_settings",
     "crm_workspace_configs",

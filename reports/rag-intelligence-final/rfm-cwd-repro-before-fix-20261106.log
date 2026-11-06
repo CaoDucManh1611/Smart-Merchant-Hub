@@ -1,0 +1,74 @@
+COMMAND: C:\Users\Administrator\Documents\ChatGPT\smh-phase2-privacy-isolated\backend\.venv\Scripts\python.exe -m pytest -q C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_personalized_rag_pipeline.py::test_training_precomputes_cache_using_same_tenant_population C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py::test_rfm_excludes_pending_cancelled_refunded_and_future_orders
+TEST_CWD: C:\Users\Administrator\AppData\Local\Temp\smh-rfm-cwd-repro-20261106
+RUN_POSTGRES_TESTS=0
+Provider credentials cleared
+FF                                                                       [100%]
+================================== FAILURES ===================================
+________ test_training_precomputes_cache_using_same_tenant_population _________
+
+shop = (<sqlalchemy.orm.session.Session object at 0x00000247FA8397F0>, <app.models.business.Business object at 0x00000247FB19...<app.models.sales.Product object at 0x00000247FC8956A0>, <app.models.sales.Product object at 0x00000247FC895520>], ...)
+
+    def test_training_precomputes_cache_using_same_tenant_population(shop):
+        db, business, customer, peer, _, _, now = shop
+        db.autoflush = False
+        add_order(db, customer, now, total=100)
+        add_order(db, peer, now, total=1000)
+        db.add(CustomerConsent(
+            business_id=business.id,
+            customer_id=peer.id,
+            purpose="personalization",
+            status="granted",
+        ))
+        run = RecommendationTrainingRun(business_id=business.id, algorithm="deterministic_rfm_kmeans", status="queued")
+        db.add(run)
+        db.commit()
+        recommender.train_customer_segments(db, business_id=business.id, training_run_id=run.id)
+        profile = db.query(RecommendationCustomerProfile).filter_by(customer_id=customer.id).one()
+        assert profile.features["rfm_percentile_scores"]["monetary"] == 1
+>       assert profile.features["cluster_model_source"] == "industry_prior"
+E       AssertionError: assert 'rules_artifact_unavailable' == 'industry_prior'
+E         
+E         - industry_prior
+E         + rules_artifact_unavailable
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_personalized_rag_pipeline.py:313: AssertionError
+_______ test_rfm_excludes_pending_cancelled_refunded_and_future_orders ________
+
+database = <sqlalchemy.orm.session.Session object at 0x00000247FC9384A0>
+model_registry = <app.services.recommendation_artifacts.RecommendationArtifactRegistry object at 0x00000247FC9FF4A0>
+
+    def test_rfm_excludes_pending_cancelled_refunded_and_future_orders(database, model_registry):
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        database.add_all([
+            CustomerConsent(business_id=1, customer_id=1, purpose="personalization", status="granted"),
+            CustomerConsent(business_id=1, customer_id=2, purpose="personalization", status="granted"),
+            BusinessSetting(business_id=1, key="customer_fact_extraction_enabled", value="true"),
+        ])
+        for i, (status, total, refund, future) in enumerate([
+            ("completed", 200000, 50000, False), ("confirmed", 1000000, 0, False),
+            ("cancelled", 1000000, 0, False), ("refunded", 1000000, 0, False),
+            ("completed", 1000000, 0, True),
+        ], 1):
+            database.add(Order(business_id=1, customer_id=1, order_number=f"TEST-{i}", status=status,
+                total_amount=total, refunded_amount=refund, created_at=now + timedelta(days=1) if future else now - timedelta(days=2)))
+        run = RecommendationTrainingRun(business_id=1, algorithm="test", status="queued")
+        database.add(run)
+        database.commit()
+        service.train_customer_segments(database, business_id=1, training_run_id=run.id)
+        buyer = database.query(RecommendationCustomerProfile).filter_by(customer_id=1).one()
+        new = database.query(RecommendationCustomerProfile).filter_by(customer_id=2).one()
+        assert buyer.features["frequency"] == 1
+        assert buyer.features["monetary"] == 150000
+        assert buyer.model_version == "rfm_percentile_v1"
+>       assert buyer.features["cluster_model_version"] == "industry_rfm_cold_start_v1"
+E       AssertionError: assert 'rfm_percentile_v1' == 'industry_rfm_cold_start_v1'
+E         
+E         - industry_rfm_cold_start_v1
+E         + rfm_percentile_v1
+
+..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py:547: AssertionError
+=========================== short test summary info ===========================
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_personalized_rag_pipeline.py::test_training_precomputes_cache_using_same_tenant_population
+FAILED ..\..\..\..\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\test_rag_crm_model_integration.py::test_rfm_excludes_pending_cancelled_refunded_and_future_orders
+2 failed in 2.14s
+EXIT_CODE=1

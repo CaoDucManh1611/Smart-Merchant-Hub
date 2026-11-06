@@ -25,10 +25,29 @@ def _citation_ids(value: str) -> list[int]:
 
 
 def customer_facing_answer(answer: str) -> str:
-    """Hide verified RAG source markers and Markdown from channel messages."""
+    """Remove presentation markup and a known malformed phrase without changing facts."""
     without_citations = _CITATION.sub("", answer or "")
-    without_markdown = without_citations.replace("***", "").replace("**", "")
-    return "\n".join(re.sub(r"[ \t]+([.,;:!?])", r"\1", line.strip()) for line in without_markdown.splitlines()).strip()
+    without_markdown = without_citations.replace("***", "").replace("**", "").replace("`", "")
+    # Repair the observed incomplete Vietnamese phrase without touching names,
+    # prices, stock, or SKU. Keep the correction limited to this grammar form.
+    without_markdown = re.sub(
+        r"\btên hoặc c?ụ thể\b",
+        "tên hoặc mô tả cụ thể hơn",
+        without_markdown,
+        flags=re.IGNORECASE,
+    )
+    lines = [
+        re.sub(r"[ \t]+([.,;:!?])", r"\1", re.sub(r"^#{1,6}\s+", "", line.strip()))
+        for line in without_markdown.splitlines()
+    ]
+    # Keep lists and paragraph boundaries, but avoid chat messages padded by
+    # repeated blank lines. No word, number, name or identifier is rewritten.
+    result: list[str] = []
+    for line in lines:
+        if not line and result and not result[-1]:
+            continue
+        result.append(line)
+    return "\n".join(result).strip()
 _MONEY = re.compile(
     r"(?<!\w)(?:(?P<prefix>USD|VND|\$|₫)\s*(?P<prefix_amount>\d+(?:[., ]\d+)*)|"
     r"(?P<suffix_amount>\d+(?:[., ]\d+)*)\s*(?P<suffix>đồng|dong|VND|USD|đ|₫))(?!\w)",
@@ -52,6 +71,37 @@ _COMPATIBILITY_UNCERTAINTY = (
     "chua du can cu", "chua co du lieu", "khong co du lieu",
     "can kiem tra", "can nhan vien", "khong cam ket",
     "cannot confirm", "not confirmed", "not verified", "no evidence",
+)
+_UNKNOWN_POLICY_CUES = (
+    "khong de cap", "chua de cap", "khong co thong tin", "chua co thong tin",
+    "chua xac nhan", "khong xac nhan", "not mentioned", "not specified",
+    "not stated", "not provided", "no information", "unknown",
+    "does not mention", "does not specify", "doesn't mention", "doesn't specify",
+)
+_INFERENCE_CONNECTORS = ("vi vay", "do do", "therefore", "hence")
+_DEFINITIVE_POLICY_NEGATION = re.compile(
+    r"\b(?:khong\s+(?:co|duoc|ap dung|ho tro|ton tai|bao gom|cung cap)|"
+    r"no\s+(?:lifetime\s+)?(?:warranty|guarantee|refund|return|coverage|service|policy)|"
+    r"(?:is|are|was|were)\s+not\s+(?:offered|covered|available|included)|"
+    r"does\s+not\s+(?:offer|cover|include|apply))\b"
+)
+_EPISTEMIC_CONCLUSION = (
+    "chua the xac nhan", "khong the xac nhan", "khong the ket luan",
+    "chua du can cu", "khong co thong tin", "chua co thong tin",
+    "not specified", "no information", "can nhan vien xac minh", "cannot confirm",
+    "cannot conclude", "unable to confirm", "not enough evidence",
+)
+_CONDITIONAL_POLICY_CUES = (
+    "du dieu kien", "neu dap ung dieu kien", "eligible", "subject to",
+    "provided that", "only if", "if eligible", "if applicable",
+)
+_POLICY_TOPIC_GROUPS = (
+    ("doi", "doi hang", "doi tra", "hoan tien", "return", "exchange", "refund"),
+    ("bao hanh", "warranty", "guarantee", "coverage"),
+    ("giao hang", "van chuyen", "shipping", "delivery"),
+    ("huy", "cancellation", "cancel"),
+    ("lich hen", "dat lich", "appointment", "booking"),
+    ("thanh toan", "tien coc", "payment", "deposit"),
 )
 _VEHICLE_START = re.compile(r"\b(?:xe|dong xe|mau xe|vehicle|motorcycle)\s+([a-z0-9]+(?:\s+[a-z0-9]+){0,4})")
 _VEHICLE_STOP_WORDS = {"doi", "nam", "phien", "ban", "the", "he", "mau", "loai", "cua", "toi", "minh", "khong", "co", "nha"}
@@ -222,6 +272,70 @@ def _answer_concepts(value: str) -> set[str]:
     return concepts
 
 
+def _split_guard_sentences(value: str) -> list[str]:
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", value or "") if part.strip()]
+
+
+def _policy_scope_is_supported(answer: str, cited_sources: list[str]) -> bool:
+    """Reject definitive policy conclusions from unknown or qualified evidence."""
+    source_sentences = [
+        fold_topic_text(sentence)
+        for source in cited_sources
+        for sentence in _split_guard_sentences(source)
+    ]
+    for sentence in _split_guard_sentences(answer):
+        folded = fold_topic_text(sentence)
+        answer_topics = [
+            group for group in _POLICY_TOPIC_GROUPS
+            if any(contains(folded, cue) for cue in group)
+        ]
+        # A direct denial is still a factual policy claim. Do not accept it
+        # merely because it lacks an explicit "therefore" connector: the
+        # cited source must state the denial for the same policy topic.
+        if (answer_topics
+                and _DEFINITIVE_POLICY_NEGATION.search(folded)
+                and not any(contains(folded, cue) for cue in _EPISTEMIC_CONCLUSION)):
+            for topic in answer_topics:
+                if not any(
+                    any(contains(source_sentence, cue) for cue in topic)
+                    and _DEFINITIVE_POLICY_NEGATION.search(source_sentence)
+                    for source_sentence in source_sentences
+                ):
+                    return False
+        if not any(contains(folded, cue) for cue in _UNKNOWN_POLICY_CUES):
+            continue
+        for connector in _INFERENCE_CONNECTORS:
+            position = folded.find(connector)
+            if position < 0:
+                continue
+            conclusion = folded[position + len(connector):].strip(" ,;:")
+            if (any(contains(conclusion, cue) for cue in _EPISTEMIC_CONCLUSION)
+                    or not _DEFINITIVE_POLICY_NEGATION.search(conclusion)):
+                continue
+            return False
+
+    for source in cited_sources:
+        for sentence in _split_guard_sentences(source):
+            folded_source = fold_topic_text(sentence)
+            if not any(contains(folded_source, cue) for cue in _CONDITIONAL_POLICY_CUES):
+                continue
+            source_topics = [group for group in _POLICY_TOPIC_GROUPS
+                             if any(contains(folded_source, cue) for cue in group)]
+            if not source_topics:
+                continue
+            for answer_sentence in _split_guard_sentences(answer):
+                folded_answer_sentence = fold_topic_text(answer_sentence)
+                same_topic = any(
+                    any(contains(folded_answer_sentence, cue) for cue in group)
+                    for group in source_topics
+                )
+                if same_topic and not any(
+                    contains(folded_answer_sentence, cue) for cue in _CONDITIONAL_POLICY_CUES
+                ):
+                    return False
+    return True
+
+
 def _product_line_is_supported(
     answer: str,
     identifiers_in_answer: list[str],
@@ -268,6 +382,8 @@ def has_valid_citations(
     if not ids or not all(1 <= value <= len(source_texts) for value in ids):
         return False
     cited_sources = [source_texts[index - 1] for index in ids]
+    if not _policy_scope_is_supported(answer, cited_sources):
+        return False
     if not _compatibility_claim_is_supported(answer, cited_sources, query):
         return False
     # A citation marker alone does not justify invented prices, product codes,

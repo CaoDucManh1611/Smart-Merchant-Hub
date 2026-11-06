@@ -1,0 +1,154 @@
+FFFFF                                                                    [100%]
+================================== FAILURES ===================================
+____ test_explicit_unknown_sku_does_not_fuzzy_match_shared_catalog_prefix _____
+
+    def test_explicit_unknown_sku_does_not_fuzzy_match_shared_catalog_prefix():
+        products = _DB([
+            SimpleNamespace(id=1, name="S\u1ea3n ph\u1ea9m demo alpha", sku="DEMO-ALPHA",
+                            price=100000, stock_quantity=4, reserved_quantity=0,
+                            status="active", metadata_={}),
+            SimpleNamespace(id=2, name="S\u1ea3n ph\u1ea9m demo beta", sku="DEMO-BETA",
+                            price=120000, stock_quantity=6, reserved_quantity=0,
+                            status="active", metadata_={}),
+        ])
+    
+        reply = _deterministic_customer_reply(
+            products, business_id=1, conversation_id=7,
+            query_text="Mã SKU DEMO-NOT-REAL còn hàng không?",
+        )
+    
+>       assert reply == (PRODUCT_NOT_FOUND_REPLY, "product_not_found")
+E       AssertionError: assert ('T\xean n\xe0y kh\u1edb...larification') == ('M\xecnh ch\u01b0a t...ct_not_found')
+E         
+E         At index 0 diff: 'T\xean n\xe0y kh\u1edbp v\u1edbi nhi\u1ec1u s\u1ea3n ph\u1ea9m: S\u1ea3n ph\u1ea9m demo alpha; S\u1ea3n ph\u1ea9m demo beta. B\u1ea1n mu\u1ed1n h\u1ecfi m\u1eabu n\xe0o? Cho m\xecnh th\xeam \u0111\u1eb7c \u0111i\u1ec3m nh\u1eadn d\u1ea1ng nh\xe9.' != 'M\xecnh ch\u01b0a t\xecm th\u1ea5y s\u1ea3n ph\u1ea9m n\xe0y trong danh m\u1ee5c c\u1ee7a shop. B\u1ea1n ki\u1ec3m tra l\u1ea1i t\xean s\u1ea3n ph\u1ea9m gi\xfap m\xecnh nh\xe9.'
+E         Use -v to get more diff
+
+tests\test_chatbot_answer_routing.py:421: AssertionError
+____ test_ambiguous_same_name_variants_show_structured_variant_without_sku ____
+
+    def test_ambiguous_same_name_variants_show_structured_variant_without_sku():
+        products = _DB([
+            SimpleNamespace(id=1, name="\xc1o m\u1eabu", sku="AO-MAU-S", price=100000,
+                            stock_quantity=3, reserved_quantity=0, status="active",
+                            metadata_={"attributes": {"size": "S"}}),
+            SimpleNamespace(id=2, name="\xc1o m\u1eabu", sku="AO-MAU-M", price=110000,
+                            stock_quantity=5, reserved_quantity=0, status="active",
+                            metadata_={"attributes": {"size": "M"}}),
+        ])
+    
+        reply = _deterministic_customer_reply(
+            products, business_id=1, conversation_id=7,
+            query_text="\xc1o m\u1eabu gi\xe1 bao nhi\xeau?",
+        )
+    
+        assert reply is not None and reply[1] == "product_identity_clarification"
+>       assert "\xc1o m\u1eabu (c\u1ee1 S)" in reply[0]
+E       AssertionError: assert '\xc1o m\u1eabu (c\u1ee1 S)' in 'T\xean n\xe0y kh\u1edbp v\u1edbi nhi\u1ec1u s\u1ea3n ph\u1ea9m: \xc1o m\u1eabu; \xc1o m\u1eabu. B\u1ea1n mu\u1ed1n h\u1ecfi m\u1eabu n\xe0o? Cho m\xecnh th\xeam \u0111\u1eb7c \u0111i\u1ec3m nh\u1eadn d\u1ea1ng nh\xe9.'
+
+tests\test_chatbot_answer_routing.py:440: AssertionError
+_ test_stock_followup_uses_unambiguous_recent_chat_product_when_profile_memory_is_opted_out _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001F0A2618170>
+
+    def test_stock_followup_uses_unambiguous_recent_chat_product_when_profile_memory_is_opted_out(monkeypatch):
+        from app.models.message import Message
+        from app.models.sales import Product
+    
+        product = SimpleNamespace(
+            id=31, name="L\u1ecdc gi\xf3 gi\u1ea5y d\xf2ng Wave Alpha 110", sku="XM-LOC-GIO-WA110",
+            price=98000, stock_quantity=23, reserved_quantity=0,
+            status="active", metadata_={},
+        )
+        messages = [
+            SimpleNamespace(id=12, content="Còn hàng không?", direction="inbound", sender_type="customer"),
+            SimpleNamespace(
+                id=11,
+                content="L\u1ecdc gi\xf3 gi\u1ea5y d\xf2ng Wave Alpha 110 hi\u1ec7n c\xf3 gi\xe1 98.000 \u0111\u1ed3ng.",
+                direction="outbound", sender_type="bot",
+            ),
+        ]
+    
+        class _HistoryDB(_DB):
+            def query(self, model, *args, **kwargs):
+                return _Query(messages if model is Message else [product] if model is Product else [])
+    
+        monkeypatch.setattr(
+            "app.services.conversation_memory.resolve_memory_products", lambda *_a, **_k: []
+        )
+        reply = _deterministic_customer_reply(
+            _HistoryDB([product]), business_id=1, conversation_id=77,
+            query_text="Còn hàng không?",
+        )
+    
+>       assert reply == (
+            "D\u1ea1, L\u1ecdc gi\xf3 gi\u1ea5y d\xf2ng Wave Alpha 110 hi\u1ec7n c\xf2n 23 s\u1ea3n ph\u1ea9m \u1ea1.",
+            "product_fact_followup",
+        )
+E       AssertionError: assert ('B\u1ea1n mu\u1ed1n ki...larification') == ('D\u1ea1, L\u1ecdc gi\xf3...act_followup')
+E         
+E         At index 0 diff: 'B\u1ea1n mu\u1ed1n ki\u1ec3m tra t\u1ed3n kho s\u1ea3n ph\u1ea9m n\xe0o? B\u1ea1n g\u1eedi m\xecnh t\xean s\u1ea3n ph\u1ea9m nh\xe9.' != 'D\u1ea1, L\u1ecdc gi\xf3 gi\u1ea5y d\xf2ng Wave Alpha 110 hi\u1ec7n c\xf2n 23 s\u1ea3n ph\u1ea9m \u1ea1.'
+E         Use -v to get more diff
+
+tests\test_chatbot_answer_routing.py:475: AssertionError
+__ test_price_and_return_window_question_is_not_shortcircuited_to_price_only __
+
+    def test_price_and_return_window_question_is_not_shortcircuited_to_price_only():
+        query = "Alpha gi\xe1 bao nhi\xeau v\xe0 c\xf3 \xe1p d\u1ee5ng \u0111\u1ed5i trong 7 ng\xe0y kh\xf4ng?"
+    
+>       assert _policy_kind(query) == "return"
+E       AssertionError: assert None == 'return'
+E        +  where None = _policy_kind('Alpha gi\xe1 bao nhi\xeau v\xe0 c\xf3 \xe1p d\u1ee5ng \u0111\u1ed5i trong 7 ng\xe0y kh\xf4ng?')
+
+tests\test_chatbot_answer_routing.py:484: AssertionError
+__ test_explicit_catalog_comparison_bypasses_generic_need_discovery_question __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001F0A26197C0>
+
+    def test_explicit_catalog_comparison_bypasses_generic_need_discovery_question(monkeypatch):
+        from app.services.universal_sales_brain import NeedsDiscovery
+    
+        query = "So s\xe1nh \xc1o Alpha v\xe0 \xc1o Beta v\u1ec1 gi\xe1 v\xe0 t\u1ed3n kho."
+        discovery = NeedsDiscovery(
+            intent="product_question", confidence=0.9,
+            next_best_question="B\u1ea1n \u0111ang t\xecm s\u1ea3n ph\u1ea9m n\xe0o?",
+        )
+        monkeypatch.setattr(
+            "app.services.universal_sales_brain.discover_needs",
+            lambda *_args, **_kwargs: discovery,
+        )
+        monkeypatch.setattr("app.services.conversation_memory.load_reply_memory", lambda *_a, **_k: {})
+        expected = ("\xc1o Alpha c\xf2n 3, \xc1o Beta c\xf2n 5; m\xecnh \u0111\xe3 so s\xe1nh theo danh m\u1ee5c.", "product_comparison")
+        with patch(
+            "app.services.auto_reply_service._deterministic_customer_reply", return_value=expected
+        ) as deterministic, patch(
+            "app.services.conversation_graph.call_llm", side_effect=AssertionError("comparison should use catalog shortcut")
+        ), patch("app.rag.run_logger.RagRunLog"):
+            result = graph_reply(
+                DB(), business_id=17, conversation=SimpleNamespace(id=21, customer_id=31),
+                query=query, job_key="comparison-discovery-gate",
+            )
+    
+>       assert result.status == "product_comparison"
+E       AssertionError: assert 'graph_answer' == 'product_comparison'
+E         
+E         - product_comparison
+E         + graph_answer
+
+tests\test_conversation_graph.py:271: AssertionError
+============================== warnings summary ===============================
+app\core\config.py:268
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\core\config.py:268: RuntimeWarning: PLATFORM_DATABASE_URL is falling back to legacy DATABASE_URL; configure the explicit URL before production
+    return self._database_url(self.PLATFORM_DATABASE_URL, "PLATFORM_DATABASE_URL")
+
+app\core\config.py:272
+  C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\app\core\config.py:272: RuntimeWarning: TENANT_DATABASE_URL is falling back to legacy DATABASE_URL; configure the explicit URL before production
+    return self._database_url(self.TENANT_DATABASE_URL, "TENANT_DATABASE_URL")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_chatbot_answer_routing.py::test_explicit_unknown_sku_does_not_fuzzy_match_shared_catalog_prefix
+FAILED tests/test_chatbot_answer_routing.py::test_ambiguous_same_name_variants_show_structured_variant_without_sku
+FAILED tests/test_chatbot_answer_routing.py::test_stock_followup_uses_unambiguous_recent_chat_product_when_profile_memory_is_opted_out
+FAILED tests/test_chatbot_answer_routing.py::test_price_and_return_window_question_is_not_shortcircuited_to_price_only
+FAILED tests/test_conversation_graph.py::test_explicit_catalog_comparison_bypasses_generic_need_discovery_question
+5 failed, 107 deselected, 2 warnings in 3.29s

@@ -4,9 +4,12 @@ import re
 from app.rag.topics import fold_topic_text, infer_query_topic  # noqa: E402
 from app.services.auto_reply_service import (  # noqa: E402
     _is_price_question,
+    _is_knowledge_explanation_question,
+    _is_general_ingredient_safety_question,
     _is_product_attribute_question,
     _is_product_catalog_listing_request,
     _is_product_fact_question,
+    _is_product_match_confirmation,
     _is_recommendation_question,
     _is_specific_product_lookup,
     _product_hint,
@@ -121,6 +124,17 @@ def classify_intent(query: str) -> str:
         "bao lau nhan", "nhan duoc hang",
     )) or infer_query_topic(query) in {"delivery", "returns", "payments", "shop"}:
         return "search_knowledge"
+
+    # General meaning/ingredient questions belong to knowledge retrieval, not
+    # product identity lookup or personalized product recommendation.
+    if (
+        _is_knowledge_explanation_question(query)
+        or _is_general_ingredient_safety_question(query)
+    ):
+        return "search_knowledge"
+
+    if _is_product_match_confirmation(query):
+        return "lookup_product"
 
     has_product = _has_product_reference(query)
     explicit_item = re.search(r"\b(?:sku|model|ma)\s+[a-z0-9][a-z0-9-]*\b", folded)

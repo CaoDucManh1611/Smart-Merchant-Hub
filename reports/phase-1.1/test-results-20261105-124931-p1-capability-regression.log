@@ -1,0 +1,10 @@
+COMMAND: python -m pytest tests/test_recommendations_api.py tests/test_chatbot_answer_routing.py tests/test_conversation_graph.py tests/test_workspace_modules.py tests/test_capability_registry.py tests/test_rag_serving_contract.py -q
+ImportError while loading conftest 'C:\Users\Administrator\Documents\Codex\2026-09-03\referenced-chatgpt-conversation-this-is-an\work\smart-merchant-hub\backend\tests\conftest.py'.
+tests\conftest.py:145: in <module>
+    _POSTGRES_TEST_URLS[key] = _prepare_postgres_test_database(value)
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\conftest.py:111: in _prepare_postgres_test_database
+    raise RuntimeError(
+E   RuntimeError: Cannot prepare isolated PostgreSQL test database 'crm_chatbot_test' (ConnectionTimeout). Use a PostgreSQL role that can create databases, or create the *_test databases first.
+EXIT_CODE=4
+ELAPSED_SECONDS=132.01

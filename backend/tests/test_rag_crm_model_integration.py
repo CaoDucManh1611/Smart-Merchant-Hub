@@ -521,7 +521,16 @@ def test_read_only_admin_preview_uses_only_integrity_checked_synthetic_assets(mo
     assert exc.value.status_code == 503
 
 
-def test_rfm_excludes_pending_cancelled_refunded_and_future_orders(database, model_registry):
+@pytest.mark.parametrize("working_directory", ["cwd-a", "cwd-b"])
+def test_rfm_excludes_pending_cancelled_refunded_and_future_orders(
+    database, model_registry, tmp_path, monkeypatch, working_directory,
+):
+    cwd = tmp_path / working_directory
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    from app.services import industry_rfm_prior
+    industry_rfm_prior.load_industry_rfm_prior.cache_clear()
+
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     database.add_all([
         CustomerConsent(business_id=1, customer_id=1, purpose="personalization", status="granted"),
@@ -544,10 +553,11 @@ def test_rfm_excludes_pending_cancelled_refunded_and_future_orders(database, mod
     assert buyer.features["frequency"] == 1
     assert buyer.features["monetary"] == 150000
     assert buyer.model_version == "rfm_percentile_v1"
-    assert buyer.features["cluster_model_version"] == buyer.model_version
+    assert buyer.features["cluster_model_version"] == "industry_rfm_cold_start_v1"
+    assert buyer.features["cluster_model_source"] == "industry_prior"
     assert buyer.segment_label == "new_customer"
     assert new.segment_label == "no_purchase" and new.features["cluster_id"] is None
     assert buyer.features["segment_name"] == "RFM · Khách mới"
-    assert buyer.features["rfm_scores"] == {"recency": 3, "frequency": 3, "monetary": 3}
+    assert buyer.features["rfm_scores"] == {"recency": 5, "frequency": 1, "monetary": 3}
     assert model_registry.data_rag_segment(1, {"frequency": 0, "monetary": 0, "recency_days": 365}) is None
 

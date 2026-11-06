@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "evaluation": "synthetic-only Groq answer quality verification",
+  "grader": "deterministic expected-evidence and policy-scope checks plus the application citation guard; no LLM judge",
+  "case_count": 3,
+  "fully_passing_cases": 0,
+  "answer_quality": "NOT_PASS; human review remains unperformed",
+  "checks": [
+    {
+      "case_id": "answer-010-no-evidence",
+      "pipeline_outcome": "LLM_GENERATED_ANSWER",
+      "expected_evidence_ids": [
+        "policy:available"
+      ],
+      "captured_retrieved_evidence_ids": [
+        "policy:available"
+      ],
+      "final_answer": "Chính sách hiện có không đề cập thời hạn bảo hành, vì vậy không có bảo hành trọn đời.",
+      "structured_claim_guard_checks": [
+        {
+          "claim": "Chính sách hiện có không đề cập thời hạn bảo hành, vì vậy không có bảo hành trọn đời.",
+          "source_ids": [
+            1
+          ],
+          "guard_accepts_after_fix": false
+        }
+      ],
+      "objective_result": "FAIL",
+      "reason": "Generated a definitive no-lifetime-warranty conclusion from evidence that only says the policy does not specify a warranty period; it also omitted the required staff verification.",
+      "human_review": "NOT_PERFORMED"
+    },
+    {
+      "case_id": "answer-011-policy-grounded",
+      "pipeline_outcome": "LLM_GENERATED_ANSWER",
+      "expected_evidence_ids": [
+        "policy:return-v1"
+      ],
+      "captured_retrieved_evidence_ids": [
+        "policy:return-v1"
+      ],
+      "final_answer": "Bạn có thể đổi hàng trong vòng 7 ngày kể từ khi nhận hàng.",
+      "structured_claim_guard_checks": [
+        {
+          "claim": "Bạn có thể đổi hàng trong vòng 7 ngày kể từ khi nhận hàng.",
+          "source_ids": [
+            1
+          ],
+          "guard_accepts_after_fix": false
+        }
+      ],
+      "objective_result": "FAIL",
+      "reason": "The answer gives the 7-day window but omits the source eligibility condition; the corrected deterministic citation guard rejects this claim.",
+      "human_review": "NOT_PERFORMED"
+    },
+    {
+      "case_id": "answer-012-multi-source",
+      "pipeline_outcome": "PROVIDER_HTTP_400",
+      "expected_evidence_ids": [
+        "catalog:alpha",
+        "policy:return-v1"
+      ],
+      "captured_retrieved_evidence_ids": [
+        "policy:return-v1"
+      ],
+      "final_answer": null,
+      "structured_claim_guard_checks": [],
+      "objective_result": "FAIL",
+      "reason": "Groq returned HTTP 400 before a final answer; captured retrieval evidence omitted the expected catalog:alpha source, so the mixed catalog/policy answer was not verified.",
+      "human_review": "NOT_PERFORMED"
+    }
+  ]
+}

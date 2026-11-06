@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "limits": {
+    "case_executions": 3,
+    "physical_attempts": 6,
+    "input_tokens": 30000,
+    "output_tokens": 5000
+  },
+  "consumed": {
+    "case_executions": 3,
+    "physical_attempts": 3,
+    "input_tokens": 23941,
+    "output_tokens": 875
+  },
+  "reported_usage": {
+    "input_tokens": 4137,
+    "output_tokens": 363
+  },
+  "runs": [
+    {
+      "phase": "baseline",
+      "case_ids": [
+        "answer-010-no-evidence",
+        "answer-011-policy-grounded",
+        "answer-012-multi-source"
+      ]
+    }
+  ]
+}

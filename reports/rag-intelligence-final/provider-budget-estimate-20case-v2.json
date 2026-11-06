@@ -1,0 +1,33 @@
+{
+  "budget_id": "smh-rag-answer-quality-provider-budget-20case-v2",
+  "dataset_sha256": "340e70c14bcd7f954650570a6ada9b7c9539d37cb149467017577ea5e97bb386",
+  "evidence_snapshot_id": "smh-rag-answer-quality-synthetic-v1-evidence:a2667f4debf8e5ca",
+  "model": "openai/gpt-oss-20b",
+  "provider": "Groq only; no provider fallback",
+  "paired_runs": [
+    "current_snapshot_once"
+  ],
+  "cases_per_run": 20,
+  "maximum_calls": {
+    "case_executions_total": 20,
+    "maximum_cases_per_run": 20,
+    "max_model_calls_per_run": 40,
+    "total_physical_provider_attempts_max": 40,
+    "total_input_tokens_hard_cap": 100000,
+    "total_output_tokens_hard_cap": 15000,
+    "completion_tokens_per_request_max": 512,
+    "timeout_seconds_per_run": 1800
+  },
+  "cost_estimate_usd": "UNAVAILABLE; no pricing table configured; owner accepted unestimated cost for this one capped run",
+  "actual_provider_calls_in_preparation": 0,
+  "current_run_authorized": true,
+  "requires_separate_owner_approval": false,
+  "token_usage_expectation": "NOT_ESTIMATED; actual prompt sizes and model usage must be measured; hard caps enforced by evaluator",
+  "notes": [
+    "One 20-case current-snapshot run only; no second provider run within authorization.",
+    "Groq SDK retries are disabled; app key rotation does not replay HTTP 429; evaluator stops the batch after the first 429.",
+    "All case context and evidence are synthetic; app database settings are forced to in-memory SQLite; no external channel or transactional capability.",
+    "Correctness, groundedness, hallucination and disputed labels still require human review."
+  ],
+  "provider_credential": "owner-confirmed test credential; no key material stored"
+}

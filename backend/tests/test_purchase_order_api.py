@@ -11,6 +11,7 @@ from app.main import app
 from app.models.business import Business
 from app.models.customer import Customer
 from app.models.sales import Product
+from capability_fixtures import enable_workspace_capabilities
 
 
 class PurchaseOrderApiTests(unittest.TestCase):
@@ -27,6 +28,9 @@ class PurchaseOrderApiTests(unittest.TestCase):
             two = Business(name="PO Two", slug="po-two")
             db.add_all([one, two])
             db.flush()
+            test_capabilities = ("RETAIL_TOOLS", "INVENTORY_TOOLS")
+            enable_workspace_capabilities(db, one.id, *test_capabilities)
+            enable_workspace_capabilities(db, two.id, *test_capabilities)
             product = Product(business_id=one.id, sku="PO-SKU", name="Bot plan", price=100)
             foreign_product = Product(business_id=two.id, sku="PO-SKU-2", name="Other", price=50)
             db.add_all([product, foreign_product])

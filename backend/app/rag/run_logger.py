@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import os
 import re
 import threading
 import time
@@ -82,6 +83,8 @@ class RagRunLog:
     """Collect details and append exactly one JSON record when a run ends."""
 
     def __init__(self, operation: str, **fields: Any) -> None:
+        from app.rag.turn_budget import current_budget
+        self._budget = current_budget()
         self._started_monotonic = time.perf_counter()
         self._record: dict[str, Any] = {
             "run_id": uuid4().hex,
@@ -92,6 +95,7 @@ class RagRunLog:
             "model": settings.LLM_MODEL,
             "embedding_provider": settings.EMBEDDING_PROVIDER,
             "embedding_model": settings.EMBEDDING_MODEL,
+            "code_version": os.getenv("GIT_SHA") or os.getenv("APP_VERSION") or "unversioned",
             **_safe_fields(fields),
         }
         self._finished = False
@@ -110,6 +114,8 @@ class RagRunLog:
 
         self._record.update(_safe_fields(fields))
         self._record["status"] = status
+        if self._budget is not None:
+            self._record.update(self._budget.snapshot())
         self._record["finished_at"] = _utc_now()
         self._record["duration_ms"] = round(
             (time.perf_counter() - self._started_monotonic) * 1000,

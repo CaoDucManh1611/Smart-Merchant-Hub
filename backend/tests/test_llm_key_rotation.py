@@ -8,7 +8,7 @@ from app.services.api_key_pool import ApiKeyPool
 
 
 class LlmKeyRotationTests(unittest.TestCase):
-    def test_retryable_provider_failure_uses_the_next_key(self):
+    def test_rate_limit_does_not_immediately_retry_with_another_key(self):
         pool = ApiKeyPool(["key-a", "key-b"])
         seen = []
 
@@ -16,6 +16,20 @@ class LlmKeyRotationTests(unittest.TestCase):
             seen.append(key)
             if key == "key-a":
                 raise RuntimeError("HTTP 429 rate limit")
+            return "ok"
+
+        with self.assertRaisesRegex(RuntimeError, "429"):
+            _call_with_key_rotation(pool, operation)
+        self.assertEqual(["key-a"], seen)
+
+    def test_transient_server_failure_can_rotate_to_the_next_key(self):
+        pool = ApiKeyPool(["key-a", "key-b"])
+        seen = []
+
+        def operation(key):
+            seen.append(key)
+            if key == "key-a":
+                raise RuntimeError("HTTP 503 service unavailable")
             return "ok"
 
         self.assertEqual("ok", _call_with_key_rotation(pool, operation))
@@ -43,7 +57,7 @@ class LlmKeyRotationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "429"):
             _call_with_key_rotation(pool, operation, provider="test-bounded")
-        self.assertEqual(["key-a", "key-b", "key-c"], seen)
+        self.assertEqual(["key-a"], seen)
 
     def test_stream_does_not_retry_after_emitting_partial_text(self):
         pool = ApiKeyPool(["key-a", "key-b"])
