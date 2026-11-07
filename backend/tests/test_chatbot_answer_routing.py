@@ -404,6 +404,67 @@ def test_generic_stock_followup_asks_which_of_multiple_recent_products(monkeypat
     )
 
 
+def test_quantity_total_followup_uses_prior_product_and_current_catalog_price(monkeypatch):
+    from app.services.chatbot_router import classify_intent
+
+    product = SimpleNamespace(
+        id=31, name="Dầu gội dịu nhẹ — Nâng cao", sku="BEAUTY-31",
+        price=909000, stock_quantity=15, reserved_quantity=0,
+        status="active", metadata_={},
+    )
+    monkeypatch.setattr(
+        "app.services.conversation_memory.resolve_memory_products",
+        lambda *_args, **_kwargs: [product],
+    )
+    query = "Nếu mua 2 sản phẩm đó thì tổng tiền là bao nhiêu?"
+
+    assert classify_intent(query) == "lookup_product"
+    reply = _deterministic_customer_reply(
+        _DB([product]), business_id=1, conversation_id=77, query_text=query,
+    )
+
+    assert reply is not None and reply[1] == "product_fact_followup"
+    assert "1.818.000 đồng" in reply[0]
+    assert "909.000 đồng" in reply[0]
+    assert "tạo đơn" not in reply[0]
+
+
+def test_explicit_unknown_named_product_does_not_route_to_catalog_listing():
+    from app.services.chatbot_router import classify_intent
+
+    query = "Shop có sản phẩm mang tên ZZZ-KHONG-TON-TAI-999 không?"
+    assert classify_intent(query) == "lookup_product"
+    reply = _deterministic_customer_reply(
+        _DB([_db().rows[0]]), business_id=1, conversation_id=77, query_text=query,
+    )
+    assert reply == (PRODUCT_NOT_FOUND_REPLY, "product_not_found")
+
+
+def test_exact_requested_catalog_variant_returns_only_its_price_and_stock():
+    from app.services.chatbot_router import classify_intent
+
+    compact = SimpleNamespace(
+        id=31, name="Dầu gội dịu nhẹ — Nhỏ gọn", sku="BEAUTY-31",
+        price=606000, stock_quantity=10, reserved_quantity=0,
+        status="active", metadata_={},
+    )
+    advanced = SimpleNamespace(
+        id=32, name="Dầu gội dịu nhẹ — Nâng cao", sku="BEAUTY-32",
+        price=909000, stock_quantity=15, reserved_quantity=0,
+        status="active", metadata_={},
+    )
+    query = "Dầu gội dịu nhẹ – Nhỏ gọn giá bao nhiêu và còn mấy sản phẩm?"
+
+    assert classify_intent(query) == "lookup_product"
+    reply = _deterministic_customer_reply(
+        _DB([compact, advanced]), business_id=1, conversation_id=77, query_text=query,
+    )
+
+    assert reply is not None and reply[1] == "product_fact"
+    assert "606.000 đồng" in reply[0] and "còn 10 sản phẩm" in reply[0]
+    assert "Nâng cao" not in reply[0] and "909.000 đồng" not in reply[0]
+
+
 def test_explicit_unknown_sku_does_not_fuzzy_match_shared_catalog_prefix():
     products = _DB([
         SimpleNamespace(id=1, name="Sản phẩm demo alpha", sku="DEMO-ALPHA",

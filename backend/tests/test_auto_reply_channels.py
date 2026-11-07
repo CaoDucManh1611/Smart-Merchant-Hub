@@ -1100,7 +1100,11 @@ def test_business_offering_question_uses_live_catalog_instead_of_no_context():
 
 def test_room_catalog_with_price_bypasses_exact_product_lookup():
     query = "hiện shop có những phòng trọ nào và giá mỗi phòng bap nhiêu"
+    from app.services.chatbot_router import classify_intent
+
     assert _is_product_catalog_listing_request(query)
+    assert classify_intent(query) == "lookup_product_catalog"
+    assert classify_intent("Phòng trọ 05 giá bao nhiêu?") == "lookup_product"
     assert not _is_product_catalog_listing_request("Phòng trọ 05 giá bao nhiêu?")
 
     db = Mock()

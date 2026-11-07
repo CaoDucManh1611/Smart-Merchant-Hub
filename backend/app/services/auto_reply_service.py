@@ -402,7 +402,7 @@ NO_RECOMMENDATION_REPLY = (
 
 _STOCK_TERMS = (
     "ton kho", "ton", "con hang", "con khong", "co san khong", "du khong",
-    "het hang", "so luong", "bao nhieu cai", "bao nhieu chiec", "con bao nhieu", "con may chiec", "con may cai", "bao nhieu san pham",
+    "het hang", "so luong", "bao nhieu cai", "bao nhieu chiec", "con bao nhieu", "con may chiec", "con may cai", "con may san pham", "con may chai", "bao nhieu san pham",
     "in stock", "available", "how many", "units left",
 )
 _SALE_STATUS_TERMS = ("con ban", "dang ban", "ngung ban", "trang thai ban")
@@ -459,7 +459,7 @@ _PRODUCT_HINT_STOP_WORDS = {
     "shop", "co", "con", "khong", "cho", "minh", "toi", "ban", "san", "pham",
     "hang", "mau", "nao", "gi", "nhe", "voi", "la", "cua", "gia", "bao",
     "nhieu", "tien", "tong", "thanh", "het", "ton", "kho", "so", "luong", "cai", "hien", "tai", "va", "and", "both",
-    "luc", "nay", "hoi", "muon", "xem", "tim", "mua", "duoc", "khong",
+    "luc", "nay", "hoi", "muon", "xem", "tim", "mua", "neu", "thi", "duoc", "khong",
     "chi", "tiet", "mo", "ta", "thong", "tin", "detail", "details", "description",
     "do", "ay", "no", "kia", "a", "please", "the", "that", "this", "it", "its",
     "how", "many", "much", "are", "is", "left", "in", "stock", "price", "cost", "of",
@@ -2471,7 +2471,13 @@ def _format_product_detail_reply(
     )
 
 
-def _format_product_fact_reply(product: Product, folded_query: str, *, language: str = "vi") -> str:
+def _format_product_fact_reply(
+    product: Product,
+    folded_query: str,
+    *,
+    language: str = "vi",
+    quantity: int | None = None,
+) -> str:
     if _is_rental_room(product):
         name = product_display_name(product, language)
         price = _format_vnd(product.price)
@@ -2485,6 +2491,28 @@ def _format_product_fact_reply(product: Product, folded_query: str, *, language:
     name = product_display_name(product, language)
     price_requested = _is_price_question(folded_query)
     stock_requested = _has_any_term(folded_query, _STOCK_TERMS)
+    wants_total = bool(re.search(r"\b(?:tong|thanh tien|tinh tien|combined|altogether|total)\b", folded_query))
+    if price_requested and wants_total and quantity and quantity > 1:
+        total = Decimal(str(product.price or 0)) * quantity
+        if language == "en":
+            reply = (
+                f"{name} costs ₫{_format_vnd(product.price).replace('.', ',')} each; "
+                f"{quantity} items total ₫{_format_vnd(total).replace('.', ',')}"
+            )
+            if available < quantity:
+                reply += f". Only {available} are currently available."
+            elif stock_requested:
+                reply += f". Current stock is {available}."
+            return reply + "."
+        reply = (
+            f"Dạ, {name} giá {_format_vnd(product.price)} đồng/sản phẩm; "
+            f"{quantity} sản phẩm là {_format_vnd(total)} đồng."
+        )
+        if available < quantity:
+            reply += f" Hiện chỉ còn {available} sản phẩm."
+        elif stock_requested:
+            reply += f" Tồn hiện tại là {available} sản phẩm."
+        return reply
     if language == "en":
         price = f"₫{_format_vnd(product.price).replace('.', ',')}"
         if price_requested and stock_requested:
@@ -3397,8 +3425,14 @@ def _deterministic_customer_reply(
             current_text=query_text,
         )
         if len(prior_products) == 1:
+            from app.services.customer_collection_flow import _extract_quantity
+
             return (
-                _format_product_fact_reply(prior_products[0], folded),
+                _format_product_fact_reply(
+                    prior_products[0],
+                    folded,
+                    quantity=_extract_quantity(query_text),
+                ),
                 "product_fact_followup",
             )
         if len(prior_products) > 1:

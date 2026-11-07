@@ -72,7 +72,7 @@ def _has_product_reference(query: str) -> bool:
         "loai", "tot", "nhat", "cai", "nay", "xanh", "den", "hong", "do", "size", "sao",
         "mau", "gia", "bao", "nhieu", "con", "khong", "ko", "hien", "tai", "muon", "xem",
         "thong", "tin", "chi", "tiet", "cho", "toi", "minh", "can", "tu", "van",
-        "suat", "goi", "gom", "includes", "this", "that", "package", "slot",
+        "suat", "goi", "gom", "phong", "tro", "moi", "includes", "this", "that", "package", "slot",
     }
     hint = set(fold_topic_text(_product_hint(query)).split())
     return bool(hint - generic)
@@ -142,13 +142,32 @@ def classify_intent(query: str) -> str:
     if has_product and _is_specific_product_lookup(query) and (explicit_item or named_availability):
         return "lookup_product"
 
-    # Broad discovery wins over price/stock words only without a specific item.
-    if _is_product_catalog_listing_request(query):
+    # A multi-room browse is a catalog listing even when the customer asks for
+    # each room's price or a typo makes the generic entity heuristic think a
+    # stray word is a product name. Keep numbered-room questions on exact lookup.
+    rental_catalog_listing = (
+        _is_product_catalog_listing_request(query)
+        and re.search(
+            r"\b(?:co\s+)?(?:nhung|cac|danh sach|tat ca)\s+phong(?:\s+tro)?\s+nao\b",
+            folded,
+        )
+    )
+    if rental_catalog_listing:
         return "lookup_product_catalog"
 
     is_product_fact = _is_product_fact_question(query)
     is_price = is_price_quote_request(query) or _is_price_question(folded)
     is_stock = is_stock_query_request(query) or is_product_fact or bool(re.search(r"\bcon ko\b", folded))
+    # Resolve a named item fact before the broad-browse heuristic. The browse
+    # detector also matches named queries such as "product X, price and stock?";
+    # letting it win sends those requests to the unfiltered catalog listing.
+    if has_product and (is_price or is_stock or _is_product_attribute_question(query)):
+        return "lookup_product"
+
+    # Broad discovery remains the route only when the customer has not named an item.
+    if _is_product_catalog_listing_request(query):
+        return "lookup_product_catalog"
+
     if (is_price or is_stock or _is_product_attribute_question(query)) and not has_product:
         return "clarify_product"
     if is_stock and has_product:
