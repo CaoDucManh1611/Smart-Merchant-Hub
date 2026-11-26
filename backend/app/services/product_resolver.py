@@ -124,15 +124,27 @@ def find_explicit_product_mentions(products: list[Product], text: str) -> list[P
         )
     if not normalized_query:
         return []
-    padded_query = f" {normalized_query} "
-
-    exact_matches: dict[int, Product] = {}
+    exact_spans = []
     for product in products:
         for alias in product_identity_aliases(product):
             normalized_alias = normalize_product_text(alias)
-            if normalized_alias and f" {normalized_alias} " in padded_query:
-                exact_matches[int(product.id)] = product
-                break
+            if normalized_alias:
+                exact_spans.extend(
+                    (match.start(), match.end(), product)
+                    for match in re.finditer(
+                        r"(?<!\w)" + re.escape(normalized_alias) + r"(?!\w)", normalized_query,
+                    )
+                )
+    # A short product name inside another complete name is not an additional
+    # cart item. Keep it only when it also occurs separately in this message.
+    exact_matches: dict[int, Product] = {
+        int(product.id): product for start, end, product in exact_spans
+        if not any(
+            other.id != product.id and outer_start <= start and end <= outer_end
+            and (outer_start < start or end < outer_end)
+            for outer_start, outer_end, other in exact_spans
+        )
+    }
     # Keep exact hits, but do not return yet: a comparison can contain one
     # exact product name and a second shortened variant (for example
     # "lốp 70/90-17 và 80/90-17"). The distinctive-token pass below can find
@@ -343,10 +355,18 @@ def resolve_prior_product_mention(
         identity_tokens = set(normalize_product_text(product.name).split()) - _STOP_WORDS - _CATALOG_QUERY_FILLERS - {"dat", "lay", "chot", "hang", "luon"}
         matched_identity_tokens.update(current_tokens & identity_tokens)
     if matched_identity_tokens - variant_words:
-        return None
+        if not re.search(r"\b(?:do|nay|ay|tren|vua)\b", current_normalized):
+            return None
+        # A named category plus a reference can narrow history, but can never
+        # borrow an item from another category just because it was mentioned.
+        products = [p for p in products if (matched_identity_tokens - variant_words)
+                    <= set(normalize_product_text(p.name).split())]
+        if not products:
+            return None
     # History is reserved for references, variant choices and short follow-ups.
     if not (matched_identity_tokens or _is_unidentified_product_detail_followup(current_text)
-            or re.search(r"\b(?:do|nay|ay|tren|vua|them|dat hang|dat|lay|chot|mua\s+(?:\d+|mot)\s+(?:cai|chai|san pham))\b", current_normalized)):
+            or re.search(r"\b(?:do|nay|ay|tren|vua|them|dat hang|dat|lay|chot|mua\s+(?:\d+|mot)\s+(?:cai|chai|san pham)|cho\s+(?:toi|minh|em)\s+\d+\s+cai)\b", current_normalized)
+            or re.fullmatch(r"(?:con hang khong|con bao nhieu|gia bao nhieu)(?: a| nhi| vay)?[?.!]*", current_normalized)):
         return None
     products_by_id = {
         int(product.id): product

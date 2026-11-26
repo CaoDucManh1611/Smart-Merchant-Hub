@@ -43,7 +43,7 @@ def test_contact_collected_twice_is_suggested_without_stealing_contact_or_auto_m
     assert 'phone' in evidence['matched_fields']
     assert any(row['source_customer_id']==other.id for row in find_duplicate_suggestions(db,1,customer_id=conv.customer_id))
     assert other.status!='merged' and other_conv.customer_id==other.id
-    assert db.query(CustomerContact).one().customer_id==conv.customer_id
+    assert db.query(CustomerContact).filter_by(kind="phone").one().customer_id==conv.customer_id
     assert 'chưa tìm thấy' in customer_context_reply(db,1,other_conv.id,f'Cho mình QR đơn {first_order.order_number}').lower()
     assert '0901234567' not in str(db.query(CustomerCollectionSession).filter_by(customer_id=other.id).one().collected_fields)
 

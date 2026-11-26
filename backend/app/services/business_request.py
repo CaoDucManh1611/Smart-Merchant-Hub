@@ -26,7 +26,7 @@ def is_business_request_cancellation(query):
         return False
     if folded in {"huy", "huy yeu cau", "huy dat lich", "huy lich hen", "dung yeu cau", "bo yeu cau", "khong dat nua", "thoi khong dat nua", "cancel", "cancel request"}:
         return True
-    return bool(re.fullmatch(r"(?:huy|dung|bo) (?:yeu cau(?: dat lich)?|lich hen|viec dat lich)", folded))
+    return bool(re.fullmatch(r"(?:huy|dung|bo) (?:yeu cau(?: dat lich)?|lich hen|viec dat lich)(?: nay| do)?", folded))
 
 
 def _valid_customer_name(value):
@@ -136,7 +136,7 @@ def _json(raw):
     return json.loads(raw)
 
 
-def pending_contact_action(query, collected_fields):
+def pending_contact_action(query, collected_fields, timezone_name='Asia/Ho_Chi_Minh'):
     """Recognize a complete contact fragment only for an existing request.
 
     Leave questions and mixed business instructions to normal intent routing;
@@ -144,6 +144,10 @@ def pending_contact_action(query, collected_fields):
     """
     from app.services.customer_collection_flow import PHONE_PATTERN, _extract_value
     from app.rag.topics import fold_topic_text
+    from app.services.booking_fragments import service_contact_fragment
+    fragment = service_contact_fragment(query, collected_fields, timezone_name)
+    if fragment is not None:
+        return fragment
     definitions = {field["key"]: field for field in collected_fields.get("field_definitions", [])}
     values = collected_fields.get("values", {})
     raw = query.strip()
@@ -266,7 +270,9 @@ def advance_business_request(db,*,business_id,conversation,query,history,job_key
     if _interpreted_action is not None:
         data = _interpreted_action
     else:
-        data = _deterministic_pending_action(query, existing)
+        data = (_deterministic_pending_action(query, existing)
+                or (pending_contact_action(query, existing, profile.timezone)
+                    if str(existing.get('offering_ref') or '').startswith('service:') else None))
         if data is None:
             record_quota_usage(db,business_id,"ai_calls",1,idempotency_key=f"business-request:{job_key}")
             interpretation_messages=[
@@ -321,13 +327,24 @@ def advance_business_request(db,*,business_id,conversation,query,history,job_key
         values.pop("payment_method",None)
     supplied=data.get("fields",{})
     if not isinstance(supplied,dict): raise ValueError("invalid_business_fields")
+    from app.services.booking_fragments import service_contact_fragment, explicit_calendar, PHONE
+    fragment = service_contact_fragment(query, {**existing, 'offering_ref': ref,
+        'field_definitions': definitions, 'values': values}, profile.timezone) if offering['kind']=='service' else None
+    if fragment:
+        existing.update(fragment['calendar_parts'])
+        if fragment['calendar_invalid']:
+            for definition in definitions:
+                if definition.get('type')=='datetime':
+                    values.pop(definition['key'], None)
+                    errors.append(definition['label'])
+                    changed=True
     for definition in definitions:
         key=definition["key"]; item=supplied.get(key)
         if not isinstance(item,dict): continue
         value,proof=item.get("value"),item.get("evidence")
-        calendar_proof = (query + " " + str(existing.get("pending_calendar_time_evidence") or ""))
-        trusted_calendar_fragment = (_interpreted_action is not None and definition.get("type") == "datetime"
-            and bool(existing.get("pending_calendar_time_evidence")) and proof == calendar_proof)
+        expected_calendar = ((fragment or {}).get('fields') or {}).get(key)
+        trusted_calendar_fragment = (definition.get("type") == "datetime" and expected_calendar
+            and proof == expected_calendar['evidence'] and str(value) == expected_calendar['value'])
         if not isinstance(proof,str) or not proof.strip() or (proof not in query and not trusted_calendar_fragment): continue
         if not isinstance(value,(str,int)) or isinstance(value,bool): continue
         value=str(value).strip()
@@ -364,6 +381,8 @@ def advance_business_request(db,*,business_id,conversation,query,history,job_key
                 value=_extract_value("address",value)
                 if not value: raise ValueError()
             elif kind=="phone":
+                if len(list(PHONE.finditer(proof))) > 1:
+                    raise ValueError('ambiguous phone')
                 value=_extract_value("phone",value)
                 if not value: raise ValueError()
                 from app.services.customer_collection import contact_hash,encrypt_contact
@@ -376,6 +395,11 @@ def advance_business_request(db,*,business_id,conversation,query,history,job_key
             elif kind in {"date","datetime"}:
                 when=datetime.fromisoformat(value)
                 if kind=="datetime" and when.tzinfo is None: raise ValueError()
+                if kind=='datetime' and not trusted_calendar_fragment:
+                    proof_dates, proof_times, ambiguous = explicit_calendar(proof)
+                    local_when = when.astimezone(ZoneInfo(profile.timezone))
+                    if ambiguous or (proof_times and proof_times[0] != local_when.time()):
+                        raise ValueError('unsupported time')
                 if definition.get('future_only') and (when.date()<datetime.now(ZoneInfo(profile.timezone)).date()
                         or (kind=='datetime' and when<=datetime.now(timezone.utc))): raise ValueError()
                 explicit=re.search(r"\b(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})\b",proof)
@@ -388,6 +412,11 @@ def advance_business_request(db,*,business_id,conversation,query,history,job_key
                 if kind=='datetime' and not re.search(r"\b\d{1,2}(?::\d{2}|h\d{0,2}|\s*(?:giờ|am|pm))\b",proof,re.I): raise ValueError()
                 if kind=='date': value=when.date().isoformat()
         except ValueError:
+            if kind=='phone':
+                values.pop(key, None)
+                existing.pop('encrypted_phone', None)
+                existing['contact_hashes']={k:v for k,v in existing.get('contact_hashes',{}).items() if k!='phone'}
+                changed=True
             errors.append(definition["label"]); continue
         if values.get(key)!=value: changed=True
         values[key]=value
@@ -410,6 +439,7 @@ def advance_business_request(db,*,business_id,conversation,query,history,job_key
     policy_snapshot=policy.model_dump(mode="json")
     fields={**existing,"offering_ref":ref,"field_definitions":definitions,"values":values}
     result={"state":"collecting" if missing or errors else "review","offering":offering,"received":values,
+        "calendar_parts": {key: value for key, value in existing.items() if key.startswith('pending_calendar_')},
         "configured_payment_methods":{k:PAYMENT_LABELS[k] for k in profile.payment_methods},
         "field_definitions":definitions,
         "missing":[d["label"] for d in missing],"payment_methods":{k:PAYMENT_LABELS[k] for k in profile.payment_methods},"invalid":errors,"order_created":False,

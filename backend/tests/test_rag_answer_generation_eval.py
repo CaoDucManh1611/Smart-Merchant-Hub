@@ -271,7 +271,7 @@ def test_case_011_graph_fallback_is_captured_by_read_only_notification_spy(monke
 
         assert artifact["application_status"] == "graph_answer"
         assert artifact["generated_response"]
-        assert "nhân viên kiểm tra" in artifact["generated_response"].lower()
+        assert "nhân viên shop" in artifact["generated_response"].lower()
         assert artifact["error_type"] is None
         assert artifact["execution_safety"]["database_query_only"] is True
         assert artifact["side_effects"]["attempted_database_models"] == []

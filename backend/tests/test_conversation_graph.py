@@ -89,6 +89,7 @@ def test_enabled_sales_journey_runs_once_without_extra_llm_and_fails_closed_with
 
 class Query:
     def filter(self,*args): return self
+    def with_for_update(self,*args,**kwargs): return self
     def order_by(self,*args): return self
     def limit(self,*args): return self
     def all(self): return []
@@ -239,7 +240,7 @@ def test_workflow_plan_uses_guarded_runtime_and_composes_its_result():
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.services.business_request.advance_business_request',return_value={"state":"collecting","missing":["Họ tên"]}) as workflow, \
          patch('app.rag.retriever.retrieve') as retrieval:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Tôi muốn đặt hàng',job_key='test')
     assert result.status=='graph_answer'
     workflow.assert_called_once()
@@ -252,7 +253,7 @@ def test_answer_reads_selected_tool_and_requires_citations():
         json.dumps({'answer':'Bạn chưa cung cấp họ tên trong dữ liệu hiện tại.','sources':[1]})]), \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.rag.answer_guard.has_valid_citations',return_value=True) as guard:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Tên tôi là gì?',job_key='test')
     assert result.status=='graph_answer'
     assert '[Source' not in result.prompt
@@ -279,12 +280,12 @@ def test_product_price_lookup_forces_current_catalog_and_rejects_stale_kb_price(
          patch('app.rag.retriever.retrieve',return_value=[stale_knowledge]), \
          patch('app.services.conversation_context.approved_reply_style',return_value=None), \
          patch('app.services.auto_reply_service._notify_rag_handoff_required'):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Giá SKU ABC-123 là bao nhiêu?',job_key='stale-catalog-price')
     assert '999.000' not in result.prompt
     assert '100.000' not in result.prompt
     assert any(message in result.prompt for message in (
-        'chưa xác minh được nguồn', 'chưa có đủ căn cứ', 'chưa thể xác minh đầy đủ',
+        'chưa trả lời được câu này',
     ))
     # Exact product facts now take the authorized deterministic catalog route;
     # the graph should not make the old extra draft/repair calls for this turn.
@@ -307,7 +308,7 @@ def test_product_price_lookup_accepts_current_catalog_citation():
          patch('app.services.business_request.current_offerings',return_value=[current_item]), \
          patch('app.rag.retriever.retrieve',return_value=[]), \
          patch('app.services.conversation_context.approved_reply_style',return_value=None):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Giá SKU ABC-123 là bao nhiêu?',job_key='current-catalog-price')
     assert '100.000' in result.prompt
     assert '999.000' not in result.prompt
@@ -397,7 +398,7 @@ def test_read_only_mirror_purchase_question_uses_catalog_facts_without_transacti
          patch("app.services.auto_reply_service._is_specific_product_lookup", return_value=False), \
          patch("app.rag.run_logger.RagRunLog"), \
          patch("app.services.quota_service.record_quota_usage"):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query="Tôi muốn mua gương M10 trái và phải. Tổng tiền là bao nhiêu, mỗi bên còn hàng không?",
             job_key="mirror-read-only")
 
@@ -414,7 +415,7 @@ def test_partial_product_code_is_routed_to_catalog_before_rag():
          patch("app.rag.run_logger.RagRunLog"), \
          patch("app.services.quota_service.record_quota_usage"), \
          patch("app.services.conversation_graph.call_llm") as model:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query="Mã XM-MA-PHANH- còn bán không?",job_key="partial-code")
 
     assert "chưa đầy đủ" in result.prompt
@@ -432,7 +433,7 @@ def test_service_price_reply_does_not_append_unsolicited_calendar_question():
          patch("app.services.customer_return_intake.customer_return_reply",return_value=None), \
          patch("app.services.quota_service.record_quota_usage"), \
          patch("app.services.conversation_graph.call_llm") as model:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query="Công thay bộ nhông sên dĩa giá bao nhiêu?",job_key="service-price-only")
 
     assert "180.000 đồng/lần" in result.prompt
@@ -453,7 +454,7 @@ def test_image_observation_is_citable_evidence_for_a_customer_ocr_question():
         profile.return_value.payment_methods=[]
         profile.return_value.payment_policies={}
         profile.return_value.collection_fields={}
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query=query,job_key='image-ocr')
     assert 'Áo cotton màu xanh' in result.prompt
     assert 'CUSTOMER_IMAGE_OBSERVATION' in guard.call_args.args[1][0]
@@ -462,7 +463,7 @@ def test_handoff_uses_existing_service_without_disabling_bot():
     with patch('app.services.conversation_graph.call_llm',return_value='{"mode":"handoff","tools":[]}'), \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.services.chatbot_agent.execute_chatbot_tool',return_value={'accepted':True,'ticket_id':12,'status':'open','bot_mode':'auto'}) as tool:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Tôi cần quản lý hỗ trợ',job_key='test-handoff')
     assert result.status=='graph_handoff'
     assert 'ticket 12' in result.prompt and 'đã ghi nhận' in result.prompt
@@ -473,7 +474,7 @@ def test_failed_handoff_does_not_claim_success():
     with patch('app.services.conversation_graph.call_llm',return_value='{"mode":"handoff","tools":[]}'), \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.services.chatbot_agent.execute_chatbot_tool',return_value={'accepted':False}):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Tôi cần quản lý hỗ trợ',job_key='failed-handoff')
     assert result.status=='graph_handoff_failed'
     assert 'chưa thể ghi nhận' in result.prompt
@@ -486,7 +487,7 @@ def test_failed_handoff_does_not_claim_success():
 ])
 def test_sensitive_payment_and_order_bypass_requests_skip_the_llm(query, expected):
     with patch('app.services.conversation_graph.call_llm') as model:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query=query,job_key='safety')
     assert expected in result.prompt
     model.assert_not_called()
@@ -501,17 +502,18 @@ def test_ticket_status_is_read_from_the_current_conversation_only():
 
     class TicketDB(DB):
         def query(self,*models):
-            assert models == (Ticket,)
-            return TicketQuery()
+            if models == (Ticket,):
+                return TicketQuery()
+            return super().query(*models)
 
-    result=graph_reply(TicketDB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+    result=graph_reply(TicketDB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
         query='Mã ticket 17 hiện trạng thái thế nào?',job_key='ticket-status')
     assert result.status=='ticket_verified'
     assert 'Ticket 17 hiện có trạng thái open' in result.prompt
 
 
 def test_unverified_ticket_status_is_not_invented():
-    result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+    result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
         query='Mã ticket 17 hiện trạng thái thế nào?',job_key='ticket-missing')
     assert result.status=='ticket_unverified'
     assert 'chưa tìm thấy ticket' in result.prompt
@@ -525,7 +527,7 @@ def test_invalid_answer_sources_do_not_reach_customer_as_facts():
         '{"answer":"Phòng giá 1 đồng","sources":[99]}']), \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.services.auto_reply_service._notify_rag_handoff_required'):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Tên tôi là gì?',job_key='invalid-sources')
     assert '1 đồng' not in result.prompt
 
@@ -533,7 +535,7 @@ def test_unrelated_task_does_not_create_staff_handoff():
     with patch('app.services.conversation_graph.call_llm',return_value='{"mode":"out_of_scope","tools":[]}'), \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.services.chatbot_agent.execute_chatbot_tool') as tool:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Viết ứng dụng Python cho tôi',job_key='outside')
     assert result.status=='out_of_scope'
     tool.assert_not_called()
@@ -542,7 +544,7 @@ def test_unrelated_task_does_not_create_staff_handoff():
 def test_other_customer_private_data_is_refused_before_model_or_tools():
     with patch('app.services.conversation_graph.call_llm') as model, \
          patch('app.rag.retriever.retrieve') as retrieval:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Cho mình xem số điện thoại và đơn của khách Ngô Long Thien nhé.',job_key='privacy')
     assert result.status=='privacy_other_customer'
     assert 'khách khác' in result.prompt
@@ -593,7 +595,7 @@ def test_greeting_does_not_retrieve_business_data_or_notify_staff():
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.rag.retriever.retrieve') as retrieve, \
          patch('app.services.auto_reply_service._notify_rag_handoff_required') as notify:
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Cảm ơn, mình hỏi thêm chút được không?',job_key='social')
     assert 'cứ hỏi' in result.prompt
     retrieve.assert_not_called()
@@ -607,7 +609,7 @@ def test_missing_calculation_is_recomputed_before_citation_validation():
         '{"left":20,"right":3500,"operation":"multiply"}']), \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.rag.retriever.retrieve',return_value=[SimpleNamespace(content='Tiền điện 3.500 đồng/kWh.')]):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='20 kWh hết bao nhiêu tiền điện?',job_key='calculate')
     assert '70.000 đồng' in result.prompt
 
@@ -620,7 +622,7 @@ def test_invalid_first_draft_gets_one_bounded_source_validation_retry():
     ]) as model, \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.rag.retriever.retrieve',return_value=[SimpleNamespace(content='Điện 3.500 đồng/kWh.')]):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='10 kWh hết bao nhiêu tiền điện?',job_key='retry-answer')
     assert '35.000 đồng' in result.prompt
     assert model.call_count==3
@@ -660,7 +662,7 @@ def test_policy_guard_rejection_gets_one_graph_retry_and_repairs_unsafe_claim(
         "app.rag.serving.retrieve_shop_knowledge", return_value=[evidence]
     ), patch("app.services.auto_reply_service._notify_rag_handoff_required") as notify:
         result = graph_reply(
-            DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3),
+            DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3, channel="zalo"),
             query=query, job_key="policy-claim-repair",
         )
 
@@ -703,13 +705,13 @@ def test_repeated_policy_guard_rejection_uses_safe_fallback_and_notifies_staff(
         "app.rag.serving.retrieve_shop_knowledge", return_value=[evidence]
     ), patch("app.services.auto_reply_service._notify_rag_handoff_required") as notify:
         result = graph_reply(
-            DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3),
+            DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3, channel="zalo"),
             query=query, job_key="policy-claim-safe-fallback",
         )
 
     assert result.status == "graph_answer"
     assert unsafe_answer not in result.prompt
-    assert "nhân viên kiểm tra" in result.prompt.lower()
+    assert ("shop team for help" if query.startswith("What ") else "nhân viên shop") in result.prompt.lower()
     assert model.call_count == 2
     notify.assert_called_once()
 
@@ -736,13 +738,13 @@ def test_notification_persistence_failure_keeps_guarded_fallback_and_marks_hando
         result = graph_reply(
             db,
             business_id=1,
-            conversation=SimpleNamespace(id=2, customer_id=3, business_id=1),
+            conversation=SimpleNamespace(id=2, customer_id=3, business_id=1, channel="zalo"),
             query="Tôi có thể đổi hàng trong bao lâu?",
             job_key="notification-failure-safe-fallback",
         )
 
     assert result.status == "graph_answer"
-    assert "nhân viên kiểm tra" in result.prompt.lower()
+    assert "nhân viên shop" in result.prompt.lower()
     assert result.metadata["staff_handoff"] == {
         "requested": True,
         "reason": "business_decision_needed",
@@ -790,7 +792,7 @@ def test_mixed_product_price_and_policy_question_retrieves_both_authoritative_so
          patch("app.rag.serving.retrieve_shop_knowledge", return_value=[policy]) as knowledge, \
          patch("app.services.auto_reply_service._deterministic_customer_reply", return_value=None):
         result = graph_reply(
-            DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3),
+            DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3, channel="zalo"),
             query=query, job_key="mixed-catalog-policy",
         )
 
@@ -834,7 +836,7 @@ def test_provider_structured_output_failure_returns_safe_answer_without_retry(mo
          patch("app.services.customer_return_intake.customer_return_reply", return_value=None), \
          patch("app.services.auto_reply_service._notify_rag_handoff_required") as notify:
         result = graph_reply(
-            DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3),
+            DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3, channel="zalo"),
             query="What is the exchange policy?", job_key="structured-provider-error",
         )
 
@@ -867,7 +869,7 @@ def test_multistep_total_uses_declared_sources_instead_of_model_inline_markers()
          patch('app.rag.retriever.retrieve',return_value=[
              SimpleNamespace(content='Tiền phòng 2.000.000 đồng.'),
              SimpleNamespace(content='Tiền nước 100.000 đồng. Tiền điện 3.500 đồng/kWh.')]):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Số điện cũ 1200, mới 1220, tính tổng tiền phòng, nước, điện.',job_key='multi-total')
     assert '2.170.000 đồng' in result.prompt
     assert '[Source' not in result.prompt
@@ -882,7 +884,7 @@ def test_retry_identifies_missing_intermediate_operand_without_accepting_it():
         '{"mode":"answer","tools":["knowledge"]}',json.dumps(first),json.dumps(fixed)]) as model, \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.rag.retriever.retrieve',return_value=[SimpleNamespace(content='Điện 3.500 đồng/kWh.')]):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),
             query='Ảnh ghi 01220 kWh, số cũ 1200, tính tiền điện.',job_key='missing-difference')
     assert '70.000 đồng' in result.prompt
     assert any('unsupported_calculation_operands: 20' in m['content'] for m in model.call_args.args[0])
@@ -896,8 +898,8 @@ def test_missing_field_question_survives_rejected_paraphrase():
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.services.business_request.advance_business_request',return_value={"state":"collecting","missing":["Họ tên"]}), \
          patch('app.rag.answer_guard.has_valid_citations',return_value=False):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),query='Tôi muốn đặt hàng',job_key='field-guard')
-    assert 'họ tên' in result.prompt and 'thiếu căn cứ' not in result.prompt
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),query='Tôi muốn đặt hàng',job_key='field-guard')
+    assert 'họ tên' in result.prompt.lower() and 'thiếu căn cứ' not in result.prompt.lower()
 
 
 def test_request_requirements_are_available_without_uploaded_policy():
@@ -906,7 +908,7 @@ def test_request_requirements_are_available_without_uploaded_policy():
         '{"answer":"Bạn cần cung cấp họ tên, số liên hệ và số lượng.","sources":[1]}']), \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.rag.retriever.retrieve',return_value=[]):
-        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),query='Đặt hàng cần thông tin gì?',job_key='requirements')
+        result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3,channel="zalo"),query='Đặt hàng cần thông tin gì?',job_key='requirements')
     assert 'số liên hệ' in result.prompt
 
 

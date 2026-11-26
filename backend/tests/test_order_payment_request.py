@@ -72,7 +72,7 @@ def test_reported_transfer_not_paid_and_retries_do_not_double_collect(setup):
     _,order=submitted(setup)
     from app.services.customer_order_service import customer_context_reply
     answer=customer_context_reply(db,1,conversation.id,'Tôi đã chuyển khoản rồi')
-    assert 'đối soát' in answer and order.paid_amount==0 and order.status=='draft'
+    assert 'đối soát' in answer and order.paid_amount==0 and order.status=='pending_confirmation'
     assert payment_state(order)=='awaiting_reconciliation'
     paid(db,order);db.commit()
     _,_,created=paid(db,order)

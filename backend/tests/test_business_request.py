@@ -171,10 +171,12 @@ def test_placeholder_name_is_not_saved_as_booking_customer(setup):
 
 def details(kind):
     values={'name':field('Khách Thử Nghiệm'),'phone':field('0901234567'),'payment_method':field('bank_transfer','chuyển khoản')}
-    if kind=='goods': values['quantity']=field('2')
+    if kind=='goods':
+        values.update(quantity=field('2'),email=field('buyer@example.test'),address=field('12 Đường Thử Nghiệm'))
     elif kind=='rental': values['start_date']=field('2099-11-01','01/11/2099')
     else: values['starts_at']=field('2099-11-01T09:00:00+07:00','01/11/2099 09:00')
     text='Khách Thử Nghiệm, 0901234567, '+('2 chiếc' if kind=='goods' else '01/11/2099 09:00')
+    if kind=='goods': text+=', buyer@example.test, 12 Đường Thử Nghiệm'
     return text+', chuyển khoản',values
 
 

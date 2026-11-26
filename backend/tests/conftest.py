@@ -225,6 +225,13 @@ os.environ["CHANNEL_ENCRYPTION_KEY"] = "pytest-channel-encryption-key"
 os.environ["CHANNEL_ROUTE_SECRET"] = "test-channel-route-secret-0123456789"
 os.environ["RAG_AUTO_REPLY_ENABLED"] = "false"
 os.environ["RAG_AUTO_SEED_ENABLED"] = "false"
+# A developer's local configuration must not change test routing, reject
+# TestClient's host, or send requests using real AI credentials.
+os.environ["CATALOG_DIALOGUE_ENABLED"] = "false"
+os.environ["ALLOWED_HOSTS"] = "testserver,localhost,127.0.0.1"
+for _credential in ("GROQ_API_KEY", "GROQ_API_KEYS", "LLM_API_KEY", "LLM_API_KEYS",
+                    "GEMINI_API_KEY", "GEMINI_API_KEYS", "OPENAI_API_KEY"):
+    os.environ[_credential] = ""
 
 
 def _ensure_migration_dependencies() -> None:

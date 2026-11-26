@@ -344,7 +344,8 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
         folded = fold_topic_text(route_text)
         if explicit_catalog_kind(folded) is not None:
             return None
-        if any(cue in folded for cue in (
+        from app.services.customer_collection_flow import is_order_intent
+        if is_order_intent(route_text) and any(cue in folded for cue in (
             "dat hang", "dat mua", "muon mua", "mua luon", "chot don", "tao don",
             "thanh toan ngay", "buy now", "order now", "checkout",
         )):
@@ -819,6 +820,12 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                 CustomerCollectionSession.purpose == "business_request",
                 CustomerCollectionSession.status.in_(["pending", "partial"]),
             ).first()
+            if business_session is not None:
+                from app.services.quantity_price_quote import pending_quantity_quote
+                quote = pending_quantity_quote(db, business_id, router_query, business_session)
+                if quote:
+                    return CollectionFlowResult(session_id=business_session.id, status="quantity_price_quote",
+                        current_field=business_session.current_field, prompt=quote)
             if business_session is not None and not is_order_intent(router_query):
                 order_result = None
             else:
@@ -1575,6 +1582,11 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                 fields = list(dict.fromkeys([str(value) for value in [*invalid, *missing]]))
                 offering = workflow.get("offering") or {}
                 lead = f"Mình đang hỗ trợ bạn đặt {offering['name']}. " if offering.get("name") else ""
+                if invalid:
+                    lead += "Bạn kiểm tra lại thông tin cho hợp lệ nhé. "
+                calendar = workflow.get('calendar_parts') or {}
+                if calendar.get('pending_calendar_time') and not calendar.get('pending_calendar_date'):
+                    lead += f"Mình đã ghi nhận {calendar['pending_calendar_time'][:5]}. Bạn muốn đặt lịch vào ngày nào? "
                 return {
                     "answer": lead + "Bạn cho mình thêm " + ", ".join(fields) + " nhé.",
                     "needs_staff_decision": False,
@@ -1756,7 +1768,8 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
             return CollectionFlowResult(session_id=session.id, status="quantity_price_quote",
                 current_field=session.current_field, prompt=quantity_quote)
     from app.services.business_request import pending_contact_action
-    pending_contact_fragment = (pending_contact_action(query, session.collected_fields or {})
+    from app.services.business_profile import get_business_profile
+    pending_contact_fragment = (pending_contact_action(query, session.collected_fields or {}, get_business_profile(db, business_id).timezone)
         if session is not None and session.purpose == "business_request"
         and str(pending.get("offering_ref") or "").startswith("service:") else None)
     pending_business_action = None
@@ -1818,28 +1831,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                 "needs_staff_decision": False,
                 "workflow_result": {"state": "staff_quote_required", "transaction_created": False},
             }
-        interpreted = pending_business_action
-        if session is not None and str((session.collected_fields or {}).get("offering_ref") or "").startswith("service:"):
-            time_only = re.fullmatch(r"\s*\d{1,2}(?::|h)\d{2}\s*(?:AM|PM|sáng|chiều|tối)?\s*[.!]?\s*", query, re.I)
-            date_only = re.fullmatch(r"\s*(?:ngày\s*)?\d{1,2}[/-]\d{1,2}[/-]\d{4}\s*[.!]?\s*", query, re.I)
-            if time_only and typed_calendar_time is not None:
-                session.collected_fields = {**session.collected_fields,
-                    "pending_calendar_time": typed_calendar_time.isoformat(), "pending_calendar_time_evidence": query}
-                db.flush()
-                return {"workflow_result": {"legacy_session": True,
-                    "result": f"Mình đã ghi nhận {typed_calendar_time.strftime('%H:%M')}. Bạn muốn đặt lịch vào ngày nào?"}, "evidence": []}
-            if date_only and typed_calendar_date is not None and session.collected_fields.get("pending_calendar_time"):
-                from app.services.business_profile import get_business_profile
-                profile = get_business_profile(db, business_id)
-                saved_time = time.fromisoformat(session.collected_fields["pending_calendar_time"])
-                appointment_at = datetime.combine(typed_calendar_date, saved_time, ZoneInfo(profile.timezone)).isoformat()
-                proof = query + " " + session.collected_fields["pending_calendar_time_evidence"]
-                # Both fragments came from this pending request, never from a model guess.
-                fields = {d["key"]: {"value": appointment_at, "evidence": proof}
-                    for d in session.collected_fields.get("field_definitions", []) if d.get("type") == "datetime"}
-                interpreted = {"action": "collect", "action_evidence": query,
-                    "offering_ref": session.collected_fields["offering_ref"], "fields": fields,
-                    "calendar_fragment_evidence": proof}
+        interpreted = pending_contact_fragment or pending_business_action
         if booking_service_clarification:
             service_choices = current_offerings(db, business_id, query="", kind="service", limit=12)
             reference_requested = bool(re.search(r"\b(?:tren|do|nay|vua roi)\b", folded_query))

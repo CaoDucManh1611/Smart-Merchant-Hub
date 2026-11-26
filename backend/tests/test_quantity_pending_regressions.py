@@ -198,8 +198,8 @@ def test_quantity_uses_refreshed_available_stock(pending_mask):
     unavailable = advance_customer_collection(db, text="2", **arguments)
 
     assert unavailable.status == "stock_unavailable"
-    assert unavailable.current_field == "quantity"
-    assert session.collected_fields["quantity_pending"]
+    assert unavailable.current_field == "stock_resolution"
+    assert session.collected_fields["stock_offer"]["offered_quantity"] == 1
     mask.reserved_quantity = 1
     db.commit()
     quoted = advance_customer_collection(db, text="2", **arguments)

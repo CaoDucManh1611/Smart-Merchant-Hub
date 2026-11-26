@@ -428,7 +428,7 @@ def catalog_dialogue_reply(db,business_id,conversation,query,platform_db=None):
        'budget':float(constraints[-1][1]),'product':None,'shortlist':[p.id for p in chosen]}})
  # Asking whether the shop sells another category is still a shop question.
  availability=re.search(r"(?:có\s+bán|co\s+ban|bán|ban)\s+(.+?)\s+(?:không|khong|ko|k)(?:\s+(?:ạ|a|vậy|vay|nhỉ|nhi))?[?.!]*$",query.strip(),re.I)
- if availability:
+ if availability and not re.search(r"[,;]",availability.group(1)):
   subject=availability.group(1).strip()
   term=normalize_product_text(subject)
   if term and term not in {'hang','san pham','mat hang','gi','nhung gi'} and len(term.split())<=8:
@@ -461,10 +461,12 @@ def catalog_dialogue_reply(db,business_id,conversation,query,platform_db=None):
  if stock_reply is not None:return stock_reply
  basic_budget=_basic_budget_reply(query,products,state)
  if basic_budget is not None:return basic_budget
+ scoped_products=_price_catalog_scope(query,products,families,state)
  # A uniquely named purchase is already grounded in the live catalogue.
  # Let the existing checkout handle quantity/contact/confirmation without
- # requiring a remote intent call to succeed first.
- if is_order_intent(query):
+ # requiring a remote intent call to succeed first. A price inquiry still
+ # belongs to catalog lookup; mentioning buying does not authorize checkout.
+ if scoped_products is None and is_order_intent(query):
   named_purchase=resolve_product_mentions(db,business_id=business_id,
       text=query,conversation_id=None)
   if len(named_purchase)==1 and named_purchase[0].id in {p.id for p in products}:
@@ -473,7 +475,6 @@ def catalog_dialogue_reply(db,business_id,conversation,query,platform_db=None):
  payload=json.dumps({'categories':families,'prior':prior,'state':state,'current':query},ensure_ascii=False,separators=(',',':'))
  browse_term=_product_group_query(query) if overview=='product_group' else None
  browse_matches=[f for f in families if browse_term and normalize_product_text(browse_term) in normalize_product_text(f)]
- scoped_products=_price_catalog_scope(query,products,families,state)
  if scoped_products is None:
   scoped_products=_detail_catalog_scope(query,products,families,state)
  try:

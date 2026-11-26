@@ -201,6 +201,18 @@ def test_short_phone_is_invalid_before_country_code_normalization():
     assert _extract_value("phone", VALID_PHONE) == "+84323723830"
 
 
+def test_service_contact_labels_and_cancellation_do_not_replace_recipient_name():
+    from app.services.business_request import pending_contact_action
+    existing = {'offering_ref': 'service:1', 'field_definitions': [
+        {'key': 'name', 'type': 'text'}, {'key': 'phone', 'type': 'phone'},
+        {'key': 'starts_at', 'type': 'datetime'},
+    ], 'values': {'name': NAME}}
+    correction = pending_contact_action(f'Số liên hệ: {VALID_PHONE}', existing)
+    assert correction['fields']['phone']['value'] == VALID_PHONE
+    assert 'name' not in correction['fields']
+    assert pending_contact_action('Dừng yêu cầu này', existing) is None
+
+
 def test_prior_stored_contact_cannot_fill_current_invalid_phone_without_evidence(
     booking_shop, offline_service_dependencies,
 ):

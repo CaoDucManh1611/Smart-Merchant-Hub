@@ -25,6 +25,7 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     outputs:
       backend: ${{ steps.images.outputs.backend }}
       frontend: ${{ steps.images.outputs.frontend }}
@@ -75,6 +76,7 @@ jobs:
   release-smoke:
     needs: publish-images
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       BACKEND_IMAGE: ${{ needs.publish-images.outputs.backend }}:${{ needs.publish-images.outputs.sha }}
       FRONTEND_IMAGE: ${{ needs.publish-images.outputs.frontend }}:${{ needs.publish-images.outputs.sha }}
@@ -120,6 +122,7 @@ jobs:
           OTP_SMTP_PASSWORD=ci-only-otp-password
           RAG_AUTO_SEED_ENABLED=false
           RAG_AUTO_REPLY_ENABLED=false
+          REDIS_URL=redis://redis:6379/0
           EMBEDDING_PROVIDER=local
           CORS_ORIGINS=http://localhost:5173
           ALLOWED_HOSTS=localhost,127.0.0.1,backend
@@ -129,6 +132,10 @@ jobs:
             backend:
               image: ${BACKEND_IMAGE}
               pull_policy: always
+              build: !reset null
+              # Exercise packaged code and migrations, not checkout bind mounts.
+              volumes: !override
+                - release_uploads:/app/uploads
               environment:
                 ENVIRONMENT: production
               healthcheck:
@@ -136,6 +143,8 @@ jobs:
             frontend:
               image: ${FRONTEND_IMAGE}
               pull_policy: always
+              build: !reset null
+              volumes: !reset []
               # The published frontend is the Nginx production image (port 80),
               # while the base compose file targets Vite's dev port 5173.
               # Replace that mapping for this release smoke stack.
@@ -143,11 +152,21 @@ jobs:
                 - "5173:80"
               healthcheck:
                 test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+            worker:
+              image: ${BACKEND_IMAGE}
+              pull_policy: always
+              build: !reset null
+              volumes: !override
+                - release_uploads:/app/uploads
+              environment:
+                ENVIRONMENT: production
+          volumes:
+            release_uploads:
           EOF
           docker compose -f docker-compose.yml -f docker-compose.release.yml config --quiet
 
       - name: Pull verified images
-        run: docker compose -f docker-compose.yml -f docker-compose.release.yml pull backend frontend
+        run: docker compose -f docker-compose.yml -f docker-compose.release.yml pull backend frontend worker
 
       - name: Run platform and tenant migrations before rollout
         run: |
@@ -156,7 +175,7 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.release.yml run --rm backend python -m app.scripts.upgrade_active_tenants --apply
 
       - name: Start verified release
-        run: docker compose -f docker-compose.yml -f docker-compose.release.yml up -d backend frontend
+        run: docker compose -f docker-compose.yml -f docker-compose.release.yml up -d backend frontend worker
 
       - name: Verify release health
         shell: bash
@@ -164,12 +183,13 @@ jobs:
           for attempt in $(seq 1 30); do
             backend_status=$(docker inspect --format '{{.State.Health.Status}}' crm_chatbot_backend 2>/dev/null || true)
             frontend_status=$(docker inspect --format '{{.State.Health.Status}}' crm_chatbot_frontend 2>/dev/null || true)
-            if [ "$backend_status" = "healthy" ] && [ "$frontend_status" = "healthy" ]; then
+            worker_status=$(docker inspect --format '{{.State.Health.Status}}' crm_chatbot_worker 2>/dev/null || true)
+            if [ "$backend_status" = "healthy" ] && [ "$frontend_status" = "healthy" ] && [ "$worker_status" = "healthy" ]; then
               break
             fi
             if [ "$attempt" = "30" ]; then
               docker compose -f docker-compose.yml -f docker-compose.release.yml ps
-              docker compose -f docker-compose.yml -f docker-compose.release.yml logs --no-color db backend frontend
+              docker compose -f docker-compose.yml -f docker-compose.release.yml logs --no-color db redis backend frontend worker
               exit 1
             fi
             sleep 5
@@ -181,11 +201,12 @@ jobs:
           fi
           docker exec crm_chatbot_backend python -c "import urllib.request; request=urllib.request.Request('http://127.0.0.1:8000/health', headers={'Host': 'localhost', 'X-Forwarded-Proto': 'https'}); response=urllib.request.urlopen(request, timeout=5); raise SystemExit(0 if response.status == 200 else 1)"
           curl --fail --silent --show-error http://localhost:5173/
+          test "$(docker compose -f docker-compose.yml -f docker-compose.release.yml exec -T redis redis-cli ping)" = "PONG"
           docker compose -f docker-compose.yml -f docker-compose.release.yml ps
 
       - name: Collect release logs on failure
         if: failure()
-        run: docker compose -f docker-compose.yml -f docker-compose.release.yml logs --no-color db backend frontend
+        run: docker compose -f docker-compose.yml -f docker-compose.release.yml logs --no-color db redis backend frontend worker
 
       - name: Tear down release stack
         if: always()
@@ -194,6 +215,7 @@ jobs:
   promote-latest:
     needs: [publish-images, release-smoke]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Log in to GitHub Container Registry

@@ -117,8 +117,12 @@ def test_image_only_send_uses_real_dom_upload_and_excludes_pending_preview(monke
 @pytest.mark.parametrize("image_delivered", [True, False])
 def test_meta_image_delivery_requires_a_sent_image_bubble(monkeypatch, channel, caption, image_delivered):
     class Locator:
-        async def fill(self, value):
+        async def fill(self, value, **_kwargs):
+            self.draft = value
             page.caption = value
+
+        async def evaluate(self, *_args):
+            return getattr(self, "draft", "")
 
         async def click(self, **_):
             page.clicked = True
@@ -175,8 +179,11 @@ def test_meta_image_delivery_requires_a_sent_image_bubble(monkeypatch, channel, 
 
 def test_meta_audio_delivery_requires_a_new_outbound_message_marker(monkeypatch):
     class Locator:
-        async def fill(self, _value):
-            pass
+        async def fill(self, _value, **_kwargs):
+            self.draft = _value
+
+        async def evaluate(self, *_args):
+            return getattr(self, "draft", "")
 
         async def click(self, **_):
             pass
@@ -372,8 +379,11 @@ def test_meta_outbound_click_timeout_is_ambiguous_and_must_not_retry(monkeypatch
         def __init__(self, selector):
             self.selector = selector
 
-        async def fill(self, _value):
-            pass
+        async def fill(self, _value, **_kwargs):
+            self.draft = _value
+
+        async def evaluate(self, *_args):
+            return getattr(self, "draft", "")
 
         async def click(self, **_kwargs):
             raise asyncio.TimeoutError("send control changed during click")
@@ -413,8 +423,11 @@ def test_meta_outbound_requires_provider_message_id_even_if_composer_clears(monk
             self.page = page
             self.selector = selector
 
-        async def fill(self, _value):
-            pass
+        async def fill(self, _value, **_kwargs):
+            self.draft = _value
+
+        async def evaluate(self, *_args):
+            return getattr(self, "draft", "")
 
         async def click(self, **_kwargs):
             pass
@@ -456,8 +469,11 @@ def test_meta_outbound_accepts_new_visible_bubble_without_provider_message_id(mo
             self.page = page
             self.selector = selector
 
-        async def fill(self, _value):
-            pass
+        async def fill(self, _value, **_kwargs):
+            self.draft = _value
+
+        async def evaluate(self, *_args):
+            return getattr(self, "draft", "")
 
         async def click(self, **_kwargs):
             pass
@@ -1261,7 +1277,7 @@ def test_history_batch_marks_only_explicit_live_inbound_messages(monkeypatch):
 def test_outbound_reuses_only_its_separate_page_and_revalidates_delivery(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    delivery = SimpleNamespace(goto=AsyncMock(), reload=AsyncMock(), wait_for_timeout=AsyncMock(), close=AsyncMock(),is_closed=lambda:False)
+    delivery = SimpleNamespace(bring_to_front=AsyncMock(), goto=AsyncMock(), reload=AsyncMock(), wait_for_timeout=AsyncMock(), close=AsyncMock(),is_closed=lambda:False)
     context = SimpleNamespace(new_page=AsyncMock(return_value=delivery))
     delivery.context=context
     delivery.url='https://business.facebook.com/latest/inbox/messenger?asset_id=123&selected_item_id=target'
@@ -1294,7 +1310,7 @@ def test_outbound_reuses_only_its_separate_page_and_revalidates_delivery(monkeyp
 def test_outbound_does_not_confirm_an_optimistic_bubble(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    delivery = SimpleNamespace(goto=AsyncMock(), reload=AsyncMock(), wait_for_timeout=AsyncMock(), close=AsyncMock(),is_closed=lambda:False)
+    delivery = SimpleNamespace(bring_to_front=AsyncMock(), goto=AsyncMock(), reload=AsyncMock(), wait_for_timeout=AsyncMock(), close=AsyncMock(),is_closed=lambda:False)
     monitor = SimpleNamespace(context=SimpleNamespace(new_page=AsyncMock(return_value=delivery)),
                               url='https://business.facebook.com/latest/inbox/messenger?asset_id=123', is_closed=lambda:False)
     monkeypatch.setattr(bridge, 'CONTROL_PAGE', monitor)
@@ -1351,19 +1367,22 @@ def test_live_reads_scroll_to_latest_before_parsing(monkeypatch):
     assert events == [("scroll", "bottom"), ("wait", 200), ("scroll", "bottom"), ("read", "thread")]
 
 
-def test_failure_snapshot_is_local_throttled_and_does_not_mask_errors(tmp_path, monkeypatch):
+def test_failure_diagnostics_are_local_throttled_and_do_not_capture_messages(tmp_path, monkeypatch):
     monkeypatch.setattr(bridge, "RUNTIME", tmp_path)
     class Page:
         shots = 0
+        reads = 0
         async def screenshot(self, *, path):
             self.shots += 1
             Path(path).write_bytes(b"test")
         async def evaluate(self, script):
+            self.reads += 1
             return {"queryKeys": ["asset_id"]}
     page = Page()
     asyncio.run(bridge._save_meta_failure(page, "selection"))
     asyncio.run(bridge._save_meta_failure(page, "selection"))
-    assert page.shots == 1
+    assert page.shots == 0
+    assert page.reads == 1
     assert json.loads((tmp_path / "diagnostics/selection.json").read_text())["queryKeys"] == ["asset_id"]
     class Broken(Page):
         async def screenshot(self, **kwargs):

@@ -21,6 +21,24 @@ from app.services.product_resolver import (
 )
 
 
+def test_longer_product_name_does_not_also_select_its_shorter_prefix():
+    products = [
+        Product(id=1, business_id=1, sku="SERUM", name="Serum"),
+        Product(id=2, business_id=1, sku="SERUM-C", name="Serum Vitamin C Lunari"),
+        Product(id=3, business_id=1, sku="CLEANSER", name="Sữa rửa mặt dịu nhẹ"),
+    ]
+    assert [p.id for p in find_explicit_product_mentions(
+        products, "Mua Serum Vitamin C Lunari và Sữa rửa mặt dịu nhẹ",
+    )] == [2, 3]
+    assert [p.id for p in find_explicit_product_mentions(
+        products, "Mua Serum Vitamin C Lunari",
+    )] == [2]
+    # A separate occurrence of the shorter name still denotes another item.
+    assert [p.id for p in find_explicit_product_mentions(
+        products, "Mua Serum và Serum Vitamin C Lunari",
+    )] == [1, 2]
+
+
 class ProductResolverTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

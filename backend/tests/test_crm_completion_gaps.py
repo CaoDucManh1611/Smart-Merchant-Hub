@@ -63,281 +63,125 @@ def _finish_checkout(db, *, business_id, customer_id, conversation_id):
     )
 
 
-def test_checkout_creates_draft_then_requires_hashed_otp_before_confirmation():
-    engine = _engine()
-    with Session(engine) as db:
-        business = Business(name="OTP Shop", slug="otp-shop")
-        db.add(business)
-        db.flush()
-        customer = Customer(business_id=business.id, channel="telegram", external_user_id="otp-user")
-        db.add(customer)
-        db.flush()
-        db.add(Product(business_id=business.id, sku="SERUM-OTP", name="Serum", price=Decimal("200000"), stock_quantity=5, status="active"))
-        assignee = User(
-            business_id=business.id,
-            full_name="Responsible Staff",
-            email="responsible@example.test",
-            role="business_agent",
-        )
-        db.add(assignee)
-        db.flush()
-        conversation = Conversation(
-            business_id=business.id,
-            customer_id=customer.id,
-            channel="telegram",
-            assigned_user_id=assignee.id,
-        )
-        db.add(conversation)
-        db.flush()
+def _checkout_entities(db):
+    business = Business(name="Invoice Shop", slug="invoice-shop")
+    db.add(business)
+    db.flush()
+    customer = Customer(business_id=business.id, channel="telegram", external_user_id="invoice-user")
+    db.add(customer)
+    db.flush()
+    product = Product(business_id=business.id, sku="SERUM-INVOICE", name="Serum",
+                      price=Decimal("200000"), stock_quantity=5, status="active")
+    assignee = User(business_id=business.id, full_name="Responsible Staff",
+                    email="responsible@example.test", role="business_agent")
+    db.add_all([product, assignee])
+    db.flush()
+    conversation = Conversation(business_id=business.id, customer_id=customer.id,
+                                channel="telegram", assigned_user_id=assignee.id)
+    db.add(conversation)
+    db.flush()
+    return business, customer, product, assignee, conversation
 
-        with patch("app.services.customer_collection_flow.generate_verification_code", return_value="123456"):
-            completed = _finish_checkout(db, business_id=business.id, customer_id=customer.id, conversation_id=conversation.id)
 
-        assert completed.completed is True
+def _checkout_turn(db, business, customer, conversation, text):
+    return advance_customer_collection(
+        db, business_id=business.id, customer_id=customer.id,
+        conversation_id=conversation.id, source_channel="telegram", text=text,
+    )
+
+
+def test_checkout_invoice_requires_customer_then_staff_confirmation():
+    # Checkout now uses an invoice acknowledgement, not a contact OTP.
+    # Preserve the payment, inventory and staff-review gates in this regression.
+    with Session(_engine()) as db:
+        business, customer, product, assignee, conversation = _checkout_entities(db)
+        with patch("app.services.customer_collection_flow.deliver_otp") as deliver:
+            completed = _finish_checkout(db, business_id=business.id,
+                customer_id=customer.id, conversation_id=conversation.id)
         order = db.query(Order).filter_by(conversation_id=conversation.id).one()
-        assert order.status == "draft"
-        assert order.metadata_["contact_verification_pending"] is True
-        challenges = db.query(CustomerVerificationChallenge).filter_by(customer_id=customer.id).all()
-        assert len(challenges) == 2
-        assert all(challenge.code_hash != "123456" for challenge in challenges)
-        assert all(challenge.status in {"queued", "sent"} for challenge in challenges)
+        session = db.get(CustomerCollectionSession, completed.session_id)
+        assert completed.completed and order.status == "draft"
+        assert session.collected_fields["awaiting_customer_confirmation"] is True
+        assert not order.metadata_.get("customer_confirmed")
+        assert db.query(CustomerVerificationChallenge).count() == 0
+        deliver.assert_not_called()
+        assert order.paid_amount == 0 and order.total_amount == 200000
+        assert product.stock_quantity == 5 and product.reserved_quantity == 1
 
-        blocked = advance_customer_collection(
-            db, business_id=business.id, customer_id=customer.id,
-            conversation_id=conversation.id, source_channel="telegram", text="Xác nhận",
-        )
-        assert "OTP" in blocked.prompt
-        assert order.metadata_["contact_verification_pending"] is True
-
-        verified = advance_customer_collection(
-            db, business_id=business.id, customer_id=customer.id,
-            conversation_id=conversation.id, source_channel="telegram", text="123456",
-        )
-        assert "email" in verified.prompt.lower()
-        verified = advance_customer_collection(
-            db, business_id=business.id, customer_id=customer.id,
-            conversation_id=conversation.id, source_channel="telegram", text="123456",
-        )
-        assert "xác thực" in verified.prompt.lower()
-        assert order.metadata_["contact_verification_pending"] is False
-        assert challenges[0].status == "verified"
-
-        confirmed = advance_customer_collection(
-            db, business_id=business.id, customer_id=customer.id,
-            conversation_id=conversation.id, source_channel="telegram", text="Xác nhận",
-        )
+        confirmed = _checkout_turn(db, business, customer, conversation, "Xác nhận")
         assert "xác nhận hóa đơn" in confirmed.prompt.lower()
         db.refresh(order)
         assert order.status == "pending_confirmation"
         assert order.metadata_["customer_confirmed"] is True
+        assert order.paid_amount == 0
         notification = db.query(Notification).filter_by(
-            business_id=business.id,
-            kind="customer_order_confirmation",
-            user_id=assignee.id,
+            business_id=business.id, kind="customer_order_confirmation", user_id=assignee.id,
         ).one()
         assert notification.metadata_["order_id"] == order.id
+        _checkout_turn(db, business, customer, conversation, "Xác nhận")
+        assert db.query(Notification).filter_by(kind="customer_order_confirmation").count() == 1
 
 
-def test_smtp_checkout_sends_only_email_otp_and_reports_the_channel():
-    engine = _engine()
-    with Session(engine) as db:
-        business = Business(name="Email OTP Shop", slug="email-otp-shop")
-        db.add(business)
-        db.flush()
-        customer = Customer(business_id=business.id, channel="telegram", external_user_id="email-otp-user")
-        db.add(customer)
-        db.flush()
-        db.add(Product(
-            business_id=business.id,
-            sku="SERUM-EMAIL",
-            name="Serum",
-            price=Decimal("200000"),
-            stock_quantity=5,
-            status="active",
-        ))
-        conversation = Conversation(business_id=business.id, customer_id=customer.id, channel="telegram")
-        db.add(conversation)
-        db.flush()
-
-        with patch("app.services.customer_collection_flow.settings.OTP_DELIVERY_MODE", "smtp"), \
-             patch("app.services.customer_collection_flow.generate_verification_code", return_value="123456"), \
-             patch(
-                 "app.services.customer_collection_flow.deliver_otp",
-                 return_value=OtpDeliveryResult(provider="smtp", delivered=True),
-             ) as deliver:
-            completed = _finish_checkout(
-                db,
-                business_id=business.id,
-                customer_id=customer.id,
-                conversation_id=conversation.id,
-            )
-
-        assert "email" in completed.prompt.lower()
-        challenges = db.query(CustomerVerificationChallenge).filter_by(customer_id=customer.id).all()
-        assert len(challenges) == 1
-        assert challenges[0].channel == "email"
-        assert challenges[0].status == "sent"
-        deliver.assert_called_once()
-        assert deliver.call_args.kwargs["channel"] == "email"
+def test_smtp_configuration_does_not_silently_add_checkout_otp():
+    with Session(_engine()) as db:
+        business, customer, _, _, conversation = _checkout_entities(db)
+        with patch("app.services.customer_collection_flow.settings.OTP_DELIVERY_MODE", "smtp"), patch(
+            "app.services.customer_collection_flow.deliver_otp",
+        ) as deliver:
+            completed = _finish_checkout(db, business_id=business.id,
+                customer_id=customer.id, conversation_id=conversation.id)
+        assert "xác nhận" in completed.prompt.lower()
+        assert db.query(CustomerVerificationChallenge).count() == 0
+        deliver.assert_not_called()
+        order = db.query(Order).one()
+        assert order.status == "draft" and order.paid_amount == 0
 
 
-def test_otp_pending_checkout_can_be_cancelled_and_releases_the_draft_hold():
-    engine = _engine()
-    with Session(engine) as db:
-        business = Business(name="Cancel OTP Shop", slug="cancel-otp-shop")
-        db.add(business)
-        db.flush()
-        customer = Customer(business_id=business.id, channel="telegram", external_user_id="cancel-user")
-        db.add(customer)
-        db.flush()
-        product = Product(
-            business_id=business.id,
-            sku="SERUM-CANCEL",
-            name="Serum",
-            price=Decimal("200000"),
-            stock_quantity=5,
-            status="active",
-        )
-        db.add(product)
-        conversation = Conversation(business_id=business.id, customer_id=customer.id, channel="telegram")
-        db.add(conversation)
-        db.flush()
-
-        with patch("app.services.customer_collection_flow.generate_verification_code", return_value="123456"):
-            completed = _finish_checkout(
-                db,
-                business_id=business.id,
-                customer_id=customer.id,
-                conversation_id=conversation.id,
-            )
-
-        order = db.query(Order).filter_by(conversation_id=conversation.id).one()
-        assert completed.draft_order_id == order.id
-        assert order.status == "draft"
-        assert product.reserved_quantity == 1
-
-        cancelled = advance_customer_collection(
-            db,
-            business_id=business.id,
-            customer_id=customer.id,
-            conversation_id=conversation.id,
-            source_channel="telegram",
-            text="xoá",
-        )
-
-        assert cancelled is not None
-        assert "hủy đơn nháp" in cancelled.prompt.lower()
-        db.refresh(order)
-        db.refresh(product)
-        assert order.status == "cancelled"
-        assert order.reserved_quantity == 0
-        assert product.reserved_quantity == 0
-        session = db.query(CustomerCollectionSession).filter_by(id=completed.session_id).one()
+def test_customer_rejection_keeps_invoice_unconfirmed():
+    with Session(_engine()) as db:
+        business, customer, product, _, conversation = _checkout_entities(db)
+        completed = _finish_checkout(db, business_id=business.id,
+            customer_id=customer.id, conversation_id=conversation.id)
+        rejected = _checkout_turn(db, business, customer, conversation, "Không")
+        order = db.query(Order).one()
+        session = db.get(CustomerCollectionSession, completed.session_id)
+        assert "chưa xác nhận" in rejected.prompt.lower()
+        assert order.status == "draft" and order.paid_amount == 0
+        assert order.metadata_["customer_confirmed"] is False
         assert session.status == "abandoned"
-        assert session.collected_fields["otp_pending"] is False
-        challenges = db.query(CustomerVerificationChallenge).filter_by(customer_id=customer.id).all()
-        assert challenges
-        assert all(challenge.status == "expired" for challenge in challenges)
+        assert session.collected_fields["awaiting_customer_confirmation"] is False
+        assert product.stock_quantity == 5
+        assert db.query(Notification).filter_by(kind="customer_order_confirmation").count() == 0
 
 
-def test_new_purchase_does_not_resume_the_old_otp_session():
-    engine = _engine()
-    with Session(engine) as db:
-        business = Business(name="Fresh Purchase Shop", slug="fresh-purchase-shop")
-        db.add(business)
-        db.flush()
-        customer = Customer(business_id=business.id, channel="telegram", external_user_id="fresh-user")
-        db.add(customer)
-        db.flush()
-        old_product = Product(
-            business_id=business.id,
-            sku="SERUM-OLD",
-            name="Serum",
-            price=Decimal("200000"),
-            stock_quantity=5,
-            status="active",
-        )
-        new_product = Product(
-            business_id=business.id,
-            sku="BIN-NEW",
-            name="Bin",
-            price=Decimal("100000"),
-            stock_quantity=5,
-            status="active",
-        )
-        db.add_all([old_product, new_product])
-        conversation = Conversation(business_id=business.id, customer_id=customer.id, channel="telegram")
-        db.add(conversation)
-        db.flush()
-
-        with patch("app.services.customer_collection_flow.generate_verification_code", return_value="123456"):
-            _finish_checkout(
-                db,
-                business_id=business.id,
-                customer_id=customer.id,
-                conversation_id=conversation.id,
-            )
-
-        old_order = db.query(Order).filter_by(conversation_id=conversation.id).one()
-        fresh = advance_customer_collection(
-            db,
-            business_id=business.id,
-            customer_id=customer.id,
-            conversation_id=conversation.id,
-            source_channel="telegram",
-            text="mình muốn mua 1 bin",
-        )
-
-        assert fresh is not None
-        assert "otp" not in fresh.prompt.lower()
-        assert "bin" in fresh.prompt.lower()
-        db.refresh(old_order)
-        assert old_order.status == "cancelled"
+def test_explicit_separate_purchase_does_not_confirm_previous_invoice():
+    with Session(_engine()) as db:
+        business, customer, _, _, conversation = _checkout_entities(db)
+        db.add(Product(business_id=business.id, sku="BIN-NEW", name="Bin",
+                       price=Decimal("100000"), stock_quantity=5, status="active"))
+        _finish_checkout(db, business_id=business.id,
+            customer_id=customer.id, conversation_id=conversation.id)
+        old_order = db.query(Order).one()
+        query = "Tôi muốn mua 1 Bin, đặt riêng đơn mới"
+        assert _checkout_turn(db, business, customer, conversation, query) is None
+        fresh = _checkout_turn(db, business, customer, conversation, query)
+        assert fresh is not None and "bin" in fresh.prompt.lower()
+        assert fresh.current_field == "order_confirmation"
+        assert old_order.status == "draft" and not old_order.metadata_.get("customer_confirmed")
+        assert db.query(Order).count() == 1
 
 
-def test_generic_new_purchase_returns_to_catalogue_after_old_otp_is_cancelled():
-    engine = _engine()
-    with Session(engine) as db:
-        business = Business(name="Catalogue Reset Shop", slug="catalogue-reset-shop")
-        db.add(business)
-        db.flush()
-        customer = Customer(business_id=business.id, channel="telegram", external_user_id="catalogue-user")
-        db.add(customer)
-        db.flush()
-        db.add(Product(
-            business_id=business.id,
-            sku="SERUM-RESET",
-            name="Serum",
-            price=Decimal("200000"),
-            stock_quantity=5,
-            status="active",
-        ))
-        conversation = Conversation(business_id=business.id, customer_id=customer.id, channel="telegram")
-        db.add(conversation)
-        db.flush()
-
-        with patch("app.services.customer_collection_flow.generate_verification_code", return_value="123456"):
-            _finish_checkout(
-                db,
-                business_id=business.id,
-                customer_id=customer.id,
-                conversation_id=conversation.id,
-            )
-
-        result = advance_customer_collection(
-            db,
-            business_id=business.id,
-            customer_id=customer.id,
-            conversation_id=conversation.id,
-            source_channel="telegram",
-            text="mình muốn mua hàng",
-        )
-
-        # ``None`` deliberately hands the fresh catalogue request back to
-        # the normal RAG responder instead of sending the old OTP prompt.
+def test_generic_browsing_returns_to_catalogue_without_confirming_invoice():
+    with Session(_engine()) as db:
+        business, customer, _, _, conversation = _checkout_entities(db)
+        completed = _finish_checkout(db, business_id=business.id,
+            customer_id=customer.id, conversation_id=conversation.id)
+        result = _checkout_turn(db, business, customer, conversation, "mình muốn mua hàng")
         assert result is None
-        old_order = db.query(Order).filter_by(conversation_id=conversation.id).one()
-        assert old_order.status == "cancelled"
+        old_order = db.query(Order).one()
+        assert old_order.status == "draft" and not old_order.metadata_.get("customer_confirmed")
+        session = db.get(CustomerCollectionSession, completed.session_id)
+        assert session.collected_fields["awaiting_customer_confirmation"] is False
 
 
 def test_quality_dashboard_exposes_usage_provider_ai_and_sla_sections():

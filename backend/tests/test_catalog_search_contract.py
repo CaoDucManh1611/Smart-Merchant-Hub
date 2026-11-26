@@ -352,9 +352,14 @@ def workflow_turn(db, conversation, ref, text, fields=None, action="collect"):
     with patch("app.services.business_request.call_llm", return_value=json.dumps(payload)) as llm, \
          patch("app.services.business_request.record_quota_usage") as quota:
         result = advance_business_request(db, business_id=1, conversation=conversation, query=text, history=[], job_key=text)
-    quota.assert_called_once()
-    prompt = json.loads(llm.call_args.args[0][-1]["content"])
-    assert len(prompt["catalog"]) <= 12
+    prompt = None
+    if llm.called:
+        assert quota.call_count == llm.call_count
+        prompt = json.loads(llm.call_args.args[0][-1]["content"])
+        assert len(prompt["catalog"]) <= 12
+    else:
+        # An explicit approval of a reviewed exact offering needs no model call.
+        quota.assert_not_called()
     return result, prompt
 
 
@@ -366,17 +371,23 @@ def test_late_workflow_ref_collect_review_submit_with_bounded_prompt(catalog, re
               "payment_method": {"value": "cash", "evidence": "tiền mặt"}}
     if kind == "goods":
         fields["quantity"] = {"value": "2", "evidence": "2"}
+        fields["email"] = {"value": "buyer@example.test", "evidence": "buyer@example.test"}
+        fields["address"] = {"value": "12 Đường Thử", "evidence": "12 Đường Thử"}
     elif kind == "rental":
         fields["start_date"] = {"value": "2099-11-01", "evidence": "01/11/2099"}
     else:
         fields["starts_at"] = {"value": "2099-11-01T09:00:00+07:00", "evidence": "01/11/2099 09:00"}
     text = "Khách Thử 0901234567, 2, 01/11/2099 09:00, tiền mặt"
+    if kind == "goods":
+        text += ", buyer@example.test, 12 Đường Thử"
     result, _ = workflow_turn(db, conversation, ref, text, fields)
     assert result["state"] == "review" and not result["order_created"]
     assert db.query(Order).count() == 0
     # Approval contains no catalog words; pending exact reference must remain.
     result, prompt = workflow_turn(db, conversation, None, "Xác nhận gửi yêu cầu", action="submit")
-    assert ref in refs(prompt["catalog"])
+    if prompt is not None:
+        assert ref in refs(prompt["catalog"])
+    assert db.query(CustomerCollectionSession).one().collected_fields["offering_ref"] == ref
     assert result["state"] == "submitted" and result["order_created"]
     order = db.query(Order).one()
     assert order.total_amount == (240000 if kind == "goods" else 150000 if kind == "rental" else 80000 if ref.startswith("product:") else 180000)

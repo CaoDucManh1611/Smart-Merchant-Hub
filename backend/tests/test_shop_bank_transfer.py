@@ -184,7 +184,7 @@ def test_invoice_prompt_shows_qr_only_for_bank_transfer(db):
             account_name="SHOP TEST",
         ),
     )
-    order = SimpleNamespace(order_number="DH-404", items=[], total_amount=125000)
+    order = SimpleNamespace(order_number="DH-404", items=[], total_amount=125000, status="pending_confirmation", metadata_={})
 
     transfer_prompt = _invoice_confirmation_prompt(
         order, payment_method="bank_transfer", db=db, business_id=404

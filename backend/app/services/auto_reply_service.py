@@ -3637,7 +3637,7 @@ def _deterministic_customer_reply(
 
     product_fact = _is_product_fact_question(query_text, conversation_id=conversation_id)
     if product_fact and re.search(
-        r"\b(?:san pham|mat hang|loai)\s+(?:nao|gi)\b"
+        r"\b(?:san pham|mat hang|loai)(?:\s+\w+){0,6}?\s+(?:nao|gi)\b"
         r"|\b(?:what|which)\s+(?:products?|items?)\b"
         r"|\b(?:products?|items?)\s+(?:available|in stock)\b",
         folded,
