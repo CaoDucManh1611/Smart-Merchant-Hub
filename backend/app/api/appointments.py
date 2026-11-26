@@ -303,10 +303,14 @@ def create_appointment(
     starts_at = _naive_utc(payload.starts_at)
     reminder_at = starts_at - timedelta(minutes=payload.reminder_minutes_before) if payload.reminder_minutes_before else None
     ends_at = starts_at + timedelta(minutes=service.duration_minutes)
-    _ensure_no_conflict(db, tenant, starts_at, ends_at, payload.assigned_user_id)
+    from app.services.appointment_assignment import choose_assignee
+    assigned_user_id = payload.assigned_user_id
+    if assigned_user_id is None:
+        assigned_user_id = choose_assignee(db, tenant.business_id, starts_at, ends_at, user_db=user_db)
+    _ensure_no_conflict(db, tenant, starts_at, ends_at, assigned_user_id)
     row = Appointment(
         business_id=tenant.business_id, customer_id=customer.id, service_id=service.id,
-        assigned_user_id=payload.assigned_user_id, starts_at=starts_at,
+        assigned_user_id=assigned_user_id, starts_at=starts_at,
         ends_at=ends_at, status="scheduled",
         notes=payload.notes.strip() if payload.notes else None,
         reminder_minutes_before=payload.reminder_minutes_before,
@@ -394,6 +398,13 @@ def update_appointment(
     if reminder_fields.intersection(changes):
         _enqueue_reminder(db, row)
     if row.status == "completed" and previous_status != "completed":
+        from app.services.appointment_completion import complete_linked_service_order
+        from app.services.order_service import SalesOrderOperationError
+        try:
+            complete_linked_service_order(db, row)
+        except SalesOrderOperationError as exc:
+            db.rollback()
+            raise HTTPException(exc.status_code, exc.detail) from exc
         service = _service(db, row.service_id, tenant, active=False)
         sync_appointment_service_catalog_entry(db, service, source="completed_appointment")
         try:

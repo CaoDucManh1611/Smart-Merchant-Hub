@@ -171,6 +171,7 @@ class Settings(BaseSettings):
     RAG_SIMILARITY_THRESHOLD: float = 0.3
     # BM25 is the serving baseline. Experimental per-shop retrieval/controller
     # overrides require a separate explicit environment gate.
+    CATALOG_DIALOGUE_ENABLED: bool = False
     RAG_RETRIEVAL_MODE: str = "bm25"
     RAG_EXPERIMENTAL_SERVING_ENABLED: bool = False
     RAG_AGENTIC_ENABLED: bool = False

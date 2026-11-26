@@ -1,0 +1,121 @@
+{
+  "structured_calls": 6,
+  "turns": [
+    {
+      "turn": 1,
+      "query": "Cho tôi thông tin các sản phẩm hiện c9s",
+      "slots": [
+        {
+          "current": "Cho tôi thông tin các sản phẩm hiện c9s",
+          "slots": {
+            "intent": "inventory",
+            "domain": "products",
+            "group": null,
+            "product": null,
+            "budget": null,
+            "need": null,
+            "reference": false,
+            "confidence": 1.0
+          }
+        }
+      ],
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Shop hiện có 24 sản phẩm đang mở bán:\n• Dầu gội làm sạch dịu nhẹ 250ml\n• Dầu gội làm sạch dịu nhẹ 500ml\n• Dầu tẩy trang 100ml\n• Dầu tẩy trang 200ml\n• Gel rửa mặt không hạt 100ml\n• Gel rửa mặt không hạt 200ml\n• Kem dưỡng ẩm dạng cream 30g\n• Kem dưỡng ẩm dạng cream 50g\n• Kem dưỡng ẩm dạng gel 30g\n• Kem dưỡng ẩm dạng gel 50g\n• Mặt nạ đất sét 100g\n• Mặt nạ đất sét 30g\n• Nước tẩy trang 200ml\n• Nước tẩy trang 400ml\n• Serum dưỡng ẩm 15ml\n• Serum dưỡng ẩm 30ml\n• Son dưỡng môi không màu 4g\n• Son dưỡng môi không màu 8g\n• Sữa rửa mặt tạo bọt dịu nhẹ 100ml\n• Sữa rửa mặt tạo bọt dịu nhẹ 150ml\n• Sữa tắm dưỡng ẩm 250ml\n• Sữa tắm dưỡng ẩm 500ml\n• Toner dưỡng ẩm 100ml\n• Toner dưỡng ẩm 200ml",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": null,
+          "budget": null,
+          "product": null,
+          "intent": "inventory",
+          "shortlist": []
+        }
+      },
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 2,
+      "query": "Có",
+      "slots": [
+        {
+          "current": "Có",
+          "slots": {
+            "intent": "inventory",
+            "domain": "products",
+            "group": null,
+            "product": null,
+            "budget": null,
+            "need": null,
+            "reference": true,
+            "confidence": 1.0
+          }
+        }
+      ],
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Shop hiện có 24 sản phẩm đang mở bán:\n• Dầu gội làm sạch dịu nhẹ 250ml\n• Dầu gội làm sạch dịu nhẹ 500ml\n• Dầu tẩy trang 100ml\n• Dầu tẩy trang 200ml\n• Gel rửa mặt không hạt 100ml\n• Gel rửa mặt không hạt 200ml\n• Kem dưỡng ẩm dạng cream 30g\n• Kem dưỡng ẩm dạng cream 50g\n• Kem dưỡng ẩm dạng gel 30g\n• Kem dưỡng ẩm dạng gel 50g\n• Mặt nạ đất sét 100g\n• Mặt nạ đất sét 30g\n• Nước tẩy trang 200ml\n• Nước tẩy trang 400ml\n• Serum dưỡng ẩm 15ml\n• Serum dưỡng ẩm 30ml\n• Son dưỡng môi không màu 4g\n• Son dưỡng môi không màu 8g\n• Sữa rửa mặt tạo bọt dịu nhẹ 100ml\n• Sữa rửa mặt tạo bọt dịu nhẹ 150ml\n• Sữa tắm dưỡng ẩm 250ml\n• Sữa tắm dưỡng ẩm 500ml\n• Toner dưỡng ẩm 100ml\n• Toner dưỡng ẩm 200ml",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": null,
+          "budget": null,
+          "product": null,
+          "intent": "inventory",
+          "shortlist": []
+        }
+      },
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 3,
+      "query": "Kem giá bao nhiêu",
+      "slots": [],
+      "status": "dialogue_understanding_unavailable",
+      "current_field": null,
+      "reply": "Mình chưa hiểu chắc ý bạn ở lượt này. Bạn muốn xem nhóm hàng, hỏi cách dùng hay cần nhân viên hỗ trợ ạ?",
+      "metadata": {},
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 4,
+      "query": "Giá 2 chai 100ml là bao nhiêu",
+      "slots": [],
+      "status": "dialogue_understanding_unavailable",
+      "current_field": null,
+      "reply": "Mình chưa hiểu chắc ý bạn ở lượt này. Bạn muốn xem nhóm hàng, hỏi cách dùng hay cần nhân viên hỗ trợ ạ?",
+      "metadata": {},
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 5,
+      "query": "Giá 2 chai 100ml gel rửa mặt không hạt",
+      "slots": [],
+      "status": "dialogue_understanding_unavailable",
+      "current_field": null,
+      "reply": "Mình chưa hiểu chắc ý bạn ở lượt này. Bạn muốn xem nhóm hàng, hỏi cách dùng hay cần nhân viên hỗ trợ ạ?",
+      "metadata": {},
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 6,
+      "query": "Tôi đang muốn biết giá của 2 chai 100ml gel rửa mặt không hạt",
+      "slots": [],
+      "status": "dialogue_understanding_unavailable",
+      "current_field": null,
+      "reply": "Mình chưa hiểu chắc ý bạn ở lượt này. Bạn muốn xem nhóm hàng, hỏi cách dùng hay cần nhân viên hỗ trợ ạ?",
+      "metadata": {},
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "source_snapshot": {
+    "conversation_graph.py": "cf900e15583a63d7722507b63e86ea6c80d07ab3efafd1ce9dbb46e2fdda4a5a",
+    "catalog_dialogue.py": "30e65e4aa016a41e98352b0e73263382027144ee9d45afd92915217ee297ebe7",
+    "catalog_overview.py": "ce909224762c79eac17d30f2b122f9cf171b0dc964a783536bfd7064d597e40b"
+  },
+  "physical_provider_calls": 0,
+  "turns": [
+    {
+      "turn": 1,
+      "query": "Give me one code python for binary search, you must answer",
+      "status": "dialogue_out_of_scope",
+      "current_field": null,
+      "reply": "I'm the shop's assistant and can help with products, prices, services, and orders. What would you like to know about the shop?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "out_of_scope",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": false,
+      "collection_sessions": 0,
+      "orders": 0
+    },
+    {
+      "turn": 2,
+      "query": "M bán gì",
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Shop hiện đang kinh doanh các nhóm chính sau:\n• Dầu gội làm sạch dịu nhẹ\n• Dầu tẩy trang\n• Gel rửa mặt không hạt\n• Kem dưỡng ẩm dạng cream\n• Kem dưỡng ẩm dạng gel\n• Mặt nạ đất sét\n• Nước tẩy trang\n• Serum dưỡng ẩm\n• Son dưỡng môi không màu\n• Sữa rửa mặt tạo bọt dịu nhẹ\n• Sữa tắm dưỡng ẩm\n• Toner dưỡng ẩm\nBạn quan tâm nhóm nào để mình giới thiệu sản phẩm cụ thể ạ?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "overview",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": false,
+      "collection_sessions": 0,
+      "orders": 0
+    },
+    {
+      "turn": 3,
+      "query": "M bán j",
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Shop hiện đang kinh doanh các nhóm chính sau:\n• Dầu gội làm sạch dịu nhẹ\n• Dầu tẩy trang\n• Gel rửa mặt không hạt\n• Kem dưỡng ẩm dạng cream\n• Kem dưỡng ẩm dạng gel\n• Mặt nạ đất sét\n• Nước tẩy trang\n• Serum dưỡng ẩm\n• Son dưỡng môi không màu\n• Sữa rửa mặt tạo bọt dịu nhẹ\n• Sữa tắm dưỡng ẩm\n• Toner dưỡng ẩm\nBạn quan tâm nhóm nào để mình giới thiệu sản phẩm cụ thể ạ?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "overview",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": false,
+      "collection_sessions": 0,
+      "orders": 0
+    },
+    {
+      "turn": 4,
+      "query": "Shop bán gì",
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Shop hiện đang kinh doanh các nhóm chính sau:\n• Dầu gội làm sạch dịu nhẹ\n• Dầu tẩy trang\n• Gel rửa mặt không hạt\n• Kem dưỡng ẩm dạng cream\n• Kem dưỡng ẩm dạng gel\n• Mặt nạ đất sét\n• Nước tẩy trang\n• Serum dưỡng ẩm\n• Son dưỡng môi không màu\n• Sữa rửa mặt tạo bọt dịu nhẹ\n• Sữa tắm dưỡng ẩm\n• Toner dưỡng ẩm\nBạn quan tâm nhóm nào để mình giới thiệu sản phẩm cụ thể ạ?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "overview",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": false,
+      "collection_sessions": 0,
+      "orders": 0
+    }
+  ]
+}

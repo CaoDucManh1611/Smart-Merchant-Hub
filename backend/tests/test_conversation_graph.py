@@ -101,6 +101,28 @@ class DB:
     def execute(self,*args,**kwargs): return Query()
 
 
+def test_repeated_request_cancellation_without_open_draft_skips_llm():
+    with patch("app.services.conversation_graph.call_llm") as model:
+        result = graph_reply(
+            DB(), business_id=17,
+            conversation=SimpleNamespace(id=21, customer_id=31),
+            query="hủy yêu cầu", job_key="cancel-no-open-request:42",
+        )
+
+    assert result.status == "no_open_business_request"
+    assert "không có yêu cầu" in result.prompt
+    model.assert_not_called()
+
+
+def test_missing_evidence_reply_uses_customer_words_not_source_terminology():
+    reply = _missing_evidence_reply("Shop có đổi trả không?", reply_language="vi")
+
+    assert "điều kiện đổi trả" in reply
+    assert "nhân viên shop" in reply
+    assert "nguồn" not in reply.lower()
+    assert "dữ liệu" not in reply.lower()
+
+
 def test_disabled_catalog_shortcut_is_denied_and_audited_before_llm(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "app.tenancy.workspace_modules.get_workspace_config",
@@ -174,6 +196,40 @@ def test_appointment_only_plan_skips_product_identity_queries(monkeypatch):
     assert result.status == "graph_answer"
     selection_probe.assert_not_called()
     identity_probe.assert_not_called()
+
+
+@pytest.mark.parametrize("query", ["shop có dịch vụ nào", "bên bạn có dịch vụ nào", "shop đang có dịch vụ nào", "shop đang có những dịch vụ nào", "shop có các dịch vụ gì", "tôi muốn tìm hiểu dịch vụ bên bạn đang có", "kem khach 1 1 giá bao nhiêu", "kèm khách 1 1 có giá bao nhiêu"])
+def test_general_service_menu_does_not_match_question_fillers_as_service_names(query):
+    from app.models.industry_modules import AppointmentService
+    class ServiceQuery(Query):
+        def all(self):
+            return [SimpleNamespace(
+                id=2, business_id=17, name="kem khach 1 1", price=300000,
+                duration_minutes=60, is_active=True,
+            )]
+    class ServiceDB(DB):
+        def query(self, *models):
+            return ServiceQuery() if models == (AppointmentService,) else super().query(*models)
+    offering = {"ref": "service:2", "name": "kem khach 1 1", "kind": "service",
+                "price": "300000", "billing_unit": "lần", "available": None,
+                "duration_minutes": 60, "description": "dich vu kem khach"}
+    with patch("app.services.business_request.current_offerings", return_value=[offering]) as offering_search, \
+         patch("app.services.customer_return_intake.customer_return_reply", return_value=None), \
+         patch("app.services.auto_reply_service._notify_rag_handoff_required"), \
+         patch("app.services.quota_service.record_quota_usage"):
+        result = graph_reply(ServiceDB(), business_id=17, conversation=SimpleNamespace(id=21, customer_id=31, channel="facebook"),
+                             query=query, job_key="general-service-menu")
+    assert "kem khach 1 1" in result.prompt
+    if "giá bao nhiêu" in query:
+        # Explicit service identity and price are answered from the active
+        # AppointmentService catalog before the product/offering router.
+        assert result.status == "service_catalog_answer"
+    else:
+        assert result.status == "service_catalog_overview"
+    offering_search.assert_not_called()
+    assert "300.000" in result.prompt
+    assert "60 phút" in result.prompt
+    assert "chưa tìm thấy" not in result.prompt
 
 
 def test_workflow_plan_uses_guarded_runtime_and_composes_its_result():
@@ -373,6 +429,7 @@ def test_service_price_reply_does_not_append_unsolicited_calendar_question():
         "available":None, "description":"Thay bộ nhông sên dĩa",
     }
     with patch("app.services.business_request.current_offerings",return_value=[service]), \
+         patch("app.services.customer_return_intake.customer_return_reply",return_value=None), \
          patch("app.services.quota_service.record_quota_usage"), \
          patch("app.services.conversation_graph.call_llm") as model:
         result=graph_reply(DB(),business_id=1,conversation=SimpleNamespace(id=2,customer_id=3),
@@ -499,11 +556,12 @@ def test_missing_business_policy_notifies_staff_without_inventing_a_rule():
         '{"answer":"unknown","sources":[],"needs_staff_decision":true}']), \
          patch('app.services.quota_service.record_quota_usage'), \
          patch('app.rag.retriever.retrieve',return_value=[SimpleNamespace(content='Shop mở cửa 9h-18h.')]), \
+         patch('app.services.customer_return_intake.customer_return_reply',return_value=None), \
          patch('app.services.auto_reply_service._notify_rag_handoff_required') as notify:
         conversation=SimpleNamespace(id=2,customer_id=3,bot_mode='auto')
         result=graph_reply(DB(),business_id=1,conversation=conversation,
             query='Chính sách bảo hành trọn đời thế nào?',job_key='unknown-policy')
-    assert 'nhân viên kiểm tra' in result.prompt
+    assert 'nhân viên shop' in result.prompt
     assert 'thời hạn hoặc điều kiện bảo hành' in result.prompt
     assert 'không có bảo hành' not in result.prompt
     assert conversation.bot_mode=='auto'
@@ -523,8 +581,8 @@ def test_missing_evidence_reply_names_unconfirmed_detail_without_inventing_polic
     answer = _missing_evidence_reply(query, reply_language="vi")
 
     assert expected_topic in answer
-    assert "nguồn hiện có" in answer.lower()
-    assert "nhân viên kiểm tra" in answer
+    assert "nguồn hiện có" not in answer.lower()
+    assert "nhân viên shop" in answer
     assert not any(claim in answer for claim in ("miễn phí giao hàng", "được đổi trả", "chắc chắn lắp vừa", "bảo hành trọn đời"))
 
 
@@ -773,6 +831,7 @@ def test_provider_structured_output_failure_returns_safe_answer_without_retry(mo
     with patch("app.services.conversation_graph.call_llm", side_effect=BadRequestError("provider detail hidden")) as model, \
          patch("app.services.quota_service.record_quota_usage"), \
          patch("app.rag.serving.retrieve_shop_knowledge", return_value=[policy]), \
+         patch("app.services.customer_return_intake.customer_return_reply", return_value=None), \
          patch("app.services.auto_reply_service._notify_rag_handoff_required") as notify:
         result = graph_reply(
             DB(), business_id=1, conversation=SimpleNamespace(id=2, customer_id=3),
@@ -780,7 +839,8 @@ def test_provider_structured_output_failure_returns_safe_answer_without_retry(mo
         )
 
     assert result.status == "graph_answer"
-    assert "verify" in result.prompt.lower() or "kiểm tra" in result.prompt.lower()
+    assert "specific product" in result.prompt.lower()
+    assert "shop team" in result.prompt.lower()
     assert "provider detail hidden" not in result.prompt
     assert model.call_count == 1
     notify.assert_called_once()

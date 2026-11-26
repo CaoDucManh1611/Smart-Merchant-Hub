@@ -1482,16 +1482,17 @@ def process_and_save_message(
     # another tenant can never be reused accidentally.
     conversation = db.execute(
         text("""
-            SELECT id
+            SELECT id, channel_id
 
             FROM conversations
 
             WHERE customer_id = :customer_id
               AND channel = :channel
               AND business_id = :business_id
+              AND (:channel_id IS NULL OR channel_id = :channel_id OR channel_id IS NULL)
               AND status = 'open'
 
-            ORDER BY id DESC
+            ORDER BY CASE WHEN channel_id = :channel_id THEN 0 ELSE 1 END, id DESC
 
             LIMIT 1
         """),
@@ -1504,6 +1505,9 @@ def process_and_save_message(
 
             "business_id":
                 int(business_id),
+
+            "channel_id":
+                message.get("channel_id"),
         },
     ).first()
 
@@ -1554,6 +1558,22 @@ def process_and_save_message(
 
 
         logger.info("Conversation created from inbound message")
+
+    elif conversation.channel_id is None and message.get("channel_id") is not None:
+        # Attach legacy conversations that predate channel_id to the first
+        # trusted channel connection that receives a new message. Once set,
+        # conversations stay scoped to that channel account.
+        db.execute(
+            text("""
+                UPDATE conversations
+                SET channel_id = :channel_id
+                WHERE id = :conversation_id AND channel_id IS NULL
+            """),
+            {
+                "channel_id": message.get("channel_id"),
+                "conversation_id": int(conversation.id),
+            },
+        )
 
 
     conversation_id = (

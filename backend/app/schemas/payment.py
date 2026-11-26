@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class PaymentCreate(BaseModel):
     idempotency_key: str = Field(..., min_length=1, max_length=160)
-    amount: Decimal = Field(..., gt=0, max_digits=14, decimal_places=2)
+    amount: Decimal = Field(..., gt=0, max_digits=14, decimal_places=0)
     method: str = Field(..., min_length=1, max_length=40)
     status: str = Field(default="paid", min_length=1, max_length=30)
     reference: str | None = Field(default=None, max_length=255)
@@ -16,7 +16,7 @@ class PaymentCreate(BaseModel):
 
 class RefundCreate(BaseModel):
     idempotency_key: str = Field(..., min_length=1, max_length=160)
-    amount: Decimal = Field(..., gt=0, max_digits=14, decimal_places=2)
+    amount: Decimal = Field(..., gt=0, max_digits=14, decimal_places=0)
     reason: str | None = Field(default=None, max_length=1000)
 
 

@@ -297,6 +297,13 @@ def build_prompt(
             "Không được bịa dữ liệu của shop và không cần gắn nhãn nguồn khi không có nguồn."
         )
 
+    full_system += (
+        "\nQuy tắc tư vấn luôn áp dụng: trả lời lịch sự, ngắn gọn, tránh thuật ngữ kỹ thuật với khách. "
+        "Không tự tạo hay đổi SKU. Khách muốn mua nhưng thiếu số lượng thì hỏi số lượng; dung tích không phải số lượng. "
+        "Không tuyên bố tạo đơn, chuyển nhân viên hoặc nhận thanh toán nếu không có kết quả thao tác thành công. "
+        "Giá và tồn phải lấy từ danh mục hiện tại. Không suy diễn thành phần, xuất xứ, hiệu quả điều trị hoặc loại da phù hợp. "
+        "Thông tin chưa xác minh của shop không phải chứng nhận nhà sản xuất. Thiếu căn cứ thì hỏi rõ hoặc đề nghị nhân viên kiểm tra."
+    )
     messages.append({
         "role": "system",
         "content": full_system,

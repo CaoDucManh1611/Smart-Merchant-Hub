@@ -293,7 +293,7 @@ def commerce_report(
         order_query = order_query.filter(Order.status == status.strip().lower())
     order_ids = order_query.with_entities(Order.id).statement
     order_status_rows = db.query(Order.status, func.count(Order.id)).filter(Order.id.in_(order_ids)).group_by(Order.status).all()
-    revenue = db.query(func.coalesce(func.sum(Order.total_amount), Decimal("0.00"))).filter(
+    revenue = db.query(func.coalesce(func.sum(Order.total_amount - Order.refunded_amount), Decimal("0.00"))).filter(
         Order.id.in_(order_ids), Order.status.in_(REVENUE_ORDER_STATUSES),
     ).scalar() or Decimal("0.00")
     order_sources = db.query(Order, Customer.name, Conversation.channel).join(
@@ -522,7 +522,7 @@ def crm_overview(
     revenue_order_query = order_query.filter(Order.status.in_(REVENUE_ORDER_STATUSES))
     total_revenue = Decimal("0.00")
     if revenue_order_query.count():
-        total_revenue = db.query(func.coalesce(func.sum(Order.total_amount), Decimal("0.00"))).filter(
+        total_revenue = db.query(func.coalesce(func.sum(Order.total_amount - Order.refunded_amount), Decimal("0.00"))).filter(
             Order.id.in_(revenue_order_query.with_entities(Order.id))
         ).scalar() or Decimal("0.00")
 
@@ -532,7 +532,7 @@ def crm_overview(
     breakdown_rows = db.query(
         func.coalesce(Conversation.channel, "unknown").label("channel"),
         func.count(Order.id).label("order_count"),
-        func.coalesce(func.sum(Order.total_amount), Decimal("0.00")).label("revenue"),
+        func.coalesce(func.sum(Order.total_amount - Order.refunded_amount), Decimal("0.00")).label("revenue"),
     ).outerjoin(
         Conversation,
         (Conversation.id == Order.conversation_id)
@@ -556,7 +556,7 @@ def crm_overview(
         bucket = series_map.setdefault(key, {"date": key, "conversations": 0, "orders": 0, "revenue": Decimal("0.00")})
         bucket["orders"] += 1
         if order.status in REVENUE_ORDER_STATUSES:
-            bucket["revenue"] += Decimal(order.total_amount or 0)
+            bucket["revenue"] += max(Decimal("0"), Decimal(order.total_amount or 0) - Decimal(order.refunded_amount or 0))
     time_series = sorted(series_map.values(), key=lambda item: item["date"])
     purchase_query = db.query(PurchaseOrder).filter(PurchaseOrder.business_id == business_id)
     if start:

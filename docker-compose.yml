@@ -75,6 +75,8 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      # Share the public embedding model cache across backend/worker restarts.
+      - embedding_cache:/root/.cache/huggingface
       # Local Data_RAG checkpoints are mounted read-only; real-shop serving
       # stays disabled unless a demo tenant is explicitly allowlisted.
       - ./backend/artifacts/data_rag:/app/artifacts/data_rag:ro
@@ -145,6 +147,9 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
+      # Share the public embedding model cache across backend/worker restarts.
+      - embedding_cache:/root/.cache/huggingface
+      - ./backend/uploads:/app/uploads
       - ./backend/artifacts/data_rag:/app/artifacts/data_rag:ro
       - ./backend/artifacts/industry_rfm:/app/artifacts/industry_rfm:ro
       - ./backups:/app/backups
@@ -159,3 +164,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  embedding_cache:

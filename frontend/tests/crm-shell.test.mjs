@@ -122,13 +122,16 @@ test("inbox supports confirmed bulk assignment for selected conversations", () =
   assert.match(appSource, /requestConfirmation\([\s\S]*?Phân công các hội thoại đã chọn/);
 });
 
-test("inbox shows blue unread badges and red badges for urgent customer work", () => {
-  assert.match(appSource, /criticalConversationNotificationCount/);
-  assert.match(appSource, /pending_order_confirmation_count/);
-  assert.match(appSource, /function conversationUrgentCount/);
-  assert.match(templateSource, /class="conversation-unread urgent"/);
-  assert.match(styleSource, /\.conversation-unread\.urgent/);
-  assert.match(styleSource, /background: var\(--salon-accent\)/);
+test("inbox red badge represents unread messages without consuming business alerts", () => {
+  assert.doesNotMatch(templateSource, /conversationUrgentCount/);
+  assert.match(templateSource, /Number\(item.unread_count \|\| 0\) > 0/);
+  assert.match(templateSource, /tin nhắn chưa đọc/);
+  assert.match(styleSource, /\.conversation-unread \{\s*background: #dc3545/);
+  assert.match(templateSource, /unreadOperationalNotificationCount/);
+  const selection = appSource.slice(appSource.indexOf("async function selectConversation(id)"), appSource.indexOf("async function sendTextMessage()"));
+  assert.doesNotMatch(selection, /markConversationRead/);
+  const load = appSource.slice(appSource.indexOf("async function loadMessages("), appSource.indexOf("async function markConversationRead("));
+  assert.ok(load.indexOf("await response.json()") < load.indexOf("markConversationRead(conversationId)"));
 });
 
 test("customer 360 shows bought products and staff can process a customer-confirmed invoice", () => {

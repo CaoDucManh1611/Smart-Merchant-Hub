@@ -53,3 +53,11 @@ docs/implementation-logs/.failed-traces.tmp
 /scripts/lttk/
 /scripts/data-runtime/
 /test.db
+
+# Local packaged archives and customer-conversation evaluation outputs.
+/scripts/dist/*.rar
+/reports/*oanh*
+/reports/ra-soat-hoi-thoai-*
+/reports/*.xml
+/reports/rag-dat-lich-dich-vu-before-*.json
+/reports/rag-dat-lich-dich-vu-after-*.json

@@ -968,7 +968,7 @@ def receive_local_connector_history(
                             UPDATE messages
                             SET received_at = :received_at,
                                 raw_payload = CASE
-                                    WHEN :is_live THEN COALESCE(raw_payload, '{}'::jsonb) - 'history_import'
+                                    WHEN :is_live THEN (COALESCE(raw_payload::jsonb, '{}'::jsonb) - 'history_import')::json
                                     ELSE raw_payload
                                 END
                             WHERE id = :message_id

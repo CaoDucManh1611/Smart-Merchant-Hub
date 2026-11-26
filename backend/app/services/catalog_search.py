@@ -27,7 +27,7 @@ from app.tenancy.workspace_modules import get_workspace_config
 
 
 _KINDS = {"goods", "service", "rental"}
-_FILLERS = set("anh ban bao ben cai can cho co con cua dang dat dich do duoi gia gi giup hang hien hoi khong la loai lich ma minh mot mua muon nao nhieu o pham san shop tai the thue toi toi_da tra tren tu va voi vu xin xem you your i a an the is are do have want buy price please under budget services service rent rental available catalog".split())
+_FILLERS = set("cac nhung tat ca het anh ban bao ben cai can cho co con cua dang dat dich do duoi gia gi giup hang hien hoi khong la loai lich ma minh mot mua muon nao nhieu o pham san shop tai the thue toi toi_da tra tren tu va voi vu xin xem you your i a an the is are do have want buy price please under budget services service rent rental available catalog".split())
 
 
 def _product_kind(profile):

@@ -1,0 +1,190 @@
+{
+  "structured_calls": 2,
+  "turns": [
+    {
+      "turn": 1,
+      "query": "Cho tôi thông tin các sản phẩm hiện c9s",
+      "slots": [
+        {
+          "current": "Cho tôi thông tin các sản phẩm hiện c9s",
+          "slots": {
+            "intent": "inventory",
+            "domain": "products",
+            "group": null,
+            "product": null,
+            "budget": null,
+            "need": null,
+            "reference": false,
+            "confidence": 0.9
+          }
+        }
+      ],
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Shop hiện có 24 sản phẩm đang mở bán:\n• Dầu gội làm sạch dịu nhẹ 250ml\n• Dầu gội làm sạch dịu nhẹ 500ml\n• Dầu tẩy trang 100ml\n• Dầu tẩy trang 200ml\n• Gel rửa mặt không hạt 100ml\n• Gel rửa mặt không hạt 200ml\n• Kem dưỡng ẩm dạng cream 30g\n• Kem dưỡng ẩm dạng cream 50g\n• Kem dưỡng ẩm dạng gel 30g\n• Kem dưỡng ẩm dạng gel 50g\n• Mặt nạ đất sét 100g\n• Mặt nạ đất sét 30g\n• Nước tẩy trang 200ml\n• Nước tẩy trang 400ml\n• Serum dưỡng ẩm 15ml\n• Serum dưỡng ẩm 30ml\n• Son dưỡng môi không màu 4g\n• Son dưỡng môi không màu 8g\n• Sữa rửa mặt tạo bọt dịu nhẹ 100ml\n• Sữa rửa mặt tạo bọt dịu nhẹ 150ml\n• Sữa tắm dưỡng ẩm 250ml\n• Sữa tắm dưỡng ẩm 500ml\n• Toner dưỡng ẩm 100ml\n• Toner dưỡng ẩm 200ml",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": null,
+          "budget": null,
+          "product": null,
+          "intent": "inventory",
+          "shortlist": []
+        }
+      },
+      "provider_calls_this_turn": 1,
+      "provider_calls": [
+        {
+          "schema_name": "catalog_intent",
+          "status": "returned"
+        }
+      ],
+      "provider_blocked_after_429": false,
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 2,
+      "query": "Có",
+      "slots": [
+        {
+          "current": "Có",
+          "slots": {
+            "intent": "inventory",
+            "domain": "products",
+            "group": null,
+            "product": null,
+            "budget": null,
+            "need": null,
+            "reference": true,
+            "confidence": 1.0
+          }
+        }
+      ],
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Shop hiện có 24 sản phẩm đang mở bán:\n• Dầu gội làm sạch dịu nhẹ 250ml\n• Dầu gội làm sạch dịu nhẹ 500ml\n• Dầu tẩy trang 100ml\n• Dầu tẩy trang 200ml\n• Gel rửa mặt không hạt 100ml\n• Gel rửa mặt không hạt 200ml\n• Kem dưỡng ẩm dạng cream 30g\n• Kem dưỡng ẩm dạng cream 50g\n• Kem dưỡng ẩm dạng gel 30g\n• Kem dưỡng ẩm dạng gel 50g\n• Mặt nạ đất sét 100g\n• Mặt nạ đất sét 30g\n• Nước tẩy trang 200ml\n• Nước tẩy trang 400ml\n• Serum dưỡng ẩm 15ml\n• Serum dưỡng ẩm 30ml\n• Son dưỡng môi không màu 4g\n• Son dưỡng môi không màu 8g\n• Sữa rửa mặt tạo bọt dịu nhẹ 100ml\n• Sữa rửa mặt tạo bọt dịu nhẹ 150ml\n• Sữa tắm dưỡng ẩm 250ml\n• Sữa tắm dưỡng ẩm 500ml\n• Toner dưỡng ẩm 100ml\n• Toner dưỡng ẩm 200ml",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": null,
+          "budget": null,
+          "product": null,
+          "intent": "inventory",
+          "shortlist": []
+        }
+      },
+      "provider_calls_this_turn": 1,
+      "provider_calls": [
+        {
+          "schema_name": "catalog_intent",
+          "status": "returned"
+        }
+      ],
+      "provider_blocked_after_429": false,
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 3,
+      "query": "Kem giá bao nhiêu",
+      "slots": [],
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Shop có các phiên bản sau; bạn muốn xem chi tiết bản nào ạ?\n• Kem dưỡng ẩm dạng gel 30g — 119.000 đồng\n• Kem dưỡng ẩm dạng gel 50g — 179.000 đồng\n• Kem dưỡng ẩm dạng cream 30g — 129.000 đồng\n• Kem dưỡng ẩm dạng cream 50g — 199.000 đồng",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": null,
+          "budget": null,
+          "product": null,
+          "intent": "detail",
+          "shortlist": [
+            12,
+            13,
+            14,
+            15
+          ]
+        }
+      },
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": false,
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 4,
+      "query": "Giá 2 chai 100ml là bao nhiêu",
+      "slots": [],
+      "status": "dialogue_clarify",
+      "current_field": null,
+      "reply": "Các sản phẩm vừa xem chưa có quy cách bạn nêu. Bạn đang hỏi sản phẩm nào ạ?",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": null,
+          "budget": null,
+          "product": null,
+          "intent": "detail",
+          "shortlist": []
+        }
+      },
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": false,
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 5,
+      "query": "Giá 2 chai 100ml gel rửa mặt không hạt",
+      "slots": [],
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Dạ, Gel rửa mặt không hạt 100ml giá 99.000 đồng/sản phẩm; 2 sản phẩm là 198.000 đồng.",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": "Gel rửa mặt không hạt",
+          "budget": null,
+          "product": null,
+          "intent": "detail",
+          "shortlist": [
+            6
+          ]
+        }
+      },
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": false,
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    },
+    {
+      "turn": 6,
+      "query": "Tôi đang muốn biết giá của 2 chai 100ml gel rửa mặt không hạt",
+      "slots": [],
+      "status": "catalog_dialogue",
+      "current_field": null,
+      "reply": "Dạ, Gel rửa mặt không hạt 100ml giá 99.000 đồng/sản phẩm; 2 sản phẩm là 198.000 đồng.",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": "Gel rửa mặt không hạt",
+          "budget": null,
+          "product": null,
+          "intent": "detail",
+          "shortlist": [
+            6
+          ]
+        }
+      },
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": false,
+      "collection_sessions_before": 0,
+      "collection_sessions_after": 0,
+      "orders": 0
+    }
+  ]
+}

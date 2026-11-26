@@ -87,6 +87,17 @@ def detect_customer_order_intent(text: str | None) -> str | None:
     """Detect only deterministic, high-confidence customer order intents."""
     normalized = str(text or "").casefold()
     folded = _fold_order_text(normalized)
+    # Check list requests before the loose ``don <token>`` reference heuristic,
+    # which can mistake “đơn hàng gì” for an order number.
+    if (
+        re.search(
+            r"\b(?:toi|minh|em|anh|chi)\s+(?:(?:dang\s+co)|(?:co\s+nhung))\s+"
+            r"don(?:\s+hang)?\s+(?:gi|nao)\b",
+            folded,
+        )
+        or re.search(r"\b(?:danh sach|liet ke)\s+(?:cac\s+|nhung\s+)?don(?:\s+hang)?\b", folded)
+    ):
+        return "list"
     has_order_reference = bool(re.search(r"\b(?:ord(?:er)?|don)\s+[a-z0-9][a-z0-9-]*\b", folded))
     asks_return_eligibility = any(term in folded for term in (
         "co duoc", "duoc khong", "co the", "co duoc phep", "eligible",
@@ -234,8 +245,13 @@ def customer_context_reply(db: Session, business_id: int, conversation_id: int, 
                 body="Cần đối soát tiền vào tài khoản; chưa ghi nhận đã thu tiền.",
                 metadata={"order_id":order.id,"conversation_id":conversation_id,"customer_id":conversation.customer_id})
             order.metadata_ = {**metadata,"customer_payment_reported_at":datetime.now(timezone.utc).isoformat()}
-            db.commit()
-        return f"Mình đã ghi nhận bạn báo chuyển khoản cho đơn {order.order_number} và gửi nhân viên đối soát. Đơn chưa được đánh dấu đã thanh toán; shop sẽ xác nhận sau khi kiểm tra tiền vào tài khoản."
+        if (new_payment_flow and order.status == "draft"
+                and (order.metadata_ or {}).get("payment_method") == "bank_transfer"):
+            transition_sales_order(db, order_id=order.id, to_status="pending_confirmation",
+                actor_id=None, business_id=business_id)
+        db.commit()
+        waiting = " và đang chờ nhân viên xác nhận" if order.status == "pending_confirmation" else ""
+        return f"Mình đã ghi nhận bạn báo chuyển khoản cho đơn {order.order_number} và gửi nhân viên đối soát. Đơn chưa được đánh dấu đã thanh toán{waiting}; shop sẽ xác nhận sau khi kiểm tra tiền vào tài khoản."
     if new_payment_flow:
         from app.services.order_payment_request import payment_instructions
         return payment_instructions(db,order)
@@ -286,6 +302,24 @@ def customer_order_reply(
             for item in listed["items"][:5]
         )
         return f"Bạn đang có {len(listed['items'])} đơn nháp: {summaries}. Bạn muốn xác nhận đơn nào?"
+
+    if intent == "list":
+        listed = list_customer_orders(db, business_id, conversation_id)
+        if not listed.get("found"):
+            return "Mình chưa thấy đơn hàng nào của bạn trong hệ thống. Khi cần, bạn gửi tin nhắn đặt hàng cho shop nhé."
+        items = listed["items"]
+        lines = []
+        for item in items[:5]:
+            products = ", ".join(
+                f"{row.get('name') or row.get('sku') or 'sản phẩm'} ×{row.get('quantity', 1)}"
+                for row in item.get("items", [])
+            ) or "chưa có thông tin mặt hàng"
+            lines.append(
+                f"• {item['order_number']} — {products}; "
+                f"{_format_vnd(item['total_amount'])} đồng; {item['status_label']}"
+            )
+        count_text = f"{len(items)} đơn hàng" if len(items) <= 5 else "5 đơn hàng gần đây"
+        return f"Mình tìm thấy {count_text} của bạn:\n" + "\n".join(lines)
 
     if intent == "status":
         if order_number:
@@ -605,7 +639,7 @@ def _staff_ticket(
         Ticket.status.in_(("open", "pending")),
     ).order_by(Ticket.id.desc()).all()
     for ticket in existing:
-        if marker in (ticket.description or ""):
+        if marker in (ticket.description or "").splitlines():
             return ticket
 
     assignee = _assignee(platform_db, business_id)
@@ -749,3 +783,37 @@ def request_order_refund(
         "ticket_id": ticket.id,
         "order": _order_payload(order),
     }
+
+
+def payment_report_confirmation_reply(db, business_id, conversation_id, text):
+    """Bind a short confirmation only to the latest delivered transfer request."""
+    if _fold_order_text(text).strip(" .!?,") not in {"xac nhan", "toi xac nhan", "minh xac nhan"}:
+        return None
+    from app.models.message import Message
+    from app.models.customer_collection import CustomerCollectionSession
+    from app.services.order_payment_request import payment_state
+    conversation = _conversation(db, business_id, conversation_id)
+    pending = db.query(CustomerCollectionSession.id).filter(
+        CustomerCollectionSession.business_id == business_id,
+        CustomerCollectionSession.conversation_id == conversation_id,
+        CustomerCollectionSession.status.in_(["pending", "partial"]),
+    ).first()
+    if pending:
+        return None
+    last = db.query(Message).filter(Message.conversation_id == conversation_id,
+        Message.direction == "outbound", Message.sender_type == "bot",
+        Message.status == "sent").order_by(Message.id.desc()).first()
+    last_text = _fold_order_text(last.content or "") if last else ""
+    if not last or not any(marker in last_text for marker in (
+            "ma qr:", "thong tin chuyen khoan don", "da ghi nhan ban bao chuyen khoan")):
+        return None
+    number = extract_order_number(last.content or "")
+    order = db.query(Order).filter(Order.business_id == business_id,
+        Order.conversation_id == conversation_id, Order.customer_id == conversation.customer_id,
+        Order.order_number == number).first() if number else None
+    if not order or (order.metadata_ or {}).get("payment_method") != "bank_transfer":
+        return None
+    if payment_state(order) not in {"awaiting_payment", "awaiting_reconciliation"}:
+        return None
+    return customer_context_reply(db, business_id, conversation_id,
+        f"Tôi đã chuyển khoản đơn {order.order_number}")

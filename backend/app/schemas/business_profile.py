@@ -28,7 +28,9 @@ class CollectionField(BaseModel):
 def default_fields():
     contact=[{"key":"name","label":"Họ tên","type":"text"},{"key":"phone","label":"Số liên hệ","type":"phone"}]
     return {
-        "goods":[*contact,{"key":"quantity","label":"Số lượng","type":"quantity"}],
+        "goods":[*contact,{"key":"email","label":"Email","type":"text"},
+                 {"key":"address","label":"Địa chỉ nhận hàng","type":"text"},
+                 {"key":"quantity","label":"Số lượng","type":"quantity"}],
         "service":[*contact,{"key":"starts_at","label":"Thời gian mong muốn","type":"datetime","future_only":True}],
         "rental":[*contact,{"key":"start_date","label":"Ngày bắt đầu thuê","type":"date","future_only":True}],
     }

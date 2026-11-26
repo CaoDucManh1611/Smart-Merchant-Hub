@@ -630,6 +630,88 @@ def test_meta_conversation_opens_by_matching_row_and_waits_for_selected_thread(m
     assert "target.click()" in page.script
 
 
+@pytest.mark.parametrize("case,expected", [
+    ("selected_link", "fb-buyer"),
+    ("omitted_business", "fb-buyer"),
+    ("other_channel", ""),
+    ("other_asset", ""),
+    ("other_business", ""),
+    ("hidden_link", ""),
+    ("ambiguous", ""),
+    ("not_hydrated", ""),
+    ("address_bar", "url-buyer"),
+])
+def test_active_meta_thread_falls_back_only_to_unique_hydrated_same_channel_link(case, expected):
+    playwright = pytest.importorskip("playwright.async_api")
+
+    async def run():
+        async with playwright.async_playwright() as runtime:
+            executable = bridge._find_edge() if not Path(runtime.chromium.executable_path).exists() else None
+            if executable is None and not Path(runtime.chromium.executable_path).exists():
+                pytest.skip("Browser missing")
+            browser = await runtime.chromium.launch(headless=True, executable_path=str(executable) if executable else None)
+            try:
+                page = await browser.new_page()
+                current = "https://business.facebook.com/latest/inbox/messenger?asset_id=shop-1&business_id=biz-1"
+                if case == "address_bar":
+                    current += "&selected_item_id=url-buyer"
+                link = current.split("&selected_item_id=")[0] + "&selected_item_id=fb-buyer"
+                if case == "omitted_business":
+                    link = link.replace("&business_id=biz-1", "")
+                if case == "other_channel":
+                    link = link.replace("/messenger?", "/instagram_direct?")
+                if case == "other_asset":
+                    link = link.replace("asset_id=shop-1", "asset_id=shop-2")
+                if case == "other_business":
+                    link = link.replace("business_id=biz-1", "business_id=biz-2")
+                style = "display:none" if case == "hidden_link" else ""
+                html = f'<a href="{link}" style="{style}">Messenger</a>'
+                # The other channel's remembered thread must never be used.
+                html += '<a href="https://business.facebook.com/latest/inbox/instagram_direct?asset_id=shop-1&business_id=biz-1&selected_item_id=ig-buyer">Instagram</a>'
+                if case == "ambiguous":
+                    html += f'<a href="{link.replace("fb-buyer", "second-buyer")}">Another thread</a>'
+                if case != "not_hydrated":
+                    html += '<div contenteditable="true" role="textbox" aria-placeholder="Trả lời trong Messenger…" style="width:600px;height:30px"></div>'
+                await page.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html; charset=utf-8", body=html))
+                await page.goto(current)
+                assert await bridge._active_thread_id(page) == expected
+            finally:
+                await browser.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("with_overflow", [True, False])
+def test_meta_conversation_can_select_a_nonoverflowing_inbox(monkeypatch, with_overflow):
+    playwright = pytest.importorskip("playwright.async_api")
+
+    async def run():
+        async with playwright.async_playwright() as runtime:
+            executable = bridge._find_edge() if not Path(runtime.chromium.executable_path).exists() else None
+            if executable is None and not Path(runtime.chromium.executable_path).exists():
+                pytest.skip("Browser missing")
+            browser = await runtime.chromium.launch(headless=True, executable_path=str(executable) if executable else None)
+            try:
+                page = await browser.new_page(viewport={"width": 1200, "height": 900})
+                filler = '<div style="height:600px"></div>' if with_overflow else ''
+                await page.set_content('''
+                  <div style="position:absolute;left:100px;top:100px;width:300px;height:400px;overflow:auto">
+                    <div role="presentation" style="height:80px;cursor:pointer" onclick="this.dataset.clicked='true'">
+                      <div>Buyer Name</div><div>Latest message</div>
+                    </div>''' + filler + '''</div>
+                ''')
+                ids = iter(("previous-thread", "selected-thread"))
+                monkeypatch.setattr(bridge, "_active_thread_id", lambda _page: asyncio.sleep(0, result=next(ids)))
+                rows = await bridge._conversation_rows(page)
+                assert len(rows) == 1
+                assert await bridge._open_meta_conversation(page, rows[0], "facebook") == "selected-thread"
+                assert await page.locator('[role="presentation"]').get_attribute("data-clicked") == "true"
+            finally:
+                await browser.close()
+
+    asyncio.run(run())
+
+
 def test_meta_conversation_waits_through_stale_selected_id_after_click(monkeypatch):
     class Page:
         async def evaluate(self, _script, _label):

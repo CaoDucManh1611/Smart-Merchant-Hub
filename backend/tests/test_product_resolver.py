@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+from app.database.bases import TenantBase
 
 from app.models.business import Business
 from app.models.conversation import Conversation
@@ -29,6 +30,7 @@ class ProductResolverTests(unittest.TestCase):
             poolclass=StaticPool,
         )
         Business.metadata.create_all(cls.engine)
+        TenantBase.metadata.create_all(cls.engine)
         with Session(cls.engine) as db:
             business = Business(name="Resolver Shop", slug="resolver-shop")
             db.add(business)
@@ -240,6 +242,26 @@ class ProductResolverTests(unittest.TestCase):
 
 
 class DemoProductResolverRegressionTests(unittest.TestCase):
+    def test_shortened_product_name_does_not_choose_unrelated_first_row(self):
+        shower_gel = Product(
+            id=367, business_id=4, sku="BATH-01",
+            name="Sữa tắm dưỡng ẩm – Tiêu chuẩn",
+            price=Decimal("120000"), stock_quantity=10, status="active",
+        )
+        face_wash = Product(
+            id=301, business_id=4, sku="FACE-01",
+            name="Sữa rửa mặt dịu nhẹ – Tiêu chuẩn",
+            price=Decimal("119000"), stock_quantity=8, status="active",
+        )
+        db = Mock()
+        db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [face_wash, shower_gel]
+
+        products = resolve_product_mentions(
+            db, business_id=4, text="Mình muốn mua sữa dưỡng ẩm tiêu chuẩn"
+        )
+
+        self.assertEqual([shower_gel.id], [product.id for product in products])
+
     def test_tire_size_comparison_matches_each_requested_dimension(self):
         products = [
             SimpleNamespace(id=1, sku="TIRE-7090", name="Lop xe so 70/90-17 khong sam", metadata_={}),
@@ -286,3 +308,25 @@ class DemoProductResolverRegressionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HistorySubjectIsolationTests(unittest.TestCase):
+    def test_new_named_group_does_not_reuse_previous_item(self):
+        from app.services.product_resolver import resolve_prior_product_mention
+        products = [Product(id=1, business_id=4, name="Toner cấp ẩm – Nhỏ gọn", sku="T1", status="active"),
+                    Product(id=2, business_id=4, name="Serum niacinamide – Nhỏ gọn", sku="S1", status="active")]
+        db = Mock()
+        db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [
+            SimpleNamespace(content="Toner cấp ẩm – Nhỏ gọn", direction="outbound", sender_type="bot", metadata_=None)]
+        self.assertIsNone(resolve_prior_product_mention(db, business_id=4, conversation_id=1,
+            current_text="Serum loại nào?", products=products))
+        self.assertEqual(1, resolve_prior_product_mention(db, business_id=4, conversation_id=1,
+            current_text="Cho tôi mua cái đó", products=products).id)
+
+    def test_no_context_does_not_guess(self):
+        from app.services.product_resolver import resolve_prior_product_mention
+        db = Mock()
+        db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
+        products = [Product(id=1,business_id=4,name="Toner nhỏ gọn",sku="T1",status="active")]
+        self.assertIsNone(resolve_prior_product_mention(db,business_id=4,conversation_id=1,
+            current_text="mua cái đó",products=products))

@@ -1,0 +1,4161 @@
+{
+  "phase": "after",
+  "source_snapshot": {
+    "conversation_graph.py": "cf900e15583a63d7722507b63e86ea6c80d07ab3efafd1ce9dbb46e2fdda4a5a",
+    "catalog_dialogue.py": "2ddb9174a0294d28544866440ae78ec19df7538637988b0b52141e598b862720",
+    "catalog_overview.py": "ce909224762c79eac17d30f2b122f9cf171b0dc964a783536bfd7064d597e40b",
+    "auto_reply_service.py": "3dbe3310ab38dc603648a461e49ed87818cfa00053332cbbe9fa87f9077690e5",
+    "customer_collection_flow.py": "4a012f8a3004e7e4b267c9daeb6a36c28899b005ffa26d11e92bd36b6908ce43",
+    "business_request.py": "c3dd2a8cb169a9834e8a87ba1638c62ccf4a6bfb1b416f8eecac13f8d3c7b286"
+  },
+  "catalog_snapshot": {
+    "source_shop_id": 8,
+    "product_count": 24,
+    "seed_sha256": "32d98b67364f29372577e943afa2a7d9881b80ca94ce1c5d9fa10e41758d577b",
+    "toner_prices": [
+      {
+        "sku": "TON-100",
+        "name": "Toner dưỡng ẩm 100ml",
+        "unit_price": "95000.00",
+        "quantity_2_total": "190000.00"
+      },
+      {
+        "sku": "TON-200",
+        "name": "Toner dưỡng ẩm 200ml",
+        "unit_price": "159000.00",
+        "quantity_2_total": "318000.00"
+      }
+    ]
+  },
+  "initial_state": {
+    "conversation_status": "open",
+    "conversation_bot_mode": "auto",
+    "ticket_count": 0,
+    "inventory": [
+      {
+        "id": 4,
+        "sku": "SRM-100",
+        "stock_quantity": 28,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 5,
+        "sku": "SRM-150",
+        "stock_quantity": 36,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 6,
+        "sku": "GEL-100",
+        "stock_quantity": 24,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 7,
+        "sku": "GEL-200",
+        "stock_quantity": 18,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 8,
+        "sku": "TON-100",
+        "stock_quantity": 31,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 9,
+        "sku": "TON-200",
+        "stock_quantity": 25,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 10,
+        "sku": "SER-015",
+        "stock_quantity": 20,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 11,
+        "sku": "SER-030",
+        "stock_quantity": 23,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 12,
+        "sku": "KDG-030",
+        "stock_quantity": 22,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 13,
+        "sku": "KDG-050",
+        "stock_quantity": 32,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 14,
+        "sku": "KDC-030",
+        "stock_quantity": 19,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 15,
+        "sku": "KDC-050",
+        "stock_quantity": 27,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 16,
+        "sku": "DTT-100",
+        "stock_quantity": 21,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 17,
+        "sku": "DTT-200",
+        "stock_quantity": 16,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 18,
+        "sku": "NTT-200",
+        "stock_quantity": 35,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 19,
+        "sku": "NTT-400",
+        "stock_quantity": 29,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 20,
+        "sku": "MND-030",
+        "stock_quantity": 18,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 21,
+        "sku": "MND-100",
+        "stock_quantity": 24,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 22,
+        "sku": "SDM-004",
+        "stock_quantity": 48,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 23,
+        "sku": "SDM-008",
+        "stock_quantity": 26,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 24,
+        "sku": "DG-250",
+        "stock_quantity": 30,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 25,
+        "sku": "DG-500",
+        "stock_quantity": 22,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 26,
+        "sku": "ST-250",
+        "stock_quantity": 34,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 27,
+        "sku": "ST-500",
+        "stock_quantity": 25,
+        "reserved_quantity": 0
+      }
+    ],
+    "sessions": [],
+    "orders": []
+  },
+  "execution_context": {
+    "database": "isolated SQLite",
+    "synthetic_business_id": 1,
+    "fixture_workspace": "mixed retail and appointments; product snapshot only; no live configuration read",
+    "catalog_dialogue_enabled": true,
+    "provider_call_budget": 6,
+    "stop_physical_attempts_after_observed_429": true
+  },
+  "physical_provider_calls": 0,
+  "turns": [
+    {
+      "turn": 1,
+      "query": "xin chào",
+      "status": "greeting",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Chào bạn! Mình có thể giúp bạn tìm sản phẩm hoặc tư vấn đơn hàng hôm nay nhé.",
+      "metadata": {},
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 2,
+      "query": "bạn đang có sản phẩm gì",
+      "status": "catalog_dialogue",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Shop hiện đang kinh doanh các nhóm chính sau:\n• Dầu gội làm sạch dịu nhẹ\n• Dầu tẩy trang\n• Gel rửa mặt không hạt\n• Kem dưỡng ẩm dạng cream\n• Kem dưỡng ẩm dạng gel\n• Mặt nạ đất sét\n• Nước tẩy trang\n• Serum dưỡng ẩm\n• Son dưỡng môi không màu\n• Sữa rửa mặt tạo bọt dịu nhẹ\n• Sữa tắm dưỡng ẩm\n• Toner dưỡng ẩm\nBạn quan tâm nhóm nào để mình giới thiệu sản phẩm cụ thể ạ?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "overview",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 3,
+      "query": "bạn đang có nhóm sản phẩm nào",
+      "status": "catalog_dialogue",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Shop hiện có các danh mục sau:\n• Dầu gội làm sạch dịu nhẹ\n• Dầu tẩy trang\n• Gel rửa mặt không hạt\n• Kem dưỡng ẩm dạng cream\n• Kem dưỡng ẩm dạng gel\n• Mặt nạ đất sét\n• Nước tẩy trang\n• Serum dưỡng ẩm\n• Son dưỡng môi không màu\n• Sữa rửa mặt tạo bọt dịu nhẹ\n• Sữa tắm dưỡng ẩm\n• Toner dưỡng ẩm",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "overview",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 4,
+      "query": "bạn đang có nhóm sản phẩm nào",
+      "status": "catalog_dialogue",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Shop hiện có các danh mục sau:\n• Dầu gội làm sạch dịu nhẹ\n• Dầu tẩy trang\n• Gel rửa mặt không hạt\n• Kem dưỡng ẩm dạng cream\n• Kem dưỡng ẩm dạng gel\n• Mặt nạ đất sét\n• Nước tẩy trang\n• Serum dưỡng ẩm\n• Son dưỡng môi không màu\n• Sữa rửa mặt tạo bọt dịu nhẹ\n• Sữa tắm dưỡng ẩm\n• Toner dưỡng ẩm",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "overview",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 5,
+      "query": "bạn đang có sản phẩm nào",
+      "status": "catalog_dialogue",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Shop hiện đang kinh doanh các nhóm chính sau:\n• Dầu gội làm sạch dịu nhẹ\n• Dầu tẩy trang\n• Gel rửa mặt không hạt\n• Kem dưỡng ẩm dạng cream\n• Kem dưỡng ẩm dạng gel\n• Mặt nạ đất sét\n• Nước tẩy trang\n• Serum dưỡng ẩm\n• Son dưỡng môi không màu\n• Sữa rửa mặt tạo bọt dịu nhẹ\n• Sữa tắm dưỡng ẩm\n• Toner dưỡng ẩm\nBạn quan tâm nhóm nào để mình giới thiệu sản phẩm cụ thể ạ?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "overview",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 6,
+      "query": "shop đang có sản phẩm nào",
+      "status": "catalog_dialogue",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Shop hiện đang kinh doanh các nhóm chính sau:\n• Dầu gội làm sạch dịu nhẹ\n• Dầu tẩy trang\n• Gel rửa mặt không hạt\n• Kem dưỡng ẩm dạng cream\n• Kem dưỡng ẩm dạng gel\n• Mặt nạ đất sét\n• Nước tẩy trang\n• Serum dưỡng ẩm\n• Son dưỡng môi không màu\n• Sữa rửa mặt tạo bọt dịu nhẹ\n• Sữa tắm dưỡng ẩm\n• Toner dưỡng ẩm\nBạn quan tâm nhóm nào để mình giới thiệu sản phẩm cụ thể ạ?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "overview",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 7,
+      "query": "tôi muốn mua 2 toner dưỡng ẩm 200ml giá",
+      "status": "catalog_dialogue",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Dạ, Toner dưỡng ẩm 200ml giá 159.000 đồng/sản phẩm; 2 sản phẩm là 318.000 đồng. Tồn hiện tại là 25 sản phẩm.",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": "Toner dưỡng ẩm",
+          "budget": null,
+          "product": null,
+          "intent": "detail",
+          "shortlist": [
+            9
+          ]
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 8,
+      "query": "tôi muốn mua 2 toner dưỡng ẩm 200ml giá sẽ trả bao nhiêu",
+      "status": "catalog_dialogue",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Dạ, Toner dưỡng ẩm 200ml giá 159.000 đồng/sản phẩm; tiền hàng cho 2 sản phẩm là 318.000 đồng. Tồn hiện tại là 25 sản phẩm.",
+      "metadata": {
+        "catalog_dialogue": {
+          "group": "Toner dưỡng ẩm",
+          "budget": null,
+          "product": null,
+          "intent": "detail",
+          "shortlist": [
+            9
+          ]
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 9,
+      "query": "code python cho tôi bài code thiếu nhi đi",
+      "status": "dialogue_out_of_scope",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Mình là trợ lý của shop, hỗ trợ thông tin sản phẩm, giá, dịch vụ và đơn hàng. Bạn cần tìm hiểu điều gì về shop ạ?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "out_of_scope",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 10,
+      "query": "hello",
+      "status": "greeting",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "Hi! I can help you find a product or answer questions about an order today.",
+      "metadata": {},
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    },
+    {
+      "turn": 11,
+      "query": "please help me find a product",
+      "status": "dialogue_clarify",
+      "session_id": 0,
+      "current_field": null,
+      "reply": "What type of product are you looking for, what do you need it for, and what's your budget?",
+      "metadata": {
+        "catalog_dialogue": {
+          "intent": "recommend",
+          "group": null,
+          "budget": null,
+          "product": null,
+          "shortlist": []
+        }
+      },
+      "structured_trace": [],
+      "slots": [],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "diagnostic_provider_block_reason": null,
+      "collection_sessions": 0,
+      "order_count": 0,
+      "state_before": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      },
+      "state_after": {
+        "conversation_status": "open",
+        "conversation_bot_mode": "auto",
+        "ticket_count": 0,
+        "inventory": [
+          {
+            "id": 4,
+            "sku": "SRM-100",
+            "stock_quantity": 28,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 5,
+            "sku": "SRM-150",
+            "stock_quantity": 36,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 6,
+            "sku": "GEL-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 7,
+            "sku": "GEL-200",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 8,
+            "sku": "TON-100",
+            "stock_quantity": 31,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 9,
+            "sku": "TON-200",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 10,
+            "sku": "SER-015",
+            "stock_quantity": 20,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 11,
+            "sku": "SER-030",
+            "stock_quantity": 23,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 12,
+            "sku": "KDG-030",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 13,
+            "sku": "KDG-050",
+            "stock_quantity": 32,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 14,
+            "sku": "KDC-030",
+            "stock_quantity": 19,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 15,
+            "sku": "KDC-050",
+            "stock_quantity": 27,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 16,
+            "sku": "DTT-100",
+            "stock_quantity": 21,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 17,
+            "sku": "DTT-200",
+            "stock_quantity": 16,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 18,
+            "sku": "NTT-200",
+            "stock_quantity": 35,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 19,
+            "sku": "NTT-400",
+            "stock_quantity": 29,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 20,
+            "sku": "MND-030",
+            "stock_quantity": 18,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 21,
+            "sku": "MND-100",
+            "stock_quantity": 24,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 22,
+            "sku": "SDM-004",
+            "stock_quantity": 48,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 23,
+            "sku": "SDM-008",
+            "stock_quantity": 26,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 24,
+            "sku": "DG-250",
+            "stock_quantity": 30,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 25,
+            "sku": "DG-500",
+            "stock_quantity": 22,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 26,
+            "sku": "ST-250",
+            "stock_quantity": 34,
+            "reserved_quantity": 0
+          },
+          {
+            "id": 27,
+            "sku": "ST-500",
+            "stock_quantity": 25,
+            "reserved_quantity": 0
+          }
+        ],
+        "sessions": [],
+        "orders": []
+      }
+    }
+  ],
+  "sticker_probe": {
+    "position_after_text_turn": 1,
+    "local_message_persisted": true,
+    "content": "[sticker]",
+    "media_type": "sticker",
+    "media_url": null,
+    "graph_executed": false,
+    "limitation": "Metadata-only synthetic message in history. graph_reply accepts query text but no media/metadata parameter; connector/media ingestion was not invoked and no URL was fetched",
+    "provider_calls": 0,
+    "state_after": {
+      "conversation_status": "open",
+      "conversation_bot_mode": "auto",
+      "ticket_count": 0,
+      "inventory": [
+        {
+          "id": 4,
+          "sku": "SRM-100",
+          "stock_quantity": 28,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 5,
+          "sku": "SRM-150",
+          "stock_quantity": 36,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 6,
+          "sku": "GEL-100",
+          "stock_quantity": 24,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 7,
+          "sku": "GEL-200",
+          "stock_quantity": 18,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 8,
+          "sku": "TON-100",
+          "stock_quantity": 31,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 9,
+          "sku": "TON-200",
+          "stock_quantity": 25,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 10,
+          "sku": "SER-015",
+          "stock_quantity": 20,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 11,
+          "sku": "SER-030",
+          "stock_quantity": 23,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 12,
+          "sku": "KDG-030",
+          "stock_quantity": 22,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 13,
+          "sku": "KDG-050",
+          "stock_quantity": 32,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 14,
+          "sku": "KDC-030",
+          "stock_quantity": 19,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 15,
+          "sku": "KDC-050",
+          "stock_quantity": 27,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 16,
+          "sku": "DTT-100",
+          "stock_quantity": 21,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 17,
+          "sku": "DTT-200",
+          "stock_quantity": 16,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 18,
+          "sku": "NTT-200",
+          "stock_quantity": 35,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 19,
+          "sku": "NTT-400",
+          "stock_quantity": 29,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 20,
+          "sku": "MND-030",
+          "stock_quantity": 18,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 21,
+          "sku": "MND-100",
+          "stock_quantity": 24,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 22,
+          "sku": "SDM-004",
+          "stock_quantity": 48,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 23,
+          "sku": "SDM-008",
+          "stock_quantity": 26,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 24,
+          "sku": "DG-250",
+          "stock_quantity": 30,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 25,
+          "sku": "DG-500",
+          "stock_quantity": 22,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 26,
+          "sku": "ST-250",
+          "stock_quantity": 34,
+          "reserved_quantity": 0
+        },
+        {
+          "id": 27,
+          "sku": "ST-500",
+          "stock_quantity": 25,
+          "reserved_quantity": 0
+        }
+      ],
+      "sessions": [],
+      "orders": []
+    }
+  },
+  "source_snapshot_after": {
+    "conversation_graph.py": "cf900e15583a63d7722507b63e86ea6c80d07ab3efafd1ce9dbb46e2fdda4a5a",
+    "catalog_dialogue.py": "2ddb9174a0294d28544866440ae78ec19df7538637988b0b52141e598b862720",
+    "catalog_overview.py": "ce909224762c79eac17d30f2b122f9cf171b0dc964a783536bfd7064d597e40b",
+    "auto_reply_service.py": "3dbe3310ab38dc603648a461e49ed87818cfa00053332cbbe9fa87f9077690e5",
+    "customer_collection_flow.py": "4a012f8a3004e7e4b267c9daeb6a36c28899b005ffa26d11e92bd36b6908ce43",
+    "business_request.py": "c3dd2a8cb169a9834e8a87ba1638c62ccf4a6bfb1b416f8eecac13f8d3c7b286"
+  },
+  "source_stable_during_run": true,
+  "final_state": {
+    "conversation_status": "open",
+    "conversation_bot_mode": "auto",
+    "ticket_count": 0,
+    "inventory": [
+      {
+        "id": 4,
+        "sku": "SRM-100",
+        "stock_quantity": 28,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 5,
+        "sku": "SRM-150",
+        "stock_quantity": 36,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 6,
+        "sku": "GEL-100",
+        "stock_quantity": 24,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 7,
+        "sku": "GEL-200",
+        "stock_quantity": 18,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 8,
+        "sku": "TON-100",
+        "stock_quantity": 31,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 9,
+        "sku": "TON-200",
+        "stock_quantity": 25,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 10,
+        "sku": "SER-015",
+        "stock_quantity": 20,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 11,
+        "sku": "SER-030",
+        "stock_quantity": 23,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 12,
+        "sku": "KDG-030",
+        "stock_quantity": 22,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 13,
+        "sku": "KDG-050",
+        "stock_quantity": 32,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 14,
+        "sku": "KDC-030",
+        "stock_quantity": 19,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 15,
+        "sku": "KDC-050",
+        "stock_quantity": 27,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 16,
+        "sku": "DTT-100",
+        "stock_quantity": 21,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 17,
+        "sku": "DTT-200",
+        "stock_quantity": 16,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 18,
+        "sku": "NTT-200",
+        "stock_quantity": 35,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 19,
+        "sku": "NTT-400",
+        "stock_quantity": 29,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 20,
+        "sku": "MND-030",
+        "stock_quantity": 18,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 21,
+        "sku": "MND-100",
+        "stock_quantity": 24,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 22,
+        "sku": "SDM-004",
+        "stock_quantity": 48,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 23,
+        "sku": "SDM-008",
+        "stock_quantity": 26,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 24,
+        "sku": "DG-250",
+        "stock_quantity": 30,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 25,
+        "sku": "DG-500",
+        "stock_quantity": 22,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 26,
+        "sku": "ST-250",
+        "stock_quantity": 34,
+        "reserved_quantity": 0
+      },
+      {
+        "id": 27,
+        "sku": "ST-500",
+        "stock_quantity": 25,
+        "reserved_quantity": 0
+      }
+    ],
+    "sessions": [],
+    "orders": []
+  },
+  "inventory_unchanged": true,
+  "observed_checkout_sessions": 0,
+  "observed_orders": 0,
+  "observed_tickets": 0,
+  "toner_expectation": {
+    "sku": "TON-200",
+    "unit_price": "159000.00",
+    "quantity": 2,
+    "expected_total": "318000.00",
+    "turns": [
+      {
+        "turn": 7,
+        "reply_mentions_unit": true,
+        "reply_mentions_total": true,
+        "staff_handoff": null
+      },
+      {
+        "turn": 8,
+        "reply_mentions_unit": true,
+        "reply_mentions_total": true,
+        "staff_handoff": null
+      }
+    ]
+  }
+}

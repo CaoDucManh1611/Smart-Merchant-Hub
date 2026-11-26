@@ -317,6 +317,16 @@ def _dispatch_appointment_reminder_job(db: Session, business_id: int, payload: d
             raise RuntimeError("Chưa gửi được email nhắc lịch; kiểm tra cấu hình SMTP.")
     appointment.reminder_sent_at = _now()
 
+def _dispatch_completion_thanks(db, business_id, payload):
+    from app.services.appointment_completion import send_completion_thanks
+    return send_completion_thanks(db, business_id, payload)
+
+
+def _dispatch_order_status_notification(db, business_id, payload):
+    from app.services.order_status_notification import send_order_status_notification
+    return send_order_status_notification(db, business_id, payload)
+
+
 def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 100, platform_db: Session | None = None) -> int:
     """Run CRM and knowledge-base jobs for one tenant.
 
@@ -344,6 +354,8 @@ def dispatch_business_crm_jobs(db: Session, business_id: int, *, limit: int = 10
         "notification.email": lambda payload: _dispatch_notification_email_job(db, business_id, payload),
         "recommendations.train_segments": lambda payload: _dispatch_recommendation_segment_training_job(db, business_id, payload),
         "appointment.reminder": lambda payload: _dispatch_appointment_reminder_job(db, business_id, payload),
+        "appointment.completion_thanks": lambda payload: _dispatch_completion_thanks(db, business_id, payload),
+        "order.status_notification": lambda payload: _dispatch_order_status_notification(db, business_id, payload),
     }
     processed_jobs = dispatch_due_jobs(
         db,

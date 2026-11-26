@@ -16,6 +16,16 @@ from app.models.message import Message
 from app.services.job_service import enqueue_job
 
 logger = logging.getLogger(__name__)
+
+
+def actionable_inbound():
+    """Provider sidecars (e.g. Zalo contact cards) must not silence text."""
+    from sqlalchemy import or_, func
+    from app.models.message_attachment import MessageAttachment
+    return or_(func.length(func.trim(func.coalesce(Message.content, ""))) > 0,
+        Message.media_type == "image", Message.attachments.any(MessageAttachment.media_type == "image"))
+
+
 SHORTCUT_COMMAND = re.compile(r"^(/(?:[a-zA-Z0-9_-]+))(?:@[a-zA-Z0-9_]+)?$")
 
 
@@ -68,6 +78,10 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
         Message.conversation_id == conversation_id,
         Message.id > message_id,
         Message.direction == "inbound",
+        # Only defer to a later fragment that belongs to this debounce batch.
+        # A later independent message must not discard this turn's fields.
+        Message.received_at <= source_time + wait,
+        actionable_inbound(),
     ).order_by(Message.id.asc()).first()
     if later_fragment is not None and shortcut is None:
         return False
@@ -148,9 +162,19 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
                     raise
                 except Exception as error:
                     logger.warning("Conversation graph unavailable: %s",type(error).__name__)
-                    from app.services.customer_collection_flow import CollectionFlowResult
-                    result = CollectionFlowResult(session_id=0,status="graph_unavailable",current_field=None,
-                        prompt="Mình đang gặp lỗi khi kiểm tra dữ liệu nên chưa thể trả lời chắc chắn. Bạn thử lại hoặc nhờ nhân viên hỗ trợ nhé.")
+                    from app.services.customer_collection_flow import CollectionFlowResult, is_order_intent
+                    # Provider outages must not block the validated checkout flow.
+                    if type(error).__name__ in {"RateLimitError", "ProviderCircuitOpen"} and is_order_intent(query):
+                        result = advance_customer_collection(
+                            db=db, business_id=business_id,
+                            customer_id=conversation.customer_id,
+                            conversation_id=conversation_id,
+                            source_channel=conversation.channel,
+                            text=query, form_fragments=fragments,
+                        )
+                    if result is None:
+                        result = CollectionFlowResult(session_id=0,status="graph_unavailable",current_field=None,
+                        prompt="Xin lỗi bạn, hiện mình chưa trả lời được câu này. Bạn có thể hỏi cụ thể về sản phẩm/dịch vụ hoặc nhắn nhân viên shop để được hỗ trợ nhé.")
             if result is None:
                 result = advance_customer_collection(
                     db=db,
@@ -187,7 +211,7 @@ def dispatch_chatbot_turn(db: Session, *, business_id: int, payload: dict, platf
                     db.commit()
         if reply_text is not None:
             newer = db.query(Message.id).filter(Message.conversation_id == conversation_id,
-                Message.direction == "inbound", Message.id > message_id).first()
+                Message.direction == "inbound", Message.id > message_id, actionable_inbound()).first()
             if newer is not None:
                 return False
             processing_ms = round((perf_counter() - turn_started) * 1000, 1)

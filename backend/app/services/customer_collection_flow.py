@@ -99,7 +99,7 @@ def _required_fields_for_channel(source_channel: str | None) -> tuple[str, ...]:
 
 
 PAYMENT_METHODS = {
-    "cod": {"cod", "cash on delivery", "thu tien khi nhan", "thanh toan khi nhan", "nhan hang moi tra"},
+    "cod": {"cod", "cash on delivery", "thu tien khi nhan", "thanh toan khi nhan", "thanh toan khi nhan hang", "nhan hang moi tra", "giao hang thu tien"},
     "bank_transfer": {"chuyen khoan", "chuyen khoan ngan hang", "bank transfer", "ck", "qr"},
 }
 GREETING_PHRASES = {
@@ -118,6 +118,10 @@ GREETING_PHRASES = {
     "xin chao",
     "xin chao ban",
     "xin chao shop",
+    "chafo",
+    "chafo ban",
+    "xin chafo",
+    "xin chafo ban",
 }
 GREETING_REPLY = "Chào bạn! Mình có thể giúp bạn tìm sản phẩm hoặc tư vấn đơn hàng hôm nay nhé."
 GREETING_REPLY_EN = "Hi! I can help you find a product or answer questions about an order today."
@@ -200,7 +204,10 @@ BROWSING_PHRASES = (
     "con hang",
     "con mau",
 )
-PHONE_PATTERN = re.compile(r"(?:\+?84|0)(?:[\s.-]?\d){8,10}")
+# Capture a whole Vietnamese phone-shaped token, including short and oversized
+# candidates, so callers can ask for a correction instead of silently accepting
+# a prefix. Validation of the complete digit count belongs to _extract_value.
+PHONE_PATTERN = re.compile(r"(?<![\w+])(?:\+?84|0)(?:[\s.-]?\d){8,}(?![\w+])")
 EMAIL_PATTERN = re.compile(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b")
 QUANTITY_PATTERN = re.compile(r"\b(\d{1,4})\b")
 PRODUCT_MEASURE_UNITS = re.compile(r"\s*(?:ml|l|lit|kg|g|cm|mm)\b")
@@ -259,6 +266,9 @@ def _fold(value: str) -> str:
 
 def is_greeting(text: str | None) -> bool:
     """Return True for a standalone greeting, not a greeting plus a request."""
+    if re.fullmatch(r"/start(?:@[A-Za-z0-9_]{5,32})?(?:[ \t]+[A-Za-z0-9_-]{1,64})?",
+                    str(text or "").strip(), flags=re.I):
+        return True
     folded = _fold(str(text or ""))
     normalized = re.sub(r"[^\w\s]", " ", folded, flags=re.UNICODE)
     return " ".join(normalized.split()) in GREETING_PHRASES
@@ -271,6 +281,18 @@ def is_order_intent(text: str | None) -> bool:
         return False
     if _is_purchase_history_question(folded):
         return False
+    if re.search(r"\b(?:khong|chua|dung)\s+(?:muon\s+)?(?:mua|dat|lay|chot)\b", folded):
+        return False
+    if re.search(r"\b(?:dat|lay|chot)\s+(?:giup|dum|ho)\b", folded) and not re.search(r"\b(?:lich hen|dat lich|dich vu|cho thue)\b", folded):
+        return True
+    if re.search(r"\b(?:dat|lay|chot)\s+(?:no|cai do|san pham do|mon do)\b", folded):
+        return True
+    # Conversational purchase verbs and quantity-led requests use the same
+    # checkout path; product identity is validated against the shop below.
+    if re.search(r"\b(?:dat|lay|chot)\s+(?:cho\s+)?(?:toi|minh|em|anh|chi)?\s*(?:\d+|mot|voi|cai|chai|san pham|hang)\b", folded):
+        return True
+    if re.search(r"\bcho\s+(?:toi|minh|em|anh|chi)\s+(?:\d+|mot)\s+\w", folded):
+        return True
     if any(phrase in folded for phrase in ORDER_CONFIRMATION_PHRASES):
         return True
     if (
@@ -339,6 +361,8 @@ def _has_explicit_quantity(text: str) -> bool:
     old detector treated that number as a requested quantity and started
     checkout for a simple price/stock question.
     """
+    if re.search(r"\b(?:mua|dat|lay|chot)\s+(?:giup\s+)?(?:minh\s+|toi\s+|em\s+)?mot\b", text):
+        return True
     for match in QUANTITY_PATTERN.finditer(text):
         if _is_product_measurement(text, match):
             continue
@@ -383,7 +407,10 @@ def _is_product_detail_request(text: str | None) -> bool:
     folded = _fold(str(text or ""))
     if any(term in folded for term in ("don hang", "hoa don", "ma don", "order status", "invoice")):
         return False
-    return any(term in folded for term in ("chi tiet", "mo ta san pham", "thong so san pham"))
+    return any(term in folded for term in (
+        "chi tiet", "mo ta san pham", "thong so san pham", "cong dung",
+        "tac dung", "thanh phan", "cach dung", "dung the nao", "dung ra sao",
+    ))
 
 
 def _format_vnd(value: object) -> str:
@@ -422,7 +449,7 @@ def _invoice_confirmation_prompt(
             f"• Items: {items}\n"
             f"• Total: {_format_quote_amount(order.total_amount, language)} VND\n"
             f"• Payment: {payment}\n"
-            "Your contact details have been verified.\n"
+            "Your contact details have been recorded.\n"
         )
     else:
         prompt = (
@@ -430,9 +457,17 @@ def _invoice_confirmation_prompt(
             f"• Sản phẩm: {items}\n"
             f"• Tổng tiền: {_format_vnd(order.total_amount)} đồng\n"
             f"• Thanh toán: {payment}\n"
-            "Thông tin liên hệ đã xác thực.\n"
+            "Thông tin liên hệ đã được ghi nhận.\n"
         )
     if payment_method == "bank_transfer" and db is not None and business_id is not None:
+        if order.status == "draft" and not (order.metadata_ or {}).get("payment_request"):
+            from app.services.order_payment_request import publish_payment_request
+            publish_payment_request(order, [
+                {"label": item.product_name_snapshot or "Sản phẩm",
+                 "amount": item.line_total}
+                for item in order.items
+            ])
+            db.commit()
         prompt += "\n" + order_transfer_instructions(
             db,
             business_id=business_id,
@@ -480,6 +515,8 @@ def _is_contextual_quantity_purchase(text: str | None) -> bool:
 
 def _is_quantity_only_update(text: str) -> bool:
     folded = " ".join(re.sub(r"[^\w\s]", " ", _fold(str(text or ""))).split())
+    folded = re.sub(r"^(?:vay|the|a|uh|u)\s+", "", folded)
+    folded = re.sub(r"^(?:cho\s+)?(?:minh|toi|em|anh|chi)\s+", "", folded)
     folded = re.sub(
         r"^(?:(?:sua|doi) thanh|actually make (?:that|it)|make (?:that|it)|change (?:it )?to|set (?:it )?to)\s+",
         "",
@@ -488,10 +525,14 @@ def _is_quantity_only_update(text: str) -> bool:
     return bool(re.fullmatch(
         r"(?:(?:toi|minh|ban|i|we|you)\s+)?(?:(?:muon|want|need|mua|buy|lay|get)\s+)*"
         r"(?:\d{1,4}|" + "|".join(ENGLISH_QUANTITY_WORDS) + r")\s*"
-        r"(?:cai|bo|sp|san pham|items?|units?|pieces?)?"
-        r"(?:\s+(?:do|nay|thoi|nhe|please))?",
+        r"(?:cai|chai|tuyp|hop|chiec|bo|sp|san pham|items?|units?|pieces?)?"
+        r"(?:\s+(?:do|nay|thoi|di|nhe|nha|a|giup minh|giup toi|please))*",
         folded,
     ))
+
+
+def _is_quantity_addition(text: str) -> bool:
+    return bool(re.search(r"\b(?:mua\s+)?them\s+\d+\s*(?:(?:cai|chai|tuyp|hop|chiec|bo|san pham)\s*)?(?:nua)?\b", _fold(text)))
 
 
 def _is_quantity_replacement(text: str) -> bool:
@@ -589,20 +630,23 @@ def _product_position(text: str, product: Product) -> int | None:
     return min(partial_positions) if partial_positions else None
 
 
+def _product_quantity_match(text: str, product: Product) -> re.Match[str] | None:
+    query = normalize_product_text(text)
+    position = _product_position(text, product)
+    if position is None:
+        return None
+    prefix = query[max(0, position - 40):position]
+    return re.search(
+        r"(\d{1,4})(?:\s+(?:cai|bo|sp|san pham))?\s*$",
+        prefix,
+    )
+
+
 def _extract_quantity_for_product(text: str, product: Product, product_count: int) -> int:
     """Extract a quantity attached to one product in a multi-item message."""
     if product_count <= 1:
         return max(_extract_quantity(text), 1)
-
-    query = normalize_product_text(text)
-    position = _product_position(text, product)
-    if position is None:
-        return 1
-    prefix = query[max(0, position - 40):position]
-    match = re.search(
-        r"(\d{1,4})(?:\s+(?:cai|bo|sp|san pham))?\s*$",
-        prefix,
-    )
+    match = _product_quantity_match(text, product)
     return max(int(match.group(1)), 1) if match else 1
 
 
@@ -737,6 +781,14 @@ def _quote_product_name(item: dict, language: str) -> str:
     )
 
 
+def _format_quantity_prompt(item: dict, *, language: str) -> str:
+    name = _quote_product_name(item, language)
+    amount = _format_quote_amount(item.get("unit_price"), language)
+    if language == "en":
+        return f"{name}: ₫{amount} each. How many would you like to order?"
+    return f"{name}: {amount} đồng/sản phẩm. Bạn muốn đặt bao nhiêu sản phẩm ạ?"
+
+
 _ORDER_FORM_LABELS = {
     "ten nguoi nhan": "name",
     "ho ten": "name",
@@ -799,7 +851,10 @@ def _split_order_form_line(line: str) -> tuple[str | None, str]:
             remainder = line[boundary:]
             if remainder and not (remainder[0].isspace() or remainder[0] in ":：=—-"):
                 continue
-            return field, remainder.lstrip(" \t:：=—-").strip()
+            value = remainder.lstrip(" \t:：=—-").strip()
+            if field == "name":
+                value = re.sub(r"^(?:là|is)\s+", "", value, flags=re.IGNORECASE).strip()
+            return field, value
     return None, ""
 
 
@@ -856,6 +911,7 @@ def _parse_order_form_details(
     required_fields: list[str] | tuple[str, ...],
     fragments: list[str] | None = None,
     fallback_field: str | None = None,
+    known_values: dict | None = None,
 ) -> tuple[dict[str, str], bool, set[str]]:
     required = set(required_fields)
     values: dict[str, str] = {}
@@ -877,6 +933,10 @@ def _parse_order_form_details(
                 # Drop example text from labels such as "Payment (COD/bank
                 # transfer): ..." before looking for the selected method.
                 raw_value = raw_value.rsplit(":", 1)[-1]
+            if field == "payment_method" and not _extract_value(field, raw_value) and _extract_value(field, line):
+                # "Thanh toán khi nhận hàng" is an answer, not a label
+                # followed by an invalid value "khi nhận hàng".
+                raw_value = line
             value = _extract_value(field, raw_value)
             if value:
                 values[field] = value
@@ -897,7 +957,6 @@ def _parse_order_form_details(
         if len(positional) == len(required_fields):
             return positional, True, set()
 
-    fallback_used = False
     for line in unlabelled:
         inferred_field = next(
             (
@@ -911,19 +970,30 @@ def _parse_order_form_details(
             if inferred_field in required:
                 values[inferred_field] = _extract_value(inferred_field, line) or ""
             continue
+        known = {**(known_values or {}), **values}
+        if ("address" in required and known.get("name") and known.get("email")
+                and not known.get("address") and line != known.get("name") and "?" not in line
+                and not re.search(r"\b(?:mua|dat|huy|xac nhan|cam on|chao|gia|bao nhieu|khong|hoi)\b", _fold(line))
+                and re.search(r"[^\W\d_]", line)):
+            address = _extract_value("address", line)
+            if address:
+                values["address"] = address
+                found_form = True
+                continue
         # When a customer replies with a bare value (for example just their
         # name) after seeing the form, assign one such fragment to the next
         # missing field. This supports short chat messages without asking the
         # same full form again after every batch.
-        if not fallback_used and required_fields:
-            field = fallback_field if fallback_field in required else required_fields[0]
-            if field in values:
+        if required_fields:
+            sequence = list(required_fields)
+            start = sequence.index(fallback_field) if fallback_field in required else 0
+            field = next((key for key in sequence[start:] if key not in values), None)
+            if field is None:
                 continue
             value = _extract_value(field, line)
             if value:
                 found_form = True
                 values[field] = value
-                fallback_used = True
 
     return values, found_form, invalid_fields
 
@@ -958,12 +1028,78 @@ def _stock_unavailable_prompt(items: list[dict], *, language: str = "vi") -> str
     ]
     if len(items) == 1 and shortages:
         item = items[0]
+        if int(item.get("available") or 0) <= 0:
+            return f"{item.get('product_name')} hiện đã hết hàng. Bạn muốn xem sản phẩm khác không ạ?"
         return (
             f"Shop hiện chỉ còn {item.get('available', 0)} {item.get('product_name')}, "
             f"không đủ {int(item.get('quantity') or 1)} sản phẩm. Bạn muốn lấy "
             f"{item.get('available', 0)} sản phẩm không?"
         )
     return "Shop chưa đủ hàng: " + "; ".join(shortages) + ". Bạn giảm số lượng hoặc chọn sản phẩm khác nhé."
+
+
+def _remember_stock_counteroffer(db, *, business_id, customer_id, conversation_id,
+                                source_channel, items, language, session=None):
+    # Counteroffers are draft state only: no order, reservation or payment.
+    if len(items) != 1 or int(items[0].get("available") or 0) <= 0:
+        return None
+    quote = dict(session.collected_fields or {}) if session is not None else {}
+    quote["reply_language"] = language
+    quote["stock_offer"] = {"product_id": items[0]["product_id"],
+                            "offered_quantity": int(items[0]["available"])}
+    quote.pop("quantity_pending", None)
+    quote.pop("quantity_pending_product_ids", None)
+    _set_quote_items(quote, items)
+    if session is None:
+        session = CustomerCollectionSession(business_id=business_id,customer_id=customer_id,
+            conversation_id=conversation_id,source_channel=source_channel,purpose="order_confirmation",
+            required_fields=["confirmation"],status="pending")
+        db.add(session)
+    session.collected_fields = quote
+    session.current_field = "stock_resolution"
+    session.last_activity_at = _now()
+    db.commit()
+    return CollectionFlowResult(session_id=session.id,status="stock_unavailable",
+        current_field=session.current_field,prompt=_stock_unavailable_prompt(items,language=language),started=True)
+
+
+def _accept_stock_counteroffer(db, session, quote, items, text, language):
+    offer = quote.get("stock_offer")
+    if not isinstance(offer,dict) or len(items)!=1 or offer.get("product_id")!=items[0]["product_id"]:
+        return None
+    if _is_order_rejection(text):
+        return None
+    folded = " ".join(re.sub(r"[^\w\s]", " ", _fold(text)).split())
+    allowed={"toi","minh","em","anh","chi","ban","cho","muon","mua","lay","chot",
+             "luon","di","nhe","nha","a","ok","dong","y","xac","nhan","vang","da",
+             "cai","chai","lo","hop","chiec","san","pham","nay","no","do","ay","noi",
+             "vua","thoi","mot","yes","please","confirm"}
+    if any(word not in allowed and not word.isdigit() for word in folded.split()):
+        return None
+    quantity = _extract_quantity(text)
+    accepting = (_is_order_approval(text) or quantity>0 or
+                 bool(re.search(r"\b(?:lay|chot)\b",folded)))
+    if not accepting:
+        return None
+    if re.search(r"\b0\b",folded):
+        return CollectionFlowResult(session_id=session.id,status=session.status,current_field="stock_resolution",
+            prompt="Số lượng cần ít nhất 1. Nếu không mua nữa, bạn có thể nhắn hủy nhé.")
+    quantity = quantity or (1 if re.search(r"\bmot\b",folded) else int(offer["offered_quantity"]))
+    items[0]["quantity"] = quantity
+    if quantity > int(items[0].get("available") or 0):
+        changed = _remember_stock_counteroffer(db,business_id=session.business_id,
+            customer_id=session.customer_id,conversation_id=session.conversation_id,
+            source_channel=session.source_channel,items=items,language=language,session=session)
+        return changed or CollectionFlowResult(session_id=session.id,status="stock_unavailable",
+            current_field="stock_resolution",prompt=_stock_unavailable_prompt(items,language=language))
+    quote.pop("stock_offer",None)
+    _set_quote_items(quote,items)
+    session.collected_fields=quote
+    session.current_field="order_confirmation"
+    session.last_activity_at=_now()
+    db.commit()
+    return CollectionFlowResult(session_id=session.id,status=session.status,current_field=session.current_field,
+        prompt=_format_quote_prompt(items,language=language))
 
 
 def _start_product_quote(
@@ -975,8 +1111,7 @@ def _start_product_quote(
     source_channel: str,
     text: str,
 ) -> CollectionFlowResult:
-    # A product-specific purchase without an explicit quantity is treated as
-    # one item, then shown for confirmation before any customer data is asked.
+    # Missing quantity must be collected before quoting or asking contact details.
     # Resolve every product mention so a single message can start a cart with
     # multiple lines instead of silently keeping only the best match.
     products = _find_requested_products(
@@ -1015,6 +1150,12 @@ def _start_product_quote(
         })
 
     if any(int(item["quantity"]) > int(item["available"]) for item in items):
+        if is_order_intent(text) and not is_price_quote_request(text):
+            offer = _remember_stock_counteroffer(db,business_id=business_id,customer_id=customer_id,
+                conversation_id=conversation_id,source_channel=source_channel,items=items,
+                language=detect_reply_language(text))
+            if offer is not None:
+                return offer
         return CollectionFlowResult(
             session_id=0,
             status="stock_unavailable",
@@ -1041,6 +1182,10 @@ def _start_product_quote(
         return CollectionFlowResult(session_id=0, status="catalog_answer", current_field=None, prompt=prompt)
 
     collected = {"reply_language": detect_reply_language(text)}
+    quantity_pending = len(items) == 1 and not _has_explicit_quantity(_fold(text))
+    if quantity_pending:
+        collected["quantity_pending"] = True
+        collected["quantity_pending_product_ids"] = [items[0]["product_id"]]
     total = _set_quote_items(collected, items)
     session = CustomerCollectionSession(
         business_id=business_id,
@@ -1049,7 +1194,7 @@ def _start_product_quote(
         purpose="order_confirmation",
         required_fields=["confirmation"],
         collected_fields=collected,
-        current_field="order_confirmation",
+        current_field="quantity" if quantity_pending else "order_confirmation",
         source_channel=source_channel,
         status="pending",
     )
@@ -1083,13 +1228,22 @@ def _start_product_quote(
         session_id=session.id,
         status=session.status,
         current_field=session.current_field,
-        prompt=_format_quote_prompt(items, language=detect_reply_language(text)),
+        prompt=(_format_quantity_prompt(items[0], language=collected["reply_language"])
+                if quantity_pending else _format_quote_prompt(items, language=collected["reply_language"])),
         started=True,
     )
 
 
 def _is_order_approval(text: str | None) -> bool:
     folded = " ".join(re.sub(r"[^\w\s]", " ", _fold(str(text or ""))).split())
+    if _is_order_rejection(text):
+        return False
+    if re.search(r"\b(?:khong|chua|dung)\s+(?:dong y|xac nhan|duoc|ok)\b", folded):
+        return False
+    if re.fullmatch(r"(?:u|uh|vang|da)(?:\s+(?:nhe|nha|a|roi))*", folded):
+        return True
+    if re.search(r"\b(?:lam|len|tao)\s+don\b|\bdat\s+(?:giup|dum|ho)\b", folded):
+        return True
     return folded in {"yes", "yes please", "confirm", "confirmed", "go ahead"} or any(
         phrase in folded for phrase in ORDER_APPROVAL_PHRASES
     ) or folded.startswith(("i ll take ", "i will take "))
@@ -1097,6 +1251,10 @@ def _is_order_approval(text: str | None) -> bool:
 
 def _is_order_rejection(text: str | None) -> bool:
     folded = " ".join(re.sub(r"[^\w\s]", " ", _fold(str(text or ""))).split())
+    if re.search(r"\b(?:khong|chua|dung)\s+(?:muon\s+)?(?:mua|dat|lay|chot)(?:\s+(?:nua|voi|hang|don))?\b", folded):
+        return True
+    if re.search(r"\b(?:thoi|de sau)\b.*\b(?:chua can|chua mua|khong mua|khong dat)\b", folded):
+        return True
     return folded in {
         "khong", "khong nhe", "khong cam on", "khong can", "thoi khong",
         "khong mua nua", "khong dat nua", "khong lay nua", "huy", "huy don",
@@ -1186,14 +1344,18 @@ def _has_specific_purchase_signal(text: str | None) -> bool:
     route, while a resolved product name should start a deterministic quote.
     """
     folded = " ".join(_fold(str(text or "")).split())
-    return bool(re.search(r"\b(?:mua|dat|lay|chot|buy|take|order)\b", folded))
+    return is_order_intent(text) or bool(re.search(r"\b(?:mua|dat|lay|chot|buy|take|order)\b", folded))
 
 
 def _looks_like_product_discovery(folded: str) -> bool:
+    # Payment wording is not a catalog request. In particular, "nhan hang"
+    # in a COD choice must not make an explicit product purchase look like a
+    # request to browse generic "hang".
+    folded = re.sub(r"\b(?:thanh toan khi nhan hang|nhan hang moi tra|thu tien khi nhan hang)\b", "", folded)
     if any(phrase in folded for phrase in BROWSING_PHRASES):
         return True
     return bool(
-        re.search(r"\b(?:co|con|xem|tim|goi y|tu van|muon mua)\b.*\b(?:san pham|hang|mau)\b", folded)
+        re.search(r"\b(?:co|con|xem|tim|goi y|tu van)\b.*\b(?:san pham|hang|mau)\b", folded)
         or re.search(r"\b(?:san pham|hang|mau)\b.*\b(?:gi|nao|khong)\b", folded)
         or "mua hang" in folded
     )
@@ -1379,11 +1541,23 @@ def _extract_value(field: str, text: str) -> str | None:
                 break
         return value[:255] if value else None
     if field == "phone":
-        match = PHONE_PATTERN.search(raw)
-        if not match:
+        matches = list(PHONE_PATTERN.finditer(raw))
+        if len(matches) != 1:
             return None
-        normalized = normalize_contact("phone", match.group(0))
-        return normalized if len(normalized) >= 10 else None
+        candidate = matches[0].group(0)
+        digits = re.sub(r"\D+", "", candidate)
+        if candidate.lstrip().startswith("+"):
+            if not digits.startswith("84") or len(digits[2:]) not in {9, 10}:
+                return None
+        elif digits.startswith("84"):
+            if len(digits[2:]) not in {9, 10}:
+                return None
+        elif digits.startswith("0"):
+            if len(digits[1:]) not in {9, 10}:
+                return None
+        else:
+            return None
+        return normalize_contact("phone", candidate)
     if field == "email":
         match = EMAIL_PATTERN.search(raw)
         if not match:
@@ -1391,7 +1565,9 @@ def _extract_value(field: str, text: str) -> str | None:
         normalized = normalize_contact("email", match.group(0))
         return normalized if 3 <= len(normalized) <= 255 else None
     if field == "address":
-        return raw[:500] if len(raw) >= 5 else None
+        value = re.sub(r"^(?:của\s+(?:mình|tôi|em)\s+)?(?:là\s+)?", "", raw, flags=re.I).strip()
+        value = re.sub(r"\s+(?:nhé|nha|ạ)[.!]*$", "", value, flags=re.I).strip()
+        return value[:500] if len(value) >= 5 else None
     if field == "payment_method":
         for method, values in PAYMENT_METHODS.items():
             if any(value in folded for value in values):
@@ -2069,6 +2245,27 @@ def advance_customer_collection(
         return None
 
     session = _get_session(db, business_id, customer_id, conversation_id)
+    # An answer to an active stock offer belongs to that offer before generic
+    # catalogue routing ("đồng ý" must not be interpreted as a product line).
+    if session and session.purpose == "order_confirmation":
+        offer_quote = dict(session.collected_fields or {})
+        if offer_quote.get("stock_offer"):
+            offer_items = _quote_items(offer_quote)
+            _refresh_quote_stock(db, business_id, offer_items)
+            offer_reply = _accept_stock_counteroffer(
+                db, session, offer_quote, offer_items, text,
+                offer_quote.get("reply_language") or "vi",
+            )
+            if offer_reply is not None:
+                return offer_reply
+    # An explicitly selected retail item replaces an unfinished service draft.
+    if (session is not None and session.purpose == "business_request"
+            and is_order_intent(text)
+            and _find_requested_product(db, business_id, text, conversation_id=None) is not None):
+        session.status = "abandoned"
+        session.current_field = None
+        db.commit()
+        session = None
     from app.services.customer_order_service import customer_context_reply
     # A labeled checkout form can contain "Thanh toán: COD". The generic
     # payment-intent handler would otherwise mistake that field for a payment
@@ -2084,6 +2281,7 @@ def advance_customer_collection(
     contextual_reply = (
         customer_context_reply(db, business_id, conversation_id, text)
         if conversation_id and not checkout_form_values
+        and not (session and (session.collected_fields or {}).get("otp_pending"))
         else None
     )
     if contextual_reply:
@@ -2093,6 +2291,18 @@ def advance_customer_collection(
     # particular, do not let "còn hàng không?" decline an open quote or turn
     # a product model number (for example 1.8 lít) into a checkout quantity.
     folded_question = _fold(text)
+    from app.services.catalog_overview import catalog_overview_kind
+    if catalog_overview_kind(folded_question):
+        # A fresh catalogue question is not a contact-field answer, even
+        # when the customer has just reached the information form.
+        if session is not None and not (session.collected_fields or {}).get("draft_order_id"):
+            session.status = "abandoned"
+            session.current_field = None
+            session.last_activity_at = _now()
+            _cancel_checkout_reminder(db, business_id=business_id,
+                conversation_id=conversation_id, session_id=session.id)
+            db.commit()
+        return None
     if is_stock_query_request(text) or (
         not is_price_quote_request(text)
         and (re.search(r"\bgia\b(?!\s+dung\b)", folded_question) or any(phrase in folded_question for phrase in ENGLISH_PRICE_PHRASES))
@@ -2194,6 +2404,14 @@ def advance_customer_collection(
                 source_channel=source_channel,
                 text=text,
             )
+        if is_order_intent(text) and _find_requested_product(
+            db, business_id, text, conversation_id=conversation_id,
+        ) is not None:
+            return _start_product_quote(
+                db, business_id=business_id, customer_id=customer_id,
+                conversation_id=conversation_id, source_channel=source_channel,
+                text=text,
+            )
         if _is_underspecified_purchase_request(text):
             # The shared assistant can show the live catalogue or ask a
             # context-aware question without opening a checkout session.
@@ -2213,29 +2431,15 @@ def advance_customer_collection(
                 source_channel=source_channel,
                 text=text,
             )
-        session = CustomerCollectionSession(
-            business_id=business_id,
-            customer_id=customer_id,
-            conversation_id=conversation_id,
-            purpose="order",
-            required_fields=list(_required_fields_for_channel(source_channel)),
-            collected_fields={"reply_language": detect_reply_language(text)},
-            current_field=_required_fields_for_channel(source_channel)[0],
-            source_channel=source_channel,
-            status="pending",
-        )
-        db.add(session)
-        db.flush()
-        db.commit()
+        from app.services.catalog_search import search_current_offerings
+        candidates = search_current_offerings(db, business_id, str(text or ""), limit=8, kind="goods")
+        names = list(dict.fromkeys(item["name"] for item in candidates))
+        prompt = "Bạn muốn chọn sản phẩm hoặc phiên bản nào để mình báo giá trước khi lên đơn nhé?"
+        if names:
+            prompt = "Shop có các mẫu phù hợp sau:\n" + "\n".join(f"• {name}" for name in names) + "\nBạn muốn chọn mẫu nào?"
         return CollectionFlowResult(
-            session_id=session.id,
-            status=session.status,
-            current_field=session.current_field,
-            prompt=_order_form_prompt(
-                session.required_fields,
-                detect_reply_language(text),
-            ),
-            started=True,
+            session_id=0, status="product_clarification", current_field=None,
+            prompt=prompt,
         )
 
     # A greeting should always receive the standard greeting response. Do not
@@ -2248,6 +2452,27 @@ def advance_customer_collection(
     # This branch intentionally runs before product/RAG handling so a six-digit
     # OTP cannot be mistaken for a quantity or a generic question.
     collected_state = dict(session.collected_fields or {})
+    if collected_state.get("otp_pending"):
+        order = db.query(Order).filter(
+            Order.id == int(collected_state.get("draft_order_id") or 0),
+            Order.business_id == business_id,
+            Order.customer_id == customer_id,
+        ).first()
+        if order is not None and order.status == "draft":
+            collected_state.update(otp_pending=False, awaiting_customer_confirmation=True)
+            session.collected_fields = collected_state
+            metadata = dict(order.metadata_ or {})
+            metadata["contact_verification_pending"] = False
+            order.metadata_ = metadata
+            db.commit()
+            return CollectionFlowResult(
+                session_id=session.id, status=session.status, current_field=None,
+                prompt=_invoice_confirmation_prompt(
+                    order, payment_method=collected_state.get("payment_method"),
+                    db=db, business_id=business_id,
+                    language=collected_state.get("reply_language") or "vi",
+                ), draft_order_id=order.id,
+            )
     if collected_state.get("otp_pending"):
         if _is_checkout_cancel_request(text):
             return _cancel_pending_checkout(
@@ -2323,6 +2548,15 @@ def advance_customer_collection(
                 current_field=None,
                 prompt="Đơn nháp không còn tồn tại. Nhân viên sẽ kiểm tra lại giúp bạn nhé.",
             )
+        wants_separate_order = is_order_intent(text) and any(term in _fold(text) for term in (
+            "don moi", "don rieng", "dat rieng", "them mot don", "lam don moi"))
+        if order.status != "draft" or wants_separate_order:
+            session.status = "completed"
+            session.current_field = None
+            session.collected_fields = {**collected_state, "awaiting_customer_confirmation": False}
+            session.last_activity_at = _now()
+            db.commit()
+            return None
         if order.metadata_ and order.metadata_.get("customer_confirmed"):
             return CollectionFlowResult(
                 session_id=session.id,
@@ -2471,6 +2705,10 @@ def advance_customer_collection(
     if session.purpose == "order_confirmation":
         quote = dict(session.collected_fields or {})
         reply_language = quote.get("reply_language") or detect_reply_language(text)
+        if _is_product_detail_request(text):
+            # Asking about the item is not acceptance of the quote. Keep
+            # the cart so the customer can decide after reading the facts.
+            return None
         if is_browsing_request(text) or _is_checkout_information_question(text):
             session.status = "abandoned"
             session.current_field = None
@@ -2488,7 +2726,24 @@ def advance_customer_collection(
         # serum” updates the same cart instead of repeating the old quote.
         items = _quote_items(quote)
         _refresh_quote_stock(db, business_id, items)
-        additional_products = _find_requested_products(
+        offer_reply = _accept_stock_counteroffer(db,session,quote,items,text,reply_language)
+        if offer_reply is not None:
+            return offer_reply
+        pending_ids = []
+        was_quantity_pending = bool(quote.get("quantity_pending"))
+        if was_quantity_pending and items:
+            stored_ids = quote.get("quantity_pending_product_ids")
+            item_ids = {item["product_id"] for item in items}
+            pending_ids = [pid for pid in stored_ids if pid in item_ids] if isinstance(stored_ids, list) else []
+            # Legacy pending sessions contain only the boolean and one item.
+            pending_ids = pending_ids or [items[0]["product_id"]]
+        # A standalone approval authorizes the existing quote; its words must
+        # never be lexically resolved as another product or default quantity.
+        standalone_approval = _is_order_approval(text) and bool(re.fullmatch(
+            r"(?:xac nhan|dong y|ok|okay|yes|confirm|confirmed)(?:\s+(?:dat hang|dat|chot don|chot|don hang|don|nhe|nha|a|roi|please))*[.! ]*",
+            _fold(text).strip(),
+        ))
+        additional_products = [] if standalone_approval else _find_requested_products(
             db,
             business_id=business_id,
             text=text,
@@ -2519,13 +2774,54 @@ def advance_customer_collection(
                     else "Mình đã hủy yêu cầu đặt sản phẩm này. Khi cần mua lại cứ nhắn mình nhé."
                 ),
             )
+        if pending_ids and not additional_products:
+            pending_item = next(item for item in items if item["product_id"] == pending_ids[0])
+            quantity = _extract_quantity(text)
+            if quantity <= 0:
+                return CollectionFlowResult(session_id=session.id, status=session.status,
+                    current_field="quantity", prompt=_format_quantity_prompt(pending_item, language=reply_language))
+            pending_item["quantity"] = quantity
+            if quantity > int(pending_item.get("available") or 0):
+                offer = _remember_stock_counteroffer(db,business_id=business_id,customer_id=customer_id,
+                    conversation_id=conversation_id,source_channel=source_channel,items=items,
+                    language=reply_language,session=session)
+                if offer is not None:
+                    return offer
+                return CollectionFlowResult(session_id=session.id, status="stock_unavailable",
+                    current_field="quantity", prompt=_stock_unavailable_prompt(items, language=reply_language))
+            # Save this item's valid answer even while another cart row still
+            # needs a quantity or a reduction after stock changed.
+            pending_ids = list(dict.fromkeys(pending_ids[1:] + [
+                item["product_id"] for item in items
+                if int(item["quantity"]) > int(item.get("available") or 0)
+            ]))
+            if pending_ids:
+                quote["quantity_pending_product_ids"] = pending_ids
+            else:
+                quote.pop("quantity_pending", None)
+                quote.pop("quantity_pending_product_ids", None)
+            _set_quote_items(quote, items)
+            session.collected_fields = quote
+            session.current_field = "quantity" if pending_ids else "order_confirmation"
+            session.last_activity_at = _now()
+            db.commit()
+            next_item = next((item for item in items if pending_ids and item["product_id"] == pending_ids[0]), None)
+            return CollectionFlowResult(session_id=session.id, status=session.status,
+                current_field=session.current_field,
+                prompt=(_format_quantity_prompt(next_item, language=reply_language)
+                        if next_item else _format_quote_prompt(items, language=reply_language)))
         if additional_products:
             if is_switch:
                 # “Không, tôi muốn mua sữa rửa mặt” means replace the old
                 # combo quote, not cancel checkout and lose the new product.
                 items = []
+                pending_ids = []
             by_product = {int(item["product_id"]): item for item in items}
             for product in additional_products:
+                has_quantity = (
+                    _has_explicit_quantity(_fold(text)) if len(additional_products) == 1
+                    else _product_quantity_match(text, product) is not None
+                )
                 quantity = _extract_quantity_for_product(text, product, len(additional_products))
                 available = max(
                     int(product.stock_quantity or 0) - int(product.reserved_quantity or 0),
@@ -2533,8 +2829,9 @@ def advance_customer_collection(
                 )
                 existing = by_product.get(product.id)
                 requested_quantity = (
-                    quantity if existing and is_quantity_replacement
+                    quantity if product.id in pending_ids and has_quantity
                     else int(existing.get("quantity") or 0) - quantity if existing and is_quantity_decrease
+                    else quantity if existing and (is_quantity_replacement or not _is_quantity_addition(text))
                     else quantity + int(existing.get("quantity") or 0) if existing
                     else quantity
                 )
@@ -2560,16 +2857,40 @@ def advance_customer_collection(
                     by_product[product.id] = existing
                 existing["quantity"] = requested_quantity
                 existing["available"] = available
+                if was_quantity_pending:
+                    if has_quantity:
+                        pending_ids = [pid for pid in pending_ids if pid != product.id]
+                    elif product.id not in pending_ids:
+                        pending_ids.append(product.id)
 
             shortages = [item for item in items if int(item.get("quantity") or 1) > int(item.get("available") or 0)]
             if shortages:
+                if was_quantity_pending:
+                    # Keep the requested SKU after a stock warning so a later
+                    # quantity correction cannot fall back to the previous item.
+                    pending_ids = list(dict.fromkeys([item["product_id"] for item in shortages] + pending_ids))
+                    quote["quantity_pending"] = True
+                    quote["quantity_pending_product_ids"] = pending_ids
+                    _set_quote_items(quote, items)
+                    session.collected_fields = quote
+                    session.current_field = "quantity"
+                    session.last_activity_at = _now()
+                    db.commit()
                 return CollectionFlowResult(
                     session_id=session.id,
-                    status=session.status,
+                    status="stock_unavailable" if was_quantity_pending else session.status,
                     current_field=session.current_field,
                     prompt=_stock_unavailable_prompt(items, language=reply_language),
                 )
             _set_quote_items(quote, items)
+            if was_quantity_pending:
+                if pending_ids:
+                    quote["quantity_pending"] = True
+                    quote["quantity_pending_product_ids"] = pending_ids
+                else:
+                    quote.pop("quantity_pending", None)
+                    quote.pop("quantity_pending_product_ids", None)
+                session.current_field = "quantity" if pending_ids else "order_confirmation"
             session.collected_fields = quote
             session.last_activity_at = _now()
             _record_recommended_cart_items(
@@ -2581,14 +2902,16 @@ def advance_customer_collection(
                 product_ids={int(product.id) for product in additional_products},
             )
             db.commit()
+            next_item = next((item for item in items if pending_ids and item["product_id"] == pending_ids[0]), None)
             return CollectionFlowResult(
                 session_id=session.id,
                 status=session.status,
                 current_field=session.current_field,
-                prompt=_format_quote_prompt(items, language=reply_language),
+                prompt=(_format_quantity_prompt(next_item, language=reply_language)
+                        if next_item else _format_quote_prompt(items, language=reply_language)),
             )
 
-        if _is_quantity_only_update(text) or is_quantity_replacement or is_quantity_decrease or bool(re.search(r"\bthem\s+\d+\s+nua\b", _fold(text))):
+        if _is_quantity_only_update(text) or is_quantity_replacement or is_quantity_decrease or _is_quantity_addition(text):
             if len(items) != 1:
                 return CollectionFlowResult(
                     session_id=session.id,
@@ -2603,7 +2926,7 @@ def advance_customer_collection(
             quantity = _extract_quantity(text)
             updated_quantity = (
                 int(items[0]["quantity"]) - quantity if is_quantity_decrease
-                else int(items[0]["quantity"]) + quantity if re.search(r"\bthem\s+\d+\s+nua\b", _fold(text))
+                else int(items[0]["quantity"]) + quantity if _is_quantity_addition(text)
                 else quantity
             )
             if updated_quantity < 1:
@@ -2628,7 +2951,21 @@ def advance_customer_collection(
                 prompt=prompt,
             )
 
-        if not _is_order_approval(text):
+        if any(int(item["quantity"]) > int(item.get("available") or 0) for item in items):
+            offer = _remember_stock_counteroffer(db,business_id=business_id,customer_id=customer_id,
+                conversation_id=conversation_id,source_channel=source_channel,items=items,
+                language=reply_language,session=session)
+            if offer is not None:
+                return offer
+            return CollectionFlowResult(session_id=session.id,status="stock_unavailable",
+                current_field=session.current_field,prompt=_stock_unavailable_prompt(items,language=reply_language))
+        required_fields = _required_fields_for_channel(session.source_channel or source_channel)
+        supplied_form, recognized_form, invalid_form = _parse_order_form_details(
+            text, required_fields, form_fragments,
+        )
+        complete_form = (recognized_form and not invalid_form
+                         and all(supplied_form.get(key) for key in required_fields))
+        if not _is_order_approval(text) and not complete_form:
             return CollectionFlowResult(
                 session_id=session.id,
                 status=session.status,
@@ -2636,7 +2973,6 @@ def advance_customer_collection(
                 prompt=_format_quote_prompt(items, language=reply_language),
             )
         session.purpose = "order"
-        required_fields = _required_fields_for_channel(session.source_channel or source_channel)
         session.required_fields = list(required_fields)
         session.current_field = required_fields[0]
         session.status = "partial"
@@ -2648,6 +2984,13 @@ def advance_customer_collection(
             session_id=session.id,
         )
         db.commit()
+        if complete_form:
+            # Contact details can arrive directly after the quote. Consume the
+            # same turn through normal validation; the resulting draft still
+            # requires its separate customer confirmation before submission.
+            return advance_customer_collection(db, business_id=business_id,
+                customer_id=customer_id, conversation_id=conversation_id,
+                source_channel=source_channel, text=text, form_fragments=form_fragments)
         return CollectionFlowResult(
             session_id=session.id,
             status=session.status,
@@ -2702,6 +3045,7 @@ def advance_customer_collection(
         session.required_fields,
         form_fragments,
         fallback_field=field,
+        known_values=collected,
     )
     if not form_submitted:
         # Let ordinary questions reach RAG while leaving this checkout open.
@@ -2772,6 +3116,11 @@ def advance_customer_collection(
             # Keep valid fragments across batched turns without sending the
             # full form again after every partial customer message.
             prompt = ""
+            if "payment_method" in values:
+                labels = {"name":"tên người nhận", "phone":"số điện thoại bằng tin nhắn chữ",
+                    "email":"email", "address":"địa chỉ nhận hàng"}
+                missing = [labels.get(key,key) for key in session.required_fields if not collected.get(key)]
+                prompt = "Mình đã ghi nhận các thông tin bạn gửi. Bạn gửi thêm " + ", ".join(missing) + " để mình hoàn tất đơn nhé."
         return CollectionFlowResult(
             session_id=session.id,
             status=session.status,
@@ -2785,11 +3134,6 @@ def advance_customer_collection(
     draft_order, draft_error = _create_draft_order_for_session(db, session=session)
     otp_pending = False
     if draft_order is not None:
-        otp_pending = _create_checkout_otp_challenges(
-            db,
-            session=session,
-            order=draft_order,
-        )
         collected = dict(session.collected_fields or {})
         # Keep this explicit state even when a previously verified contact
         # means no new challenge is required.  It lets the next inbound

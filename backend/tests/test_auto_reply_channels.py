@@ -21,6 +21,31 @@ from app.services.auto_reply_service import (
 )
 
 
+def test_mixed_product_detail_question_does_not_drop_missing_usage():
+    from types import SimpleNamespace
+    from app.services.auto_reply_service import _format_product_fact_reply
+    product=SimpleNamespace(name='Toner',price=142000,stock_quantity=12,reserved_quantity=0,
+        metadata_={},description='Dữ liệu giả lập: Toner')
+    reply=_format_product_fact_reply(product,'toner co cong dung gi gia bao nhieu va con hang khong')
+    assert '142.000' in reply and '12' in reply
+    assert 'chưa xác nhận công dụng' in reply
+
+
+def test_public_payment_qr_is_rgb_jpeg_for_provider_fetchers(tmp_path):
+    import qrcode
+    from io import BytesIO
+    from PIL import Image
+    from app.services.auto_reply_service import _public_payment_qr
+    source=BytesIO();qrcode.make('synthetic QR contract').save(source,format='PNG')
+    with patch('app.services.shop_bank_transfer.shop_transfer_qr_png',return_value=source.getvalue()), \
+         patch('app.api.conversations.UPLOAD_DIR',tmp_path), \
+         patch('app.api.conversations.get_public_base_url',return_value='https://shop.test'):
+        url=_public_payment_qr(Mock(),1,'https://img.vietqr.io/image/synthetic.png')
+    assert url.endswith('.jpg')
+    image=Image.open(next(tmp_path.iterdir()))
+    assert image.mode=='RGB' and image.size==(800,800) and image.format=='JPEG'
+
+
 def _catalog_enabled_workspace_config():
     return {
         "business_model": "RETAIL",
@@ -35,7 +60,7 @@ def _catalog_enabled_workspace_config():
 
 @pytest.mark.parametrize("label", ["Mã QR", "• Mã QR", "🧾 Mã QR"])
 def test_vietqr_invoice_marker_is_sent_as_image_even_with_display_prefix(label):
-    url = "https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=4980000&addInfo=CHAT26"
+    url = "https://img.vietqr.io/image/970403-0900000011-compact2.png?amount=4980000&addInfo=CHAT26"
     text = f"🧾 Hóa đơn tạm tính CHAT-26\n{label}: {url}\nShop xác nhận sau khi nhận tiền."
 
     assert _extract_vietqr_photo(text) == (
@@ -553,25 +578,26 @@ def test_auto_reply_dispatches_telegram_through_tenant_channel():
     )
 
 
-def test_telegram_order_qr_is_sent_as_photo_with_instructions_as_caption():
+@pytest.mark.parametrize("channel", ["telegram", "zalo"])
+def test_order_qr_is_sent_as_photo_with_instructions_as_caption(channel):
     db = Mock()
     text = (
         "🏦 Thông tin chuyển khoản đơn CHAT-17\n"
         "Ngân hàng: Sacombank\nChủ tài khoản: Ngo Long Thien\n"
         "Số tiền: 249.000 đồng\nNội dung chuyển khoản: CHAT17\n"
-        "Mã QR: https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=249000&addInfo=CHAT17\n"
+        "Mã QR: https://img.vietqr.io/image/970403-0900000011-compact2.png?amount=249000&addInfo=CHAT17\n"
         "Shop sẽ cập nhật thanh toán sau khi xác nhận tiền đã vào tài khoản."
     )
     with patch(
-        "app.services.auto_reply_service.send_telegram_media",
+        f"app.services.auto_reply_service.send_{channel}_media",
         return_value={"ok": True, "result": {"message_id": 43}},
     ) as send_photo, patch(
-        "app.services.auto_reply_service.send_telegram_message",
-    ) as send_text:
+        f"app.services.auto_reply_service.send_{channel}_message",
+    ) as send_text, patch("app.services.auto_reply_service._public_payment_qr", return_value="https://shop.test/api/conversations/media-uploads/qr.png"):
         response = _send_channel_reply(
             db=db,
             conversation_id=7,
-            channel="telegram",
+            channel=channel,
             recipient_id="12345",
             text=text,
             business_id=1,
@@ -584,7 +610,7 @@ def test_telegram_order_qr_is_sent_as_photo_with_instructions_as_caption():
         conversation_id=7,
         recipient_id="12345",
         media_type="image",
-        media_url="https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=249000&addInfo=CHAT17",
+        media_url="https://shop.test/api/conversations/media-uploads/qr.png",
         caption=(
             "🏦 Thông tin chuyển khoản đơn CHAT-17\n"
             "Ngân hàng: Sacombank\nChủ tài khoản: Ngo Long Thien\n"
@@ -600,7 +626,7 @@ def test_facebook_and_instagram_order_qr_are_sent_as_images_without_the_url_text
     db.query.return_value.filter.return_value.first.return_value = Mock(id=11, channel_id=5)
     text = (
         "Thông tin chuyển khoản CHAT-18\nNgân hàng: Sacombank\nSố tiền: 1.245.000 đồng\n"
-        "Mã QR: https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=1245000&addInfo=CHAT18\n"
+        "Mã QR: https://img.vietqr.io/image/970403-0900000011-compact2.png?amount=1245000&addInfo=CHAT18\n"
         "Shop xác nhận sau khi nhận được tiền."
     )
     caption = "Thông tin chuyển khoản CHAT-18\nNgân hàng: Sacombank\nSố tiền: 1.245.000 đồng\nShop xác nhận sau khi nhận được tiền."
@@ -626,11 +652,27 @@ def test_facebook_and_instagram_order_qr_are_sent_as_images_without_the_url_text
             db=db,
             conversation={"id": 11, "channel_id": 5, "channel": channel},
             recipient_id="customer-1",
-            image_url="https://img.vietqr.io/image/970403-0327256842-compact2.png?amount=1245000&addInfo=CHAT18",
+            image_url="https://img.vietqr.io/image/970403-0900000011-compact2.png?amount=1245000&addInfo=CHAT18",
             caption=caption,
             business_id=4,
         )
         send_text.assert_not_called()
+
+
+@pytest.mark.parametrize("channel", ["tiktok", "shopee"])
+def test_connector_payment_qr_uses_image_bytes_and_caption(channel):
+    db = Mock()
+    db.query.return_value.filter.return_value.first.return_value = Mock(id=11, channel_id=5)
+    text = "Thông tin chuyển khoản\nMã QR: https://img.vietqr.io/image/970414-123-compact2.png?amount=300000"
+    with patch("app.services.shop_bank_transfer.shop_transfer_qr_png", return_value=b"validated-png"), \
+         patch(f"app.api.conversations.send_{channel}_text", return_value=({"message_id":"sent-1"},Mock())) as send:
+        result = _send_channel_reply(db=db,conversation_id=11,channel=channel,
+            recipient_id="customer",text=text,business_id=7)
+    kwargs = send.call_args.kwargs
+    assert kwargs["text_content"] == "Thông tin chuyển khoản"
+    assert kwargs["media_payload"]["mediaType"] == "image"
+    assert kwargs["media_payload"]["mediaData"] == "dmFsaWRhdGVkLXBuZw=="
+    assert result["media_type"] == "image"
 
 
 def test_auto_reply_persists_qr_caption_and_image_instead_of_url():

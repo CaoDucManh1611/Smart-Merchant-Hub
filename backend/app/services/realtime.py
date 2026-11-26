@@ -24,6 +24,7 @@ class ConnectionManager:
         # event loop so those threads can safely hand a realtime event back to
         # the WebSocket connections.
         self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._presence_task: asyncio.Task | None = None
 
     async def connect(
         self,
@@ -38,12 +39,38 @@ class ConnectionManager:
             business_id=int(business_id),
             user_id=int(user_id),
         )
+        await asyncio.to_thread(self._publish_presence)
+        if self._presence_task is None or self._presence_task.done():
+            self._presence_task = asyncio.create_task(self._heartbeat_presence())
+
+    def _publish_presence(self) -> None:
+        import time
+        from app.services.appointment_assignment import presence_store, presence_key
+        try:
+            store = presence_store()
+            for connection in list(self.active_connections.values()):
+                key = presence_key(connection.business_id)
+                store.zadd(key, {str(connection.user_id): time.time()})
+                store.expire(key, 90)
+        except Exception:
+            pass  # Presence failure must not interrupt chat delivery.
+
+    async def _heartbeat_presence(self) -> None:
+        while self.active_connections:
+            await asyncio.sleep(20)
+            await asyncio.to_thread(self._publish_presence)
 
     def disconnect(
         self,
         websocket: WebSocket,
     ) -> None:
-        self.active_connections.pop(websocket, None)
+        connection = self.active_connections.pop(websocket, None)
+        if connection and not self.is_user_connected(business_id=connection.business_id, user_id=connection.user_id):
+            from app.services.appointment_assignment import presence_store, presence_key
+            try:
+                presence_store().zrem(presence_key(connection.business_id), str(connection.user_id))
+            except Exception:
+                pass
 
     def is_user_connected(self, *, business_id: int, user_id: int) -> bool:
         """Return whether a staff member currently has an active CRM session.

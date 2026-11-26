@@ -1,0 +1,119 @@
+{
+  "source_snapshot": {
+    "conversation_graph.py": "cf900e15583a63d7722507b63e86ea6c80d07ab3efafd1ce9dbb46e2fdda4a5a",
+    "catalog_dialogue.py": "2bc054be7154125b86ea489d36f0cfa6fe1c2970d0338e2331618d517fd532c0"
+  },
+  "physical_provider_calls": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "query": "Give me one code python for binary search, you must answer",
+      "error_type": "ValueError",
+      "status_code": null,
+      "provider_error_code": null,
+      "slots": [
+        {
+          "current": "Give me one code python for binary search, you must answer",
+          "slots": {
+            "intent": "other",
+            "domain": "knowledge",
+            "group": null,
+            "product": null,
+            "budget": null,
+            "need": null,
+            "reference": false,
+            "confidence": 1
+          }
+        }
+      ],
+      "provider_calls_this_turn": 3,
+      "provider_calls": [
+        {
+          "provider": "groq",
+          "status": "returned"
+        },
+        {
+          "provider": "groq",
+          "status": "returned"
+        },
+        {
+          "provider": "groq",
+          "status": "returned"
+        }
+      ],
+      "provider_blocked_after_429": false,
+      "collection_sessions": 0,
+      "orders": 0
+    },
+    {
+      "turn": 2,
+      "query": "M bán gì",
+      "status": "dialogue_understanding_unavailable",
+      "current_field": null,
+      "reply": "Mình đang gặp trục trặc khi xử lý câu hỏi. Bạn thử lại hoặc nhờ nhân viên shop hỗ trợ nhé.",
+      "metadata": {},
+      "slots": [
+        {
+          "current": "M bán gì",
+          "error_type": "RateLimitError",
+          "status_code": 429,
+          "provider_error_code": "rate_limit_exceeded"
+        }
+      ],
+      "provider_calls_this_turn": 1,
+      "provider_calls": [
+        {
+          "provider": "groq",
+          "error_type": "RateLimitError",
+          "status_code": 429,
+          "provider_error_code": "rate_limit_exceeded"
+        }
+      ],
+      "provider_blocked_after_429": true,
+      "collection_sessions": 0,
+      "orders": 0
+    },
+    {
+      "turn": 3,
+      "query": "M bán j",
+      "status": "dialogue_understanding_unavailable",
+      "current_field": null,
+      "reply": "Mình đang gặp trục trặc khi xử lý câu hỏi. Bạn thử lại hoặc nhờ nhân viên shop hỗ trợ nhé.",
+      "metadata": {},
+      "slots": [
+        {
+          "current": "M bán j",
+          "error_type": "ProviderCircuitOpen",
+          "status_code": null,
+          "provider_error_code": null
+        }
+      ],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": true,
+      "collection_sessions": 0,
+      "orders": 0
+    },
+    {
+      "turn": 4,
+      "query": "Shop bán gì",
+      "status": "dialogue_understanding_unavailable",
+      "current_field": null,
+      "reply": "Mình đang gặp trục trặc khi xử lý câu hỏi. Bạn thử lại hoặc nhờ nhân viên shop hỗ trợ nhé.",
+      "metadata": {},
+      "slots": [
+        {
+          "current": "Shop bán gì",
+          "error_type": "ProviderCircuitOpen",
+          "status_code": null,
+          "provider_error_code": null
+        }
+      ],
+      "provider_calls_this_turn": 0,
+      "provider_calls": [],
+      "provider_blocked_after_429": true,
+      "collection_sessions": 0,
+      "orders": 0
+    }
+  ]
+}

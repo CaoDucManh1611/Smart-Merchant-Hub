@@ -79,6 +79,16 @@ def test_generic_fallback_asks_for_interest_only_when_request_is_too_broad():
     assert needs.next_best_question == "Bạn đang tìm sản phẩm/dịch vụ nào hoặc muốn giải quyết nhu cầu gì?"
 
 
+def test_generic_product_request_with_budget_is_actionable_without_category():
+    context = resolve_industry_profiles(7)
+    needs = discover_needs("Vậy sản phẩm phù hợp dưới 200k", context)
+
+    assert needs.intent == "product_recommendation"
+    assert needs.budget is not None and needs.budget.amount == 200_000
+    assert needs.missing_slots == ()
+    assert needs.next_best_question is None
+
+
 def test_profile_slots_apply_to_advice_not_factual_price_lookup():
     context = resolve_industry_profiles(7, config(7, "beauty_cosmetics"))
     advice = discover_needs("Gợi ý serum giúp tôi", context)

@@ -297,7 +297,9 @@ def record_order_payment(
     normalized_status = status.strip().lower()
     if normalized_status not in PAYMENT_STATUSES:
         raise PaymentOperationError("Trạng thái thanh toán không hợp lệ.", 422)
-    amount = Decimal(amount).quantize(Decimal("0.01"))
+    amount = Decimal(amount)
+    if not amount.is_finite() or amount <= 0 or amount != amount.to_integral_value():
+        raise PaymentOperationError("Số tiền phải là số nguyên đồng, lớn hơn 0.", 422)
     if normalized_status == "paid":
         new_paid = Decimal(order.paid_amount or 0) + amount
         if new_paid > Decimal(order.total_amount or 0):
@@ -356,7 +358,9 @@ def refund_order_payment(
     ).with_for_update().first()
     if order is None:
         raise PaymentOperationError("Đơn hàng không tồn tại.", 404)
-    amount = Decimal(amount).quantize(Decimal("0.01"))
+    amount = Decimal(amount)
+    if not amount.is_finite() or amount <= 0 or amount != amount.to_integral_value():
+        raise PaymentOperationError("Số tiền phải là số nguyên đồng, lớn hơn 0.", 422)
     paid = Decimal(order.paid_amount or 0)
     refunded = Decimal(order.refunded_amount or 0)
     if amount <= 0:
@@ -415,14 +419,22 @@ def refund_order_payment(
     )
     db.add(payment)
     db.flush()
-    db.add(OrderEvent(
+    refund_event = OrderEvent(
         business_id=business_id,
         order_type="sales_order",
         order_id=order.id,
         event_type="refund_created",
         actor_id=actor_id,
-        metadata_={"payment_id": payment.id, "amount": str(amount)},
-    ))
+        metadata_={"payment_id": payment.id, "amount": str(amount),
+                   "cumulative_refunded": str(order.refunded_amount), "paid_amount": str(paid)},
+    )
+    db.add(refund_event)
+    if order.conversation_id:
+        from app.services.job_service import enqueue_job
+        db.flush()
+        enqueue_job(db,business_id=business_id,kind="order.status_notification",
+            payload={"order_id":order.id,"event_id":refund_event.id,"status":"refunded","event_type":"refund_created"},
+            idempotency_key=f"order:{order.id}:refund-notification:{payment.id}")
     if returned_to_stock:
         db.add(OrderEvent(
             business_id=business_id,
@@ -471,7 +483,9 @@ def record_purchase_payment(
     normalized_status = status.strip().lower()
     if normalized_status not in PAYMENT_STATUSES:
         raise PaymentOperationError("Trạng thái thanh toán không hợp lệ.", 422)
-    amount = Decimal(amount).quantize(Decimal("0.01"))
+    amount = Decimal(amount)
+    if not amount.is_finite() or amount <= 0 or amount != amount.to_integral_value():
+        raise PaymentOperationError("Số tiền phải là số nguyên đồng, lớn hơn 0.", 422)
     if normalized_status == "paid":
         new_paid = Decimal(order.paid_amount or 0) + amount
         if new_paid > Decimal(order.total_spend or 0):
@@ -543,8 +557,29 @@ def transition_sales_order(
             "Dùng endpoint hoàn tiền để tạo giao dịch hoàn tiền trước khi đổi trạng thái đơn.",
             409,
         )
+    if (
+        target != "cancelled"
+        and Decimal(order.paid_amount or 0) > 0
+        and Decimal(order.refunded_amount or 0) >= Decimal(order.paid_amount or 0)
+    ):
+        raise SalesOrderOperationError(
+            "Đơn đã hoàn đủ tiền; không thể tiếp tục xử lý hoặc giao hàng.", 409
+        )
     allowed = SALES_TRANSITIONS.get(order.status, set())
-    if target not in allowed:
+    service_completion = (target == "completed" and order.status in {"confirmed", "processing"}
+        and (order.metadata_ or {}).get("offering_type") == "service"
+        and bool((order.metadata_ or {}).get("appointment_id")))
+    if service_completion:
+        from app.models.industry_modules import Appointment
+        completed_appointment = db.query(Appointment).filter(
+            Appointment.id == order.metadata_["appointment_id"],
+            Appointment.business_id == business_id,
+            Appointment.customer_id == order.customer_id,
+            Appointment.status == "completed",
+        ).first()
+        if completed_appointment is None:
+            raise SalesOrderOperationError("Cần hoàn tất lịch hẹn trước khi hoàn tất đơn dịch vụ.", 409)
+    if target not in allowed and not service_completion:
         raise SalesOrderOperationError(f"Không thể chuyển {order.status} sang {target}.", 409)
     if target=="confirmed":
         from app.services.order_payment_request import confirmation_payment_error
@@ -666,7 +701,7 @@ def transition_sales_order(
     order.status = target
     if appointment is not None and target in {"confirmed","cancelled"}:
         appointment.status=target
-    db.add(OrderEvent(
+    event = OrderEvent(
         business_id=business_id,
         order_type="sales_order",
         order_id=order.id,
@@ -675,7 +710,10 @@ def transition_sales_order(
         to_status=target,
         actor_id=actor_id,
         metadata_={"reserved_quantity": int(order.reserved_quantity or 0)},
-    ))
+    )
+    db.add(event)
+    from app.services.order_status_notification import queue_order_status_notification
+    queue_order_status_notification(db, order, event)
     # A completed, fully paid order is the strongest recommender signal. The
     # deterministic key inside the recorder makes retries of this transition
     # harmless and covers every caller of the lifecycle service.

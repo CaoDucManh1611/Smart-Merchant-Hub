@@ -35,6 +35,7 @@ async function save(payment=false){
 <template>
   <details class="payment-request-panel">
     <summary>Bảng kê khoản thu · {{ order.metadata?.payment_request ? formatMoney(order.total_amount) : 'Chưa lập' }}</summary>
+    <p v-if="order.metadata?.customer_payment_reported_at && remaining > 0 && !['cancelled','refunded'].includes(order.status)" role="status"><strong>Khách báo đã chuyển khoản — chờ đối soát.</strong> Chưa ghi nhận đã thu tiền.</p>
     <p>Gửi khoản thu trước, đối soát tiền rồi nhân viên xác nhận đơn/lịch. COD được trả sau.</p>
     <div v-for="(line,index) in lines" :key="index" class="charge-row">
       <label>Khoản thu<input v-model="line.label" :disabled="!editable || busy" maxlength="120" /></label>

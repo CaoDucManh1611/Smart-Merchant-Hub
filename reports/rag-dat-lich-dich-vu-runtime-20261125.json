@@ -1,0 +1,25 @@
+{
+  "checked_at": "2026-11-25T17:30:29.2850988+07:00",
+  "services": [
+    {
+      "name": "/smart-merchant-hub-runtime-backend-1",
+      "status": "running",
+      "health": "healthy",
+      "failing_streak": 0,
+      "started_at": "2026-11-25T10:29:26.772943015Z"
+    },
+    {
+      "name": "/smart-merchant-hub-runtime-worker-1",
+      "status": "running",
+      "health": "healthy",
+      "failing_streak": 0,
+      "started_at": "2026-11-25T10:29:26.819231544Z"
+    }
+  ],
+  "health": {
+    "status": "ok",
+    "loaded_revision": "bb37335a3d00c2e8",
+    "source_revision": "bb37335a3d00c2e8"
+  },
+  "verification": "backend and worker healthy with failing_streak 0; loaded_revision equals source_revision"
+}

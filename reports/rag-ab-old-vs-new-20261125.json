@@ -1,0 +1,4329 @@
+{
+  "question_count": 30,
+  "positive_questions": 27,
+  "model": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+  "max_tokens": 128,
+  "query_batch_ms": 2474.071742999513,
+  "note": "Retrieval-only benchmark, not generated-answer correctness. Schema changes are uncommitted and rolled back. Latencies exclude precomputed query embedding.",
+  "arms": {
+    "A_old_BM25": {
+      "mode": "bm25",
+      "hit1": 0.8888888888888888,
+      "hit3": 0.8888888888888888,
+      "mrr3": 0.8888888888888888,
+      "median_retrieval_ms": 59.25310899874603,
+      "negative_empty": 0,
+      "groups": {
+        "exact": {
+          "count": 10,
+          "hit3": 1.0
+        },
+        "paraphrase": {
+          "count": 10,
+          "hit3": 0.7
+        },
+        "policy": {
+          "count": 4,
+          "hit3": 1.0
+        },
+        "sku": {
+          "count": 3,
+          "hit3": 1.0
+        }
+      }
+    },
+    "diagnostic_old_hybrid": {
+      "mode": "hybrid",
+      "hit1": 0.8888888888888888,
+      "hit3": 0.8888888888888888,
+      "mrr3": 0.8888888888888888,
+      "median_retrieval_ms": 57.1164580014738,
+      "negative_empty": 0,
+      "groups": {
+        "exact": {
+          "count": 10,
+          "hit3": 0.9
+        },
+        "paraphrase": {
+          "count": 10,
+          "hit3": 0.8
+        },
+        "policy": {
+          "count": 4,
+          "hit3": 1.0
+        },
+        "sku": {
+          "count": 3,
+          "hit3": 1.0
+        }
+      }
+    },
+    "diagnostic_new_BM25": {
+      "mode": "bm25",
+      "hit1": 0.9259259259259259,
+      "hit3": 0.9259259259259259,
+      "mrr3": 0.9259259259259259,
+      "median_retrieval_ms": 78.9388784996845,
+      "negative_empty": 0,
+      "groups": {
+        "exact": {
+          "count": 10,
+          "hit3": 1.0
+        },
+        "paraphrase": {
+          "count": 10,
+          "hit3": 0.8
+        },
+        "policy": {
+          "count": 4,
+          "hit3": 1.0
+        },
+        "sku": {
+          "count": 3,
+          "hit3": 1.0
+        }
+      }
+    },
+    "B_token_safe_hybrid": {
+      "mode": "hybrid",
+      "hit1": 0.8518518518518519,
+      "hit3": 0.9259259259259259,
+      "mrr3": 0.882716049382716,
+      "median_retrieval_ms": 77.57041449985991,
+      "negative_empty": 0,
+      "groups": {
+        "exact": {
+          "count": 10,
+          "hit3": 1.0
+        },
+        "paraphrase": {
+          "count": 10,
+          "hit3": 0.8
+        },
+        "policy": {
+          "count": 4,
+          "hit3": 1.0
+        },
+        "sku": {
+          "count": 3,
+          "hit3": 1.0
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "arm": "A_old_BM25",
+      "query": "Sữa rửa mặt dịu nhẹ có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": 301,
+          "parent": 301,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-1 — Sữa rửa mặt dịu nhẹ – Tiêu chuẩn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu "
+        },
+        {
+          "chunk_id": 302,
+          "parent": 302,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-2 — Sữa rửa mặt dịu nhẹ – Nhỏ gọn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý: "
+        },
+        {
+          "chunk_id": 303,
+          "parent": 303,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-3 — Sữa rửa mặt dịu nhẹ – Nâng cao\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý:"
+        }
+      ],
+      "ms": 113.204681998468,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Toner cấp ẩm dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "02"
+      ],
+      "results": [
+        {
+          "chunk_id": 305,
+          "parent": 305,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-1 — Toner cấp ẩm – Tiêu chuẩn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành"
+        },
+        {
+          "chunk_id": 306,
+          "parent": 306,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-2 — Toner cấp ẩm – Nhỏ gọn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        }
+      ],
+      "ms": 83.23088999895845,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Serum niacinamide là nhóm sản phẩm nào?",
+      "group": "exact",
+      "expected_labels": [
+        "03"
+      ],
+      "results": [
+        {
+          "chunk_id": 309,
+          "parent": 309,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-1 — Serum niacinamide – Tiêu chuẩn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": 310,
+          "parent": 310,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-2 — Serum niacinamide – Nhỏ gọn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": 311,
+          "parent": 311,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-3 — Serum niacinamide – Nâng cao\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành "
+        }
+      ],
+      "ms": 78.9472360011132,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Kem dưỡng phục hồi có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": 313,
+          "parent": 313,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-1 — Kem dưỡng phục hồi – Tiêu chuẩn\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": 314,
+          "parent": 314,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-2 — Kem dưỡng phục hồi – Nhỏ gọn\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": 315,
+          "parent": 315,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-3 — Kem dưỡng phục hồi – Nâng cao\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành "
+        }
+      ],
+      "ms": 83.62530099839205,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Kem chống nắng có tác dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": 317,
+          "parent": 317,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-1 — Kem chống nắng – Tiêu chuẩn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống "
+        },
+        {
+          "chunk_id": 318,
+          "parent": 318,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-2 — Kem chống nắng – Nhỏ gọn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắn"
+        },
+        {
+          "chunk_id": 319,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        }
+      ],
+      "ms": 76.15396400069585,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Dầu tẩy trang dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "06"
+      ],
+      "results": [
+        {
+          "chunk_id": 321,
+          "parent": 321,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-1 — Dầu tẩy trang – Tiêu chuẩn\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa x"
+        },
+        {
+          "chunk_id": 322,
+          "parent": 322,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-2 — Dầu tẩy trang – Nhỏ gọn\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        }
+      ],
+      "ms": 81.32600300086779,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Mặt nạ đất sét có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "07"
+      ],
+      "results": [
+        {
+          "chunk_id": 325,
+          "parent": 325,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-1 — Mặt nạ đất sét – Tiêu chuẩn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLư"
+        },
+        {
+          "chunk_id": 326,
+          "parent": 326,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-2 — Mặt nạ đất sét – Nhỏ gọn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý"
+        },
+        {
+          "chunk_id": 327,
+          "parent": 327,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-3 — Mặt nạ đất sét – Nâng cao\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu "
+        }
+      ],
+      "ms": 75.5009099993913,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Son dưỡng môi dùng làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": 329,
+          "parent": 329,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-1 — Son dưỡng môi – Tiêu chuẩn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chư"
+        },
+        {
+          "chunk_id": 330,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        },
+        {
+          "chunk_id": 331,
+          "parent": 331,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-3 — Son dưỡng môi – Nâng cao\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa "
+        }
+      ],
+      "ms": 102.78078199917218,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Dầu gội dịu nhẹ có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "09"
+      ],
+      "results": [
+        {
+          "chunk_id": 333,
+          "parent": 333,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-1 — Dầu gội dịu nhẹ – Tiêu chuẩn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa "
+        },
+        {
+          "chunk_id": 334,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": 335,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        }
+      ],
+      "ms": 90.81724800125812,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Sữa tắm dưỡng ẩm dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "10"
+      ],
+      "results": [
+        {
+          "chunk_id": 337,
+          "parent": 337,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-1 — Sữa tắm dưỡng ẩm – Tiêu chuẩn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhậ"
+        },
+        {
+          "chunk_id": 338,
+          "parent": 338,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-2 — Sữa tắm dưỡng ẩm – Nhỏ gọn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận t"
+        },
+        {
+          "chunk_id": 339,
+          "parent": 339,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-3 — Sữa tắm dưỡng ẩm – Nâng cao\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận "
+        }
+      ],
+      "ms": 70.7183940030518,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Tôi muốn làm sạch làn da trên mặt sau một ngày đi đường",
+      "group": "paraphrase",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": 293,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        },
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        }
+      ],
+      "ms": 65.90250400040532,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Da cần bổ sung độ ẩm, tôi nên tham khảo nhóm nào?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "02",
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": 308,
+          "parent": 308,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-4 — Toner cấp ẩm – Bộ đôi\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành phầ"
+        },
+        {
+          "chunk_id": 305,
+          "parent": 305,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-1 — Toner cấp ẩm – Tiêu chuẩn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành"
+        },
+        {
+          "chunk_id": 306,
+          "parent": 306,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-2 — Toner cấp ẩm – Nhỏ gọn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        }
+      ],
+      "ms": 68.07707100233529,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Tôi cần chăm sóc da với tinh chất serum",
+      "group": "paraphrase",
+      "expected_labels": [
+        "03"
+      ],
+      "results": [
+        {
+          "chunk_id": 309,
+          "parent": 309,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-1 — Serum niacinamide – Tiêu chuẩn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": 310,
+          "parent": 310,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-2 — Serum niacinamide – Nhỏ gọn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": 295,
+          "parent": 295,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Tư vấn sản phẩm\n\n- Khi khách hỏi shop có bán gì, lấy danh sách từ danh mục CRM. Khi khách hỏi giá hoặc số lượng, kiểm tra đúng sản phẩm và đúng biến thể tron"
+        }
+      ],
+      "ms": 60.744980997696985,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Có món nào dưỡng ẩm cho làn da không?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "02",
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": 329,
+          "parent": 329,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-1 — Son dưỡng môi – Tiêu chuẩn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chư"
+        },
+        {
+          "chunk_id": 330,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        },
+        {
+          "chunk_id": 331,
+          "parent": 331,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-3 — Son dưỡng môi – Nâng cao\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa "
+        }
+      ],
+      "ms": 57.761236999795074,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Ra ngoài trời nắng thì dùng món nào hỗ trợ bảo vệ da?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": 317,
+          "parent": 317,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-1 — Kem chống nắng – Tiêu chuẩn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống "
+        },
+        {
+          "chunk_id": 318,
+          "parent": 318,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-2 — Kem chống nắng – Nhỏ gọn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắn"
+        },
+        {
+          "chunk_id": 319,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        }
+      ],
+      "ms": 68.90021700019133,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Tôi muốn làm sạch lớp trang điểm buổi tối",
+      "group": "paraphrase",
+      "expected_labels": [
+        "06"
+      ],
+      "results": [
+        {
+          "chunk_id": 321,
+          "parent": 321,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-1 — Dầu tẩy trang – Tiêu chuẩn\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa x"
+        },
+        {
+          "chunk_id": 322,
+          "parent": 322,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-2 — Dầu tẩy trang – Nhỏ gọn\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": 323,
+          "parent": 323,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-3 — Dầu tẩy trang – Nâng cao\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác"
+        }
+      ],
+      "ms": 37.44007700151997,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Tôi cần chăm sóc da bằng mặt nạ",
+      "group": "paraphrase",
+      "expected_labels": [
+        "07"
+      ],
+      "results": [
+        {
+          "chunk_id": 325,
+          "parent": 325,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-1 — Mặt nạ đất sét – Tiêu chuẩn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLư"
+        },
+        {
+          "chunk_id": 326,
+          "parent": 326,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-2 — Mặt nạ đất sét – Nhỏ gọn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý"
+        },
+        {
+          "chunk_id": 299,
+          "parent": 299,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Khi không đủ căn cứ\n\nTrả lời ngắn rằng shop chưa có thông tin đã xác nhận và chuyển câu hỏi cho nhân viên. Không lặp danh sách sản phẩm, không tự thêm chính "
+        }
+      ],
+      "ms": 55.54930700236582,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Môi khô thì tham khảo nhóm chăm sóc nào?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": 309,
+          "parent": 309,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-1 — Serum niacinamide – Tiêu chuẩn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": 310,
+          "parent": 310,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-2 — Serum niacinamide – Nhỏ gọn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": 311,
+          "parent": 311,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-3 — Serum niacinamide – Nâng cao\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành "
+        }
+      ],
+      "ms": 51.57204000352067,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Tóc và da đầu cần được làm sạch thì tìm loại gì?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "09"
+      ],
+      "results": [
+        {
+          "chunk_id": 333,
+          "parent": 333,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-1 — Dầu gội dịu nhẹ – Tiêu chuẩn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa "
+        },
+        {
+          "chunk_id": 334,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        }
+      ],
+      "ms": 56.59360500067123,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Dùng gì làm sạch cơ thể khi tắm?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "10"
+      ],
+      "results": [
+        {
+          "chunk_id": 337,
+          "parent": 337,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-1 — Sữa tắm dưỡng ẩm – Tiêu chuẩn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhậ"
+        },
+        {
+          "chunk_id": 338,
+          "parent": 338,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-2 — Sữa tắm dưỡng ẩm – Nhỏ gọn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận t"
+        },
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        }
+      ],
+      "ms": 48.40291099753813,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Cho tôi thông tin mã DEMO-BEA-01-1",
+      "group": "sku",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": 301,
+          "parent": 301,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-1 — Sữa rửa mặt dịu nhẹ – Tiêu chuẩn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu "
+        }
+      ],
+      "ms": 2326.753864999773,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "DEMO-BEA-05-3 thuộc nhóm nào?",
+      "group": "sku",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": 319,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        }
+      ],
+      "ms": 45.92257799959043,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Mã DEMO-BEA-08-2 có công dụng gì?",
+      "group": "sku",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": 330,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        }
+      ],
+      "ms": 54.13962499733316,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Gửi mã QR có nghĩa đã thanh toán chưa?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        },
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        }
+      ],
+      "ms": 39.222900002641836,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Khách muốn hoàn tiền thì cần cung cấp mã gì?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        },
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        }
+      ],
+      "ms": 26.644109002518235,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Khách gửi thông tin đặt hàng thành nhiều tin được không?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        },
+        {
+          "chunk_id": 341,
+          "parent": 341,
+          "labels": [],
+          "preview": "## Chính sách và thông tin chưa có\nChưa có chính sách giao hàng, giảm giá, bảo hành và đổi trả được xác nhận trong tài liệu này. Không tự hứa hẹn; nhờ nhân viên"
+        },
+        {
+          "chunk_id": 300,
+          "parent": 300,
+          "labels": [],
+          "preview": "# Hồ sơ tư vấn danh mục làm đẹp demo\n\nNội dung minh họa cho demo; không phải thông tin nhà sản xuất xác nhận. Giá, tồn và trạng thái bán phải tra CRM hiện tại. "
+        }
+      ],
+      "ms": 29.77514499798417,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Shop chưa có căn cứ trả lời thì bot nên làm gì?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": 299,
+          "parent": 299,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Khi không đủ căn cứ\n\nTrả lời ngắn rằng shop chưa có thông tin đã xác nhận và chuyển câu hỏi cho nhân viên. Không lặp danh sách sản phẩm, không tự thêm chính "
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        },
+        {
+          "chunk_id": 341,
+          "parent": 341,
+          "labels": [],
+          "preview": "## Chính sách và thông tin chưa có\nChưa có chính sách giao hàng, giảm giá, bảo hành và đổi trả được xác nhận trong tài liệu này. Không tự hứa hẹn; nhờ nhân viên"
+        }
+      ],
+      "ms": 34.01362799922936,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Lãi suất vay mua nhà hôm nay bao nhiêu?",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        }
+      ],
+      "ms": 32.82927999680396,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Dự báo thời tiết ngày mai tại Hà Nội",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": 293,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        },
+        {
+          "chunk_id": 300,
+          "parent": 300,
+          "labels": [],
+          "preview": "# Hồ sơ tư vấn danh mục làm đẹp demo\n\nNội dung minh họa cho demo; không phải thông tin nhà sản xuất xác nhận. Giá, tồn và trạng thái bán phải tra CRM hiện tại. "
+        }
+      ],
+      "ms": 38.347629000782035,
+      "vector_hits": 0
+    },
+    {
+      "arm": "A_old_BM25",
+      "query": "Giá vé máy bay đi Singapore tuần tới",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": 293,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        }
+      ],
+      "ms": 29.624454000440892,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Sữa rửa mặt dịu nhẹ có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": 301,
+          "parent": 301,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-1 — Sữa rửa mặt dịu nhẹ – Tiêu chuẩn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu "
+        },
+        {
+          "chunk_id": 304,
+          "parent": 304,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-4 — Sữa rửa mặt dịu nhẹ – Bộ đôi\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý: C"
+        },
+        {
+          "chunk_id": 302,
+          "parent": 302,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-2 — Sữa rửa mặt dịu nhẹ – Nhỏ gọn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý: "
+        }
+      ],
+      "ms": 48.11196299851872,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Toner cấp ẩm dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "02"
+      ],
+      "results": [
+        {
+          "chunk_id": 308,
+          "parent": 308,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-4 — Toner cấp ẩm – Bộ đôi\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành phầ"
+        },
+        {
+          "chunk_id": 305,
+          "parent": 305,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-1 — Toner cấp ẩm – Tiêu chuẩn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành"
+        },
+        {
+          "chunk_id": 295,
+          "parent": 295,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Tư vấn sản phẩm\n\n- Khi khách hỏi shop có bán gì, lấy danh sách từ danh mục CRM. Khi khách hỏi giá hoặc số lượng, kiểm tra đúng sản phẩm và đúng biến thể tron"
+        }
+      ],
+      "ms": 42.44757700143964,
+      "vector_hits": 2
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Serum niacinamide là nhóm sản phẩm nào?",
+      "group": "exact",
+      "expected_labels": [
+        "03"
+      ],
+      "results": [
+        {
+          "chunk_id": 309,
+          "parent": 309,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-1 — Serum niacinamide – Tiêu chuẩn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": 312,
+          "parent": 312,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-4 — Serum niacinamide – Bộ đôi\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": 310,
+          "parent": 310,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-2 — Serum niacinamide – Nhỏ gọn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành p"
+        }
+      ],
+      "ms": 48.64828599966131,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Kem dưỡng phục hồi có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": 315,
+          "parent": 315,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-3 — Kem dưỡng phục hồi – Nâng cao\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": 313,
+          "parent": 313,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-1 — Kem dưỡng phục hồi – Tiêu chuẩn\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": 314,
+          "parent": 314,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-2 — Kem dưỡng phục hồi – Nhỏ gọn\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        }
+      ],
+      "ms": 63.561769002262736,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Kem chống nắng có tác dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": 317,
+          "parent": 317,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-1 — Kem chống nắng – Tiêu chuẩn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống "
+        },
+        {
+          "chunk_id": 320,
+          "parent": 320,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-4 — Kem chống nắng – Bộ đôi\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắng"
+        },
+        {
+          "chunk_id": 318,
+          "parent": 318,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-2 — Kem chống nắng – Nhỏ gọn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắn"
+        }
+      ],
+      "ms": 61.554044998047175,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Dầu tẩy trang dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "06"
+      ],
+      "results": [
+        {
+          "chunk_id": 334,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": 335,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        }
+      ],
+      "ms": 67.73885300208349,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Mặt nạ đất sét có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "07"
+      ],
+      "results": [
+        {
+          "chunk_id": 327,
+          "parent": 327,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-3 — Mặt nạ đất sét – Nâng cao\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu "
+        },
+        {
+          "chunk_id": 326,
+          "parent": 326,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-2 — Mặt nạ đất sét – Nhỏ gọn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý"
+        },
+        {
+          "chunk_id": 325,
+          "parent": 325,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-1 — Mặt nạ đất sét – Tiêu chuẩn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLư"
+        }
+      ],
+      "ms": 51.48526800257969,
+      "vector_hits": 4
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Son dưỡng môi dùng làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": 331,
+          "parent": 331,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-3 — Son dưỡng môi – Nâng cao\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa "
+        },
+        {
+          "chunk_id": 330,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        },
+        {
+          "chunk_id": 329,
+          "parent": 329,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-1 — Son dưỡng môi – Tiêu chuẩn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chư"
+        }
+      ],
+      "ms": 50.86719700193498,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Dầu gội dịu nhẹ có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "09"
+      ],
+      "results": [
+        {
+          "chunk_id": 334,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": 333,
+          "parent": 333,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-1 — Dầu gội dịu nhẹ – Tiêu chuẩn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa "
+        },
+        {
+          "chunk_id": 335,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        }
+      ],
+      "ms": 46.88359899955685,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Sữa tắm dưỡng ẩm dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "10"
+      ],
+      "results": [
+        {
+          "chunk_id": 338,
+          "parent": 338,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-2 — Sữa tắm dưỡng ẩm – Nhỏ gọn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận t"
+        },
+        {
+          "chunk_id": 340,
+          "parent": 340,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-4 — Sữa tắm dưỡng ẩm – Bộ đôi\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận th"
+        },
+        {
+          "chunk_id": 337,
+          "parent": 337,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-1 — Sữa tắm dưỡng ẩm – Tiêu chuẩn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhậ"
+        }
+      ],
+      "ms": 48.45527699944796,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Tôi muốn làm sạch làn da trên mặt sau một ngày đi đường",
+      "group": "paraphrase",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": 293,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        },
+        {
+          "chunk_id": 335,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        }
+      ],
+      "ms": 55.552310001075966,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Da cần bổ sung độ ẩm, tôi nên tham khảo nhóm nào?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "02",
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": 308,
+          "parent": 308,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-4 — Toner cấp ẩm – Bộ đôi\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành phầ"
+        },
+        {
+          "chunk_id": 305,
+          "parent": 305,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-1 — Toner cấp ẩm – Tiêu chuẩn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành"
+        },
+        {
+          "chunk_id": 307,
+          "parent": 307,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-3 — Toner cấp ẩm – Nâng cao\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        }
+      ],
+      "ms": 50.676261002081446,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Tôi cần chăm sóc da với tinh chất serum",
+      "group": "paraphrase",
+      "expected_labels": [
+        "03"
+      ],
+      "results": [
+        {
+          "chunk_id": 312,
+          "parent": 312,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-4 — Serum niacinamide – Bộ đôi\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": 309,
+          "parent": 309,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-1 — Serum niacinamide – Tiêu chuẩn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": 295,
+          "parent": 295,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Tư vấn sản phẩm\n\n- Khi khách hỏi shop có bán gì, lấy danh sách từ danh mục CRM. Khi khách hỏi giá hoặc số lượng, kiểm tra đúng sản phẩm và đúng biến thể tron"
+        }
+      ],
+      "ms": 53.00560900286655,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Có món nào dưỡng ẩm cho làn da không?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "02",
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": 315,
+          "parent": 315,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-3 — Kem dưỡng phục hồi – Nâng cao\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": 329,
+          "parent": 329,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-1 — Son dưỡng môi – Tiêu chuẩn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chư"
+        },
+        {
+          "chunk_id": 335,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        }
+      ],
+      "ms": 47.84132200074964,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Ra ngoài trời nắng thì dùng món nào hỗ trợ bảo vệ da?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": 320,
+          "parent": 320,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-4 — Kem chống nắng – Bộ đôi\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắng"
+        },
+        {
+          "chunk_id": 318,
+          "parent": 318,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-2 — Kem chống nắng – Nhỏ gọn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắn"
+        },
+        {
+          "chunk_id": 319,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        }
+      ],
+      "ms": 51.440063001791714,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Tôi muốn làm sạch lớp trang điểm buổi tối",
+      "group": "paraphrase",
+      "expected_labels": [
+        "06"
+      ],
+      "results": [
+        {
+          "chunk_id": 321,
+          "parent": 321,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-1 — Dầu tẩy trang – Tiêu chuẩn\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa x"
+        },
+        {
+          "chunk_id": 334,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": 322,
+          "parent": 322,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-2 — Dầu tẩy trang – Nhỏ gọn\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác "
+        }
+      ],
+      "ms": 34.85702200123342,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Tôi cần chăm sóc da bằng mặt nạ",
+      "group": "paraphrase",
+      "expected_labels": [
+        "07"
+      ],
+      "results": [
+        {
+          "chunk_id": 327,
+          "parent": 327,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-3 — Mặt nạ đất sét – Nâng cao\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu "
+        },
+        {
+          "chunk_id": 326,
+          "parent": 326,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-2 — Mặt nạ đất sét – Nhỏ gọn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý"
+        },
+        {
+          "chunk_id": 299,
+          "parent": 299,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Khi không đủ căn cứ\n\nTrả lời ngắn rằng shop chưa có thông tin đã xác nhận và chuyển câu hỏi cho nhân viên. Không lặp danh sách sản phẩm, không tự thêm chính "
+        }
+      ],
+      "ms": 53.326771998399636,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Môi khô thì tham khảo nhóm chăm sóc nào?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": 309,
+          "parent": 309,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-1 — Serum niacinamide – Tiêu chuẩn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": 336,
+          "parent": 336,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-4 — Dầu gội dịu nhẹ – Bộ đôi\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": 310,
+          "parent": 310,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-2 — Serum niacinamide – Nhỏ gọn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành p"
+        }
+      ],
+      "ms": 69.53757600058452,
+      "vector_hits": 7
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Tóc và da đầu cần được làm sạch thì tìm loại gì?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "09"
+      ],
+      "results": [
+        {
+          "chunk_id": 335,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": 333,
+          "parent": 333,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-1 — Dầu gội dịu nhẹ – Tiêu chuẩn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa "
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        }
+      ],
+      "ms": 61.508265000156825,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Dùng gì làm sạch cơ thể khi tắm?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "10"
+      ],
+      "results": [
+        {
+          "chunk_id": 340,
+          "parent": 340,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-4 — Sữa tắm dưỡng ẩm – Bộ đôi\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận th"
+        },
+        {
+          "chunk_id": 338,
+          "parent": 338,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-2 — Sữa tắm dưỡng ẩm – Nhỏ gọn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận t"
+        },
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        }
+      ],
+      "ms": 75.62394400156336,
+      "vector_hits": 9
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Cho tôi thông tin mã DEMO-BEA-01-1",
+      "group": "sku",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": 301,
+          "parent": 301,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-1 — Sữa rửa mặt dịu nhẹ – Tiêu chuẩn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu "
+        }
+      ],
+      "ms": 146.00881599835702,
+      "vector_hits": 1
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "DEMO-BEA-05-3 thuộc nhóm nào?",
+      "group": "sku",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": 319,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        }
+      ],
+      "ms": 125.14516299779643,
+      "vector_hits": 1
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Mã DEMO-BEA-08-2 có công dụng gì?",
+      "group": "sku",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": 330,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        }
+      ],
+      "ms": 143.50063999881968,
+      "vector_hits": 1
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Gửi mã QR có nghĩa đã thanh toán chưa?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        },
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        }
+      ],
+      "ms": 69.07640600184095,
+      "vector_hits": 4
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Khách muốn hoàn tiền thì cần cung cấp mã gì?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        }
+      ],
+      "ms": 65.32308899841155,
+      "vector_hits": 7
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Khách gửi thông tin đặt hàng thành nhiều tin được không?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        },
+        {
+          "chunk_id": 341,
+          "parent": 341,
+          "labels": [],
+          "preview": "## Chính sách và thông tin chưa có\nChưa có chính sách giao hàng, giảm giá, bảo hành và đổi trả được xác nhận trong tài liệu này. Không tự hứa hẹn; nhờ nhân viên"
+        }
+      ],
+      "ms": 55.30943299891078,
+      "vector_hits": 7
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Shop chưa có căn cứ trả lời thì bot nên làm gì?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": 299,
+          "parent": 299,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Khi không đủ căn cứ\n\nTrả lời ngắn rằng shop chưa có thông tin đã xác nhận và chuyển câu hỏi cho nhân viên. Không lặp danh sách sản phẩm, không tự thêm chính "
+        },
+        {
+          "chunk_id": 298,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": 341,
+          "parent": 341,
+          "labels": [],
+          "preview": "## Chính sách và thông tin chưa có\nChưa có chính sách giao hàng, giảm giá, bảo hành và đổi trả được xác nhận trong tài liệu này. Không tự hứa hẹn; nhờ nhân viên"
+        }
+      ],
+      "ms": 71.93716499750735,
+      "vector_hits": 7
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Lãi suất vay mua nhà hôm nay bao nhiêu?",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": 297,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Luồng đặt hàng\n\n1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác n"
+        }
+      ],
+      "ms": 58.68060600187164,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Dự báo thời tiết ngày mai tại Hà Nội",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": 293,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        },
+        {
+          "chunk_id": 294,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        },
+        {
+          "chunk_id": 300,
+          "parent": 300,
+          "labels": [],
+          "preview": "# Hồ sơ tư vấn danh mục làm đẹp demo\n\nNội dung minh họa cho demo; không phải thông tin nhà sản xuất xác nhận. Giá, tồn và trạng thái bán phải tra CRM hiện tại. "
+        }
+      ],
+      "ms": 82.32340599715826,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_old_hybrid",
+      "query": "Giá vé máy bay đi Singapore tuần tới",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": 293,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        }
+      ],
+      "ms": 66.02892500086455,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Sữa rửa mặt dịu nhẹ có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": -19,
+          "parent": 303,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-3 — Sữa rửa mặt dịu nhẹ – Nâng cao\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý:"
+        },
+        {
+          "chunk_id": -17,
+          "parent": 302,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-2 — Sữa rửa mặt dịu nhẹ – Nhỏ gọn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý: "
+        },
+        {
+          "chunk_id": -21,
+          "parent": 304,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-4 — Sữa rửa mặt dịu nhẹ – Bộ đôi\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý: C"
+        }
+      ],
+      "ms": 78.54586000030395,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Toner cấp ẩm dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "02"
+      ],
+      "results": [
+        {
+          "chunk_id": -27,
+          "parent": 307,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-3 — Toner cấp ẩm – Nâng cao\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": -25,
+          "parent": 306,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-2 — Toner cấp ẩm – Nhỏ gọn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": -12,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "hoặc xác nhận tiền đã chuyển.\n- Chỉ thông báo đã hủy hoặc đã ghi nhận hoàn tiền sau khi trạng thái tương ứng được nhân viên cập nhật trong SMH. “Ghi nhận hoàn t"
+        }
+      ],
+      "ms": 74.9254229995131,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Serum niacinamide là nhóm sản phẩm nào?",
+      "group": "exact",
+      "expected_labels": [
+        "03"
+      ],
+      "results": [
+        {
+          "chunk_id": -35,
+          "parent": 311,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-3 — Serum niacinamide – Nâng cao\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -33,
+          "parent": 310,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-2 — Serum niacinamide – Nhỏ gọn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": -37,
+          "parent": 312,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-4 — Serum niacinamide – Bộ đôi\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành ph"
+        }
+      ],
+      "ms": 64.69026599734207,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Kem dưỡng phục hồi có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": -43,
+          "parent": 315,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-3 — Kem dưỡng phục hồi – Nâng cao\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -41,
+          "parent": 314,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-2 — Kem dưỡng phục hồi – Nhỏ gọn\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": -45,
+          "parent": 316,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-4 — Kem dưỡng phục hồi – Bộ đôi\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        }
+      ],
+      "ms": 84.41224900161615,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Kem chống nắng có tác dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": -51,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        },
+        {
+          "chunk_id": -49,
+          "parent": 318,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-2 — Kem chống nắng – Nhỏ gọn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắn"
+        },
+        {
+          "chunk_id": -53,
+          "parent": 320,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-4 — Kem chống nắng – Bộ đôi\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắng"
+        }
+      ],
+      "ms": 79.14648399673752,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Dầu tẩy trang dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "06"
+      ],
+      "results": [
+        {
+          "chunk_id": -59,
+          "parent": 323,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-3 — Dầu tẩy trang – Nâng cao\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": -57,
+          "parent": 322,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-2 — Dầu tẩy trang – Nhỏ gọn\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": -61,
+          "parent": 324,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-4 — Dầu tẩy trang – Bộ đôi\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác n"
+        }
+      ],
+      "ms": 83.51059900087421,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Mặt nạ đất sét có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "07"
+      ],
+      "results": [
+        {
+          "chunk_id": -67,
+          "parent": 327,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-3 — Mặt nạ đất sét – Nâng cao\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu "
+        },
+        {
+          "chunk_id": -65,
+          "parent": 326,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-2 — Mặt nạ đất sét – Nhỏ gọn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý"
+        },
+        {
+          "chunk_id": -69,
+          "parent": 328,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-4 — Mặt nạ đất sét – Bộ đôi\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý:"
+        }
+      ],
+      "ms": 81.44065400119871,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Son dưỡng môi dùng làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": -77,
+          "parent": 332,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-4 — Son dưỡng môi – Bộ đôi\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": -75,
+          "parent": 331,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-3 — Son dưỡng môi – Nâng cao\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa "
+        },
+        {
+          "chunk_id": -73,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        }
+      ],
+      "ms": 76.39071199810132,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Dầu gội dịu nhẹ có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "09"
+      ],
+      "results": [
+        {
+          "chunk_id": -83,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": -81,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": -85,
+          "parent": 336,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-4 — Dầu gội dịu nhẹ – Bộ đôi\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác "
+        }
+      ],
+      "ms": 71.64670299971476,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Sữa tắm dưỡng ẩm dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "10"
+      ],
+      "results": [
+        {
+          "chunk_id": -91,
+          "parent": 339,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-3 — Sữa tắm dưỡng ẩm – Nâng cao\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận "
+        },
+        {
+          "chunk_id": -89,
+          "parent": 338,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-2 — Sữa tắm dưỡng ẩm – Nhỏ gọn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận t"
+        },
+        {
+          "chunk_id": -93,
+          "parent": 340,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-4 — Sữa tắm dưỡng ẩm – Bộ đôi\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận th"
+        }
+      ],
+      "ms": 79.14539800185594,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Tôi muốn làm sạch làn da trên mặt sau một ngày đi đường",
+      "group": "paraphrase",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": -1,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        },
+        {
+          "chunk_id": -12,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "hoặc xác nhận tiền đã chuyển.\n- Chỉ thông báo đã hủy hoặc đã ghi nhận hoàn tiền sau khi trạng thái tương ứng được nhân viên cập nhật trong SMH. “Ghi nhận hoàn t"
+        }
+      ],
+      "ms": 85.18516500043916,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Da cần bổ sung độ ẩm, tôi nên tham khảo nhóm nào?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "02",
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": -29,
+          "parent": 308,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-4 — Toner cấp ẩm – Bộ đôi\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành phầ"
+        },
+        {
+          "chunk_id": -27,
+          "parent": 307,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-3 — Toner cấp ẩm – Nâng cao\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": -25,
+          "parent": 306,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-2 — Toner cấp ẩm – Nhỏ gọn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        }
+      ],
+      "ms": 66.12964899977669,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Tôi cần chăm sóc da với tinh chất serum",
+      "group": "paraphrase",
+      "expected_labels": [
+        "03"
+      ],
+      "results": [
+        {
+          "chunk_id": -37,
+          "parent": 312,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-4 — Serum niacinamide – Bộ đôi\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": -31,
+          "parent": 309,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-1 — Serum niacinamide – Tiêu chuẩn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thàn"
+        },
+        {
+          "chunk_id": -4,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "tồn, thuộc tính, cam kết, trạng thái đơn hoặc kết quả thao tác."
+        }
+      ],
+      "ms": 72.944629999256,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Có món nào dưỡng ẩm cho làn da không?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "02",
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": -43,
+          "parent": 315,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-3 — Kem dưỡng phục hồi – Nâng cao\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -41,
+          "parent": 314,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-2 — Kem dưỡng phục hồi – Nhỏ gọn\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": -45,
+          "parent": 316,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-4 — Kem dưỡng phục hồi – Bộ đôi\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        }
+      ],
+      "ms": 75.50731899755192,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Ra ngoài trời nắng thì dùng món nào hỗ trợ bảo vệ da?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": -51,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        },
+        {
+          "chunk_id": -49,
+          "parent": 318,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-2 — Kem chống nắng – Nhỏ gọn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắn"
+        },
+        {
+          "chunk_id": -11,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        }
+      ],
+      "ms": 85.59026300281403,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Tôi muốn làm sạch lớp trang điểm buổi tối",
+      "group": "paraphrase",
+      "expected_labels": [
+        "06"
+      ],
+      "results": [
+        {
+          "chunk_id": -59,
+          "parent": 323,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-3 — Dầu tẩy trang – Nâng cao\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": -57,
+          "parent": 322,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-2 — Dầu tẩy trang – Nhỏ gọn\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": -61,
+          "parent": 324,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-4 — Dầu tẩy trang – Bộ đôi\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác n"
+        }
+      ],
+      "ms": 50.69513299895334,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Tôi cần chăm sóc da bằng mặt nạ",
+      "group": "paraphrase",
+      "expected_labels": [
+        "07"
+      ],
+      "results": [
+        {
+          "chunk_id": -67,
+          "parent": 327,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-3 — Mặt nạ đất sét – Nâng cao\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu "
+        },
+        {
+          "chunk_id": -65,
+          "parent": 326,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-2 — Mặt nạ đất sét – Nhỏ gọn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý"
+        },
+        {
+          "chunk_id": -10,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": ", nói đơn đang chờ nhân viên duyệt. Chỉ báo đã xác nhận, đang giao, đã giao hoặc hoàn tất khi SMH ghi nhận đúng trạng thái. Không coi việc gửi QR hoặc khách đồn"
+        }
+      ],
+      "ms": 71.68830899900058,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Môi khô thì tham khảo nhóm chăm sóc nào?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": -35,
+          "parent": 311,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-3 — Serum niacinamide – Nâng cao\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -33,
+          "parent": 310,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-2 — Serum niacinamide – Nhỏ gọn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": -37,
+          "parent": 312,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-4 — Serum niacinamide – Bộ đôi\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành ph"
+        }
+      ],
+      "ms": 75.90668600096251,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Tóc và da đầu cần được làm sạch thì tìm loại gì?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "09"
+      ],
+      "results": [
+        {
+          "chunk_id": -83,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": -81,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": -2,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        }
+      ],
+      "ms": 72.63753100050963,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Dùng gì làm sạch cơ thể khi tắm?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "10"
+      ],
+      "results": [
+        {
+          "chunk_id": -91,
+          "parent": 339,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-3 — Sữa tắm dưỡng ẩm – Nâng cao\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận "
+        },
+        {
+          "chunk_id": -89,
+          "parent": 338,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-2 — Sữa tắm dưỡng ẩm – Nhỏ gọn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận t"
+        },
+        {
+          "chunk_id": -93,
+          "parent": 340,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-4 — Sữa tắm dưỡng ẩm – Bộ đôi\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận th"
+        }
+      ],
+      "ms": 81.65815799657139,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Cho tôi thông tin mã DEMO-BEA-01-1",
+      "group": "sku",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": -15,
+          "parent": 301,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-1 — Sữa rửa mặt dịu nhẹ – Tiêu chuẩn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu "
+        },
+        {
+          "chunk_id": -16,
+          "parent": 301,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "từ nhà sản xuất; cần shop kiểm tra khi khách hỏi.\nKhông suy luận công dụng, dung tích hay chất lượng khác nhau từ tên biến thể. Giá và tồn phải kiểm tra theo SK"
+        }
+      ],
+      "ms": 141.39238300049328,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "DEMO-BEA-05-3 thuộc nhóm nào?",
+      "group": "sku",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": -51,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        },
+        {
+          "chunk_id": -52,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "; cần shop kiểm tra khi khách hỏi.\nKhông suy luận công dụng, dung tích hay chất lượng khác nhau từ tên biến thể. Giá và tồn phải kiểm tra theo SKU này trong CRM"
+        }
+      ],
+      "ms": 163.13727300075698,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Mã DEMO-BEA-08-2 có công dụng gì?",
+      "group": "sku",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": -73,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        },
+        {
+          "chunk_id": -74,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "sản xuất; cần shop kiểm tra khi khách hỏi.\nKhông suy luận công dụng, dung tích hay chất lượng khác nhau từ tên biến thể. Giá và tồn phải kiểm tra theo SKU này t"
+        }
+      ],
+      "ms": 125.35762100014836,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Gửi mã QR có nghĩa đã thanh toán chưa?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": -10,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": ", nói đơn đang chờ nhân viên duyệt. Chỉ báo đã xác nhận, đang giao, đã giao hoặc hoàn tất khi SMH ghi nhận đúng trạng thái. Không coi việc gửi QR hoặc khách đồn"
+        },
+        {
+          "chunk_id": -11,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": -9,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "và phương thức thanh toán COD hoặc chuyển khoản. Khách có thể gửi thành nhiều tin; giữ lại mục đã nhận và chỉ hỏi phần còn thiếu.\n4. Chỉ tạo đơn khi đủ thông ti"
+        }
+      ],
+      "ms": 109.41977800030145,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Khách muốn hoàn tiền thì cần cung cấp mã gì?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": -11,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": -12,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "hoặc xác nhận tiền đã chuyển.\n- Chỉ thông báo đã hủy hoặc đã ghi nhận hoàn tiền sau khi trạng thái tương ứng được nhân viên cập nhật trong SMH. “Ghi nhận hoàn t"
+        },
+        {
+          "chunk_id": -9,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "và phương thức thanh toán COD hoặc chuyển khoản. Khách có thể gửi thành nhiều tin; giữ lại mục đã nhận và chỉ hỏi phần còn thiếu.\n4. Chỉ tạo đơn khi đủ thông ti"
+        }
+      ],
+      "ms": 61.720702000457095,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Khách gửi thông tin đặt hàng thành nhiều tin được không?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": -9,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "và phương thức thanh toán COD hoặc chuyển khoản. Khách có thể gửi thành nhiều tin; giữ lại mục đã nhận và chỉ hỏi phần còn thiếu.\n4. Chỉ tạo đơn khi đủ thông ti"
+        },
+        {
+          "chunk_id": -95,
+          "parent": 341,
+          "labels": [],
+          "preview": "## Chính sách và thông tin chưa có\nChưa có chính sách giao hàng, giảm giá, bảo hành và đổi trả được xác nhận trong tài liệu này. Không tự hứa hẹn; nhờ nhân viên"
+        },
+        {
+          "chunk_id": -8,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "1. Xác định chính xác sản phẩm, biến thể và số lượng từ danh mục hiện tại; báo đơn giá và tổng tiền theo dữ liệu hệ thống.\n2. Hỏi khách xác nhận muốn đặt hàng. "
+        }
+      ],
+      "ms": 69.25191300251754,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Shop chưa có căn cứ trả lời thì bot nên làm gì?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": -13,
+          "parent": 299,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Khi không đủ căn cứ\n\nTrả lời ngắn rằng shop chưa có thông tin đã xác nhận và chuyển câu hỏi cho nhân viên. Không lặp danh sách sản phẩm, không tự thêm chính "
+        },
+        {
+          "chunk_id": -3,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "quan, nội dung kiểm thử, dữ liệu minh họa và câu trả lời của một câu hỏi khác.\n- Chính sách giao hàng, thanh toán, bảo hành, đổi trả và hoàn tiền chỉ được trả l"
+        },
+        {
+          "chunk_id": -95,
+          "parent": 341,
+          "labels": [],
+          "preview": "## Chính sách và thông tin chưa có\nChưa có chính sách giao hàng, giảm giá, bảo hành và đổi trả được xác nhận trong tài liệu này. Không tự hứa hẹn; nhờ nhân viên"
+        }
+      ],
+      "ms": 93.8564989992301,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Lãi suất vay mua nhà hôm nay bao nhiêu?",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": -10,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": ", nói đơn đang chờ nhân viên duyệt. Chỉ báo đã xác nhận, đang giao, đã giao hoặc hoàn tất khi SMH ghi nhận đúng trạng thái. Không coi việc gửi QR hoặc khách đồn"
+        }
+      ],
+      "ms": 121.83652599924244,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Dự báo thời tiết ngày mai tại Hà Nội",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": -1,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        },
+        {
+          "chunk_id": -2,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        },
+        {
+          "chunk_id": -14,
+          "parent": 300,
+          "labels": [],
+          "preview": "# Hồ sơ tư vấn danh mục làm đẹp demo\n\nNội dung minh họa cho demo; không phải thông tin nhà sản xuất xác nhận. Giá, tồn và trạng thái bán phải tra CRM hiện tại. "
+        }
+      ],
+      "ms": 116.4775910001481,
+      "vector_hits": 0
+    },
+    {
+      "arm": "diagnostic_new_BM25",
+      "query": "Giá vé máy bay đi Singapore tuần tới",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": -1,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        }
+      ],
+      "ms": 78.73235899751307,
+      "vector_hits": 0
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Sữa rửa mặt dịu nhẹ có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": -21,
+          "parent": 304,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-4 — Sữa rửa mặt dịu nhẹ – Bộ đôi\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý: C"
+        },
+        {
+          "chunk_id": -19,
+          "parent": 303,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-3 — Sữa rửa mặt dịu nhẹ – Nâng cao\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý:"
+        },
+        {
+          "chunk_id": -17,
+          "parent": 302,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-2 — Sữa rửa mặt dịu nhẹ – Nhỏ gọn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý: "
+        }
+      ],
+      "ms": 99.66129199892748,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Toner cấp ẩm dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "02"
+      ],
+      "results": [
+        {
+          "chunk_id": -27,
+          "parent": 307,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-3 — Toner cấp ẩm – Nâng cao\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        },
+        {
+          "chunk_id": -5,
+          "parent": 295,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Tư vấn sản phẩm\n\n- Khi khách hỏi shop có bán gì, lấy danh sách từ danh mục CRM. Khi khách hỏi giá hoặc số lượng, kiểm tra đúng sản phẩm và đúng biến thể tron"
+        },
+        {
+          "chunk_id": -25,
+          "parent": 306,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-2 — Toner cấp ẩm – Nhỏ gọn\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        }
+      ],
+      "ms": 95.80347299925052,
+      "vector_hits": 1
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Serum niacinamide là nhóm sản phẩm nào?",
+      "group": "exact",
+      "expected_labels": [
+        "03"
+      ],
+      "results": [
+        {
+          "chunk_id": -37,
+          "parent": 312,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-4 — Serum niacinamide – Bộ đôi\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": -35,
+          "parent": 311,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-3 — Serum niacinamide – Nâng cao\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -33,
+          "parent": 310,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-2 — Serum niacinamide – Nhỏ gọn\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành p"
+        }
+      ],
+      "ms": 84.1723710000224,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Kem dưỡng phục hồi có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": -43,
+          "parent": 315,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-3 — Kem dưỡng phục hồi – Nâng cao\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -45,
+          "parent": 316,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-4 — Kem dưỡng phục hồi – Bộ đôi\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": -41,
+          "parent": 314,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-2 — Kem dưỡng phục hồi – Nhỏ gọn\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành p"
+        }
+      ],
+      "ms": 95.61679400212597,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Kem chống nắng có tác dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": -51,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        },
+        {
+          "chunk_id": -53,
+          "parent": 320,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-4 — Kem chống nắng – Bộ đôi\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắng"
+        },
+        {
+          "chunk_id": -49,
+          "parent": 318,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-2 — Kem chống nắng – Nhỏ gọn\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắn"
+        }
+      ],
+      "ms": 104.96876500110375,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Dầu tẩy trang dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "06"
+      ],
+      "results": [
+        {
+          "chunk_id": -83,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": -85,
+          "parent": 336,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-4 — Dầu gội dịu nhẹ – Bộ đôi\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": -59,
+          "parent": 323,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-3 — Dầu tẩy trang – Nâng cao\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác"
+        }
+      ],
+      "ms": 85.1185589999659,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Mặt nạ đất sét có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "07"
+      ],
+      "results": [
+        {
+          "chunk_id": -67,
+          "parent": 327,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-3 — Mặt nạ đất sét – Nâng cao\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu "
+        },
+        {
+          "chunk_id": -69,
+          "parent": 328,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-4 — Mặt nạ đất sét – Bộ đôi\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý:"
+        },
+        {
+          "chunk_id": -65,
+          "parent": 326,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-2 — Mặt nạ đất sét – Nhỏ gọn\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý"
+        }
+      ],
+      "ms": 89.5957049979188,
+      "vector_hits": 4
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Son dưỡng môi dùng làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": -77,
+          "parent": 332,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-4 — Son dưỡng môi – Bộ đôi\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": -75,
+          "parent": 331,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-3 — Son dưỡng môi – Nâng cao\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa "
+        },
+        {
+          "chunk_id": -73,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        }
+      ],
+      "ms": 76.87300199904712,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Dầu gội dịu nhẹ có công dụng gì?",
+      "group": "exact",
+      "expected_labels": [
+        "09"
+      ],
+      "results": [
+        {
+          "chunk_id": -85,
+          "parent": 336,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-4 — Dầu gội dịu nhẹ – Bộ đôi\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": -83,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": -81,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        }
+      ],
+      "ms": 79.89605799957644,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Sữa tắm dưỡng ẩm dùng để làm gì?",
+      "group": "exact",
+      "expected_labels": [
+        "10"
+      ],
+      "results": [
+        {
+          "chunk_id": -93,
+          "parent": 340,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-4 — Sữa tắm dưỡng ẩm – Bộ đôi\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận th"
+        },
+        {
+          "chunk_id": -89,
+          "parent": 338,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-2 — Sữa tắm dưỡng ẩm – Nhỏ gọn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận t"
+        },
+        {
+          "chunk_id": -91,
+          "parent": 339,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-3 — Sữa tắm dưỡng ẩm – Nâng cao\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận "
+        }
+      ],
+      "ms": 68.15543000266189,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Tôi muốn làm sạch làn da trên mặt sau một ngày đi đường",
+      "group": "paraphrase",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": -83,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": -1,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        },
+        {
+          "chunk_id": -81,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        }
+      ],
+      "ms": 83.88653799920576,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Da cần bổ sung độ ẩm, tôi nên tham khảo nhóm nào?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "02",
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": -45,
+          "parent": 316,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-4 — Kem dưỡng phục hồi – Bộ đôi\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": -53,
+          "parent": 320,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-4 — Kem chống nắng – Bộ đôi\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắng"
+        },
+        {
+          "chunk_id": -29,
+          "parent": 308,
+          "labels": [
+            "02",
+            "02"
+          ],
+          "preview": "## DEMO-BEA-02-4 — Toner cấp ẩm – Bộ đôi\nNhóm: Toner.\nCông dụng minh họa: Bổ sung độ ẩm cho da.\nNhu cầu: toner; cấp ẩm; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành phầ"
+        }
+      ],
+      "ms": 67.21536300028674,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Tôi cần chăm sóc da với tinh chất serum",
+      "group": "paraphrase",
+      "expected_labels": [
+        "03"
+      ],
+      "results": [
+        {
+          "chunk_id": -37,
+          "parent": 312,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-4 — Serum niacinamide – Bộ đôi\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": -35,
+          "parent": 311,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-3 — Serum niacinamide – Nâng cao\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -4,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "tồn, thuộc tính, cam kết, trạng thái đơn hoặc kết quả thao tác."
+        }
+      ],
+      "ms": 60.76860800021677,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Có món nào dưỡng ẩm cho làn da không?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "02",
+        "04"
+      ],
+      "results": [
+        {
+          "chunk_id": -45,
+          "parent": 316,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-4 — Kem dưỡng phục hồi – Bộ đôi\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành ph"
+        },
+        {
+          "chunk_id": -43,
+          "parent": 315,
+          "labels": [
+            "04",
+            "04"
+          ],
+          "preview": "## DEMO-BEA-04-3 — Kem dưỡng phục hồi – Nâng cao\nNhóm: Kem dưỡng.\nCông dụng minh họa: Dưỡng ẩm cho da.\nNhu cầu: kem dưỡng; dưỡng ẩm.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -21,
+          "parent": 304,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-4 — Sữa rửa mặt dịu nhẹ – Bộ đôi\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu ý: C"
+        }
+      ],
+      "ms": 64.9332439970749,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Ra ngoài trời nắng thì dùng món nào hỗ trợ bảo vệ da?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": -51,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        },
+        {
+          "chunk_id": -53,
+          "parent": 320,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-4 — Kem chống nắng – Bộ đôi\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắng"
+        },
+        {
+          "chunk_id": -11,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        }
+      ],
+      "ms": 66.90643999900203,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Tôi muốn làm sạch lớp trang điểm buổi tối",
+      "group": "paraphrase",
+      "expected_labels": [
+        "06"
+      ],
+      "results": [
+        {
+          "chunk_id": -81,
+          "parent": 334,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-2 — Dầu gội dịu nhẹ – Nhỏ gọn\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": -59,
+          "parent": 323,
+          "labels": [
+            "06",
+            "06"
+          ],
+          "preview": "## DEMO-BEA-06-3 — Dầu tẩy trang – Nâng cao\nNhóm: Dầu tẩy trang.\nCông dụng minh họa: Làm sạch lớp trang điểm.\nNhu cầu: tẩy trang; dầu tẩy trang.\nLưu ý: Chưa xác"
+        },
+        {
+          "chunk_id": -85,
+          "parent": 336,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-4 — Dầu gội dịu nhẹ – Bộ đôi\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác "
+        }
+      ],
+      "ms": 40.72113599977456,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Tôi cần chăm sóc da bằng mặt nạ",
+      "group": "paraphrase",
+      "expected_labels": [
+        "07"
+      ],
+      "results": [
+        {
+          "chunk_id": -67,
+          "parent": 327,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-3 — Mặt nạ đất sét – Nâng cao\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu "
+        },
+        {
+          "chunk_id": -69,
+          "parent": 328,
+          "labels": [
+            "07",
+            "07"
+          ],
+          "preview": "## DEMO-BEA-07-4 — Mặt nạ đất sét – Bộ đôi\nNhóm: Mặt nạ đất sét.\nCông dụng minh họa: Chăm sóc và làm sạch da với mặt nạ.\nNhu cầu: mặt nạ; mặt nạ đất sét.\nLưu ý:"
+        },
+        {
+          "chunk_id": -10,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": ", nói đơn đang chờ nhân viên duyệt. Chỉ báo đã xác nhận, đang giao, đã giao hoặc hoàn tất khi SMH ghi nhận đúng trạng thái. Không coi việc gửi QR hoặc khách đồn"
+        }
+      ],
+      "ms": 62.33237400010694,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Môi khô thì tham khảo nhóm chăm sóc nào?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": -85,
+          "parent": 336,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-4 — Dầu gội dịu nhẹ – Bộ đôi\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": -35,
+          "parent": 311,
+          "labels": [
+            "03",
+            "03"
+          ],
+          "preview": "## DEMO-BEA-03-3 — Serum niacinamide – Nâng cao\nNhóm: Serum.\nCông dụng minh họa: Chăm sóc da với serum.\nNhu cầu: serum; chăm sóc da.\nLưu ý: Chưa xác nhận thành "
+        },
+        {
+          "chunk_id": -93,
+          "parent": 340,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-4 — Sữa tắm dưỡng ẩm – Bộ đôi\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận th"
+        }
+      ],
+      "ms": 70.57727700157557,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Tóc và da đầu cần được làm sạch thì tìm loại gì?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "09"
+      ],
+      "results": [
+        {
+          "chunk_id": -83,
+          "parent": 335,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-3 — Dầu gội dịu nhẹ – Nâng cao\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xá"
+        },
+        {
+          "chunk_id": -85,
+          "parent": 336,
+          "labels": [
+            "09",
+            "09"
+          ],
+          "preview": "## DEMO-BEA-09-4 — Dầu gội dịu nhẹ – Bộ đôi\nNhóm: Dầu gội.\nCông dụng minh họa: Làm sạch tóc và da đầu.\nNhu cầu: dầu gội; gội đầu; làm sạch tóc.\nLưu ý: Chưa xác "
+        },
+        {
+          "chunk_id": -2,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        }
+      ],
+      "ms": 70.22109299941803,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Dùng gì làm sạch cơ thể khi tắm?",
+      "group": "paraphrase",
+      "expected_labels": [
+        "10"
+      ],
+      "results": [
+        {
+          "chunk_id": -93,
+          "parent": 340,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-4 — Sữa tắm dưỡng ẩm – Bộ đôi\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận th"
+        },
+        {
+          "chunk_id": -91,
+          "parent": 339,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-3 — Sữa tắm dưỡng ẩm – Nâng cao\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận "
+        },
+        {
+          "chunk_id": -89,
+          "parent": 338,
+          "labels": [
+            "10",
+            "10"
+          ],
+          "preview": "## DEMO-BEA-10-2 — Sữa tắm dưỡng ẩm – Nhỏ gọn\nNhóm: Sữa tắm.\nCông dụng minh họa: Làm sạch cơ thể.\nNhu cầu: sữa tắm; tắm; làm sạch cơ thể.\nLưu ý: Chưa xác nhận t"
+        }
+      ],
+      "ms": 69.05037300020922,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Cho tôi thông tin mã DEMO-BEA-01-1",
+      "group": "sku",
+      "expected_labels": [
+        "01"
+      ],
+      "results": [
+        {
+          "chunk_id": -16,
+          "parent": 301,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "từ nhà sản xuất; cần shop kiểm tra khi khách hỏi.\nKhông suy luận công dụng, dung tích hay chất lượng khác nhau từ tên biến thể. Giá và tồn phải kiểm tra theo SK"
+        },
+        {
+          "chunk_id": -15,
+          "parent": 301,
+          "labels": [
+            "01",
+            "01"
+          ],
+          "preview": "## DEMO-BEA-01-1 — Sữa rửa mặt dịu nhẹ – Tiêu chuẩn\nNhóm: Sữa rửa mặt.\nCông dụng minh họa: Làm sạch da mặt.\nNhu cầu: rửa mặt; sữa rửa mặt; làm sạch da mặt.\nLưu "
+        }
+      ],
+      "ms": 87.59316099894932,
+      "vector_hits": 2
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "DEMO-BEA-05-3 thuộc nhóm nào?",
+      "group": "sku",
+      "expected_labels": [
+        "05"
+      ],
+      "results": [
+        {
+          "chunk_id": -51,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "## DEMO-BEA-05-3 — Kem chống nắng – Nâng cao\nNhóm: Kem chống nắng.\nCông dụng minh họa: Hỗ trợ bảo vệ da khi tiếp xúc ánh nắng.\nNhu cầu: kem chống nắng; chống nắ"
+        },
+        {
+          "chunk_id": -52,
+          "parent": 319,
+          "labels": [
+            "05",
+            "05"
+          ],
+          "preview": "; cần shop kiểm tra khi khách hỏi.\nKhông suy luận công dụng, dung tích hay chất lượng khác nhau từ tên biến thể. Giá và tồn phải kiểm tra theo SKU này trong CRM"
+        }
+      ],
+      "ms": 86.70447700205841,
+      "vector_hits": 2
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Mã DEMO-BEA-08-2 có công dụng gì?",
+      "group": "sku",
+      "expected_labels": [
+        "08"
+      ],
+      "results": [
+        {
+          "chunk_id": -73,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "## DEMO-BEA-08-2 — Son dưỡng môi – Nhỏ gọn\nNhóm: Son dưỡng môi.\nCông dụng minh họa: Dưỡng ẩm cho môi.\nNhu cầu: son dưỡng; dưỡng môi; dưỡng ẩm môi.\nLưu ý: Chưa x"
+        },
+        {
+          "chunk_id": -74,
+          "parent": 330,
+          "labels": [
+            "08",
+            "08"
+          ],
+          "preview": "sản xuất; cần shop kiểm tra khi khách hỏi.\nKhông suy luận công dụng, dung tích hay chất lượng khác nhau từ tên biến thể. Giá và tồn phải kiểm tra theo SKU này t"
+        }
+      ],
+      "ms": 86.9489370015799,
+      "vector_hits": 2
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Gửi mã QR có nghĩa đã thanh toán chưa?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": -10,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": ", nói đơn đang chờ nhân viên duyệt. Chỉ báo đã xác nhận, đang giao, đã giao hoặc hoàn tất khi SMH ghi nhận đúng trạng thái. Không coi việc gửi QR hoặc khách đồn"
+        },
+        {
+          "chunk_id": -11,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": -9,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "và phương thức thanh toán COD hoặc chuyển khoản. Khách có thể gửi thành nhiều tin; giữ lại mục đã nhận và chỉ hỏi phần còn thiếu.\n4. Chỉ tạo đơn khi đủ thông ti"
+        }
+      ],
+      "ms": 78.2678270006727,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Khách muốn hoàn tiền thì cần cung cấp mã gì?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": -11,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": -9,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "và phương thức thanh toán COD hoặc chuyển khoản. Khách có thể gửi thành nhiều tin; giữ lại mục đã nhận và chỉ hỏi phần còn thiếu.\n4. Chỉ tạo đơn khi đủ thông ti"
+        },
+        {
+          "chunk_id": -12,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "hoặc xác nhận tiền đã chuyển.\n- Chỉ thông báo đã hủy hoặc đã ghi nhận hoàn tiền sau khi trạng thái tương ứng được nhân viên cập nhật trong SMH. “Ghi nhận hoàn t"
+        }
+      ],
+      "ms": 56.62186399786151,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Khách gửi thông tin đặt hàng thành nhiều tin được không?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": -9,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "và phương thức thanh toán COD hoặc chuyển khoản. Khách có thể gửi thành nhiều tin; giữ lại mục đã nhận và chỉ hỏi phần còn thiếu.\n4. Chỉ tạo đơn khi đủ thông ti"
+        },
+        {
+          "chunk_id": -13,
+          "parent": 299,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Khi không đủ căn cứ\n\nTrả lời ngắn rằng shop chưa có thông tin đã xác nhận và chuyển câu hỏi cho nhân viên. Không lặp danh sách sản phẩm, không tự thêm chính "
+        },
+        {
+          "chunk_id": -95,
+          "parent": 341,
+          "labels": [],
+          "preview": "## Chính sách và thông tin chưa có\nChưa có chính sách giao hàng, giảm giá, bảo hành và đổi trả được xác nhận trong tài liệu này. Không tự hứa hẹn; nhờ nhân viên"
+        }
+      ],
+      "ms": 59.21995800235891,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Shop chưa có căn cứ trả lời thì bot nên làm gì?",
+      "group": "policy",
+      "expected_labels": [
+        "POLICY"
+      ],
+      "results": [
+        {
+          "chunk_id": -13,
+          "parent": 299,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Khi không đủ căn cứ\n\nTrả lời ngắn rằng shop chưa có thông tin đã xác nhận và chuyển câu hỏi cho nhân viên. Không lặp danh sách sản phẩm, không tự thêm chính "
+        },
+        {
+          "chunk_id": -11,
+          "parent": 298,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Hủy, đổi trả và hoàn tiền\n\n- Nếu khách yêu cầu hủy hoặc hoàn mà chưa nêu mã đơn, hỏi mã đơn trước; không đoán đơn từ lịch sử hoặc tự hứa sẽ hoàn tiền.\n- Khi "
+        },
+        {
+          "chunk_id": -95,
+          "parent": 341,
+          "labels": [],
+          "preview": "## Chính sách và thông tin chưa có\nChưa có chính sách giao hàng, giảm giá, bảo hành và đổi trả được xác nhận trong tài liệu này. Không tự hứa hẹn; nhờ nhân viên"
+        }
+      ],
+      "ms": 68.48662899938063,
+      "vector_hits": 9
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Lãi suất vay mua nhà hôm nay bao nhiêu?",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": -10,
+          "parent": 297,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": ", nói đơn đang chờ nhân viên duyệt. Chỉ báo đã xác nhận, đang giao, đã giao hoặc hoàn tất khi SMH ghi nhận đúng trạng thái. Không coi việc gửi QR hoặc khách đồn"
+        }
+      ],
+      "ms": 66.50910899770679,
+      "vector_hits": 0
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Dự báo thời tiết ngày mai tại Hà Nội",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": -1,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        },
+        {
+          "chunk_id": -2,
+          "parent": 294,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "## Chọn đúng nguồn\n\n- Tên, biến thể, giá hiện tại, trạng thái bán và lượng hàng khả dụng phải lấy từ danh mục sản phẩm đang hoạt động trong CRM. Không lấy các c"
+        },
+        {
+          "chunk_id": -14,
+          "parent": 300,
+          "labels": [],
+          "preview": "# Hồ sơ tư vấn danh mục làm đẹp demo\n\nNội dung minh họa cho demo; không phải thông tin nhà sản xuất xác nhận. Giá, tồn và trạng thái bán phải tra CRM hiện tại. "
+        }
+      ],
+      "ms": 80.08974699987448,
+      "vector_hits": 0
+    },
+    {
+      "arm": "B_token_safe_hybrid",
+      "query": "Giá vé máy bay đi Singapore tuần tới",
+      "group": "no_source",
+      "expected_labels": [],
+      "results": [
+        {
+          "chunk_id": -1,
+          "parent": 293,
+          "labels": [
+            "POLICY"
+          ],
+          "preview": "# Quy tắc trả lời và luồng bán hàng của Smart Merchant Hub\n\n> Tài liệu hướng dẫn cách chatbot dùng nguồn dữ liệu và đi theo luồng bán hàng. Đây không phải bảng "
+        }
+      ],
+      "ms": 98.48567699737032,
+      "vector_hits": 0
+    }
+  ],
+  "old_chunks": 49,
+  "new_chunks": 95,
+  "new_max_tokens": 124,
+  "rolled_back": true
+}

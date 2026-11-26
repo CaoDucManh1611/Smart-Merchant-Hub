@@ -49,6 +49,7 @@ HISTORY_RETRY_INTERVAL_SECONDS = 3600
 CONTROL_PAGE = None
 CONTROL_DELIVERY_PAGE = None
 BACKGROUND_HISTORY_PAGE = None
+META_THREAD_ROWS: dict[str, dict] = {}
 CONTROL_LOOP: asyncio.AbstractEventLoop | None = None
 CONTROL_SECRET = ""
 CONTROL_SERVER: ThreadingHTTPServer | None = None
@@ -352,6 +353,8 @@ def _start_edge(channel_type: str, port: int) -> None:
         [
             str(edge), "--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={port}",
             f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
+            "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
             _meta_inbox_url(channel_type),
         ],
         stdout=subprocess.DEVNULL,
@@ -497,24 +500,32 @@ async def _conversation_rows(page) -> list[dict]:
 
 
 async def _save_meta_failure(page, stage: str) -> None:
-    """Keep one local failure snapshot per minute for connector diagnosis."""
+    """Keep privacy-safe UI metadata for one failure per minute."""
     directory = RUNTIME / "diagnostics"
-    image = directory / f"{stage}.png"
-    if image.exists() and time.time() - image.stat().st_mtime < 60:
+    diagnostic = directory / f"{stage}.json"
+    if diagnostic.exists() and time.time() - diagnostic.stat().st_mtime < 60:
         return
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        await page.screenshot(path=str(image))
         state = await page.evaluate(r"""() => ({
           url: location.origin + location.pathname,
           queryKeys: [...new URLSearchParams(location.search).keys()],
+          selectedItemPresent: !!new URLSearchParams(location.search).get('selected_item_id'),
+          visibility: document.visibilityState,
+          readyState: document.readyState,
           selected: [...document.querySelectorAll('[aria-selected="true"],[aria-current="true"]')]
             .slice(0, 12).map(e => ({tag:e.tagName,role:e.getAttribute('role'),
-              text:(e.innerText||'').slice(0,150),href:e.getAttribute('href')})),
+              selected:e.getAttribute('aria-selected'),current:e.getAttribute('aria-current')})),
           fileInputs: [...document.querySelectorAll('input[type="file"]')].map(e=>({accept:e.accept,multiple:e.multiple})),
-          editors: [...document.querySelectorAll('[contenteditable="true"],textarea')].map(e=>({label:e.getAttribute('aria-label'),role:e.getAttribute('role')}))
+          editors: [...document.querySelectorAll('[contenteditable="true"],textarea,[role="textbox"]')].map(e=>{
+            const r=e.getBoundingClientRect();
+            return {tag:e.tagName,role:e.getAttribute('role'),label:e.getAttribute('aria-label'),
+              ariaPlaceholder:e.getAttribute('aria-placeholder'),placeholder:e.getAttribute('placeholder'),
+              visible:r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden',
+              x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)};
+          })
         })""")
-        image.with_suffix(".json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        diagnostic.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass  # Diagnostics must not hide the original delivery error.
 
@@ -533,8 +544,17 @@ async def _open_meta_conversation(page, row: dict, channel_type: str = "") -> st
             return e.scrollHeight > e.clientHeight + 30 && r.x < vw * .38
               && r.width > vw * .14 && r.width < vw * .4 && r.y > 80 && r.height > vh * .3;
           }).sort((a, b) => b.clientHeight - a.clientHeight)[0];
-          if (!list || !expected) return false;
-          const box = list.getBoundingClientRect();
+          if (!expected) return false;
+          const fallbackRow = !list && [...document.querySelectorAll('[role="presentation"]')].find(e => {
+            const r = e.getBoundingClientRect();
+            return r.x > 60 && r.x < vw * .38 && r.width > vw * .14 && r.width < vw * .4
+              && r.y > 80 && r.height >= 55 && r.height <= 180
+              && (e.innerText || '').trim().length > 4 && getComputedStyle(e).cursor === 'pointer';
+          });
+          if (!list && !fallbackRow) return false;
+          const rowBox = fallbackRow && fallbackRow.getBoundingClientRect();
+          const box = list ? list.getBoundingClientRect()
+            : {x: rowBox.x, y: rowBox.y, width: rowBox.width, bottom: vh};
           const candidates = [...document.querySelectorAll('[role="presentation"]')]
             .filter(e => {
               const r = e.getBoundingClientRect();
@@ -564,9 +584,11 @@ async def _open_meta_conversation(page, row: dict, channel_type: str = "") -> st
             if not thread_id:
                 continue
             if thread_id != previous_id:
+                _remember_meta_thread_row(thread_id, row)
                 return thread_id
             active_name = " ".join((await _active_display_name(page, "")).split()).casefold()
             if active_name and active_name == expected_name:
+                _remember_meta_thread_row(thread_id, row)
                 return thread_id
             if not active_name and expected_name:
                 header_matches = await page.evaluate(
@@ -578,6 +600,7 @@ async def _open_meta_conversation(page, row: dict, channel_type: str = "") -> st
                     })""", expected_name,
                 )
                 if header_matches is True:
+                    _remember_meta_thread_row(thread_id, row)
                     return thread_id
             # Meta may keep the previous URL/header briefly after a row click.
         if attempt == 0:
@@ -600,6 +623,71 @@ async def _open_meta_conversation(page, row: dict, channel_type: str = "") -> st
                 await page.mouse.click(*position)
     await _save_meta_failure(page, "thread-selection")
     raise RuntimeError(f"{channel_name} chưa cung cấp mã hội thoại sau khi chọn chat.")
+
+
+def _remember_meta_thread_row(thread_id: str, row: dict) -> None:
+    thread_id = str(thread_id or "").strip()
+    if not thread_id:
+        return
+    META_THREAD_ROWS[thread_id] = {
+        "displayName": _usable_meta_name(row.get("displayName")),
+        "avatarUrl": str(row.get("avatarUrl") or "").strip(),
+    }
+    while len(META_THREAD_ROWS) > 1000:
+        META_THREAD_ROWS.pop(next(iter(META_THREAD_ROWS)))
+
+
+def _meta_row_matches_cached_profile(row: dict, profile: dict) -> bool:
+    expected_name = _usable_meta_name(profile.get("displayName")).casefold()
+    current_name = _usable_meta_name(row.get("displayName")).casefold()
+    expected_avatar = str(profile.get("avatarUrl") or "").strip()
+    current_avatar = str(row.get("avatarUrl") or "").strip()
+    if expected_name and current_name and expected_name != current_name:
+        return False
+    if expected_avatar:
+        if not current_avatar:
+            return False
+        expected_url, current_url = urlparse(expected_avatar), urlparse(current_avatar)
+        return (
+            expected_url.netloc.casefold() == current_url.netloc.casefold()
+            and expected_url.path == current_url.path
+            and (not expected_name or expected_name == current_name)
+        )
+    return bool(expected_name and expected_name == current_name)
+
+
+async def _open_cached_meta_conversation(page, channel_type: str, thread_id: str) -> bool:
+    """Use Meta's own row click to hydrate a thread before sending from a fresh tab."""
+    profile = META_THREAD_ROWS.get(str(thread_id or "").strip())
+    if not profile or not (profile.get("displayName") or profile.get("avatarUrl")):
+        return False
+    visited: set[str] = set()
+    stable_bottom = 0
+    for _ in range(48):
+        rows = await _conversation_rows(page)
+        matches = [row for row in rows if _meta_row_matches_cached_profile(row, profile)]
+        for row in matches:
+            key = str(row.get("label") or "")
+            if key in visited:
+                continue
+            visited.add(key)
+            try:
+                opened_id = await _open_meta_conversation(page, row, channel_type)
+            except Exception:
+                continue
+            if opened_id == str(thread_id):
+                return True
+        scroll = await _scroll_meta_list(page)
+        if scroll is None:
+            return False
+        if scroll["top"] + scroll["client"] >= scroll["height"] - 4:
+            stable_bottom += 1
+            if stable_bottom >= 2:
+                return False
+        else:
+            stable_bottom = 0
+        await page.wait_for_timeout(250)
+    return False
 
 
 async def _scroll_meta_list(page) -> dict | None:
@@ -700,7 +788,47 @@ async def _scroll_thread_to_oldest(page) -> None:
 
 async def _active_thread_id(page) -> str:
     try:
-        return str(parse_qs(urlparse(page.url).query).get("selected_item_id", [""])[-1]).strip()
+        current = urlparse(page.url)
+        selected = str(parse_qs(current.query).get("selected_item_id", [""])[-1]).strip()
+        if selected:
+            return selected
+        # Meta can keep the selected conversation in the channel tab's link
+        # while leaving selected_item_id out of the address bar. Only accept a
+        # unique visible link for this inbox and Page, never the other channel.
+        if _inbox_state(page) != "inbox":
+            return ""
+        return str(await page.evaluate(r"""() => {
+          const current = new URL(location.href);
+          const path = current.pathname.replace(/\/+$/, '');
+          if (!['/latest/inbox/messenger', '/latest/inbox/instagram_direct'].includes(path)) return '';
+          const visible = node => {
+            const r = node.getBoundingClientRect(), style = getComputedStyle(node);
+            return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          };
+          const hydrated = [...document.querySelectorAll('[data-message-id]')].some(visible)
+            || [...document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].some(node => {
+              const label = [node.getAttribute('aria-label'), node.getAttribute('aria-placeholder'),
+                node.getAttribute('placeholder'), node.getAttribute('data-placeholder')].join(' ');
+              return visible(node) && !/search|tìm kiếm/i.test(label)
+                && /reply|message|trả lời|tin nhắn|soạn tin|viết tin/i.test(label);
+            });
+          if (!hydrated) return '';
+          const ids = new Set();
+          for (const node of document.querySelectorAll('a[href]')) {
+            const r = node.getBoundingClientRect(), style = getComputedStyle(node);
+            if (!r.width || !r.height || style.visibility === 'hidden' || style.display === 'none') continue;
+            let url;
+            try { url = new URL(node.href, location.href); } catch { continue; }
+            if (url.origin !== current.origin || url.pathname.replace(/\/+$/, '') !== path) continue;
+            const asset = current.searchParams.get('asset_id');
+            if (!asset || url.searchParams.get('asset_id') !== asset) continue;
+            const business = url.searchParams.get('business_id');
+            if (business && business !== current.searchParams.get('business_id')) continue;
+            const id = (url.searchParams.get('selected_item_id') || '').trim();
+            if (id) ids.add(id);
+          }
+          return ids.size === 1 ? [...ids][0] : '';
+        }""") or "").strip()
     except Exception:
         return ""
 
@@ -1453,8 +1581,12 @@ async def _send_meta_message(
             raise RuntimeError("Meta không mở được đúng hội thoại để gửi; hãy kiểm tra lại cuộc trò chuyện trong CRM.")
         await page.wait_for_timeout(500)
 
-    target = await page.evaluate(
-        r"""() => {
+    target = None
+    # The selected_item_id can update before Meta mounts the composer. Wait for
+    # the reply field rather than failing after the first DOM snapshot.
+    for _ in range(48):
+        target = await page.evaluate(
+            r"""() => {
           const vw = innerWidth, vh = innerHeight;
           const visible = node => {
             const r = node.getBoundingClientRect(), s = getComputedStyle(node);
@@ -1464,13 +1596,13 @@ async def _send_meta_message(
             .filter(node => {
               if (!visible(node)) return false;
               const r = node.getBoundingClientRect();
-              const descriptor = [node.getAttribute('aria-label'), node.getAttribute('placeholder'), node.getAttribute('data-placeholder'), node.getAttribute('data-testid')].join(' ').toLocaleLowerCase();
+              const descriptor = [node.getAttribute('aria-label'), node.getAttribute('aria-placeholder'), node.getAttribute('placeholder'), node.getAttribute('data-placeholder'), node.getAttribute('data-testid')].join(' ').toLocaleLowerCase();
               if (/(search|tìm kiếm)/i.test(descriptor)) return false;
               const isReplyField = /(message|reply|trả lời|tin nhắn|soạn tin|gửi tin|viết tin)/i.test(descriptor);
               return isReplyField || (r.x >= vw * .04 && r.right <= vw * .995 && r.y >= vh * .50 && r.width >= vw * .12);
             }).map(node => {
               const r = node.getBoundingClientRect();
-              const descriptor = [node.getAttribute('aria-label'), node.getAttribute('placeholder'), node.getAttribute('data-placeholder'), node.getAttribute('data-testid')].join(' ').toLocaleLowerCase();
+              const descriptor = [node.getAttribute('aria-label'), node.getAttribute('aria-placeholder'), node.getAttribute('placeholder'), node.getAttribute('data-placeholder'), node.getAttribute('data-testid')].join(' ').toLocaleLowerCase();
               const score = (/message|reply|trả lời|tin nhắn|soạn tin|gửi tin|viết tin|write/i.test(descriptor) ? 1000000 : 0)
                 + (node.isContentEditable ? 100 : 0) + Math.min(r.width, vw) - Math.abs(vh - r.bottom);
               return {node, score, r};
@@ -1479,23 +1611,15 @@ async def _send_meta_message(
           if (!editor) return null;
           for (const node of document.querySelectorAll('[data-smart-merchant-meta-composer]')) node.removeAttribute('data-smart-merchant-meta-composer');
           editor.setAttribute('data-smart-merchant-meta-composer', 'active');
-          const er = editor.getBoundingClientRect();
-          const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible).map(node => {
-            const r = node.getBoundingClientRect();
-            const name = [node.getAttribute('aria-label'), node.getAttribute('title'), node.getAttribute('data-testid'), node.innerText].join(' ').trim();
-            return {node, r, name, distance: Math.abs(r.y + r.height / 2 - (er.y + er.height / 2))};
-          }).filter(item => item.r.x > vw * .20 && item.r.x < vw * .82 && item.r.y > vh * .50
-            && item.distance < 100 && /(send|gửi|tin nhắn)/i.test(item.name))
-            .sort((a, b) => a.distance - b.distance);
-          const button = buttons[0]?.node;
-          if (button) button.setAttribute('data-smart-merchant-meta-send', 'active');
           return {
-            hasButton: !!button,
             messageIds: [...new Set([...document.querySelectorAll('[data-message-id]')]
               .map(node => node.getAttribute('data-message-id')).filter(Boolean))]
           };
-        }"""
-    )
+            }"""
+        )
+        if target:
+            break
+        await page.wait_for_timeout(250)
     if not target:
         raise RuntimeError("Không nhận diện được ô trả lời trong hội thoại Meta đang mở.")
     existing_message_ids = set(target.get("messageIds") or [])
@@ -1505,7 +1629,17 @@ async def _send_meta_message(
     existing_images = Counter(await _visible_outbound_images(page)) if image_path is not None and is_image else Counter()
     existing_audio = set(await _visible_outbound_audio(page)) if image_path is not None and is_audio else set()
     composer = page.locator('[data-smart-merchant-meta-composer="active"]')
-    await composer.fill(message)
+    if message and os.getenv("SMART_MERCHANT_CHANNEL_TYPE") == "facebook":
+        # Fill the actual editable node so insertion does not depend on tab focus.
+        draft = await composer.evaluate("node => (node.value ?? node.innerText ?? '').trim()")
+        if draft:
+            raise RuntimeError("Ô Messenger đang có bản nháp; chưa gửi để tránh ghi đè.")
+        await composer.fill(message, timeout=3000)
+        draft = await composer.evaluate("node => (node.value ?? node.innerText ?? '').trim()")
+        if " ".join(draft.split()) != " ".join(message.split()):
+            raise RuntimeError("Meta chưa nhận nội dung vào ô trả lời; chưa gửi.")
+    else:
+        await composer.fill(message)
     if image_path is not None:
         await _attach_meta_image(page, image_path, media_type)
     for _ in range(40 if image_path is not None else 1):
@@ -1518,15 +1652,25 @@ async def _send_meta_message(
             const r = node.getBoundingClientRect(), s = getComputedStyle(node);
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
           };
+          const normalizeLabel = value => String(value || '').toLocaleLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+          const explicitSend = /^(?:send(?:\s+(?:a\s+)?message)?|gửi(?:\s+tin(?:\s+nhắn)?)?)$/i;
+          const unsafeAction = /(like|thumbs?\s*up|reaction|react\b|emoji|sticker|thích|cảm\s*xúc|biểu\s*cảm)/i;
           for (const node of document.querySelectorAll('[data-smart-merchant-meta-send]')) node.removeAttribute('data-smart-merchant-meta-send');
           const button = [...document.querySelectorAll('button,[role="button"]')]
             .filter(node => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true').map(node => {
               const r = node.getBoundingClientRect();
-              const name = [node.getAttribute('aria-label'), node.getAttribute('title'), node.getAttribute('data-testid'), node.innerText].join(' ').trim();
-              return {node, r, name, distance: Math.abs(r.y + r.height / 2 - (er.y + er.height / 2))};
+              const ariaLabel = normalizeLabel(node.getAttribute('aria-label'));
+              const title = normalizeLabel(node.getAttribute('title'));
+              const testId = normalizeLabel(node.getAttribute('data-testid'));
+              const buttonText = normalizeLabel(node.innerText);
+              const visibleLabel = [ariaLabel, title, buttonText].join(' ');
+              const isSend = !unsafeAction.test(visibleLabel)
+                && ([ariaLabel, title, buttonText].some(value => explicitSend.test(value))
+                  || /(?:send|message).*?(?:button|btn)|(?:button|btn).*?(?:send|message)/i.test(testId));
+              return {node, r, isSend, distance: Math.abs(r.y + r.height / 2 - (er.y + er.height / 2))};
             }).filter(item => item.r.x > vw * .04 && item.r.x < vw * .995 && item.r.y > vh * .50
-              && item.distance < 160 && /(send|gửi)/i.test(item.name))
-            .sort((a, b) => a.distance - b.distance)[0]?.node;
+              && item.distance < 160 && item.isSend)
+            .sort((a, b) => a.distance - b.distance || b.r.x - a.r.x)[0]?.node;
           if (button) button.setAttribute('data-smart-merchant-meta-send', 'active');
           return {hasButton: !!button};
         }"""
@@ -1539,6 +1683,8 @@ async def _send_meta_message(
     if image_path is not None and not (send_target and send_target.get("hasButton")):
         raise RuntimeError("Meta chưa hiển thị nút gửi tệp đính kèm; chưa gửi tin.")
     try:
+        if await _active_thread_id(page) != thread_id:
+            raise RuntimeError("Hội thoại Meta đã đổi; chưa gửi.")
         if send_target and send_target.get("hasButton"):
             await button.click(timeout=5000)
         else:
@@ -1628,9 +1774,25 @@ async def _send_meta_message_isolated(thread_id, message, recipient_id="", image
             must_navigate = (_meta_conversation_url(channel_type,delivery_page.url,str(thread_id)) != target_url
                 or await _active_thread_id(delivery_page) != str(thread_id))
         if must_navigate:
-            await delivery_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
-            await delivery_page.wait_for_timeout(1000)
+            cached_profile = META_THREAD_ROWS.get(str(thread_id))
+            opened_from_inbox = False
+            if cached_profile:
+                await delivery_page.goto(
+                    _meta_inbox_url(channel_type, monitor.url),
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+                await delivery_page.wait_for_timeout(700)
+                opened_from_inbox = await _open_cached_meta_conversation(
+                    delivery_page, channel_type, str(thread_id)
+                )
+            if not opened_from_inbox:
+                await delivery_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                await delivery_page.wait_for_timeout(1000)
+            else:
+                print("✅ Meta đã mở hội thoại bằng dòng inbox trước khi gửi.", flush=True)
         previous_count = await _visible_outbound_text_count(delivery_page, str(message)) if image_path is None else 0
+        await delivery_page.bring_to_front()
         result = await _send_meta_message(thread_id, message, recipient_id, image_path, media_type, page=delivery_page)
         if image_path is None:
             # An optimistic bubble can disappear when its tab closes before Meta saves it.
@@ -2444,6 +2606,7 @@ async def run() -> None:
                         profile = profile_cache.get(current_id, {})
                         name = _usable_meta_name(profile.get("displayName")) or _usable_meta_name(await _active_display_name(page, ""))
                         avatar_url = str(profile.get("avatarUrl") or await _active_avatar_url(page, name) or "")
+                        _remember_meta_thread_row(current_id, {"displayName": name, "avatarUrl": avatar_url})
                         messages = await _latest_message_rows(page, channel_type, current_id, name, avatar_url)
                         if channel_type == "instagram":
                             messages = [

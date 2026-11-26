@@ -66,8 +66,14 @@ def _missing_evidence_subject(query: str, *, reply_language: str) -> str:
 def _missing_evidence_reply(query: str, *, reply_language: str) -> str:
     subject = _missing_evidence_subject(query, reply_language=reply_language)
     if reply_language == "en":
-        return f"The shop's current sources do not confirm {subject}. You can ask a staff member to check."
-    return f"Nguồn hiện có của shop chưa xác nhận {subject}. Bạn có thể nhờ nhân viên kiểm tra thêm."
+        return f"The shop hasn't confirmed {subject}. Please message a shop team member and they can check it for you."
+    return f"Shop chưa có thông tin xác nhận về {subject}. Bạn nhắn nhân viên shop để được kiểm tra thêm nhé."
+
+
+def _friendly_unverified_reply(reply_language: str = "vi") -> str:
+    if reply_language == "en":
+        return "Sorry, I can't answer that just yet. Please ask about a specific product or service, or message the shop team for help."
+    return "Xin lỗi bạn, hiện mình chưa trả lời được câu này. Bạn có thể hỏi cụ thể về sản phẩm/dịch vụ hoặc nhắn nhân viên shop để được hỗ trợ nhé."
 
 
 def recent_calendar_subject(rows, current_query, *, now=None, ttl_minutes=30):
@@ -203,7 +209,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
     from app.models.sales import Product, Order
     from app.models.ticket import Ticket
     from app.services.quota_service import record_quota_usage
-    from app.services.customer_collection_flow import CollectionFlowResult
+    from app.services.customer_collection_flow import CollectionFlowResult, is_order_intent
     from app.rag.topics import fold_topic_text
     from app.rag.serving import retrieve_shop_knowledge as retrieve
     from app.rag.answer_guard import has_valid_citations, customer_facing_answer, verified_money_calculation
@@ -246,6 +252,48 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
     # instruction. Keep them in the answer context but out of intent control.
     router_query = query.split("VISIBLE_IMAGE_OBSERVATION", 1)[0].strip()
     folded_query = fold_topic_text(router_query)
+    from app.services.catalog_overview import generic_recommendation_needs_question
+    needs_question = generic_recommendation_needs_question(router_query)
+    if needs_question and not getattr(settings,"CATALOG_DIALOGUE_ENABLED",False):
+        return CollectionFlowResult(session_id=0, status="recommendation_needs", current_field=None,
+                                    prompt=needs_question)
+    from app.services.customer_collection_flow import is_greeting, greeting_reply
+    if is_greeting(router_query):
+        return CollectionFlowResult(
+            session_id=0,
+            status="greeting",
+            current_field=None,
+            prompt=greeting_reply(router_query),
+        )
+    from app.services.business_request import is_business_request_cancellation
+    if is_business_request_cancellation(router_query):
+        latest_session = db.query(CustomerCollectionSession).filter(
+            CustomerCollectionSession.business_id == business_id,
+            CustomerCollectionSession.customer_id == conversation.customer_id,
+            CustomerCollectionSession.conversation_id == conversation.id,
+        ).order_by(CustomerCollectionSession.id.desc()).first()
+        if latest_session is None:
+            return CollectionFlowResult(session_id=0, status="no_open_business_request",
+                current_field=None,
+                prompt="Hiện không có yêu cầu đặt hàng hoặc đặt lịch nào đang soạn để hủy. Nếu bạn muốn hủy đơn/lịch đã gửi, vui lòng cung cấp mã để shop kiểm tra nhé.")
+        if (latest_session.purpose == "business_request"
+                and latest_session.status not in {"pending", "partial"}):
+            if latest_session.status == "cancelled":
+                message = "Yêu cầu đang soạn đã được hủy trước đó. Chưa tạo đơn/lịch và chưa ghi nhận thanh toán."
+            else:
+                message = "Hiện không có yêu cầu đặt hàng hoặc đặt lịch nào đang soạn để hủy. Nếu bạn muốn hủy đơn/lịch đã gửi, vui lòng cung cấp mã để shop kiểm tra nhé."
+            return CollectionFlowResult(session_id=latest_session.id,
+                status="business_request_already_closed", current_field=None, prompt=message)
+    from app.services.customer_order_service import payment_report_confirmation_reply
+    transfer_confirmation = payment_report_confirmation_reply(db, business_id, conversation.id, router_query)
+    if transfer_confirmation:
+        return CollectionFlowResult(session_id=0, status="payment_reported", current_field=None,
+            prompt=transfer_confirmation)
+    if getattr(settings,"CATALOG_DIALOGUE_ENABLED",False) and "VISIBLE_IMAGE_OBSERVATION" not in query and resolve_capability_request(workspace_config, tools=["catalog"], catalog_kind="product").allowed:
+        from app.services.catalog_dialogue import catalog_dialogue_reply
+        dialogue = catalog_dialogue_reply(db, business_id, conversation, router_query, platform_db=platform_db)
+        if dialogue is not None:
+            return dialogue
     intent = classify_intent(router_query)
     # Persisted tenant settings are authoritative; never infer or accept a
     # different tenant's industry from request/query context.
@@ -255,6 +303,11 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
 
     def explicit_catalog_kind(text):
         """Identify explicit service/rental questions without guessing from industry."""
+        rejected_booking = re.search(r"\bthay vi dat (?:lich(?: hen)?|hen)\b", text)
+        if rejected_booking and is_order_intent(text[:rejected_booking.start()]):
+            # A positive purchase keeps its domain when booking is only the
+            # rejected alternative; the original message remains the evidence.
+            text = text[:rejected_booking.start()].strip()
         rental_cues=("cho thue", "gia thue", "thue phong", "thue xe", "thue may", "rental", "for rent", "rent ")
         service_cues=("dich vu", "dat lich", "lich hen", "sua chua", "sua xe", "bao duong", "massage", "appointment", "service for", "services for", "service price", "offer service", "offer services", "repair", "maintenance", "cong thay", "tien cong", "cong sua", "phi lap dat", "gia lap dat", "chi phi lap dat", "labor cost", "installation fee")
         if any(cue in text for cue in rental_cues):
@@ -289,8 +342,10 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
         # into a catalog lookup. Only the customer's own words choose tools.
         route_text = text.split("VISIBLE_IMAGE_OBSERVATION", 1)[0].strip()
         folded = fold_topic_text(route_text)
+        if explicit_catalog_kind(folded) is not None:
+            return None
         if any(cue in folded for cue in (
-            "dat hang", "dat mua", "mua luon", "chot don", "tao don",
+            "dat hang", "dat mua", "muon mua", "mua luon", "chot don", "tao don",
             "thanh toan ngay", "buy now", "order now", "checkout",
         )):
             return None
@@ -366,6 +421,10 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
 
     def explicitly_starts_booking(text):
         # Informational questions such as “cách đặt lịch” must stay read-only.
+        if re.search(r"\b(?:khong|chua|dung|huy|not|don t) (?:muon |can |want to )?(?:dat lich|dat hen|book|rent)\b", text):
+            return False
+        if re.match(r"^(?:(?:toi|minh|em|anh|chi) )?(?:(?:muon|can) )?dat (?:lich(?: hen)?|hen|dich vu)(?: |$)", text):
+            return True
         return any(cue in text for cue in (
             "muon dat lich", "dat lich giup", "dat lich cho minh", "dat cho toi",
             "tien hanh dat", "book now", "book appointment", "book a slot", "i want to rent", "toi muon thue", "minh muon thue",
@@ -386,12 +445,16 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
     def _workflow_for_state(state):
         if (state.get("plan") or {}).get("mode") != "workflow":
             return None
+        if pending_business_action and pending_business_action.get("action") == "cancel":
+            return None
+        if typed_catalog_kind == "service" and (booking_service_clarification or explicitly_starts_booking(folded_query)):
+            return "appointment_booking"
         journey_workflow = state.get("sales_journey_workflow")
         if isinstance(journey_workflow, str) and journey_workflow:
             return journey_workflow
         pending_state = state.get("pending") or {}
         offering_ref = str(pending_state.get("offering_ref") or "")
-        if offering_ref.startswith("service:") or (typed_catalog_kind == "service" and explicitly_starts_booking(folded_query)):
+        if offering_ref.startswith("service:") or (typed_catalog_kind == "service" and (booking_service_clarification or explicitly_starts_booking(folded_query))):
             return "appointment_booking"
         if offering_ref.startswith("rental:") or (typed_catalog_kind == "rental" and explicitly_starts_booking(folded_query)):
             return "rental_request"
@@ -454,6 +517,43 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
 
     typed_catalog_kind=explicit_catalog_kind(folded_query)
     typed_catalog_query=query
+    # A service's full name is an identity even when the customer omits the
+    # word "service". Check authorized active services before the product
+    # shortcut can mistake a shared word (for example "kem") for a product.
+    if (not typed_catalog_kind and catalog_route_intent
+            and any(cue in folded_query for cue in ("gia", "price", "thoi luong", "bao lau", "duration"))
+            and resolve_capability_request(workspace_config, tools=("catalog",), catalog_kind="service").allowed):
+        from app.models.industry_modules import AppointmentService
+        from app.services.catalog_search import _phrase_in_query
+        service_candidates = db.query(AppointmentService).filter(
+            AppointmentService.business_id == business_id,
+            AppointmentService.is_active.is_(True),
+            (_phrase_in_query(db, AppointmentService.name, router_query)
+             | _phrase_in_query(db, AppointmentService.name, folded_query)),
+        ).limit(12).all()
+        named_services = [item for item in service_candidates
+            if len(fold_topic_text(item.name or "")) >= 3
+            and re.search(r"(?<!\w)" + re.escape(fold_topic_text(item.name)) + r"(?!\w)", folded_query)]
+        if named_services:
+            typed_catalog_kind = "service"
+            catalog_route_intent = None
+    booking_service_clarification = typed_catalog_kind == "service" and bool(re.fullmatch(
+        r"(?:(?:toi|minh|em|anh|chi) )?(?:(?:muon|can) )?dat (?:lich(?: hen)?(?: (?:cho )?dich vu)?|dich vu)(?: (?:tren|do|nay|vua roi))?(?: giup (?:toi|minh))?(?: nhe| a)?[.!?]*",
+        folded_query.strip(),
+    ))
+    service_catalog_discovery = typed_catalog_kind == "service" and bool(re.search(
+        r"\b(?:(?:shop|ben ban|cua hang|ben minh)\s+(?:dang\s+)?co\s+(?:nhung\s+)?"
+        r"dich vu nao(?:\s+(?:nhi|vay|a))?(?=$|\s+(?:liet ke|cho minh xem|please list))|"
+        r"tim hieu dich vu|danh sach dich vu|cac dich vu|nhung dich vu|"
+        r"dich vu gi|services? do you offer|what services|available services)\b",
+        folded_query,
+    )) and not any(cue in folded_query for cue in (
+        "bang gia", "tong hop", "so sanh gia", "gia thap nhat", "gia re nhat",
+    ))
+    if booking_service_clarification or service_catalog_discovery:
+        # The customer has not named an offering yet; "appointment" is an
+        # action, and a general service-menu question is not a service name.
+        typed_catalog_query = ""
     typed_calendar_check=False
     typed_calendar_date=None
     typed_calendar_time=None
@@ -501,7 +601,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
             hour=0
         elif hour < 12 and noon and hour < 11:
             hour+=12
-        elif hour <= 12 and not (evening or morning or noon) and not re.search(r"(?<!\d)\d{1,2}:\d{2}",text):
+        elif hour <= 12 and not (evening or morning or noon) and not re.search(r"(?<!\d)\d{1,2}(?::\d{2}|\s*(?:h|gio)\s*\d{2})",text):
             # A bare “9h” is ambiguous; ask whether morning or evening.
             return None
         try:
@@ -617,6 +717,180 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
         return CollectionFlowResult(session_id=0,status="safety",current_field=None,
             prompt=safety_reply, metadata=sales_journey_metadata or None)
 
+    from app.services.customer_order_service import (
+        customer_order_reply,
+        detect_customer_order_intent,
+    )
+    if detect_customer_order_intent(router_query) == "list":
+        order_lookup_permission = resolve_capability_request(
+            workspace_config, tools=["orders"], requested_workflow="order_lookup",
+        )
+        if order_lookup_permission.allowed:
+            order_list_reply = customer_order_reply(
+                db, business_id, conversation.id, router_query, platform_db=platform_db,
+            )
+            return CollectionFlowResult(
+                session_id=0, status="customer_order_list", current_field=None,
+                prompt=order_list_reply or "Mình chưa tìm thấy đơn hàng của bạn trong hội thoại này.",
+            )
+        return CollectionFlowResult(
+            session_id=0, status="customer_order_lookup_unavailable", current_field=None,
+            prompt="Mình chưa thể tra cứu đơn hàng qua kênh này. Bạn nhắn nhân viên shop để được kiểm tra giúp nhé.",
+        )
+
+    service_followup_candidate = any(cue in folded_query for cue in (
+        "su dung", "tong chi phi", "gia thap hon", "re hon", "ngan hon",
+        "thoi gian thuc hien", "vua gioi thieu", "ban dau", "nhac lai",
+    ))
+    if ((typed_catalog_kind == "service" or (not typed_catalog_kind and service_followup_candidate))
+            and not service_catalog_discovery
+            and not explicitly_starts_booking(folded_query)
+            and not is_read_only_calendar_question(folded_query)):
+        service_permission = resolve_capability_request(
+            workspace_config, tools=["catalog"], catalog_kind="service",
+        )
+        if service_permission.allowed:
+            from app.services.catalog_overview import render_service_catalog_reply
+            service_fact_reply = render_service_catalog_reply(
+                db, business_id, router_query, conversation_id=conversation.id,
+            )
+            if service_fact_reply:
+                return CollectionFlowResult(
+                    session_id=0, status="service_catalog_answer", current_field=None,
+                    prompt=service_fact_reply,
+                )
+
+    if service_catalog_discovery:
+        service_permission = resolve_capability_request(
+            workspace_config, tools=["catalog"], catalog_kind="service",
+        )
+        if service_permission.allowed:
+            from app.services.catalog_overview import render_service_overview
+            service_reply = render_service_overview(db, business_id)
+        else:
+            service_reply = "Hiện shop chưa nhận tư vấn hoặc đặt lịch dịch vụ qua kênh này. Bạn nhắn nhân viên shop để được hỗ trợ nhé."
+        return CollectionFlowResult(
+            session_id=0, status="service_catalog_overview", current_field=None,
+            prompt=service_reply,
+        )
+
+    if resolve_capability_request(workspace_config,tools=['orders'],requested_workflow='order_lookup').allowed:
+        from app.services.customer_return_intake import customer_return_reply
+        return_reply=customer_return_reply(db,business_id,conversation.id,query,platform_db=platform_db)
+        if return_reply:
+            return CollectionFlowResult(session_id=0,status='return_intake',current_field=None,prompt=return_reply)
+    from app.services.customer_collection_flow import is_price_quote_request, advance_customer_collection
+    from app.models.customer_collection import CustomerCollectionSession
+    existing_checkout = db.query(CustomerCollectionSession).filter(
+        CustomerCollectionSession.business_id == business_id,
+        CustomerCollectionSession.customer_id == conversation.customer_id,
+        CustomerCollectionSession.conversation_id == conversation.id,
+        CustomerCollectionSession.purpose.in_(["order", "order_confirmation"]),
+        CustomerCollectionSession.status.in_(["pending", "partial", "completed"]),
+    ).order_by(CustomerCollectionSession.id.desc()).first()
+    if existing_checkout is not None and existing_checkout.status == "completed":
+        checkout_fields = existing_checkout.collected_fields or {}
+        if not (checkout_fields.get("otp_pending") or checkout_fields.get("awaiting_customer_confirmation")):
+            existing_checkout = None
+    if existing_checkout is not None:
+        checkout_permission = resolve_capability_request(
+            workspace_config, tools=["catalog", "orders"],
+            requested_workflow="order_collection", catalog_kind="product",
+        )
+        if checkout_permission.allowed:
+            checkout_result = advance_customer_collection(
+                db=db, business_id=business_id,
+                customer_id=conversation.customer_id,
+                conversation_id=conversation.id,
+                source_channel=conversation.channel, text=router_query,
+            )
+            if checkout_result is not None:
+                return checkout_result
+    if not typed_catalog_kind and (is_order_intent(router_query) or is_price_quote_request(router_query)):
+        order_permission = resolve_capability_request(
+            workspace_config, tools=["catalog", "orders"],
+            requested_workflow="order_collection", catalog_kind="product",
+        )
+        if order_permission.allowed:
+            from app.models.customer_collection import CustomerCollectionSession
+            business_session = db.query(CustomerCollectionSession).filter(
+                CustomerCollectionSession.business_id == business_id,
+                CustomerCollectionSession.conversation_id == conversation.id,
+                CustomerCollectionSession.purpose == "business_request",
+                CustomerCollectionSession.status.in_(["pending", "partial"]),
+            ).first()
+            if business_session is not None and not is_order_intent(router_query):
+                order_result = None
+            else:
+                order_result = advance_customer_collection(
+                    db=db, business_id=business_id,
+                    customer_id=conversation.customer_id,
+                    conversation_id=conversation.id,
+                    source_channel=conversation.channel, text=router_query,
+                )
+            if order_result is not None:
+                return order_result
+
+    if re.search(r"\bhuy\s+(?:yeu cau|phien|dat hang dang soan)\b", folded_query):
+        from app.models.customer_collection import CustomerCollectionSession
+        pending_request = db.query(CustomerCollectionSession).filter(
+            CustomerCollectionSession.business_id == business_id,
+            CustomerCollectionSession.customer_id == conversation.customer_id,
+            CustomerCollectionSession.conversation_id == conversation.id,
+            CustomerCollectionSession.purpose == "business_request",
+            CustomerCollectionSession.status.in_(["pending", "partial"]),
+        ).with_for_update().first()
+        if pending_request is not None:
+            pending_request.status = "cancelled"
+            db.commit()
+            return CollectionFlowResult(
+                session_id=pending_request.id, status="cancelled", current_field=None,
+                prompt="Mình đã hủy yêu cầu đang soạn của bạn. Bạn có thể bắt đầu yêu cầu mới khi cần nhé.",
+            )
+
+    from app.services.catalog_overview import catalog_overview_kind, render_catalog_overview
+    if (not typed_catalog_kind
+            and re.search(r"\b(?:chi tiet|thong tin|mo ta|thanh phan|cach dung|cong dung|tac dung|dung the nao|dung ra sao)\b", folded_query)
+            and resolve_capability_request(workspace_config, tools=["catalog"], catalog_kind="product").allowed):
+        from app.services.product_resolver import resolve_product_mentions
+        from app.services.auto_reply_service import _format_product_fact_reply
+        detail_products = resolve_product_mentions(db, business_id=business_id,
+            text=query, conversation_id=conversation.id)
+        if len(detail_products) == 1:
+            return CollectionFlowResult(session_id=0, status="catalog_detail", current_field=None,
+                prompt=_format_product_fact_reply(detail_products[0], folded_query))
+    if (not typed_catalog_kind
+            and re.search(r"\b(?:nhu cau|goi y|tu van)\b", folded_query)
+            and resolve_capability_request(workspace_config, tools=["catalog"], catalog_kind="product").allowed):
+        from app.services.product_profile import matching_need_products, profile_values
+        from app.services.recommendation_artifacts import stated_budget
+        from app.services.auto_reply_service import _format_vnd
+        current_products = db.query(Product).filter(Product.business_id == business_id, Product.status == "active").all()
+        budget = stated_budget(query)
+        matched = matching_need_products(current_products, query, budget)
+        # Activate this route only for a need explicitly configured by the shop.
+        known_need = any(" " + fold_topic_text(need) + " " in " " + folded_query + " "
+                         for p in current_products for need in profile_values(p, "suitable_needs"))
+        if known_need:
+            if matched:
+                lines = ["Các sản phẩm đáp ứng nhu cầu bạn vừa nêu:"]
+                for p in matched[:3]:
+                    lines.append(f"• {p.name} — {_format_vnd(p.price)} đồng. Công dụng: " + "; ".join(profile_values(p, "benefits")))
+                if any((p.metadata_ or {}).get("product_profile", {}).get("demo") for p in matched[:3]):
+                    lines.append("Thông tin công dụng trên là minh họa cho sản phẩm demo.")
+                reply = "\n".join(lines)
+            else:
+                reply = "Shop chưa có sản phẩm còn hàng đáp ứng nhu cầu và ngân sách này. Bạn có muốn thay đổi ngân sách hoặc nhờ nhân viên hỗ trợ không ạ?"
+            return CollectionFlowResult(session_id=0, status="need_catalog_match", current_field=None, prompt=reply)
+    overview = catalog_overview_kind(folded_query) if "VISIBLE_IMAGE_OBSERVATION" not in query else None
+    if overview and resolve_capability_request(
+        workspace_config, tools=["catalog"], catalog_kind="product",
+    ).allowed:
+        return CollectionFlowResult(
+            session_id=0, status="catalog_overview", current_field=None,
+            prompt=render_catalog_overview(db, business_id, overview, query=router_query),
+        )
+
     folded_ticket_query = fold_topic_text(query)
     if (any(term in folded_ticket_query for term in ("ticket", "phieu ho tro", "ma yeu cau"))
             and any(term in folded_ticket_query for term in ("trang thai", "tinh trang", "kiem tra", "status", "ma la gi"))):
@@ -652,13 +926,25 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
             from app.services.auto_reply_service import _is_catalog_selection_request
             if _is_catalog_selection_request(db, business_id, query):
                 return {"plan": {"mode": "answer", "tools": selection_tools}}
+        pending_ref = str((state.get("pending") or {}).get("offering_ref") or "")
+        if pending_business_action and pending_business_action.get("action") == "cancel":
+            return {"plan": {"mode": "workflow", "tools": []}}
+        if (pending_business_action is not None or pending_contact_fragment is not None
+                or (typed_catalog_kind == "service" and explicitly_starts_booking(folded_query)
+                    and "VISIBLE_IMAGE_OBSERVATION" not in query)
+                or booking_service_clarification or (pending_ref.startswith("service:")
+                    and (typed_calendar_time is not None
+                         or (typed_calendar_date is not None and session is not None
+                             and (session.collected_fields or {}).get("pending_calendar_time"))))):
+            return {"plan": {"mode": "workflow", "tools": ["catalog"]}}
         journey_plan = state.get("sales_journey_plan")
         if isinstance(journey_plan, dict) and journey_plan.get("mode"):
             return {
                 "plan": journey_plan,
                 "sales_brain_clarification": bool(state.get("sales_journey_clarification")),
             }
-        if (state.get("sales_brain_context", {}).get("needs", {}).get("next_best_question")
+        if (not typed_catalog_kind
+                and state.get("sales_brain_context", {}).get("needs", {}).get("next_best_question")
                 and route_intent.get("kind") in {None, "product_recommendation"}):
             return {"plan":{"mode":"chat","tools":[]},"sales_brain_clarification":True}
         if route_intent.get("kind") in {
@@ -691,7 +977,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
             if crm_catalog_intent and product_catalog_probe_allowed:
                 policy_tools.insert(0, "catalog")
             return {"plan":{"mode":"answer","tools":policy_tools}}
-        if product_catalog_probe_allowed and _is_catalog_selection_request(db, business_id, query):
+        if not typed_catalog_kind and product_catalog_probe_allowed and _is_catalog_selection_request(db, business_id, query):
             # A read-only product need (for example, "I need scooter oil") is
             # not a new order and must not be absorbed by a pending collection.
             return {"plan":{"mode":"answer","tools":["recommendations","catalog"]}}
@@ -702,6 +988,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
         ))
         if (
             asks_product_use_or_comparison
+            and not typed_catalog_kind
             and product_catalog_probe_allowed
             and _catalog_request_has_identity_overlap(db, business_id, query)
         ):
@@ -718,7 +1005,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                     typed_catalog_query=query+"\n"+prior_content
         if typed_calendar_check and typed_catalog_kind:
             return {"plan":{"mode":"answer","tools":["catalog"]}}
-        if typed_catalog_kind and not explicitly_starts_booking(folded_query):
+        if typed_catalog_kind and (booking_service_clarification or not explicitly_starts_booking(folded_query)):
             # Service and rental facts come from the shop-scoped live catalog.
             # This read-only path avoids a generic LLM fallback and never books.
             return {"plan":{"mode":"answer","tools":["catalog"]}}
@@ -876,6 +1163,20 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
             if (deterministic and deterministic[1].startswith(("product_", "general_knowledge_"))
                     and deterministic[1] != "product_not_found"):
                 reply, route = deterministic
+                if re.search(r"\b(?:loai da|skin type)\b", folded_query):
+                    from app.services.product_resolver import resolve_prior_product_mention
+                    skin_product = resolve_prior_product_mention(
+                        db, business_id=business_id, conversation_id=conversation.id,
+                        current_text=query,
+                    )
+                    if skin_product is not None:
+                        attributes = (skin_product.metadata_ or {}).get("attributes") or {}
+                        skin_values = attributes.get("skin_types") or attributes.get("skin_type") or attributes.get("suitable_skin_type")
+                        if skin_values:
+                            skin_text = ", ".join(str(value) for value in skin_values) if isinstance(skin_values, list) else str(skin_values)
+                            reply += "\nThông tin loại da phù hợp trong danh mục: " + skin_text + "."
+                        else:
+                            reply += "\nShop chưa có thông tin xác nhận loại da phù hợp cho sản phẩm này. Mình cần nhờ nhân viên kiểm tra thêm."
                 evidence.append(f"CURRENT_CRM_CATALOG: deterministic, tenant-scoped route={route}.")
                 return {
                     "evidence": evidence,
@@ -953,13 +1254,13 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                     else "Tối đa 12 kết quả khớp câu hỏi, không coi danh sách bị giới hạn là toàn bộ danh mục")
                 evidence.append("CURRENT_CRM_CATALOG — " + catalog_scope + ":\n" + "\n".join(rows))
                 authoritative_source_ids.append(len(evidence))
-                if typed_catalog_kind and "recommendations" not in planned_tools and not explicitly_starts_booking(folded_query):
+                if typed_catalog_kind and "recommendations" not in planned_tools and (booking_service_clarification or not explicitly_starts_booking(folded_query)):
                     from app.services.auto_reply_service import _format_vnd
                     from app.services.recommendation_artifacts import stated_budget
                     typed_offerings=[item for item in offerings if item.get("kind")==typed_catalog_kind]
                     catalog_query_folded=fold_topic_text(typed_catalog_query)
                     query_tokens={token for token in re.findall(r"[a-z0-9]+",catalog_query_folded)
-                        if len(token)>1 and token not in {"shop","minh","ban","co","can","cho","biet","gia","bao","nhieu","cach","dat","lich","thue","dich","vu","hien","tai","nao","giup","toi","mot","va","la","khong","chua","hoi","thong","tin","nay","service","services","do","you","have","the","for","what","price","how","book","appointment","available","is","it","can","i","want","to","rent","please","current","catalog"}}
+                        if len(token)>1 and token not in {"muon","hen","gi","dang","cac","nhung","tat","ca","het","shop","minh","ban","co","can","cho","biet","gia","bao","nhieu","cach","dat","lich","thue","dich","vu","hien","tai","nao","giup","toi","mot","va","la","khong","chua","hoi","thong","tin","nay","service","services","do","you","have","the","for","what","price","how","book","appointment","available","is","it","can","i","want","to","rent","please","current","catalog"}}
                     def offering_score(item):
                         name_tokens=set(re.findall(r"[a-z0-9]+",fold_topic_text(item.get("name",""))))
                         description_tokens=set(re.findall(r"[a-z0-9]+",fold_topic_text(item.get("description",""))))
@@ -975,7 +1276,13 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                         matched=[item for item in matched if float(item.get("price") or 0)>0 and float(item["price"])<=budget]
                     catalog_reply_candidate_count=len(matched[:3])
                     label="dịch vụ" if typed_catalog_kind=="service" else "mục cho thuê"
-                    if not typed_offerings:
+                    if booking_service_clarification and typed_offerings:
+                        menu = "; ".join(item["name"] for item in typed_offerings[:3])
+                        catalog_reply = (f"Bạn muốn đặt lịch dịch vụ nào: {menu}? Bạn cho mình ngày và giờ mong muốn nhé. Mình chưa tạo hay xác nhận lịch hẹn."
+                            if reply_language != "en" else f"Which service would you like to book: {menu}? Please give your preferred date and time. No appointment has been created or confirmed.")
+                        catalog_reply_needs_staff = False
+                        catalog_reply_mode = "service_booking_clarification"
+                    elif not typed_offerings:
                         catalog_reply=(f"Shop chưa cấu hình {label} trong danh mục hiện tại, nên mình chưa thể xác nhận giá hoặc lịch. Mình chuyển shop kiểm tra; mình chưa tạo lịch hay yêu cầu đặt thuê."
                             if reply_language!="en" else f"No active {label} is configured in the shop catalog, so I can't confirm a price or schedule. I'll ask the shop to check; I haven't created a booking.")
                         catalog_reply_needs_staff=True
@@ -1253,6 +1560,25 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
             # avoid a second LLM call that could alter price or stock claims.
             return {"answer":state["recommendation_reply"],"needs_staff_decision":False}
         workflow=state.get("workflow_result") or {}
+        if workflow.get("legacy_session") and workflow.get("result"):
+            return {"answer": workflow["result"], "needs_staff_decision": False}
+        if workflow.get("state") == "cancelled":
+            return {"answer":"Mình đã hủy yêu cầu đang soạn. Chưa tạo đơn/lịch và chưa ghi nhận thanh toán. Nếu bạn cần, mình có thể giúp bắt đầu yêu cầu mới.",
+                    "needs_staff_decision":False}
+        if workflow.get("state") == "collecting":
+            if (workflow.get("offering") or {}).get("kind") == "goods":
+                from app.services.order_collection_form import render_order_form
+                return {"answer":render_order_form(workflow),"needs_staff_decision":False}
+            missing = workflow.get("missing") or []
+            invalid = workflow.get("invalid") or []
+            if missing or invalid:
+                fields = list(dict.fromkeys([str(value) for value in [*invalid, *missing]]))
+                offering = workflow.get("offering") or {}
+                lead = f"Mình đang hỗ trợ bạn đặt {offering['name']}. " if offering.get("name") else ""
+                return {
+                    "answer": lead + "Bạn cho mình thêm " + ", ".join(fields) + " nhé.",
+                    "needs_staff_decision": False,
+                }
         if workflow.get("state")=="submitted" and workflow.get("payment_instructions"):
             return {"answer":workflow['payment_instructions']}
         if workflow.get("state")=="review":
@@ -1333,9 +1659,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                 raise
             status_code = getattr(error, "status_code", None)
             fallback = (
-                "I couldn't verify a complete answer from the current sources. Please ask the shop team to check."
-                if reply_language == "en" else
-                "Mình chưa thể xác minh đầy đủ câu trả lời từ nguồn hiện có. Bạn nhờ nhân viên kiểm tra giúp nhé."
+                _friendly_unverified_reply(reply_language)
             )
             return {
                 "answer": fallback,
@@ -1399,7 +1723,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                 feedback=(str(error) if str(error).startswith("unsupported_calculation_operands:") else
                     "Preserve source qualifiers and uncertainty; do not turn missing policy details into a definite yes or no.")
                 return compose({**state,"_validation_retry":True,"_validation_error":feedback})
-            return {"answer":"Mình chưa xác minh được nguồn cho câu trả lời này. Bạn nhờ nhân viên kiểm tra giúp nhé.",
+            return {"answer":_friendly_unverified_reply(reply_language),
                     "needs_staff_decision":True,"answer_generation_status":"structured_output_safe_fallback"}
         authoritative_sources=[evidence[source_id-1] for source_id in state.get("authoritative_source_ids", [])
             if 1 <= source_id <= len(evidence)]
@@ -1412,7 +1736,7 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
             if workflow.get("state")=="collecting" and workflow.get("missing"):
                 # A rejected paraphrase must not block a validated request for a missing field.
                 return {"answer":f"Bạn cho mình biết {workflow['missing'][0].lower()} để tiếp tục soạn yêu cầu nhé."}
-            return {"answer":"Mình chưa thể xác minh đầy đủ câu trả lời từ nguồn hiện có. Bạn nhờ nhân viên kiểm tra giúp nhé.",
+            return {"answer":_friendly_unverified_reply(reply_language),
                     "needs_staff_decision":True,"answer_generation_status":"guard_safe_fallback"}
         return {"answer":customer_facing_answer(answer),"needs_staff_decision":needs_staff,
                 "answer_generation_status":"validated_after_retry" if state.get("_validation_retry") else "validated",
@@ -1425,6 +1749,31 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
         CustomerCollectionSession.customer_id==conversation.customer_id,CustomerCollectionSession.conversation_id==conversation.id,
         CustomerCollectionSession.status.in_(["pending","partial"])).order_by(CustomerCollectionSession.id.desc()).first()
     pending={"purpose":session.purpose,"field":session.current_field,"phase":(session.collected_fields or {}).get("phase"),"offering_ref":(session.collected_fields or {}).get("offering_ref")} if session else {}
+    if resolve_capability_request(workspace_config, tools=["catalog"], catalog_kind="product").allowed:
+        from app.services.quantity_price_quote import pending_quantity_quote
+        quantity_quote = pending_quantity_quote(db, business_id, query, session)
+        if quantity_quote:
+            return CollectionFlowResult(session_id=session.id, status="quantity_price_quote",
+                current_field=session.current_field, prompt=quantity_quote)
+    from app.services.business_request import pending_contact_action
+    pending_contact_fragment = (pending_contact_action(query, session.collected_fields or {})
+        if session is not None and session.purpose == "business_request"
+        and str(pending.get("offering_ref") or "").startswith("service:") else None)
+    pending_business_action = None
+    if session is not None and session.purpose == "business_request":
+        from app.services.business_request import _deterministic_pending_action
+        pending_business_action = _deterministic_pending_action(query, session.collected_fields or {})
+    if session is not None and session.purpose == "business_request":
+        pending_offering = get_current_offering(db,business_id,(session.collected_fields or {}).get('offering_ref'))
+        if pending_offering and pending_offering['kind']=='goods':
+            from app.services.business_profile import get_business_profile
+            from app.services.order_collection_form import order_form_action
+            form_fields=dict(session.collected_fields or {})
+            definitions=list(form_fields.get('field_definitions') or [])
+            for configured in get_business_profile(db,business_id).collection_fields['goods']:
+                if not any(d['key']==configured.key for d in definitions): definitions.append(configured.model_dump())
+            form_fields['field_definitions']=definitions
+            pending_contact_fragment=order_form_action(query,form_fields)
     if not settings.SALES_JOURNEY_ENGINE_ENABLED:
         if needs_memory is None and not catalog_route_intent:
             from app.services.conversation_memory import load_reply_memory
@@ -1469,8 +1818,89 @@ def graph_reply(db, *, business_id, conversation, query, job_key, platform_db=No
                 "needs_staff_decision": False,
                 "workflow_result": {"state": "staff_quote_required", "transaction_created": False},
             }
+        interpreted = pending_business_action
+        if session is not None and str((session.collected_fields or {}).get("offering_ref") or "").startswith("service:"):
+            time_only = re.fullmatch(r"\s*\d{1,2}(?::|h)\d{2}\s*(?:AM|PM|sáng|chiều|tối)?\s*[.!]?\s*", query, re.I)
+            date_only = re.fullmatch(r"\s*(?:ngày\s*)?\d{1,2}[/-]\d{1,2}[/-]\d{4}\s*[.!]?\s*", query, re.I)
+            if time_only and typed_calendar_time is not None:
+                session.collected_fields = {**session.collected_fields,
+                    "pending_calendar_time": typed_calendar_time.isoformat(), "pending_calendar_time_evidence": query}
+                db.flush()
+                return {"workflow_result": {"legacy_session": True,
+                    "result": f"Mình đã ghi nhận {typed_calendar_time.strftime('%H:%M')}. Bạn muốn đặt lịch vào ngày nào?"}, "evidence": []}
+            if date_only and typed_calendar_date is not None and session.collected_fields.get("pending_calendar_time"):
+                from app.services.business_profile import get_business_profile
+                profile = get_business_profile(db, business_id)
+                saved_time = time.fromisoformat(session.collected_fields["pending_calendar_time"])
+                appointment_at = datetime.combine(typed_calendar_date, saved_time, ZoneInfo(profile.timezone)).isoformat()
+                proof = query + " " + session.collected_fields["pending_calendar_time_evidence"]
+                # Both fragments came from this pending request, never from a model guess.
+                fields = {d["key"]: {"value": appointment_at, "evidence": proof}
+                    for d in session.collected_fields.get("field_definitions", []) if d.get("type") == "datetime"}
+                interpreted = {"action": "collect", "action_evidence": query,
+                    "offering_ref": session.collected_fields["offering_ref"], "fields": fields,
+                    "calendar_fragment_evidence": proof}
+        if booking_service_clarification:
+            service_choices = current_offerings(db, business_id, query="", kind="service", limit=12)
+            reference_requested = bool(re.search(r"\b(?:tren|do|nay|vua roi)\b", folded_query))
+            reference_resolved = not reference_requested
+            if reference_requested:
+                now = datetime.now(timezone.utc)
+                for prior in messages:
+                    if prior.direction != "outbound" or not prior.content or prior.received_at is None:
+                        continue
+                    stamp = prior.received_at.replace(tzinfo=timezone.utc) if prior.received_at.tzinfo is None else prior.received_at
+                    if not timedelta(0) <= now - stamp <= timedelta(minutes=30):
+                        continue
+                    # This is the shop's previous quote, not a customer's
+                    # spending limit. "khoảng 60 phút" must not become 60 VND.
+                    searched = current_offerings(db, business_id, query=prior.content, kind="service", limit=12, budget=9999999999)
+                    candidates = list({item["ref"]: item for item in [*service_choices, *searched]}.values())
+                    prior_text = fold_topic_text(prior.content)
+                    named = [item for item in candidates if re.search(
+                        r"(?<!\w)" + re.escape(fold_topic_text(item["name"])) + r"(?!\w)", prior_text)]
+                    if named:
+                        service_choices = named
+                        reference_resolved = len(named) == 1
+                        break
+            if len(service_choices) == 1 and reference_resolved:
+                interpreted = {"action": "collect", "action_evidence": query,
+                    "offering_ref": service_choices[0]["ref"], "fields": {}}
+            else:
+                menu = "; ".join(item["name"] for item in service_choices[:3])
+                return {"workflow_result": {"legacy_session": True,
+                    "result": f"Bạn muốn đặt lịch dịch vụ nào: {menu}?" if menu else "Shop chưa có dịch vụ đang nhận lịch; mình chưa tạo lịch hẹn."},
+                    "evidence": []}
+        elif typed_catalog_kind == "service" and explicitly_starts_booking(folded_query):
+            from app.services.business_request import service_booking_selection
+            selection = service_booking_selection(db, business_id, router_query)
+            if selection is not None:
+                if selection["offering_ref"]:
+                    interpreted = {"action": "collect", "action_evidence": router_query,
+                        "offering_ref": selection["offering_ref"], "fields": {}}
+                else:
+                    menu = "; ".join(selection["choices"])
+                    return {"workflow_result": {"legacy_session": True,
+                        "result": f"Mình chưa xác định chắc dịch vụ bạn muốn đặt. Bạn chọn dịch vụ nào: {menu}?"
+                            if menu else "Shop chưa có dịch vụ đang nhận lịch; mình chưa tạo lịch hẹn."},
+                        "evidence": []}
+        elif (session is not None and str((session.collected_fields or {}).get("offering_ref") or "").startswith("service:")
+                and typed_calendar_date is not None and typed_calendar_time is not None
+                and re.fullmatch(r"\s*(?:ngày\s*)?\d{1,2}[/-]\d{1,2}[/-]\d{4}\s*(?:vào\s*)?(?:lúc\s*)?\d{1,2}(?::|h)\d{2}\s*(?:AM|PM|sáng|chiều|tối)?\s*[.!]?\s*", query, re.I)):
+            from app.services.business_profile import get_business_profile
+            profile = get_business_profile(db, business_id)
+            appointment_at = datetime.combine(typed_calendar_date, typed_calendar_time, ZoneInfo(profile.timezone)).isoformat()
+            fields = {definition["key"]: {"value": appointment_at, "evidence": query}
+                for definition in (session.collected_fields or {}).get("field_definitions", [])
+                if definition.get("type") == "datetime"}
+            if fields:
+                interpreted = {"action": "collect", "action_evidence": query,
+                    "offering_ref": session.collected_fields["offering_ref"], "fields": fields}
+        if interpreted is None and pending_contact_fragment is not None:
+            interpreted = pending_contact_fragment
+        kwargs = {"_interpreted_action": interpreted} if interpreted is not None else {}
         result=advance_business_request(db,business_id=business_id,conversation=conversation,query=query,
-            history=state["history"],job_key=job_key,workflow_planned=True)
+            history=state["history"],job_key=job_key,workflow_planned=True,**kwargs)
         if result.get("state")=="question":
             answer_state=tools_node({**state,"plan":{"mode":"answer","tools":["catalog","knowledge"]}})
             answer_state["evidence"].append("CURRENT_WORKFLOW_RESULT: This message was treated as an information question; no fields, payment choice, order or payment were saved. Do not claim collection advanced based on history. The pending field remains: "+str(state.get('pending',{}).get('field')))

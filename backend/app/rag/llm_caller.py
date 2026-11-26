@@ -841,6 +841,7 @@ def _call_structured_route(messages, schema, schema_name, provider, model):
         _provider_pool(provider),
         lambda key: _openai_text(client_factory(key).chat.completions.create(
             model=model, messages=messages, temperature=0.3,
+            **({"max_completion_tokens": 768, **({"reasoning_effort": "low"} if model.startswith("openai/gpt-oss") else {})} if schema_name == "catalog_intent" else {}),
             response_format={"type": "json_schema", "json_schema": {
                 "name": schema_name, "strict": True, "schema": schema,
             }},

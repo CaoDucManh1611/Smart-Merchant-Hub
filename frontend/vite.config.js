@@ -8,7 +8,9 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     watch: process.env.VITE_USE_POLLING === "true" ? { usePolling: true, interval: 1000 } : undefined,
-    allowedHosts: ["vocalist-dreamy-corned.ngrok-free.dev"],
+    allowedHosts: [
+      "glitzy-confusion-casualty.ngrok-free.dev",
+    ],
     proxy: {
       "/api": {
         target: "http://backend:8000",

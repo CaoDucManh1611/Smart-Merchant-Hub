@@ -168,6 +168,18 @@ class ProductOrderApiTests(unittest.TestCase):
             created = db.query(Product).filter(Product.business_id == 1, Product.sku == "IMPORT-NEW").one()
             self.assertEqual(7, created.stock_quantity)
 
+    def test_csv_profile_is_persisted_and_available_for_need_matching(self):
+        from app.services.product_profile import matching_need_products
+        content = ("sku,name,price,stock_quantity,category,benefits,suitable_needs,usage\n"
+                   "PROFILE-LIP,Son dưỡng 4g,59000,5,Son dưỡng,Dưỡng môi,môi khô;dưỡng môi,Thoa mỏng\n").encode("utf-8")
+        response = self.client.post("/api/products/import", headers={"X-Business-Id": "1"},
+            files={"file": ("profile.csv", content, "text/csv")})
+        self.assertEqual(200, response.status_code, response.text)
+        with Session(self.engine) as db:
+            p = db.query(Product).filter(Product.business_id == 1, Product.sku == "PROFILE-LIP").one()
+            self.assertEqual(["môi khô", "dưỡng môi"], p.metadata_["product_profile"]["suitable_needs"])
+            self.assertEqual([p], matching_need_products([p], "môi khô", 100000))
+
     def test_product_import_duplicate_sku_is_a_preview_error_and_never_writes(self):
         content = b"sku,name,price,stock_quantity\nDUPLICATE-01,One,100,2\nDUPLICATE-01,One,100,3\n"
         preview = self.client.post(

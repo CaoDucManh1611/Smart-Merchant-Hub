@@ -112,6 +112,16 @@ def find_explicit_product_mentions(products: list[Product], text: str) -> list[P
     return a nearest-neighbour guess.
     """
     normalized_query = normalize_product_text(text)
+    # Purchase scaffolding is not product identity (đặt vs đất after folding).
+    # Remove only a leading purchase command; keep the same word inside names.
+    # A bare literal name starting with “đất” is not a purchase command.
+    if not re.match(r"^\s*đất\b", text, re.I):
+        normalized_query = re.sub(
+            r"^(?:(?:ok|cho|toi|minh|em|anh|chi|ban|tao|vay|muon|can|xin|hay)\s+)*"
+            r"(?:dat(?: hang)?|mua|lay|chot(?: don)?)\s+"
+            r"(?:\d+\s+)?(?:(?:don|cai|chai|lo|hop|chiec|san pham)\s+)?",
+            "", normalized_query,
+        )
     if not normalized_query:
         return []
     padded_query = f" {normalized_query} "
@@ -324,6 +334,20 @@ def resolve_prior_product_mention(
         Product.status == "active",
     ).order_by(Product.id.asc()).all()
     current_normalized = normalize_product_text(current_text)
+    # A new named subject must never borrow an unrelated historical item.
+    # Variant-only replies can still select from the preceding choices.
+    current_tokens = set(current_normalized.split())
+    variant_words = {"tieu", "chuan", "nho", "gon", "nang", "cao", "bo", "doi", "ban", "mau"}
+    matched_identity_tokens = set()
+    for product in products:
+        identity_tokens = set(normalize_product_text(product.name).split()) - _STOP_WORDS - _CATALOG_QUERY_FILLERS - {"dat", "lay", "chot", "hang", "luon"}
+        matched_identity_tokens.update(current_tokens & identity_tokens)
+    if matched_identity_tokens - variant_words:
+        return None
+    # History is reserved for references, variant choices and short follow-ups.
+    if not (matched_identity_tokens or _is_unidentified_product_detail_followup(current_text)
+            or re.search(r"\b(?:do|nay|ay|tren|vua|them|dat hang|dat|lay|chot|mua\s+(?:\d+|mot)\s+(?:cai|chai|san pham))\b", current_normalized)):
+        return None
     products_by_id = {
         int(product.id): product
         for product in products
@@ -351,6 +375,10 @@ def resolve_prior_product_mention(
                 exact_product = None
             if exact_product is not None:
                 return exact_product
+            dialogue = metadata.get("catalog_dialogue") if isinstance(metadata, dict) else None
+            shortlist = dialogue.get("shortlist", []) if isinstance(dialogue, dict) else []
+            if len(shortlist) == 1 and shortlist[0] in products_by_id:
+                return products_by_id[shortlist[0]]
             folded_text = f" {normalize_product_text(previous_text)} "
             exact_matches = {
                 int(product.id): product
@@ -362,7 +390,17 @@ def resolve_prior_product_mention(
                 )
             }
             if len(exact_matches) > 1:
-                # A list of products needs a clarifying question, not an arbitrary pick.
+                # A customer's variant answer may identify one item from
+                # the immediately preceding choices ("lấy bản tiêu chuẩn").
+                # Require at least two identity tokens and one unique match.
+                selection_tokens = set(current_normalized.split()) - _STOP_WORDS - _CATALOG_QUERY_FILLERS - {
+                    "minh", "em", "chon", "lay", "dat", "nhe", "nha", "a", "nua",
+                }
+                matches = [product for product in exact_matches.values()
+                    if len(selection_tokens & set(normalize_product_text(product.name).split())) >= 2]
+                if len(matches) == 1:
+                    return matches[0]
+                # A list alone is never permission to choose its first item.
                 return None
             if exact_matches:
                 return next(iter(exact_matches.values()))
@@ -425,6 +463,29 @@ def product_display_name(product: Product, language: str = "vi") -> str:
 _product_aliases = product_aliases
 
 
+def product_family(product):
+    metadata = product.metadata_ if isinstance(product.metadata_, dict) else {}
+    for container in (metadata.get("product_profile"), metadata.get("attributes"), metadata):
+        if isinstance(container, dict):
+            category = container.get("category")
+            if isinstance(category, list):
+                category = next((v for v in category if isinstance(v, str) and v.strip()), None)
+            if isinstance(category, str) and category.strip():
+                return category.strip()
+    name = re.split(r"\s+[–—-]\s+", product.name)[0]
+    return re.sub(r"\s+\d+(?:[.,]\d+)?\s*(?:ml|g|kg|l)\s*$", "", name, flags=re.I).strip()
+
+
+def _reference_only(text):
+    query = normalize_product_text(text)
+    # A counted purchase with no product noun is a reference too. Never score
+    # conversational words such as đặt against catalog names (đất sét).
+    if re.search(r"\b(?:dat|mua|lay|chot)\b", query) and re.fullmatch(
+        r"(?:(?:ok|cho|toi|minh|em|anh|chi|ban|tao|vay|muon|xin|hay|dat|hang|mua|lay|chot|mot|[0-9]+|cai|chai|lo|hop|chiec|bo|san pham|mon|loai|di|nhe|nha|voi|luon|a)\s*)+", query):
+        return True
+    return bool(re.fullmatch(r"(?:(?:cho|toi|minh|em|anh|chi|ban|tao|ok|vay|muon|xin|hay|dat|hang|mua|lay|chot|mot|[0-9]+|cai|san pham|mon|loai|di|nhe|nha|voi)\s+)*(?:no|do|nay|ay)(?:\s+(?:di|nhe|nha|voi|luon|a))*", query))
+
+
 def _resolve_from_products(products: list[Product], text: str) -> Product | None:
     query = normalize_product_text(text)
     if not query:
@@ -464,6 +525,14 @@ def _resolve_from_products(products: list[Product], text: str) -> Product | None
     return best_matches[0]
 
 
+def _variant_only_selection(products, text):
+    tokens = set(normalize_product_text(text).split())
+    variants = {"tieu", "chuan", "nho", "gon", "nang", "cao", "bo", "doi", "ban", "mau"}
+    identity = set().union(*(set(normalize_product_text(p.name).split()) - _STOP_WORDS - _CATALOG_QUERY_FILLERS - {"dat", "lay", "chot", "hang", "luon"} for p in products))
+    matched = tokens & identity
+    return bool(matched & variants) and not (matched - variants)
+
+
 def resolve_product_mentions(
     db: Session,
     *,
@@ -483,89 +552,74 @@ def resolve_product_mentions(
         Product.business_id == business_id,
         Product.status == "active",
     ).order_by(Product.id.asc()).all()
+    if _reference_only(text):
+        prior = resolve_prior_product_mention(db, business_id=business_id,
+            conversation_id=conversation_id, current_text=text, products=products) if conversation_id else None
+        return [prior] if prior else []
+    if _variant_only_selection(products, text):
+        prior = resolve_prior_product_mention(db, business_id=business_id,
+            conversation_id=conversation_id, current_text=text, products=products) if conversation_id else None
+        return [prior] if prior else []
     query = normalize_product_text(text)
     if not query:
         return []
 
-    identity_candidates: list[tuple[int, int, int, Product]] = []
-    fallback_candidates: list[tuple[int, int, int, Product]] = []
-    seen_candidates: set[tuple[int, int, int]] = set()
-    seen_identity_candidates: set[tuple[int, int, int]] = set()
-    for product in products:
-        identity_aliases = set(product_identity_aliases(product))
-        for alias in product_aliases(product):
-            target_candidates = identity_candidates if alias in identity_aliases else fallback_candidates
-            normalized_alias = normalize_product_text(alias)
-            if len(normalized_alias) < 2:
-                continue
-            start = query.find(normalized_alias)
-            while start >= 0:
-                end = start + len(normalized_alias)
-                candidate_key = (start, end, product.id)
-                seen = seen_identity_candidates if target_candidates is identity_candidates else seen_candidates
-                if candidate_key not in seen:
-                    target_candidates.append((start, -len(normalized_alias), product.id, product))
-                    seen.add(candidate_key)
-                start = query.find(normalized_alias, start + 1)
+    # Share the conservative resolver used by catalog lookup. The older
+    # token-span fallback could mistake common words ("sữa", "tiêu chuẩn")
+    # for product identity and select the first database row on a tie.
+    explicit = find_explicit_product_mentions(products, text)
+    # In conversational Vietnamese, "đặt với nha/nhé" is a polite purchase
+    # request, not a conjunction between multiple products. Do not let this
+    # filler prevent the recent, uniquely mentioned product from resolving.
+    multiple_query = re.sub(
+        r"\b(dat|mua|lay|chot)\s+voi(?:\s+(?:nha|nhe|a|di))?\b",
+        r"\1",
+        query,
+    )
+    asks_for_multiple = bool(re.search(
+        r"\b(?:va|voi|cung|and|or|with|together|both|vs|versus|so sanh|khac nhau|khac gi|compare|comparison)\b",
+        multiple_query,
+    ))
+    if asks_for_multiple:
+        return explicit
 
-            # Customers often omit descriptive suffixes ("kem chống nắng",
-            # "sữa rửa mặt", or even "sữa mặt").  When the full alias is not
-            # present, accept at least two meaningful catalog tokens with a
-            # conservative coverage threshold.  Exact aliases above always
-            # win, so a specific product such as "Serum Vitamin C Lunari" is
-            # not shadowed by the generic "Serum" product.
-            if query.find(normalized_alias) >= 0:
-                continue
-            alias_tokens = [
-                token
-                for token in normalized_alias.split()
-                if token not in _STOP_WORDS and len(token) >= 2 and not token.isdigit()
-            ]
-            if len(alias_tokens) < 2:
-                continue
-            query_token_positions = [
-                (match.group(0), match.start(), match.end())
-                for match in re.finditer(r"\S+", query)
-            ]
-            matched_positions = []
-            for token in alias_tokens:
-                position = next(
-                    (item for item in query_token_positions if item[0] == token),
-                    None,
-                )
-                if position is not None:
-                    matched_positions.append(position)
-            required_matches = max(2, (len(alias_tokens) + 2) // 3)
-            if len(matched_positions) < required_matches:
-                continue
-            start = min(item[1] for item in matched_positions)
-            end = max(item[2] for item in matched_positions)
-            candidate_key = (start, end, product.id)
-            if candidate_key not in seen_candidates:
-                fallback_candidates.append((start, -(end - start), product.id, product))
-                seen_candidates.add(candidate_key)
+    padded_query = f" {query} "
+    exact_ids = {
+        int(product.id)
+        for product in products
+        if any(
+            (normalized_alias := normalize_product_text(alias))
+            and f" {normalized_alias} " in padded_query
+            for alias in product_identity_aliases(product)
+        )
+    }
+    if len(exact_ids) > 1:
+        return explicit
+    if len(explicit) == 1:
+        return explicit
+    if len(explicit) > 1:
+        if len({product_family(p) for p in explicit}) == 1 and not exact_ids:
+            prior = resolve_prior_product_mention(db, business_id=business_id,
+                conversation_id=conversation_id, current_text="đặt nó", products=products) if conversation_id else None
+            return [prior] if prior is not None and prior in explicit else []
+        # Several shortened variants with the same evidence are ambiguous.
+        # Only the single-product scorer may break that tie.
+        fallback = _resolve_from_products(products, text)
+        return [fallback] if fallback is not None else []
 
-    candidates = identity_candidates or fallback_candidates
-    selected: list[Product] = []
-    occupied: list[tuple[int, int]] = []
-    for start, neg_length, _product_id, product in sorted(candidates, key=lambda item: (item[0], item[1], item[2])):
-        end = start - neg_length
-        if product in selected:
-            continue
-        if any(start < other_end and end > other_start for other_start, other_end in occupied):
-            continue
-        selected.append(product)
-        occupied.append((start, end))
-
-    if selected:
-        return selected
-    fallback = resolve_product(
+    fallback = _resolve_from_products(products, text)
+    if fallback is not None:
+        return [fallback]
+    if conversation_id is None:
+        return []
+    prior = resolve_prior_product_mention(
         db,
         business_id=business_id,
-        text=text,
         conversation_id=conversation_id,
+        current_text=text,
+        products=products,
     )
-    return [fallback] if fallback is not None else []
+    return [prior] if prior is not None else []
 
 
 def resolve_product(
@@ -579,6 +633,12 @@ def resolve_product(
         Product.business_id == business_id,
         Product.status == "active",
     ).order_by(Product.id.asc()).all()
+    if _reference_only(text):
+        return resolve_prior_product_mention(db, business_id=business_id,
+            conversation_id=conversation_id, current_text=text, products=products) if conversation_id else None
+    if _variant_only_selection(products, text):
+        return resolve_prior_product_mention(db, business_id=business_id,
+            conversation_id=conversation_id, current_text=text, products=products) if conversation_id else None
     product = _resolve_from_products(products, text)
     if product is not None or conversation_id is None:
         return product

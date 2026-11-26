@@ -1,0 +1,40 @@
+[
+  {
+    "file": ".env",
+    "domains": [
+      "glitzy-confusion-casualty.ngrok-free.dev"
+    ]
+  },
+  {
+    "file": "KHOI_DONG_SMH.bat",
+    "domains": [
+      "glitzy-confusion-casualty.ngrok-free.dev"
+    ]
+  },
+  {
+    "file": "backend\\.env",
+    "domains": [
+      "glitzy-confusion-casualty.ngrok-free.dev"
+    ]
+  },
+  {
+    "file": "backend\\app\\api\\conversations.py",
+    "domains": [
+      "xxxx.ngrok-free.dev"
+    ]
+  },
+  {
+    "file": "backend\\tests\\test_media_upload_api.py",
+    "domains": [
+      "vocalist-dreamy-corned.ngrok-free.dev"
+    ]
+  },
+  {
+    "file": "frontend\\vite.config.js",
+    "domains": [
+      "d8a1-2405-4802-90bc-4eb0-acbf-421c-47a2-a719.ngrok-free.app",
+      "ee4c-2405-4802-90bc-4eb0-f1b5-6328-f3dd-2660.ngrok-free.app",
+      "glitzy-confusion-casualty.ngrok-free.dev"
+    ]
+  }
+]

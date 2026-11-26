@@ -11257,7 +11257,7 @@ body,
 }
 
 .conversation-unread {
-  background: var(--salon-accent);
+  background: #dc3545;
 }
 
 .conversation-unread.urgent {

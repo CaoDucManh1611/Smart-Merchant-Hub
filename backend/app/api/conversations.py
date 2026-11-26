@@ -4143,6 +4143,7 @@ def get_uploaded_image(
     )
 
 
+@router.head("/media-uploads/{filename}", include_in_schema=False)
 @router.get("/media-uploads/{filename}")
 def get_uploaded_media(filename: str):
     """Serve a composer upload to a channel provider using a safe filename."""

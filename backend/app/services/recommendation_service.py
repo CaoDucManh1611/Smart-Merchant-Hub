@@ -694,7 +694,8 @@ def _query_overlap(query: str | None, product: Product) -> float:
     tokens = set(_tokens(fold_topic_text(query or "")))
     if not tokens:
         return 0.0
-    searchable = set(_tokens(fold_topic_text(f"{product.name} {product.description or ''}")))
+    from app.services.product_profile import profile_search_text
+    searchable = set(_tokens(fold_topic_text(f"{product.name} {product.description or ''} {profile_search_text(product)}")))
     return sum(token in searchable for token in tokens) / len(tokens)
 
 

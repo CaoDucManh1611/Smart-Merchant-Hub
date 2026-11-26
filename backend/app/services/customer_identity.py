@@ -189,10 +189,20 @@ def resolve_customer(
         db.refresh(customer)
         return customer
 
-    customer = None
+    # Older tenant data can contain a Customer row before the identity table
+    # was introduced. Reuse that canonical row first; otherwise inserting a
+    # second Customer for the same channel/user violates
+    # uq_customers_channel_user and turns an inbound webhook into a 500.
+    customer = db.scalar(
+        select(Customer).where(
+            Customer.business_id == business_id,
+            Customer.channel == channel,
+            Customer.external_user_id == external_user_id,
+        )
+    )
     normalized_email = normalize_email(email)
     normalized_phone = normalize_phone(phone)
-    if normalized_email or normalized_phone:
+    if customer is None and (normalized_email or normalized_phone):
         # A verified contact collected through checkout/chat is a stronger
         # cross-channel key than a free-form customer field.  Unverified
         # contacts are deliberately ignored so a typo cannot merge profiles.

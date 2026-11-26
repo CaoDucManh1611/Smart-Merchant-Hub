@@ -16,6 +16,54 @@ from app.services.business_profile import get_business_profile,save_business_pro
 from app.services.business_request import advance_business_request,current_offerings
 
 
+@pytest.mark.parametrize("paid,expected", [(150000,"completed"),(0,"confirmed")])
+def test_service_completion_sync_and_single_thanks_job(setup,paid,expected):
+    from app.services.appointment_completion import complete_linked_service_order
+    from app.services.order_service import SalesOrderOperationError
+    from app.models.crm_job import CrmJob
+    db, conversation, *rest = setup
+    service=db.query(AppointmentService).filter_by(business_id=1).first()
+    appointment=Appointment(business_id=1,customer_id=conversation.customer_id,service_id=service.id,
+        starts_at=datetime(2099,1,1),ends_at=datetime(2099,1,1,1),status="completed")
+    db.add(appointment);db.flush()
+    order=Order(business_id=1,customer_id=conversation.customer_id,conversation_id=conversation.id,
+        order_number="SERVICE-COMPLETE",status="confirmed",total_amount=150000,paid_amount=paid,
+        metadata_={"offering_type":"service","appointment_id":appointment.id})
+    db.add(order);db.commit()
+    if paid:
+        complete_linked_service_order(db,appointment)
+        complete_linked_service_order(db,appointment)
+        db.flush()
+        assert db.query(CrmJob).filter_by(kind="appointment.completion_thanks").count()==1
+        from app.services.appointment_completion import send_completion_thanks
+        with patch("app.services.auto_reply_service.send_text_reply") as send:
+            send_completion_thanks(db,1,{"appointment_id":appointment.id,"order_id":order.id})
+            assert send.call_count==1
+            assert send.call_args.kwargs["channel"]==conversation.channel
+            assert "Cảm ơn" in send.call_args.kwargs["text"]
+            assert send.call_args.kwargs["auto_reply_key"]==f"appointment:{appointment.id}:completion-thanks"
+            send_completion_thanks(db,2,{"appointment_id":appointment.id,"order_id":order.id})
+            assert send.call_count==1
+    else:
+        with pytest.raises(SalesOrderOperationError):
+            complete_linked_service_order(db,appointment)
+        assert db.query(CrmJob).filter_by(kind="appointment.completion_thanks").count()==0
+    assert order.status==expected
+
+
+@pytest.mark.parametrize("text", ["giá bao nhiêu?", "tôi muốn hủy", "xác nhận", "chuyển khoản", "chào bạn", "0900000011 0900000022"])
+def test_pending_contact_parser_never_treats_other_intents_as_contact(text):
+    from app.services.business_request import pending_contact_action
+    fields = {"offering_ref": "service:1", "values": {}, "field_definitions": [
+        {"key": "name", "type": "text"}, {"key": "phone", "type": "phone"}]}
+    assert pending_contact_action(text, fields) is None
+
+
+def test_contact_fragment_requires_pending_offering():
+    from app.services.business_request import pending_contact_action
+    assert pending_contact_action("Khách Kiểm Thử, 0900000011", {}) is None
+
+
 @pytest.fixture
 def setup():
     engine=create_engine('sqlite://',poolclass=StaticPool,connect_args={'check_same_thread':False})
@@ -52,6 +100,73 @@ def run(setup,action,ref,text,fields=None,key=None):
 
 
 def field(value,evidence=None): return {'value':value,'evidence':evidence or str(value)}
+
+
+@pytest.mark.parametrize(('query','expected'), [
+    ('COD', 'cod'),
+    ('thanh toán khi nhận hàng', 'cod'),
+    ('chuyển khoản', 'bank_transfer'),
+    ('Mình chọn QR', 'bank_transfer'),
+])
+def test_pending_payment_choice_is_interpreted_without_llm(query, expected):
+    from app.services.business_request import _deterministic_pending_action
+
+    action = _deterministic_pending_action(query, {
+        'offering_ref': 'service:8', 'phase': 'collecting',
+    })
+
+    assert action['action'] == 'collect'
+    assert action['fields']['payment_method']['value'] == expected
+
+
+def test_review_confirmation_requires_a_pending_review():
+    from app.services.business_request import _deterministic_pending_action
+
+    assert _deterministic_pending_action('xác nhận', {
+        'offering_ref': 'service:8', 'phase': 'collecting',
+    }) is None
+    assert _deterministic_pending_action('xác nhận', {
+        'offering_ref': 'service:8', 'phase': 'review',
+    })['action'] == 'submit'
+
+
+@pytest.mark.parametrize('query', ['hủy', 'hủy yêu cầu', 'hủy lịch hẹn', 'dừng yêu cầu'])
+def test_pending_business_request_cancellation_is_deterministic(query):
+    from app.services.business_request import _deterministic_pending_action
+
+    action = _deterministic_pending_action(query, {
+        'offering_ref': 'service:8', 'phase': 'review',
+    })
+
+    assert action['action'] == 'cancel'
+    assert action['action_evidence'] == query
+    assert action['fields'] == {}
+
+
+def test_order_cancellation_is_not_misread_as_draft_request_cancellation():
+    from app.services.business_request import _deterministic_pending_action
+
+    assert _deterministic_pending_action('hủy đơn hàng', {
+        'offering_ref': 'product:8', 'phase': 'collecting',
+    }) is None
+
+
+def test_placeholder_name_is_not_saved_as_booking_customer(setup):
+    db, _, _, _, service, _ = setup
+    ref = f'service:{service.id}'
+    text = 'wtf bro, 0901234567, 01/11/2099 09:00, chuyển khoản'
+    values = {
+        'name': field('wtf bro'),
+        'phone': field('0901234567'),
+        'starts_at': field('2099-11-01T09:00:00+07:00', '01/11/2099 09:00'),
+        'payment_method': field('bank_transfer', 'chuyển khoản'),
+    }
+
+    result = run(setup, 'collect', ref, text, values)
+
+    assert result['state'] == 'collecting'
+    assert 'Họ tên' in result['missing']
+    assert 'name' not in db.query(CustomerCollectionSession).one().collected_fields['values']
 
 
 def details(kind):

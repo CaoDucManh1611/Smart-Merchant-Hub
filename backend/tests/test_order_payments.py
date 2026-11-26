@@ -147,7 +147,7 @@ class OrderPaymentApiTests(unittest.TestCase):
         over_refund = self.client.post(
             f"/api/orders/{order['id']}/refunds",
             headers=self.headers(),
-            json={"idempotency_key": "refund-over-1", "amount": "0.01", "reason": "Sai số"},
+            json={"idempotency_key": "refund-over-1", "amount": "1", "reason": "Vượt số tiền đã thu"},
         )
         self.assertEqual(409, over_refund.status_code, over_refund.text)
 

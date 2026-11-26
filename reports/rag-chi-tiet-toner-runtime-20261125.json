@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-11-25T17:54:23+07:00",
+  "source_revision": "c6ce3fbcc2af8a17",
+  "containers": [
+    "/smart-merchant-hub-runtime-backend-1 running healthy",
+    "/smart-merchant-hub-runtime-worker-1 running healthy"
+  ],
+  "status": "ok",
+  "loaded_revision": "c6ce3fbcc2af8a17",
+  "frontend_http_status": 200
+}

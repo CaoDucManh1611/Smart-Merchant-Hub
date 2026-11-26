@@ -188,6 +188,10 @@ def _stream_customer_avatar(
                     access_token=access_token,
                 )
             elif avatar_channel == "zalo":
+                config = channel.config if isinstance(channel.config, dict) else {}
+                if str(config.get("provider", "bot")).lower() not in {"oa", "zalo_oa", "official_account"}:
+                    # Bot Creator credentials cannot query the OA profile endpoint.
+                    raise HTTPException(status_code=404, detail="Customer avatar not available")
                 profile = ZaloAdapter().fetch_user_profile(
                     user_id=identity.external_user_id,
                     access_token=access_token,

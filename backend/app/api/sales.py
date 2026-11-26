@@ -126,6 +126,25 @@ _PRODUCT_IMPORT_FIELDS = {
     "tu_khoa": "keywords",
     "từ_khóa": "keywords",
 }
+# Optional structured facts; absent columns preserve legacy import behavior.
+_PRODUCT_IMPORT_FIELDS.update({key: key for key in (
+    "benefits", "suitable_needs", "usage", "warnings", "fact_status", "fact_source")})
+
+
+def _import_product_profile(values):
+    profile = {}
+    for key in ("category", "benefits", "suitable_needs", "usage", "warnings"):
+        raw = values.get(key, "").strip()
+        if raw:
+            profile[key] = list(dict.fromkeys(x.strip() for x in raw.split(";") if x.strip()))
+    if not any(key in profile for key in ("benefits", "suitable_needs", "usage", "warnings")):
+        return {}
+    # A CSV cannot promote itself to manufacturer-verified evidence.
+    profile["fact_status"] = "unverified"
+    profile["source"] = values.get("fact_source", "").strip() or "shop_csv"
+    return profile
+
+
 _ORDER_IMPORT_FIELDS = {
     "order_number": "order_number", "order_no": "order_number", "ma_don": "order_number", "mã_đơn": "order_number",
     "customer_id": "customer_id", "ma_khach_hang": "customer_id", "mã_khách_hàng": "customer_id",
@@ -539,6 +558,7 @@ async def import_products(
             errors.append(f"Dòng {row_number}: trạng thái chỉ có Đang bán hoặc Lưu trữ.")
             continue
         imported_attributes = _import_product_attributes(values)
+        imported_profile = _import_product_profile(values)
 
         product = db.query(Product).filter(
             Product.business_id == tenant.business_id,
@@ -556,6 +576,7 @@ async def import_products(
                 status=status,
                 metadata_={
                     **({"attributes": imported_attributes} if imported_attributes else {}),
+                    **({"product_profile": imported_profile} if imported_profile else {}),
                     **({"display_names": {"en": name_en}} if name_en else {}),
                     **({"image_url": image_url} if image_url else {}),
                 },
@@ -586,6 +607,10 @@ async def import_products(
             product.price = price
             product.status = status
             product.stock_quantity = after
+            if imported_profile:
+                metadata = dict(product.metadata_ or {})
+                metadata["product_profile"] = imported_profile
+                product.metadata_ = metadata
             if imported_attributes:
                 metadata = dict(product.metadata_ or {})
                 metadata["attributes"] = imported_attributes
@@ -848,7 +873,7 @@ def revenue_by_channel(
         db.query(
             channel_expr.label("channel"),
             func.count(Order.id).label("order_count"),
-            func.coalesce(func.sum(Order.total_amount), Decimal("0")).label("revenue"),
+            func.coalesce(func.sum(Order.total_amount - Order.refunded_amount), Decimal("0")).label("revenue"),
         )
         .outerjoin(
             Conversation,
@@ -1215,10 +1240,6 @@ def transition_order(
     if actor:
         record_audit(db, business_id=tenant.business_id, user_id=actor.id, action="transition", resource_type="sales_order", resource_id=str(order.id), metadata={"to_status": order.status})
         db.commit()
-    if order.status == "confirmed":
-        from app.services.order_confirmation import notify_order_confirmation
-
-        notify_order_confirmation(db, order=order, business_id=tenant.business_id)
     if order.status == "delivered" and order.conversation_id is not None:
         try:
             from app.services.chatbot_followup import schedule_post_delivery_followup

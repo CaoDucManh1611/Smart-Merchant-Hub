@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -341,6 +341,10 @@ class CustomerAvatarApiTests(unittest.TestCase):
 
     def test_signed_avatar_route_streams_zalo_profile_image(self):
         customer_id = self._create_provider_customer("zalo", "proxy")
+        with Session(self.engine) as db:
+            channel = db.scalar(select(Channel).where(Channel.external_account_id == "zalo-account-proxy"))
+            channel.config = {"provider": "oa"}
+            db.commit()
         signed = build_customer_avatar_url(
             customer_id=customer_id,
             business_id=self.business_id,
@@ -473,6 +477,16 @@ class CustomerAvatarApiTests(unittest.TestCase):
                 self.assertEqual(200, response.status_code, response.text)
                 self.assertEqual(provider_response.content, response.content)
                 self.assertEqual(avatar_url, download.call_args.args[0])
+
+
+    def test_zalo_bot_without_profile_does_not_call_oa_api(self):
+        customer_id = self._create_provider_customer("zalo", "no-oa-profile")
+        signed = build_customer_avatar_url(customer_id=customer_id, business_id=self.business_id,
+                                           base_url="http://testserver", channel="zalo")
+        with patch("app.api.customer_avatar.ZaloAdapter.fetch_user_profile") as profile:
+            response = self.client.get(signed.removeprefix("http://testserver"))
+        self.assertEqual(404, response.status_code)
+        profile.assert_not_called()
 
 
 if __name__ == "__main__":

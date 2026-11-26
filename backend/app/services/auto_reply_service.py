@@ -67,7 +67,7 @@ from app.rag.llm_caller import call_llm, call_llm_with_image
 from app.rag.run_logger import RagRunLog, query_metadata
 from app.rag.topics import infer_query_topic
 from app.services.telegram_service import send_telegram_media, send_telegram_message
-from app.services.zalo_service import send_zalo_message
+from app.services.zalo_service import send_zalo_media, send_zalo_message
 from app.services.customer_collection_flow import is_browsing_request, is_greeting
 from app.services.chatbot_agent import build_agent_memory, is_business_open
 from app.services.customer_order_service import customer_order_reply
@@ -141,6 +141,42 @@ def _reply_content_without_vietqr_link(text: str, response: dict | None = None) 
         return str(caption).strip()
     qr_photo = _extract_vietqr_photo(text)
     return qr_photo[1] if qr_photo else text
+
+
+def _public_payment_qr(db, business_id, image_url):
+    """Publish a locally generated, shop-validated QR instead of a remote renderer."""
+    import hashlib
+    from app.services.shop_bank_transfer import shop_transfer_qr_png
+    from app.api.conversations import UPLOAD_DIR, get_public_base_url
+    data = shop_transfer_qr_png(db, business_id, image_url)
+    # Provider image fetchers may reject tiny 1-bit QR PNGs. Publish a normal
+    # RGB JPEG with a readable quiet zone, while retaining the encoded payload.
+    from PIL import Image
+    from io import BytesIO
+    output = BytesIO()
+    Image.open(BytesIO(data)).convert("RGB").resize((800,800), Image.Resampling.NEAREST).save(output, format="JPEG", quality=95)
+    data = output.getvalue()
+    filename = hashlib.sha256(data).hexdigest()[:32] + ".jpg"
+    (UPLOAD_DIR / filename).write_bytes(data)
+    # The dev tunnel's browser interstitial breaks provider image downloads.
+    # The launcher maintains this local runtime origin; expose only QR files.
+    origin_file = UPLOAD_DIR / "payment-qr-origin.json"
+    if origin_file.is_file():
+        try:
+            import json
+            origin = str(json.loads(origin_file.read_text(encoding="utf-8-sig"))["origin"]).rstrip("/")
+            parsed = urlsplit(origin)
+            if (parsed.scheme == "https" and parsed.hostname
+                    and re.fullmatch(r"[a-z0-9-]+\.trycloudflare\.com", parsed.hostname)
+                    and not parsed.username and not parsed.password and not parsed.port
+                    and not parsed.path and not parsed.query and not parsed.fragment):
+                qr_dir = UPLOAD_DIR / "payment-qr"
+                qr_dir.mkdir(exist_ok=True)
+                (qr_dir / filename).write_bytes(data)
+                return f"{origin}/{filename}"
+        except (ValueError, KeyError, OSError, TypeError):
+            logger.warning("Invalid QR media runtime configuration; retaining normal media origin")
+    return f"{get_public_base_url()}/api/conversations/media-uploads/{filename}"
 
 def _latest_inbound_image_url(
     db: Session,
@@ -863,6 +899,7 @@ def _send_channel_reply(
         vietqr_photo = _extract_vietqr_photo(text)
         if vietqr_photo:
             image_url, caption = vietqr_photo
+            image_url = _public_payment_qr(db, business_id, image_url)
             response = send_telegram_media(
                 db=db,
                 business_id=business_id,
@@ -881,6 +918,31 @@ def _send_channel_reply(
             text=text,
         )
     if channel == "zalo":
+        vietqr_photo = _extract_vietqr_photo(text)
+        if vietqr_photo:
+            original_url, caption = vietqr_photo
+            # This also validates the bank/account/amount against shop settings.
+            image_url = _public_payment_qr(db, business_id, original_url)
+            for candidate in dict.fromkeys((image_url, original_url)):
+                try:
+                    response = send_zalo_media(
+                        db=db, business_id=business_id, conversation_id=conversation_id,
+                        recipient_id=recipient_id, media_type="image",
+                        media_url=candidate, caption=caption,
+                    )
+                    return {**response, "media_type": "image", "media_url": candidate, "caption": caption}
+                except RuntimeError as error:
+                    # Only a definite image rejection is safe to resend. Never
+                    # retry a timeout/unknown delivery or unrelated token error.
+                    if "the photo url is invalid" not in str(error).lower():
+                        raise
+                    logger.warning("Zalo rejected payment QR image: business_id=%s conversation_id=%s", business_id, conversation_id)
+            fallback = text + "\nẢnh QR chưa gửi được; bạn có thể mở liên kết QR ở trên hoặc dùng thông tin chuyển khoản nhé."
+            response = send_zalo_message(
+                db=db, business_id=business_id, conversation_id=conversation_id,
+                recipient_id=recipient_id, text=fallback,
+            )
+            return {**response, "caption": fallback, "qr_delivery": "link_only"}
         return send_zalo_message(
             db=db,
             business_id=business_id,
@@ -898,13 +960,27 @@ def _send_channel_reply(
         from app.api.conversations import send_shopee_text, send_tiktok_text
 
         send = send_shopee_text if channel == "shopee" else send_tiktok_text
+        qr_photo = _extract_vietqr_photo(text)
+        media_kwargs = {}
+        if qr_photo:
+            from app.services.shop_bank_transfer import shop_transfer_qr_png
+            from app.api.conversations import _local_connector_media_payload
+            image_url, caption = qr_photo
+            data = shop_transfer_qr_png(db, business_id, image_url)
+            media_kwargs["media_payload"] = _local_connector_media_payload({
+                "upload_bytes": data, "upload_filename": "payment-qr.png",
+                "upload_content_type": "image/png"}, "image")
+            text = caption
         response, _ = send(
             db=db,
             conversation={"id": conversation.id, "channel_id": conversation.channel_id},
             recipient_id=recipient_id,
             text_content=text,
             business_id=business_id,
+            **media_kwargs,
         )
+        if qr_photo:
+            return {**response, "media_type": "image", "media_url": image_url, "caption": caption}
         return response
     raise ValueError(f"Unsupported auto-reply channel: {channel}")
 
@@ -2489,10 +2565,20 @@ def _format_product_fact_reply(
         0,
     )
     name = product_display_name(product, language)
+    from app.services.product_profile import profile_detail_lines
+    profile_details = profile_detail_lines(product)
+    if profile_details and any(term in folded_query for term in ("thong tin", "chi tiet", "cong dung", "tac dung", "cach dung", "mo ta", "luu y")):
+        return (f"{name}: {_format_vnd(product.price)} đồng/sản phẩm; còn {available} sản phẩm.\n"
+                + "\n".join(profile_details))
     price_requested = _is_price_question(folded_query)
     stock_requested = _has_any_term(folded_query, _STOCK_TERMS)
-    wants_total = bool(re.search(r"\b(?:tong|thanh tien|tinh tien|combined|altogether|total)\b", folded_query))
-    if price_requested and wants_total and quantity and quantity > 1:
+    if any(term in folded_query for term in ("cong dung", "tac dung", "cach dung", "thanh phan", "chi tiet", "mo ta", "dung ra sao", "dung the nao", "su dung")):
+        description = (product.description or "").strip()
+        detail = ("Danh mục hiện chưa xác nhận công dụng, thành phần và cách dùng cụ thể; shop cần kiểm tra thêm."
+            if not description or description.casefold().startswith("dữ liệu giả lập")
+            else "Mô tả trong danh mục: " + description[:1000])
+        return (f"{name}: {_format_vnd(product.price)} đồng/sản phẩm; còn {available} sản phẩm.\n" + detail)
+    if price_requested and quantity and quantity > 1:
         total = Decimal(str(product.price or 0)) * quantity
         if language == "en":
             reply = (
@@ -2506,7 +2592,8 @@ def _format_product_fact_reply(
             return reply + "."
         reply = (
             f"Dạ, {name} giá {_format_vnd(product.price)} đồng/sản phẩm; "
-            f"{quantity} sản phẩm là {_format_vnd(total)} đồng."
+            + ("tiền hàng cho " if re.search(r"\b(?:se|phai) tra\b", folded_query) else "")
+            + f"{quantity} sản phẩm là {_format_vnd(total)} đồng."
         )
         if available < quantity:
             reply += f" Hiện chỉ còn {available} sản phẩm."
@@ -3550,7 +3637,7 @@ def _deterministic_customer_reply(
 
     product_fact = _is_product_fact_question(query_text, conversation_id=conversation_id)
     if product_fact and re.search(
-        r"\b(?:san pham|mat hang|loai)\b.*\b(?:nao|gi)\b"
+        r"\b(?:san pham|mat hang|loai)\s+(?:nao|gi)\b"
         r"|\b(?:what|which)\s+(?:products?|items?)\b"
         r"|\b(?:products?|items?)\s+(?:available|in stock)\b",
         folded,
@@ -4364,11 +4451,13 @@ def process_rag_auto_reply(
     rag_options = load_rag_runtime_options(db, business_id)
 
     def turn_is_current() -> bool:
+        from app.services.conversation_turn_service import actionable_inbound
         if expected_latest_inbound_id is None:
             return True
         latest_id = db.query(Message.id).filter(
             Message.conversation_id == conversation_id,
             Message.direction == "inbound",
+            actionable_inbound(),
         ).order_by(Message.id.desc()).limit(1).scalar()
         return latest_id == expected_latest_inbound_id
 

@@ -1,0 +1,84 @@
+{
+  "runs": [
+    {
+      "run": "baseline-filtered-class",
+      "returncode": 1,
+      "elapsed": 27.578,
+      "cases": 41,
+      "failures": [
+        {
+          "class": "tests.test_customer_collection_flow.CustomerCollectionFlowTests",
+          "name": "test_short_follow_up_uses_last_customer_product_mention",
+          "message": "AttributeError: 'NoneType' object has no attribute 'current_field'"
+        }
+      ],
+      "xml": "/tmp/smh-service-booking-order-dependency-20261125/baseline-filtered-class/results.xml",
+      "log": "/tmp/smh-service-booking-order-dependency-20261125/baseline-filtered-class/pytest.log"
+    },
+    {
+      "run": "baseline-target-alone",
+      "returncode": 1,
+      "elapsed": 26.381,
+      "cases": 1,
+      "failures": [
+        {
+          "class": "tests.test_customer_collection_flow.CustomerCollectionFlowTests",
+          "name": "test_short_follow_up_uses_last_customer_product_mention",
+          "message": "AttributeError: 'NoneType' object has no attribute 'current_field'"
+        }
+      ],
+      "xml": "/tmp/smh-service-booking-order-dependency-20261125/baseline-target-alone/results.xml",
+      "log": "/tmp/smh-service-booking-order-dependency-20261125/baseline-target-alone/pytest.log"
+    },
+    {
+      "run": "current-target-alone",
+      "returncode": 1,
+      "elapsed": 28.269,
+      "cases": 1,
+      "failures": [
+        {
+          "class": "tests.test_customer_collection_flow.CustomerCollectionFlowTests",
+          "name": "test_short_follow_up_uses_last_customer_product_mention",
+          "message": "AttributeError: 'NoneType' object has no attribute 'current_field'"
+        }
+      ],
+      "xml": "/tmp/smh-service-booking-order-dependency-20261125/current-target-alone/results.xml",
+      "log": "/tmp/smh-service-booking-order-dependency-20261125/current-target-alone/pytest.log"
+    }
+  ],
+  "excluded": [
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_commerce_corpus_dialogues_never_create_orders_before_checkout_verification",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_customer_can_switch_from_combo_to_single_product_before_checkout",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_multi_product_addition_refreshes_legacy_quote_stock",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_multi_product_quote_merges_follow_up_and_creates_multi_item_draft",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_order_email_otp_is_sent_once_then_reused_for_later_orders",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_product_link_question_is_not_misread_as_quote_rejection",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_quantity_purchase_followup_uses_last_product_and_waits_for_confirmation",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_quote_only_quantity_correction_keeps_previous_product_without_order",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_shopee_email_checkout_stays_pending_when_only_sms_otp_is_configured",
+    "tests/test_customer_collection_flow.py::CustomerCollectionFlowTests::test_stock_question_without_quantity_does_not_cancel_pending_quote"
+  ],
+  "test_sha256": "4ffcfafdf809f6525c16a46bb3c0b3ddea0d6bb4d7a081039eaf248c769bcd77",
+  "fixture_probe_returncode": 0,
+  "fixture_probe_output": "{\"dialect\": \"sqlite\", \"business_id\": 1, \"customer_id\": 1, \"conversation_58_exists\": false, \"conversation_count\": 0}\n",
+  "fixture_probe_error": "",
+  "conversation_row_control": {
+    "run": "baseline-target-with-conversation",
+    "returncode": 1,
+    "elapsed": 12.824,
+    "cases": 1,
+    "failures": [
+      {
+        "class": "tests.test_customer_collection_flow.CustomerCollectionFlowTests",
+        "name": "test_short_follow_up_uses_last_customer_product_mention",
+        "message": "AttributeError: 'NoneType' object has no attribute 'current_field'"
+      }
+    ],
+    "xml": "/tmp/smh-service-booking-order-dependency-20261125/baseline-target-with-conversation/results.xml",
+    "log": "/tmp/smh-service-booking-order-dependency-20261125/baseline-target-with-conversation/pytest.log",
+    "control_diagnostics": [
+      "FIXTURE_CONTROL {\"before_exists\": false, \"after_exists\": true, \"collection_sessions_for_58\": 0, \"is_quantity_replacement\": false}"
+    ]
+  },
+  "conclusion": "The identical failure reproduces on the frozen baseline when run alone or after deselecting the class known failures. Adding Conversation58 alone does not fix it; it is a pre-existing order-dependent test, not a regression from service booking changes."
+}

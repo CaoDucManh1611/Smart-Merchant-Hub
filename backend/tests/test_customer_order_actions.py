@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.database.session import Base
+from app.database.bases import TenantBase
 from app.models.business import Business
 from app.models.business_setting import BusinessSetting
 from app.models.conversation import Conversation
@@ -40,6 +41,7 @@ class CustomerOrderActionTests(unittest.TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(cls.engine)
+        TenantBase.metadata.create_all(cls.engine)
         with Session(cls.engine) as db:
             business = Business(name="Customer Order Actions", slug="customer-order-actions")
             db.add(business)
@@ -285,6 +287,26 @@ class CustomerOrderActionTests(unittest.TestCase):
         self.assertIn("ORD-DRAFT-1", reply)
         self.assertIn("mã đơn", reply)
         self.assertNotIn("chưa tìm thấy", reply.lower())
+
+    def test_customer_order_list_question_shows_only_their_recent_orders(self):
+        text = "tôi đang có đơn hàng gì"
+        self.assertEqual("list", detect_customer_order_intent(text))
+
+        with Session(self.engine) as db:
+            reply = customer_order_reply(
+                db,
+                self.business_id,
+                self.conversation_id,
+                text,
+            )
+
+        self.assertIn("ORD-DRAFT-1", reply)
+        self.assertIn("ORD-PROCESSING-1", reply)
+        self.assertIn("ORD-DELIVERED-1", reply)
+        self.assertIn("Order Action Product", reply)
+        self.assertIn("100 đồng", reply)
+        self.assertNotIn("ORD-OTHER-1", reply)
+        self.assertNotIn("mã đơn nhé", reply)
 
     def test_customer_draft_lookup_lists_only_draft_orders(self):
         with Session(self.engine) as db:

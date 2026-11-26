@@ -23,6 +23,7 @@ from app.models.platform_control import (
     PlatformSubscription,
     PlatformUser,
     PlatformUsage,
+    TenantRegistry,
 )
 from app.services.channel_service import QUOTA_HOLDING_CHANNEL_STATUSES
 
@@ -135,8 +136,11 @@ def quota_snapshot(
     threshold = min(1.0, max(0.0, threshold))
     plan = _active_plan(db, business_id)
     resources: dict[str, dict] = {}
+    knowledge_usage = _knowledge_inventory_usage(db, business_id)
     for resource, field in PLAN_LIMIT_FIELDS.items():
         _row, used = _used_value(db, business_id, resource, period_start)
+        if knowledge_usage is not None and resource in knowledge_usage:
+            used = knowledge_usage[resource]
         limit = _plan_limit(db, plan, resource)
         percent = None
         if limit is not None and limit > 0:
@@ -158,6 +162,37 @@ def quota_snapshot(
         "warning_percent": threshold,
         "resources": resources,
     }
+
+
+def _knowledge_inventory_usage(db: Session, business_id: int) -> dict[str, Decimal] | None:
+    """Read occupied KB capacity without rewriting in-flight reservations.
+
+    Restores/imports can leave the platform ledger behind the tenant data.
+    Inventory shown to the shop must reflect its documents, while reservation
+    accounting remains untouched: resetting that ledger in a GET could erase
+    a concurrent upload's reservation before its tenant transaction commits.
+    """
+    if _is_platform_control(db):
+        registry = db.scalar(select(TenantRegistry).where(
+            TenantRegistry.business_id == int(business_id),
+            TenantRegistry.state == "active",
+            TenantRegistry.feature_enabled.is_(True),
+        ))
+        if registry is None:
+            return None
+        from app.database.tenant_session import tenant_session
+
+        with tenant_session(registry.schema_name) as tenant_db:
+            return _knowledge_inventory_usage(tenant_db, business_id)
+    # Legacy unit-test sessions may contain only control-plane tables.
+    # Query tenant tables only when the caller is explicitly schema-routed.
+    if not db.info.get("tenant_schema"):
+        return None
+    document_count, chunk_count = db.execute(select(
+        func.count(Document.id),
+        func.coalesce(func.sum(Document.chunk_count), 0),
+    ).where(Document.business_id == int(business_id), Document.status != "deleted")).one()
+    return {"documents": Decimal(document_count), "rag_chunks": Decimal(chunk_count)}
 
 
 def _amount(value: int | float | Decimal | str) -> Decimal:

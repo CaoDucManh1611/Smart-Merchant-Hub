@@ -69,4 +69,4 @@ def payment_instructions(db,order):
     method=(order.metadata_ or {}).get('payment_method')
     if method=='cod': return prefix+'Bạn chọn thanh toán khi nhận hàng (COD); nhân viên sẽ kiểm tra và xác nhận đơn theo hình thức trả sau.'
     if method=='cash': return prefix+'Bạn chọn tiền mặt. Vui lòng thanh toán qua kênh thu tiền mặt của shop; sau khi nhân viên ghi nhận đã nhận tiền, đơn chuyển sang chờ xác nhận. Chưa ghi nhận đã thanh toán.'
-    return prefix+order_transfer_instructions(db,business_id=order.business_id,order_number=order.order_number,amount=int(remaining))+'\nSau đối soát, nhân viên xác nhận đơn; việc gửi QR chưa phải xác nhận đặt thành công.'
+    return prefix+order_transfer_instructions(db,business_id=order.business_id,order_number=order.order_number,amount=int(remaining))+'\nSau khi chuyển khoản xong, bạn nhắn «Xác nhận» hoặc «Tôi đã chuyển khoản» để shop kiểm tra nhé.\nSau đối soát, nhân viên xác nhận đơn; việc gửi QR chưa phải xác nhận đặt thành công.'

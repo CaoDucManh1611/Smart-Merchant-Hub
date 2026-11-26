@@ -3,6 +3,9 @@ import { ref } from "vue";
 const STORAGE_KEY = "smh-ui-locale";
 const supportedLocales = ["vi", "en"];
 const english = Object.freeze({
+  "tin nhắn chưa đọc": "unread messages",
+  "Khách báo đã chuyển khoản — chờ đối soát.": "Customer reported a bank transfer — awaiting reconciliation.",
+  "Chưa ghi nhận đã thu tiền.": "Payment has not been recorded as received.",
   "HỒ SƠ KHÁCH HÀNG": "CUSTOMER RECORDS",
   "HỒ SƠ 360": "CUSTOMER 360",
   "Danh sách khách hàng": "Customer directory",

@@ -23,7 +23,7 @@ import { outboundMediaAccept, outboundMediaTypes, supportsOutboundMedia } from "
 import { getInboxChannels } from "./inbox-utils.js";
 import { MAX_SAVED_INBOX_VIEWS, normalizeInboxViewFilters, normalizeSavedInboxViews } from "./inbox-view-utils.js";
 import { conversationBotStatus, timelineActor } from "./timeline-utils.js";
-import { criticalConversationNotificationCounts, notificationDestination, unreadNotificationCount } from "./notification-utils.js";
+import { notificationDestination, unreadNotificationCount } from "./notification-utils.js";
 import { maskCustomerEmail, maskCustomerName, maskCustomerPhone } from "./privacy-utils.js";
 import { apiFetch, AUTH_EXPIRED_EVENT } from "./api-client.js";
 import { clearAuthToken, readAuthToken, requireBusinessId, storeAuthToken } from "./auth-context.js";
@@ -96,6 +96,8 @@ function friendlyErrorMessage(error, fallback = "Chưa thể hoàn tất yêu c�
 // Only localize copy authored by this screen. API details and customer content
 // are not translation keys, so unknown errors use a localized safe fallback.
 const crmEnglishCopy = {
+  "Chưa đủ tồn khả dụng để xác nhận.": "Insufficient available stock to confirm.",
+  "Chưa đủ khoản thu. Mở Bảng kê khoản thu để đối soát và ghi nhận tiền trước khi xác nhận.": "Payment is insufficient. Open the payment breakdown to reconcile and record payment before confirming.",
   "Email này không khớp với tài khoản trong hệ thống. Hãy kiểm tra lại email và mã shop.": "This email does not match an account in the system. Check the email address and shop code.",
   "Quản lý các kênh Facebook, Instagram, Telegram, Zalo, TikTok và Shopee của cửa hàng này.": "Manage this shop's Facebook, Instagram, Telegram, Zalo, TikTok, and Shopee channels.",
   "Mỗi cửa hàng chỉ xem thông tin kết nối, tin nhắn và lịch sử của chính mình. Dữ liệu luôn được giữ riêng.": "Each shop only sees its own connection details, messages, and history. Data always stays separate.",
@@ -548,6 +550,7 @@ const loading = ref(false);
 const sending = ref(false);
 const sendingImage = ref(false);
 const failedAvatarUrls = ref(new Set());
+const loadedAvatarUrls = ref(new Set());
 
 const error = ref("");
 const appDialog = ref(null);
@@ -1832,12 +1835,16 @@ function botConnectionStateLabel(state) {
 }
 
 function botChannelStatus(channelType) {
+  if (isSocialChannelOnline(channelType)) return crmUiText("Đang hoạt động");
   const connection = botConnections.value.find((item) => item.channel_type === channelType);
+  if (["active", "connected"].includes(String(connection?.status || "").toLowerCase())) {
+    return crmUiText("Đã lưu, chưa hoạt động");
+  }
   return connection ? botConnectionStateLabel(connection.status) : t("CHƯA KẾT NỐI");
 }
 
 function botChannelIsConnected(channelType) {
-  return activeBotConnections.value.some((item) => item.channel_type === channelType);
+  return isSocialChannelOnline(channelType);
 }
 
 function localConnectorStatus(connection) {
@@ -2262,11 +2269,12 @@ async function saveCustomerFactExtractionSetting() {
 }
 
 async function fetchLearningSummary() {
+  if (learningSummaryLoading.value) return;
   if (!tenantReady.value) return;
   learningSummaryLoading.value = true;
   learningSummaryError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/chatbot/learning/summary?days=30`);
+    const response = await apiFetch(`${API_BASE}/chatbot/learning/summary?days=30`, { signal: AbortSignal.timeout(30000) });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
@@ -3483,19 +3491,6 @@ const unreadOperationalNotificationCount = computed(() => (
   unreadNotificationCount(operationalNotifications.value)
 ));
 
-const criticalConversationNotificationCount = computed(() => (
-  criticalConversationNotificationCounts(operationalNotifications.value)
-));
-
-function conversationUrgentCount(item) {
-  // A pending order stays red until its real lifecycle state changes, even if
-  // the staff member has already opened the notification bell.
-  return Math.max(
-    Number(item?.pending_order_confirmation_count || 0),
-    Number(criticalConversationNotificationCount.value[item?.conversation_id] || 0),
-  );
-}
-
 const conversationPriorityActive = computed(() => (
   selectedId.value !== null
   && String(selected.value?.priority || "normal") !== "normal"
@@ -3663,7 +3658,7 @@ function purchaseStatusLabel(status) {
 }
 
 function paymentStatusLabel(status) {
-  const labels = { unpaid: "Chưa thanh toán", partially_paid: "Thanh toán một phần", paid: "Đã thanh toán", refunded: "Đã hoàn tiền" };
+  const labels = { unpaid: "Chưa thanh toán", partial: "Thanh toán một phần", partially_paid: "Thanh toán một phần", paid: "Đã thanh toán", refunded: "Đã hoàn tiền" };
   return t(labels[status] || status || "Chưa rõ");
 }
 
@@ -4143,10 +4138,31 @@ function initials(item) {
 }
 
 
+function avatarLoaded(item) {
+  return !!resolvedAvatarUrl(item) && loadedAvatarUrls.value.has(String(item?.avatar_url || "").trim());
+}
+
+function markAvatarLoaded(item) {
+  loadedAvatarUrls.value = new Set([...loadedAvatarUrls.value, String(item?.avatar_url || "").trim()]);
+}
+
+function avatarFailureKey(item) {
+  const value = String(item?.avatar_url || "").trim();
+  try {
+    const parsed = new URL(value, window.location.origin);
+    if (/^\/api\/customers\/\d+\/avatar\/?$/.test(parsed.pathname)) {
+      // Renewing a signed URL must not repeatedly retry a missing provider photo.
+      return `${parsed.pathname}:${parsed.searchParams.get("business_id") || ""}:${parsed.searchParams.get("channel") || ""}`;
+    }
+  } catch { /* Invalid URLs use their original value as the failure key. */ }
+  return value;
+}
+
+
 function resolvedAvatarUrl(item) {
 
   const value = String(item?.avatar_url || "").trim();
-  if (!value || failedAvatarUrls.value.has(value)) {
+  if (!value || failedAvatarUrls.value.has(avatarFailureKey(item))) {
     return "";
   }
 
@@ -4170,7 +4186,7 @@ function markAvatarFailed(item) {
   if (value) {
     failedAvatarUrls.value = new Set([
       ...failedAvatarUrls.value,
-      value,
+      avatarFailureKey(item),
     ]);
   }
 
@@ -5744,6 +5760,12 @@ async function loadMessages(
     }
 
 
+    if (currentTab.value === "inbox" && document.visibilityState === "visible"
+        && requestedConversationId === Number(selectedId.value)
+        && (showLoading || Number(selected.value?.unread_count || 0) > 0)) {
+      void markConversationRead(conversationId);
+    }
+
   } catch (err) {
 
     if (
@@ -6528,6 +6550,12 @@ async function transitionSalesOrder(order, toStatus) {
   if (!order || !toStatus || order.status === toStatus) return;
   const orderId = Number(order.id);
   if (orderTransitionSaving.value[orderId]) return;
+  if (toStatus === "confirmed" && !orderCanConfirm(order)) {
+    orderError.value = orderPaymentReady(order)
+      ? "Đơn chưa đủ tồn khả dụng để xác nhận."
+      : "Đơn chuyển khoản cần được ghi nhận đủ tiền trong Bảng kê khoản thu trước khi xác nhận.";
+    return false;
+  }
   orderError.value = "";
   orderTransitionSaving.value = { ...orderTransitionSaving.value, [orderId]: true };
   try {
@@ -6544,7 +6572,7 @@ async function transitionSalesOrder(order, toStatus) {
     if (toStatus === "confirmed" && Number(updatedOrder.conversation_id) === Number(selectedId.value)) {
       await loadMessages(updatedOrder.conversation_id, false, false);
     }
-    if (toStatus === "confirmed" && updatedOrder.metadata?.confirmation_notification_status !== "sent") {
+    if (toStatus === "confirmed" && !["sent", "queued"].includes(updatedOrder.metadata?.confirmation_notification_status)) {
       orderError.value = updatedOrder.metadata?.confirmation_notification_status === "no_conversation"
         ? "Đã xác nhận đơn, nhưng đơn chưa gắn với hội thoại để gửi thông báo."
         : "Đã xác nhận đơn, nhưng chưa gửi được thông báo cho khách. Hãy kiểm tra hội thoại trước khi gửi lại.";
@@ -6629,8 +6657,8 @@ async function loadSalesOrderEvents(order) {
 
 async function recordSalesPayment(order, kind = "payment") {
   const amount = Number(orderPaymentDrafts.value[order.id] || 0);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    orderError.value = "Nhập số tiền thanh toán hợp lệ trước.";
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    orderError.value = "Số tiền phải là số nguyên đồng, lớn hơn 0.";
     return;
   }
   orderPaymentSaving.value = { ...orderPaymentSaving.value, [order.id]: true };
@@ -6650,7 +6678,7 @@ async function recordSalesPayment(order, kind = "payment") {
       throw new Error(detail.detail || `HTTP ${response.status}`);
     }
     orderPaymentDrafts.value = { ...orderPaymentDrafts.value, [order.id]: "" };
-    await fetchOrders();
+    await Promise.all([fetchOrders(), fetchProducts()]);
   } catch (err) {
     orderError.value = friendlyErrorMessage(err, kind === "refund" ? "Chưa thể hoàn tiền. Vui lòng thử lại sau." : "Chưa thể ghi nhận thanh toán. Vui lòng thử lại sau.");
   } finally {
@@ -6956,10 +6984,11 @@ async function fetchQuotaUsage() {
     quotaLoading.value = false;
     return;
   }
+  if (quotaLoading.value) return;
   quotaLoading.value = true;
   quotaError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/usage`);
+    const response = await apiFetch(`${API_BASE}/usage`, { signal: AbortSignal.timeout(30000) });
     const detail = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) return;
@@ -7473,11 +7502,14 @@ async function runPrivacyAction(kind) {
 }
 
 async function fetchAuditLogs() {
+  if (auditLoading.value) return;
   if (!authUser.value) return;
   auditLoading.value = true;
   try {
-    const response = await apiFetch(`${API_BASE}/auth/audit-logs?limit=50`);
+    const response = await apiFetch(`${API_BASE}/auth/audit-logs?limit=50`, { signal: AbortSignal.timeout(30000) });
     if (response.ok) auditLogs.value = await response.json();
+  } catch (err) {
+    securityError.value = friendlyErrorMessage(err, "Chưa tải được nhật ký thao tác. Vui lòng thử lại.");
   } finally {
     auditLoading.value = false;
   }
@@ -10079,7 +10111,6 @@ async function selectConversation(id) {
   if (!Number.isFinite(conversationId) || conversationId <= 0) return;
   discardVoiceRecording();
   selectedId.value = conversationId;
-  void markConversationRead(conversationId);
   deliveryAttempts.value = [];
   mobileInboxOpen.value = false;
   mobileCustomerOpen.value = false;
@@ -11165,10 +11196,11 @@ async function saveSelectedConversationOutcome(value) {
 }
 
 async function fetchFollowups() {
+  if (followupsLoading.value) return;
   followupsLoading.value = true;
   followupError.value = "";
   try {
-    const response = await apiFetch(`${API_BASE}/chatbot/followups?status=${encodeURIComponent(followupStatusFilter.value)}`);
+    const response = await apiFetch(`${API_BASE}/chatbot/followups?status=${encodeURIComponent(followupStatusFilter.value)}`, { signal: AbortSignal.timeout(30000) });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
       throw new Error(detail.detail || `HTTP ${response.status}`);
@@ -11902,10 +11934,12 @@ function followupRecommendationLabel(item) {
                   :alt="
                     nameOf(item)
                   "
+                  v-show="avatarLoaded(item)"
+                  @load="markAvatarLoaded(item)"
                   @error="markAvatarFailed(item)"
                 />
 
-                <span v-else>
+                <span v-if="!avatarLoaded(item)">
                   {{ initials(item) }}
                 </span>
 
@@ -11920,12 +11954,9 @@ function followupRecommendationLabel(item) {
                     {{ nameOf(item) }}
                   </strong>
                   <div class="conversation-status">
-                    <span
-                      v-if="conversationUrgentCount(item)"
-                      class="conversation-unread urgent"
-                      title="Cần xử lý: khách xác nhận đơn hoặc AI cần nhân viên hỗ trợ"
-                    >{{ conversationUrgentCount(item) }}</span>
-                    <span v-else-if="item.unread_count" class="conversation-unread">{{ item.unread_count }}</span>
+                    <span v-if="Number(item.unread_count || 0) > 0" class="conversation-unread"
+                      :title="`${item.unread_count} tin nhắn chưa đọc`"
+                      :aria-label="`${item.unread_count} tin nhắn chưa đọc`">{{ item.unread_count }}</span>
                     <time
                       :title="conversationTimeTitle(item)"
                     >{{ conversationTime(item) }}</time>
@@ -12089,10 +12120,12 @@ function followupRecommendationLabel(item) {
                     :alt="
                       nameOf(selected)
                     "
-                    @error="markAvatarFailed(selected)"
+                    v-show="avatarLoaded(selected)"
+                  @load="markAvatarLoaded(selected)"
+                  @error="markAvatarFailed(selected)"
                   />
 
-                  <span v-else>
+                  <span v-if="!avatarLoaded(selected)">
                     {{ initials(selected) }}
                   </span>
 
@@ -12401,10 +12434,12 @@ function followupRecommendationLabel(item) {
                     :alt="
                       nameOf(selected)
                     "
-                    @error="markAvatarFailed(selected)"
+                    v-show="avatarLoaded(selected)"
+                  @load="markAvatarLoaded(selected)"
+                  @error="markAvatarFailed(selected)"
                   />
 
-                  <span v-else>
+                  <span v-if="!avatarLoaded(selected)">
                     {{
                       initials(
                         selected
@@ -13116,10 +13151,12 @@ function followupRecommendationLabel(item) {
                   :alt="
                     nameOf(customer360 || selected)
                   "
+                  v-show="avatarLoaded(customer360Avatar)"
+                  @load="markAvatarLoaded(customer360Avatar)"
                   @error="markAvatarFailed(customer360Avatar)"
                 />
 
-                <span v-else>
+                <span v-if="!avatarLoaded(customer360Avatar)">
 
                   {{
                     initials(
@@ -14660,23 +14697,25 @@ function followupRecommendationLabel(item) {
                 <td>{{ order.channel || (order.metadata?.marketplace_source === 'shopee' ? 'Shopee Seller Center' : order.metadata?.marketplace_source === 'tiktok' ? 'TikTok Shop Seller Center' : 'Không gắn kênh') }}</td>
                 <td>
                   <select class="inline-stage" :value="order.status" :disabled="orderTransitionSaving[order.id]" @change="transitionSalesOrder(order, $event.target.value)">
-                    <option v-for="status in salesStatusOptions(order)" :key="status" :value="status">{{ salesOrderStatusLabel(status) }}</option>
+                    <option v-for="status in salesStatusOptions(order)" :key="status" :value="status" :disabled="status === 'confirmed' && !orderCanConfirm(order)">{{ salesOrderStatusLabel(status) }}</option>
                   </select>
                   <small v-if="order.metadata?.marketplace_source">Trạng thái sàn: {{ order.metadata.external_status || '—' }}</small>
                   <button v-if="order.status === 'draft'" type="button" class="table-action-btn" :disabled="!orderCanConfirm(order) || orderTransitionSaving[order.id]" @click.stop="transitionSalesOrder(order, 'confirmed')">{{ orderTransitionSaving[order.id] ? 'Đang cập nhật...' : 'Xác nhận đơn' }}</button>
                   <small v-if="order.status === 'draft' && !orderCanConfirm(order)" class="stock-warning">{{ orderPaymentReady(order) ? 'Thiếu tồn khả dụng' : 'Cần lập bảng kê và đối soát khoản thu' }}</small>
+                  <small v-if="order.status === 'pending_confirmation' && !orderCanConfirm(order)" class="stock-warning" role="status">{{ orderPaymentReady(order) ? 'Chưa đủ tồn khả dụng để xác nhận.' : 'Chưa đủ khoản thu. Mở Bảng kê khoản thu để đối soát và ghi nhận tiền trước khi xác nhận.' }}</small>
                 </td>
                 <td><button type="button" class="table-action-btn" data-testid="order-history-button" :title="uiLocale === 'en' ? 'View order history' : 'Xem lịch sử đơn hàng'" :aria-label="uiLocale === 'en' ? 'View order history' : 'Xem lịch sử đơn hàng'" @click.stop="loadSalesOrderEvents(order)">{{ uiLocale === 'en' ? 'History' : 'Lịch sử' }}</button><small>{{ uiLocale === 'en' ? 'Order updates' : 'Các lần cập nhật đơn' }}</small></td>
                 <td class="order-payment-cell">
                   <span class="product-status" :class="order.payment_status">{{ paymentStatusLabel(order.payment_status) }}</span>
+                  <small v-if="order.status === 'cancelled' && Number(order.paid_amount || 0) > Number(order.refunded_amount || 0)" class="stock-warning">{{ uiLocale === 'en' ? 'Cancelled · Refund due:' : 'Đã hủy · Còn cần hoàn:' }} {{ formatMoney(Number(order.paid_amount || 0) - Number(order.refunded_amount || 0)) }}</small>
                   <small>{{ formatMoney(order.paid_amount || 0) }} / {{ formatMoney(order.total_amount || 0) }}</small>
                   <PaymentRequestPanel v-if="order.metadata?.payment_flow === 'prepay_then_confirm'" :order="order" :endpoint="`${API_BASE}/orders/${order.id}/payment-request`" :payment-endpoint="`${API_BASE}/orders/${order.id}/payments`" @saved="fetchOrders" />
                   <div v-else class="order-payment-actions">
-                    <input v-model.number="orderPaymentDrafts[order.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" />
+                    <input v-model.number="orderPaymentDrafts[order.id]" type="number" min="1" step="1" placeholder="Số tiền" />
                     <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận thanh toán" title="Ghi nhận thanh toán" @click="recordSalesPayment(order)">Thu</button>
                     <button type="button" :disabled="orderPaymentSaving[order.id]" aria-label="Ghi nhận hoàn tiền" title="Ghi nhận hoàn tiền" @click="recordSalesPayment(order, 'refund')">Hoàn</button>
                   </div>
-                  <div v-if="order.metadata?.payment_flow==='prepay_then_confirm' && Number(order.paid_amount)>Number(order.refunded_amount || 0)" class="order-payment-actions"><input v-model.number="orderPaymentDrafts[order.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền hoàn" /><button type="button" :disabled="orderPaymentSaving[order.id]" @click="recordSalesPayment(order,'refund')">Hoàn</button></div>
+                  <div v-if="order.metadata?.payment_flow==='prepay_then_confirm' && Number(order.paid_amount)>Number(order.refunded_amount || 0)" class="order-payment-actions"><input v-model.number="orderPaymentDrafts[order.id]" type="number" min="1" step="1" placeholder="Số tiền hoàn" /><button type="button" :disabled="orderPaymentSaving[order.id]" @click="recordSalesPayment(order,'refund')">Hoàn</button></div>
                 </td>
                 <td><strong>{{ formatMoney(order.total_amount || 0) }}</strong></td>
                 <td>{{ order.created_at ? formatDateTime(order.created_at) : '—' }}</td>
@@ -14770,7 +14809,7 @@ function followupRecommendationLabel(item) {
                   </select>
                   <button v-if="['submitted', 'partially_received'].includes(purchase.status)" type="button" class="table-action-btn" @click="receivePurchaseOrder(purchase)">Nhận hàng</button>
                 </td>
-                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ paymentStatusLabel(purchase.payment_status || 'unpaid') }}</span><small>{{ formatMoney(purchase.paid_amount || 0) }} / {{ formatMoney(purchase.total_spend || 0) }}</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="0.01" step="0.01" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Thanh toán công nợ</button></div></td>
+                <td class="order-payment-cell"><span class="product-status" :class="purchase.payment_status">{{ paymentStatusLabel(purchase.payment_status || 'unpaid') }}</span><small>{{ formatMoney(purchase.paid_amount || 0) }} / {{ formatMoney(purchase.total_spend || 0) }}</small><div class="order-payment-actions"><input v-model.number="purchasePaymentDrafts[purchase.id]" type="number" min="1" step="1" placeholder="Số tiền" /><button type="button" :disabled="purchasePaymentSaving[purchase.id]" @click="recordPurchasePayment(purchase)">Thanh toán công nợ</button></div></td>
                 <td><strong>{{ formatMoney(purchase.total_spend || 0) }}</strong></td>
                 <td>{{ purchase.updated_at ? formatDateTime(purchase.updated_at) : '—' }}</td>
                 <td><button type="button" class="table-action-btn" data-testid="purchase-order-history-button" @click.stop="loadPurchaseOrderEvents(purchase)">Lịch sử</button></td>
@@ -15620,7 +15659,7 @@ function followupRecommendationLabel(item) {
             <template v-else>
               <span class="visually-hidden">{{ crmUiText('Hướng dẫn kết nối Zalo và Telegram.') }}</span>
               <div v-if="botConnectionError" class="settings-notice team-error bot-connection-alert"><span>{{ crmUiText(botConnectionError) }}</span><button type="button" class="settings-refresh" :disabled="botConnectionLoading" @click="fetchBotConnections">{{ crmUiText(botConnectionLoading ? 'Đang tải...' : 'Thử lại') }}</button></div><div v-if="botConnectionNotice" class="settings-notice">{{ crmUiText(botConnectionNotice) }}</div>
-              <div class="bot-provider-heading"><span class="channel-card-icon">{{ channelModalTab === 'zalo' ? 'Z' : '✈' }}</span><div><h3>{{ channelModalTab === 'zalo' ? 'Zalo' : 'Telegram' }}</h3><p>{{ crmUiText(channelModalTab === 'zalo' ? 'Kênh Zalo chính thức của cửa hàng.' : 'Kênh Telegram riêng của cửa hàng.') }}</p></div><span class="connection-badge" :class="{ connected: activeBotConnections.some((item) => item.channel_type === channelModalTab) }">{{ activeBotConnections.some((item) => item.channel_type === channelModalTab) ? t('ĐÃ KẾT NỐI') : t('CHƯA KẾT NỐI') }}</span></div>
+              <div class="bot-provider-heading"><span class="channel-card-icon">{{ channelModalTab === 'zalo' ? 'Z' : '✈' }}</span><div><h3>{{ channelModalTab === 'zalo' ? 'Zalo' : 'Telegram' }}</h3><p>{{ crmUiText(channelModalTab === 'zalo' ? 'Kênh Zalo chính thức của cửa hàng.' : 'Kênh Telegram riêng của cửa hàng.') }}</p></div><span class="connection-badge" :class="{ connected: botChannelIsConnected(channelModalTab) }">{{ botChannelStatus(channelModalTab) }}</span></div>
               <div class="bot-connect-guide-single"><div class="bot-guide-qr-wrap"><img :src="botQrUrl(channelModalTab)" :alt="`${crmUiText(channelModalTab === 'zalo' ? 'Mã quét để mở hướng dẫn Zalo' : 'Mã quét để mở hướng dẫn Telegram')}`" loading="lazy" /></div><div><ol v-if="channelModalTab === 'telegram'"><li>{{ crmUiText('Mở trang tạo kênh Telegram.') }}</li><li>{{ crmUiText('Nhập /newbot rồi làm theo hướng dẫn.') }}</li><li>{{ crmUiText('Sao chép mã truy cập được cấp.') }}</li></ol><ol v-else><li>{{ crmUiText('Mở trang quản lý Zalo và chọn Tạo kênh.') }}</li><li>{{ crmUiText('Sao chép mã truy cập sau khi tạo.') }}</li><li>{{ crmUiText('Dán mã vào đây để bật nhận tin tự động.') }}</li></ol><a class="bot-guide-link" :href="botGuideUrl(channelModalTab)" target="_blank" rel="noreferrer">{{ crmUiText(channelModalTab === 'zalo' ? 'Mở hướng dẫn Zalo' : 'Mở hướng dẫn Telegram') }}</a></div></div>
               <div v-if="demoChannelsLocked" class="settings-notice channel-plan-locked"><span>{{ channelCapacity.reason }}</span><button type="button" class="settings-refresh" @click="openServicePageFromChannelLimit">{{ crmUiText('Nâng cấp gói') }}</button></div>
               <form class="bot-connect-form" @submit.prevent="connectBotChannel"><input type="hidden" v-model="botConnectionForm.channel_type" /><label class="bot-token-field">{{ crmUiText(channelModalTab === 'zalo' ? 'Mã truy cập Zalo' : 'Mã truy cập Telegram') }}<div class="bot-token-input-wrap"><input v-model="botConnectionForm.access_token" :type="botTokenVisible ? 'text' : 'password'" autocomplete="off" required :disabled="demoChannelsLocked" :placeholder="demoChannelsLocked ? crmUiText('Nâng cấp gói để mở kết nối') : crmUiText(channelModalTab === 'zalo' ? 'Dán mã truy cập Zalo vào đây' : 'Dán mã truy cập Telegram vào đây')" /><button type="button" class="token-visibility-btn" :disabled="demoChannelsLocked" @click="botTokenVisible = !botTokenVisible">{{ botTokenVisible ? crmUiText('Ẩn') : crmUiText('Hiện') }}</button></div></label><button class="primary-btn bot-connect-submit" type="submit" :disabled="botConnectionSaving || demoChannelsLocked">{{ crmUiText(demoChannelsLocked ? 'Không thể kết nối thêm' : botConnectionSaving ? 'Đang kiểm tra...' : 'Kiểm tra và kết nối') }}</button></form>
@@ -16053,7 +16092,7 @@ function followupRecommendationLabel(item) {
           </form>
           <label class="followup-status-filter">
             <span>{{ uiLocale === 'en' ? 'Delivery status' : 'Trạng thái gửi' }}</span>
-            <select v-model="followupStatusFilter" @change="fetchFollowups">
+            <select v-model="followupStatusFilter" :disabled="followupsLoading" @change="fetchFollowups">
               <option value="scheduled">{{ uiLocale === 'en' ? 'Scheduled' : 'Đang chờ' }}</option>
               <option value="failed">{{ uiLocale === 'en' ? 'Failed' : 'Thất bại' }}</option>
               <option value="delivery_unknown">{{ uiLocale === 'en' ? 'Delivery unclear' : 'Chưa rõ đã gửi' }}</option>

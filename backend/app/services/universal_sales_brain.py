@@ -389,7 +389,16 @@ def _known_slot(name: str, folded: str, budget: Budget | None, purpose: str | No
     if name == "desired_outcome":
         return purpose is not None or any(term in folded for term in ("hop dong", "thiet ke", "ke khai", "thanh lap", "tu van ve"))
     if name == "product_or_goal":
-        return bool(_extract_interest("", folded))
+        # A shop-wide product request with an explicit price ceiling is
+        # sufficiently actionable: the catalog/recommendation path can return
+        # items within that budget without forcing the customer to name a
+        # category first. Keep the follow-up question for vague requests such
+        # as "Gợi ý giúp tôi".
+        generic_product_request = bool(re.search(
+            r"\b(?:san pham|mat hang|hang hoa|product|products|item|items)\b",
+            folded,
+        ))
+        return bool(_extract_interest("", folded)) or (budget is not None and generic_product_request)
     return False
 
 
@@ -417,7 +426,7 @@ def _applicable_playbook(context: ResolvedIndustryContext, folded: str) -> Verti
     if len(context.profiles) == 1:
         return VERTICAL_PLAYBOOKS[context.profiles[0].industry_id]
     configured = [VERTICAL_PLAYBOOKS[profile.industry_id] for profile in context.profiles]
-    matches = [playbook for playbook in configured if any(_fold(term) in folded for term in playbook.trigger_terms)]
+    matches = [playbook for playbook in configured if any(re.search(r"(?<!\w)"+re.escape(_fold(term))+r"(?!\w)", folded) for term in playbook.trigger_terms)]
     return matches[0] if len(matches) == 1 else GENERIC_PLAYBOOK
 
 
@@ -457,7 +466,7 @@ def discover_needs(query: str, context: ResolvedIndustryContext, *,
     slot_intent = "recommendation" if intent in {"product_recommendation", "service_recommendation"} else intent
     selected_slots = tuple(slot for slot in playbook.required_customer_information
                            if advisory and slot_intent in slot.applies_to
-                           and (not slot.trigger_any or any(_fold(cue) in folded for cue in slot.trigger_any)))
+                           and (not slot.trigger_any or any(re.search(r"(?<!\w)"+re.escape(_fold(cue))+r"(?!\w)", folded) for cue in slot.trigger_any)))
     required = tuple(slot.name for slot in selected_slots)
     missing = tuple(slot.name for slot in selected_slots
                     if not _known_slot(slot.name, folded, budget, purpose, active_memory, followup))
@@ -466,7 +475,7 @@ def discover_needs(query: str, context: ResolvedIndustryContext, *,
         chosen = min((slot for slot in selected_slots if slot.name == missing[0]), key=lambda slot: slot.priority)
         next_question = chosen.question
     elif (playbook.industry_id == "generic" and advisory and interest is None
-          and not followup):
+          and not followup and not _known_slot("product_or_goal", folded, budget, purpose, active_memory, followup)):
         required = ("product_or_goal",)
         missing = required
         next_question = GENERIC_PLAYBOOK.required_customer_information[0].question

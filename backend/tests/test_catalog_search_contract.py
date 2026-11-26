@@ -23,6 +23,15 @@ from app.services.catalog_search import get_current_offering, search_current_off
 from app.tenancy.workspace_modules import save_workspace_config
 
 
+@pytest.mark.parametrize("query", ["shop đang có dịch vụ nào", "shop đang có những dịch vụ nào", "shop có các dịch vụ gì"])
+def test_general_service_question_returns_active_tenant_menu(catalog, query):
+    db = catalog[0] if isinstance(catalog, tuple) else catalog
+    results = search_current_offerings(db, 1, query, kind="service")
+    assert results
+    assert all(item["kind"] == "service" for item in results)
+    assert all(item["ref"] not in {"service:601", "service:602"} for item in results)
+
+
 @pytest.fixture(scope="module")
 def catalog_engine():
     engine = create_engine("sqlite://")
@@ -88,6 +97,74 @@ def catalog(catalog_connection):
 
 def refs(items):
     return [item["ref"] for item in items]
+
+
+@pytest.mark.parametrize("booking_query", ["tôi muốn đặt lịch hẹn", "tôi muốn đặt lịch hẹn dịch vụ trên", "đặt dịch vụ đó", "tôi muốn đặt dịch vụ này", "tôi muốn đặt lịch hẹn cho dịch vụ trên"])
+@pytest.mark.parametrize("date_query,expected_hour", [("25/11/2099 vào lúc 12h30",12), ("ngày 25/11/2099 vào lúc 10h30 AM",10), ("ngày 25/11/2099 vào lúc 10h30 PM",22), ("split",12)])
+def test_booking_keeps_service_and_consumes_datetime_followup_without_llm(catalog, booking_query,date_query,expected_hour):
+    from datetime import datetime, timezone
+    from app.models.message import Message
+    from app.services.conversation_graph import graph_reply
+    db, conversation = catalog
+    db.query(AppointmentService).filter(AppointmentService.business_id == 1, AppointmentService.id != 501).update({"is_active": False})
+    db.get(Product, 503).status = "inactive"
+    db.add(Message(conversation_id=conversation.id, channel="facebook", direction="outbound",
+                   content="Theo danh mục hiện tại: Chăm sóc chuyên sâu: 180.000 đồng/lần, thời lượng khoảng 90 phút.",
+                   received_at=datetime.now(timezone.utc).replace(tzinfo=None)))
+    db.commit()
+    before_appointments = db.query(Appointment).count()
+    before_orders = db.query(Order).count()
+    with patch("app.services.business_request.call_llm", side_effect=AssertionError("booking fragments need no LLM")), \
+         patch("app.services.conversation_graph.call_llm", side_effect=AssertionError("booking fragments need no LLM")):
+        first = graph_reply(db, business_id=1, conversation=conversation,
+                            query=booking_query, job_key="booking-start")
+        assert "Chăm sóc chuyên sâu" in first.prompt
+        if date_query == "split":
+            for index in range(2):
+                fragment = graph_reply(db, business_id=1, conversation=conversation,
+                    query="12h30", job_key=f"booking-time-{index}")
+                assert "12:30" in fragment.prompt
+                assert "ngày nào" in fragment.prompt
+            date_query = "ngày 25/11/2099"
+        second = graph_reply(db, business_id=1, conversation=conversation,
+                             query=date_query, job_key="booking-datetime")
+        third = graph_reply(db, business_id=1, conversation=conversation,
+                            query="Khách Kiểm Thử , 0900000011", job_key="booking-contact")
+    session = db.query(CustomerCollectionSession).filter_by(conversation_id=conversation.id, purpose="business_request").one()
+    assert session.collected_fields["offering_ref"] == "service:501"
+    datetime_fields = [field["key"] for field in session.collected_fields["field_definitions"] if field["type"] == "datetime"]
+    assert datetime_fields
+    stored = datetime.fromisoformat(session.collected_fields["values"][datetime_fields[0]])
+    assert (stored.year, stored.month, stored.day, stored.hour, stored.minute) == (2099, 11, 25, expected_hour, 30)
+    assert stored.tzinfo is not None
+    assert "Chăm sóc chuyên sâu" in second.prompt
+    assert "Thời gian mong muốn" not in second.prompt
+    assert session.collected_fields["values"]["name"] == "Khách Kiểm Thử"
+    assert session.collected_fields["values"]["phone"] == "đã cung cấp"
+    assert "thiếu căn cứ" not in third.prompt
+    assert "nguồn" not in third.prompt.lower()
+    assert db.query(Appointment).count() == before_appointments
+    assert db.query(Order).count() == before_orders
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_service_reference_does_not_auto_choose_ambiguous_or_stale_menu(catalog, stale):
+    from datetime import datetime, timedelta, timezone
+    from app.models.message import Message
+    from app.services.conversation_graph import graph_reply
+    db, conversation = catalog
+    db.query(AppointmentService).filter(AppointmentService.business_id == 1, AppointmentService.id != 501).update({"is_active": False})
+    db.get(Product, 503).status = "active" if not stale else "inactive"
+    menu = "Chăm sóc chuyên sâu; Tư vấn ảnh" if not stale else "Chăm sóc chuyên sâu"
+    db.add(Message(conversation_id=conversation.id, channel="facebook", direction="outbound", content=menu,
+                   received_at=(datetime.now(timezone.utc) - timedelta(minutes=31 if stale else 1)).replace(tzinfo=None)))
+    db.commit()
+    with patch("app.services.business_request.call_llm", side_effect=AssertionError("must clarify")), \
+         patch("app.services.conversation_graph.call_llm", side_effect=AssertionError("must clarify")):
+        result = graph_reply(db, business_id=1, conversation=conversation,
+                             query="tôi muốn đặt lịch hẹn dịch vụ trên", job_key="ambiguous-reference")
+    assert "dịch vụ nào" in result.prompt
+    assert db.query(CustomerCollectionSession).filter_by(conversation_id=conversation.id).count() == 0
 
 
 @pytest.mark.parametrize("query,options,expected", [

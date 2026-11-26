@@ -7,6 +7,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+from app.database.bases import TenantBase
 
 from app.models.business import Business
 from app.models.customer import Customer
@@ -37,6 +38,24 @@ from app.services.customer_collection import contact_hash
 from app.services.otp_delivery import OtpDeliveryResult, OtpSmtpConfig
 
 
+def legacy_contact_session(db, *, business_id, customer_id, conversation_id, source_channel, text):
+    """Seed an already-open legacy form for field-parser/resume tests.
+
+    New conversations must select a real product before entering this stage.
+    These tests exercise stored sessions from before that routing contract.
+    """
+    from app.services.customer_collection_flow import (
+        _required_fields_for_channel, _order_form_prompt, CollectionFlowResult,
+    )
+    fields = list(_required_fields_for_channel(source_channel))
+    session = CustomerCollectionSession(business_id=business_id, customer_id=customer_id,
+        conversation_id=conversation_id, source_channel=source_channel, purpose='order',
+        status='pending', required_fields=fields, current_field=fields[0], collected_fields={})
+    db.add(session); db.commit()
+    return CollectionFlowResult(session_id=session.id, status='pending', current_field=fields[0],
+        prompt=_order_form_prompt(fields, 'vi'), started=True)
+
+
 class CustomerCollectionFlowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -46,6 +65,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             poolclass=StaticPool,
         )
         Business.metadata.create_all(cls.engine)
+        TenantBase.metadata.create_all(cls.engine)
         with Session(cls.engine) as db:
             business = Business(name="Flow Shop", slug="flow-shop")
             db.add(business)
@@ -163,7 +183,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             customer.address = None
             db.commit()
 
-            first = advance_customer_collection(
+            first = legacy_contact_session(
                 db,
                 business_id=self.business_id,
                 customer_id=self.customer_id,
@@ -402,7 +422,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
 
     def test_checkout_accepts_fields_grouped_from_separate_chat_messages(self):
         with Session(self.engine) as db:
-            started = advance_customer_collection(
+            started = legacy_contact_session(
                 db, business_id=self.business_id, customer_id=self.customer_id,
                 conversation_id=14, source_channel="facebook",
                 text="Chốt đơn giúp mình",
@@ -432,7 +452,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
 
     def test_checkout_accumulates_labeled_fragments_across_existing_chat_batches(self):
         with Session(self.engine) as db:
-            started = advance_customer_collection(
+            started = legacy_contact_session(
                 db, business_id=self.business_id, customer_id=self.customer_id,
                 conversation_id=15, source_channel="facebook",
                 text="Chốt đơn giúp mình",
@@ -440,7 +460,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertTrue(started.started)
 
             # Real customers often put name and phone in the same message.
-            first_batch = ["tên: Ngô Long Thiên , sdt 0327256842"]
+            first_batch = ["tên: Ngô Long Thiên , sdt 0900000011"]
             first_partial = advance_customer_collection(
                 db, business_id=self.business_id, customer_id=self.customer_id,
                 conversation_id=15, source_channel="facebook",
@@ -471,7 +491,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
 
     def test_checkout_parses_multiple_fields_from_one_labeled_line(self):
         values, submitted = _parse_order_form(
-            "Tên: Ngô Long Thiên, SĐT: 0327256842, Email: thien@example.com, "
+            "Tên: Ngô Long Thiên, SĐT: 0900000011, Email: thien@example.com, "
             "Địa chỉ: 140 Lê Trọng Tấn, Quận Tân Phú, Thanh toán: COD",
             ("name", "phone", "email", "address", "payment_method"),
         )
@@ -489,7 +509,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 business_id=self.business_id,
                 channel="facebook",
                 external_user_id="legacy-combined-name-phone",
-                name="Ngô Long Thiên , sdt 0327256842",
+                name="Ngô Long Thiên , sdt 0900000011",
             )
             db.add(customer)
             db.flush()
@@ -503,7 +523,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 purpose="order",
                 required_fields=["name", "phone", "email", "address", "payment_method"],
                 collected_fields={
-                    "name": "Ngô Long Thiên , sdt 0327256842",
+                    "name": "Ngô Long Thiên , sdt 0900000011",
                     "email": "thien@example.com",
                     "address": "140 Lê Trọng Tấn",
                     "payment_method": "cod",
@@ -526,8 +546,8 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 customer_id=customer.id,
                 conversation_id=None,
                 source_channel="facebook",
-                text="0327256842",
-                form_fragments=["0327256842"],
+                text="0900000011",
+                form_fragments=["0900000011"],
             )
 
             self.assertTrue(result.completed)
@@ -563,7 +583,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             )
             self.assertIsNone(ignored)
 
-            started = advance_customer_collection(
+            started = legacy_contact_session(
                 db,
                 business_id=self.business_id,
                 customer_id=self.customer_id,
@@ -600,7 +620,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             db.flush()
             conversation_id = 22
 
-            self.assertEqual("name", advance_customer_collection(
+            self.assertEqual("name", legacy_contact_session(
                 db, business_id=self.business_id, customer_id=customer.id,
                 conversation_id=conversation_id, source_channel="shopee",
                 text="Chốt đơn giúp mình",
@@ -742,7 +762,8 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 source_channel="zalo",
                 text="Mình mua sản phẩm này",
             )
-            self.assertTrue(started.started)
+            self.assertEqual("product_clarification", started.status)
+            self.assertEqual(0, db.query(CustomerCollectionSession).filter_by(conversation_id=32).count())
             browse = advance_customer_collection(
                 db,
                 business_id=self.business_id,
@@ -752,8 +773,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 text="Tôi cần tìm hiểu danh sách sản phẩm",
             )
             self.assertIsNone(browse)
-            session = db.query(CustomerCollectionSession).filter_by(conversation_id=32).one()
-            self.assertEqual("abandoned", session.status)
+            self.assertEqual(0, db.query(CustomerCollectionSession).filter_by(conversation_id=32).count())
 
     def test_product_detail_request_does_not_start_or_repeat_checkout(self):
         detail_before_purchase = "Tôi muốn mua Serum Vitamin C Lunari nhưng muốn xem chi tiết nó"
@@ -791,7 +811,8 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             )
             self.assertIsNone(follow_up)
             session = db.query(CustomerCollectionSession).filter_by(conversation_id=34).one()
-            self.assertEqual("abandoned", session.status)
+            self.assertEqual("pending", session.status)
+            self.assertEqual("order_confirmation", session.purpose)
 
     def test_product_link_question_is_not_misread_as_quote_rejection(self):
         with Session(self.engine) as db:
@@ -832,7 +853,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
 
     def test_greeting_does_not_resume_a_stale_collection_prompt(self):
         with Session(self.engine) as db:
-            started = advance_customer_collection(
+            started = legacy_contact_session(
                 db,
                 business_id=self.business_id,
                 customer_id=self.customer_id,
@@ -1043,7 +1064,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
             self.assertEqual("order_confirmation", result.current_field)
             self.assertIn("400.000 đồng", result.prompt)
 
-    def test_product_purchase_without_quantity_uses_one_as_the_safe_default(self):
+    def test_product_purchase_without_quantity_waits_for_explicit_quantity(self):
         with Session(self.engine) as db:
             result = advance_customer_collection(
                 db,
@@ -1054,9 +1075,26 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 text="Mình muốn mua Serum",
             )
 
-            self.assertEqual("order_confirmation", result.current_field)
-            self.assertIn("mua 1 Serum", result.prompt)
-            self.assertNotIn("mua 0 Serum", result.prompt)
+            self.assertEqual("quantity", result.current_field)
+            self.assertIn("Serum", result.prompt)
+            self.assertIn("bao nhiêu", result.prompt)
+
+    def test_purchase_without_quantity_asks_before_quote(self):
+        with Session(self.engine) as db:
+            args = dict(business_id=self.business_id, customer_id=self.customer_id,
+                        conversation_id=910001, source_channel="zalo")
+            first = advance_customer_collection(db, text="Tôi muốn mua Serum", **args)
+            self.assertEqual("quantity", first.current_field)
+            self.assertIn("bao nhiêu", first.prompt)
+            repeated = advance_customer_collection(db, text="ok đặt đi", **args)
+            self.assertEqual("quantity", repeated.current_field)
+            self.assertIn("bao nhiêu", repeated.prompt)
+            quoted = advance_customer_collection(db, text="2", **args)
+            self.assertEqual("order_confirmation", quoted.current_field)
+            self.assertIn("400.000", quoted.prompt)
+            session = db.query(CustomerCollectionSession).filter_by(id=first.session_id).one()
+            self.assertEqual(2, session.collected_fields["quantity"])
+            self.assertFalse(session.collected_fields.get("quantity_pending"))
 
     def test_customer_can_change_the_quantity_of_a_single_pending_quote(self):
         with Session(self.engine) as db:
@@ -1068,7 +1106,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
                 source_channel="telegram",
                 text="Mình muốn mua Kem chống nắng Daily Shield",
             )
-            self.assertIn("mua 1 Kem chống nắng Daily Shield", quote.prompt)
+            self.assertIn("bao nhiêu", quote.prompt)
 
             revised = advance_customer_collection(
                 db,
@@ -1371,7 +1409,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
 
     def test_price_question_replaces_stale_checkout_session(self):
         with Session(self.engine) as db:
-            started = advance_customer_collection(
+            started = legacy_contact_session(
                 db,
                 business_id=self.business_id,
                 customer_id=self.customer_id,
@@ -1397,7 +1435,7 @@ class CustomerCollectionFlowTests(unittest.TestCase):
 
     def test_product_question_abandons_pending_checkout_at_any_field(self):
         with Session(self.engine) as db:
-            started = advance_customer_collection(
+            started = legacy_contact_session(
                 db,
                 business_id=self.business_id,
                 customer_id=self.customer_id,

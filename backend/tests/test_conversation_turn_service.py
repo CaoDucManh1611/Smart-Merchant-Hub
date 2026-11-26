@@ -73,6 +73,48 @@ class ConversationTurnTests(unittest.TestCase):
             self.assertEqual(f"turn:{self.business_id}:{self.conversation_id}:{rows[0].id}:{rows[-1].id}", kwargs["auto_reply_key"])
             self.assertEqual(rows[-1].id, kwargs["expected_latest_inbound_id"])
 
+    def test_contact_card_does_not_suppress_preceding_text(self):
+        with Session(self.engine) as db:
+            source=db.query(Message).order_by(Message.id.desc()).first()
+            db.add(Message(conversation_id=self.conversation_id,channel='zalo',direction='inbound',
+                content=None,media_type='unknown',received_at=source.received_at+timedelta(milliseconds=1)))
+            db.commit()
+            with patch('app.services.auto_reply_service.process_rag_auto_reply',return_value=True) as reply:
+                dispatch_chatbot_turn(db,business_id=self.business_id,
+                    payload={'conversation_id':self.conversation_id,'message_id':source.id})
+            reply.assert_called_once()
+
+    def test_graph_error_uses_customer_friendly_message(self):
+        with Session(self.engine) as db:
+            db.query(Message).filter(Message.conversation_id == self.conversation_id).delete()
+            inbound = Message(
+                conversation_id=self.conversation_id,
+                channel="facebook",
+                sender_type="customer",
+                direction="inbound",
+                content="Shop buôn bán về gì vậy?",
+                received_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            db.add(inbound)
+            db.commit()
+            conversation = db.query(Conversation).filter_by(id=self.conversation_id).first()
+            conversation.channel = "facebook"
+            db.commit()
+            with patch("app.services.conversation_turn_service.settings.CHATBOT_GRAPH_ENABLED", True), \
+                 patch("app.services.privacy_service.customer_memory_opt_out_reply", return_value=None), \
+                 patch("app.services.recommendation_interaction_service.record_explicit_chat_recommendation_decline"), \
+                 patch("app.services.conversation_graph.graph_reply", side_effect=RuntimeError("provider detail")), \
+                 patch("app.services.auto_reply_service.send_text_reply") as send:
+                self.assertTrue(dispatch_chatbot_turn(db, business_id=self.business_id,
+                    payload={"conversation_id": self.conversation_id, "message_id": inbound.id}))
+
+        send.assert_called_once()
+        text = send.call_args.kwargs["text"]
+        self.assertIn("Xin lỗi bạn", text)
+        self.assertIn("sản phẩm/dịch vụ", text)
+        self.assertNotIn("dữ liệu", text.lower())
+        self.assertNotIn("lỗi khi kiểm tra", text.lower())
+
     @patch("app.services.conversation_turn_service.settings.CHATBOT_GRAPH_ENABLED", False)
     def test_otp_and_order_bypass_get_one_safe_reply_without_llm_or_crm_action(self):
         with Session(self.engine) as db, \
@@ -353,11 +395,11 @@ class ConversationTurnTests(unittest.TestCase):
                                  payload={"conversation_id": self.conversation_id, "message_id": source.id}))
             reply.assert_not_called()
 
-    def test_mock_shopee_and_tiktok_outbound_routing(self):
+    def test_all_channels_use_shared_rag_turn(self):
         with Session(self.engine) as db:
             source = db.query(Message).order_by(Message.id.desc()).first()
             conversation = db.get(Conversation, self.conversation_id)
-            for channel in ("shopee", "tiktok"):
+            for channel in ("facebook", "instagram", "shopee", "tiktok", "telegram", "zalo"):
                 conversation.channel = channel
                 db.commit()
                 with patch("app.services.auto_reply_service.process_rag_auto_reply", return_value=True) as reply:
